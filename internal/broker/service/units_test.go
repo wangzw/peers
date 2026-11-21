@@ -50,6 +50,38 @@ func TestUnitsMatchGolden(t *testing.T) {
 	}
 }
 
+// TestSystemdSystemUnitResourceLimits checks that the system unit alone carries
+// the host-wide PID and descriptor caps; the user unit and the launchd daemon
+// keep no equivalent, because their limits would count processes or
+// descriptors belonging to the whole account or the whole host.
+func TestSystemdSystemUnitResourceLimits(t *testing.T) {
+	system, err := SystemdSystemUnit(goldenExe)
+	if err != nil {
+		t.Fatalf("SystemdSystemUnit: %v", err)
+	}
+	for _, want := range []string{"TasksMax=8192", "LimitNOFILE=65536"} {
+		if !strings.Contains(system, want) {
+			t.Errorf("system unit does not contain %q:\n%s", want, system)
+		}
+	}
+
+	user, err := SystemdUserUnit(goldenExe)
+	if err != nil {
+		t.Fatalf("SystemdUserUnit: %v", err)
+	}
+	daemon, err := LaunchDaemonPlist(goldenExe)
+	if err != nil {
+		t.Fatalf("LaunchDaemonPlist: %v", err)
+	}
+	for name, out := range map[string]string{"user unit": user, "launch daemon": daemon} {
+		for _, unwanted := range []string{"TasksMax", "LimitNOFILE"} {
+			if strings.Contains(out, unwanted) {
+				t.Errorf("%s contains %q but must not:\n%s", name, unwanted, out)
+			}
+		}
+	}
+}
+
 func TestSystemdExecStartEscaping(t *testing.T) {
 	cases := []struct {
 		exe  string

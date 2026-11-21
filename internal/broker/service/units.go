@@ -43,6 +43,10 @@ Restart=always
 RestartSec=5
 UMask=0022
 NoNewPrivileges=yes
+# Keep a runaway Broker or its helpers from exhausting the host's PIDs.
+TasksMax=8192
+# Keep connections and helper pipes from exhausting the host's descriptors.
+LimitNOFILE=65536
 # The Broker reaches every served account's session registry and inbox
 # sockets through per-account helpers, so it must see the real /home, /tmp
 # and /run. Do not add ProtectHome, PrivateTmp or ProtectSystem.
