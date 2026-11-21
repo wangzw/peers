@@ -12,4 +12,3 @@ weight: 7
 - **与其他 A2A agent 对话。** Broker 之间的消息使用 A2A 的 Message 格式，但 peers 不处理 A2A 的任务、流式传输与回调，所以不能与外部 A2A agent 交换消息。
 - **覆盖每一个 Claude Code 会话。** 以无界面方式运行且跳过权限确认的会话收不到消息，发送方却会看到成功；跳过权限确认又没有设置入站策略的会话，会把每条消息暂扣等批准；从另一个会话的命令行启动的会话不能成为 Agent。见[Agent]({{< relref "concepts/agents.md" >}})与[安全模型]({{< relref "security.md" >}})。
 - **在每次 Claude Code 升级后照常工作。** peers 依赖 Claude Code 的两个接口，即 inbox socket 的消息格式与会话注册表，Claude Code 没有公开承诺保持它们兼容，所以升级可能改变登记或投递的方式。
-- **用 `peers update` 选择版本或回退。** 它只安装更新的正式发布版本。要安装指定版本，用安装脚本的 `--version`；见[安装 peers]({{< relref "guides/install.md" >}})。

@@ -277,7 +277,7 @@ peers update [flags]
 
 Installs the latest formal release, either by asking the selected Broker to update itself or by replacing the binary in place.
 
-The command installs only a newer formal release: drafts and prereleases are ignored, there is no option to choose a version and it never downgrades.
+The command installs only a newer formal release: drafts and prereleases are ignored, there is no option to choose a version and it never downgrades. To install a particular version, run the install script with `--version`; see [Install with one command]({{< relref "install.md" >}}#install-with-one-command).
 
 - `--yes` (`-y`) skips the confirmation question. Without it the command asks `peers <installed> is installed. Update to the latest release? [y/N]`, where `<installed>` is the installed version, and accepts `y` or `yes`, in any case, as confirmation. When standard input is not a terminal, the command fails without `--yes` and exits with code 1. When the user answers `n`, it prints `Update canceled; nothing was changed.` and exits with code 0.
 - A usage error exits with code 2. Any other failure exits with code 1. A successful update, an up-to-date result and a canceled update all exit with code 0.

@@ -28,7 +28,7 @@ Two configuration keys control the check: `update.check` turns it on and off, an
 
 ## Update the binary
 
-`peers update` installs only a newer formal release; you cannot choose a version or roll back.
+`peers update` installs only a newer formal release. To install a particular version, including an older one to roll back, run the install script with `--version`; see [Install with one command]({{< relref "install.md" >}}#install-with-one-command).
 
 Run the command in a terminal:
 

@@ -28,7 +28,7 @@ peers <latest> is available (this Broker runs <installed>). To upgrade, the user
 
 ## 更新二进制
 
-`peers update` 只安装更新的正式发布版本，不能指定版本，也不能回退。
+`peers update` 只安装更新的正式发布版本。要安装指定版本，包括回退到更旧的版本，可以用安装脚本的 `--version`；见[用一条命令安装]({{< relref "install.md" >}}#用一条命令安装)。
 
 在终端运行：
 
