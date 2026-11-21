@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -46,9 +47,28 @@ func dispatch(args []string, stderr io.Writer) int {
 	return 2
 }
 
+// exitError carries the exit code a subcommand needs beyond the default 1. The
+// scan-secret command uses 2 for an unreadable directory so the workflow can
+// tell a scan failure from a token hit.
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string { return e.err.Error() }
+
+func (e *exitError) Unwrap() error { return e.err }
+
+// ExitCode reports the process exit code for this error.
+func (e *exitError) ExitCode() int { return e.code }
+
 func report(err error, stderr io.Writer) int {
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "rsprobe: %v\n", err)
+		var coded interface{ ExitCode() int }
+		if errors.As(err, &coded) {
+			return coded.ExitCode()
+		}
 		return 1
 	}
 	return 0
