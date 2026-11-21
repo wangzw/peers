@@ -75,7 +75,7 @@ peers 写入时不带回复地址，所以经同一个用户级 Broker，或经�
 
 peers 自己也会限制 topic 变更：加入与退出按账户限速，本机 topic 的数量与单个 topic 的成员数有上限，见[上限]({{< relref "/docs/concepts/topics" >}}#上限)。配对 Broker 发来的成员名单每个 topic 最多 4096 条，每条链路合计最多 16384 条；超过任一上限时整帧丢弃，Broker 日志记一条警告，链路保持连接。被丢弃的那一帧里的成员，要等链路重新建立后才会出现。超过 4 MiB 的帧在发送前就被拒绝，链路不会断开。
 
-链路本身也有入站上限。一条连接最多排队 4096 个状态帧，状态帧负载合计最多 64 MiB，排队中的与正在处理的帧都计入；超过任一上限，本 Broker 关闭这一条连接，由拨号方按常规退避重连。同一个对端同时最多运行 64 个请求处理函数，该对端的各条连接共用这份名额；名额用尽时，本 Broker 暂停读取该对端，直到有一个请求完成，不报错，也不关闭链路。`peers service status` 与 `list_brokers` 对这种断开的链路不显示 detail；原因在审计记录里，事件为 `link_down`，detail 为 `inbound_limit`，用 `peers service audit` 查看。
+链路本身也有入站上限。一条连接最多排队 4096 个状态帧，状态帧负载合计最多 64 MiB，排队中的与正在处理的帧都计入；超过任一上限，本 Broker 关闭这一条连接，由拨号方按常规退避重连。同一个对端同时最多运行 64 个请求处理函数，该对端的各条连接共用这份名额；名额用尽时，本 Broker 暂停读取该对端，直到有一个请求完成，不报错，也不关闭链路。`peers service status` 与 `list_brokers` 对这种断开的链路在 detail 里给出原因：`the peer sent more state frames than this Broker's inbound limit allows on one connection; the link was closed and will reconnect after a backoff; check the audit log for the link_down record`。审计记录里另有 `link_down` 记录，detail 为 `inbound_limit`，用 `peers service audit` 查看。
 
 ## 操作系统账户是隔离边界
 

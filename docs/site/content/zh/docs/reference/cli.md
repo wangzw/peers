@@ -44,7 +44,7 @@ peers broker list [flags]
 
 把正在运行的 Broker 已知的全部 Broker 列成表格，包括还不是对端的 Broker。列为 `ALIAS`、`FINGERPRINT`、`PEER`（`yes` 或 `no`）、`STATUS`、`DIRECTION` 与 `ADDRESSES`，按别名排序。`ADDRESSES` 列用逗号连接各地址。没有任何 Broker 时输出 `Brokers: none`。本 Broker 下线时，表格之前先输出一行 `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.`。Broker 处于降级运行时，表格之前先输出 `Broker: degraded …` 与 `Fix: …` 两行；仅诊断降级时改为把原因写到标准错误，并以退出码 1 结束。
 
-除 `-h`/`--help` 外没有选项。不需要权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。表格里没有说明对端为什么没有连上的一列。原因要看 `peers service status`：它给出对端一侧已解除配对、双方角色不符、链路协议版本不兼容这几种情况；因超出对端入站上限而断开的链路在那里没有 detail，原因见 `peers service audit`。
+除 `-h`/`--help` 外没有选项。不需要权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。表格不显示对端为什么没有连上。`peers service status` 对四种情况给出说明：对端一侧已解除配对、双方角色不符、链路协议版本不兼容，以及本 Broker 因对端发送的状态帧超过入站上限而关闭的链路。最后一种的 detail 是 `the peer sent more state frames than this Broker's inbound limit allows on one connection; the link was closed and will reconnect after a backoff; check the audit log for the link_down record`。其余原因，例如连接不上、发送队列已满、连接中断、协议错误，detail 留空。
 
 ## peers broker connect
 
@@ -243,7 +243,7 @@ peers service status [flags]
 
 某一节为空时打印为 `Agents: none` 或 `Peers: none`。没有 Broker 配置文件的读权限时，只列出调用方自己的 Agent；Peers 表照常显示。本 Broker 下线时，两张表之前先输出一行 `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.`。
 
-Peers 表的 `DETAIL` 列给出对端没有连上的原因。两个 Broker 使用的链路协议版本不同时，这一列是 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方以 `backoff` 状态持续重试，接受方停在 `waiting`。`peers broker list` 没有这一列。
+Peers 表的 `DETAIL` 列给出对端没有连上的原因。两个 Broker 使用的链路协议版本不同时，这一列是 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方以 `backoff` 状态持续重试，接受方停在 `waiting`。本 Broker 因对端发送的状态帧超过入站上限而关闭链路时，`DETAIL` 是 `the peer sent more state frames than this Broker's inbound limit allows on one connection; the link was closed and will reconnect after a backoff; check the audit log for the link_down record`。`peers broker list` 没有这一列。
 
 Broker 提供的文字在终端里按转义形式打印：制表符、换行、行分隔符或段落分隔符显示为空格，其余控制字符与 Unicode 格式字符按码点显示为 `\xNN`、`\uNNNN` 或 `\UNNNNNNNN`。
 
