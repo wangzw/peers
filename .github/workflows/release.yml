@@ -5,6 +5,8 @@ on:
     tags:
       - "v*"
 
+# The goreleaser job creates the release, so it is the only job that needs
+# contents: write. Every other job, and the workflow default, gets read only.
 permissions:
   contents: read
 
@@ -18,10 +20,13 @@ jobs:
       # from a resolution that would update it.
       GOFLAGS: -mod=readonly
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+          # goreleaser reads the token from the environment; the checkout has
+          # no reason to keep credentials in .git/config for later steps.
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version: "1.27"
           # The published binary is installed as root by a system Broker. A Go
@@ -35,7 +40,7 @@ jobs:
           go mod verify
       - name: Extract the release notes
         run: go run ./scripts/release-notes -version "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
-      - uses: goreleaser/goreleaser-action@v7
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7
         with:
           distribution: goreleaser
           version: "v2.20.2"

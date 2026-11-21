@@ -20,9 +20,11 @@ jobs:
       R: /tmp/peers-rs
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version: "1.27"
           # The probe runs beside the OAuth token, so this job restores no
@@ -112,7 +114,7 @@ jobs:
           fi
       - name: Upload
         if: ${{ !cancelled() && steps.scan.outcome == 'success' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: probe-${{ env.PROBE }}
           path: /tmp/peers-rs/out/${{ env.PROBE }}/
@@ -136,9 +138,11 @@ jobs:
       R: /private/tmp/peers-rs
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - name: Set up Go
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version: "1.27"
           # The probe runs beside the OAuth token, so this job restores no
@@ -219,7 +223,7 @@ jobs:
           fi
       - name: Upload
         if: ${{ !cancelled() && steps.scan.outcome == 'success' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: probe-macos-${{ env.PROBE }}
           path: /private/tmp/peers-rs/out/${{ env.PROBE }}/

@@ -97,6 +97,7 @@ lint:
 	go run ./scripts/check-deps -goos linux
 	go run ./scripts/check-deps -goos darwin
 	go run ./scripts/check-deps -tags e2e
+	go run ./scripts/check-workflows
 
 # Check that the release notes extracted from CHANGELOG.md become the body of
 # the release goreleaser publishes. The command runs a real release against a
