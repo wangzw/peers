@@ -218,16 +218,26 @@ jobs:
         with:
           go-version: "1.27"
           cache: true
+      # The check and the selection both call the shard tool, so build it once
+      # and reuse the binary. It goes into the runner's temporary directory
+      # rather than the checkout, and the following steps read its path from
+      # GITHUB_ENV.
+      - name: Build the shard tool
+        run: |
+          dir="$(mktemp -d "$RUNNER_TEMP/e2e-shards.XXXXXX")"
+          go build -o "$dir/e2e-shards" ./scripts/e2e-shards
+          echo "E2E_SHARDS=$dir/e2e-shards" >> "$GITHUB_ENV"
       # The check fails when a package or a top-level test falls into no shard
       # or into more than one, so a new test cannot silently drop out of the
       # gate. One shard runs it because it examines the whole table.
       - name: Check that the shard table covers every package and test
         if: matrix.shard == 'top-a'
-        run: go run ./scripts/e2e-shards -check
+        run: |
+          "$E2E_SHARDS" -check
       - name: Select the end-to-end shard
         run: |
-          echo "E2E_PKGS=$(go run ./scripts/e2e-shards -shard '${{ matrix.shard }}' -print packages)" >> "$GITHUB_ENV"
-          run="$(go run ./scripts/e2e-shards -shard '${{ matrix.shard }}' -print run)"
+          echo "E2E_PKGS=$("$E2E_SHARDS" -shard '${{ matrix.shard }}' -print packages)" >> "$GITHUB_ENV"
+          run="$("$E2E_SHARDS" -shard '${{ matrix.shard }}' -print run)"
           if [ -n "$run" ]; then
             echo "E2E_RUN=$run" >> "$GITHUB_ENV"
           fi
