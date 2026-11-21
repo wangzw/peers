@@ -7,6 +7,8 @@ A link is the long-lived connection between two paired Brokers. Each pair has ex
 
 The dialer is the side that initiated pairing. It opens the link and reopens it after a disconnect; the acceptor waits for the dialer to connect and tells it which advertised addresses to use. Once two Brokers are paired, rebuilding the link needs no pairing key and no user action.
 
+The two Brokers in a pair must speak the same link protocol version. When they do not, the pairing stays saved, but the link does not come up and agents on the two hosts cannot see each other. This is the one exception to rebuilding a link without user action: bring the older Broker to the same version as the newer one, and the dialer re-establishes the link without pairing again. The reason appears in `peers service status` and in the `list_brokers` result.
+
 ## Direct connections
 
 Brokers connect directly. They do not relay messages through a third Broker, and there is no central registry. When neither of two hosts can reach the other, for example when both are behind NAT, the two Brokers cannot communicate.

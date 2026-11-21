@@ -44,7 +44,7 @@ peers broker list [flags]
 
 Lists every Broker known to a running Broker, including Brokers that are not peers, as a table with the columns `ALIAS`, `FINGERPRINT`, `PEER` (`yes` or `no`), `STATUS`, `DIRECTION` and `ADDRESSES`, sorted by alias. The `ADDRESSES` column joins the addresses with commas. With no known Broker it prints `Brokers: none`. When this Broker is offline, the line `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.` comes before the table. When it runs degraded, the `Broker: degraded …` and `Fix: …` lines come before the table; a diagnostics-only run writes the reason to standard error instead and exits with code 1.
 
-The command takes no options apart from `-h`/`--help`. It requires no permission. A usage error exits with code 2; any other failure exits with code 1.
+The command takes no options apart from `-h`/`--help`. It requires no permission. A usage error exits with code 2; any other failure exits with code 1. The table does not show why a peer is not connected; `peers service status` gives the detail, including a peer whose link protocol version is incompatible.
 
 ## peers broker connect
 
@@ -233,6 +233,8 @@ Connects to a running Broker, without starting one, and prints two tables:
 - `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system Broker and every other account its user Broker. The command talks only to the selected level and does not fall back to the other one; an account that uses only the system Broker must pass `--system`.
 
 An empty section is printed as `Agents: none` or `Peers: none`. Without read permission on the Broker's configuration file, only the caller's own agents are listed; the Peers table is still shown. When this Broker is offline, a `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.` line comes before the tables.
+
+In the `Peers` table, `DETAIL` gives the reason a peer is not connected. When the two Brokers speak different link protocol versions, it is `link protocol version incompatible with this peer; upgrade the older Broker`; on the accepting side it continues `: peer speaks link protocol version <N>`. The dialer keeps retrying in `backoff`, and the acceptor stays in `waiting`. `peers broker list` has no such column.
 
 When the Broker runs degraded, the lines `Broker: degraded (local only): <reason>` or `Broker: degraded (diagnostics only): <reason>` and `Fix: <fix>` come before the tables. A local-only run still prints both tables. A diagnostics-only run prints only these two lines and exits with code 1.
 

@@ -44,7 +44,7 @@ peers broker list [flags]
 
 把正在运行的 Broker 已知的全部 Broker 列成表格，包括还不是对端的 Broker。列为 `ALIAS`、`FINGERPRINT`、`PEER`（`yes` 或 `no`）、`STATUS`、`DIRECTION` 与 `ADDRESSES`，按别名排序。`ADDRESSES` 列用逗号连接各地址。没有任何 Broker 时输出 `Brokers: none`。本 Broker 下线时，表格之前先输出一行 `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.`。Broker 处于降级运行时，表格之前先输出 `Broker: degraded …` 与 `Fix: …` 两行；仅诊断降级时改为把原因写到标准错误，并以退出码 1 结束。
 
-除 `-h`/`--help` 外没有选项。不需要权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。
+除 `-h`/`--help` 外没有选项。不需要权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。表格里没有说明对端为什么没有连上的一列；原因要看 `peers service status`，链路协议版本不兼容也在那里说明。
 
 ## peers broker connect
 
@@ -233,6 +233,8 @@ peers service status [flags]
 - `--system` 与 `--user` 选择级别，二者互斥。都不给时，root 选系统级，其他账户选用户级。命令只与选中的级别通信，不会回退到另一级别；只使用系统级 Broker 的账户必须加 `--system`。
 
 某一节为空时打印为 `Agents: none` 或 `Peers: none`。没有 Broker 配置文件的读权限时，只列出调用方自己的 Agent；Peers 表照常显示。本 Broker 下线时，两张表之前先输出一行 `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.`。
+
+Peers 表的 `DETAIL` 列给出对端没有连上的原因。两个 Broker 使用的链路协议版本不同时，这一列是 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方以 `backoff` 状态持续重试，接受方停在 `waiting`。`peers broker list` 没有这一列。
 
 Broker 处于降级运行时，两张表之前先输出 `Broker: degraded (local only): <reason>` 或 `Broker: degraded (diagnostics only): <reason>`，再输出 `Fix: <fix>`。仅本机降级时照常输出两张表。仅诊断降级时只输出这两行，并以退出码 1 结束。
 

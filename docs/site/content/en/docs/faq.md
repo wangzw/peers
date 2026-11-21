@@ -55,6 +55,10 @@ Without `broker.alias` set, a system Broker reports the first segment of the hos
 
 Run `peers update` in a terminal, or say “Update the Broker.” in a session and approve the call (the model calls `update_broker`). The system installation is updated without `sudo` by a member of the admin group; an account outside the group uses `sudo peers update`, or joins the group first. When the same account also runs a user Broker, `sudo peers update` reaches the system Broker. The update verifies the download and replaces the binary. A Broker that runs as a service is restarted with the new version. A Broker that is not running, or a user Broker that does not run under a service manager, picks up the new version at its next start. Sessions that are already open must reconnect with `/mcp` or be restarted. See [Update `peers`]({{< relref "guides/update.md" >}}).
 
+## Two paired hosts stopped seeing each other after an update
+
+Paired Brokers link only when they speak the same link protocol version, and an update can change that version. The pairing is still saved, but the link does not come up, so agents on the two hosts cannot see each other. `peers service status` gives the reason in the `DETAIL` column, and `list_brokers` gives it in `status_detail`: `link protocol version incompatible with this peer; upgrade the older Broker`; on the accepting side it continues `: peer speaks link protocol version <N>`. The dialer keeps retrying in `backoff`, and the acceptor stays in `waiting`; `peers broker list` does not show the reason. Bring the older Broker to the same version as the newer one. The pairing stays, and the dialer re-establishes the link without pairing again.
+
 ## Can I turn off update checks?
 
 Yes. Run `peers config set update.check false`; the `Update` line and the session notice disappear immediately, and no further checks are made. See [Update `peers`]({{< relref "guides/update.md" >}}) for how checks and updates work, or the [security model]({{< relref "security.md" >}}) for what a check sends to GitHub.

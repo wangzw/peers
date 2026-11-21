@@ -96,6 +96,8 @@ After the Broker restarts, the connection recovers automatically. The MCP server
 
 When the Broker applies an update, it restarts and its connections recover automatically. Sessions that are already open keep running the old MCP server, so each one must reconnect with `/mcp` or be reopened before it uses the new version. When the command replaces a binary while no Broker is running, there is no connection to recover; sessions use the new version once the Broker starts and they connect to it.
 
+An update can also change the link protocol version. Paired Brokers link only when they speak the same version, so when an update changes it, every host paired with this one must reach the same version before the link comes back; the pairing is kept, and the dialer re-establishes the link once the other host is updated.
+
 ## Which command applies to your installation
 
 | Installation | Command | What happens |

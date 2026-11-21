@@ -55,6 +55,10 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 在终端运行 `peers update`，或在会话里说“更新 Broker。”并批准这次调用（模型会调用 `update_broker`）。系统级安装由管理组成员更新，不用 `sudo`；不在组内的账户用 `sudo peers update`，或先加入管理组。同一账户还运行着用户级 Broker 时，用 `sudo peers update` 到达系统级 Broker。更新会校验下载内容，替换二进制。作为服务运行的 Broker 会用新版本重启。没有在运行的 Broker，或者不在服务管理器下运行的用户级 Broker，下次启动时才用上新版本。已经打开的会话要用 `/mcp` 重连或重开。见[更新 peers]({{< relref "guides/update.md" >}})。
 
+## 更新之后两台已配对的主机为什么互相看不见？
+
+两个已配对的 Broker 只有使用同一个链路协议版本才能建立链路，而更新可能改变这个版本。配对关系仍然保存，但链路建不起来，两台主机上的 Agent 互相看不见。`peers service status` 在 `DETAIL` 列给出原因，`list_brokers` 在 `status_detail` 里给出同样的文字：`link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方以 `backoff` 状态持续重试，接受方停在 `waiting`；`peers broker list` 不显示原因。把较旧的一台更新到与另一台相同的版本，配对关系保留，拨号方会自动重新建立链路，不用重新配对。
+
 ## 能关闭更新检查吗？
 
 能。运行 `peers config set update.check false`，`Update` 一行和会话里的提示会立刻消失，之后不再检查。检查与更新的工作方式见[更新 peers]({{< relref "guides/update.md" >}})，检查向 GitHub 发送什么见[安全模型]({{< relref "security.md" >}})。
