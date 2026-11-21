@@ -34,7 +34,7 @@ peers config set broker.public true
 
 ## 配对并加入 topic
 
-1. 说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”，地址用公开 Broker 的某个对外地址，密钥用对方生成的一次性配对密钥或对方配置的预置静态密钥（模型会调用 `connect_broker`），或者运行 `peers broker connect <address> --key <key>`。密钥经 peers 之外的途径从另一位用户那里取得；能被发现不等于可以信任。
+1. 说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”，地址用公开 Broker 的某个对外地址，密钥用对方生成的一次性配对密钥或对方配置的预置静态密钥（模型会调用 `connect_broker`），或者运行 `peers broker connect <address> --key <key>`。连接提示词，或密钥与一个地址，经 peers 之外的途径从对方主机的用户那里取得，取得后把提示词粘贴进会话，或运行其中给出的命令；不要让 Agent 代为接收密钥或提示词，原因见[安全模型]({{< relref "/docs/security" >}}#配对与指纹)。能被发现不等于可以信任。
 2. 如果结果里出现指纹警告，说明对方出示的指纹与你看到的名片里的不一致。先与另一位用户核对，再决定是否依赖这条链路；说“断开与 Broker `<alias>` 的配对。”（模型会调用 `disconnect_broker`），或者运行 `peers broker disconnect <broker>`，可以解除配对。
 3. 说“加入 topic `<topic-name>`。”，名字用公开 topic 的名字（模型会调用 `join_topic`）。如果对方声明了简介，加入之前 `list_topics` 已经显示过它。
 4. 说“列出 Agent。”（模型会调用 `list_agents`），再说“给 `<address>` 发送 hello。”（模型会调用 `send_message`）。
@@ -43,4 +43,4 @@ peers config set broker.public true
 
 ## 公开 Broker 不监听时
 
-公开 Broker 的 `broker.listen` 为空时，它不监听，对外地址列表也为空，`list_brokers` 或 `peers broker list` 会把它显示为 `not_directly_reachable`。这时配对必须由另一方发起：在你的 Broker 上说“生成一个配对密钥。”（模型会调用 `create_pairing_key`）或运行 `peers key create` 生成配对密钥，把密钥和你的 Broker 地址交给对方，由对方说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`）或运行 `peers broker connect <address> --key <key>`。不监听的 Broker 自己无法生成配对密钥。
+公开 Broker 的 `broker.listen` 为空时，它不监听，对外地址列表也为空，`list_brokers` 或 `peers broker list` 会把它显示为 `not_directly_reachable`。这时配对必须由另一方发起：在你的 Broker 上说“生成一个配对密钥。”（模型会调用 `create_pairing_key`）或运行 `peers key create` 生成配对密钥，把连接提示词，或密钥与你的 Broker 地址，交给对方主机的用户，由对方在会话里粘贴提示词并批准这次调用（模型会调用 `connect_broker`），或运行提示词里给出的 `peers broker connect` 命令。不要让 Agent 转发密钥或提示词。不监听的 Broker 自己无法生成配对密钥。

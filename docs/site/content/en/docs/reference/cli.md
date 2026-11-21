@@ -80,16 +80,21 @@ The command takes no options apart from `-h`/`--help`. Requires write permission
 peers key create [flags]
 ```
 
-Creates a one-time pairing key on a running Broker and prints the key, its expiry time and this Broker's advertised addresses:
+Creates a one-time pairing key on a running Broker and prints the key, its expiry time, this Broker's advertised addresses and a paste-ready connect prompt:
 
 ```text
-Key: <key>
-Expires: <RFC 3339 UTC>
+Key: 4F2A-9C1E-7B3D-5086
+Expires: 2026-11-22T09:30:00Z
 Addresses:
-  <address>
+  workstation(203.0.113.10:17443)
+
+To pair, paste this into a Claude Code session on the other host:
+  Connect to the peers Broker at workstation(203.0.113.10:17443) using the one-time pairing key 4F2A-9C1E-7B3D-5086.
+Or run this on the other host:
+  peers broker connect 'workstation(203.0.113.10:17443)' --key 4F2A-9C1E-7B3D-5086
 ```
 
-Each address is printed on its own line, indented by two spaces. When the Broker does not listen, which happens when `broker.listen` is empty and no `--listen` is given at startup, it rejects the request and the command exits with code 1.
+Each address is printed on its own line, indented by two spaces. When the Broker has an address to show, the command then prints, after a blank line, the same connect prompt that `create_pairing_key` returns as `connect_prompt`: one sentence to paste into a Claude Code session on the other host, and the equivalent `peers broker connect` command. With more than one address, the sentence lists them all and says to choose whichever address is reachable from the other host (the prompt says “this host”, because it is written from the perspective of the session that pastes it there), while the command uses the first address and a following line, `If that address is not reachable from the other host, use … instead.`, names the rest. Addresses in the command and in that line are quoted by shell rules, in single quotes when they contain a character such as a parenthesis. A Broker that listens but has no address to show prints no prompt. When the Broker does not listen, which happens when `broker.listen` is empty and no `--listen` is given at startup, it rejects the request and the command exits with code 1.
 
 The command takes no options apart from `-h`/`--help`. Requires write permission on the Broker's configuration file. A usage error exits with code 2; any other failure exits with code 1.
 

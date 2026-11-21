@@ -80,16 +80,21 @@ peers broker disconnect <broker> [flags]
 peers key create [flags]
 ```
 
-在正在运行的 Broker 上生成一次性配对密钥，并输出密钥、失效时间与本 Broker 的对外地址：
+在正在运行的 Broker 上生成一次性配对密钥，并输出密钥、失效时间、本 Broker 的对外地址与一段可直接粘贴的连接提示词：
 
 ```text
-Key: <key>
-Expires: <RFC 3339 UTC>
+Key: 4F2A-9C1E-7B3D-5086
+Expires: 2026-11-22T09:30:00Z
 Addresses:
-  <address>
+  workstation(203.0.113.10:17443)
+
+To pair, paste this into a Claude Code session on the other host:
+  Connect to the peers Broker at workstation(203.0.113.10:17443) using the one-time pairing key 4F2A-9C1E-7B3D-5086.
+Or run this on the other host:
+  peers broker connect 'workstation(203.0.113.10:17443)' --key 4F2A-9C1E-7B3D-5086
 ```
 
-每个地址单独一行，缩进两格。`broker.listen` 为空、且启动时没有给 `--listen` 时，Broker 不监听，会拒绝请求，命令以退出码 1 结束。
+每个地址单独一行，缩进两格。Broker 有可展示的地址时，命令会先空一行，再输出与 `create_pairing_key` 返回的 `connect_prompt` 相同的一段连接提示词：一句可以粘贴到对方主机上 Claude Code 会话里的请求，以及等价的 `peers broker connect` 命令。地址不止一个时，请求句列出全部地址，并说明任选一个对方主机能连上的地址（提示词里写作 `this host`，因为这句话是站在粘贴提示词的会话那边说的）；命令用第一个地址，随后一行 `If that address is not reachable from the other host, use … instead.` 给出其余地址。命令与这一行里的地址都按 shell 规则加引号，含括号等字符时用单引号。Broker 在监听但没有可展示的地址时不输出提示词。`broker.listen` 为空、且启动时没有给 `--listen` 时，Broker 不监听，会拒绝请求，命令以退出码 1 结束。
 
 除 `-h`/`--help` 外没有选项。需要 Broker 配置文件的写权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。
 

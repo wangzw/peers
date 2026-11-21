@@ -7,7 +7,7 @@ Pairing is how two Brokers establish trust. The accepting side creates a one-tim
 
 ## Pairing keys
 
-The accepting side creates a one-time pairing key by saying “Create a pairing key.” (the model calls `create_pairing_key`), or with `peers key create`. It is valid for 10 minutes and stops working after one successful pairing. The user passes the key, together with the Broker's address, to the other user through a channel outside `peers`; the address is not secret and can travel separately.
+The accepting side creates a one-time pairing key by saying “Create a pairing key.” (the model calls `create_pairing_key`), or with `peers key create`. It is valid for 10 minutes and stops working after one successful pairing. The result also gives a paste-ready connect prompt that names the key and this Broker's addresses. The user passes the prompt, or the key and an address, to the other host's user through a channel outside `peers`; the address is not secret and can travel separately. Do not let an agent forward the key or the prompt; [the security model]({{< relref "/docs/security" >}}#pairing-and-fingerprints) explains why.
 
 A Broker can also use a pre-provisioned static key written into its configuration file by the user or administrator. The key can be used for any number of pairings and does not expire. `peers` never generates it; the configuration file that `peers service install` generates includes a comment showing how to generate one, for example with `openssl rand -hex 32`.
 
