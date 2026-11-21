@@ -2,6 +2,7 @@ package broker
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/inbox"
 	"github.com/wangzw/peers/internal/link"
 	"github.com/wangzw/peers/internal/topic"
 )
@@ -21,11 +23,34 @@ type nopTopicTransport struct{}
 
 var _ topic.Transport = nopTopicTransport{}
 
-func (nopTopicTransport) Send(link.Fingerprint, link.Frame) error { return nil }
+func (nopTopicTransport) SendLatest(link.Fingerprint, link.Frame) error { return nil }
+
+func (nopTopicTransport) SendLatestKey(link.Fingerprint, string, link.Frame) (bool, error) {
+	return false, nil
+}
 
 func (nopTopicTransport) HandleState(link.FrameKind, func(link.Fingerprint, link.Frame)) {}
 
 func (nopTopicTransport) Subscribe(func(link.Fingerprint, []byte), func(link.Fingerprint)) {}
+
+// TestTopicRegistryErrorMapsTopicLimit checks that the adapter turns the topic
+// package's limit sentinel into the broker's quota sentinel.
+func TestTopicRegistryErrorMapsTopicLimit(t *testing.T) {
+	err := topicRegistryError(fmt.Errorf("registry: %w", topic.ErrTopicLimit))
+	if !errors.Is(err, ErrTopicQuotaExceeded) {
+		t.Fatalf("topicRegistryError(ErrTopicLimit) = %v, want ErrTopicQuotaExceeded", err)
+	}
+}
+
+// TestMemberNameLimitsAgree checks that the two packages limit member names to
+// the same number of bytes. topic cannot import inbox, so the constants are
+// separate declarations that must stay equal.
+func TestMemberNameLimitsAgree(t *testing.T) {
+	if topic.MaxMemberNameBytes != inbox.MaxNameBytes {
+		t.Fatalf("topic.MaxMemberNameBytes = %d, inbox.MaxNameBytes = %d",
+			topic.MaxMemberNameBytes, inbox.MaxNameBytes)
+	}
+}
 
 // TestTopicNameRulesMatch checks that the Broker rejects exactly the names
 // topic.ValidateName rejects, so a name the Broker accepts never reaches the

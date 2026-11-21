@@ -92,9 +92,10 @@ func (ps *peerState) sharedDigest(name string) ([32]byte, bool) {
 	return ps.send[name], true
 }
 
-// applyRoster replaces the peer's entries under d. Entries with an empty Ref are
-// skipped, and a later entry with the same Ref overwrites an earlier one.
-func (ps *peerState) applyRoster(d [32]byte, ms []Member) {
+// entriesForRoster returns the table a Roster frame would set under a digest.
+// Entries with an empty Ref are skipped, and a later entry with the same Ref
+// overwrites an earlier one.
+func entriesForRoster(ms []Member) map[string]Member {
 	entries := make(map[string]Member, len(ms))
 	for _, m := range ms {
 		if m.Ref == "" {
@@ -102,34 +103,97 @@ func (ps *peerState) applyRoster(d [32]byte, ms []Member) {
 		}
 		entries[m.Ref] = m
 	}
-	ps.rosters[d] = entries
+	return entries
 }
 
-// applyDelta applies removed, then added, then changed under d. A removal only
-// takes effect when both the Ref and the name match; added and changed entries
-// are written by Ref, overwriting or creating the entry, and an empty Ref is
-// skipped. A digest without a roster starts from an empty table.
-func (ps *peerState) applyDelta(d [32]byte, added []Member, removed []memberKey, changed []Member) {
-	entries := ps.rosters[d]
-	if entries == nil {
-		entries = map[string]Member{}
-	}
+// deltaResultCount returns the number of entries the table under a digest would
+// hold after applying added, removed and changed, without changing cur. It
+// visits only the entries the delta names, never the whole table.
+func deltaResultCount(cur map[string]Member, added []Member, removed []memberKey, changed []Member) int {
+	n := len(cur)
+	removedRefs := make(map[string]struct{}, len(removed))
 	for _, k := range removed {
-		if cur, ok := entries[k.Ref]; ok && cur.Name == k.Name {
-			delete(entries, k.Ref)
+		if _, done := removedRefs[k.Ref]; done {
+			continue
+		}
+		if m, ok := cur[k.Ref]; ok && m.Name == k.Name {
+			removedRefs[k.Ref] = struct{}{}
+			n--
+		}
+	}
+	written := make(map[string]struct{}, len(added)+len(changed))
+	write := func(m Member) {
+		if m.Ref == "" {
+			return
+		}
+		if _, done := written[m.Ref]; done {
+			return
+		}
+		written[m.Ref] = struct{}{}
+		if _, removed := removedRefs[m.Ref]; removed {
+			return
+		}
+		if _, ok := cur[m.Ref]; ok {
+			return
+		}
+		n++
+	}
+	for _, m := range added {
+		write(m)
+	}
+	for _, m := range changed {
+		write(m)
+	}
+	return n
+}
+
+// applyDeltaInPlace applies added, removed and changed to cur. Removals apply
+// first and only take effect when both the Ref and the name match; added and
+// changed entries are written by Ref, overwriting or creating the entry, and an
+// empty Ref is skipped.
+func applyDeltaInPlace(cur map[string]Member, added []Member, removed []memberKey, changed []Member) {
+	for _, k := range removed {
+		if m, ok := cur[k.Ref]; ok && m.Name == k.Name {
+			delete(cur, k.Ref)
 		}
 	}
 	for _, m := range added {
-		if m.Ref == "" {
-			continue
+		if m.Ref != "" {
+			cur[m.Ref] = m
 		}
-		entries[m.Ref] = m
 	}
 	for _, m := range changed {
-		if m.Ref == "" {
-			continue
+		if m.Ref != "" {
+			cur[m.Ref] = m
 		}
-		entries[m.Ref] = m
 	}
-	ps.rosters[d] = entries
+}
+
+// rosterTotalExcept returns the number of entries the peer holds across every
+// digest other than exclude.
+func (ps *peerState) rosterTotalExcept(exclude [32]byte) int {
+	n := 0
+	for d, entries := range ps.rosters {
+		if d != exclude {
+			n += len(entries)
+		}
+	}
+	return n
+}
+
+// applyRoster replaces the peer's entries under d. It is used by tests that do
+// not go through the inbound frame limits.
+func (ps *peerState) applyRoster(d [32]byte, ms []Member) {
+	ps.rosters[d] = entriesForRoster(ms)
+}
+
+// applyDelta applies one incremental change under d. It is used by tests that
+// do not go through the inbound frame limits.
+func (ps *peerState) applyDelta(d [32]byte, added []Member, removed []memberKey, changed []Member) {
+	cur := ps.rosters[d]
+	if cur == nil {
+		cur = map[string]Member{}
+		ps.rosters[d] = cur
+	}
+	applyDeltaInPlace(cur, added, removed, changed)
 }

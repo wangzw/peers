@@ -186,9 +186,11 @@ func TestDigestsTriggerRosterForSharedOnly(t *testing.T) {
 	}
 }
 
-// TestRosterOutsideRemoteDigestsDropped checks that a Roster for a digest the
-// peer never announced is discarded and its names never reach the log.
-func TestRosterOutsideRemoteDigestsDropped(t *testing.T) {
+// TestRosterOutsideRemoteDigestsIgnored checks that a Roster for a digest the
+// peer never announced is ignored at debug level and its names never reach the
+// log. A merged TopicDigests can overtake a Roster queued before it, so this is
+// a legal arrival order rather than a peer bug.
+func TestRosterOutsideRemoteDigestsIgnored(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
 	fl := newFakeLink(t, fakeLinkFingerprint(1))
@@ -209,11 +211,11 @@ func TestRosterOutsideRemoteDigestsDropped(t *testing.T) {
 		t.Fatalf("RemoteMembers = %v, want nil", got)
 	}
 	logs := buf.String()
-	if !strings.Contains(logs, "topic.frame_dropped") {
-		t.Fatalf("log has no topic.frame_dropped: %s", logs)
+	if !strings.Contains(logs, "topic.frame_ignored") {
+		t.Fatalf("log has no topic.frame_ignored: %s", logs)
 	}
-	if !strings.Contains(logs, `"reason":"unknown_digest"`) {
-		t.Fatalf("log has no reason=unknown_digest: %s", logs)
+	if strings.Contains(logs, "topic.frame_dropped") {
+		t.Fatalf("log has a topic.frame_dropped for a legal arrival order: %s", logs)
 	}
 	if strings.Contains(logs, "leaky-name") {
 		t.Fatalf("log leaks a member name: %s", logs)
@@ -493,10 +495,10 @@ func TestReenteringIntersectionDropsOldRoster(t *testing.T) {
 	}
 }
 
-// TestDeltaForUnknownDigestDropped checks that a RosterDelta for a digest the
-// peer never announced is discarded with reason=unknown_digest, and that the
-// member stays invisible even after the digest enters the intersection later.
-func TestDeltaForUnknownDigestDropped(t *testing.T) {
+// TestDeltaForUnknownDigestIgnored checks that a RosterDelta for a digest the
+// peer never announced is ignored at debug level, and that the member stays
+// invisible even after the digest enters the intersection later.
+func TestDeltaForUnknownDigestIgnored(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
 	fl := newFakeLink(t, fakeLinkFingerprint(1))
@@ -517,14 +519,14 @@ func TestDeltaForUnknownDigestDropped(t *testing.T) {
 		t.Fatalf("RemoteMembers = %+v, want none", got)
 	}
 	logs := buf.String()
-	if !strings.Contains(logs, "topic.frame_dropped") {
-		t.Fatalf("log has no topic.frame_dropped: %s", logs)
+	if !strings.Contains(logs, "topic.frame_ignored") {
+		t.Fatalf("log has no topic.frame_ignored: %s", logs)
 	}
-	if !strings.Contains(logs, `"reason":"unknown_digest"`) {
-		t.Fatalf("log has no reason=unknown_digest: %s", logs)
+	if strings.Contains(logs, "topic.frame_dropped") {
+		t.Fatalf("log has a topic.frame_dropped for a legal arrival order: %s", logs)
 	}
 
-	// d2 enters the intersection only now; the dropped delta must not resurface.
+	// d2 enters the intersection only now; the ignored delta must not resurface.
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, d2}))
 	flushAll(t, fl)
 
@@ -1070,22 +1072,22 @@ func TestInboundFrameLimits(t *testing.T) {
 		}
 	})
 
-	t.Run("delta changed at the limit", func(t *testing.T) {
+	t.Run("delta reaching the digest limit", func(t *testing.T) {
 		fl, r, buf, p, d1 := newLinked(t)
 
-		changed := make([]Member, limit)
+		// The anchor entry from the setup counts toward the digest limit.
+		changed := make([]Member, limit-1)
 		for i := range changed {
 			changed[i] = Member{Name: fmt.Sprintf("member%d", i), Ref: fmt.Sprintf("%06x", i)}
 		}
 		fl.inject(p, topicpb.KindRosterDelta, deltaMsg(d1, nil, nil, changed))
 		flushAll(t, fl)
 
-		// The anchor entry stays; the frame's entries are all accepted.
-		if got := len(r.RemoteMembers(p)); got != limit+1 {
-			t.Fatalf("RemoteMembers has %d entries, want %d", got, limit+1)
+		if got := len(r.RemoteMembers(p)); got != limit {
+			t.Fatalf("RemoteMembers has %d entries, want %d", got, limit)
 		}
-		if logs := buf.String(); strings.Contains(logs, `"reason":"too_many_members"`) {
-			t.Fatalf("a Delta at the limit was rejected: %s", logs)
+		if logs := buf.String(); strings.Contains(logs, `"reason":"too_many_members"`) || strings.Contains(logs, `"reason":"roster_full"`) {
+			t.Fatalf("a Delta at the digest limit was rejected: %s", logs)
 		}
 	})
 

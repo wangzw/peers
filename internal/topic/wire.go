@@ -68,6 +68,11 @@ func memberFromWire(p *topicpb.Member) Member {
 	}
 }
 
+// MaxMemberNameBytes is the longest member name or previous name, in bytes,
+// that a roster entry may carry. It matches inbox.MaxNameBytes, which topic
+// cannot import; a broker test keeps the two equal.
+const MaxMemberNameBytes = 128
+
 // validMemberEntry reports whether an inbound roster entry follows the broker's
 // rules for names, disambiguators and previous names: a Ref of 6 to 12 lowercase
 // hex digits, a non-empty name without whitespace, '@', '*' or control
@@ -91,10 +96,10 @@ func validMemberEntry(m Member) bool {
 	return true
 }
 
-// validMemberName reports whether name is a non-empty member name: no
-// whitespace, '@', '*' or control characters.
+// validMemberName reports whether name is a non-empty member name of at most
+// MaxMemberNameBytes bytes with no whitespace, '@', '*' or control characters.
 func validMemberName(name string) bool {
-	if name == "" {
+	if name == "" || len(name) > MaxMemberNameBytes {
 		return false
 	}
 	for _, r := range name {

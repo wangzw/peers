@@ -25,12 +25,18 @@
 
 ## 外部接口契约
 
-供 `broker` 调用，签名稳定。除 `New` 与 `ValidateName` 外，下列函数是主类型 `*Registry` 的方法，由 `New(t Transport, opts Options)` 创建。`Transport` 是本包对 `link` 的依赖面，只含 `Send`、`HandleState`、`Subscribe`；broker 的 topic 装配器传入 link 实例，`New` 在 link 开始监听与拨号之前调用。`Options` 带日志记录器与 `Self`：日志记录器为 nil 时用 `slog.Default()`；`Self` 是本机证书指纹，即对端在链路上看到的同一个值，`New` 在它为零值时 panic。
+供 `broker` 调用，签名稳定。除 `New` 与 `ValidateName` 外，下列函数是主类型 `*Registry` 的方法，由 `New(t Transport, opts Options)` 创建。`Transport` 是本包对 `link` 的依赖面，只含 `SendLatest`、`SendLatestKey`、`HandleState`、`Subscribe`；broker 的 topic 装配器传入 link 实例，`New` 在 link 开始监听与拨号之前调用。`Options` 带日志记录器与 `Self`：日志记录器为 nil 时用 `slog.Default()`；`Self` 是本机证书指纹，即对端在链路上看到的同一个值，`New` 在它为零值时 panic。
 
 ```go
+// MaxMemberNameBytes 是成员条目的名字或曾用名允许的最长字节数。它与 inbox.MaxNameBytes
+// 相同；topic 不能引用 inbox，由 internal/broker 的测试保证两者相等。
+const MaxMemberNameBytes = 128
+
 func New(t Transport, opts Options) *Registry
 func ValidateName(name string) error
 
+// Join 把 agent 加入 name。本机有成员的 topic 已达上限，或该 topic 的本机成员已达上限时
+// 返回 ErrTopicLimit。
 func (r *Registry) Join(agent AgentID, name string) error
 func (r *Registry) Leave(agent AgentID, name string) error
 func (r *Registry) LeaveAll(agent AgentID)
@@ -49,6 +55,14 @@ func (r *Registry) VisibleAgents(local AgentID) []VisibleAgent
 
 // RemoteMembers 返回 peer 发来的、处在当前交集内的成员条目，供解析地址与核对发送方。
 func (r *Registry) RemoteMembers(peer Fingerprint) []Member
+
+// Transport 是本包对 link 的依赖面；*link.Link 满足它。
+type Transport interface {
+	SendLatest(peer link.Fingerprint, f link.Frame) error
+	SendLatestKey(peer link.Fingerprint, key string, f link.Frame) (replaced bool, err error)
+	HandleState(kind link.FrameKind, h func(peer link.Fingerprint, f link.Frame))
+	Subscribe(onUp func(peer link.Fingerprint, salt []byte), onDown func(peer link.Fingerprint))
+}
 ```
 
 `AgentID` 是 broker 内部的 Agent 标识，是 `"session:" + socket 路径` 的 SHA-256 小写十六进制。`AgentRef` 指明一个 Agent：`Peer` 为零值时是本机 Agent，由 `ID` 指明；`Peer` 非零时是这条链路上的远端 Agent，`Ref` 是它在对端成员名单里的消歧标识，`ID` 忽略。
@@ -60,6 +74,8 @@ func (r *Registry) RemoteMembers(peer Fingerprint) []Member
 `ValidateName` 校验 topic 名：合法返回 nil，否则返回 `ErrInvalidTopic`。`Join`、`Leave` 用它校验；broker 与公开 topic 的声明也用它。topic 名是长度不超过 256 字节的非空 UTF-8 字符串，不含控制字符，区分大小写。
 
 `ErrInvalidTopic` 表示 topic 名不合法，`broker` 把它映射为 `invalid_argument`。`ErrUnknownAgent` 表示 `Join` 的 Agent 尚未经 `AgentChanged` 引入，或已由 `LeaveAll` 删除，这是 broker 的缺陷，映射为 `internal`。
+
+`ErrTopicLimit` 表示 `Join` 会使本机有成员的 topic 超过 512 个，或该 topic 的本机成员超过 4096 个；已在该 topic 中的 Agent 重复加入仍是幂等成功。512 的上限使本机发出的 `TopicDigests` 远小于对端接受的 4096 项，一次成员变化扇出到一条链路的帧数也有界；成员上限与接收侧的 `maxInboundMembers` 取同一常量。系统级 Broker 把这 512 个 topic 的预算按账户细分，每账户至多 128 个，见 [design-broker.md](design-broker.md)。`broker` 把 `ErrTopicLimit` 映射为 `quota_exceeded`。
 
 `AgentChanged` 同时用于引入 Agent：broker 在 Agent 登记后、第一次 `Join` 之前调用一次。对没有引入过的 Agent，`Join` 返回 `ErrUnknownAgent`，`Leave` 返回成功，`LeaveAll` 无操作；`LeaveAll` 同时删除该 Agent 的信息。
 
@@ -146,7 +162,11 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 
 一次事件产生的帧在同一次持锁内入队。对端按指纹字节升序处理；每个对端内依次是 `TopicDigests`、进入交集的各 topic 的 `Roster`、各 `RosterDelta`，`Roster` 与 `RosterDelta` 各自按摘要字节升序。`TopicDigests` 只在本机 topic 集合变化时发送，至多一帧。`RosterDelta` 只发给事件前后本机都有成员、且摘要在该链路交集内的 topic；topic 变空或由空变为非空，都只通过 `TopicDigests` 与 `Roster` 体现。
 
-链路上的这些帧由 `link` 按到达顺序串行交给本包处理。本包在持有的锁内取快照并交给 `link` 的发送队列，因此在同一条链路上，后取的快照后发出，`Roster` 不会被更早取得的内容覆盖。
+`TopicDigests` 一律经 `Transport.SendLatest` 发送：发送队列中已有一帧由它放入、尚未被写协程取走的 `TopicDigests` 时，就地替换为新的集合，不占新的位置；没有时按普通入队。`Roster` 与 `RosterDelta` 经 `Transport.SendLatestKey` 发送，键是该 topic 在本方向的摘要：同一摘要下至多有一帧尚未被写协程取走的帧，新的帧就地替换旧的，不占新的位置。就地替换会让较新的 `TopicDigests` 先于此前排队的成员名单发出，对端因此可能收到摘要已不在它最近一次集合中的名单帧；这是合法情形，接收方按“错误与失败语义”忽略。
+
+同一摘要的帧被更新帧替换时，`Roster` 直接替换排在其前的 `Roster` 或 `RosterDelta`：`Roster` 覆盖该摘要的全部条目，替换是安全的。`RosterDelta` 不能直接替换排在其前的帧，否则会丢掉那帧携带的其他 Agent 的变化或一份尚未送达的完整快照，因此本包在发现同摘要已有待发帧时，改为发送按本机当前成员生成的全量 `Roster`，把未发出的增量折进完整快照。改写分两步：先以同一个键放入 `RosterDelta` 并替换队列中的旧帧；确有旧帧被替换时，再以同一个键放入全量 `Roster`，替换那帧 `RosterDelta`。两步之间，写协程可能已取走 `RosterDelta` 并发出；它替换的那帧从未发出，对端因此短暂收到一帧缺少上一帧的增量，该摘要下的状态可能不完整。紧随其后的全量 `Roster` 覆盖该摘要的全部条目，把它纠正。这是有意的最终一致。这样一条链路上待发的成员名单帧数不超过共同 topic 数，成片的变化不再把发送队列（上限 1024 帧）填满，链路也不会因队列满而断开。
+
+链路上的这些帧由 `link` 按到达顺序串行交给本包处理。本包在持有的锁内取快照并交给 `link` 的发送队列，因此在同一条链路上，后取的 `Roster` 快照后发出，不会被更早取得的 `Roster` 覆盖；就地替换只改变同一摘要的待发帧，`TopicDigests` 与各摘要之间的相对顺序不变。
 
 ### 可见性判定
 
@@ -161,12 +181,16 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 - 该对端没有链路状态，即未收到建立通知或已经断开。
 - 帧的载荷无法解码。
 - `TopicDigests` 中有任何一项不是 32 字节，此时整帧丢弃，保留此前的对端集合。其中重复的摘要按集合去重。
-- `Roster` 或 `RosterDelta` 的摘要不是 32 字节，或不在对端最近一次的摘要集合中；摘要不在该集合中表示对端发来了本机未与其协商的摘要，可能来自回送本机摘要集合的尝试，也可能是对端实现有误。
-- `Roster` 或 `RosterDelta` 的摘要在对端最近一次的摘要集合中，但不在当前交集内；此时不保存其中的名单。
-- 成员条目不合规：消歧标识不是 6 至 12 位小写十六进制，或名字为空、含空白、`@`、`*` 或控制字符，或曾用名不为空却含空白、`@`、`*` 或控制字符。不合规的条目整条丢弃，其余条目照常应用；每帧记一条日志，带该帧丢弃的条数，日志不写成员名与曾用名。
-- 单个 `TopicDigests` 帧的摘要超过 4096 项，或 `Roster`、`RosterDelta` 的任一成员列表超过 4096 条：整帧丢弃，不改变此前的状态。
+- `Roster` 或 `RosterDelta` 的摘要不是 32 字节：整帧丢弃，记 Warn。
+- `Roster` 或 `RosterDelta` 的摘要不在对端最近一次的摘要集合中，或在对端最近一次的摘要集合中但不在当前交集内：忽略，记 debug `topic.frame_ignored`，不保存其中的名单。合并发送使较新的 `TopicDigests` 先于旧的名单帧到达，第一种情形因此是合法到达顺序。
+- 成员条目不合规：消歧标识不是 6 至 12 位小写十六进制，或名字为空、超过 `MaxMemberNameBytes` 字节、含空白、`@`、`*` 或控制字符，或曾用名非空却超过 `MaxMemberNameBytes` 字节或含上述字符。不合规的条目整条丢弃，其余条目照常应用；每帧记一条 `topic.member_dropped`，带该帧丢弃的条数，日志不写成员名与曾用名。
+- 单个 `TopicDigests` 帧的摘要超过 4096 项，或 `Roster`、`RosterDelta` 的任一成员列表超过 4096 条：整帧丢弃，不改变此前的状态，记 `topic.frame_dropped`，原因分别为 `too_many_digests` 与 `too_many_members`。
+- 应用一帧 `Roster` 或 `RosterDelta` 后，该摘要下的条目超过 4096 条：整帧丢弃，此前的状态不变，记 `topic.frame_dropped`，原因 `roster_full`。
+- 应用一帧 `Roster` 或 `RosterDelta` 后，该对端在全部共同摘要下的条目合计超过 16384 条：整帧丢弃，此前的状态不变，记 `topic.frame_dropped`，原因 `peer_roster_full`。
 
-`Send` 失败时不改状态、不重试，只记一条 debug 日志；链路随后会收到断开通知，重建后从 `TopicDigests` 全量重来。
+单条链路累计 16384 条的上限是失效关闭（fail-closed）的已知限制：某一帧一旦会把该对端推到上限之上而被丢弃，该帧里的成员在这条链路重建之前不会出现，取消订阅后重新进入交集也不会恢复；链路本身保持连接，该对端其余名单与投递不受影响，重建后从 `TopicDigests` 与新的 `Roster` 重新开始。
+
+先算出应用后的条数再决定是否修改，丢弃的帧不留下任何变化。`SendLatest` 或 `SendLatestKey` 失败时不改状态、不重试：`ErrFrameTooLarge` 记 Warn `topic.frame_too_large`，字段为对端指纹、kind 与帧大小；其余失败记 debug。链路随后会收到断开通知，重建后从 `TopicDigests` 全量重来。
 
 本包的日志只记对端指纹、kind、原因、摘要的前 8 字节与计数，不记任何 topic 名、成员名字、曾用名或消歧标识（`REQ-topics-009`、`REQ-topics-014`）。
 
@@ -178,12 +202,12 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 
 - `Join`、`Leave`、`LeaveAll`、`AgentChanged`、链路的建立与断开回调、`TopicDigests`、`Roster`、`RosterDelta` 的处理函数，在整个函数体内持写锁。
 - `TopicsOf`、`Visible`、`VisibleAgents`、`RemoteMembers` 持读锁，返回新分配的副本，不暴露内部的 map 与切片。
-- 一次事件产生的全部帧在同一次持写锁期间调用 `Transport.Send`，不先收集再解锁发送。
-- 持锁时除 `Transport.Send` 与日志外不调用任何外部代码；本包不起协程，不用计时器，不用 channel。
+- 一次事件产生的全部帧在同一次持写锁期间调用 `Transport.SendLatest` 或 `Transport.SendLatestKey`，不先收集再解锁发送。
+- 持锁时除 `Transport.SendLatest`、`Transport.SendLatestKey` 与日志外不调用任何外部代码；本包不起协程，不用计时器，不用 channel。
 - `New` 内注册帧处理函数与订阅链路事件时不持锁。
 - 链路的断开通知与本包自身的操作并发时，谁先拿到锁谁先执行，两种顺序都正确：断开通知先执行，本包的操作看不到这条链路；本包的操作先执行，它发出的帧在 link 那里失败或随连接丢弃，重建后从 `TopicDigests` 全量重来。
 
-本包依赖 link 的下列性质：`Send` 不阻塞，不等网络，也不同步回调本包；link 调用本包的回调与状态帧处理函数时不持有 `Send` 需要的锁；同一对端的建立通知、断开通知与该对端的状态帧串行处理，断开通知送达之后不再交付旧连接的帧。这些性质见 [design-link.md](design-link.md) 的并发与事务边界一节。
+本包依赖 link 的下列性质：`SendLatest` 与 `SendLatestKey` 不阻塞，不等网络，也不同步回调本包；`SendLatest` 与 `SendLatestKey` 的就地替换与写协程取走该帧互斥，取走之后的替换按新帧入队；link 调用本包的回调与状态帧处理函数时不持有 `SendLatest` 与 `SendLatestKey` 需要的锁；同一对端的建立通知、断开通知与该对端的状态帧串行处理，断开通知送达之后不再交付旧连接的帧。这些性质见 [design-link.md](design-link.md) 的并发与事务边界一节。
 
 `TopicDigests` 与 `Roster` 的覆盖语义加上帧的有序处理，使任意时刻的并发变化最终收敛到双方的当前状态。
 
@@ -198,4 +222,7 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 | 加入、退出与注销清理 | 已实现 | `internal/topic/local.go`（`localTable`）、`internal/topic/publish.go`（`Registry.Join`、`Registry.Leave`、`Registry.LeaveAll`） |
 | 摘要交换与交集的重算 | 已实现 | `internal/topic/peer.go`（`peerState`、`recompute`）、`internal/topic/registry.go`（`Registry.onUp`、`Registry.handleDigests`） |
 | 成员名单的全量与增量同步 | 已实现 | `internal/topic/wire.go`（`memberToWire`、`rosterMsg`、`deltaMsg`）、`internal/topic/registry.go`（`Registry.handleRoster`、`Registry.handleDelta`）、`internal/topic/publish.go`（`Registry.AgentChanged`） |
+| 接收侧名单上限与名字长度 | 已实现 | `internal/topic/registry.go`（`maxInboundMembers`、`maxPeerMembers`、`Registry.handleRoster`、`Registry.handleDelta`）、`internal/topic/wire.go`（`MaxMemberNameBytes`、`validMemberEntry`） |
+| 本机 topic 数与成员数上限 | 已实现 | `internal/topic/local.go`（`maxLocalTopics`、`maxLocalTopicMembers`、`localTable.join`）、`internal/topic/api.go`（`ErrTopicLimit`） |
+| 摘要与成员名单的合并发送、发送失败日志 | 已实现 | `internal/topic/state.go`（`sendLatestLocked`、`sendRosterLocked`、`sendDeltaLocked`、`deliverLatestKeyLocked`、`logSendError`）、`internal/topic/publish.go`（`Registry.Join`、`Registry.Leave`、`Registry.LeaveAll`、`Registry.AgentChanged`）、`internal/topic/registry.go`（`Registry.handleDigests`） |
 | 可见性判定 | 已实现 | `internal/topic/query.go`（`visible`、`visibleAgents`、`remoteMembers`） |

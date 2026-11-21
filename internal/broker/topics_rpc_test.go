@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -125,6 +126,25 @@ func (t *recordingTopics) Join(agent AgentID, name string) error {
 func (t *recordingTopics) Leave(agent AgentID, name string) error {
 	t.log.add("leave:" + name)
 	return t.TopicTable.Leave(agent, name)
+}
+
+// TestJoinTopicQuotaExceeded checks that a join refused by the topic table's
+// limit surfaces as quota_exceeded with a complete sentence for the model.
+func TestJoinTopicQuotaExceeded(t *testing.T) {
+	tb := newTestBroker(t)
+	id, _ := registerTopicAgent(t, tb, "quota")
+	tb.topics.mu.Lock()
+	tb.topics.joinErrs["t1"] = ErrTopicQuotaExceeded
+	tb.topics.mu.Unlock()
+
+	_, err := tb.client.JoinTopic(topicCallContext(t), &localpb.JoinTopicRequest{AgentId: id, Name: "t1"})
+	code, wire, msg := topicErrorDetail(t, err)
+	if code != codes.ResourceExhausted || wire != localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED {
+		t.Fatalf("JoinTopic = %v/%v, want ResourceExhausted/QUOTA_EXCEEDED", code, wire)
+	}
+	if msg == "" || !strings.HasSuffix(msg, ".") {
+		t.Fatalf("message %q is not a complete sentence", msg)
+	}
 }
 
 func TestJoinAndListTopics(t *testing.T) {
@@ -560,5 +580,54 @@ func TestJoinUnknownAgentIsInternal(t *testing.T) {
 	code, wire, _ := topicErrorDetail(t, err)
 	if code != codes.Internal || wire != localpb.ErrorCode_ERROR_CODE_INTERNAL {
 		t.Fatalf("JoinTopic after ErrUnknownAgent = %v/%v, want Internal/INTERNAL", code, wire)
+	}
+}
+
+// joinWithRefill joins name, advancing the fake clock first so the per-account
+// topic-change rate never refuses the call.
+func joinWithRefill(t *testing.T, tb *testBroker, id, name string) error {
+	t.Helper()
+	tb.clock.Advance(time.Second)
+	_, err := tb.client.JoinTopic(topicCallContext(t), &localpb.JoinTopicRequest{AgentId: id, Name: name})
+	return err
+}
+
+// TestJoinTopicPerAccountLimit checks that a system Broker refuses the topic
+// past the per-account limit with quota_exceeded and still lets the account
+// rejoin one it already has.
+func TestJoinTopicPerAccountLimit(t *testing.T) {
+	tb := newTestBroker(t, func(d *Deps) { d.System = true })
+	id, _ := registerTopicAgent(t, tb, "accountlimit")
+
+	for i := 0; i < maxAccountTopics; i++ {
+		if err := joinWithRefill(t, tb, id, fmt.Sprintf("t%d", i)); err != nil {
+			t.Fatalf("JoinTopic %d: %v", i, err)
+		}
+	}
+	err := joinWithRefill(t, tb, id, "one-too-many")
+	code, wire, message := topicErrorDetail(t, err)
+	if code != codes.ResourceExhausted || wire != localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED {
+		t.Fatalf("JoinTopic past the account limit = %v/%v, want ResourceExhausted/QUOTA_EXCEEDED", code, wire)
+	}
+	if message == "" || !strings.HasSuffix(message, ".") {
+		t.Fatalf("message %q is not a complete sentence", message)
+	}
+
+	if err := joinWithRefill(t, tb, id, "t0"); err != nil {
+		t.Fatalf("rejoin an existing topic at the account limit: %v", err)
+	}
+}
+
+// TestUserBrokerHasNoPerAccountLimit checks that a user Broker, which serves one
+// account, does not apply the per-account limit; the registry's global limit is
+// the only one there.
+func TestUserBrokerHasNoPerAccountLimit(t *testing.T) {
+	tb := newTestBroker(t)
+	id, _ := registerTopicAgent(t, tb, "userlimit")
+
+	for i := 0; i <= maxAccountTopics; i++ {
+		if err := joinWithRefill(t, tb, id, fmt.Sprintf("t%d", i)); err != nil {
+			t.Fatalf("JoinTopic %d on a user Broker: %v", i, err)
+		}
 	}
 }

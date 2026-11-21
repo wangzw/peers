@@ -13,6 +13,11 @@ import (
 // name. It is shared by JoinTopic and LeaveTopic.
 const invalidTopicNameMessage = "topic name must be 1 to 256 bytes of UTF-8 without control characters"
 
+// maxAccountTopics caps the distinct local topics one account may hold a member
+// in on a system Broker. A user Broker serves one account, so it uses only the
+// topic registry's global limit.
+const maxAccountTopics = 128
+
 // privateDirectory is the built-in PublicTopicDirectory used when the process
 // runs without a directory. It makes the Broker behave as not public.
 type privateDirectory struct{}
@@ -50,9 +55,43 @@ func topicTableError(err error, id AgentID) error {
 	case errors.Is(err, ErrUnknownAgent):
 		return Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
 			"agent %s was not introduced to the topic table", id)
+	case errors.Is(err, ErrTopicQuotaExceeded):
+		return topicQuotaExceededError("This Broker has reached the limit on topics or on members of one topic.")
 	default:
 		return err
 	}
+}
+
+// topicQuotaExceededError is the client-facing error for a topic change refused
+// by a quota. message is a complete sentence for the model.
+func topicQuotaExceededError(message string) *Error {
+	return Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, "%s", message)
+}
+
+// overAccountTopicLimit reports whether joining name would give a's account
+// more than maxAccountTopics distinct local topics on a system Broker. A topic
+// the account already has a member in does not count as exceeding the limit,
+// so a repeated join stays idempotent at the limit. The caller must hold
+// b.accountTopicMu; this method takes b.mu itself.
+func (b *Broker) overAccountTopicLimit(a *agent, name string) bool {
+	if !b.deps.System {
+		return false
+	}
+	b.mu.Lock()
+	topics := make(map[string]struct{})
+	for _, other := range b.agents {
+		if other.caller.UID != a.caller.UID {
+			continue
+		}
+		for _, t := range b.deps.Topics.TopicsOf(other.id) {
+			topics[t] = struct{}{}
+		}
+	}
+	b.mu.Unlock()
+	if _, ok := topics[name]; ok {
+		return false
+	}
+	return len(topics) >= maxAccountTopics
 }
 
 // JoinTopic joins the calling agent to a topic, optionally declaring the topic
@@ -68,6 +107,9 @@ func (b *Broker) JoinTopic(ctx context.Context, req *localpb.JoinTopicRequest) (
 	if topic.ValidateName(name) != nil {
 		return nil, toStatus(invalidTopicNameError())
 	}
+	if !b.topicRate.allow(a.caller.UID, b.deps.Clock.Now()) {
+		return nil, toStatus(topicQuotaExceededError("Too many topic changes. Try again in a moment."))
+	}
 
 	declared := false
 	if req.GetIsPublic() {
@@ -77,11 +119,22 @@ func (b *Broker) JoinTopic(ctx context.Context, req *localpb.JoinTopicRequest) (
 		declared = true
 	}
 
-	if err := b.deps.Topics.Join(a.id, name); err != nil {
+	b.accountTopicMu.Lock()
+	if b.overAccountTopicLimit(a, name) {
+		b.accountTopicMu.Unlock()
 		if declared {
 			b.rollbackPublicDeclaration(a, name)
 		}
-		return nil, toStatus(topicTableError(err, a.id))
+		return nil, toStatus(topicQuotaExceededError("This account has reached the limit on topics."))
+	}
+	joinErr := b.deps.Topics.Join(a.id, name)
+	b.accountTopicMu.Unlock()
+
+	if joinErr != nil {
+		if declared {
+			b.rollbackPublicDeclaration(a, name)
+		}
+		return nil, toStatus(topicTableError(joinErr, a.id))
 	}
 
 	if req.GetIsPublic() && !b.recordPublicJoin(a, name, req.GetDescription()) {
@@ -109,6 +162,9 @@ func (b *Broker) LeaveTopic(ctx context.Context, req *localpb.LeaveTopicRequest)
 	name := req.GetName()
 	if topic.ValidateName(name) != nil {
 		return nil, toStatus(invalidTopicNameError())
+	}
+	if !b.topicRate.allow(a.caller.UID, b.deps.Clock.Now()) {
+		return nil, toStatus(topicQuotaExceededError("Too many topic changes. Try again in a moment."))
 	}
 
 	if err := b.deps.Topics.Leave(a.id, name); err != nil {

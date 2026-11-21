@@ -47,6 +47,14 @@ type Broker struct {
 	// It has its own lock so a check never takes Broker.mu.
 	configDirChecks configDirCheckSet
 
+	// topicRate limits topic changes per account.
+	topicRate topicRateLimiter
+
+	// accountTopicMu serialises the per-account topic limit check with the Join
+	// it guards, so two concurrent joins on a system Broker cannot both pass
+	// while the account is one topic short of its limit.
+	accountTopicMu sync.Mutex
+
 	// update state is the in-memory result of the periodic release check. It
 	// is never persisted.
 	updateMu         sync.Mutex

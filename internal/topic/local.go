@@ -2,6 +2,17 @@ package topic
 
 import "sort"
 
+const (
+	// maxLocalTopics caps the topics that have at least one local member. It is
+	// smaller than maxInboundDigests so that the TopicDigests one Broker sends
+	// stays well inside what a peer accepts and the work one membership change
+	// fans out to the links stays bounded. A system Broker splits the same
+	// budget per account; see the broker.
+	maxLocalTopics = 512
+	// maxLocalTopicMembers caps the local members of one topic.
+	maxLocalTopicMembers = maxInboundMembers
+)
+
 // setInfo stores m as the agent's information, creating the agent when it does
 // not exist yet, and returns the previous information and whether the agent
 // already existed.
@@ -36,13 +47,18 @@ func (lt *localTable) join(id AgentID, name string) (joined, created bool, err e
 	if _, ok := a.topics[name]; ok {
 		return false, false, nil
 	}
-	a.topics[name] = struct{}{}
 	set := lt.topics[name]
 	if set == nil {
+		if len(lt.topics) >= maxLocalTopics {
+			return false, false, ErrTopicLimit
+		}
 		set = map[AgentID]struct{}{}
 		lt.topics[name] = set
 		created = true
+	} else if len(set) >= maxLocalTopicMembers {
+		return false, false, ErrTopicLimit
 	}
+	a.topics[name] = struct{}{}
 	set[id] = struct{}{}
 	return true, created, nil
 }

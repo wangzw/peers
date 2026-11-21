@@ -122,26 +122,30 @@ func TestNewPeerStateCopiesSalt(t *testing.T) {
 	}
 }
 
-// sendFailTransport is the smallest Transport implementation: Send always
+// sendFailTransport is the smallest Transport implementation: SendLatest always
 // fails, the other methods do nothing.
 type sendFailTransport struct {
 	err error
 }
 
-func (s *sendFailTransport) Send(link.Fingerprint, link.Frame) error { return s.err }
+func (s *sendFailTransport) SendLatest(link.Fingerprint, link.Frame) error { return s.err }
+
+func (s *sendFailTransport) SendLatestKey(link.Fingerprint, string, link.Frame) (bool, error) {
+	return false, s.err
+}
 
 func (s *sendFailTransport) HandleState(link.FrameKind, func(link.Fingerprint, link.Frame)) {}
 
 func (s *sendFailTransport) Subscribe(func(link.Fingerprint, []byte), func(link.Fingerprint)) {
 }
 
-func TestSendLockedLogsFailure(t *testing.T) {
+func TestSendLatestLockedLogsFailure(t *testing.T) {
 	var buf bytes.Buffer
 	r := &Registry{
 		t:   &sendFailTransport{err: errors.New("link is down")},
 		log: slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
 	}
-	r.sendLocked(link.Fingerprint{}, topicpb.KindTopicDigests, &topicpb.TopicDigests{})
+	r.sendLatestLocked(link.Fingerprint{}, topicpb.KindTopicDigests, &topicpb.TopicDigests{})
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 1 {

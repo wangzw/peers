@@ -21,6 +21,11 @@ var ErrInvalidTopicName = errors.New("invalid topic name")
 // never introduced or that LeaveAll removed; the broker maps it to internal.
 var ErrUnknownAgent = errors.New("agent not introduced to the topic table")
 
+// ErrTopicQuotaExceeded is returned by TopicTable.Join when the number of local
+// topics or the number of local members of one topic has reached its limit; the
+// broker maps it to quota_exceeded.
+var ErrTopicQuotaExceeded = errors.New("topic quota exceeded")
+
 // Member is one agent's current roster entry in the topic table.
 type Member struct {
 	Name     string

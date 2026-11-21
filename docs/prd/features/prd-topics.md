@@ -239,6 +239,22 @@ Broker 由公开改为不公开后，它此前的公开 topic 声明必须从连
 - **状态**：已实现
 - **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-027 leave default without name`
 
+### REQ-topics-028
+
+本机有成员的 topic 数、每个 topic 的本机成员数，以及同一账户在短时间内变更 topic 的次数，都必须有上限；达到上限时系统必须拒绝超出的调用，说明稍后再试，并且不改变成员关系。系统级 Broker 还须把本机 topic 的预算按账户细分，使一个账户不能占满全部 topic。
+
+- **验收**：本机已有 512 个有成员的 topic 时，加入第 513 个 topic 失败并说明数量已达上限；一个 topic 已有 4096 个本机成员时，再加入一个 Agent 失败；系统级 Broker 下一个账户已有 128 个有成员的 topic 时，该账户再加入一个新的 topic 失败，已在该账户某个 topic 中的 Agent 重复加入仍成功；同一账户连续变更 topic 超过 64 次后，调用失败并说明稍后再试，成员关系不变，等待一秒后再变更 4 次成功；另一个账户的变更不受影响。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/topics_limits_test.go` 的 `TestTopicChangeLimits` 覆盖同一账户的 topic 变更限速、拒绝后成员关系不变与等待后恢复；本机 topic 数、每个 topic 的本机成员数以及系统级 Broker 的每账户上限由单元测试 `internal/topic/locallimit_test.go` 的 `TestJoinTopicCountLimit`、`TestJoinMemberLimit`、`internal/topic/linkstability_test.go` 的 `TestLinkStaysUpSharingTopicsToLimit`、`internal/broker/topics_rpc_test.go` 的 `TestJoinTopicQuotaExceeded`、`TestJoinTopicPerAccountLimit`、`TestUserBrokerHasNoPerAccountLimit` 与 `internal/broker/topicratelimit_test.go` 的 `TestJoinTopicRateLimited`、`TestLeaveTopicRateLimited` 覆盖
+
+### REQ-topics-029
+
+任何对端发来的成员名单都不得使本机为该对端保存的条目无限增长；名字或曾用名超过长度上限的成员条目必须不予保存。
+
+- **验收**：已配对的对端在同一个共同 topic 下连发多帧成员名单，累计超过 4096 个新成员；本机为该对端保存的成员不超过 4096 个，名字为 129 字节的条目不出现在任何结果中；五个共同 topic 各有 4096 条成员时，第五个 topic 的名单被整帧丢弃，该对端保存的条目合计不超过 16384；对端随后发来一个可识别的成员，该成员可见，链路仍为已连接，Broker 日志记录名单帧与成员条目被丢弃。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/topics_limits_test.go` 的 `TestTopicRosterBounds` 覆盖对端批量名单的上限、129 字节名字的丢弃、拒绝后链路仍为已连接；累计条数的精确边界由单元测试 `internal/topic/rosterlimit_test.go` 的 `TestRosterDeltaCumulativeLimit`、`TestRosterMemberNameLength`、`TestPeerRosterCumulativeLimit` 覆盖
+
 ## 数据需求
 
 topic 成员关系只在内存中保留，不写入磁盘。项目的 topic 声明保存在项目配置文件里，随仓库管理。

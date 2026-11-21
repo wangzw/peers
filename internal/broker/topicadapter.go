@@ -103,6 +103,8 @@ func topicRegistryError(err error) error {
 		return fmt.Errorf("%w: %v", ErrInvalidTopicName, err)
 	case errors.Is(err, topic.ErrUnknownAgent):
 		return fmt.Errorf("%w: %v", ErrUnknownAgent, err)
+	case errors.Is(err, topic.ErrTopicLimit):
+		return fmt.Errorf("%w: %v", ErrTopicQuotaExceeded, err)
 	default:
 		return err
 	}

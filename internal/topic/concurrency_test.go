@@ -15,10 +15,10 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// TestSendHappensUnderLock checks lock rule three: every frame is handed to
-// Transport.Send while the caller holds Registry.mu. A send hook tries to take
-// the lock and fails the test when it succeeds, which happens exactly when an
-// event collected frames under the lock and sent them after releasing it.
+// TestSendHappensUnderLock checks lock rule three: every frame is handed to the
+// transport's send methods while the caller holds Registry.mu. A send hook tries
+// to take the lock and fails the test when it succeeds, which happens exactly
+// when an event collected frames under the lock and sent them after releasing it.
 func TestSendHappensUnderLock(t *testing.T) {
 	la := newFakeLink(t, fakeLinkFingerprint(1))
 	lb := newFakeLink(t, fakeLinkFingerprint(2))
@@ -41,7 +41,7 @@ func TestSendHappensUnderLock(t *testing.T) {
 		sends.Add(1)
 		if ra.mu.TryLock() {
 			ra.mu.Unlock()
-			t.Error("Send called without holding the registry lock")
+			t.Error("send called without holding the registry lock")
 		}
 	})
 

@@ -53,4 +53,7 @@ var (
 	// ErrUnknownAgent: Join for an agent that AgentChanged never introduced,
 	// or that LeaveAll removed. A broker bug; broker maps it to internal.
 	ErrUnknownAgent = errors.New("unknown agent")
+	// ErrTopicLimit: Join would exceed the number of local topics or the number
+	// of local members of one topic. broker maps it to quota_exceeded.
+	ErrTopicLimit = errors.New("topic limit reached")
 )

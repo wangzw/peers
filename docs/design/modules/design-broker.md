@@ -425,6 +425,10 @@ Linux 上，账户与组经 `getent` 取自系统的账户数据库，来源由 
 
 权限判定由本机接口的 gRPC 拦截器执行，一元调用与流式调用分别由对应的拦截器判定：按调用的完整方法名查表，表项与外部接口契约中的权限表对应，拦截器经服务端选项挂到本机服务上。用户级 Broker 的检查器恒允许，不读文件；系统级的检查器派生权限检查进程，对配置文件做一次读或写的访问检查。表外的调用返回 `internal`；检查器自身失败也返回 `internal`，不放行。权限不足时返回 `permission_denied`，说明缺的是读权限还是写权限，并给出配置文件的路径。`Status` 不因缺少读权限而拒绝：拦截器把读判定记在调用的上下文上，`Status` 据此只省略其他账户的 Agent，对端与链路照常返回。
 
+topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次调用消耗该账户一个令牌，令牌桶容量 64，每秒补充 4 个；令牌不足时返回 `quota_exceeded`，说明稍后再试，不改变成员关系。不带名字的调用由 [mcpserver](design-mcpserver.md) 对每个默认 topic 各调用一次，每个 topic 各消耗一个令牌。注销时的 `LeaveAll` 不限速。用户级 Broker 只有一个账户，系统级 Broker 的各账户各自计数，时间取自 `Deps.Clock`。
+
+系统级 Broker 另限制每个账户的本机 topic 数：一个账户至多在有成员的 128 个 topic 下持有成员，`JoinTopic` 使该账户超过时返回 `quota_exceeded`，说明 topic 数已达上限；已在该账户某个 topic 中的 Agent 重复加入仍成功。这一上限与 topic 注册表的全局 512 个上限叠加：账户先触及 128 时由 broker 拒绝，全部账户合计触及 512 时由注册表返回 `ErrTopicLimit`，两者都映射为 `quota_exceeded`。用户级 Broker 只有一个账户，只受全局 512 个上限。
+
 ### 登记
 
 1. 读取 `Register` 上行首帧中的 socket 路径与配置目录。socket 路径须为绝对路径且不含 `..` 元素，按 `filepath.Clean` 规范化后作为 Agent 的身份；不满足时按找不到记录处理。这两个值用于在调用方账户的会话注册表中查找记录。
@@ -689,6 +693,8 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 正文为空，消息标识不是 UUID，发送方名字或目标名字的原文超过 1024 字节；本次运行的监听地址来自启动参数时修改 `broker.listen`；修改 `broker.listen` 而新地址无法绑定（`REQ-broker-config-034`）；修改密钥类配置项；`Connect` 的地址写法不合法；本次运行不监听时生成配对密钥 | `invalid_argument` | 否 |
 | 本 Broker 不公开时以公开方式加入 topic | `invalid_argument` | 否 |
 | 本机公开 topic 声明数达上限 | `quota_exceeded` | 否 |
+| 本机有成员的 topic 数或一个 topic 的本机成员数达上限，或系统级 Broker 下一个账户的 topic 数达 128 个上限 | `quota_exceeded` | 否 |
+| 同一账户的 topic 变更超过限速允许的频率 | `quota_exceeded` | 是，稍后重试 |
 | 公开 topic 简介不合法 | `invalid_argument` | 否 |
 | 编码后的帧超过上限 | `too_large` | 否 |
 | 别名未知，名字或消歧标识不存在；目标是某个 Agent 的曾用名，说明中给出它现在的地址 | `not_found` | 否 |

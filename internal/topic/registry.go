@@ -11,8 +11,12 @@ import (
 const (
 	// maxInboundDigests caps the digests in one TopicDigests frame.
 	maxInboundDigests = 4096
-	// maxInboundMembers caps each member list in a Roster or RosterDelta frame.
+	// maxInboundMembers caps each member list in a Roster or RosterDelta frame,
+	// and the entries one digest may hold in total.
 	maxInboundMembers = 4096
+	// maxPeerMembers caps the entries one peer may hold across every shared
+	// digest.
+	maxPeerMembers = 4 * maxInboundMembers
 )
 
 // New registers topic's three frame handlers and the link subscription on t.
@@ -47,7 +51,7 @@ func (r *Registry) onUp(peer link.Fingerprint, salt []byte) {
 	defer r.mu.Unlock()
 	ps := newPeerState(salt, r.self, peer, r.local.topicNames())
 	r.peers[peer] = ps
-	r.sendLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
+	r.sendLatestLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 }
 
 // onDown discards everything learned about peer.
@@ -84,7 +88,7 @@ func (r *Registry) handleDigests(peer link.Fingerprint, f link.Frame) {
 	ps.setRemote(set)
 	for _, d := range ps.recompute() {
 		send, name := ps.sentDigest(d)
-		r.sendLocked(peer, topicpb.KindRoster, rosterMsg(send, r.local.members(name)))
+		r.sendRosterLocked(peer, send, rosterMsg(send, r.local.members(name)))
 	}
 }
 
@@ -108,7 +112,9 @@ func (r *Registry) handleRoster(peer link.Fingerprint, f link.Frame) {
 		return
 	}
 	if !ps.knowsRemote(d) {
-		r.frameDropped(peer, f, "unknown_digest", &d)
+		// A merged TopicDigests can overtake a roster frame queued before it,
+		// so a digest outside the peer's latest set is a legal arrival order.
+		r.frameIgnored(peer, f)
 		return
 	}
 	if _, ok := ps.shared[d]; !ok {
@@ -132,7 +138,16 @@ func (r *Registry) handleRoster(peer link.Fingerprint, f link.Frame) {
 	if dropped > 0 {
 		r.membersDropped(peer, f, &d, dropped)
 	}
-	ps.applyRoster(d, members)
+	entries := entriesForRoster(members)
+	if len(entries) > maxInboundMembers {
+		r.frameDropped(peer, f, "roster_full", &d)
+		return
+	}
+	if ps.rosterTotalExcept(d)+len(entries) > maxPeerMembers {
+		r.frameDropped(peer, f, "peer_roster_full", &d)
+		return
+	}
+	ps.rosters[d] = entries
 }
 
 // handleDelta applies one incremental change under a shared digest.
@@ -155,7 +170,9 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 		return
 	}
 	if !ps.knowsRemote(d) {
-		r.frameDropped(peer, f, "unknown_digest", &d)
+		// See handleRoster: a merged TopicDigests makes this a legal arrival
+		// order, so it is ignored rather than logged as a protocol fault.
+		r.frameIgnored(peer, f)
 		return
 	}
 	if _, ok := ps.shared[d]; !ok {
@@ -195,11 +212,26 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 	if dropped > 0 {
 		r.membersDropped(peer, f, &d, dropped)
 	}
-	ps.applyDelta(d, added, removed, changed)
+	cur := ps.rosters[d]
+	count := deltaResultCount(cur, added, removed, changed)
+	if count > maxInboundMembers {
+		r.frameDropped(peer, f, "roster_full", &d)
+		return
+	}
+	if ps.rosterTotalExcept(d)+count > maxPeerMembers {
+		r.frameDropped(peer, f, "peer_roster_full", &d)
+		return
+	}
+	if cur == nil && count > 0 {
+		cur = make(map[string]Member, count)
+		ps.rosters[d] = cur
+	}
+	applyDeltaInPlace(cur, added, removed, changed)
 }
 
 // frameIgnored records an inbound frame that cannot be used: it arrived without
-// link state, or it names a digest outside the current intersection.
+// link state, or it names a digest outside the peer's latest set or the current
+// intersection. These are legal arrival orders, not peer faults.
 func (r *Registry) frameIgnored(peer link.Fingerprint, f link.Frame) {
 	r.log.Debug("topic.frame_ignored", "peer", peer.String(), "kind", frameKind(f))
 }

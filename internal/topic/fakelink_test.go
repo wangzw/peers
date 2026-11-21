@@ -2,6 +2,7 @@ package topic
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +16,14 @@ import (
 // errFakeNotEstablished is returned by fakeLink.Send while the link to the peer
 // is not established or the test has made the send fail.
 var errFakeNotEstablished = errors.New("fakelink: link to peer is not established")
+
+// errFakeQueueFull is returned when a stalled peer's send queue overflows. The
+// link is marked down, matching link's bounded queue.
+var errFakeQueueFull = fmt.Errorf("%w: send queue full", errFakeNotEstablished)
+
+// fakeSendQueueLimit is the send queue size a stalled peer models. It matches
+// link's own sendQueueSize.
+const fakeSendQueueLimit = 1024
 
 // fakeEventKind is the kind of one event in a fakeLink's queue.
 type fakeEventKind uint8
@@ -42,12 +51,30 @@ type fakePeer struct {
 	up   bool
 	gen  uint64
 	conn *fakeLink // the other endpoint when the two are connected
+
+	// stalled models a peer that has stopped reading: frames sent while it is
+	// set stay in this endpoint's bounded queue instead of being delivered.
+	stalled bool
+	// outstanding counts frames queued while stalled and not delivered yet.
+	outstanding int
+	// pending holds the frames queued while stalled, in order, and pendingByKey
+	// indexes the latest one of each key so a newer latest frame replaces it.
+	pending      []*fakePending
+	pendingByKey map[string]*fakePending
 }
 
-// fakeFrame is one frame recorded by Send.
+// fakePending is one frame held in a stalled endpoint's send queue.
+type fakePending struct {
+	key   string
+	frame link.Frame
+}
+
+// fakeFrame is one frame recorded by Send, SendLatest or SendLatestKey.
 type fakeFrame struct {
 	Kind    uint32
 	Payload []byte
+	Latest  bool   // sent through SendLatest or SendLatestKey
+	Key     string // the latest-slot key, empty for Send
 }
 
 // fakeLink is an in-memory implementation of Transport. One scheduler goroutine
@@ -71,6 +98,7 @@ type fakeLink struct {
 	onDown   func(peer link.Fingerprint)
 	hook     func(peer link.Fingerprint, f link.Frame)
 	failSend map[link.Fingerprint]bool
+	sendErr  map[link.FrameKind]error
 	sent     map[link.Fingerprint][]fakeFrame
 }
 
@@ -83,6 +111,7 @@ func newFakeLink(t *testing.T, self link.Fingerprint) *fakeLink {
 		peers:    map[link.Fingerprint]*fakePeer{},
 		handlers: map[link.FrameKind]func(peer link.Fingerprint, f link.Frame){},
 		failSend: map[link.Fingerprint]bool{},
+		sendErr:  map[link.FrameKind]error{},
 		sent:     map[link.Fingerprint][]fakeFrame{},
 	}
 	l.cond = sync.NewCond(&l.mu)
@@ -91,11 +120,35 @@ func newFakeLink(t *testing.T, self link.Fingerprint) *fakeLink {
 	return l
 }
 
-// Send implements Transport. It calls the test hook first, without holding the
-// lock, then returns errFakeNotEstablished unless the link to peer is
-// established and not failing. A successful frame is recorded and, when peer is
-// connected to another fakeLink, enqueued at that endpoint.
+// Send delivers a frame to peer. Tests use it to inject one. It calls the test
+// hook first, without holding the lock, then returns errFakeNotEstablished
+// unless the link to peer is established and not failing. A successful frame is
+// recorded and, when peer is connected to another fakeLink, enqueued at that
+// endpoint.
 func (l *fakeLink) Send(peer link.Fingerprint, f link.Frame) error {
+	_, err := l.send(peer, f, "")
+	return err
+}
+
+// SendLatest implements Transport. It keys the frame by kind and otherwise
+// behaves like Send.
+func (l *fakeLink) SendLatest(peer link.Fingerprint, f link.Frame) error {
+	_, err := l.send(peer, f, fmt.Sprintf("k:%d", f.Kind))
+	return err
+}
+
+// SendLatestKey implements Transport. A stalled peer's queued frame with the
+// same key is replaced in place and replaced reports true.
+func (l *fakeLink) SendLatestKey(peer link.Fingerprint, key string, f link.Frame) (replaced bool, err error) {
+	return l.send(peer, f, key)
+}
+
+// send records and delivers one frame. A per-kind error installed with
+// setSendError is returned in place of delivering the frame. While the peer is
+// stalled, the frame is held in a bounded queue instead, the frame with the same
+// key is replaced when key is non-empty, and a queue past its limit marks the
+// link down like link's FailQueueFull.
+func (l *fakeLink) send(peer link.Fingerprint, f link.Frame, key string) (replaced bool, err error) {
 	l.mu.Lock()
 	hook := l.hook
 	l.mu.Unlock()
@@ -109,16 +162,85 @@ func (l *fakeLink) Send(peer link.Fingerprint, f link.Frame) error {
 	st := l.peers[peer]
 	if st == nil || !st.up || l.failSend[peer] {
 		l.mu.Unlock()
-		return errFakeNotEstablished
+		return false, errFakeNotEstablished
 	}
-	l.sent[peer] = append(l.sent[peer], fakeFrame{Kind: uint32(f.Kind), Payload: payload})
+	if err := l.sendErr[link.FrameKind(f.Kind)]; err != nil {
+		l.mu.Unlock()
+		return false, err
+	}
+	l.sent[peer] = append(l.sent[peer], fakeFrame{Kind: uint32(f.Kind), Payload: payload, Latest: key != "", Key: key})
+
+	if st.stalled {
+		if key != "" {
+			if pf := st.pendingByKey[key]; pf != nil {
+				pf.frame = link.Frame{Kind: f.Kind, Payload: payload}
+				l.mu.Unlock()
+				return true, nil
+			}
+		}
+		limit := fakeSendQueueLimit
+		if st.outstanding >= limit {
+			l.downLocked(peer)
+			l.mu.Unlock()
+			return false, errFakeQueueFull
+		}
+		pf := &fakePending{key: key, frame: link.Frame{Kind: f.Kind, Payload: payload}}
+		st.outstanding++
+		st.pending = append(st.pending, pf)
+		if key != "" {
+			st.pendingByKey[key] = pf
+		}
+		l.mu.Unlock()
+		return false, nil
+	}
 	conn := st.conn
 	l.mu.Unlock()
 
 	if conn != nil {
 		conn.deliver(l.self, link.Frame{Kind: f.Kind, Payload: payload})
 	}
-	return nil
+	return false, nil
+}
+
+// stall marks peer as not reading, so sends queue up to the send limit.
+func (l *fakeLink) stall(peer link.Fingerprint) {
+	l.mu.Lock()
+	l.peerLocked(peer).stalled = true
+	l.mu.Unlock()
+}
+
+// resume makes peer read again, delivering every frame held while it was
+// stalled, and reports whether the link is still up.
+func (l *fakeLink) resume(peer link.Fingerprint) bool {
+	l.mu.Lock()
+	st := l.peers[peer]
+	if st == nil {
+		l.mu.Unlock()
+		return false
+	}
+	st.stalled = false
+	pending := st.pending
+	st.pending = nil
+	st.pendingByKey = map[string]*fakePending{}
+	st.outstanding = 0
+	conn := st.conn
+	up := st.up
+	l.mu.Unlock()
+
+	if conn != nil {
+		for _, pf := range pending {
+			conn.deliver(l.self, pf.frame)
+		}
+	}
+	return up
+}
+
+// isUp reports whether the link to peer is still established.
+func (l *fakeLink) isUp(peer link.Fingerprint) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	st := l.peers[peer]
+	return st != nil && st.up
 }
 
 // HandleState implements Transport.
@@ -161,6 +283,10 @@ func (l *fakeLink) upLocked(peer link.Fingerprint, salt []byte) {
 	st := l.peerLocked(peer)
 	st.up = true
 	st.gen++
+	st.stalled = false
+	st.outstanding = 0
+	st.pending = nil
+	st.pendingByKey = map[string]*fakePending{}
 	l.queue = append(l.queue, fakeEvent{kind: fakeEventUp, peer: peer, gen: st.gen, salt: append([]byte(nil), salt...)})
 	l.cond.Broadcast()
 }
@@ -177,6 +303,10 @@ func (l *fakeLink) downLocked(peer link.Fingerprint) {
 	st := l.peerLocked(peer)
 	st.up = false
 	st.gen++
+	st.stalled = false
+	st.outstanding = 0
+	st.pending = nil
+	st.pendingByKey = map[string]*fakePending{}
 	l.queue = append(l.queue, fakeEvent{kind: fakeEventDown, peer: peer, gen: st.gen})
 	l.cond.Broadcast()
 }
@@ -210,7 +340,7 @@ func (l *fakeLink) sentFrames(peer link.Fingerprint) []fakeFrame {
 	src := l.sent[peer]
 	out := make([]fakeFrame, len(src))
 	for i, f := range src {
-		out[i] = fakeFrame{Kind: f.Kind, Payload: append([]byte(nil), f.Payload...)}
+		out[i] = fakeFrame{Kind: f.Kind, Payload: append([]byte(nil), f.Payload...), Latest: f.Latest, Key: f.Key}
 	}
 	return out
 }
@@ -222,11 +352,23 @@ func (l *fakeLink) clearSent(peer link.Fingerprint) {
 	l.mu.Unlock()
 }
 
-// setSendHook installs a hook called at the start of every Send, without the
+// setSendHook installs a hook called at the start of every send, without the
 // fakeLink's lock held. A nil hook removes it.
 func (l *fakeLink) setSendHook(hook func(peer link.Fingerprint, f link.Frame)) {
 	l.mu.Lock()
 	l.hook = hook
+	l.mu.Unlock()
+}
+
+// setSendError makes Send and SendLatest return err for frames of kind. A nil
+// err removes the entry.
+func (l *fakeLink) setSendError(kind link.FrameKind, err error) {
+	l.mu.Lock()
+	if err == nil {
+		delete(l.sendErr, kind)
+	} else {
+		l.sendErr[kind] = err
+	}
 	l.mu.Unlock()
 }
 
@@ -308,7 +450,7 @@ func (l *fakeLink) stop() {
 func (l *fakeLink) peerLocked(peer link.Fingerprint) *fakePeer {
 	st := l.peers[peer]
 	if st == nil {
-		st = &fakePeer{}
+		st = &fakePeer{pendingByKey: map[string]*fakePending{}}
 		l.peers[peer] = st
 	}
 	return st

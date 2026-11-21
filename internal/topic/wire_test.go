@@ -3,6 +3,7 @@ package topic
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/wangzw/peers/internal/topic/topicpb"
@@ -26,6 +27,22 @@ func TestStatusMapping(t *testing.T) {
 	}
 	if got := statusFromWire(topicpb.AgentStatus(99)); got != "" {
 		t.Errorf("statusFromWire(99) = %q, want the empty string", got)
+	}
+}
+
+// TestMemberNameLengthLimit checks that a name or previous name over
+// MaxMemberNameBytes bytes is rejected while one at the limit is kept.
+func TestMemberNameLengthLimit(t *testing.T) {
+	at := strings.Repeat("a", MaxMemberNameBytes)
+	over := strings.Repeat("a", MaxMemberNameBytes+1)
+	if !validMemberEntry(Member{Name: at, Ref: "abcdef"}) {
+		t.Errorf("a %d-byte name was rejected", MaxMemberNameBytes)
+	}
+	if validMemberEntry(Member{Name: over, Ref: "abcdef"}) {
+		t.Errorf("a %d-byte name was kept", MaxMemberNameBytes+1)
+	}
+	if validMemberEntry(Member{Name: "ok", Ref: "abcdef", PrevName: over}) {
+		t.Errorf("a %d-byte previous name was kept", MaxMemberNameBytes+1)
 	}
 }
 

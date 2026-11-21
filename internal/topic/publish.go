@@ -45,10 +45,10 @@ func (r *Registry) Join(agent AgentID, name string) error {
 		ps := r.peers[peer]
 		if created {
 			ps.addLocal(name)
-			r.sendLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
+			r.sendLatestLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 			for _, d := range ps.recompute() {
 				send, topicName := ps.sentDigest(d)
-				r.sendLocked(peer, topicpb.KindRoster, rosterMsg(send, r.local.members(topicName)))
+				r.sendRosterLocked(peer, send, rosterMsg(send, r.local.members(topicName)))
 			}
 			continue
 		}
@@ -56,7 +56,7 @@ func (r *Registry) Join(agent AgentID, name string) error {
 		if !ok {
 			continue
 		}
-		r.sendLocked(peer, topicpb.KindRosterDelta, deltaMsg(d, []Member{info}, nil, nil))
+		r.sendDeltaLocked(peer, d, name, deltaMsg(d, []Member{info}, nil, nil))
 	}
 	return nil
 }
@@ -81,7 +81,7 @@ func (r *Registry) Leave(agent AgentID, name string) error {
 		ps := r.peers[peer]
 		if emptied {
 			ps.removeLocal(name)
-			r.sendLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
+			r.sendLatestLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 			ps.recompute()
 			continue
 		}
@@ -89,7 +89,7 @@ func (r *Registry) Leave(agent AgentID, name string) error {
 		if !ok {
 			continue
 		}
-		r.sendLocked(peer, topicpb.KindRosterDelta, deltaMsg(d, nil, []memberKey{{Name: info.Name, Ref: info.Ref}}, nil))
+		r.sendDeltaLocked(peer, d, name, deltaMsg(d, nil, []memberKey{{Name: info.Name, Ref: info.Ref}}, nil))
 	}
 	return nil
 }
@@ -107,8 +107,9 @@ func (r *Registry) LeaveAll(agent AgentID) {
 	}
 
 	type removal struct {
-		d   [32]byte
-		key memberKey
+		d    [32]byte
+		name string
+		key  memberKey
 	}
 
 	for _, peer := range publishSortedPeers(r.peers) {
@@ -117,7 +118,7 @@ func (r *Registry) LeaveAll(agent AgentID) {
 			for _, name := range emptied {
 				ps.removeLocal(name)
 			}
-			r.sendLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
+			r.sendLatestLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 			ps.recompute()
 		}
 
@@ -127,13 +128,13 @@ func (r *Registry) LeaveAll(agent AgentID) {
 			if !ok {
 				continue
 			}
-			removals = append(removals, removal{d: d, key: memberKey{Name: info.Name, Ref: info.Ref}})
+			removals = append(removals, removal{d: d, name: name, key: memberKey{Name: info.Name, Ref: info.Ref}})
 		}
 		sort.Slice(removals, func(i, j int) bool {
 			return bytes.Compare(removals[i].d[:], removals[j].d[:]) < 0
 		})
 		for _, rem := range removals {
-			r.sendLocked(peer, topicpb.KindRosterDelta, deltaMsg(rem.d, nil, []memberKey{rem.key}, nil))
+			r.sendDeltaLocked(peer, rem.d, rem.name, deltaMsg(rem.d, nil, []memberKey{rem.key}, nil))
 		}
 	}
 }
@@ -167,6 +168,7 @@ func (r *Registry) AgentChanged(agent AgentID, name, prevName, ref, status strin
 
 	type delta struct {
 		d       [32]byte
+		name    string
 		added   []Member
 		removed []memberKey
 		changed []Member
@@ -183,18 +185,19 @@ func (r *Registry) AgentChanged(agent AgentID, name, prevName, ref, status strin
 			if nameOrRefChanged {
 				deltas = append(deltas, delta{
 					d:       d,
+					name:    name,
 					added:   []Member{m},
 					removed: []memberKey{{Name: old.Name, Ref: old.Ref}},
 				})
 			} else {
-				deltas = append(deltas, delta{d: d, changed: []Member{m}})
+				deltas = append(deltas, delta{d: d, name: name, changed: []Member{m}})
 			}
 		}
 		sort.Slice(deltas, func(i, j int) bool {
 			return bytes.Compare(deltas[i].d[:], deltas[j].d[:]) < 0
 		})
 		for _, del := range deltas {
-			r.sendLocked(peer, topicpb.KindRosterDelta, deltaMsg(del.d, del.added, del.removed, del.changed))
+			r.sendDeltaLocked(peer, del.d, del.name, deltaMsg(del.d, del.added, del.removed, del.changed))
 		}
 	}
 }

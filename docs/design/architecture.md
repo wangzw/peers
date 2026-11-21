@@ -197,7 +197,7 @@ sequenceDiagram
 | `broker_degraded` | 降级运行中调用不可用的功能 | `broker` |
 | `not_registered` | 调用需要 Agent 身份，而所在会话没有完成登记：找不到会话记录、会话名不可用、登记首帧没有 socket 路径，或 socket 不属于调用方账户；或给出的 Agent 标识无效、不属于调用方账户 | `broker`、`mcpserver` |
 | `version_mismatch` | 本机接口或链路的协议版本不兼容 | `broker`、`link` |
-| `quota_exceeded` | 名录的数量限制已满 | `directory` |
+| `quota_exceeded` | 名录或 topic 的数量限制已满，或 topic 变更过于频繁 | `directory`、`topic`、`broker` |
 | `internal` | 不属于以上各类的内部错误 | 各模块 |
 
 ### 接口契约约定
@@ -233,7 +233,7 @@ Local 的错误放在 gRPC status 的 details 里，恰好携带一个 `ErrorDet
 | 边界 | 认证方式 | 授权范围 |
 |---|---|---|
 | MCP 服务进程、终端命令到用户级 Broker | 本机 socket 的权限为 `0600`，Broker 另以进程凭据核对调用方账户与自己相同 | 本机接口的全部操作 |
-| MCP 服务进程、终端命令到系统级 Broker | 本机 socket 的文件权限决定哪些账户能连接；调用方的账户取自进程凭据 | 登记、列出、topic 操作与发送不设前提；读取配置、审计与全量状态要求调用方账户对配置文件有读权限；修改配置、生成配对密钥、发起与解除配对要求写权限 |
+| MCP 服务进程、终端命令到系统级 Broker | 本机 socket 的文件权限决定哪些账户能连接；调用方的账户取自进程凭据 | 登记、列出、topic 操作与发送不设前提，其中 topic 变更按账户限速；读取配置、审计与全量状态要求调用方账户对配置文件有读权限；修改配置、生成配对密钥、发起与解除配对要求写权限 |
 | MCP 服务进程到 Agent 身份 | Broker 在调用方账户的会话注册表中找到登记请求所指的会话记录（系统级形态下经该账户的辅助进程读取），自己核对记录所载 inbox socket 的属主是调用方账户 | 一个连接只能登记属于自己账户的会话；同一账户的任何进程都能登记该账户的任一会话 |
 | Broker 到 Broker | 双向 TLS，对方证书的指纹在对端表中，或在本次连接内完成配对握手 | 交换共同 topic 的成员名单、名录记录，向可见的 Agent 投递消息 |
 | Broker 到 Claude Code 会话 | 不出示会话的认证令牌 | 由该会话的入站控制决定 |

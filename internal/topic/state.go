@@ -1,10 +1,13 @@
 package topic
 
 import (
+	"encoding/hex"
+	"errors"
 	"log/slog"
 	"sync"
 
 	"github.com/wangzw/peers/internal/link"
+	"github.com/wangzw/peers/internal/topic/topicpb"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -92,15 +95,80 @@ type Registry struct {
 	peers map[link.Fingerprint]*peerState
 }
 
-// sendLocked encodes m and calls r.t.Send; on error it logs topic.send_failed
-// at debug level (fields peer, kind, error) and returns. Callers hold r.mu.Lock.
-func (r *Registry) sendLocked(peer link.Fingerprint, kind uint32, m proto.Message) {
+// sendLatestLocked encodes m and calls r.t.SendLatest, so a frame of the same
+// kind still queued is replaced instead of queueing another. Callers hold
+// r.mu.Lock.
+func (r *Registry) sendLatestLocked(peer link.Fingerprint, kind uint32, m proto.Message) {
 	f, err := encodeFrame(kind, m)
 	if err != nil {
 		r.log.Debug("topic.send_failed", "peer", peer.String(), "kind", kind, "error", err)
 		return
 	}
-	if err := r.t.Send(peer, f); err != nil {
-		r.log.Debug("topic.send_failed", "peer", peer.String(), "kind", kind, "error", err)
+	if err := r.t.SendLatest(peer, f); err != nil {
+		r.logSendError(peer, f, err)
 	}
+}
+
+// digestKey names the latest-slot of one digest. A Roster and a RosterDelta for
+// the same digest share it, so the newer frame replaces the older instead of
+// both waiting in the send queue. Callers hold r.mu.Lock.
+func digestKey(d [32]byte) string { return "d:" + hex.EncodeToString(d[:]) }
+
+// sendRosterLocked queues a full roster for digest d as the latest frame of d.
+// A roster replaces the peer's entries, so replacing an earlier roster or delta
+// still queued for d is safe. Callers hold r.mu.Lock.
+func (r *Registry) sendRosterLocked(peer link.Fingerprint, d [32]byte, m *topicpb.Roster) {
+	f, err := encodeFrame(topicpb.KindRoster, m)
+	if err != nil {
+		r.log.Debug("topic.send_failed", "peer", peer.String(), "kind", topicpb.KindRoster, "error", err)
+		return
+	}
+	r.deliverLatestKeyLocked(peer, digestKey(d), f)
+}
+
+// sendDeltaLocked queues a delta for digest d. If a frame for d is still
+// queued, replacing it with a delta could drop changes the queued frame carries
+// (another agent's change, or the snapshot a queued roster holds), so the
+// current full roster for name is queued instead. That folds the unsent delta
+// into a full roster and keeps one pending frame per digest. Callers hold
+// r.mu.Lock.
+func (r *Registry) sendDeltaLocked(peer link.Fingerprint, d [32]byte, name string, m *topicpb.RosterDelta) {
+	f, err := encodeFrame(topicpb.KindRosterDelta, m)
+	if err != nil {
+		r.log.Debug("topic.send_failed", "peer", peer.String(), "kind", topicpb.KindRosterDelta, "error", err)
+		return
+	}
+	replaced, err := r.t.SendLatestKey(peer, digestKey(d), f)
+	if err != nil {
+		r.logSendError(peer, f, err)
+		return
+	}
+	if !replaced {
+		return
+	}
+	rf, err := encodeFrame(topicpb.KindRoster, rosterMsg(d, r.local.members(name)))
+	if err != nil {
+		r.log.Debug("topic.send_failed", "peer", peer.String(), "kind", topicpb.KindRoster, "error", err)
+		return
+	}
+	r.deliverLatestKeyLocked(peer, digestKey(d), rf)
+}
+
+// deliverLatestKeyLocked sends f as the latest frame of key. Callers hold
+// r.mu.Lock.
+func (r *Registry) deliverLatestKeyLocked(peer link.Fingerprint, key string, f link.Frame) {
+	if _, err := r.t.SendLatestKey(peer, key, f); err != nil {
+		r.logSendError(peer, f, err)
+	}
+}
+
+// logSendError records a failed send. A frame above the link's message limit is
+// logged at warn as topic.frame_too_large; every other failure stays at debug
+// as topic.send_failed. Callers hold r.mu.Lock.
+func (r *Registry) logSendError(peer link.Fingerprint, f link.Frame, err error) {
+	if errors.Is(err, link.ErrFrameTooLarge) {
+		r.log.Warn("topic.frame_too_large", "peer", peer.String(), "kind", frameKind(f), "size", len(f.Payload))
+		return
+	}
+	r.log.Debug("topic.send_failed", "peer", peer.String(), "kind", frameKind(f), "error", err)
 }

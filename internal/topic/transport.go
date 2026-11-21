@@ -7,7 +7,10 @@ import (
 
 // Transport is the part of link that topic uses. broker passes its link instance.
 type Transport interface {
-	Send(peer link.Fingerprint, f link.Frame) error
+	SendLatest(peer link.Fingerprint, f link.Frame) error
+	// SendLatestKey queues f like SendLatest, keyed by a caller-chosen string,
+	// and reports whether a queued frame with that key was replaced in place.
+	SendLatestKey(peer link.Fingerprint, key string, f link.Frame) (replaced bool, err error)
 	HandleState(kind link.FrameKind, h func(peer link.Fingerprint, f link.Frame))
 	Subscribe(onUp func(peer link.Fingerprint, salt []byte), onDown func(peer link.Fingerprint))
 }
