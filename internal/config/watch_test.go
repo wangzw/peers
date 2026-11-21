@@ -11,6 +11,15 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// eventTimeout is the package-wide fallback for a wait on an event that is
+// expected to arrive but that the test cannot force, including a real fsnotify
+// delivery. It only decides how long a wait that will never complete takes to
+// fail: the success path selects on the event itself and never spends this
+// time, so a larger value costs nothing. Thirty seconds is far above the worst
+// normal latency under load; it is not a claim that an event should take that
+// long.
+const eventTimeout = 30 * time.Second
+
 // watchTestRoutes is the default address source for test cores: it reports no
 // default-route addresses, so a test that is not about route parsing never
 // reads the host's real routing table. Tests that need addresses pass their own
@@ -211,7 +220,7 @@ func TestConfigWatchDebounceDelaysReload(t *testing.T) {
 
 	select {
 	case <-armed:
-	case <-time.After(4 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the watcher did not arm the debounce after the file event")
 	}
 
@@ -229,7 +238,7 @@ func TestConfigWatchDebounceDelaysReload(t *testing.T) {
 
 	select {
 	case <-reloaded:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the reload did not run after the debounce fired")
 	}
 	if got := aliasOf(t, c); got != "watched" {
@@ -245,7 +254,7 @@ func TestConfigWatchFSNotifySmoke(t *testing.T) {
 		t.Skip("fsnotify is unavailable on this host; there is no periodic rescan to fall back on, but Secret rereads the file before returning a value so the change is still observed")
 	}
 	writeConfigBody(t, path, "broker:\n  alias: watched\n")
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if aliasOf(t, c) == "watched" {
 			return
