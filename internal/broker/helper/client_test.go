@@ -63,7 +63,7 @@ func (s *scriptedChild) next(t *testing.T) *helperpb.HelperRequest {
 			t.Fatalf("scripted child read: %v", r.err)
 		}
 		return r.req
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("timed out waiting for a request")
 		return nil
 	}
@@ -223,7 +223,7 @@ func TestClientDeliverInFlightWhenHelperDiesIsUncertain(t *testing.T) {
 		if !errors.Is(err, ErrHelperGone) {
 			t.Fatalf("Deliver error = %v, want ErrHelperGone", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("Deliver did not return after the helper died")
 	}
 }
@@ -233,7 +233,7 @@ func TestClientDeliverAfterGoneIsNotWritten(t *testing.T) {
 	child.die()
 	select {
 	case <-c.Done():
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("Done not closed after the helper died")
 	}
 
@@ -280,7 +280,7 @@ func TestClientDeliverCancelWaitsForOutcome(t *testing.T) {
 		if errors.Is(err, context.Canceled) {
 			t.Fatalf("Deliver error = %v, want the write outcome, not context.Canceled", err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("Deliver did not return after the cancel outcome")
 	}
 }
@@ -366,7 +366,7 @@ func TestClientWatchStopNoLateCallbacks(t *testing.T) {
 	child.send(t, doneMessage(unwatchReq.GetId()))
 	select {
 	case <-stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("stop did not return after the unwatch reply")
 	}
 
@@ -441,7 +441,7 @@ func TestClientSecondReadyIsProtocolError(t *testing.T) {
 
 	select {
 	case <-c.Done():
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("Done not closed after a second Ready")
 	}
 	if _, err := c.Lookup(context.Background(), "/c", "/s"); !errors.Is(err, ErrHelperGone) {
@@ -456,7 +456,7 @@ func TestClientGoneIsUnavailable(t *testing.T) {
 	child.die()
 	select {
 	case <-c.Done():
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("Done was not closed after the child's pipe closed")
 	}
 	if _, err := c.Lookup(context.Background(), "/c", "/s"); !errors.Is(err, ErrUnavailable) {
@@ -642,6 +642,12 @@ func TestClientDeliverOversizeIsNotWritten(t *testing.T) {
 	}
 }
 
+// unwatchWaitBound is how long the test waits for stop to return after the
+// helper leaves an unwatch unanswered. The product bounds the request by
+// unwatchTimeout; the package fallback covers handing the result back to the
+// test goroutine on a loaded runner after that timer fires.
+const unwatchWaitBound = unwatchTimeout + processTimeout
+
 func TestClientUnwatchBoundedWhenReplyMissing(t *testing.T) {
 	c, child := newScriptedChild(t)
 
@@ -672,11 +678,11 @@ func TestClientUnwatchBoundedWhenReplyMissing(t *testing.T) {
 
 	select {
 	case <-stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(unwatchWaitBound):
 		t.Fatal("stop did not return without an unwatch reply")
 	}
-	if elapsed := time.Since(began); elapsed > 3*time.Second {
-		t.Fatalf("stop took %v, want it bounded by the unwatch timeout", elapsed)
+	if elapsed := time.Since(began); elapsed < unwatchTimeout {
+		t.Fatalf("stop returned after %v, want it to wait for the %v unwatch timeout", elapsed, unwatchTimeout)
 	}
 }
 

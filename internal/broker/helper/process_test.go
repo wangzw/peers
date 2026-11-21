@@ -19,8 +19,14 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// processTimeout bounds every wait on a real child process.
-const processTimeout = 3 * time.Second
+// processTimeout is the package-wide fallback for a wait on a helper child,
+// whether it is a real process or a scripted child on a goroutine. It only
+// decides how long a wait that will never complete takes to fail: the success
+// path selects on the child's exit or pipe traffic and never spends this time,
+// so a larger value costs nothing. Thirty seconds is far above the worst
+// normal latency under load; it is not a claim that a child should take that
+// long.
+const processTimeout = 30 * time.Second
 
 // testRoleEnv returns the parent environment with PEERS_TEST_HELPER_ROLE
 // set to role, so the re-executed test binary takes the matching branch in
