@@ -34,6 +34,27 @@ func TestREQAgentMessaging003_NormalizeName(t *testing.T) {
 	}
 }
 
+// wantMaxNameBytes mirrors the value the plan fixes for MaxNameBytes; a peer
+// accepts a roster entry only when its name fits in this many bytes.
+const wantMaxNameBytes = 128
+
+// TestMaxNameBytes pins the exported limit to the value the plan fixes.
+func TestMaxNameBytes(t *testing.T) {
+	if MaxNameBytes != wantMaxNameBytes {
+		t.Fatalf("MaxNameBytes = %d, want %d", MaxNameBytes, wantMaxNameBytes)
+	}
+}
+
+// TestNormalizeNameCapsLength checks that a normalized name never exceeds
+// MaxNameBytes bytes, even when the input is as large as a session record may
+// hold (inbox reads records up to 256 KiB).
+func TestNormalizeNameCapsLength(t *testing.T) {
+	got := NormalizeName(strings.Repeat("a", 256*1024))
+	if len(got) > wantMaxNameBytes {
+		t.Fatalf("NormalizeName of 256 KiB is %d bytes, want at most %d", len(got), wantMaxNameBytes)
+	}
+}
+
 // TestNormalizeNameTruncatesLongName checks that a name far longer than the
 // limit comes back within it.
 func TestNormalizeNameTruncatesLongName(t *testing.T) {

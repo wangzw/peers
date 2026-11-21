@@ -5,6 +5,7 @@ package e2e
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"sort"
@@ -396,6 +397,63 @@ func TestRemoteVisibility(t *testing.T) {
 		}
 	})
 
+	t.Run("REQ-agent-messaging-030 long name is truncated for both sides", func(t *testing.T) {
+		longName := strings.Repeat("q", 300)
+		want := strings.Repeat("q", inbox.MaxNameBytes)
+		long := vrStartSession(t, aNode, longName, vrTopic)
+		defer long.End(t)
+
+		// The registered name, read from the Broker's own record, is exactly the
+		// normalized name cut to the limit.
+		harness.Eventually(t, vrWaitBound, "the Broker registers the long name cut to the limit", func() (bool, string) {
+			got := vrBrokerRegisteredName(t, aNode, "qq")
+			if got == "" {
+				return false, "no agent_registered record for the long name yet"
+			}
+			if len(got) != inbox.MaxNameBytes || got != want {
+				return false, fmt.Sprintf("the registered name is %d bytes, want %d", len(got), inbox.MaxNameBytes)
+			}
+			return true, ""
+		})
+
+		// The listing on the registering host shows a prefix of that name. An
+		// address is formatted to at most 64 runes, so a 128-byte name is cut
+		// again for display; the displayed prefix must stay valid UTF-8.
+		harness.EventuallyPoll(t, vrWaitBound, "a1 lists the long name truncated", func(deadline time.Time) (bool, string) {
+			out, state := vrListAgentsPoll(t, deadline, a1)
+			if state != "" {
+				return false, state
+			}
+			name, _, _, ok := vrFindNamePrefix(out, want)
+			if !ok {
+				return false, "no entry carries a prefix of the long name"
+			}
+			if !utf8.ValidString(name) {
+				return false, "the displayed name is not valid UTF-8"
+			}
+			return true, ""
+		})
+
+		// The paired host sees the same truncated name in its roster.
+		harness.EventuallyPoll(t, vrWaitBound, "the peer lists the long name truncated", func(deadline time.Time) (bool, string) {
+			out, state := vrListAgentsPoll(t, deadline, b1)
+			if state != "" {
+				return false, state
+			}
+			name, _, alias, ok := vrFindNamePrefix(out, want)
+			if !ok {
+				return false, "the peer lists no entry carrying a prefix of the long name"
+			}
+			if !utf8.ValidString(name) {
+				return false, "the peer's displayed name is not valid UTF-8"
+			}
+			if alias != "hostA.peer" {
+				return false, "the peer entry's alias is " + alias
+			}
+			return true, ""
+		})
+	})
+
 	t.Run("REQ-agent-messaging-012 removal reaches peer", func(t *testing.T) {
 		gone := vrStartSession(t, bNode, "b3", vrTopic)
 		defer gone.End(t)
@@ -617,6 +675,41 @@ func vrSees(t *testing.T, s *harness.Session, name string) bool {
 	}
 	_, ok := vrFindAgent(out, name)
 	return ok
+}
+
+// vrFindNamePrefix returns the first entry whose displayed name part is a
+// non-empty prefix of want.
+func vrFindNamePrefix(out mcpserver.ListAgentsOut, want string) (name, ref, alias string, ok bool) {
+	for _, agent := range out.Agents {
+		n, r, a := vrSplitAddress(agent.Address)
+		if n != "" && strings.HasPrefix(want, n) {
+			return n, r, a, true
+		}
+	}
+	return "", "", "", false
+}
+
+// vrBrokerRegisteredName returns the name field of the Broker's
+// agent_registered record whose name starts with prefix, or "" when the log
+// has no such record yet.
+func vrBrokerRegisteredName(t *testing.T, node *harness.Node, prefix string) string {
+	t.Helper()
+	for _, line := range strings.Split(string(node.BrokerLog(t)), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec struct {
+			Event string `json:"event"`
+			Name  string `json:"name"`
+		}
+		if json.Unmarshal([]byte(line), &rec) != nil {
+			continue
+		}
+		if rec.Event == "agent_registered" && strings.HasPrefix(rec.Name, prefix) {
+			return rec.Name
+		}
+	}
+	return ""
 }
 
 // vrFindAgent returns the entry whose name part is name.

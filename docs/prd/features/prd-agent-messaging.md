@@ -256,11 +256,11 @@ Agent 的名字经接收方会话对署名的清洗后与原名不同时，该 A
 
 ### REQ-agent-messaging-030
 
-会话名不可用的会话不得登记为 Agent，系统不得以其他名字代替，并必须向该会话说明原因。会话名不可用是指它规范化后为空、经署名清洗后为空，或含有 `@` 或 `*`。已登记的会话改名后名字变得不可用的，其登记随之撤销。
+会话名不可用的会话不得登记为 Agent，系统不得以其他名字代替，并必须向该会话说明原因。会话名不可用是指它规范化后为空、经署名清洗后为空，或含有 `@` 或 `*`。会话名规范化后超过 128 字节的部分截去。已登记的会话改名后名字变得不可用的，其登记随之撤销。
 
-- **验收**：以会话名 `a@b` 启动一个启用了工具的会话：其他 Agent 的列表中不出现对应它的任何一项；它调用列出 Agent 时得到错误，说明会话名含有 `@` 因而不能登记。把会话改名为 `ab` 后，其他 Agent 的列表中出现名字为 `ab` 的一项。
+- **验收**：以会话名 `a@b` 启动一个启用了工具的会话：其他 Agent 的列表中不出现对应它的任何一项；它调用列出 Agent 时得到错误，说明会话名含有 `@` 因而不能登记。把会话改名为 `ab` 后，其他 Agent 的列表中出现名字为 `ab` 的一项。以超过 128 字节的会话名启动一个启用了工具的会话：其他 Agent 的列表中出现对应它的一项，名字不超过 128 字节，截断落在 UTF-8 字符边界上；与它配对的对端 Broker 上的 Agent 列表中出现同一个截断后的名字。
 - **状态**：已实现
-- **端到端测试**：`test/e2e/registration_test.go` 的 `TestLocalRegistration/REQ-agent-messaging-030 unusable names`
+- **端到端测试**：`test/e2e/registration_test.go` 的 `TestLocalRegistration/REQ-agent-messaging-030 unusable names`，以及 `test/e2e/visibility_remote_test.go` 的 `TestRemoteVisibility/REQ-agent-messaging-030 long name is truncated for both sides`
 
 ### REQ-agent-messaging-031
 

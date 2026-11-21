@@ -49,7 +49,11 @@ func Deliver(ctx context.Context, s Session, sig, text, msgID string, timeout ti
 // FrameSize 返回这条消息编码成帧后的字节数。
 func FrameSize(sig, text string) int
 
+// MaxNameBytes 是可以登记、发布到名录或从对端接受的 Agent 名字的最长字节数。
+const MaxNameBytes = 128
+
 // NormalizeName 返回会话名按 Claude Code 匹配会话名的规则规范化后的结果。
+// 结果超过 MaxNameBytes 字节时在 UTF-8 字符边界上截断，截断后留在末尾的 "-" 去掉。
 func NormalizeName(name string) string
 
 // CleanSignature 返回 sig 经接收方清洗后的结果。
