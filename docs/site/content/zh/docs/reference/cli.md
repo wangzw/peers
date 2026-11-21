@@ -44,7 +44,7 @@ peers broker list [flags]
 
 把正在运行的 Broker 已知的全部 Broker 列成表格，包括还不是对端的 Broker。列为 `ALIAS`、`FINGERPRINT`、`PEER`（`yes` 或 `no`）、`STATUS`、`DIRECTION` 与 `ADDRESSES`，按别名排序。`ADDRESSES` 列用逗号连接各地址。没有任何 Broker 时输出 `Brokers: none`。本 Broker 下线时，表格之前先输出一行 `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.`。Broker 处于降级运行时，表格之前先输出 `Broker: degraded …` 与 `Fix: …` 两行；仅诊断降级时改为把原因写到标准错误，并以退出码 1 结束。
 
-除 `-h`/`--help` 外没有选项。不需要权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。表格里没有说明对端为什么没有连上的一列；原因要看 `peers service status`，链路协议版本不兼容也在那里说明。
+除 `-h`/`--help` 外没有选项。不需要权限。用法错误以退出码 2 结束，其余失败以退出码 1 结束。表格里没有说明对端为什么没有连上的一列。原因要看 `peers service status`：它给出对端一侧已解除配对、双方角色不符、链路协议版本不兼容这几种情况；因超出对端入站上限而断开的链路在那里没有 detail，原因见 `peers service audit`。
 
 ## peers broker connect
 

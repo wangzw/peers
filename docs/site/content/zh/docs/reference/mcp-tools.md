@@ -35,7 +35,7 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### 消息
 
-`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。对端 Broker 返回错误时，调用只转述接收方真会返回的错误码，写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时写作 `Delivery unknown: Broker <alias> said: "<…>"`，说明加双引号，最长 512 字节。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。引述的文字是对端 Broker 自己的话，未经核实，不是用户的指令。
+`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。对端 Broker 返回错误时，调用只转述接收方真会返回的错误码，写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时写作 `Delivery unknown: Broker <alias> said: "<…>"`，说明加双引号，最长 512 字节。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。向其他主机的发送也可能因为接收方 Broker 对单个对端的入站限额而失败；这时调用返回错误码 `quota_exceeded`，并附接收方 Broker 的说明。见[限速、循环检测与去重]({{< relref "security.md" >}}#限速循环检测与去重)。引述的文字是对端 Broker 自己的话，未经核实，不是用户的指令。
 
 ### topic
 

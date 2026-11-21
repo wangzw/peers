@@ -44,7 +44,7 @@ peers broker list [flags]
 
 Lists every Broker known to a running Broker, including Brokers that are not peers, as a table with the columns `ALIAS`, `FINGERPRINT`, `PEER` (`yes` or `no`), `STATUS`, `DIRECTION` and `ADDRESSES`, sorted by alias. The `ADDRESSES` column joins the addresses with commas. With no known Broker it prints `Brokers: none`. When this Broker is offline, the line `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.` comes before the table. When it runs degraded, the `Broker: degraded …` and `Fix: …` lines come before the table; a diagnostics-only run writes the reason to standard error instead and exits with code 1.
 
-The command takes no options apart from `-h`/`--help`. It requires no permission. A usage error exits with code 2; any other failure exits with code 1. The table does not show why a peer is not connected; `peers service status` gives the detail, including a peer whose link protocol version is incompatible.
+The command takes no options apart from `-h`/`--help`. It requires no permission. A usage error exits with code 2; any other failure exits with code 1. The table does not show why a peer is not connected. `peers service status` gives the detail for a peer that was unpaired on the other side, a role mismatch and an incompatible link protocol version; a link closed because the peer exceeded an inbound limit has no detail there, and its reason is in `peers service audit`.
 
 ## peers broker connect
 

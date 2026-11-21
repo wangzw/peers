@@ -53,19 +53,29 @@ Broker 的设计是不做任何会话的后代进程。用户级 Broker 由服�
 
 投递的文本放在一段固定的信封里，信封标明发送方。消息正文里出现信封的起始或结束标签时，不论大小写，peers 都在 `<` 之后插入一个反斜杠，使它作为普通文本显示，正文因此伪造不了信封的任何一端。已知限制：HTML 实体、零宽字符与同形字符不转义；它们只改变正文在会话里的显示，不改变信封对消息的署名。
 
-对端 Broker 为一次发送返回错误时，本 Broker 只转述接收方真会返回的错误码：`not_found`、`ambiguous`、`not_visible`、`invalid_argument`、`too_large`、`inbox_unwritable`、`broker_offline` 与 `delivery_unknown`。错误写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时，开头改为 `Delivery unknown: Broker <alias> said: "<…>"`。引述的说明最长 512 字节，在字符边界上截断，截断处加 `...`。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。
+对端 Broker 为一次发送返回错误时，本 Broker 只转述接收方真会返回的错误码：`not_found`、`ambiguous`、`not_visible`、`invalid_argument`、`too_large`、`inbox_unwritable`、`quota_exceeded`、`broker_offline` 与 `delivery_unknown`。错误写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时，开头改为 `Delivery unknown: Broker <alias> said: "<…>"`。引述的说明最长 512 字节，在字符边界上截断，截断处加 `...`。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。
 
 终端命令打印 Broker 提供的文字时，制表符、换行、行分隔符或段落分隔符显示为空格，其余控制字符与 Unicode 格式字符按码点显示为 `\xNN`、`\uNNNN` 或 `\UNNNNNNNN`。
 
 ## 限速、循环检测与去重
 
-peers 不限制发送频率，不携带跳数，也不检测消息循环。接收端的 Claude Code 自己有一套规则。它按帧里的回复地址识别发送方，没有回复地址时按写入进程识别。每个发送方一个令牌桶，容量 30，每秒补充 0.5 个；未处理的会话间消息至多保留 50 条。30 秒去重是另一条规则：同一个 Agent 发给同一个会话、与上一条内容完全相同的消息会被丢弃。署名是内容的一部分，所以即使多个 Agent 共用一个令牌桶，这条规则也按 Agent 区分；不同 Agent 不会互相造成丢弃。
+peers 本身不限制一个会话发多少消息，不计跳数，也不检测消息循环。接收方 Broker 则限制一个配对 Broker 投递给同一个本机会话的消息：连续最多 10 条，之后每 10 秒恢复 1 条。超出的消息不写入，发送方收到错误码 `quota_exceeded`，并得到下面这条报错，其中 `<alias>` 是接收方 Broker，`<session>` 是目标会话，`<fingerprint>` 是该 Broker 的指纹：
 
-接收端的 Broker 也会丢弃同一次发送中重试产生的副本。它按投递请求里的消息标识认出副本，把结果记在一张内存表里，保留 `send.dedupe_window` 的时长，默认 5 分钟。这张表在 Broker 重启后清空，所以 Broker 在两次重试之间重启时，同一条消息可能写入两次。送达情况未知之后再发，带的是新的消息标识，不会被去重。
+```
+Not sent: Broker <alias> said: "<session> is receiving too many messages from your Broker; try again in <N> seconds" (code: quota_exceeded; reported by Broker <fingerprint>)
+```
+
+其中 `<N>` 是等待的整秒数，向上取整，等待这么久后可以重试；`<N>` 为 1 时单位是 `second`。限额按来源 Broker 与目标会话分别计算，本机内部的发送与其他配对 Broker 发来的消息都不受它影响。这些数值是常量，不可配置。
+
+接收端的 Claude Code 自己有一套规则。它按帧里的回复地址识别发送方，没有回复地址时按写入进程识别。每个发送方一个令牌桶，容量 30，每秒补充 0.5 个；未处理的会话间消息至多保留 50 条。30 秒去重是另一条规则：同一个 Agent 发给同一个会话、与上一条内容完全相同的消息会被丢弃。署名是内容的一部分，所以即使多个 Agent 共用一个令牌桶，这条规则也按 Agent 区分；不同 Agent 不会互相造成丢弃。
+
+接收端的 Broker 也会丢弃同一次发送中重试产生的副本。它按投递请求里的消息标识认出副本，把结果记在一张内存表里，保留 `send.dedupe_window` 的时长，默认 5 分钟。这张表在 Broker 重启后清空，所以 Broker 在两次重试之间重启时，同一条消息可能写入两次。送达情况未知之后再发，带的是新的消息标识，不会被去重。这张表合计最多保留 65536 项，每个对端最多 4096 项。超过每对端上限的消息被拒绝，错误码为 `quota_exceeded`，说明为 `this Broker holds too many recent messages from your Broker`；整张表已满时，消息被拒绝，错误码为 `inbox_unwritable`，说明为 `the Broker is temporarily holding too many messages`。发送方看到的是接收方 Broker 转述的这些说明。
 
 peers 写入时不带回复地址，所以经同一个用户级 Broker，或经系统级 Broker 的同一个账户辅助进程写入的全部消息，不论来自哪个 Agent，都算同一个发送方，共用一个令牌桶。Claude Code 自带的循环检测依赖消息里记录的经过路径，peers 的消息没有这项记录，因此两个 Agent 之间的循环只能靠接收端的限速约束。Claude Code 可以改动上述限速值和 30 秒规则，也可以远程调整它们。
 
 peers 自己也会限制 topic 变更：加入与退出按账户限速，本机 topic 的数量与单个 topic 的成员数有上限，见[上限]({{< relref "/docs/concepts/topics" >}}#上限)。配对 Broker 发来的成员名单每个 topic 最多 4096 条，每条链路合计最多 16384 条；超过任一上限时整帧丢弃，Broker 日志记一条警告，链路保持连接。被丢弃的那一帧里的成员，要等链路重新建立后才会出现。超过 4 MiB 的帧在发送前就被拒绝，链路不会断开。
+
+链路本身也有入站上限。一条连接最多排队 4096 个状态帧，状态帧负载合计最多 64 MiB，排队中的与正在处理的帧都计入；超过任一上限，本 Broker 关闭这一条连接，由拨号方按常规退避重连。同一个对端同时最多运行 64 个请求处理函数，该对端的各条连接共用这份名额；名额用尽时，本 Broker 暂停读取该对端，直到有一个请求完成，不报错，也不关闭链路。`peers service status` 与 `list_brokers` 对这种断开的链路不显示 detail；原因在审计记录里，事件为 `link_down`，detail 为 `inbound_limit`，用 `peers service audit` 查看。
 
 ## 操作系统账户是隔离边界
 

@@ -91,6 +91,10 @@ No. Success means the message was written to the target session's inbox socket, 
 
 The receiving Claude Code drops a message from the same agent to the same session whose content repeats the previous one within 30 seconds; this rule belongs to Claude Code and may change. The receiving Broker also drops a copy that a retry within one send produces, but two separate sends are not deduplicated. See the [security model]({{< relref "security.md" >}}).
 
+## Why was my message refused with “is receiving too many messages”?
+
+The session on the other host is receiving messages from your Broker faster than the receiving Broker allows. It accepts ten in a row and one more every 10 seconds, counted per source Broker and target session, so other hosts and other sessions are not affected. Wait the number of seconds given in the error, then send again; see [Rate limits, loop detection and duplicate suppression]({{< relref "security.md" >}}#rate-limits-loop-detection-and-duplicate-suppression).
+
 ## Who can change the Broker's configuration?
 
 An account with write permission on the Broker's configuration file can change it with `set_config` or `peers config set`, create one-time pairing keys with `create_pairing_key` or `peers key create` and pair or unpair with `connect_broker` and `disconnect_broker`, or `peers broker connect` and `peers broker disconnect`. Read permission allows reading the configuration and the audit log. The terminal commands judge permission by the account running them. A member of the admin group manages the system Broker without `sudo`: `peers service status`, `audit`, `online` and `offline` reach it with `--system`, and `peers config`, `peers key` and `peers broker` reach it directly when the account runs no user Broker of its own, while `peers service start`, `stop`, `restart`, `install` and `remove` still need `sudo`; an administrator who runs a command with `sudo` is authorized against root's permissions. See [Management permissions]({{< relref "guides/management-permissions.md" >}}), especially [The admin group]({{< relref "guides/management-permissions.md" >}}#the-admin-group).
