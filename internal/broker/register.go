@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -60,12 +61,23 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 		out:       newEventQueue(),
 	}
 
+	// sendCtx stops the sender when this handler ends the stream on overflow.
+	// A sender that has not started a Send returns instead of starting one. A
+	// Send already in the transport returns when the handler returns, because
+	// gRPC ends the RPC then, so the overflow path must not wait for the
+	// sender.
+	sendCtx, cancelSend := context.WithCancel(ctx)
+	defer cancelSend()
+
 	senderDone := make(chan struct{})
 	go func() {
 		defer close(senderDone)
 		for {
 			resp, ok := c.out.pop()
 			if !ok {
+				return
+			}
+			if sendCtx.Err() != nil {
 				return
 			}
 			if err := stream.Send(resp); err != nil {
@@ -89,10 +101,27 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 	select {
 	case <-done:
 	case <-ctx.Done():
+	case <-c.out.stopped:
 	}
 
 	b.dropConn(c)
 	c.out.close()
+	if c.out.overflowInfo() {
+		// The client stopped reading and the backlog reached its limit. End the
+		// stream instead of growing it: the connection stays open, so the client
+		// can register again. Stop the sender and return without waiting for it:
+		// it may be blocked in a Send the client is not reading, and returning
+		// ends the RPC, which releases that Send.
+		cancelSend()
+		if release != nil {
+			release()
+		}
+		// c.id names this connection even when the refused event names no agent,
+		// so the warning always says which registration overflowed.
+		b.log.Warn(EvRegisterEventsOverflow, "uid", c.caller.UID, "agent", shortID(c.id))
+		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+			"cannot send registration events: more than %d are waiting to be read", registrationEventLimit))
+	}
 	<-senderDone
 	if release != nil {
 		release()
@@ -523,25 +552,56 @@ func reasonName(reason localpb.NotRegisteredReason) string {
 	return strings.ToLower(strings.TrimPrefix(reason.String(), "NOT_REGISTERED_REASON_"))
 }
 
-// eventQueue is the unbounded, per-connection queue that feeds one sender
-// goroutine. Closing it discards pending events, because by then the
-// registration stream is over.
+// registrationEventLimit is how many downstream events one registration stream
+// may have waiting for its sender. A client that stops reading would otherwise
+// make the Broker keep every event it produces.
+const registrationEventLimit = 64
+
+// eventQueue is the bounded, per-connection queue that feeds one sender
+// goroutine. Consecutive agent_changed events for one agent are coalesced, and
+// a push past the limit stops the queue: the Register handler ends the stream.
+// Closing it discards pending events, because by then the registration stream
+// is over.
 type eventQueue struct {
-	mu     sync.Mutex
-	items  []*localpb.RegisterResponse
-	closed bool
-	signal chan struct{}
+	mu       sync.Mutex
+	items    []*localpb.RegisterResponse
+	closed   bool
+	overflow bool // an event was refused because the queue was full
+	signal   chan struct{}
+	stopped  chan struct{} // closed once overflow stops the queue
 }
 
 func newEventQueue() *eventQueue {
-	return &eventQueue{signal: make(chan struct{}, 1)}
+	return &eventQueue{
+		signal:  make(chan struct{}, 1),
+		stopped: make(chan struct{}),
+	}
 }
 
-func (q *eventQueue) push(resp *localpb.RegisterResponse) {
+// push queues resp and reports whether it was accepted. An agent_changed
+// replaces a trailing, not yet sent agent_changed for the same agent instead of
+// being appended, so an unread stream keeps only the latest address. An event
+// that would take the backlog past registrationEventLimit is refused, and the
+// queue stops; caller work already in progress is unaffected.
+func (q *eventQueue) push(resp *localpb.RegisterResponse) bool {
 	q.mu.Lock()
-	if q.closed {
+	if q.closed || q.overflow {
 		q.mu.Unlock()
-		return
+		return false
+	}
+	if changed := resp.GetAgentChanged(); changed != nil && len(q.items) > 0 {
+		if last := q.items[len(q.items)-1].GetAgentChanged(); last != nil &&
+			last.GetAgentId() == changed.GetAgentId() {
+			q.items[len(q.items)-1] = resp
+			q.mu.Unlock()
+			return true
+		}
+	}
+	if len(q.items) >= registrationEventLimit {
+		q.overflow = true
+		close(q.stopped)
+		q.mu.Unlock()
+		return false
 	}
 	q.items = append(q.items, resp)
 	q.mu.Unlock()
@@ -549,6 +609,14 @@ func (q *eventQueue) push(resp *localpb.RegisterResponse) {
 	case q.signal <- struct{}{}:
 	default:
 	}
+	return true
+}
+
+// overflowInfo reports whether the queue stopped because an event did not fit.
+func (q *eventQueue) overflowInfo() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.overflow
 }
 
 func (q *eventQueue) close() {

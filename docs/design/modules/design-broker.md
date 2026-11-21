@@ -459,6 +459,7 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 
 会话执行 `/clear` 或 `/compact` 时 socket 路径、会话名都不变，Agent 的地址与成员关系随之不变，不需要任何处理（`REQ-agent-messaging-033`）。
 
+下行事件由每条登记连接各自的队列送往客户端。连续的、尚未发出的同一 Agent 的 `agent_changed` 合并为最新一条，其他事件按产生顺序追加。队列中等待发送的事件达到 64 条时，Broker 以 `quota_exceeded` 结束这条 `Register` 流，说明写明积压超过 64 条，并记一条 Warn `register_events_overflow`（字段 uid、agent）。连接本身不关闭，客户端可以重新登记。
 ### 辅助进程
 
 系统级 Broker 在某个账户的第一个连接需要它时派生该账户的辅助进程：以隐藏的子命令 `peers internal account-helper` 运行本二进制。身份切换按平台分别进行。Linux 在 exec 之前经 `syscall.Credential` 把账户的 uid、主组与完整组表交给内核，子进程启动时已是该账户；Linux 的 `setgroups` 没有条数上限。Darwin 的 `setgroups` 与 `initgroups` 的静态组表都受 `NGROUPS`（16）限制，完整组表放不进凭据，因此子进程以 root 启动，经环境变量取得账户的 uid 与 gid，在进入协议循环之前依次调用 `setgid`、`initgroups` 与 `setuid`：`setgid` 把真实、有效与保存的 gid 切到账户主组；`initgroups` 传入只含主组的静态表和账户 uid 作为 `gmuid`，由内核经 memberd 解析其余组，静态表因此不超过 `NGROUPS`，所属组超过 16 个的账户同样能完成切换；最后 `setuid` 把真实、有效与保存的 uid 切到账户。切换完成后核对 `getuid`、`geteuid`、`getgid`、`getegid` 四项，任一与账户不符即以非零状态退出，原因写到标准错误，不进入协议循环，因此不会以 root 继续服务。四项之外再做两项核对，做法同 OpenSSH 的 `permanently_set_uid`：调用一次 `setuid(0)`，若成功说明进程仍在保存的 uid 或能力里留有 root，以非零状态退出；读取附属组（`getgroups`），目标主组不是 0 而组表里含 0 时同样退出，避免账户保留 root 组的访问。这次读取只覆盖 `initgroups` 建立的静态组表：root 原有的静态附属组已被替换，但核对只能确认表里不含 0；内核在判定组成员时经 memberd 按账户解析的组不进入 `getgroups` 的结果，不在核对范围内。目标 uid 为 0 的请求直接拒绝，Broker 从不为辅助进程指定 root。核对全部通过后用 `os.Unsetenv` 清掉承载身份的两个变量，进程不再把身份带进它以后派生的子进程。切换要求进程以 root 启动，非 root 的子进程直接拒绝，普通账户无法借环境变量进入另一个账户。
@@ -699,6 +700,7 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 本机公开 topic 声明数达上限 | `quota_exceeded` | 否 |
 | 本机有成员的 topic 数或一个 topic 的本机成员数达上限，或系统级 Broker 下一个账户的 topic 数达 128 个上限 | `quota_exceeded` | 否 |
 | 同一账户的 topic 变更超过限速允许的频率 | `quota_exceeded` | 是，稍后重试 |
+| 登记下行流的积压超过上限 | `quota_exceeded` | 否 |
 | 公开 topic 简介不合法 | `invalid_argument` | 否 |
 | 编码后的帧超过上限 | `too_large` | 否 |
 | 别名未知，名字或消歧标识不存在；目标是某个 Agent 的曾用名，说明中给出它现在的地址 | `not_found` | 否 |

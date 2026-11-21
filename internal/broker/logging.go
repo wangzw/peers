@@ -33,6 +33,7 @@ const (
 	EvAgentRegistered           = "agent_registered"
 	EvAgentUnregistered         = "agent_unregistered"
 	EvRegistrationWaiting       = "registration_waiting"
+	EvRegisterEventsOverflow    = "register_events_overflow"
 	EvAgentRenamed              = "agent_renamed"
 	EvAgentSocketChanged        = "agent_socket_changed"
 	EvRecordRereadFailed        = "session_record_reread_failed"
