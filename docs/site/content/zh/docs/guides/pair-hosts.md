@@ -50,6 +50,8 @@ peers broker connect <address> --key <key>
 ## 特殊情况
 
 - 密钥过期或已经用过一次。一次性配对密钥有效期 10 分钟，成功配对一次后失效。超过时间再使用会返回密钥无效或已过期的错误，双方都不保存对方的身份。重新生成一个密钥，从头再来。
+- 配对因请求过于频繁被拒。没有匹配上密钥的配对请求按来源限次，全部来源合计另有上限；超过任一上限时，对方以 `try again later` 拒绝。限额在比对静态密钥之前检查，所以某个来源或全部来源达到上限后，带静态密钥的请求同样被拒；匹配上静态密钥的请求不计入次数。模型看到的是 `Not connected: try again later (code: pairing_rejected)`，`peers broker connect` 打印的是 `peers broker connect: pairing_rejected: try again later`。等一分钟再试。
+- 两台 Broker 的链路协议版本不同。配对阶段这句用 `the other Broker`，与下文链路阶段用 `this peer` 的报错区分开。模型看到的是 `Not connected: link protocol version incompatible with the other Broker; upgrade the older Broker (code: pairing_rejected)`，`peers broker connect` 打印的是 `peers broker connect: pairing_rejected: link protocol version incompatible with the other Broker; upgrade the older Broker`。把较旧的 Broker 升级，让两边使用同一个链路协议版本。v0.5.0 或更早的 Broker 向本 Broker 发起配对时，旧的一方报协议错误，本 Broker 在审计日志里记一条 `pairing_failed`，`detail` 为 `version incompatible`。反过来，本方去连 v0.5.0 或更早的 Broker 时，即使密钥正确，对方也报 `pairing key is invalid`。
 - 别名已被占用。常见起因是默认别名只取主机名的第一段：主机名第一段相同的两台主机，例如 `workstation.example.com` 与 `workstation.example.net`，其系统级 Broker 会得到相同的别名，两台主机上同名账户的用户级 Broker 也是如此。如果接受方 Broker 的别名与本 Broker 自己的别名、另一个对端的别名，或另一个对端仍然保留的旧别名相同，`connect_broker` 会要求指定本地别名。说“连接到 `<address>` 上的 Broker，密钥是 `<key>`，本地别名是 `<alias>`。”，别名不超过 24 个字符（模型会调用 `connect_broker`）；也可以运行 `peers broker connect <address> --key <key> --alias <alias>`，名字同样不超过 24 个字符。这个别名只在本 Broker 上有效。
 - 展示的地址连不上。随密钥给出的地址未必能从对方连上，例如接受方主机位于端口转发之后。提示词列出多个地址时，最后一行给出其余可选地址。改用一个对方能连上的地址，说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`），或者在 `peers broker connect` 里使用它。
 - 网络中断。配对完成后，拨号方不需要密钥就会重连。稍等片刻，再说一次“列出本 Broker 知道的 Broker。”（模型会调用 `list_brokers`），或者运行 `peers broker list` 检查，对端会回到 `connected`。

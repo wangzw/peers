@@ -26,7 +26,7 @@ The file groups its keys into sections. The `broker` section comes between this 
 
 ```yaml
 pairing:
-  # Pairing requests per minute that match no pairing key; successful matches of the static key are not counted.
+  # Unmatched pairing requests allowed per source per minute; all sources together are limited to 10 times this, and static-key matches do not count.
   max_attempts_per_minute: 10
   # Failed verifications allowed before a one-time pairing key is invalidated.
   max_failures: 5
@@ -50,7 +50,7 @@ pairing:
 | `broker.offline` | boolean | `false` | Whether this Broker refuses messages from other hosts. Links and the directory keep working, and a change applies while the Broker runs. | Yes |
 | `pairing.static_key` | secret string | empty | A pre-provisioned static pairing key, 16 to 128 characters. The key is active as soon as it is set. Generate one with `openssl rand -hex 32`, which produces 64 hexadecimal characters. | No, file only |
 | `pairing.max_failures` | integer | `5` | Failed verifications allowed before a one-time pairing key is discarded. | Yes |
-| `pairing.max_attempts_per_minute` | integer | `10` | Pairing requests per minute that match no pairing key. Requests matched by the static key do not count. | Yes |
+| `pairing.max_attempts_per_minute` | integer | `10` | Unmatched pairing requests allowed per source per minute, where a source is one IPv4 address or one IPv6 /64. All sources together are limited to 10 times this, a fixed factor. Requests matched by the static key do not count. | Yes |
 | `topics.auto_join` | boolean | `true` | Whether sessions join their default topics automatically. | Yes |
 | `directory.reconcile_interval` | duration | `10m` | How often paired Brokers reconcile their directories. | Yes |
 | `directory.max_records` | integer | `1000` | Maximum number of records in the directory. | Yes |

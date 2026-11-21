@@ -11,7 +11,7 @@ weight: 4
 
 Broker 也可以使用用户或管理员写在配置文件里的预置静态密钥。这种密钥可以用于任意多次配对，不会过期，peers 从不生成它；`peers service install` 生成的配置文件里有一行注释说明生成方法，例如 `openssl rand -hex 32`。
 
-发起方说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`），或运行 `peers broker connect <address> --key <key>`，传入对方的地址和密钥。地址写成 `host:port`，或者按 `create_pairing_key` 的结果或 `peers key create` 的输出，写成 `hostname(host:port)` 形式。密钥错误、已过期或已被使用时，配对失败，双方都不保存对方的身份。
+发起方说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`），或运行 `peers broker connect <address> --key <key>`，传入对方的地址和密钥。地址写成 `host:port`，或者按 `create_pairing_key` 的结果或 `peers key create` 的输出，写成 `hostname(host:port)` 形式。密钥错误、已过期或已被使用时，配对失败，双方都不保存对方的身份。请求过于频繁，或两台 Broker 的链路协议版本不兼容时，配对同样失败；两种情况见[两台主机配对]({{< relref "/docs/guides/pair-hosts" >}})。
 
 ## 配对之后
 

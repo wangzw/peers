@@ -26,7 +26,7 @@ weight: 3
 
 ```yaml
 pairing:
-  # Pairing requests per minute that match no pairing key; successful matches of the static key are not counted.
+  # Unmatched pairing requests allowed per source per minute; all sources together are limited to 10 times this, and static-key matches do not count.
   max_attempts_per_minute: 10
   # Failed verifications allowed before a one-time pairing key is invalidated.
   max_failures: 5
@@ -50,7 +50,7 @@ pairing:
 | `broker.offline` | 布尔 | `false` | 本 Broker 是否拒绝其他主机发来的消息。链路与名录照常工作，运行中修改立即生效。 | 可以 |
 | `pairing.static_key` | 字符串（密钥） | 空 | 预置静态密钥，16 至 128 个字符。有值即生效。可用 `openssl rand -hex 32` 生成，输出 64 个十六进制字符。 | 不可以，只能改文件 |
 | `pairing.max_failures` | 整数 | `5` | 一次性配对密钥作废前允许的验证失败次数。 | 可以 |
-| `pairing.max_attempts_per_minute` | 整数 | `10` | 每分钟允许的、没有匹配上任何配对密钥的配对请求数。匹配上预置静态密钥的请求不计入。 | 可以 |
+| `pairing.max_attempts_per_minute` | 整数 | `10` | 每个来源每分钟允许的、没有匹配上任何配对密钥的配对请求数，来源按一个 IPv4 地址或一个 IPv6 的 /64 划分。全部来源合计的上限是它的 10 倍，倍数固定。匹配上预置静态密钥的请求不计入。 | 可以 |
 | `topics.auto_join` | 布尔 | `true` | 会话是否自动加入默认 topic。 | 可以 |
 | `directory.reconcile_interval` | 时长 | `10m` | 对端之间对账名录的间隔。 | 可以 |
 | `directory.max_records` | 整数 | `1000` | 名录记录总数的上限。 | 可以 |

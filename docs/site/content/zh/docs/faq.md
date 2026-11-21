@@ -67,6 +67,10 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 两台主机里至少要有一台能连到另一台。在对方能连上的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或运行 `peers key create`。结果给出一个一次性密钥、显示的地址，以及一段填好密钥与本 Broker 全部地址、可直接粘贴的连接提示词。把提示词通过系统之外的途径交给另一台主机的用户，不要让 Agent 转发密钥或提示词；原因见[安全模型]({{< relref "security.md" >}}#配对与指纹)。另一台在会话里粘贴提示词并批准这次调用（模型会调用 `connect_broker`），或运行提示词里给出的命令；也可以说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”，地址和密钥都给出。配对使用该一次性密钥或接受方配置的预置静态密钥。此后双方各凭指纹认对方。见[配对]({{< relref "concepts/pairing.md" >}})与[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
 
+## 配对时报密钥无效，可是我是照着复制的
+
+先查一次性密钥：它 10 分钟内有效，只能用于一次配对，过期或已经用过的密钥即使复制无误也会失败。过期不到 24 小时的一次性密钥报 `key expired; ask the other side to generate a new pairing key`；超过 24 小时才报 `pairing key is invalid`。再查版本：两边的 Broker 都要是 v0.6.0 或更新，因为旧 Broker 不读取配对请求里的版本字段，密钥正确也会报 `pairing key is invalid`。两种情况见[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
+
 ## 什么是 topic？需要自己创建吗？
 
 topic 是 Agent 之间可见与通信的范围。同一个项目里工作的会话通常共享一个默认 topic，它取自 `.peers.yaml` 或 git origin 地址，所以不需要自己创建。见[topic]({{< relref "concepts/topics.md" >}})。

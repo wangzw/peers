@@ -11,7 +11,7 @@ The accepting side creates a one-time pairing key by saying “Create a pairing 
 
 A Broker can also use a pre-provisioned static key written into its configuration file by the user or administrator. The key can be used for any number of pairings and does not expire. `peers` never generates it; the configuration file that `peers service install` generates includes a comment showing how to generate one, for example with `openssl rand -hex 32`.
 
-The initiating side says “Connect to the Broker at `<address>` with the key `<key>`.” (the model calls `connect_broker`), or runs `peers broker connect <address> --key <key>`, with the other Broker's address and the key. The address is written `host:port`, or `hostname(host:port)` in the form shown by `create_pairing_key` or by the output of `peers key create`. A wrong, expired or already used key makes the pairing fail, and neither side saves the other's identity.
+The initiating side says “Connect to the Broker at `<address>` with the key `<key>`.” (the model calls `connect_broker`), or runs `peers broker connect <address> --key <key>`, with the other Broker's address and the key. The address is written `host:port`, or `hostname(host:port)` in the form shown by `create_pairing_key` or by the output of `peers key create`. A wrong, expired or already used key makes the pairing fail, and neither side saves the other's identity. The pairing also fails when too many requests arrive too quickly, or when the two Brokers speak different link protocol versions; [Pair two hosts]({{< relref "/docs/guides/pair-hosts" >}}) describes both.
 
 ## After pairing
 
