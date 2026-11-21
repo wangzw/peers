@@ -9,16 +9,18 @@ import (
 // current value; there is deliberately no protocol version field, which is set
 // through Options.ProtocolVersion.
 type TestKnobs struct {
-	SendQueueSize      int
-	FirstFrameTimeout  time.Duration
-	HelloTimeout       time.Duration
-	RejectLinger       time.Duration
-	MaxUnauthenticated int
-	EnforcementMinTime time.Duration
-	LocalNets          func() ([]*net.IPNet, error)
-	OnDial             func(address string)
-	BeforeDialLoop     func()
-	OnRejectLingerExit func()
+	SendQueueSize         int
+	FirstFrameTimeout     time.Duration
+	HelloTimeout          time.Duration
+	RejectLinger          time.Duration
+	MaxUnauthenticated    int
+	EnforcementMinTime    time.Duration
+	LocalNets             func() ([]*net.IPNet, error)
+	OnDial                func(address string)
+	BeforeDialLoop        func()
+	OnRejectLingerExit    func()
+	AfterHelloSent        func()
+	OnUnauthenticatedRead func(total int64)
 }
 
 // SetTestKnobs applies k to l. Zero fields keep the current value. Tests call
@@ -55,5 +57,11 @@ func SetTestKnobs(l *Link, k TestKnobs) {
 	}
 	if k.OnRejectLingerExit != nil {
 		l.onRejectLingerExit = k.OnRejectLingerExit
+	}
+	if k.AfterHelloSent != nil {
+		l.afterHelloSent = k.AfterHelloSent
+	}
+	if k.OnUnauthenticatedRead != nil {
+		l.unauth.onRead = k.OnUnauthenticatedRead
 	}
 }

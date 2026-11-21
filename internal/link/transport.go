@@ -24,6 +24,12 @@ import (
 // checkFrameSize enforces it before a frame reaches the transport.
 const maxMessageSize = 4 << 20
 
+// maxHeaderListSize is the largest HTTP/2 header list an inbound connection may
+// send. Link uses no custom metadata, so the limit does not affect an
+// established link; it only bounds what a pre-authentication connection can
+// make the server parse.
+const maxHeaderListSize = 16 << 10
+
 // checkFrameSize rejects a frame the transport would refuse. The limit applies
 // to the encoded message, so proto.Size is the matching measure: it is the
 // serialized length gRPC compares with MaxSendMsgSize, and no compressor is
@@ -174,6 +180,7 @@ func (l *Link) serverOptions() []grpc.ServerOption {
 			PermitWithoutStream: true,
 		}),
 		grpc.MaxConcurrentStreams(1),
+		grpc.MaxHeaderListSize(maxHeaderListSize),
 		grpc.ConnectionTimeout(l.firstFrameTimeout),
 		grpc.MaxRecvMsgSize(maxMessageSize),
 		grpc.MaxSendMsgSize(maxMessageSize),

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,6 +13,12 @@ import (
 // pool keeps for one fingerprint. A third connection for the same fingerprint
 // closes the oldest one.
 const maxKnownPerPeer = 2
+
+// maxUnauthenticatedReadBytes is the number of bytes a connection may read
+// from its raw socket before it authenticates. It covers the TLS handshake,
+// the HTTP/2 preface and frames, and the first link frame. Once the connection
+// leaves the registry, reads are no longer counted.
+const maxUnauthenticatedReadBytes = 64 << 10
 
 // unauthRegistry tracks inbound connections until the peer behind them is
 // authenticated. It enforces three limits from the design: a connection that
@@ -36,6 +43,10 @@ type unauthRegistry struct {
 	firstFrame   time.Duration
 	logger       *slog.Logger
 	afterFunc    func(time.Duration, func()) func() bool
+	// onRead, when not nil, receives the bytes an accepted connection has read
+	// so far. Tests use it to observe the read budget without polling. It is
+	// set before the listener starts and never changes afterwards.
+	onRead func(total int64)
 }
 
 func newUnauthRegistry(max, maxPerSource int, firstFrame time.Duration, logger *slog.Logger, afterFunc func(time.Duration, func()) func() bool) *unauthRegistry {
@@ -59,6 +70,7 @@ func (r *unauthRegistry) track(c net.Conn) *trackedConn {
 		source = sourcePrefix(addr.String())
 	}
 	t := &trackedConn{Conn: c, reg: r, source: source}
+	t.counting.Store(true)
 
 	r.mu.Lock()
 	t.elem = r.conns.PushBack(t)
@@ -86,6 +98,10 @@ func (r *unauthRegistry) track(c net.Conn) *trackedConn {
 	return t
 }
 
+// count returns the number of connections in the stranger-source pool. The
+// known-peer pool is not included: it is bounded per fingerprint by
+// maxKnownPerPeer and has no global cap. Tests read the known pool directly
+// under the registry lock.
 func (r *unauthRegistry) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -199,6 +215,60 @@ type trackedConn struct {
 	seen    bool
 	closed  bool
 	claimed bool
+
+	// readBytes counts bytes read from the raw connection while counting is
+	// true, that is, until the connection leaves the registry. Both are atomic
+	// so the read path never takes the registry lock after authentication.
+	readBytes atomic.Int64
+	counting  atomic.Bool
+	// observedReads accumulates every byte read from the raw connection for
+	// the test-only onRead callback. It is used only when onRead is set.
+	observedReads atomic.Int64
+}
+
+// Read counts the bytes the raw connection delivers while it is still in the
+// registry. The TLS handshake, the HTTP/2 preface and every frame go through
+// this method, so a connection cannot make the host buffer more than
+// maxUnauthenticatedReadBytes before it authenticates. Once the connection
+// leaves the registry, the check is one atomic load and the read path no
+// longer takes the registry lock.
+func (t *trackedConn) Read(p []byte) (int, error) {
+	n, err := t.Conn.Read(p)
+	if n > 0 && t.counting.Load() {
+		if t.readBytes.Add(int64(n)) > maxUnauthenticatedReadBytes {
+			t.closeForByteBudget()
+		}
+	}
+	// The observer runs after the budget check, so a test that waits for it
+	// sees the close already decided when the byte budget was exceeded.
+	if n > 0 && t.reg.onRead != nil {
+		t.reg.onRead(t.observedReads.Add(int64(n)))
+	}
+	return n, err
+}
+
+// closeForByteBudget closes a connection that read past the pre-authentication
+// budget. It closes the raw connection and writes the Debug record outside the
+// registry lock. A connection that already left the registry, or that another
+// path closed first, is left alone.
+func (t *trackedConn) closeForByteBudget() {
+	r := t.reg
+	r.mu.Lock()
+	if t.closed || t.elem == nil {
+		r.mu.Unlock()
+		return
+	}
+	t.closed = true
+	t.detachLocked()
+	stop := t.stopTimerLocked()
+	source := t.source
+	r.mu.Unlock()
+
+	if stop != nil {
+		stop()
+	}
+	_ = t.Conn.Close()
+	r.logger.Debug("link: closed an unauthenticated connection", "source", source, "cause", "byte_budget")
 }
 
 // promoteKnown moves t from the stranger-source pool to the known-peer pool,
@@ -352,15 +422,17 @@ func (t *trackedConn) deadline() {
 
 // detachLocked removes t from whichever pool holds it. Caller holds reg.mu.
 func (t *trackedConn) detachLocked() {
-	if t.elem == nil {
-		return
+	if t.elem != nil {
+		if t.known {
+			t.reg.known.Remove(t.elem)
+		} else {
+			t.reg.conns.Remove(t.elem)
+		}
+		t.elem = nil
 	}
-	if t.known {
-		t.reg.known.Remove(t.elem)
-	} else {
-		t.reg.conns.Remove(t.elem)
-	}
-	t.elem = nil
+	// Leaving the registry ends the read budget: reads after this point are
+	// not counted and do not take the registry lock.
+	t.counting.Store(false)
 }
 
 // stopTimerLocked clears the recorded timer and returns its stop function.

@@ -36,6 +36,13 @@ type transportTestLink struct {
 
 func newTransportTestLink(t *testing.T) *transportTestLink {
 	t.Helper()
+	return newTransportTestLinkWithLogger(t, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// newTransportTestLinkWithLogger is newTransportTestLink with a caller-chosen
+// logger, so a test can assert on a Debug record.
+func newTransportTestLinkWithLogger(t *testing.T, logger *slog.Logger) *transportTestLink {
+	t.Helper()
 	peers := linktest.NewFakePeers(t)
 	settings := linktest.NewFakeSettings("test")
 	clock := linktest.NewFakeClock(time.Unix(1_700_000_000, 0))
@@ -43,7 +50,7 @@ func newTransportTestLink(t *testing.T) *transportTestLink {
 		Peers:    peers,
 		Settings: settings,
 		Clock:    clock,
-		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Logger:   logger,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -200,7 +207,12 @@ func TestServerRejectsTLS12(t *testing.T) {
 func TestFramesRoundTripOverGRPC(t *testing.T) {
 	server := newTransportTestLink(t)
 	received := make(chan []*linkpb.Frame, 1)
-	addr := startTransportServer(t, server.Link, func(c *conn, _ *trackedConn) {
+	addr := startTransportServer(t, server.Link, func(c *conn, tr *trackedConn) {
+		// This handler stands in for serveInbound; mark the connection
+		// authenticated so the pre-authentication read budget is off.
+		if tr != nil {
+			tr.authenticated()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
 		defer cancel()
 		frames := make([]*linkpb.Frame, 0, 3)
@@ -384,7 +396,13 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 
 	server := newTransportTestLink(t)
 	serverReceived := make(chan []byte, 1)
-	addr := startTransportServer(t, server.Link, func(c *conn, _ *trackedConn) {
+	addr := startTransportServer(t, server.Link, func(c *conn, tr *trackedConn) {
+		// This handler stands in for serveInbound; mark the connection
+		// authenticated so a 1.5 MiB frame is not charged to the
+		// pre-authentication read budget.
+		if tr != nil {
+			tr.authenticated()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
 		defer cancel()
 		f, err := c.recv(ctx)

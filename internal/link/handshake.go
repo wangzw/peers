@@ -239,6 +239,14 @@ func (l *Link) serveInbound(c *conn, t *trackedConn) (<-chan struct{}, bool) {
 		return nil, false
 	}
 
+	// The peer's Hello is verified: its role and protocol version are both
+	// acceptable. Leave the registry before answering, so the frames the peer
+	// sends after it reads our Hello are no longer charged to the
+	// pre-authentication read budget.
+	if t != nil {
+		t.authenticated()
+	}
+
 	l.noteHandshaking(fp)
 	l.peers.ObserveAlias(fp, hello.GetAlias())
 
@@ -258,14 +266,17 @@ func (l *Link) serveInbound(c *conn, t *trackedConn) (<-chan struct{}, bool) {
 		return nil, false
 	}
 
+	// Tests use this point to hold the accepting side after it answered the
+	// dialer, before the connection is installed.
+	if l.afterHelloSent != nil {
+		l.afterHelloSent()
+	}
+
 	// The salt is always the dialer's nonce followed by the acceptor's.
 	salt := make([]byte, 0, len(hello.GetNonce())+len(nonce))
 	salt = append(salt, hello.GetNonce()...)
 	salt = append(salt, nonce...)
 
-	if t != nil {
-		t.authenticated()
-	}
 	c.role = pairing.RoleAcceptor
 	delivered, ok := l.install(fp, pairing.RoleAcceptor, c, salt, gen)
 	if !ok {

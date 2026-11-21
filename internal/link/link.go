@@ -30,6 +30,11 @@ type Link struct {
 	localNets                   func() ([]*net.IPNet, error) // nil in production: the dial loop then uses defaultLocalNets
 	onDial                      func(address string)         // nil in production
 	randRead                    func([]byte) (int, error)    // crypto/rand.Read
+	// afterHelloSent, when not nil, runs after an accepted connection's Hello
+	// has been sent and before the connection is installed. Tests use it to
+	// hold the accepting side in the window where it has answered the dialer
+	// but has not installed the link.
+	afterHelloSent func()
 
 	rootCtx    context.Context
 	cancelRoot context.CancelFunc
