@@ -214,17 +214,17 @@ type PathSet struct {
 | 数据目录：身份、对端表、名录 | `~/.peers/` | `/var/lib/peers/` |
 | 审计日志 | `~/.peers/audit.log` | `/var/log/peers/audit.log` |
 
-运行时目录内有本机 socket `broker.sock` 和账户锁 `broker.lock`。运行时目录只取决于进程的账户，与形态、环境变量、配置内容和监听地址无关：root 的是 Linux 上的 `/run/peers/`、macOS 上的 `/var/run/peers/`，系统级 Broker 与 root 的用户级 Broker 因此争用同一把锁；其他账户的是 `/tmp/peers-<uid>/`，`<uid>` 是进程的账户。同一账户的两个进程因此总是争用同一把锁，也总在同一个位置找本机 socket（`REQ-broker-config-013`）。root 的运行时目录权限 `0755`；系统级 Broker 的本机 socket 在绑定后按 `broker.local_socket_group` 与 `broker.local_socket_mode` 设置属组与权限，哪些账户能连接由它决定；用户级的 socket 固定为 `0600`；其他账户的运行时目录权限 `0700`。运行时目录的属主必须是本账户，不符时拒绝启动。以上位置规则对发布构建成立。带 `peers_testenv` 构建标签的测试构建例外：`PEERS_TEST_RUNTIME_ROOT` 非空时运行时目录的根取它的值，`PEERS_TEST_HOME` 非空时账户家目录取它的值；两者为空时不生效，发布构建不含这段代码。
+运行时目录内有本机 socket `broker.sock` 和账户锁 `broker.lock`。运行时目录只取决于进程的账户与文件系统的状态，与形态、环境变量、配置内容和监听地址无关：root 的是 Linux 上的 `/run/peers/`、macOS 上的 `/var/run/peers/`，系统级 Broker 与 root 的用户级 Broker 因此争用同一把锁；其他账户的首选位置是 `/tmp/peers-<uid>/`，`<uid>` 是进程的账户。首选位置已存在且是符号链接、不是目录或属主不是本账户时，视为被其他账户占用，改用后备位置：Linux 的是 `/run/user/<uid>/peers/`，macOS 的是 `getconf` 的 `DARWIN_USER_TEMP_DIR` 给出的每用户临时目录下的 `peers/`。后备位置的上级目录必须是本账户拥有、不是符号链接、组与其他人都没有任何权限的目录；首选位置的属主是本账户而权限过宽时不算被占用，仍按权限规则拒绝启动，因为账户自己能改正。两处都不可用时拒绝启动，错误写出首选位置的占用者与原因，退出码沿用运行时目录失败时的取值。这条规则只取决于文件系统的状态与进程的账户，不读环境变量；Broker、MCP 服务、终端命令、`service install` 的预检与 `service remove` 使用同一组规则。占用者可以删除并重建首选位置，因此同一账户的不同进程在不同时刻可能算出不同的位置；为此 Broker 启动时在首选与后备两处都检查账户锁，任一处被本账户运行中的实例持有就拒绝启动，MCP 服务与终端命令在同样的两处探测本机 socket，只采用通过进程凭据检查的那个，两处都通过时采用账户锁被持有的那个，都没有持有时采用位置规则选出的那个（`REQ-broker-config-013`）。root 的运行时目录权限 `0755`；系统级 Broker 的本机 socket 在绑定后按 `broker.local_socket_group` 与 `broker.local_socket_mode` 设置属组与权限，哪些账户能连接由它决定；用户级的 socket 固定为 `0600`；其他账户的运行时目录权限 `0700`。运行时目录的属主必须是本账户，不符时拒绝启动。以上位置规则对发布构建成立。带 `peers_testenv` 构建标签的测试构建例外：`PEERS_TEST_RUNTIME_ROOT` 非空时运行时目录的根取它的值，`PEERS_TEST_HOME` 非空时账户家目录取它的值；两者为空时不生效，发布构建不含这段代码。
 
-用户级的数据目录权限 `0700`，其中的文件权限 `0600`。系统级的配置文件由 `service install --system` 在不存在时以 root 为属主、管理组为属组、`0660` 为权限创建，内容为 `Template(ModeSystem)`，已存在时安装不改动；管理组默认为 `peers`，可由 `--admin-group` 指定（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-040`、`REQ-broker-config-043`）。用户级的配置文件由 `service install` 在不存在时以本账户为属主、`0600` 为权限创建，内容为 `Template(ModeUser)`，已存在时安装不改动。管理员把它的读或写权限授予某个组，即把读取配置或管理操作委托给该组的账户。
+用户级的数据目录权限 `0700`，其中的文件权限 `0600`。系统级的配置文件由 `service install --system` 在不存在时以 root 为属主、管理组为属组、`0660` 为权限创建，内容为 `Template(ModeSystem)`，已存在时安装不改动；管理组默认为 `peers`，可由 `--admin-group` 指定（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-040`、`REQ-broker-config-043`）。用户级的配置文件由 `service install` 在不存在时以本账户为属主、`0600` 为权限创建，内容为 `Template(ModeUser)`，已存在时安装不改动。管理员把它的读或写权限授予某个组，即把读取配置或管理操作委托给该组的账户。Broker 的 `Set` 在配置文件不存在而新建时，系统级也用 `0600` 的文件权限：系统级 Broker 不知道管理组，不能照安装的属组与 `0660` 加组。
 
-配置文件的结构与键名一一对应，例如 `broker.alias` 对应顶层 `broker` 下的 `alias`。文件中没有出现的键取默认值，文件不存在等同于空文件。`Set` 只改动文件中它所修改的那个键，文件里的其他内容原样保留；文件不存在时，以运行 Broker 的账户创建它，属主与权限按形态设置。
+配置文件的结构与键名一一对应，例如 `broker.alias` 对应顶层 `broker` 下的 `alias`。文件中没有出现的键取默认值，文件不存在等同于空文件。`Set` 只改动文件中它所修改的那个键，文件里的其他内容原样保留；文件不存在时，以运行 Broker 的账户创建它，文件权限 `0600`，所在目录不存在时一并创建，用户级目录 `0700`，系统级目录 `0755`。
 
 默认别名：没有配置 `broker.alias` 时，系统级 Broker 取所在主机系统主机名的第一段（第一个 `.` 之前的部分），用户级 Broker 取主机名的第一段、`.` 与所属账户名依次组成的字符串。主机名取自 `os.Hostname()`，保留原有大小写；账户名取运行 Broker 的账户，经账户数据库查出，与审计 `account` 字段的来源相同；账户名查不到或为空时，账户名部分改用 `os.Geteuid()` 的十进制数字 uid，例如 `hostA.1000`，同一主机上唯一且每次结果相同，同时以 Warn 级别写一条运行日志，说明账户名查不到、改用 uid。别名与监听地址、监听端口和对外地址都无关。主机名和账户名中不属于别名字符集的字符替换为 `-`。主机名取不到或为空时，主机名部分取 `broker`。总长不超过 24 个字符（`REQ-broker-pairing-037`）：超长时先截短主机名部分，至少保留 1 个字符；仍然超长时再截短账户名部分，账户名部分改用 uid 时即截短 uid。截短后去掉末尾的 `.` 与 `-`，结果为空时取 `broker`。配置了 `broker.alias` 时取配置值，本节规则不适用。
 
 监听地址：`broker.listen` 的主机部分为空时，在本机的全部地址上监听，启用了 IPv6 时包括 IPv6 地址；写出了主机部分的，按字面绑定该地址，其中 `0.0.0.0` 与 `::` 在计算对外地址时按全部地址对待。端口不得为 0。
 
-系统级 Broker 的 `broker.listen` 端口小于 1024 时，只有在配置文件只有 root 可写时才生效：属组与其他人都没有写权限，访问控制列表里也没有额外的写授权。经本机接口把 `broker.listen` 设为低端口而调用方不是 root 的，由 `broker` 返回 `permission_denied`，说明低端口需要 root 修改，并且配置文件只能由 root 写。配置文件可被组或其他人写入时，热加载不采用新的低端口，保留旧值，运行日志以 Warn 级记录并追加一条 `config_rejected` 审计记录。启动时这条规则不改变 `Load` 的结果，而在绑定监听地址前由 `broker` 检查：前台运行以退出码 4 结束，带 `--allow-degraded` 的服务进入仅本机降级，修复提示为 `chmod g-w <配置文件>` 或改用 1024 以上的端口。用户级 Broker 不受这条规则影响（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`、`REQ-broker-config-058`）。
+系统级 Broker 的 `broker.listen` 端口小于 1024 时，只有在配置文件只有 root 可写时才生效：属组与其他人都没有写权限，访问控制列表里也没有额外的写授权。经本机接口把 `broker.listen` 设为低端口而调用方不是 root 的，由 `broker` 返回 `permission_denied`，说明低端口需要 root 修改，并且配置文件只能由 root 写。配置文件可被组或其他人写入时，热加载不采用新的低端口，保留旧值，运行日志以 Warn 级记录并追加一条 `config_rejected` 审计记录。启动时这条规则不改变 `Load` 的结果，而在绑定监听地址前由 `broker` 检查：前台运行以退出码 4 结束，带 `--allow-degraded` 的服务进入仅本机降级。拒绝时的提示分两种。`SetConfig` 的拒绝说明低端口需要 root 与只有 root 可写的配置文件，配置文件现在可被其他账户写入，修复办法是 `chmod g-w <配置文件>`（并去掉授予写权限的访问控制列表），或改用 1024 及以上的端口。启动与热加载共用一个提示：写出文件中 `broker.listen` 的当前取值，说明这个值可能由能写该文件的其他账户写入，要先核对该取值是否是想要的，再收紧权限；修复办法同样是 `chmod g-w` 或改用 1024 及以上的端口。用户级 Broker 不受这条规则影响（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`、`REQ-broker-config-058`）。
 
 对外地址：本次运行的对外地址列表由生效的监听地址与 `broker.advertise` 按下表得出，`broker.advertise_extra` 的各项追加在其后（[ADR-advertised-address](../../adr/adr-advertised-address.md)，`REQ-broker-config-030`、`REQ-broker-config-031`、`REQ-broker-config-033`）。
 
@@ -311,7 +311,7 @@ type PathSet struct {
 
 - 先按“配置文件的监视”中的同一套规则采用磁盘上尚未采纳的外部改动，并为每个采用了新值的键写 `config_file_changed` 审计记录。校验因此从磁盘上的当前值出发，去抖期内保存的外部改动不会被这次写入吞掉。
 - 检查键存在且不是密钥类配置项，值的类型与取值范围合法，与其他键的组合合法，再调用为该键注册的校验函数。修改 `broker.listen`、`broker.advertise` 或 `broker.advertise_extra` 时，以新值与另外两项的当前值核对“对外地址”中的组合规则与项数上限。
-- 读取配置文件的当前内容，只替换这个键，在原文件上就地改写：截断后写入完整内容并同步到磁盘。写回要重写整个文件，文件中的其他内容原样保留，原文件的属主、组、权限位与访问控制列表因此保持不变。文件不存在时以本账户的身份创建它。键在文件中不存在时，按下一段的占位行规则写入。写路径以 `O_NOFOLLOW` 打开配置文件，它是符号链接时写入失败、原文件不变；这条规则依赖配置目录 `/etc/peers` 以 root 为属主、组不可写（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`）。
+- 读取配置文件的当前内容，只替换这个键，在原文件上就地改写：截断后写入完整内容并同步到磁盘。写回要重写整个文件，文件中的其他内容原样保留，原文件的属主、组、权限位与访问控制列表因此保持不变。文件不存在时以本账户的身份创建它，文件权限 `0600`；所在目录不存在时一并创建，用户级目录 `0700`，系统级目录 `0755`。键在文件中不存在时，按下一段的占位行规则写入。写路径以 `O_NOFOLLOW` 打开配置文件，它是符号链接时写入失败、原文件不变；这条规则依赖配置目录 `/etc/peers` 以 root 为属主、组不可写（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`）。
 - 更新内存中的值。
 - 追加 `config_set` 审计记录。
 - 把这次变更放入通知队列。
@@ -363,6 +363,7 @@ type PathSet struct {
 - 同值 `Set` 照常写文件、写审计、发通知，因为这是一次经本机接口完成的修改。
 - 当前配置文件在结构上无法解析时 `Set` 失败，不覆盖文件；单个键的取值不合法不阻止其他键的修改。
 - 任何段中重复出现的键（包括未知段与未知键）、顶层已知段不是映射、YAML 合并键 `<<` 都按解析错误处理；其余未知段与未知键保留在文件里，不参与加载，`Set` 也不改动它们。
+- 配置文件中的锚点与别名（`&name`、`*name`）按解析错误处理，映射与序列的嵌套超过 32 层同样按解析错误处理；检查只遍历节点树、不跟随别名指针，因此自引用的别名不会成环，展开后呈指数增长的别名也不会被展开。配置文件的每一处读取最多读到 1 MiB 加 1 字节，超过 1 MiB 按读取错误处理。
 - 特定地址监听且未配置 `broker.advertise` 时，监听地址这一隐含项计入 8 项上限；默认路由来源的地址超过上限时舍去排在后面的项，`broker.advertise_extra` 的项全部保留。
 - 审计合并的分组依据包含事件类型，两种不同事件不会因字符串相同而合并。
 - 文件监视的去抖时长与地址枚举的周期 ticker 都通过包内字段注入；测试用假 ticker 驱动重载与周期枚举，不依赖真实等待。
@@ -373,6 +374,7 @@ type PathSet struct {
 | 情形 | 行为 |
 |---|---|
 | 启动时配置文件无法解析或含不合法的值 | 拒绝启动，带 `--allow-degraded` 时同样拒绝；无法解析时错误信息给出行号与列号，或指出出错的段名、键名，或说明失败的原因，不引用文件中的取值；含不合法的值时指出键与原因，不含密钥类配置项的取值 |
+| 配置文件超过 1 MiB | 读取在 1 MiB 加 1 字节处停止，超过时按读取错误处理：启动时拒绝启动，带 `--allow-degraded` 时同样拒绝；运行期间保留全部原值，运行日志以错误级别记录 |
 | 启动时数据目录或审计日志不可用 | `Load` 返回错误；带 `--allow-degraded` 时 `broker` 进入仅诊断降级，否则拒绝启动 |
 | 启动时 `broker.listen` 端口小于 1024 且配置文件可被组或其他人写入 | 由 `broker` 在绑定监听地址前拒绝：前台运行退出码为 4，带 `--allow-degraded` 时进入仅本机降级 |
 | 启动时监听地址与对外地址配置的组合非法，或对外地址的配置超过 8 项 | 拒绝启动；组合非法时错误信息同时指出 `broker.listen` 与 `broker.advertise` 或 `broker.advertise_extra`，超过 8 项时指出 `broker.advertise_extra` |

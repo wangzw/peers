@@ -320,7 +320,7 @@ Broker A 自报的别名是 `hostA`，Broker B 自报的别名是 `hostB`，A �
 
 1. 确定形态。带 `--system` 而进程不是以 root 运行的，报错退出。
 2. 经 `inbox` 的 `InSession` 检查自己是否运行在某个 Claude Code 会话的进程树内，是则报错退出。
-3. 对账户锁加排他的文件锁，拿不到即报告已有实例在运行并退出。账户锁的路径由 `config` 给出，只取决于本进程的账户，与形态、配置内容和监听地址无关；以不同的监听地址再启动一个实例，同样拿不到锁。系统级 Broker 取的是 root 的账户锁，root 因此不能同时运行一个系统级和一个用户级的实例。
+3. 对账户锁加排他的文件锁，拿不到即报告已有实例在运行并退出；取得解析出的那把锁之后，再检查本账户另一处候选运行时目录的账户锁，任一处被本账户运行中的实例持有都按已有实例处理，错误文字相同。账户锁的路径由 `config` 给出，只取决于本进程的账户，与形态、配置内容和监听地址无关；以不同的监听地址再启动一个实例，同样拿不到锁。系统级 Broker 取的是 root 的账户锁，root 因此不能同时运行一个系统级和一个用户级的实例。
 4. 加载配置，把 `--listen` 给出的地址作为本次运行的监听地址。带 `--allow-degraded` 时，`Load` 因审计日志不可用而失败使进程转入仅诊断；配置文件读取与解析、取值校验、对外地址准备的失败都与不带该参数时一样使进程退出。
 5. 按顺序执行各装配器：由装配器依次打开身份与对端表、构造 link 并把拨号与关闭链路的能力注入 `pairing`、构造 topic 与名录，各包实例在此时建立；配置读写与审计的装配器排在最后，把权限拦截器加入本机接口的服务端选项；随后构造本机接口并启动各组件，各组件在此时注册链路帧处理、配置变更的订阅与 `broker.listen` 的校验函数，早于本机 socket 的绑定与 `link` 的启动，因此先于任何入站连接和链路事件生效。身份、对端表与名录由装配器打开，不在 `Load` 里；装配器把打开它们时的“数据目录不可用”错误包上 `config` 导出的哨兵（[config](design-config.md) 的“错误与失败语义”）。带 `--allow-degraded` 时，`run.go` 用 `errors.Is` 认出这个哨兵并转入仅诊断；其余装配或组件启动失败照常致命退出。
 6. 绑定监听地址。这一步在全部组件启动之后执行，地址取本次运行的生效监听地址。绑定失败时，未带 `--allow-degraded` 的报告该地址不可用并退出；带它的进入仅本机降级，不改用其他地址或端口（[ADR-listen-by-default](../../adr/adr-listen-by-default.md)，[ADR-degraded-run](../../adr/adr-degraded-run.md)，`REQ-broker-config-024`、`REQ-broker-config-058`）。监听地址配置为空时跳过这一步。启动组件之后、各组件的 `AfterReady` 之前送达的 `broker.listen` 变更不立即绑定：`AfterReady` 阶段按当时的生效值与这一步绑定的地址比较，不同则补绑一次，相同则跳过。
@@ -332,7 +332,7 @@ Broker A 自报的别名是 `hostA`，Broker B 自报的别名是 `hostB`，A �
 
 投递的帧处理与链路订阅在装配阶段注册，早于本机 socket 的绑定与 `link` 的启动，因此先于任何入站连接和链路事件生效。
 
-持锁期间，Broker 每隔 1 分钟核对一次运行时目录：账户锁的路径上已不是自己持有的那个文件时退出，使锁文件被清理后不会出现两个实例；本机 socket 文件被删除或换成别的 socket 文件时重新绑定，换成普通文件时记一条 Warn 级别的日志并不替换。
+持锁期间，Broker 每隔 1 分钟核对一次运行时目录：账户锁的路径上已不是自己持有的那个文件时退出，使锁文件被清理后不会出现两个实例；本机 socket 文件被删除或换成别的 socket 文件时重新绑定，换成普通文件时记一条 Warn 级别的日志并不替换。核对时把账户锁文件、运行时目录与本地 socket 的时间戳设为同一时刻，按路径设置时不跟随符号链接，使按时间清理 `/tmp` 的规则不会删除运行中 Broker 的文件。三个目标各自在开始失败时记一条 Warn 级别的日志，恢复后再记一条 Info 级别的日志：账户锁为 `account_lock_touch_failed` 与 `account_lock_touch_recovered`，运行时目录为 `runtime_dir_touch_failed` 与 `runtime_dir_touch_recovered`，本地 socket 为 `local_socket_touch_failed` 与 `local_socket_touch_recovered`；同一失败只记首次与恢复，不逐次记录，也不退出，失败时在字段里给出路径与原因。运行时目录被其他账户占用而改用[后备位置](design-config.md)时，首次加载配置后以 Warn 级别记一条 `runtime_dir_fallback` 日志，字段是被占用的首选位置、占用者的 uid 与后备路径。
 
 同一主机上另一个账户的 Broker 已经占用了默认配置中的监听地址时：新装或重装由安装的预检拒绝，不注册服务（`REQ-broker-config-064`）；已经装好的服务之后再启动，前台运行的本实例在第 6 步失败，作为服务运行的进入仅本机降级，本机 Agent 照常互通，由用户改用其他地址或端口后自动开始监听。Agent 表为空时 Broker 不退出（`REQ-broker-config-014`）。
 
@@ -665,7 +665,7 @@ Broker 处理 `ApplyUpdate`：
 6. 删除安装脚本写入的补全文件，以及系统级的 man 页。补全文件为系统级的 `/usr/local/share/bash-completion/completions/peers`、`/usr/local/share/zsh/site-functions/_peers`、`/usr/local/share/fish/vendor_completions.d/peers.fish`，用户级的 `~/.local/share/bash-completion/completions/peers` 与 `~/.config/fish/completions/peers.fish`。删除前读取内容，只有带 cobra 为本程序生成的标记（bash 的 `# bash completion V2 for peers`、zsh 的 `#compdef peers`、fish 的 `# fish completion for peers`）才删除，否则保留并输出原因。man 页只匹配 `peers.1` 与 `peers-*.1`，不删 `peerstat.1` 这类别人的文件。与这些文件同名的目录一律保留并输出原因。
 7. 删除运行时目录：系统级为 Linux 的 `/run/peers/` 或 macOS 的 `/var/run/peers/`，用户级为 `/tmp/peers-<uid>/`（[config](design-config.md) 的路径表）。
 8. 删除数据（第 2 步为删时）：配置文件与配置目录、数据目录、审计日志、服务日志，系统级另按下面的规则删除管理组与 systemd 的 drop-in 目录 `peers.service.d`。完整位置如下表。
-9. 删除系统级二进制之前，查看 `/tmp/peers-*/broker.sock`；有其他账户的 Broker 在应答时列出这些账户并提示，照常删除。
+9. 删除系统级二进制之前，查看 `/tmp/peers-*/broker.sock`；`OtherAccountBrokers` 只扫描 `/tmp/peers-*`，采用后备运行时目录的用户级 Broker 不在其中，不会被列出。有其他账户的 Broker 在应答时列出这些账户并提示，照常删除。
 10. 最后删除第 3 步的二进制。只删除同时满足以下条件的文件：绝对路径；文件名为 `peers`；与当前进程的可执行文件是同一文件（同设备同 inode）。任一条件不满足时保留该文件，输出保留原因与手动删除命令 `rm <路径>`；命令不执行这个文件来判断它的版本。没有服务定义时，只有第 1 步按默认安装前缀认定安装的情况下，才把当前可执行文件当作第 3 步的路径；经 `sudo` 运行的其他位置的副本保留。
 
 | 内容 | Linux 用户级 | Linux 系统级 | macOS 用户级 | macOS 系统级 |

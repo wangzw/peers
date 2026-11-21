@@ -101,7 +101,7 @@ auto_join: true                               # 设为 false 时不自动加入�
 
 ## 依赖
 
-`mcpserver` 只引用本机接口的 proto 包 `internal/broker/localpb`，不引用 `broker` 包本身，符合模块依赖图的方向。它用系统的 `git` 命令读取 `origin` 地址。两种形态下运行时目录的位置规则与 [config](design-config.md) 所列的一致，`mcpserver` 按这些规则自行算出本机 socket 的路径，不需要引用 `broker` 包。终端命令 `service status` 与 `service audit` 的客户端在 `internal/mcpserver/termcmd`，它们复用本模块选定 Broker 的函数 `FindBrokerWithDial`，选定时只查找正在运行的 Broker，不启动 Broker；生成配对连接提示词的 `internal/mcpserver/pairingprompt` 由工具输出与 `termcmd` 共用，只依赖标准库；进程级信号由 `cmd/peers` 处理。
+`mcpserver` 只引用本机接口的 proto 包 `internal/broker/localpb`，不引用 `broker` 包本身，符合模块依赖图的方向。它用系统的 `git` 命令读取 `origin` 地址。两种形态下运行时目录的位置规则与 [config](design-config.md) 所列的一致，包括首选位置被其他账户占用时改用后备位置；占用者可能删除并重建首选位置，因此本模块在首选与后备两处都探测本机 socket，只采用通过进程凭据检查的那个，两处都通过时采用账户锁被持有、即 Broker 正在运行的那个。`mcpserver` 按这些规则自行算出本机 socket 的路径，不需要引用 `broker` 包。终端命令 `service status` 与 `service audit` 的客户端在 `internal/mcpserver/termcmd`，它们复用本模块选定 Broker 的函数 `FindBrokerWithDial`，选定时只查找正在运行的 Broker，不启动 Broker；生成配对连接提示词的 `internal/mcpserver/pairingprompt` 由工具输出与 `termcmd` 共用，只依赖标准库；进程级信号由 `cmd/peers` 处理。
 
 ## 核心算法与流程
 
@@ -111,11 +111,11 @@ auto_join: true                               # 设为 false 时不自动加入�
 
 | 顺序 | 条件 | 连接 |
 |---|---|---|
-| 一 | 本账户的用户级 Broker 的本机 socket 上有进程应答 | 该 socket |
+| 一 | 本账户的用户级 Broker 在首选或后备运行时目录的本机 socket 上有进程应答 | 通过进程凭据检查的那个；两处都通过时取账户锁被持有的那个，都不持有时取位置规则选出的那个 |
 | 二 | 系统级 Broker 的本机 socket 存在，本账户有权连接，且连接被接受 | 该 socket |
 | 三 | 以上都不成立 | 不连接；进入 `PhaseNoBroker`，工具调用返回错误 |
 
-是否有可用的 Broker，以能否连上它的本机 socket 判定：socket 不存在、本账户无权连接或连接被拒绝，都算不可用。管理员用系统级 Broker 本机 socket 的文件权限限定哪些账户可以使用它（`REQ-broker-config-027`），无权连接的账户落到第三步。系统级 socket 存在、本账户有权连接而连接被拒绝时，在 10 秒内按退避重试连接；其间连上即选定系统级，10 秒后仍无应答视为不可用，落到第三步。已选定并登记在系统级 Broker 上的会话断开后不重新选定，只按退避重连同一个 socket。本账户已有用户级 Broker 在运行时，即使主机上另有系统级 Broker，也连接用户级的那个。root 账户的用户级与系统级 socket 是同一路径，按用户级处理，不重复探测。
+是否有可用的 Broker，以能否连上它的本机 socket 判定：socket 不存在、本账户无权连接或连接被拒绝，都算不可用。用户级的两处候选 socket 都要探测：只要一处通过进程凭据检查就采用它，另一处不通过不影响选择；两处都通过时以账户锁被持有的那处为准，都没有持有时取位置规则选出的那处；两处都不通过才落到下一步。管理员用系统级 Broker 本机 socket 的文件权限限定哪些账户可以使用它（`REQ-broker-config-027`），无权连接的账户落到第三步。系统级 socket 存在、本账户有权连接而连接被拒绝时，在 10 秒内按退避重试连接；其间连上即选定系统级，10 秒后仍无应答视为不可用，落到第三步。已选定并登记在系统级 Broker 上的会话断开后不重新选定，只按退避重连同一个 socket。本账户已有用户级 Broker 在运行时，即使主机上另有系统级 Broker，也连接用户级的那个。root 账户的用户级与系统级 socket 是同一路径，按用户级处理，不重复探测。
 
 连上一个 socket 之后，在发出任何数据之前，本进程读取另一端进程的凭据，取得对端进程的有效 uid 并核对。本账户的用户级 Broker 的 socket，对端 uid 必须等于本进程的有效 uid；系统级 Broker 的 socket，对端 uid 必须为 0。不符的 socket 按不可用处理，错误文字写明路径与对端 uid。用户级的 socket 不符时直接报错；启动另一个 Broker 也无法绑定这个路径。选定之后建立连接时同样核对，socket 在选定之后被别的账户接管也不会用到。
 
