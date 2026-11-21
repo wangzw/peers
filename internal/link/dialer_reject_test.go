@@ -118,7 +118,7 @@ func (s *lingerStubAcceptor) Connect(stream grpc.BidiStreamingServer[linkpb.Fram
 func TestDialerRejectReachesAcceptorBeforeClose(t *testing.T) {
 	id := linktest.NewIdentity(t)
 	stub := &lingerStubAcceptor{
-		version:   2,
+		version:   linkpb.ProtocolVersion + 1,
 		readDelay: 250 * time.Millisecond,
 		frames:    make(chan *linkpb.Frame, 4),
 		ended:     make(chan error, 1),
@@ -155,7 +155,7 @@ func TestDialerRejectReachesAcceptorBeforeClose(t *testing.T) {
 	}
 
 	waitState(t, dialer.Link, id.Fingerprint, "dialer to back off with version_incompatible", func(st link.LinkState) bool {
-		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == 2
+		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == linkpb.ProtocolVersion+1
 	})
 	if got := dialer.upCount(id.Fingerprint); got != 0 {
 		t.Fatalf("dialer reported the link up %d times, want never", got)

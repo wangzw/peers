@@ -8,10 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `create_pairing_key` and `peers key create` append a paste-ready connect prompt that already names this Broker's addresses and the one-time pairing key: one sentence to paste into a session on the other host, and the equivalent `peers broker connect` command. It lists every shown address and says to choose one the other host can reach, while the command uses the first address and offers the rest as replacements. The tool returns the same text as `connect_prompt`, and leaves the field out when no address can be shown.
 
+### Changed
+
+- The link protocol version is now 2, a breaking change: a Broker of this version cannot establish a link with a v0.5.0 or earlier Broker, and the other side is reported as version-incompatible with its version. The digest fields of `TopicDigests`, `Roster` and `RosterDelta` changed meaning because each digest now binds the sender's fingerprint; see the Security entry below.
+
 ### Security
 
 - A host that opens many unauthenticated connections can no longer evict the connections of other sources or of paired peers. Unauthenticated connections are limited per source and, once a peer's fingerprint is known, per fingerprint; the bytes and HTTP/2 header size a connection may send before authentication are bounded.
 - `create_pairing_key`'s note, its not-listening error, the server instructions and `connect_broker`'s `key` parameter now say the pairing key and the connect prompt go only to the user, who passes them outside peers. A session no longer relays either to another agent over `send_message`, Claude Code's built-in session messaging or any other agent-to-agent channel when that agent asks for a pairing key.
+- A malicious or compromised peer could send a Broker's own topic digests back verbatim: the echo matched every local topic, so the peer learned the member list of each and could forge members under those digests. A digest is now `SHA-256(salt ‖ sender fingerprint ‖ topic name)`, so the two directions of a topic differ and an echoed set intersects nothing. The digest fields of `TopicDigests`, `Roster` and `RosterDelta` changed meaning, so the link protocol version is now 2: this version's Broker cannot establish a link with 0.5.0 and earlier, which is reported as the existing version-incompatible status with the other side's version.
 
 ## [0.5.0] - 2026-11-21
 

@@ -19,7 +19,7 @@ type wlEndpoint struct {
 func wlNewEndpoint(t *testing.T, self link.Fingerprint) *wlEndpoint {
 	t.Helper()
 	l := newFakeLink(t, self)
-	return &wlEndpoint{r: New(l, Options{}), l: l}
+	return &wlEndpoint{r: New(l, Options{Self: self}), l: l}
 }
 
 // introduce registers an agent with the registry. AgentChanged also introduces
@@ -138,7 +138,7 @@ func TestWalkthrough(t *testing.T) {
 
 	// Before step 5 neither a roster nor a delta under the private topic's
 	// digest crossed the link, and no frame carried the name itself.
-	wlCheckNoSecretRoster(t, a.l.sentFrames(b.l.self), digest(salt, secret))
+	wlCheckNoSecretRoster(t, a.l.sentFrames(b.l.self), digest(salt, a.l.self, secret))
 	for i, f := range a.l.sentFrames(b.l.self) {
 		if bytes.Contains(f.Payload, []byte(secret)) {
 			t.Fatalf("frame %d sent to B contains the private topic name", i)

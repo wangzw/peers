@@ -104,7 +104,7 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 
 	// An invalid Roster (its digest is not in the peer's set) carrying the
 	// private name. It must be dropped without the name reaching the log.
-	unknown := digest(salt2, "unshared-topic")
+	unknown := digest(salt2, la.self, "unshared-topic")
 	bad := &topicpb.Roster{
 		Digest: unknown[:],
 		Members: []*topicpb.Member{{
@@ -258,7 +258,7 @@ func TestLogsCarryNoNames(t *testing.T) {
 
 	// A frame that carries several of the names but is dropped because its
 	// digest is not in the peer's set; the log must not echo its payload.
-	unknown := digest([]byte("salt-2"), "unshared-topic")
+	unknown := digest([]byte("salt-2"), lb.self, "unshared-topic")
 	bad := &topicpb.Roster{
 		Digest: unknown[:],
 		Members: []*topicpb.Member{{

@@ -48,40 +48,67 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-func TestDigestOrderAndValue(t *testing.T) {
-	// SHA-256("abc") proves salt first, name second.
-	if got, want := digest([]byte("ab"), "c"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"; hex.EncodeToString(got[:]) != want {
-		t.Errorf("digest(\"ab\", \"c\") = %s, want %s", hex.EncodeToString(got[:]), want)
+func TestDigestBindsSender(t *testing.T) {
+	salt := []byte("salt")
+	var f1, f2 link.Fingerprint
+	f1[0], f2[0] = 1, 2
+
+	// Two directions of one topic under one salt, against fixed values.
+	for _, tc := range []struct {
+		fp   link.Fingerprint
+		want string
+	}{
+		{f1, "4f07fe1fb1ac90392a249ad6535b7a8e714bc917f3882cb07c5b10c041a6bb2b"},
+		{f2, "266f506a71f852b8eef5fa24ab5a65d4edd06d8cc2d4035eef1bdeee09c64517"},
+	} {
+		if got := digest(salt, tc.fp, "topic"); hex.EncodeToString(got[:]) != tc.want {
+			t.Errorf("digest(salt, %x, topic) = %s, want %s", tc.fp[:4], hex.EncodeToString(got[:]), tc.want)
+		}
 	}
-	if digest([]byte("s1"), "t") == digest([]byte("s2"), "t") {
-		t.Error("digest ignores the salt")
+	if digest(salt, f1, "topic") == digest(salt, f2, "topic") {
+		t.Error("the digest ignores the sender")
+	}
+	if digest([]byte("s1"), f1, "t") == digest([]byte("s2"), f1, "t") {
+		t.Error("the digest ignores the salt")
+	}
+
+	// SHA-256("ab" || zero fingerprint || "c") proves salt first, sender
+	// second, name third.
+	var zero link.Fingerprint
+	if got, want := digest([]byte("ab"), zero, "c"), "311d16069bf00c1d50ef0f78ebcd407e88b193f5a737020ace49c1e0ccac89de"; hex.EncodeToString(got[:]) != want {
+		t.Errorf("digest(\"ab\", zero, \"c\") = %s, want %s", hex.EncodeToString(got[:]), want)
 	}
 
 	// A digest must not write into the caller's salt, not even into its spare
 	// capacity.
-	salt := make([]byte, 3, 16)
-	copy(salt, "s1x")
-	before := append([]byte(nil), salt[:cap(salt)]...)
-	digest(salt, "t")
-	if !bytes.Equal(salt[:cap(salt)], before) {
-		t.Errorf("digest modified the caller's salt: %q -> %q", before, salt[:cap(salt)])
+	tight := make([]byte, 3, 16)
+	copy(tight, "s1x")
+	before := append([]byte(nil), tight[:cap(tight)]...)
+	digest(tight, f1, "t")
+	if !bytes.Equal(tight[:cap(tight)], before) {
+		t.Errorf("digest modified the caller's salt: %q -> %q", before, tight[:cap(tight)])
 	}
 }
 
 func TestNewPeerStateCopiesSalt(t *testing.T) {
 	salt := []byte("s1")
-	ps := newPeerState(salt, []string{"t1", "t2"})
+	self, peer := link.Fingerprint{1}, link.Fingerprint{2}
+	ps := newPeerState(salt, self, peer, []string{"t1", "t2"})
 	salt[0] = 'X'
 	if string(ps.salt) != "s1" {
 		t.Errorf("ps.salt = %q, want %q (the salt was not copied)", ps.salt, "s1")
 	}
 
-	want := digest([]byte("s1"), "t1")
-	if got := ps.digest["t1"]; got != want {
-		t.Errorf("ps.digest[\"t1\"] = %x, want %x", got, want)
+	wantSend := digest([]byte("s1"), self, "t1")
+	if got := ps.send["t1"]; got != wantSend {
+		t.Errorf("ps.send[\"t1\"] = %x, want %x", got, wantSend)
 	}
-	if got := ps.name[want]; got != "t1" {
-		t.Errorf("ps.name[digest(\"t1\")] = %q, want %q", got, "t1")
+	wantRecv := digest([]byte("s1"), peer, "t1")
+	if got := ps.recv["t1"]; got != wantRecv {
+		t.Errorf("ps.recv[\"t1\"] = %x, want %x", got, wantRecv)
+	}
+	if got := ps.recvName[wantRecv]; got != "t1" {
+		t.Errorf("ps.recvName[recv(\"t1\")] = %q, want %q", got, "t1")
 	}
 
 	if ps.remote == nil || len(ps.remote) != 0 {

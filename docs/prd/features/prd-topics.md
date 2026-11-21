@@ -133,7 +133,7 @@ Agent 必须能列出自己已加入的 topic 和本 Broker 已知的公开 topi
 
 - **验收**：主机 A 上名为 `api-worker` 的 Agent 在 topic `t1` 中，已连接的主机 B 上没有 Agent 在 `t1` 中；B 上任何工具的返回结果和 B 的日志中都不出现 `api-worker`。B 上有 Agent 加入 `t1` 后，A 上的该 Agent 出现在它的列表中。
 - **状态**：已实现
-- **端到端测试**：`test/e2e/security_test.go` 的 `TestPrivateTopicNamesStayHome/REQ-topics-014 member list`
+- **端到端测试**：`test/e2e/security_test.go` 的 `TestPrivateTopicNamesStayHome/REQ-topics-014 member list`；`test/e2e/security_test.go` 的 `TestEchoedTopicDigestsRevealNothing/REQ-topics-014 echoed digests`
 
 ### REQ-topics-015
 

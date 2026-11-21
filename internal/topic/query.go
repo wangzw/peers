@@ -102,7 +102,7 @@ func visibleAgents(lt *localTable, peers map[link.Fingerprint]*peerState, local 
 		}
 		byRef := map[string]*remoteEntry{}
 		for _, name := range localTopics {
-			d, ok := ps.digest[name]
+			d, ok := ps.recv[name]
 			if !ok {
 				continue
 			}
@@ -149,7 +149,7 @@ func remoteMembers(ps *peerState) []Member {
 	}
 	first := map[string]Member{}
 	for _, name := range sharedNames(ps) {
-		d, ok := ps.digest[name]
+		d, ok := ps.recv[name]
 		if !ok {
 			continue
 		}
@@ -183,7 +183,7 @@ func sharedMember(ps *peerState, name, ref string) (Member, bool) {
 	if ps == nil || ref == "" {
 		return Member{}, false
 	}
-	d, ok := ps.digest[name]
+	d, ok := ps.recv[name]
 	if !ok {
 		return Member{}, false
 	}
@@ -202,7 +202,7 @@ func sharedNames(ps *peerState) []string {
 	}
 	names := make([]string, 0, len(ps.shared))
 	for d := range ps.shared {
-		names = append(names, ps.name[d])
+		names = append(names, ps.recvName[d])
 	}
 	sort.Strings(names)
 	return names

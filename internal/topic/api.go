@@ -38,6 +38,12 @@ type VisibleAgent struct {
 // Options configures a Registry. A nil Logger means slog.Default().
 type Options struct {
 	Logger *slog.Logger
+
+	// Self is this Broker's certificate fingerprint, the value the peer sees on
+	// the link. Digests this Broker sends are bound to it so a peer cannot echo
+	// a digest set back and match it. New panics when Self is the zero
+	// Fingerprint.
+	Self link.Fingerprint
 }
 
 var (

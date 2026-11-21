@@ -47,7 +47,8 @@ func (r *Registry) Join(agent AgentID, name string) error {
 			ps.addLocal(name)
 			r.sendLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 			for _, d := range ps.recompute() {
-				r.sendLocked(peer, topicpb.KindRoster, rosterMsg(d, r.local.members(ps.name[d])))
+				send, topicName := ps.sentDigest(d)
+				r.sendLocked(peer, topicpb.KindRoster, rosterMsg(send, r.local.members(topicName)))
 			}
 			continue
 		}

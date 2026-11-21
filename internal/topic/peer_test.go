@@ -5,7 +5,15 @@ import (
 	"maps"
 	"slices"
 	"testing"
+
+	"github.com/wangzw/peers/internal/link"
 )
+
+// peerTestFingerprints returns distinct self and peer fingerprints for tests
+// that build a peerState directly.
+func peerTestFingerprints() (self, peer link.Fingerprint) {
+	return link.Fingerprint{1}, link.Fingerprint{2}
+}
 
 // peerTestDigestSet builds the digest set a peer would send for ds.
 func peerTestDigestSet(ds [][32]byte) map[[32]byte]struct{} {
@@ -22,8 +30,9 @@ func peerTestDigestSet(ds [][32]byte) map[[32]byte]struct{} {
 // REQ-topics-007: the same non-public topic name on two Brokers is one topic.
 func TestRecomputeEntering(t *testing.T) {
 	salt := []byte("salt")
-	a := newPeerState(salt, []string{"t1", "t2"})
-	b := newPeerState(salt, []string{"t1", "t3"})
+	self, peer := peerTestFingerprints()
+	a := newPeerState(salt, self, peer, []string{"t1", "t2"})
+	b := newPeerState(salt, peer, self, []string{"t1", "t3"})
 
 	if got := a.localDigests(); !slices.IsSortedFunc(got, func(x, y [32]byte) int {
 		return bytes.Compare(x[:], y[:])
@@ -34,12 +43,15 @@ func TestRecomputeEntering(t *testing.T) {
 	a.setRemote(peerTestDigestSet(b.localDigests()))
 	b.setRemote(peerTestDigestSet(a.localDigests()))
 
-	want := [][32]byte{digest(salt, "t1")}
-	if got := a.recompute(); !slices.Equal(got, want) {
-		t.Errorf("a.recompute() = %x, want %x", got, want)
+	// Each side compares in the direction of the other Broker's fingerprint,
+	// so the two intersections hold different digests for the same topic.
+	wantA := [][32]byte{digest(salt, peer, "t1")}
+	wantB := [][32]byte{digest(salt, self, "t1")}
+	if got := a.recompute(); !slices.Equal(got, wantA) {
+		t.Errorf("a.recompute() = %x, want %x", got, wantA)
 	}
-	if got := b.recompute(); !slices.Equal(got, want) {
-		t.Errorf("b.recompute() = %x, want %x", got, want)
+	if got := b.recompute(); !slices.Equal(got, wantB) {
+		t.Errorf("b.recompute() = %x, want %x", got, wantB)
 	}
 	if got := a.recompute(); len(got) != 0 {
 		t.Errorf("second a.recompute() = %x, want none", got)
@@ -52,13 +64,14 @@ func TestRecomputeEntering(t *testing.T) {
 // TestSaltChangesDigests checks that a digest learned under one salt does not
 // match the same topic under another salt.
 func TestSaltChangesDigests(t *testing.T) {
-	d1 := digest([]byte("s1"), "t1")
-	d2 := digest([]byte("s2"), "t1")
+	self, peer := peerTestFingerprints()
+	d1 := digest([]byte("s1"), peer, "t1")
+	d2 := digest([]byte("s2"), peer, "t1")
 	if d1 == d2 {
 		t.Fatal("the digest ignores the salt")
 	}
 
-	ps := newPeerState([]byte("s2"), []string{"t1"})
+	ps := newPeerState([]byte("s2"), self, peer, []string{"t1"})
 	ps.setRemote(map[[32]byte]struct{}{d1: {}})
 	if got := ps.recompute(); len(got) != 0 {
 		t.Errorf("recompute() = %x, want none", got)
@@ -73,8 +86,9 @@ func TestSaltChangesDigests(t *testing.T) {
 // again but starts with no entries.
 func TestLeavingDropsRoster(t *testing.T) {
 	salt := []byte("salt")
-	ps := newPeerState(salt, []string{"t1"})
-	d := digest(salt, "t1")
+	self, peer := peerTestFingerprints()
+	ps := newPeerState(salt, self, peer, []string{"t1"})
+	d := digest(salt, peer, "t1")
 	ps.setRemote(map[[32]byte]struct{}{d: {}})
 	if got := ps.recompute(); !slices.Equal(got, [][32]byte{d}) {
 		t.Fatalf("recompute() = %x, want [%x]", got, d)
@@ -89,11 +103,14 @@ func TestLeavingDropsRoster(t *testing.T) {
 	if _, ok := ps.shared[d]; ok {
 		t.Error("t1 is still in the intersection after removeLocal")
 	}
-	if _, ok := ps.digest["t1"]; ok {
-		t.Error("removeLocal kept the digest of t1")
+	if _, ok := ps.send["t1"]; ok {
+		t.Error("removeLocal kept the sent digest of t1")
 	}
-	if _, ok := ps.name[d]; ok {
-		t.Error("removeLocal kept the reverse mapping of t1")
+	if _, ok := ps.recv["t1"]; ok {
+		t.Error("removeLocal kept the compared digest of t1")
+	}
+	if _, ok := ps.recvName[d]; ok {
+		t.Error("removeLocal kept the reverse compared mapping of t1")
 	}
 	if entries, ok := ps.rosters[d]; ok {
 		t.Errorf("roster entries = %+v, want the roster discarded when the digest left the intersection", entries)
@@ -118,7 +135,8 @@ func TestLeavingDropsRoster(t *testing.T) {
 // TestApplyDeltaRules covers the receiver's rules for RosterDelta.
 func TestApplyDeltaRules(t *testing.T) {
 	salt := []byte("salt")
-	d := digest(salt, "t1")
+	self, peer := peerTestFingerprints()
+	d := digest(salt, peer, "t1")
 
 	tests := []struct {
 		name    string
@@ -166,7 +184,7 @@ func TestApplyDeltaRules(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ps := newPeerState(salt, []string{"t1"})
+			ps := newPeerState(salt, self, peer, []string{"t1"})
 			if tt.initial != nil {
 				ps.applyRoster(d, tt.initial)
 			}
@@ -183,8 +201,9 @@ func TestApplyDeltaRules(t *testing.T) {
 // Ref wins.
 func TestApplyRosterReplaces(t *testing.T) {
 	salt := []byte("salt")
-	d := digest(salt, "t1")
-	ps := newPeerState(salt, []string{"t1"})
+	self, peer := peerTestFingerprints()
+	d := digest(salt, peer, "t1")
+	ps := newPeerState(salt, self, peer, []string{"t1"})
 
 	ps.applyRoster(d, []Member{{Name: "a", Ref: "r1"}, {Name: "b", Ref: "r2"}})
 	if got := len(ps.rosters[d]); got != 2 {

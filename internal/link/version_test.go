@@ -20,7 +20,7 @@ import (
 )
 
 func TestLinkVersionAcceptorNewer(t *testing.T) {
-	acceptor := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = 2 })
+	acceptor := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = linkpb.ProtocolVersion + 1 })
 	dialer := newNode(t, "a")
 	addr := listenAt(t, acceptor)
 	linktest.Introduce(dialer.Peers, acceptor.Peers, "a", "b", addr)
@@ -35,7 +35,7 @@ func TestLinkVersionAcceptorNewer(t *testing.T) {
 	})
 
 	waitState(t, acceptor.Link, fpDialer, "acceptor to record the dialer's version", func(st link.LinkState) bool {
-		return st.Phase == link.PhaseWaiting && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == 1
+		return st.Phase == link.PhaseWaiting && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == linkpb.ProtocolVersion
 	})
 	if got := acceptor.upCount(fpDialer); got != 0 {
 		t.Fatalf("acceptor reported the link up %d times, want never", got)
@@ -46,7 +46,7 @@ func TestLinkVersionAcceptorNewer(t *testing.T) {
 }
 
 func TestLinkVersionDialerNewer(t *testing.T) {
-	dialer := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = 2 })
+	dialer := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = linkpb.ProtocolVersion + 1 })
 	acceptor := newNode(t, "a")
 	addr := listenAt(t, acceptor)
 	linktest.Introduce(dialer.Peers, acceptor.Peers, "b", "a", addr)
@@ -57,7 +57,7 @@ func TestLinkVersionDialerNewer(t *testing.T) {
 	fpDialer := dialer.Peers.Fingerprint()
 
 	waitState(t, acceptor.Link, fpDialer, "acceptor to record the dialer's version", func(st link.LinkState) bool {
-		return st.Phase == link.PhaseWaiting && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == 2
+		return st.Phase == link.PhaseWaiting && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == linkpb.ProtocolVersion+1
 	})
 	waitState(t, dialer.Link, fpAcceptor, "dialer to back off after the reject", func(st link.LinkState) bool {
 		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible
@@ -159,7 +159,7 @@ func (s *stubAcceptor) Connect(stream grpc.BidiStreamingServer[linkpb.Frame, lin
 
 func TestDialerRejectsAcceptorHello(t *testing.T) {
 	id := linktest.NewIdentity(t)
-	stub := &stubAcceptor{version: 2, frames: make(chan *linkpb.Frame, 4), ended: make(chan error, 1)}
+	stub := &stubAcceptor{version: linkpb.ProtocolVersion + 1, frames: make(chan *linkpb.Frame, 4), ended: make(chan error, 1)}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -174,7 +174,7 @@ func TestDialerRejectsAcceptorHello(t *testing.T) {
 	dialer.Start()
 
 	waitState(t, dialer.Link, id.Fingerprint, "dialer to back off with version_incompatible after the newer Hello", func(st link.LinkState) bool {
-		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == 2
+		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible && st.PeerVersion == linkpb.ProtocolVersion+1
 	})
 
 	select {
@@ -211,7 +211,7 @@ func TestDialerRejectsAcceptorHello(t *testing.T) {
 }
 
 func TestLinkVersionRecoversAfterUpgrade(t *testing.T) {
-	acceptor := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = 2 })
+	acceptor := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = linkpb.ProtocolVersion + 1 })
 	dialer := newNode(t, "a")
 	addr := listenAt(t, acceptor)
 	linktest.Introduce(dialer.Peers, acceptor.Peers, "a", "b", addr)

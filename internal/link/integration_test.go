@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/link"
+	"github.com/wangzw/peers/internal/link/linkpb"
 	"github.com/wangzw/peers/internal/pairing"
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
@@ -802,7 +803,7 @@ func TestBothDialersReportRoleMismatch(t *testing.T) {
 func TestProtocolVersionIncompatible(t *testing.T) {
 	var logs syncBuffer
 	acceptor := newNode(t, "a", func(o *link.Options) {
-		o.ProtocolVersion = 2
+		o.ProtocolVersion = linkpb.ProtocolVersion + 1
 		o.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	})
 	dialer := newNode(t, "b")
@@ -818,10 +819,10 @@ func TestProtocolVersionIncompatible(t *testing.T) {
 		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible
 	})
 
-	if got := acceptor.State(fpDialer).PeerVersion; got != 1 {
-		t.Fatalf("acceptor recorded peer version %d, want 1", got)
+	if got := acceptor.State(fpDialer).PeerVersion; got != linkpb.ProtocolVersion {
+		t.Fatalf("acceptor recorded peer version %d, want %d", got, linkpb.ProtocolVersion)
 	}
-	if !logHasVersionMismatch(logs.String(), 2, 1) {
+	if !logHasVersionMismatch(logs.String(), linkpb.ProtocolVersion+1, linkpb.ProtocolVersion) {
 		t.Fatalf("acceptor log does not name both versions:\n%s", logs.String())
 	}
 }

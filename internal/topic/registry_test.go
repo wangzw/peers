@@ -42,7 +42,7 @@ func (b *syncBuffer) String() string {
 func newLinkRegistry(t *testing.T, fl *fakeLink) (*Registry, *syncBuffer) {
 	t.Helper()
 	buf := &syncBuffer{}
-	r := New(fl, Options{Logger: slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	r := New(fl, Options{Logger: slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})), Self: fl.self})
 	return r, buf
 }
 
@@ -127,7 +127,7 @@ func TestOnUpSendsDigests(t *testing.T) {
 
 		frames := fl.sentFrames(p)
 		wantKinds(t, frames, topicpb.KindTopicDigests)
-		want := [][32]byte{digest(salt, "t1"), digest(salt, "t2")}
+		want := [][32]byte{digest(salt, fl.self, "t1"), digest(salt, fl.self, "t2")}
 		sortDigests(want)
 		if got := wireDigestsOf(t, frames[0]); !slices.Equal(got, want) {
 			t.Fatalf("digests = %x, want %x", got, want)
@@ -163,22 +163,23 @@ func TestDigestsTriggerRosterForSharedOnly(t *testing.T) {
 	flushAll(t, fl)
 	fl.clearSent(p)
 
-	d1 := digest(salt, "t1")
-	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, digest(salt, "unrelated")}))
+	d1 := digest(salt, p, "t1")
+	sent := digest(salt, fl.self, "t1")
+	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, digest(salt, p, "unrelated")}))
 	flushAll(t, fl)
 
 	frames := fl.sentFrames(p)
 	wantKinds(t, frames, topicpb.KindRoster)
 	roster := decodeRoster(t, frames[0])
-	if !bytes.Equal(roster.Digest, d1[:]) {
-		t.Fatalf("roster digest = %x, want %x", roster.Digest, d1)
+	if !bytes.Equal(roster.Digest, sent[:]) {
+		t.Fatalf("roster digest = %x, want %x", roster.Digest, sent)
 	}
 	if len(roster.Members) != 1 || roster.Members[0].Name != "api" {
 		t.Fatalf("roster members = %v, want only api", roster.Members)
 	}
 
 	fl.clearSent(p)
-	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, digest(salt, "unrelated")}))
+	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, digest(salt, p, "unrelated")}))
 	flushAll(t, fl)
 	if frames := fl.sentFrames(p); len(frames) != 0 {
 		t.Fatalf("same digest set produced %d frames, want none", len(frames))
@@ -197,7 +198,7 @@ func TestRosterOutsideRemoteDigestsDropped(t *testing.T) {
 	fl.up(p, salt)
 	flushAll(t, fl)
 
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
 		Members: []*topicpb.Member{{Name: "leaky-name", Ref: "aaaaaa"}},
@@ -232,7 +233,7 @@ func TestRosterThenVisible(t *testing.T) {
 	fl.up(p, salt)
 	flushAll(t, fl)
 
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -268,7 +269,7 @@ func TestReconnectStartsOver(t *testing.T) {
 
 	fl.up(p, s1)
 	flushAll(t, fl)
-	d1 := digest(s1, "t1")
+	d1 := digest(s1, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -286,14 +287,15 @@ func TestReconnectStartsOver(t *testing.T) {
 	fl.up(p, s2)
 	flushAll(t, fl)
 
-	d2 := digest(s2, "t1")
+	d2 := digest(s2, p, "t1")
+	sent2 := digest(s2, fl.self, "t1")
 	if d1 == d2 {
 		t.Fatal("the two salts produced the same digest")
 	}
 	frames := fl.sentFrames(p)
 	wantKinds(t, frames, topicpb.KindTopicDigests)
-	if got := wireDigestsOf(t, frames[0]); !slices.Equal(got, [][32]byte{d2}) {
-		t.Fatalf("digests after reconnect = %x, want [%x]", got, d2)
+	if got := wireDigestsOf(t, frames[0]); !slices.Equal(got, [][32]byte{sent2}) {
+		t.Fatalf("digests after reconnect = %x, want [%x]", got, sent2)
 	}
 
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d2}))
@@ -317,7 +319,7 @@ func TestFramesWithoutLinkIgnored(t *testing.T) {
 	r, _ := newLinkRegistry(t, fl)
 	seedLocal(t, r, "a", Member{Name: "api", Ref: "aaaaaa"}, "t1")
 
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -348,7 +350,7 @@ func TestMalformedFramesDropped(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -387,7 +389,7 @@ func TestQueriesReturnCopies(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -457,7 +459,7 @@ func TestReenteringIntersectionDropsOldRoster(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -503,8 +505,8 @@ func TestDeltaForUnknownDigestDropped(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
-	d2 := digest(salt, "t2")
+	d1 := digest(salt, p, "t1")
+	d2 := digest(salt, p, "t2")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	flushAll(t, fl)
 
@@ -545,7 +547,7 @@ func TestDeltaBadDigestLengthDropped(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	flushAll(t, fl)
 
@@ -575,7 +577,7 @@ func TestDownDiscardsLinkState(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -637,7 +639,7 @@ func TestSecondOnUpStartsWithNewSalt(t *testing.T) {
 
 	fl.up(p, s1)
 	flushAll(t, fl)
-	d1 := digest(s1, "t1")
+	d1 := digest(s1, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -652,14 +654,15 @@ func TestSecondOnUpStartsWithNewSalt(t *testing.T) {
 	fl.up(p, s2)
 	flushAll(t, fl)
 
-	d2 := digest(s2, "t1")
+	d2 := digest(s2, p, "t1")
+	sent2 := digest(s2, fl.self, "t1")
 	if d1 == d2 {
 		t.Fatal("the two salts produced the same digest")
 	}
 	frames := fl.sentFrames(p)
 	wantKinds(t, frames, topicpb.KindTopicDigests)
-	if got := wireDigestsOf(t, frames[0]); !slices.Equal(got, [][32]byte{d2}) {
-		t.Fatalf("digests after the second onUp = %x, want [%x]", got, d2)
+	if got := wireDigestsOf(t, frames[0]); !slices.Equal(got, [][32]byte{sent2}) {
+		t.Fatalf("digests after the second onUp = %x, want [%x]", got, sent2)
 	}
 	if got := r.RemoteMembers(p); got != nil {
 		t.Fatalf("RemoteMembers = %+v, want nil", got)
@@ -681,7 +684,7 @@ func TestInboundMemberEntriesValidated(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	flushAll(t, fl)
 
@@ -741,7 +744,7 @@ func TestMemberDropLogsOncePerFrame(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	flushAll(t, fl)
 
@@ -785,7 +788,7 @@ func TestPrevNameValidated(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	flushAll(t, fl)
 
@@ -832,7 +835,7 @@ func TestDeltaChangedEntryValidated(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
+	d1 := digest(salt, p, "t1")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	flushAll(t, fl)
 
@@ -869,8 +872,8 @@ func TestDeltaOutsideIntersectionNotStored(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
-	d2 := digest(salt, "t2")
+	d1 := digest(salt, p, "t1")
+	d2 := digest(salt, p, "t2")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, d2}))
 	flushAll(t, fl)
 
@@ -912,8 +915,8 @@ func TestRosterOutsideIntersectionNotStored(t *testing.T) {
 
 	fl.up(p, salt)
 	flushAll(t, fl)
-	d1 := digest(salt, "t1")
-	d2 := digest(salt, "t2")
+	d1 := digest(salt, p, "t1")
+	d2 := digest(salt, p, "t2")
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, d2}))
 	flushAll(t, fl)
 
@@ -961,7 +964,7 @@ func TestInboundFrameLimits(t *testing.T) {
 		seedLocal(t, r, "a", Member{Name: "api", Ref: "aaaaaa"}, "t1")
 		fl.up(p, salt)
 		flushAll(t, fl)
-		d1 := digest(salt, "t1")
+		d1 := digest(salt, p, "t1")
 		fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 		fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 			Digest:  d1[:],

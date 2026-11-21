@@ -18,6 +18,9 @@ const (
 // New registers topic's three frame handlers and the link subscription on t.
 // It must be called before t starts listening or dialing.
 func New(t Transport, opts Options) *Registry {
+	if opts.Self.IsZero() {
+		panic("topic: Options.Self is required")
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
@@ -25,6 +28,7 @@ func New(t Transport, opts Options) *Registry {
 	r := &Registry{
 		t:     t,
 		log:   logger,
+		self:  opts.Self,
 		local: newLocalTable(),
 		peers: map[link.Fingerprint]*peerState{},
 	}
@@ -41,7 +45,7 @@ func New(t Transport, opts Options) *Registry {
 func (r *Registry) onUp(peer link.Fingerprint, salt []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	ps := newPeerState(salt, r.local.topicNames())
+	ps := newPeerState(salt, r.self, peer, r.local.topicNames())
 	r.peers[peer] = ps
 	r.sendLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 }
@@ -79,7 +83,8 @@ func (r *Registry) handleDigests(peer link.Fingerprint, f link.Frame) {
 	}
 	ps.setRemote(set)
 	for _, d := range ps.recompute() {
-		r.sendLocked(peer, topicpb.KindRoster, rosterMsg(d, r.local.members(ps.name[d])))
+		send, name := ps.sentDigest(d)
+		r.sendLocked(peer, topicpb.KindRoster, rosterMsg(send, r.local.members(name)))
 	}
 }
 

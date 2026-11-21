@@ -5,28 +5,28 @@ import (
 	"sort"
 )
 
-// addLocal adds a local topic and its digest under this link's salt.
+// addLocal adds a local topic and both of its digests under this link's salt.
 func (ps *peerState) addLocal(name string) {
-	d := digest(ps.salt, name)
-	ps.digest[name] = d
-	ps.name[d] = name
+	ps.indexLocal(name)
 }
 
-// removeLocal removes a local topic and its digest. The intersection is not
-// recomputed here; the caller does that.
+// removeLocal removes a local topic and both of its digests. The intersection
+// is not recomputed here; the caller does that.
 func (ps *peerState) removeLocal(name string) {
-	d, ok := ps.digest[name]
-	if !ok {
+	if _, ok := ps.send[name]; !ok {
 		return
 	}
-	delete(ps.digest, name)
-	delete(ps.name, d)
+	delete(ps.send, name)
+	r := ps.recv[name]
+	delete(ps.recv, name)
+	delete(ps.recvName, r)
 }
 
-// localDigests returns the digests of every local topic, ascending.
+// localDigests returns the digests this Broker sends for every local topic,
+// ascending.
 func (ps *peerState) localDigests() [][32]byte {
-	out := make([][32]byte, 0, len(ps.digest))
-	for _, d := range ps.digest {
+	out := make([][32]byte, 0, len(ps.send))
+	for _, d := range ps.send {
 		out = append(out, d)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -50,14 +50,14 @@ func (ps *peerState) knowsRemote(d [32]byte) bool {
 	return ok
 }
 
-// recompute replaces the intersection with the digests that are both local and
-// in the peer's set, and returns the digests that entered it, ascending.
-// A digest that leaves the intersection loses its roster: entries that went
-// stale while the topic was outside the intersection must not come back when it
-// re-enters, so the peer has to send a new Roster.
+// recompute replaces the intersection with the peer-direction digests that are
+// both local and in the peer's set, and returns the digests that entered it,
+// ascending. A digest that leaves the intersection loses its roster: entries
+// that went stale while the topic was outside the intersection must not come
+// back when it re-enters, so the peer has to send a new Roster.
 func (ps *peerState) recompute() (entered [][32]byte) {
-	shared := make(map[[32]byte]struct{}, len(ps.name))
-	for d := range ps.name {
+	shared := make(map[[32]byte]struct{}, len(ps.recv))
+	for _, d := range ps.recv {
 		if _, ok := ps.remote[d]; ok {
 			shared[d] = struct{}{}
 		}
@@ -79,17 +79,17 @@ func (ps *peerState) recompute() (entered [][32]byte) {
 	return entered
 }
 
-// sharedDigest returns the digest of a local topic when it is in the
-// intersection.
+// sharedDigest returns the digest this Broker sends for a local topic when the
+// topic is in the intersection.
 func (ps *peerState) sharedDigest(name string) ([32]byte, bool) {
-	d, ok := ps.digest[name]
+	recv, ok := ps.recv[name]
 	if !ok {
 		return [32]byte{}, false
 	}
-	if _, ok := ps.shared[d]; !ok {
+	if _, ok := ps.shared[recv]; !ok {
 		return [32]byte{}, false
 	}
-	return d, true
+	return ps.send[name], true
 }
 
 // applyRoster replaces the peer's entries under d. Entries with an empty Ref are

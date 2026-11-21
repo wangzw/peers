@@ -28,31 +28,56 @@ func newLocalTable() *localTable {
 }
 
 type peerState struct {
-	salt    []byte                         // private copy
-	digest  map[string][32]byte            // local non-empty topic -> digest under salt
-	name    map[[32]byte]string            // reverse of digest
-	remote  map[[32]byte]struct{}          // peer's latest TopicDigests
-	shared  map[[32]byte]struct{}          // current intersection
-	rosters map[[32]byte]map[string]Member // peer's entries per digest, keyed by Ref
+	salt []byte
+	self link.Fingerprint // this Broker, labelling what it sends
+	peer link.Fingerprint // the other Broker, labelling what it sends
+
+	send     map[string][32]byte // local topic -> digest this Broker sends
+	recv     map[string][32]byte // local topic -> digest the peer would send
+	recvName map[[32]byte]string // reverse of recv
+
+	remote  map[[32]byte]struct{}          // peer's latest TopicDigests, peer direction
+	shared  map[[32]byte]struct{}          // current intersection, peer direction
+	rosters map[[32]byte]map[string]Member // peer's entries per peer-direction digest, keyed by Ref
 }
 
-// newPeerState copies salt and fills digest and name for every local topic;
-// remote, shared and rosters start empty (allocated).
-func newPeerState(salt []byte, localTopics []string) *peerState {
+// newPeerState copies salt and fills the two digests of every local topic:
+// send under this Broker's fingerprint and recv under the peer's. remote,
+// shared and rosters start empty (allocated).
+func newPeerState(salt []byte, self, peer link.Fingerprint, localTopics []string) *peerState {
 	ps := &peerState{
-		salt:    append([]byte(nil), salt...),
-		digest:  make(map[string][32]byte, len(localTopics)),
-		name:    make(map[[32]byte]string, len(localTopics)),
-		remote:  map[[32]byte]struct{}{},
-		shared:  map[[32]byte]struct{}{},
-		rosters: map[[32]byte]map[string]Member{},
+		salt:     append([]byte(nil), salt...),
+		self:     self,
+		peer:     peer,
+		send:     make(map[string][32]byte, len(localTopics)),
+		recv:     make(map[string][32]byte, len(localTopics)),
+		recvName: make(map[[32]byte]string, len(localTopics)),
+		remote:   map[[32]byte]struct{}{},
+		shared:   map[[32]byte]struct{}{},
+		rosters:  map[[32]byte]map[string]Member{},
 	}
 	for _, n := range localTopics {
-		d := digest(ps.salt, n)
-		ps.digest[n] = d
-		ps.name[d] = n
+		ps.indexLocal(n)
 	}
 	return ps
+}
+
+// indexLocal records both digests of a local topic and the reverse lookup of
+// the peer direction, which is the one incoming frames are matched against.
+func (ps *peerState) indexLocal(name string) {
+	s := digest(ps.salt, ps.self, name)
+	ps.send[name] = s
+	r := digest(ps.salt, ps.peer, name)
+	ps.recv[name] = r
+	ps.recvName[r] = name
+}
+
+// sentDigest returns the digest this Broker sends for the local topic whose
+// peer-direction digest is recv, along with the topic name. recv must be in the
+// intersection.
+func (ps *peerState) sentDigest(recv [32]byte) ([32]byte, string) {
+	name := ps.recvName[recv]
+	return ps.send[name], name
 }
 
 // Registry is the topic table. It holds the local agents and their topics and,
@@ -62,6 +87,7 @@ type Registry struct {
 	mu    sync.RWMutex
 	t     Transport
 	log   *slog.Logger
+	self  link.Fingerprint
 	local *localTable
 	peers map[link.Fingerprint]*peerState
 }

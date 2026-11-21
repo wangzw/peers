@@ -93,14 +93,14 @@ func TestDialerVersionMismatchLingersUntilTheRejectIsWritten(t *testing.T) {
 	c := newConn(stream, stream.abort, peerIdentity{fp: fp, pub: make([]byte, 32), remote: "127.0.0.1:1"}, 8)
 	c.start()
 
-	stream.incoming <- encodeHello(2, "acceptor", hsNonce(2), nil)
+	stream.incoming <- encodeHello(linkpb.ProtocolVersion+1, "acceptor", hsNonce(2), nil)
 
 	res := waitHSDial(t, hsDial(t, h.l, c))
 	if res.failure != FailVersionIncompatible {
 		t.Fatalf("failure = %v, want FailVersionIncompatible (err: %v)", res.failure, res.err)
 	}
-	if res.peerVersion != 2 {
-		t.Fatalf("peer version = %d, want 2", res.peerVersion)
+	if res.peerVersion != linkpb.ProtocolVersion+1 {
+		t.Fatalf("peer version = %d, want %d", res.peerVersion, linkpb.ProtocolVersion+1)
 	}
 
 	// This is the dial loop's failure path for a failed handshake.

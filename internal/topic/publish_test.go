@@ -20,6 +20,7 @@ func pubNewRegistry(t *testing.T, fl *fakeLink) (*Registry, *bytes.Buffer) {
 	return &Registry{
 		t:     fl,
 		log:   slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		self:  fl.self,
 		local: newLocalTable(),
 		peers: map[link.Fingerprint]*peerState{},
 	}, buf
@@ -34,10 +35,10 @@ func pubLinkPeer(t *testing.T, r *Registry, fl *fakeLink, p link.Fingerprint, sa
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	ps := newPeerState(salt, r.local.topicNames())
+	ps := newPeerState(salt, r.self, p, r.local.topicNames())
 	set := make(map[[32]byte]struct{}, len(remoteTopics))
 	for _, name := range remoteTopics {
-		set[digest(salt, name)] = struct{}{}
+		set[digest(salt, p, name)] = struct{}{}
 	}
 	ps.setRemote(set)
 	ps.recompute()
@@ -45,11 +46,11 @@ func pubLinkPeer(t *testing.T, r *Registry, fl *fakeLink, p link.Fingerprint, sa
 	fl.clearSent(p)
 }
 
-// pubDigestSet returns the digests of names under salt.
-func pubDigestSet(salt []byte, names ...string) map[[32]byte]struct{} {
+// pubDigestSet returns the digests this Broker sends for names under salt.
+func pubDigestSet(self link.Fingerprint, salt []byte, names ...string) map[[32]byte]struct{} {
 	set := make(map[[32]byte]struct{}, len(names))
 	for _, name := range names {
-		set[digest(salt, name)] = struct{}{}
+		set[digest(salt, self, name)] = struct{}{}
 	}
 	return set
 }
@@ -175,14 +176,14 @@ func TestJoinFrameOrder(t *testing.T) {
 	if len(pf) != 2 {
 		t.Fatalf("peer p received %d frames, want 2", len(pf))
 	}
-	pubCheckDigests(t, pf[0], pubDigestSet(salt, "t9"))
-	pubCheckRoster(t, pf[1], digest(salt, "t9"), []Member{{Name: "api-worker", Ref: "aaaaaa"}})
+	pubCheckDigests(t, pf[0], pubDigestSet(r.self, salt, "t9"))
+	pubCheckRoster(t, pf[1], digest(salt, r.self, "t9"), []Member{{Name: "api-worker", Ref: "aaaaaa"}})
 
 	qf := fl.sentFrames(q)
 	if len(qf) != 1 {
 		t.Fatalf("peer q received %d frames, want only TopicDigests", len(qf))
 	}
-	pubCheckDigests(t, qf[0], pubDigestSet(salt, "t9"))
+	pubCheckDigests(t, qf[0], pubDigestSet(r.self, salt, "t9"))
 
 	fl.clearSent(p)
 	fl.clearSent(q)
@@ -195,7 +196,7 @@ func TestJoinFrameOrder(t *testing.T) {
 	if len(pf) != 1 {
 		t.Fatalf("peer p received %d frames for the second join, want 1", len(pf))
 	}
-	pubCheckDelta(t, pf[0], digest(salt, "t9"), []Member{{Name: "frontend", Ref: "bbbbbb"}}, nil, nil)
+	pubCheckDelta(t, pf[0], digest(salt, r.self, "t9"), []Member{{Name: "frontend", Ref: "bbbbbb"}}, nil, nil)
 	if qf := fl.sentFrames(q); len(qf) != 0 {
 		t.Errorf("peer q received %d frames for a topic it does not share, want 0", len(qf))
 	}
@@ -229,7 +230,7 @@ func TestLeaveFrames(t *testing.T) {
 	if len(pf) != 1 {
 		t.Fatalf("peer p received %d frames after Leave(a), want 1", len(pf))
 	}
-	pubCheckDelta(t, pf[0], digest(salt, "t1"), nil, []memberKey{{Name: "api-worker", Ref: "aaaaaa"}}, nil)
+	pubCheckDelta(t, pf[0], digest(salt, r.self, "t1"), nil, []memberKey{{Name: "api-worker", Ref: "aaaaaa"}}, nil)
 
 	fl.clearSent(p)
 	if err := r.Leave(b, "t1"); err != nil {
@@ -239,7 +240,7 @@ func TestLeaveFrames(t *testing.T) {
 	if len(pf) != 1 {
 		t.Fatalf("peer p received %d frames after the last leave, want only TopicDigests", len(pf))
 	}
-	pubCheckDigests(t, pf[0], pubDigestSet(salt))
+	pubCheckDigests(t, pf[0], pubDigestSet(r.self, salt))
 }
 
 // TestLeaveAllFrames checks the frames when an agent disappears: one
@@ -272,8 +273,8 @@ func TestLeaveAllFrames(t *testing.T) {
 	if len(pf) != 2 {
 		t.Fatalf("peer p received %d frames after LeaveAll, want 2", len(pf))
 	}
-	pubCheckDigests(t, pf[0], pubDigestSet(salt, "t2"))
-	pubCheckDelta(t, pf[1], digest(salt, "t2"), nil, []memberKey{{Name: "api-worker", Ref: "aaaaaa"}}, nil)
+	pubCheckDigests(t, pf[0], pubDigestSet(r.self, salt, "t2"))
+	pubCheckDelta(t, pf[1], digest(salt, r.self, "t2"), nil, []memberKey{{Name: "api-worker", Ref: "aaaaaa"}}, nil)
 
 	r.mu.RLock()
 	topics := r.local.topicsOf(a)
@@ -343,7 +344,7 @@ func TestAgentChangedFrames(t *testing.T) {
 	if err := r.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)
 	}
-	d := digest(salt, "t1")
+	d := digest(salt, r.self, "t1")
 
 	fl.clearSent(p)
 	r.AgentChanged(a, "api-v2", "api-worker", "aaaaaa", "busy")

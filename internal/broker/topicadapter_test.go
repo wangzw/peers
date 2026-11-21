@@ -87,7 +87,7 @@ func TestTopicNameRulesMatch(t *testing.T) {
 // TestTopicAdapterJoinLeave checks that the adapter forwards memberships,
 // roster entries and errors between the Broker's types and the registry's.
 func TestTopicAdapterJoinLeave(t *testing.T) {
-	r := topic.New(nopTopicTransport{}, topic.Options{})
+	r := topic.New(nopTopicTransport{}, topic.Options{Self: link.Fingerprint{1}})
 	table := NewTopicTable(r)
 
 	table.AgentChanged("ag1", "worker", "", "ref1", "idle")

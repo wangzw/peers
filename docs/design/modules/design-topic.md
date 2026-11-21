@@ -4,14 +4,14 @@
 
 ## 核心概念
 
-链路两端需要找出共同的 topic，又不能把自己独有的 topic 名字告诉对方。做法是各自对 topic 名加盐求摘要，只交换摘要（[ADR-salted-topic-digest](../../adr/adr-salted-topic-digest.md)）：摘要相同说明名字相同，摘要不同则对方无从得知名字。盐值由链路建立时双方各提供一半随机数拼成，每条链路、每次建立都不同。
+链路两端需要找出共同的 topic，又不能把自己独有的 topic 名字告诉对方。做法是各自对 topic 名、盐值和发送方指纹求摘要，只交换摘要（[ADR-salted-topic-digest](../../adr/adr-salted-topic-digest.md)）：同一个 topic 在两个方向上的摘要不同，本机发出时按本机指纹计算，比对收到的摘要时按对端指纹计算；摘要相同说明名字相同，摘要不同则对方无从得知名字，把收到的摘要集合原样回送也得不到交集。盐值由链路建立时双方各提供一半随机数拼成，每条链路、每次建立都不同；指纹是本机证书指纹，即对端在链路上看到的同一个值。
 
-每一方都持有本机当前有成员的 topic 的摘要集合，以及对端最近一次发来的摘要集合，这两个集合的交集就是共同的 topic。交集不由某一方算好后通知另一方，而是双方各算各的；任何一个集合变化，持有它的一方都重算，并把新进入交集的 topic 的成员名单发给对方。双方依据的是同样的一对集合，算出的交集最终相同。
+每一方发出的是按本机指纹计算的、本机当前有成员的 topic 的摘要集合；收到对端最近一次发来的集合后，用按对端指纹计算的本机同名 topic 摘要与之求交，得到共同的 topic。交集不由某一方算好后通知另一方，而是双方各算各的；任何一个集合变化，持有它的一方都重算，并把新进入交集的 topic 的成员名单发给对方。双方依据的是同样的一对集合，算出的交集最终相同。
 
 ## 职责
 
 - 记录本机每个 Agent 所在的 topic，处理加入与退出，在 Agent 注销时清除其全部成员关系（`REQ-topics-001` 至 `REQ-topics-004`、`REQ-topics-022`）。
-- 在每条链路上与对端交换加盐摘要，算出共同的 topic，只就这些 topic 发送本机的成员名单；名字相同的 topic 在两个 Broker 上摘要相同，因而是同一个 topic（`REQ-topics-007`、`REQ-topics-009`、`REQ-topics-014`）。
+- 在每条链路上与对端交换加盐摘要，算出共同的 topic，只就这些 topic 发送本机的成员名单；两边对同一个名字按同一个发送方指纹与盐值算出的摘要相同，因而是同一个 topic（`REQ-topics-007`、`REQ-topics-009`、`REQ-topics-014`）。
 - 保存每条链路对端发来的成员名单，在链路断开时整体丢弃。
 - 判定两个 Agent 是否可见（[ADR-topic-scoped-visibility](../../adr/adr-topic-scoped-visibility.md)，`REQ-topics-005`、`REQ-topics-006`）。
 - 在本机成员关系或 Agent 的名字、曾用名、消歧标识、状态变化时，向相关链路推送变化（`REQ-agent-messaging-031`、`REQ-agent-messaging-032`）。
@@ -25,7 +25,7 @@
 
 ## 外部接口契约
 
-供 `broker` 调用，签名稳定。除 `New` 与 `ValidateName` 外，下列函数是主类型 `*Registry` 的方法，由 `New(t Transport, opts Options)` 创建。`Transport` 是本包对 `link` 的依赖面，只含 `Send`、`HandleState`、`Subscribe`；broker 的 topic 装配器传入 link 实例，`New` 在 link 开始监听与拨号之前调用。`Options` 目前只带一个日志记录器，为 nil 时用 `slog.Default()`。
+供 `broker` 调用，签名稳定。除 `New` 与 `ValidateName` 外，下列函数是主类型 `*Registry` 的方法，由 `New(t Transport, opts Options)` 创建。`Transport` 是本包对 `link` 的依赖面，只含 `Send`、`HandleState`、`Subscribe`；broker 的 topic 装配器传入 link 实例，`New` 在 link 开始监听与拨号之前调用。`Options` 带日志记录器与 `Self`：日志记录器为 nil 时用 `slog.Default()`；`Self` 是本机证书指纹，即对端在链路上看到的同一个值，`New` 在它为零值时 panic。
 
 ```go
 func New(t Transport, opts Options) *Registry
@@ -78,8 +78,8 @@ sequenceDiagram
     participant A as Broker A 的 topic
     participant B as Broker B 的 topic
     Note over A,B: 链路已建立，盐值已由 link 给出
-    A->>B: TopicDigests（A 上有成员的每个 topic 的摘要）
-    B->>A: TopicDigests（B 上有成员的每个 topic 的摘要）
+    A->>B: TopicDigests（A 上有成员的每个 topic、按 A 指纹计算的摘要）
+    B->>A: TopicDigests（B 上有成员的每个 topic、按 B 指纹计算的摘要）
     A->>A: 求交集
     B->>B: 求交集
     A->>B: Roster（交集内每个 topic 的摘要及其下 A 的成员）
@@ -97,25 +97,25 @@ sequenceDiagram
 | 结构 | 键 | 值 | 存续 |
 |---|---|---|---|
 | 本机成员名单 | topic 名 | 该 topic 下的本机 Agent 集合 | 随 Agent 存续 |
-| 链路摘要表，每条链路一张 | 摘要 | 本机 topic 名 | 随链路存续 |
+| 链路摘要表，每条链路一张 | 本机 topic 名 | 发出用摘要（按本机指纹计算）与比对用摘要（按对端指纹计算） | 随链路存续 |
 | 对端摘要集合，每条链路一个 | — | 对端最近一次发来的全部摘要 | 随链路存续 |
-| 对端成员名单，每条链路一张 | 摘要，消歧标识 | 对端在该 topic 下的成员条目 | 随链路存续 |
+| 对端成员名单，每条链路一张 | 比对用摘要，消歧标识 | 对端在该 topic 下的成员条目 | 随链路存续 |
 
-成员条目的字段是名字、消歧标识、状态和曾用名，不含别名、工作目录或其他信息。曾用名由 Agent 所在的 Broker 在保留期满后清除，清除也作为一次变化推送，其他 Broker 因此能对以曾用名为目标的发送给出同样的提示。对端成员名单在摘要下按消歧标识保存条目，依据是同一 Broker 上各 Agent 的消歧标识两两不同，对端的一个条目由消歧标识唯一确定。只有摘要处在当前交集内时才保存对端成员名单；判定可见性和回答查询时也只使用这些条目。
+成员条目的字段是名字、消歧标识、状态和曾用名，不含别名、工作目录或其他信息。曾用名由 Agent 所在的 Broker 在保留期满后清除，清除也作为一次变化推送，其他 Broker 因此能对以曾用名为目标的发送给出同样的提示。对端成员名单在比对用摘要下按消歧标识保存条目，依据是同一 Broker 上各 Agent 的消歧标识两两不同，对端的一个条目由消歧标识唯一确定。只有摘要处在当前交集内时才保存对端成员名单；判定可见性和回答查询时也只使用这些条目。
 
 链路上的帧：
 
 | 帧 | 类别 | 内容 | 语义 |
 |---|---|---|---|
-| `TopicDigests` | 状态帧 | 摘要的完整集合 | 发送方当前有成员的全部 topic，覆盖此前发送的集合 |
-| `Roster` | 状态帧 | 摘要，成员条目的完整列表 | 该 topic 下发送方的全部成员，覆盖此前的列表 |
-| `RosterDelta` | 状态帧 | 摘要，新增、移除与变更的成员条目 | 增量 |
+| `TopicDigests` | 状态帧 | 摘要的完整集合，按发送方指纹计算 | 发送方当前有成员的全部 topic，覆盖此前发送的集合 |
+| `Roster` | 状态帧 | 发送方的发出用摘要，成员条目的完整列表 | 该 topic 下发送方的全部成员，覆盖此前的列表 |
+| `RosterDelta` | 状态帧 | 发送方的发出用摘要，新增、移除与变更的成员条目 | 增量 |
 
 `RosterDelta` 的组成规则是：成员加入放进新增，退出放进移除；名字或消歧标识变化，以移除旧键、新增新条目表示，因为消歧标识会随本机 Agent 增减而变长变短；只有状态或曾用名变化时放进变更；名字、消歧标识、状态、曾用名都不变时不发帧。接收方按移除、新增、变更的顺序应用：移除要求名字与消歧标识都相符才删除，不相符的忽略；新增与变更都按消歧标识写入，已有则覆盖，没有则新增；消歧标识为空的条目跳过。
 
 链路建立时总是发送一帧 `TopicDigests`，本机没有任何 topic 时也发送，内容为空集合，对端据此得到确定的初始集合。
 
-摘要的计算是 `SHA-256(盐值 ‖ topic 名)`，`‖` 表示拼接。
+摘要的计算是 `SHA-256(盐值 ‖ 发送方指纹 ‖ topic 名)`，`‖` 表示拼接。发送方指纹是本机证书指纹，即对端在链路上看到的同一个值；盐值固定 64 字节，指纹固定 32 字节，拼接没有歧义。本机发出的每一帧用本机指纹计算，收到对端摘要时用对端指纹计算本机同名的 topic。
 
 ## 核心算法与流程
 
@@ -126,7 +126,7 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 | 步骤 | 事件 | A 持有的 B 成员名单 | B 持有的 A 成员名单 |
 |---|---|---|---|
 | 1 | A 发出自己的摘要集合，含 `github.com/org/repo` 与 `secret-x` 的摘要；B 发出的集合只含 `github.com/org/repo` 的摘要 | 空 | 空 |
-| 2 | 双方求交集，都得到 `github.com/org/repo`；B 无法从另一个摘要得知 `secret-x` | 空 | 空 |
+| 2 | 双方求交集，都得到 `github.com/org/repo`；B 无法从另一个摘要得知 `secret-x`，把收到的摘要集合原样回送也不会产生交集，因为两个方向的摘要不同 | 空 | 空 |
 | 3 | A 发 `Roster`：`api-worker`；B 发 `Roster`：`frontend` | `github.com/org/repo`：`frontend` | `github.com/org/repo`：`api-worker` |
 | 4 | `api-worker` 调用列出 Agent，看到 B 上的 `frontend` | 不变 | 不变 |
 | 5 | B 上新 Agent `db-worker` 加入 `secret-x`。B 重发摘要集合，并用它与 A 此前发来的集合重算，`secret-x` 进入交集，B 发 `Roster(secret-x)`：`db-worker` | 增加 `secret-x`：`db-worker` | 不变 |
@@ -161,7 +161,7 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 - 该对端没有链路状态，即未收到建立通知或已经断开。
 - 帧的载荷无法解码。
 - `TopicDigests` 中有任何一项不是 32 字节，此时整帧丢弃，保留此前的对端集合。其中重复的摘要按集合去重。
-- `Roster` 或 `RosterDelta` 的摘要不是 32 字节，或不在对端最近一次的摘要集合中；摘要不在该集合中表示对端的实现有误。
+- `Roster` 或 `RosterDelta` 的摘要不是 32 字节，或不在对端最近一次的摘要集合中；摘要不在该集合中表示对端发来了本机未与其协商的摘要，可能来自回送本机摘要集合的尝试，也可能是对端实现有误。
 - `Roster` 或 `RosterDelta` 的摘要在对端最近一次的摘要集合中，但不在当前交集内；此时不保存其中的名单。
 - 成员条目不合规：消歧标识不是 6 至 12 位小写十六进制，或名字为空、含空白、`@`、`*` 或控制字符，或曾用名不为空却含空白、`@`、`*` 或控制字符。不合规的条目整条丢弃，其余条目照常应用；每帧记一条日志，带该帧丢弃的条数，日志不写成员名与曾用名。
 - 单个 `TopicDigests` 帧的摘要超过 4096 项，或 `Roster`、`RosterDelta` 的任一成员列表超过 4096 条：整帧丢弃，不改变此前的状态。

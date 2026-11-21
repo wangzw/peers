@@ -37,16 +37,16 @@ func buildLocal(t *testing.T, agents map[AgentID]localSpec) *localTable {
 // buildPeer fills a peerState with the shared set and the rosters it is given.
 // A roster topic outside the intersection is stored too, so tests can prove
 // those entries stay invisible.
-func buildPeer(t *testing.T, salt []byte, localTopics, sharedTopics []string, rosters map[string][]Member) *peerState {
+func buildPeer(t *testing.T, salt []byte, self, peer link.Fingerprint, localTopics, sharedTopics []string, rosters map[string][]Member) *peerState {
 	t.Helper()
-	ps := newPeerState(salt, localTopics)
+	ps := newPeerState(salt, self, peer, localTopics)
 	for _, name := range sharedTopics {
-		d := digest(salt, name)
+		d := digest(salt, peer, name)
 		ps.remote[d] = struct{}{}
 		ps.shared[d] = struct{}{}
 	}
 	for name, members := range rosters {
-		d := digest(salt, name)
+		d := digest(salt, peer, name)
 		byRef := ps.rosters[d]
 		if byRef == nil {
 			byRef = map[string]Member{}
@@ -151,14 +151,14 @@ func TestVisibleRemoteOnlyInShared(t *testing.T) {
 	member := Member{Name: "frontend", Ref: "r1"}
 
 	notShared := map[link.Fingerprint]*peerState{
-		p: buildPeer(t, salt, []string{"t1"}, nil, map[string][]Member{"t1": {member}}),
+		p: buildPeer(t, salt, queryFingerprint(100), p, []string{"t1"}, nil, map[string][]Member{"t1": {member}}),
 	}
 	if got := visible(lt, notShared, "a", AgentRef{Peer: p, Ref: "r1"}); got != nil {
 		t.Errorf("visible over a digest outside the intersection = %v, want nil", got)
 	}
 
 	shared := map[link.Fingerprint]*peerState{
-		p: buildPeer(t, salt, []string{"t1"}, []string{"t1"}, map[string][]Member{"t1": {member}}),
+		p: buildPeer(t, salt, queryFingerprint(100), p, []string{"t1"}, []string{"t1"}, map[string][]Member{"t1": {member}}),
 	}
 	if got := visible(lt, shared, "a", AgentRef{Peer: p, Ref: "r1"}); !slices.Equal(got, []string{"t1"}) {
 		t.Errorf("visible over a shared digest = %v, want [t1]", got)
@@ -201,7 +201,7 @@ func TestVisibleAgentsOrderAndMerge(t *testing.T) {
 		"c": {Info: Member{Name: "c-id", Ref: "ref-c", Status: "busy"}, Topics: []string{"t2"}},
 	})
 	peers := map[link.Fingerprint]*peerState{
-		p: buildPeer(t, salt, []string{"t1", "t2"}, []string{"t1", "t2"}, map[string][]Member{
+		p: buildPeer(t, salt, queryFingerprint(100), p, []string{"t1", "t2"}, []string{"t1", "t2"}, map[string][]Member{
 			"t1": {
 				{Name: "one", Ref: "r1", Status: "busy"},
 				{Name: "two", Ref: "r2", Status: "idle"},
@@ -210,7 +210,7 @@ func TestVisibleAgentsOrderAndMerge(t *testing.T) {
 				{Name: "one", Ref: "r1", Status: "idle"},
 			},
 		}),
-		q: buildPeer(t, salt, []string{"t1"}, []string{"t1"}, map[string][]Member{
+		q: buildPeer(t, salt, queryFingerprint(100), q, []string{"t1"}, []string{"t1"}, map[string][]Member{
 			"t1": {{Name: "zero", Ref: "r0", Status: "shell"}},
 		}),
 	}
@@ -231,7 +231,7 @@ func TestVisibleAgentsOrderAndMerge(t *testing.T) {
 // the first shared topic's entry, and drops entries outside the intersection.
 func TestRemoteMembersDedupe(t *testing.T) {
 	salt := []byte("salt")
-	ps := buildPeer(t, salt, []string{"t1", "t2"}, []string{"t1", "t2"}, map[string][]Member{
+	ps := buildPeer(t, salt, queryFingerprint(100), queryFingerprint(1), []string{"t1", "t2"}, []string{"t1", "t2"}, map[string][]Member{
 		"t1": {
 			{Name: "one", Ref: "r1", Status: "busy"},
 			{Name: "two", Ref: "r2", Status: "idle"},

@@ -1,7 +1,9 @@
 package linkpb
 
 // ProtocolVersion is the link protocol version carried in Hello.protocol_version.
-const ProtocolVersion uint32 = 1
+// Version 2 changed the meaning of the topic digest fields, so a version 1
+// Broker cannot share topics with a version 2 Broker and the link is refused.
+const ProtocolVersion uint32 = 2
 
 // Frame kinds for link payloads.
 const (
