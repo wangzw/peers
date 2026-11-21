@@ -50,7 +50,7 @@ func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) 
 	if err != nil {
 		return Peer{}, "", err
 	}
-	hint := computeHint([]byte(key), ni)
+	hint := computeHint([]byte(key), ni, p.identity.fingerprint())
 
 	var result Peer
 	err = p.transport.PairDial(ctx, dialAddr, func(conn PairConn) error {
@@ -248,7 +248,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 		_ = conn.Close()
 		return fmt.Errorf("%w: %v", ErrStore, err)
 	}
-	match, found, lookupErr := p.keys.lookupAtRequest(ni, request.GetLookupTag(), now, sourcePrefix(conn.RemoteAddr()), maxAttempts, p.settings.StaticKey)
+	match, found, lookupErr := p.keys.lookupAtRequest(ni, request.GetLookupTag(), initiatorFP, now, sourcePrefix(conn.RemoteAddr()), maxAttempts, p.settings.StaticKey)
 	if !found {
 		reason := ReasonKeyInvalid
 		if lookupErr != nil {

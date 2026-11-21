@@ -108,11 +108,15 @@ func encodeOneTimeKey(raw [10]byte) string {
 }
 
 // computeHint is the lookup tag the initiator sends in PairRequest. It lets the
-// acceptor find the key without revealing it, and has no NUL terminator.
-func computeHint(key, ni []byte) []byte {
+// acceptor find the key without revealing it, and has no NUL terminator. The
+// tag is bound to the initiator's fingerprint: the acceptor recomputes it with
+// the fingerprint it reads from this TLS connection, so a third party that
+// forwards someone else's tag presents its own certificate and matches no key.
+func computeHint(key, ni []byte, initiator Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(pairHintLabel))
 	mac.Write(ni)
+	mac.Write(initiator[:])
 	return mac.Sum(nil)[:lookupTagLength]
 }
 
@@ -167,6 +171,10 @@ func (k *keyTable) expireLocked(now time.Time) {
 // undone when the static key matches. found is false on rejection; the returned
 // error is a PairingError whose reason maps to the PairReject reason.
 //
+// initiator is the fingerprint the acceptor sees on this connection; every
+// lookup tag is recomputed with it, so a tag computed by a different party
+// matches no key.
+//
 // source is the network prefix from sourcePrefix; every address without an IP
 // shares the empty string as one unknown source. A source may make
 // maxAttempts unmatched requests per minute and all sources together may make
@@ -178,12 +186,12 @@ func (k *keyTable) expireLocked(now time.Time) {
 // The per-key failure limit is not consulted here: recordVerificationFailure
 // already discards a one-time key once its failures reach that limit, so any key
 // still in the table is eligible.
-func (k *keyTable) lookupAtRequest(ni, hint []byte, now time.Time, source string, maxAttempts int, staticKey func() string) (keyMatch, bool, error) {
+func (k *keyTable) lookupAtRequest(ni, hint []byte, initiator Fingerprint, now time.Time, source string, maxAttempts int, staticKey func() string) (keyMatch, bool, error) {
 	k.mu.Lock()
 
 	k.expireLocked(now)
 	for i := range k.keys {
-		if hmac.Equal(computeHint([]byte(k.keys[i].key), ni), hint) {
+		if hmac.Equal(computeHint([]byte(k.keys[i].key), ni, initiator), hint) {
 			key := k.keys[i].key
 			k.mu.Unlock()
 			return keyMatch{key: key, oneTime: true, index: i}, true, nil
@@ -191,7 +199,7 @@ func (k *keyTable) lookupAtRequest(ni, hint []byte, now time.Time, source string
 	}
 
 	for _, e := range k.expired {
-		if hmac.Equal(computeHint([]byte(e.key), ni), hint) {
+		if hmac.Equal(computeHint([]byte(e.key), ni, initiator), hint) {
 			k.mu.Unlock()
 			return keyMatch{}, false, &PairingError{Reason: ReasonKeyExpired, Detail: rejectDetail(ReasonKeyExpired)}
 		}
@@ -224,7 +232,7 @@ func (k *keyTable) lookupAtRequest(ni, hint []byte, now time.Time, source string
 	// validators take the peer table lock while holding config's lock, and
 	// nesting keys.mu before config's lock would invert that order.
 	key := staticKey()
-	if key != "" && hmac.Equal(computeHint([]byte(key), ni), hint) {
+	if key != "" && hmac.Equal(computeHint([]byte(key), ni, initiator), hint) {
 		k.undoAttempt(source, minute)
 		return keyMatch{key: key}, true, nil
 	}

@@ -25,11 +25,12 @@ import (
 const designLookupTagLength = 8
 
 // designPairHint computes
-// HMAC-SHA256(key, "peers pair hint" || ni)[:8].
-func designPairHint(key, ni []byte) []byte {
+// HMAC-SHA256(key, "peers pair hint" || ni || initiator)[:8].
+func designPairHint(key, ni []byte, initiator Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("peers pair hint"))
 	mac.Write(ni)
+	mac.Write(initiator[:])
 	return mac.Sum(nil)[:designLookupTagLength]
 }
 

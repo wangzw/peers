@@ -484,8 +484,8 @@ func TestHandshakeHMACFormulaVectors(t *testing.T) {
 	// docs/design/modules/design-pairing.md, transcribed here as
 	// designPairHint/designResponderProof/designInitiatorProof, not from the
 	// implementation's own functions.
-	wantHint := designPairHint(key, ni)
-	if got := computeHint(key, ni); !hmac.Equal(got, wantHint) {
+	wantHint := designPairHint(key, ni, initiator)
+	if got := computeHint(key, ni, initiator); !hmac.Equal(got, wantHint) {
 		t.Fatalf("hint = %x, want %x", got, wantHint)
 	}
 	wantMR := designResponderProof(key, ni, nr, acceptor, initiatorSeen)
@@ -855,7 +855,7 @@ func TestConnectCanceledDialIsCanceled(t *testing.T) {
 	}
 }
 
-func TestMismatchedFingerprintViewsFailProofs(t *testing.T) {
+func TestMismatchedFingerprintViewsFailLookup(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
 	initS.alias = "alpha"
@@ -867,7 +867,9 @@ func TestMismatchedFingerprintViewsFailProofs(t *testing.T) {
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 	otherFP, otherPub := hsKey(t)
 
-	// The acceptor sees a valid but different initiator identity.
+	// The acceptor sees a valid but different initiator identity. The lookup tag
+	// is bound to this fingerprint, so the acceptor finds no matching key and
+	// rejects before any proof is exchanged.
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
 	bConn.fp = otherFP
 	bConn.pub = otherPub
@@ -878,11 +880,11 @@ func TestMismatchedFingerprintViewsFailProofs(t *testing.T) {
 	go func() { acceptErr <- accP.Accept(bConn) }()
 	_, _, err := initP.Connect(context.Background(), "127.0.0.1:17443", "STATIC-KEY", "")
 	var pairErr *PairingError
-	if !errors.As(err, &pairErr) || pairErr.Reason != ReasonVerificationFailed {
-		t.Fatalf("Connect error = %v, want verification failure", err)
+	if !errors.As(err, &pairErr) || pairErr.Reason != ReasonKeyInvalid {
+		t.Fatalf("Connect error = %v, want a key-invalid rejection", err)
 	}
 	if err := awaitAccept(acceptErr); err == nil {
-		t.Fatal("acceptor reported success after a failed proof")
+		t.Fatal("acceptor reported success after a mismatched fingerprint view")
 	}
 	if got := initP.Peers(); len(got) != 0 {
 		t.Fatalf("initiator committed after a failed proof: %+v", got)
@@ -890,6 +892,136 @@ func TestMismatchedFingerprintViewsFailProofs(t *testing.T) {
 	if got := accP.Peers(); len(got) != 0 {
 		t.Fatalf("acceptor committed after a failed proof: %+v", got)
 	}
+}
+
+// TestLookupTagReplayDoesNotConsumeOneTimeKey reproduces the defect where a man
+// in the middle forwards the initiator's (ni, lookup tag) to the real acceptor.
+// While the lookup tag was computed from the key and ni alone, the forwarded
+// request matched the one-time key, so every wrong PairConfirm the forwarder
+// sent counted against the key. Once the count reached max_failures the key was
+// discarded and its real owner could no longer pair.
+func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.maxFailures = 3
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	key, _, _, err := accP.CreateOneTimeKey()
+	if err != nil {
+		t.Fatalf("CreateOneTimeKey: %v", err)
+	}
+
+	initP, tr := newInitiatorPairing(t, clk)
+
+	// The request the initiator I sends: a nonce and the lookup tag it computes
+	// for its own fingerprint.
+	ni := makeSeq(9, nonceLength)
+	hint := computeHint([]byte(key), ni, initP.identity.fingerprint())
+
+	for i := 0; i < accS.maxFailures; i++ {
+		// A different certificate M forwards I's request. It does not hold the
+		// key, so whenever the acceptor offers it a challenge it answers with a
+		// wrong PairConfirm.
+		mFP, mPub := hsKey(t)
+		aConn, bConn := hsConnPairFor(mFP, mPub, accP.identity.fingerprint(), accP.identity.publicKey())
+		acceptErr := make(chan error, 1)
+		go func() { acceptErr <- accP.Accept(bConn) }()
+
+		request := &pairingpb.PairRequest{InitiatorNonce: ni, LookupTag: hint}
+		if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
+			t.Fatalf("replay %d: send PairRequest: %v", i, err)
+		}
+		kind, payload, recvErr := receiveWithTimeout(aConn)
+		if recvErr != nil {
+			t.Fatalf("replay %d: receive reply: %v", i, recvErr)
+		}
+		switch kind {
+		case kindPairChallenge:
+			// The defect: the forwarded tag matched the one-time key.
+			t.Errorf("replay %d received a PairChallenge for the forwarded lookup tag", i)
+			if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: make([]byte, proofLength)}); err != nil {
+				t.Fatalf("replay %d: send bad PairConfirm: %v", i, err)
+			}
+			if _, _, err := receiveWithTimeout(aConn); err != nil {
+				t.Fatalf("replay %d: receive reply to PairConfirm: %v", i, err)
+			}
+		case kindPairReject:
+			var reject pairingpb.PairReject
+			if err := proto.Unmarshal(payload, &reject); err != nil {
+				t.Fatalf("replay %d: decode PairReject: %v", i, err)
+			}
+			if reason, ok := rejectReasonFromPB(reject.GetReason()); !ok || reason != ReasonKeyInvalid {
+				t.Fatalf("replay %d: reject reason = %v, want key invalid", i, reject.GetReason())
+			}
+		default:
+			t.Fatalf("replay %d: frame kind = %d, want PairReject", i, kind)
+		}
+		_ = awaitAccept(acceptErr)
+	}
+
+	// I, which really holds the key, must still pair with it.
+	peer, _, connectErr, acceptErr := hsPairFrom(t, initP, accP, tr, key, "", "198.51.100.9:9999", func(ctx context.Context, raw PairConn) error {
+		return hsSendHello(raw)
+	})
+	if connectErr != nil {
+		t.Fatalf("the key's owner could not pair after the replays: %v", connectErr)
+	}
+	if acceptErr != nil {
+		t.Fatalf("Accept for the key's owner = %v, want success", acceptErr)
+	}
+	if peer.Fingerprint != accP.identity.fingerprint() {
+		t.Fatalf("paired peer fingerprint = %x, want the acceptor", peer.Fingerprint)
+	}
+}
+
+// TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid checks that a forwarded
+// tag cannot even learn that the one-time key it names has expired. Binding the
+// tag to the initiator's fingerprint makes it match no record, so the replay is
+// an ordinary invalid key rather than an expired-key answer.
+func TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	key, _, _, err := accP.CreateOneTimeKey()
+	if err != nil {
+		t.Fatalf("CreateOneTimeKey: %v", err)
+	}
+	ownerFP, _ := hsKey(t)
+
+	ni := makeSeq(11, nonceLength)
+	hint := computeHint([]byte(key), ni, ownerFP)
+	// The key expires while still retained as an expired-key record.
+	clk.Advance(11 * time.Minute)
+
+	mFP, mPub := hsKey(t)
+	aConn, bConn := hsConnPairFor(mFP, mPub, accP.identity.fingerprint(), accP.identity.publicKey())
+	acceptErr := make(chan error, 1)
+	go func() { acceptErr <- accP.Accept(bConn) }()
+
+	if err := hsSendProto(aConn, kindPairRequest, &pairingpb.PairRequest{InitiatorNonce: ni, LookupTag: hint}); err != nil {
+		t.Fatalf("send forwarded PairRequest: %v", err)
+	}
+	kind, payload, recvErr := receiveWithTimeout(aConn)
+	if recvErr != nil {
+		t.Fatalf("receive reply: %v", recvErr)
+	}
+	if kind == kindPairChallenge {
+		t.Fatal("a forwarded lookup tag received a PairChallenge")
+	}
+	if kind != kindPairReject {
+		t.Fatalf("frame kind = %d, want PairReject", kind)
+	}
+	var reject pairingpb.PairReject
+	if err := proto.Unmarshal(payload, &reject); err != nil {
+		t.Fatalf("decode PairReject: %v", err)
+	}
+	if reason, ok := rejectReasonFromPB(reject.GetReason()); !ok || reason != ReasonKeyInvalid {
+		t.Fatalf("reject reason = %v, want key invalid", reject.GetReason())
+	}
+	_ = awaitAccept(acceptErr)
 }
 
 func TestRateLimitedFailureUsesSourceMergeKey(t *testing.T) {
@@ -1131,7 +1263,7 @@ func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
 		}
 		request := &pairingpb.PairRequest{
 			InitiatorNonce: ni,
-			LookupTag:      computeHint([]byte(key), ni),
+			LookupTag:      computeHint([]byte(key), ni, fp),
 		}
 		if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 			t.Fatalf("send PairRequest: %v", err)
@@ -1289,7 +1421,7 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 			}
 			request := &pairingpb.PairRequest{
 				InitiatorNonce: ni,
-				LookupTag:      computeHint([]byte(oldKey), ni),
+				LookupTag:      computeHint([]byte(oldKey), ni, initiatorFP),
 			}
 			if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 				t.Fatalf("send PairRequest: %v", err)
@@ -1428,7 +1560,7 @@ func TestAcceptorReadsAliasFromConfirmedPairConfirm(t *testing.T) {
 	ni := makeSeq(0, nonceLength)
 	request, err := proto.Marshal(&pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni),
+		LookupTag:      computeHint([]byte(key), ni, initiatorFP),
 	})
 	if err != nil {
 		t.Fatalf("marshal PairRequest: %v", err)
@@ -1510,7 +1642,7 @@ func TestAcceptorFailureAuditsOmitInitiatorAlias(t *testing.T) {
 		ni := makeSeq(0, nonceLength)
 		request, err := proto.Marshal(&pairingpb.PairRequest{
 			InitiatorNonce: ni,
-			LookupTag:      computeHint([]byte(key), ni),
+			LookupTag:      computeHint([]byte(key), ni, initiatorFP),
 		})
 		if err != nil {
 			t.Fatalf("marshal PairRequest: %v", err)
@@ -1643,7 +1775,7 @@ func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 	}
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni),
+		LookupTag:      computeHint([]byte(key), ni, fp),
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 		t.Fatalf("send PairRequest: %v", err)
@@ -1681,7 +1813,7 @@ func hsRequestAttemptFrom(t *testing.T, p *Pairing, key string, want RejectReaso
 	}
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni),
+		LookupTag:      computeHint([]byte(key), ni, fp),
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 		t.Fatalf("send PairRequest: %v", err)
@@ -1717,7 +1849,7 @@ func hsCompleteAsInitiator(t *testing.T, p *Pairing, aConn, bConn *hsConn, initi
 	}
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni),
+		LookupTag:      computeHint([]byte(key), ni, initiatorFP),
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 		return err
