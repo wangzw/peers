@@ -1,0 +1,37 @@
+# Vendored third-party source under third_party/.
+#
+# One entry per library, separated by a line holding only "---". An entry has
+# these fields, one per line:
+#
+#   directory: <path below third_party/>
+#   module:    <upstream module path>
+#   version:   <upstream tag or commit>
+#   changed:   <file> <sha256> <commit>[,<commit>...]
+#   deleted:   <file>
+#
+# "changed" names every file that differs from the module at that version,
+# including a file that exists only in the vendored copy, with the SHA-256 of
+# its vendored content and the commits in this repository that introduced the
+# change, oldest first. "deleted" names every upstream file absent from the
+# vendored copy. A file with no local change has neither a changed nor a
+# deleted line.
+#
+# Lines starting with "#" and blank lines are ignored. scripts/check-third-party
+# downloads each module at the recorded version through the Go module proxy and
+# checksum database and compares it file by file with the vendored copy, so an
+# unlisted change, a missing file, a listed change that no longer exists, a
+# recorded hash that no longer matches the vendored bytes and a symbolic link
+# all fail the check.
+
+directory: claude-code-socket-transport
+module: github.com/PeterSR/claude-code-socket-transport
+version: 480bd83c0bf1
+
+---
+
+directory: fsnotify
+module: github.com/fsnotify/fsnotify
+version: v1.10.1
+changed: backend_kqueue.go 2580cf1450d942acb10c7c6b4685e85e6013386c9e52bd7081847085c0f0b2be 5bcee5649f01cc4d2e9ccdcb52a13fb3ba95d589,23dc2f7b5bff4e855f5f026255b78c69db3bc9ac
+changed: backend_kqueue_test.go ead0d35474e6a12af3e3649a90aa66c2a0512996afad56a3ee966176dcd728e9 23dc2f7b5bff4e855f5f026255b78c69db3bc9ac
+changed: backend_kqueue_doubleclose_test.go 638b6fc7150bd7833a706721f68388f6217cd397ddb6f0ba5366fb2403b29964 7528c570c31c77bb45bb63ec4c162a3d883cea6e,5bcee5649f01cc4d2e9ccdcb52a13fb3ba95d589,72a5839ebea32c568535c4afda26cc145917aa65
