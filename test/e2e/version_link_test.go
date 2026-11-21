@@ -4,12 +4,14 @@ package e2e
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/link/linkpb"
 	"github.com/wangzw/peers/internal/mcpserver"
 	"github.com/wangzw/peers/test/e2e/harness"
 )
@@ -17,9 +19,10 @@ import (
 // vlRelinkBound is reconnect_max (400ms) plus the three-second test allowance.
 const vlRelinkBound = 3400 * time.Millisecond
 
-// vlVersionDetail is the status_detail an acceptor at link protocol version 2
-// reports for a dialer at version 1.
-const vlVersionDetail = "link protocol version incompatible with this peer; upgrade the older Broker: peer speaks link protocol version 1"
+// vlVersionDetail is the status_detail an acceptor one link protocol version
+// ahead of the dialer reports. It is derived from the constant so a future
+// version bump needs no test change.
+var vlVersionDetail = fmt.Sprintf("link protocol version incompatible with this peer; upgrade the older Broker: peer speaks link protocol version %d", linkpb.ProtocolVersion)
 
 // vlStartBroker starts the node's Broker from config and fails when it does not
 // come up.
@@ -94,12 +97,14 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 	sb.End(t)
 	sa.End(t)
 
-	// Restart B at link protocol version 2; its data directory and the pair
-	// survive.
+	// Restart B one link protocol version ahead; its data directory and the
+	// pair survive.
 	if code := b.StopBroker(t, syscall.SIGTERM); code != 0 {
 		t.Fatalf("B's Broker exited %d on SIGTERM, want 0", code)
 	}
-	vlStartBroker(t, b, harness.BrokerSpec{Env: map[string]string{"PEERS_TEST_LINK_PROTOCOL_VERSION": "2"}})
+	vlStartBroker(t, b, harness.BrokerSpec{Env: map[string]string{
+		"PEERS_TEST_LINK_PROTOCOL_VERSION": strconv.FormatUint(uint64(linkpb.ProtocolVersion+1), 10),
+	}})
 
 	harness.Eventually(t, vlRelinkBound, "A reports the link version mismatch", func() (bool, string) {
 		peer, state := vlPeer(t, a)

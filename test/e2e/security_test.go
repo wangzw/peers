@@ -370,6 +370,94 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 	})
 }
 
+// TestEchoedTopicDigestsRevealNothing proves REQ-topics-014 against a real
+// Broker: a peer that echoes a Broker's own TopicDigests, then forges a Roster
+// under an echoed digest, learns and injects nothing. A digest binds the
+// sender's fingerprint (ADR-salted-topic-digest), so one direction's digest
+// never matches the other and the echoed set intersects nothing. A fresh local
+// topic then provides a fence: its Roster can only come from the peer's own
+// digest set, so every Roster received before it must be the shared-t one.
+func TestEchoedTopicDigestsRevealNothing(t *testing.T) {
+	t.Parallel()
+
+	a := discNewNode(t, "digest-a", "log:\n  level: debug\n", false)
+
+	token := secToken(t)
+	workerName := "echo-worker-" + token
+	forgedName := "intruder-" + token
+	const (
+		secretTopic = "secret-x"
+		sharedTopic = "shared-t"
+		freshTopic  = "fresh-t"
+	)
+
+	worker := discAgent(t, a, workerName, t.TempDir())
+	defer worker.End(t)
+	secWaitRegistered(t, worker, workerName)
+	secJoin(t, worker, secretTopic)
+	secJoin(t, worker, sharedTopic)
+
+	// The window opens before pairing, so every frame the attack interaction
+	// produces lands in the log tail below.
+	logStart := len(a.BrokerLog(t))
+
+	f := startFakePeer(t)
+	f.Pair(t, a.addr, hostilePairKey(t, a))
+	f.WaitLinked(t, secWaitBound)
+
+	t.Run("REQ-topics-014 echoed digests", func(t *testing.T) {
+		// On link up A sends one digest per local topic. Only the worker holds
+		// any, and it holds exactly the two private topics.
+		digests := f.TopicDigests(t)
+		if len(digests.Digests) != 2 {
+			t.Fatalf("A sent %d topic digests, want 2 (secret-x and shared-t)", len(digests.Digests))
+		}
+
+		// Echo A's set verbatim, then forge a Roster under one of the echoed
+		// digests while that set is still A's latest. A knows the digest, so the
+		// frame reaches the direction check instead of the branch that drops a
+		// digest outside the latest set.
+		f.EchoDigests(t)
+		f.SendRoster(t, digests.Digests[0], fakePeerWireMember{Name: forgedName, Ref: "abcdef"})
+
+		// The peer then sends its own direction for shared-t. A answers with a
+		// Roster under the digest it sends for shared-t, which differs from
+		// every echoed digest.
+		sent := f.SendTopicDigests(t, sharedTopic)
+		if len(sent.Want) != 1 {
+			t.Fatalf("digests_sent carried %d expected digests, want 1", len(sent.Want))
+		}
+		sharedDigest := sent.Want[0]
+
+		// Joining a fresh topic adds a digest the echo never carried. When the
+		// peer claims that topic, A's Roster under its digest is a fence the
+		// echo cannot produce, so every Roster received before it has already
+		// been recorded. The fence requires each of them to be the shared-t
+		// Roster; anything else is the echoed set matching secret-x.
+		secJoin(t, worker, freshTopic)
+		f.TopicDigests(t)
+		fresh := f.SendTopicDigests(t, freshTopic)
+		if len(fresh.Want) != 1 {
+			t.Fatalf("digests_sent carried %d expected digests, want 1", len(fresh.Want))
+		}
+		f.WaitTopicRosterFence(t, fresh.Want[0], sharedDigest, secWaitBound)
+
+		out, state := secListAgents(t, worker)
+		if state != "" {
+			t.Fatalf("list_agents on A: %s", state)
+		}
+		if entry, ok := secFindAgent(out, forgedName); ok {
+			t.Fatalf("A lists the peer's forged member %q at %q", forgedName, entry.Address)
+		}
+
+		// A never writes a private topic's name or a member name from a dropped
+		// frame to its own log or audit.
+		secAssertAbsent(t, "hostA Broker log", string(a.BrokerLog(t)[logStart:]), secretTopic, forgedName)
+		audit := secReadIfExists(t, a.Node, filepath.Join(a.AccountHome(), ".peers", "audit.log"))
+		secAssertAbsent(t, "hostA audit log", string(audit), secretTopic, forgedName)
+	})
+}
+
 // secStartRelayAgent starts a second node-agent process on the router and
 // returns a client for it.
 //

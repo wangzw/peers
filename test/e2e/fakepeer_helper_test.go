@@ -26,12 +26,26 @@ const fakePeerCommandBound = 13 * time.Second
 
 // fakePeerWire is one JSON line the fake peer writes to stdout.
 type fakePeerWire struct {
-	Event       string `json:"event"`
-	Fingerprint string `json:"fingerprint"`
-	Peer        string `json:"peer"`
-	Count       int    `json:"count"`
-	Reason      string `json:"reason"`
-	Message     string `json:"message"`
+	Event       string               `json:"event"`
+	Fingerprint string               `json:"fingerprint"`
+	Peer        string               `json:"peer"`
+	Count       int                  `json:"count"`
+	Reason      string               `json:"reason"`
+	Message     string               `json:"message"`
+	Digests     []string             `json:"digests"`
+	Sent        []string             `json:"sent"`
+	Want        []string             `json:"want"`
+	Topics      []string             `json:"topics"`
+	Digest      string               `json:"digest"`
+	Members     []fakePeerWireMember `json:"members"`
+}
+
+// fakePeerWireMember is one member entry in a Roster the fake peer sends or
+// receives.
+type fakePeerWireMember struct {
+	Name   string `json:"name"`
+	Ref    string `json:"ref"`
+	Status string `json:"status"`
 }
 
 // fakePeerEvent is one stdout line with the bookkeeping of which waiter has
@@ -155,7 +169,13 @@ func (f *fakePeer) waitEvent(t *testing.T, kind string, bound time.Duration) *fa
 		f.mu.Unlock()
 
 		if !time.Now().Before(deadline) {
-			t.Fatalf("the fake peer sent no %q event within %s (stderr: %s)", kind, bound, f.stderr.String())
+			f.mu.Lock()
+			seen := make([]string, 0, len(f.events))
+			for _, event := range f.events {
+				seen = append(seen, event.Event)
+			}
+			f.mu.Unlock()
+			t.Fatalf("the fake peer sent no %q event within %s (events: %v; stderr: %s)", kind, bound, seen, f.stderr.String())
 			return nil
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -220,6 +240,87 @@ func (f *fakePeer) DialUnpaired(t *testing.T, address string) string {
 	t.Helper()
 	f.send(t, map[string]any{"cmd": "dial_unpaired", "address": address})
 	return f.waitEvent(t, "closed", fakePeerCommandBound).Reason
+}
+
+// TopicDigests waits for a TopicDigests the fake peer received.
+func (f *fakePeer) TopicDigests(t *testing.T) *fakePeerEvent {
+	t.Helper()
+	return f.waitEvent(t, "topic_digests", fakePeerCommandBound)
+}
+
+// EchoDigests resends the most recent TopicDigests verbatim.
+func (f *fakePeer) EchoDigests(t *testing.T) *fakePeerEvent {
+	t.Helper()
+	f.send(t, map[string]any{"cmd": "echo_digests"})
+	return f.waitEvent(t, "echoed", fakePeerCommandBound)
+}
+
+// SendTopicDigests sends the fake peer's own digests for names. The returned
+// event lists in Want the digests the Broker uses when it sends a Roster for
+// the same names.
+func (f *fakePeer) SendTopicDigests(t *testing.T, names ...string) *fakePeerEvent {
+	t.Helper()
+	f.send(t, map[string]any{"cmd": "digests", "topics": names})
+	return f.waitEvent(t, "digests_sent", fakePeerCommandBound)
+}
+
+// SendRoster sends a Roster under digest (lowercase hex) carrying members.
+func (f *fakePeer) SendRoster(t *testing.T, digest string, members ...fakePeerWireMember) *fakePeerEvent {
+	t.Helper()
+	f.send(t, map[string]any{"cmd": "roster", "digest": digest, "members": members})
+	return f.waitEvent(t, "roster_sent", fakePeerCommandBound)
+}
+
+// WaitTopicRosterFence waits until a Roster under fence arrives and requires
+// every Roster received before it to be under allowed. The fence digest is one
+// the echoed set never carried, so the fence Roster can only come from the
+// peer's own digest set; frames are ordered, so every Roster the echo could
+// have produced has arrived by then. A Roster under any other digest before
+// the fence is the echoed set matching a topic A alone holds, which is exactly
+// the leak REQ-topics-014 forbids. Checking only the first Roster would pass
+// whenever a leaked Roster happens to sort after the allowed one, so the whole
+// run before the fence is checked.
+func (f *fakePeer) WaitTopicRosterFence(t *testing.T, fence, allowed string, bound time.Duration) *fakePeerWire {
+	t.Helper()
+	deadline := time.Now().Add(bound)
+	for {
+		f.mu.Lock()
+		var fenceWire, leaked *fakePeerWire
+		for _, event := range f.events {
+			if event.Event == "error" {
+				message := event.Message
+				f.mu.Unlock()
+				t.Fatalf("the fake peer reported an error: %s", message)
+				return nil
+			}
+			if event.Event != "topic_roster" {
+				continue
+			}
+			wire := event.fakePeerWire
+			if wire.Digest == fence {
+				fenceWire = &wire
+				break
+			}
+			if wire.Digest != allowed {
+				leaked = &wire
+				break
+			}
+		}
+		f.mu.Unlock()
+		if leaked != nil {
+			t.Fatalf("the peer received a Roster under %s before the fence %s: the echoed set matched a topic A alone holds",
+				leaked.Digest, fence)
+			return nil
+		}
+		if fenceWire != nil {
+			return fenceWire
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the peer received no Roster under the fence %s within %s (stderr: %s)", fence, bound, f.stderr.String())
+			return nil
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // close shuts the fake peer down by closing its stdin and waits for it to
