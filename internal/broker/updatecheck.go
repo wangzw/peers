@@ -18,7 +18,6 @@ import (
 // interval when the next check is scheduled, so a change takes effect at the
 // next period.
 const (
-	updateCheckInitialDelay    = time.Minute
 	updateCheckDefaultInterval = 24 * time.Hour
 	updateCheckMinInterval     = time.Hour
 	updateCheckRequestTimeout  = 30 * time.Second
@@ -35,7 +34,7 @@ func (b *Broker) startUpdateChecks(ctx context.Context) {
 			b.setAvailableUpdate("", "")
 		}
 	})
-	b.scheduleUpdateCheck(ctx, updateCheckInitialDelay)
+	b.scheduleUpdateCheck(ctx, updateCheckInitialDelay())
 	go func() {
 		<-ctx.Done()
 		b.updateMu.Lock()

@@ -50,13 +50,34 @@ func TestUpdateCheckWaitsThenRepeatsAtInterval(t *testing.T) {
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
 
-	tb.clock.Advance(updateCheckInitialDelay - time.Nanosecond)
+	tb.clock.Advance(updateCheckInitialDelay() - time.Nanosecond)
 	expectCheck(t, calls, false)
 
 	tb.clock.Advance(time.Nanosecond)
 	expectCheck(t, calls, true)
 
 	tb.clock.Advance(updateCheckDefaultInterval - time.Nanosecond)
+	expectCheck(t, calls, false)
+
+	tb.clock.Advance(time.Nanosecond)
+	expectCheck(t, calls, true)
+}
+
+// TestUpdateCheckDefaultInitialDelayIsOneMinute pins the product default: a
+// release build waits exactly one minute before its first check. It uses the
+// literal minute instead of the updateCheckInitialDelay symbol, so a change to
+// the test hook cannot silently move the release default.
+func TestUpdateCheckDefaultInitialDelayIsOneMinute(t *testing.T) {
+	latest, calls := updateCheckCalls()
+	tb := newTestBroker(t, func(d *Deps) {
+		d.Version = "0.1.1"
+		d.LatestRelease = latest
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	tb.b.startUpdateChecks(ctx)
+
+	tb.clock.Advance(time.Minute - time.Nanosecond)
 	expectCheck(t, calls, false)
 
 	tb.clock.Advance(time.Nanosecond)
@@ -75,7 +96,7 @@ func TestUpdateCheckDisabledSkipsLookups(t *testing.T) {
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
 
-	tb.clock.Advance(updateCheckInitialDelay)
+	tb.clock.Advance(updateCheckInitialDelay())
 	expectCheck(t, calls, false)
 	tb.clock.Advance(updateCheckDefaultInterval)
 	expectCheck(t, calls, false)
@@ -102,7 +123,7 @@ func TestUpdateCheckDisabledClearsAvailableVersion(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
-	tb.clock.Advance(updateCheckInitialDelay)
+	tb.clock.Advance(updateCheckInitialDelay())
 
 	resp, err := tb.client.UpdateStatus(context.Background(), &localpb.UpdateStatusRequest{})
 	if err != nil {
@@ -199,7 +220,7 @@ func TestUpdateCheckUsesNewIntervalAfterNextPeriod(t *testing.T) {
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
 
-	tb.clock.Advance(updateCheckInitialDelay)
+	tb.clock.Advance(updateCheckInitialDelay())
 	expectCheck(t, calls, true)
 
 	// The check already scheduled uses the old interval; the period after it
@@ -226,7 +247,7 @@ func TestUpdateCheckSkipsNonReleaseBuilds(t *testing.T) {
 			t.Cleanup(cancel)
 			tb.b.startUpdateChecks(ctx)
 
-			tb.clock.Advance(updateCheckInitialDelay)
+			tb.clock.Advance(updateCheckInitialDelay())
 			tb.clock.Advance(updateCheckDefaultInterval * 3)
 			expectCheck(t, calls, false)
 
@@ -253,7 +274,7 @@ func TestUpdateCheckFailureOnlyLogsAtDebug(t *testing.T) {
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
 
-	tb.clock.Advance(updateCheckInitialDelay)
+	tb.clock.Advance(updateCheckInitialDelay())
 
 	found := false
 	for _, rec := range tb.logLines(t) {
@@ -300,7 +321,7 @@ func TestUpdateCheckStoresOnlyNewerRelease(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
 			tb.b.startUpdateChecks(ctx)
-			tb.clock.Advance(updateCheckInitialDelay)
+			tb.clock.Advance(updateCheckInitialDelay())
 
 			resp, err := tb.client.UpdateStatus(context.Background(), &localpb.UpdateStatusRequest{})
 			if err != nil {
@@ -346,7 +367,7 @@ func TestUpdateStatusNeedsNoAgentIdentity(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
-	tb.clock.Advance(updateCheckInitialDelay)
+	tb.clock.Advance(updateCheckInitialDelay())
 
 	// No agent registration and no configuration access precede this call.
 	resp, err := tb.client.UpdateStatus(context.Background(), &localpb.UpdateStatusRequest{})
