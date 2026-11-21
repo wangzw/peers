@@ -59,7 +59,7 @@ func startRegRunOn(t *testing.T, h fakelocal.Handlers, first *localpb.RegisterRe
 		errc <- runRegistration(ctx, client, first, st, onComplete, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}()
 
-	regCtx, regCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	regCtx, regCancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer regCancel()
 	conn, err := srv.NextRegister(regCtx)
 	if err != nil {
@@ -74,8 +74,8 @@ func (r *regRun) wait(t *testing.T) error {
 	select {
 	case err := <-r.errc:
 		return err
-	case <-time.After(3 * time.Second):
-		t.Fatal("runRegistration did not return within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatal("runRegistration did not return before the event timeout")
 		return nil
 	}
 }
@@ -83,7 +83,7 @@ func (r *regRun) wait(t *testing.T) error {
 // regWaitUntil polls cond until it holds or the deadline passes.
 func regWaitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -148,8 +148,8 @@ func TestRunRegistration(t *testing.T) {
 			if got.agentID != "id1" || !got.autoJoin {
 				t.Fatalf("onComplete got (%q, %v), want (id1, true)", got.agentID, got.autoJoin)
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete was not called within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete was not called before the event timeout")
 		}
 		st := run.st.Get()
 		if st.AgentID != "id1" || st.Address != "me@h" {
@@ -176,8 +176,8 @@ func TestRunRegistration(t *testing.T) {
 		}
 		select {
 		case <-calls:
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete was not called within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete was not called before the event timeout")
 		}
 
 		if err := run.conn.NotRegistered(localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE); err != nil {
@@ -201,7 +201,7 @@ func TestRunRegistration(t *testing.T) {
 			if got != "id1" {
 				t.Fatalf("second onComplete got %q, want id1", got)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("onComplete was not called again after the second completion")
 		}
 
@@ -255,8 +255,8 @@ func TestRunRegistration(t *testing.T) {
 			if got != "id1" {
 				t.Fatalf("onComplete got %q, want id1", got)
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete was not called within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete was not called before the event timeout")
 		}
 		if st := run.st.Get(); st.NotRegistered != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_UNSPECIFIED || st.NotRegisteredDetail != "" {
 			t.Fatalf("status after re-registration = (%v, %q), want UNSPECIFIED and no detail", st.NotRegistered, st.NotRegisteredDetail)
@@ -278,8 +278,8 @@ func TestRunRegistration(t *testing.T) {
 		}
 		select {
 		case <-calls:
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete was not called within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete was not called before the event timeout")
 		}
 
 		if err := run.conn.Send(&localpb.RegisterResponse{
@@ -324,8 +324,8 @@ func TestRunRegistration(t *testing.T) {
 		}
 		select {
 		case <-calls:
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete was not called within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete was not called before the event timeout")
 		}
 
 		run.conn.End()
@@ -349,13 +349,13 @@ func TestRunRegistration(t *testing.T) {
 			if !errors.Is(err, context.Canceled) {
 				t.Fatalf("runRegistration returned %v, want context.Canceled", err)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("runRegistration did not return after ctx was cancelled")
 		}
 		select {
 		case <-run.conn.Done():
-		case <-time.After(3 * time.Second):
-			t.Fatal("the Broker did not see the Register stream close within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("the Broker did not see the Register stream close before the event timeout")
 		}
 	})
 
@@ -372,8 +372,8 @@ func TestRunRegistration(t *testing.T) {
 		}
 		select {
 		case <-started:
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete did not start within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete did not start before the event timeout")
 		}
 
 		run.conn.End()
@@ -403,8 +403,8 @@ func TestRunRegistration(t *testing.T) {
 		}
 		select {
 		case <-started:
-		case <-time.After(3 * time.Second):
-			t.Fatal("onComplete did not start within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("onComplete did not start before the event timeout")
 		}
 
 		run.conn.End()
@@ -412,7 +412,7 @@ func TestRunRegistration(t *testing.T) {
 		// While onComplete is still blocked, the status must already say the
 		// connection is gone. A tool call in this window must be told to retry,
 		// not that the session is merely unregistered.
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(eventTimeout)
 		for time.Now().Before(deadline) && run.st.Get().Phase != PhaseUnavailable {
 			time.Sleep(2 * time.Millisecond)
 		}
@@ -462,8 +462,8 @@ func TestRunRegistration(t *testing.T) {
 			}
 			select {
 			case <-started:
-			case <-time.After(3 * time.Second):
-				t.Fatalf("iteration %d: the first onComplete did not start within 3s", i)
+			case <-time.After(eventTimeout):
+				t.Fatalf("iteration %d: the first onComplete did not start before the event timeout", i)
 			}
 			if err := run.conn.Complete("id2", "two@h", false); err != nil {
 				t.Fatalf("iteration %d: sending the second registration_complete: %v", i, err)
@@ -519,8 +519,8 @@ func TestRunRegistration(t *testing.T) {
 		}
 		select {
 		case <-started:
-		case <-time.After(3 * time.Second):
-			t.Fatal("the first onComplete did not start within 3s")
+		case <-time.After(eventTimeout):
+			t.Fatal("the first onComplete did not start before the event timeout")
 		}
 		if err := run.conn.Complete("id2", "two@h", false); err != nil {
 			t.Fatalf("sending the second registration_complete: %v", err)
@@ -536,7 +536,7 @@ func TestRunRegistration(t *testing.T) {
 			if got != "id2" {
 				t.Fatalf("second onComplete got %q, want id2", got)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("the second onComplete did not start after the first returned")
 		}
 

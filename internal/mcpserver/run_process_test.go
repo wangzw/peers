@@ -52,7 +52,7 @@ func startRunProcess(t *testing.T, env []string) (*mcp.ClientSession, *exec.Cmd)
 	transport := &mcp.CommandTransport{Command: cmd}
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	cs, err := client.Connect(ctx, transport, nil)
 	if err != nil {
@@ -79,7 +79,7 @@ func TestRunProcessServesMCP(t *testing.T) {
 		t.Fatalf("ListTools returned %d tools, want 13", got)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	conn, err := srv.NextRegister(ctx)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestRunProcessSurvivesMissingBroker(t *testing.T) {
 	}
 
 	var res *mcp.CallToolResult
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		res = callTool(t, cs, "list_agents", nil)
 		if res.IsError && strings.HasPrefix(textContent(t, res), "list_agents failed:") {
