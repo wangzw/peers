@@ -53,11 +53,23 @@ func (l *Link) Addr() net.Addr
 // Close 停止监听，关闭全部连接与协程。可重复调用，返回后不再有回调；订阅者的回调与帧处理函数内不得调用（Close 会等待它们返回）。
 func (l *Link) Close()
 
-// Send 把一帧放入与 peer 的链路的有序发送队列；链路未建立或队列已满时立即返回错误。
+// Send 把一帧放入与 peer 的链路的有序发送队列；链路未建立、队列已满，或编码后的帧超过
+// MaxMessageSize 时立即返回错误。超过上限的帧不入队，链路不受影响。
 func (l *Link) Send(peer Fingerprint, f Frame) error
 
+// SendLatest 与 Send 相同，但同一 kind 的帧若仍有一帧由 SendLatest 放入、尚未被写协程
+// 取走，就地把它的内容换成 f，不占新的队列位置；取走之后的替换按新帧入队。
+func (l *Link) SendLatest(peer Fingerprint, f Frame) error
+
+// SendLatestKey 与 SendLatest 相同，但用调用方给定的 key 而不是 kind 标识待替换的位置。
+// 同一 key 的帧若仍有一帧由 SendLatestKey 放入、尚未被写协程取走，就地把内容换成 f，
+// 并以 replaced 报告发生了替换；取走之后的替换按新帧入队。上层为一个摘要的两种帧
+// 使用同一个 key 时，新帧不论 kind 都替换旧帧。
+func (l *Link) SendLatestKey(peer Fingerprint, key string, f Frame) (replaced bool, err error)
+
 // Request 发出一帧并等待对方以同一请求号应答，直到 ctx 到期。
-// 返回的 sent 表示该帧是否已交给传输层。
+// 返回的 sent 表示该帧是否已交给传输层。帧超过 MaxMessageSize 时返回 ErrFrameTooLarge，
+// sent 为假。
 func (l *Link) Request(ctx context.Context, peer Fingerprint, f Frame) (reply Frame, sent bool, err error)
 
 // HandleState 注册一种状态帧的处理函数；同一链路上的状态帧按到达顺序逐个调用。
@@ -94,6 +106,9 @@ type Frame struct {
     Kind    FrameKind
     Payload []byte
 }
+
+// MaxMessageSize 是一次收发的帧消息上限，按编码后的长度计。
+const MaxMessageSize = 4 << 20
 
 // Fingerprint 与 pairing 的指纹是同一类型。
 type Fingerprint = pairing.Fingerprint
@@ -138,6 +153,7 @@ var (
     ErrLinkDown       = errors.New("link: link went down before the reply arrived")
     ErrClosed         = errors.New("link: closed")
     ErrInvalidKind    = errors.New("link: frame kind is reserved for link and pairing")
+    ErrFrameTooLarge  = errors.New("link: frame is larger than the message limit") // 不入队，不包装 ErrNotEstablished
 )
 
 // UnsupportedError 表示对方以“不支持”应答了请求。
@@ -219,7 +235,7 @@ message Frame {
 
 流上的首帧由发起连接的一方发送，是 `Hello` 或配对握手的 `PairRequest`。接受连接的一方在核实对方之前不发送任何帧。接受连接后，在未读到首帧的期限之后关闭连接。同时处于未认证状态的连接按来源限额（[ADR-unauthenticated-connection-limits](../../adr/adr-unauthenticated-connection-limits.md)）：来源取对方地址的网络前缀，IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理，去掉 IPv6 的 zone，地址中没有 IP 地址的连接共同归入一个来源。同一来源超过每来源上限时，关闭该来源最早建立的一条；全部来源合计超过全局上限时，关闭连接数最多的来源中最早建立的一条，连接数并列时取最早连接最早建立的那个来源。`Hello` 中的协议版本是一个整数，双方的版本相等才建立链路，不相等时回 `Reject` 并关闭。只增不改的变化不改变协议版本：新增帧类型，以及给已有的帧增加字段；收到不认识的状态帧时丢弃，收到不认识的请求帧时回以“不支持”的应答，不认识的字段被忽略。改变已有帧或已有字段含义的变化，才提升协议版本。帧类型的编号空间按包划分。
 
-首帧期限 10 秒，自 TCP 接受起计。每来源上限 8，全局上限 64。TLS 握手完成、证书指纹在本方对端表中的连接转入已知对端池，不计入这两个上限；每个指纹的已知对端池至多 2 条，超过时关闭该指纹最早建立的一条。认证前从一条连接读入的字节数（含 TLS 握手、HTTP/2 前言与帧）上限 64 KiB，超过即关闭；HTTP/2 头部列表上限 16 KiB。未认证的范围从 TCP 接受到首帧 `Hello` 核实通过、或首帧 `PairRequest` 交给 `pairing` 且握手成功为止，配对握手期间的连接仍计入其所在池的上限：指纹不在对端表中的连接计入陌生来源池的每来源上限与全局上限，指纹已在对端表中的连接计入该指纹的已知对端池上限。每条 TCP 连接只承载一个 `Connect` 流，同一连接上的第二个流以错误结束。`Reject` 发出后，连接最多再保留 1 秒。认证后一次收发的消息上限是 4 MiB。驱逐超限的连接、因已知对端池超限关闭连接、以及认证前读取超过预算时，各写一条 Debug 级运行日志 `link: closed an unauthenticated connection`，字段 `source` 为来源前缀，`cause` 为关闭原因（`source_limit`、`global_limit`、`known_peer_limit` 或 `byte_budget`）；首帧期限到期不写这条日志。
+首帧期限 10 秒，自 TCP 接受起计。每来源上限 8，全局上限 64。TLS 握手完成、证书指纹在本方对端表中的连接转入已知对端池，不计入这两个上限；每个指纹的已知对端池至多 2 条，超过时关闭该指纹最早建立的一条。认证前从一条连接读入的字节数（含 TLS 握手、HTTP/2 前言与帧）上限 64 KiB，超过即关闭；HTTP/2 头部列表上限 16 KiB。未认证的范围从 TCP 接受到首帧 `Hello` 核实通过、或首帧 `PairRequest` 交给 `pairing` 且握手成功为止，配对握手期间的连接仍计入其所在池的上限：指纹不在对端表中的连接计入陌生来源池的每来源上限与全局上限，指纹已在对端表中的连接计入该指纹的已知对端池上限。每条 TCP 连接只承载一个 `Connect` 流，同一连接上的第二个流以错误结束。`Reject` 发出后，连接最多再保留 1 秒。认证后一次收发的消息上限是 `MaxMessageSize`，即 4 MiB。驱逐超限的连接、因已知对端池超限关闭连接，以及认证前读取超过预算时，各写一条 Debug 级运行日志 `link: closed an unauthenticated connection`，字段 `source` 为来源前缀，`cause` 为关闭原因（`source_limit`、`global_limit`、`known_peer_limit` 或 `byte_budget`）；首帧期限到期不写这条日志。
 
 ## 依赖
 
@@ -339,7 +355,11 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 
 ### 帧的发送与处理
 
-`Send` 把帧放入该链路的有序发送队列后返回，写协程按入队顺序发出。队列有界，上限 1024 帧；满了说明对方长时间不读，此时关闭连接并进入退避。超过 4 MiB 的帧会导致链路断开，调用方负责把帧控制在上限以内。
+`Send` 在入队前检查编码后的帧大小，超过 `MaxMessageSize`（4 MiB）时返回 `ErrFrameTooLarge`，帧不入队，链路照常收发。其余情况下把帧放入该链路的有序发送队列后返回，写协程按入队顺序发出。队列有界，上限 1024 帧；满了说明对方长时间不读，此时关闭连接并进入退避。
+
+`SendLatest` 与 `Send` 做同样的检查与入队，但同一 kind 的帧若仍有一帧由 `SendLatest` 放入、尚未被写协程取走，就地把它的内容换成新的，不占新的队列位置；写协程取走之后的替换按新帧入队。`SendLatestKey` 是同样语义的通用形式：替换位置由调用方给的 key 标识，`SendLatest` 相当于以 kind 为 key。同一 key 的帧在队列中至多有一个待发位置，不论它的 kind；上层因此可以让一个摘要的全量快照替换排在其前的增量。被替换的帧保持第一次入队时的位置，其余帧的相对顺序不变。对一个 key 连续调用 `SendLatestKey` 不会把队列填满，对端只收到最后一次的内容。`Request` 在填入请求号之后、登记等待表与入队之前检查帧大小，超限时返回 `ErrFrameTooLarge`，`sent` 为假，等待表不留下条目。
+
+应答帧超过 `MaxMessageSize` 时不入队，记一条 Warn 运行日志 `link: dropping a reply`，字段为对端指纹、kind 与原因 `frame_too_large`；请求方按现有的超时处理。
 
 读侧分成读协程与路由协程。读协程按到达顺序读帧，路由协程把应答按请求号交给等待它的调用方，把请求帧各起一个协程处理，把状态帧放入该链路的无界队列。状态帧由一个处理协程逐帧处理，前一帧的处理函数返回才处理后一帧；请求与应答都不经过这个协程，因此状态帧的处理函数里可以对同一链路发 `Request` 并等待应答而不死锁。状态帧队列无界：有界队列满时只能阻塞路由协程，使应答停住、进而造成同样的死锁，或无故断开链路；对端已经过身份认证，属于受信任范围（[architecture](../architecture.md) 的“认证与授权边界”）。
 
@@ -359,7 +379,9 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 
 | 情形 | 行为 |
 |---|---|
-| 链路不在已建立状态时调用 `Send` 或 `Request` | 立即返回 `peer_unreachable`，`sent` 为假，不排队 |
+| 链路不在已建立状态时调用 `Send`、`SendLatest`、`SendLatestKey` 或 `Request` | 立即返回 `peer_unreachable`，`sent` 为假，不排队 |
+| 编码后的帧超过 `MaxMessageSize`（`Send`、`SendLatest`、`SendLatestKey` 或 `Request`） | 返回 `ErrFrameTooLarge`，帧不入队，链路不断；`Request` 的 `sent` 为假 |
+| 应答帧超过 `MaxMessageSize` | 丢弃该应答，记 Warn 运行日志 `link: dropping a reply`（原因 `frame_too_large`），请求方按超时处理 |
 | 等待应答期间链路中断或上下文到期 | 返回错误，`sent` 为真；对方是否已处理该请求不确定，由 [broker](design-broker.md) 归结为结果未知并以消息标识保证重发安全 |
 | 候选地址连不上、超时，或对方证书的指纹不是该对端 | 放弃该地址，尝试下一个；一轮中全部失败后进入退避 |
 | 证书指纹不在对端表中，且首帧不是 `PairRequest` | 回原因为“不是对端”的 `Reject`，关闭连接，写审计 |
@@ -376,7 +398,9 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 
 ## 并发与事务边界
 
-每条链路有一个读协程、一个写协程、一个路由协程和一个状态帧处理协程。写协程从有序发送队列取帧，保证同一链路上的帧按 `Send` 返回的顺序发出。`Send` 不阻塞：队列已满时关闭连接并返回 `ErrQueueFull`。
+每条链路有一个读协程、一个写协程、一个路由协程和一个状态帧处理协程。写协程从有序发送队列取帧，保证同一链路上的帧按入队顺序发出。`Send` 不阻塞：队列已满时关闭连接并返回 `ErrQueueFull`。
+
+`SendLatest` 与 `SendLatestKey` 的就地替换与写协程取走该帧互斥：写协程先从队列取下该帧并注销它的替换位置，再读取它的内容发送；在这之后到达的替换按新帧入队。因此一帧不会在发送途中被改写，同一 key 在队列中至多有一个待发位置（`SendLatest` 的 key 是 kind），其余帧的相对顺序不变。
 
 建立与断开的通知由一个通知协程串行投递，各事件先进先出，订阅者按 `Subscribe` 的先后被调用。一条连接的状态帧在它的 `onUp` 全部返回之后才开始处理；一条连接的 `onDown` 在该连接的状态帧处理协程退出之后才入队，因此上层不会在 `onDown` 之后再收到这条连接的状态帧。`onDown` 从不在 `Send`、`Drop`、`Kick` 或队列溢出的调用者栈上执行。接受方用新连接取代旧连接时，只发一次 `onDown` 再发一次新连接的 `onUp`。
 
@@ -394,7 +418,8 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 | 按候选地址拨号、退避与重新建立 | 已实现 | `internal/link/dial.go`、`internal/link/order.go`、`internal/link/transport.go`（`startDialLoop`、`orderCandidates`、`backoffDelay`、`dialTLS`） |
 | 接受方的等待与同一对端新连接的取代 | 已实现 | `internal/link/record.go`、`internal/link/handshake.go`（`install`、`teardown`、`serveInbound`） |
 | 保活 | 已实现 | `internal/link/transport.go`（`serverOptions`、`newGRPCServer`、`clientKeepalive`） |
-| 有序发送、状态帧串行处理与请求应答 | 已实现 | `internal/link/conn.go`、`internal/link/dispatch.go`、`internal/link/api.go`（`conn`、`runConn`、`Send`、`Request`） |
+| 有序发送、状态帧串行处理与请求应答 | 已实现 | `internal/link/conn.go`、`internal/link/dispatch.go`、`internal/link/api.go`（`conn`、`runConn`、`Send`、`SendLatest`、`SendLatestKey`、`Request`、`enqueueLatest`） |
+| 帧大小上限与按 key 合并发送 | 已实现 | `internal/link/transport.go`（`MaxMessageSize`、`frameExceedsLimit`）、`internal/link/api.go`（`Send`、`SendLatest`、`SendLatestKey`、`Request`）、`internal/link/conn.go`（`latestSlot`、`writeLoop`、`enqueueLatest`、`enqueueRequest`） |
 | 盐值协商 | 已实现 | `internal/link/handshake.go`、`internal/link/frames.go`（`dialerHandshake`、`serveInbound`、`encodeHello`） |
 | 被拒绝状态 | 已实现 | `internal/link/record.go`、`internal/link/handshake.go`（`record`、`failFromReject`） |
 | 对外地址列表的告知 | 已实现 | `internal/link/api.go`、`internal/link/handshake.go`（`AnnounceAlias`、`AnnounceAddresses`、`dialerHandshake`） |

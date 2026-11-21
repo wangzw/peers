@@ -99,6 +99,11 @@ func (l *Link) handleRequest(c *conn, f *linkpb.Frame) {
 			Payload:   r.Payload,
 		}
 	}
+	if frameExceedsLimit(reply) {
+		l.logger.Warn("link: dropping a reply",
+			"peer", c.id.fp.String(), "kind", reply.GetKind(), "reason", "frame_too_large")
+		return
+	}
 	if err := c.enqueue(reply); err != nil {
 		l.logger.Debug("link: dropping a reply",
 			"peer", c.id.fp.String(), "kind", reply.GetKind(), "err", err)

@@ -57,11 +57,17 @@ func (l *Link) registerHandler(kind FrameKind, state func(Fingerprint, Frame), r
 }
 
 // Send queues a state frame for peer. It returns immediately, with
-// ErrNotEstablished when no link is up and ErrQueueFull when the peer has not
-// read for long enough to fill the queue.
+// ErrNotEstablished when no link is up, ErrQueueFull when the peer has not read
+// for long enough to fill the queue, and ErrFrameTooLarge when the encoded frame
+// is above MaxMessageSize. An oversized frame is not queued and the link stays
+// up.
 func (l *Link) Send(peer Fingerprint, f Frame) error {
 	if f.Kind < reservedKindLimit {
 		return ErrInvalidKind
+	}
+	wire := &linkpb.Frame{Kind: f.Kind, Payload: f.Payload}
+	if frameExceedsLimit(wire) {
+		return ErrFrameTooLarge
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -69,8 +75,49 @@ func (l *Link) Send(peer Fingerprint, f Frame) error {
 	if c == nil {
 		return ErrNotEstablished
 	}
-	return c.enqueue(&linkpb.Frame{Kind: f.Kind, Payload: f.Payload})
+	return c.enqueue(wire)
 }
+
+// SendLatest queues a state frame like Send, except that a frame of the same
+// kind already queued by SendLatest and not yet taken by the writer is replaced
+// in place, keeping its position in the queue. A replacement that arrives after
+// the writer took the frame is queued as a new frame. The frame is refused with
+// ErrFrameTooLarge when it exceeds MaxMessageSize.
+func (l *Link) SendLatest(peer Fingerprint, f Frame) error {
+	_, err := l.sendLatestKey(peer, kindKey(f.Kind), f)
+	return err
+}
+
+// SendLatestKey is SendLatest with a caller-chosen key instead of the frame
+// kind: a frame queued by SendLatestKey with the same key and not yet taken by
+// the writer is replaced in place, and replaced reports that it happened. An
+// upper layer for which one digest has a state frame of two kinds uses one key
+// for both, so the newer frame replaces the older regardless of kind.
+func (l *Link) SendLatestKey(peer Fingerprint, key string, f Frame) (replaced bool, err error) {
+	return l.sendLatestKey(peer, key, f)
+}
+
+// sendLatestKey is the shared body of SendLatest and SendLatestKey.
+func (l *Link) sendLatestKey(peer Fingerprint, key string, f Frame) (replaced bool, err error) {
+	if f.Kind < reservedKindLimit {
+		return false, ErrInvalidKind
+	}
+	wire := &linkpb.Frame{Kind: f.Kind, Payload: f.Payload}
+	if frameExceedsLimit(wire) {
+		return false, ErrFrameTooLarge
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	c := l.establishedConn(peer)
+	if c == nil {
+		return false, ErrNotEstablished
+	}
+	return c.enqueueLatest(key, wire)
+}
+
+// kindKey is the latest-slot key SendLatest uses for the frames of one kind. It
+// is disjoint from the keys an upper layer passes to SendLatestKey.
+func kindKey(kind FrameKind) string { return fmt.Sprintf("k:%d", kind) }
 
 // Request sends a request frame and waits for the peer's reply, until ctx is
 // done or the link goes down. sent reports whether the frame reached the
@@ -79,12 +126,13 @@ func (l *Link) Request(ctx context.Context, peer Fingerprint, f Frame) (reply Fr
 	if f.Kind < reservedKindLimit {
 		return Frame{}, false, ErrInvalidKind
 	}
+	wire := &linkpb.Frame{Kind: f.Kind, Payload: f.Payload}
 
 	l.mu.Lock()
 	c := l.establishedConn(peer)
 	var p *pendingReq
 	if c != nil {
-		p, err = c.enqueueRequest(&linkpb.Frame{Kind: f.Kind, Payload: f.Payload})
+		p, err = c.enqueueRequest(wire)
 	}
 	l.mu.Unlock()
 

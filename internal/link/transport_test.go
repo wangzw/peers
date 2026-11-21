@@ -657,7 +657,7 @@ func frameOfEncodedSize(t *testing.T, size int) *linkpb.Frame {
 // encoded frame of exactly the limit reaches the transport, and one byte more
 // is rejected as ResourceExhausted before the transport is touched.
 func TestFrameSizeLimit(t *testing.T) {
-	atLimit := frameOfEncodedSize(t, maxMessageSize)
+	atLimit := frameOfEncodedSize(t, MaxMessageSize)
 	stream := new(recordingSendStream)
 	c := newConn(stream, nil, peerIdentity{}, 8)
 	if err := c.sendDirect(context.Background(), atLimit); err != nil {
@@ -667,7 +667,7 @@ func TestFrameSizeLimit(t *testing.T) {
 		t.Fatal("a frame at the limit did not reach the transport")
 	}
 
-	overLimit := frameOfEncodedSize(t, maxMessageSize+1)
+	overLimit := frameOfEncodedSize(t, MaxMessageSize+1)
 	stream = new(recordingSendStream)
 	c = newConn(stream, nil, peerIdentity{}, 8)
 	err := c.sendDirect(context.Background(), overLimit)
@@ -691,7 +691,7 @@ func TestOversizedFrameRejectedWithoutTransport(t *testing.T) {
 	c := newConn(stream, nil, peerIdentity{}, 8)
 	c.closeAsync(FailConnectionLost)
 
-	err := c.sendDirect(context.Background(), &linkpb.Frame{Kind: 200, Payload: make([]byte, maxMessageSize+1)})
+	err := c.sendDirect(context.Background(), &linkpb.Frame{Kind: 200, Payload: make([]byte, MaxMessageSize+1)})
 	if code := status.Code(err); code != codes.ResourceExhausted {
 		t.Fatalf("oversized send error code = %v (%v), want ResourceExhausted", code, err)
 	}

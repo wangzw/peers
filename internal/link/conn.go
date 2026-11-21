@@ -61,8 +61,12 @@ type conn struct {
 	authed    chan struct{}
 	authOnce  sync.Once
 
-	out      chan outItem // cap sendQueueSize
-	sendMu   sync.Mutex   // serialises sendDirect before the writer starts
+	out    chan outItem // cap sendQueueSize
+	sendMu sync.Mutex   // serialises sendDirect before the writer starts
+	// outMu guards latest, the queued latest slot of each key. The writer
+	// removes a slot while holding it, so a later replacement is queued anew.
+	outMu    sync.Mutex
+	latest   map[string]*latestSlot
 	writerOn atomic.Bool
 
 	closed    chan struct{}
@@ -85,10 +89,21 @@ type conn struct {
 }
 
 // outItem is one queued frame. req is non-nil for a request, whose state
-// changes when the writer takes it.
+// changes when the writer takes it. latest, when non-nil, identifies an item
+// queued by SendLatest or SendLatestKey that a later send with the same key
+// replaces in place.
 type outItem struct {
+	f      *linkpb.Frame
+	req    *pendingReq
+	latest *latestSlot
+}
+
+// latestSlot holds the frame of one queued latest item. Its mutex keeps the
+// writer's read of f from racing with a replacement.
+type latestSlot struct {
+	mu  sync.Mutex
+	key string
 	f   *linkpb.Frame
-	req *pendingReq
 }
 
 // pendingReq is one request waiting for its reply. state is queued until the
@@ -114,6 +129,7 @@ func newConn(stream frameStream, abort func(), id peerIdentity, queueSize int) *
 		abort:     abort,
 		in:        make(chan *linkpb.Frame, connInQueueSize),
 		out:       make(chan outItem, queueSize),
+		latest:    map[string]*latestSlot{},
 		closed:    make(chan struct{}),
 		stateDone: make(chan struct{}),
 		pending:   make(map[uint64]*pendingReq),
@@ -289,7 +305,21 @@ func (c *conn) writeLoop() {
 			if item.req != nil && !item.req.state.CompareAndSwap(reqQueued, reqWritten) {
 				continue
 			}
-			if err := c.stream.Send(item.f); err != nil {
+			f := item.f
+			if item.latest != nil {
+				// Remove the slot before reading it: a latest send that arrives
+				// after this enqueues a new frame instead of replacing one that
+				// is already going out.
+				c.outMu.Lock()
+				if c.latest[item.latest.key] == item.latest {
+					delete(c.latest, item.latest.key)
+				}
+				c.outMu.Unlock()
+				item.latest.mu.Lock()
+				f = item.latest.f
+				item.latest.mu.Unlock()
+			}
+			if err := c.stream.Send(f); err != nil {
 				c.closeAsync(FailConnectionLost)
 				return
 			}
@@ -305,13 +335,46 @@ func (c *conn) enqueue(f *linkpb.Frame) error {
 	return c.push(outItem{f: f})
 }
 
+// enqueueLatest queues f like enqueue under key. When a frame with the same key
+// is already queued by enqueueLatest and the writer has not taken it, that
+// frame's content is replaced in place, no new queue position is used, and
+// replaced reports true. A replacement that arrives after the writer took the
+// frame is queued as a new item, as is the case once the queue is closed.
+func (c *conn) enqueueLatest(key string, f *linkpb.Frame) (replaced bool, err error) {
+	c.outMu.Lock()
+	defer c.outMu.Unlock()
+	select {
+	case <-c.closed:
+		return false, c.closedErr()
+	default:
+	}
+	if slot, ok := c.latest[key]; ok {
+		slot.mu.Lock()
+		slot.f = f
+		slot.mu.Unlock()
+		return true, nil
+	}
+	slot := &latestSlot{key: key, f: f}
+	c.latest[key] = slot
+	if err := c.push(outItem{latest: slot}); err != nil {
+		delete(c.latest, key)
+		return false, err
+	}
+	return false, nil
+}
+
 // enqueueRequest assigns the next request id, registers the waiter and queues
-// the frame. A failed enqueue removes the waiter again.
+// the frame. The size check runs after the id is filled, so the check covers
+// the frame as it will actually be written. A failed check or enqueue removes
+// the waiter again.
 func (c *conn) enqueueRequest(f *linkpb.Frame) (*pendingReq, error) {
 	id := c.nextID.Add(1)
 	p := &pendingReq{id: id, reply: make(chan *linkpb.Frame, 1)}
 	f.RequestId = id
 	f.IsReply = false
+	if frameExceedsLimit(f) {
+		return nil, ErrFrameTooLarge
+	}
 
 	c.pendMu.Lock()
 	c.pending[id] = p

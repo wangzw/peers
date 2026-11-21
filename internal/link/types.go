@@ -73,6 +73,10 @@ var (
 	ErrClosed = errors.New("the link is closed")
 	// ErrInvalidKind reports a frame kind reserved for link and pairing.
 	ErrInvalidKind = errors.New("frame kind is reserved for link and pairing")
+	// ErrFrameTooLarge reports a frame whose encoded form exceeds
+	// MaxMessageSize. The frame is refused before it is queued, so the link
+	// stays up.
+	ErrFrameTooLarge = errors.New("frame is larger than the message limit")
 )
 
 // UnsupportedError reports that the peer does not support the request kind.
