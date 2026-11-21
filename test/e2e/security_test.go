@@ -764,6 +764,58 @@ func secAssertNoRosterFrames(t *testing.T, log []byte, peer string) {
 	}
 }
 
+// TestREQBrokerConfig069_RejectedConnectionsMergeBySource reproduces the
+// certificate-rotation bypass end to end. A client that is not a paired peer
+// dials with a fresh certificate every time; the audit log must gain one
+// connection_rejected record that counts every attempt and names the network
+// source, not one record per certificate.
+func TestREQBrokerConfig069_RejectedConnectionsMergeBySource(t *testing.T) {
+	c := harness.Up(t, harness.TopoSingle)
+	host := c.Node("hostA")
+	secStartBroker(t, host, "")
+
+	addr := net.JoinHostPort("127.0.0.1", secBrokerPort)
+	since := time.Now()
+	const probes = 5
+	for index := 0; index < probes; index++ {
+		res := host.Exec(t, []string{"/usr/local/bin/e2e-node", "probe-hello", "--addr", addr}, nil)
+		if res.ExitCode != 0 {
+			t.Fatalf("probe %d exited %d: %s", index, res.ExitCode, strings.TrimSpace(res.Stderr))
+		}
+	}
+
+	var rejected *localpb.AuditEvent
+	harness.Eventually(t, secWaitBound, "one merged connection_rejected record", func() (bool, string) {
+		events, detail := host.Oracle().Audit(t, since, 0)
+		if detail != nil {
+			return false, detail.GetMessage()
+		}
+		var found *localpb.AuditEvent
+		total := 0
+		for _, event := range events {
+			if event.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_CONNECTION_REJECTED {
+				total++
+				found = event
+			}
+		}
+		if total != 1 {
+			return false, fmt.Sprintf("%d connection_rejected records", total)
+		}
+		if found.GetCount() != probes {
+			return false, fmt.Sprintf("the record counts %d attempts", found.GetCount())
+		}
+		rejected = found
+		return true, ""
+	})
+
+	if got := rejected.GetDetail(); got != "not a peer from 127.0.0.1/32" {
+		t.Errorf("audit detail = %q, want %q", got, "not a peer from 127.0.0.1/32")
+	}
+	if rejected.GetPeer() == nil {
+		t.Error("the merged record carries no peer fingerprint")
+	}
+}
+
 // secForbiddenForms returns the encodings of s that a capture must not
 // contain: UTF-8, standard and raw base64, and UTF-16 in both byte orders.
 func secForbiddenForms(s string) [][]byte {

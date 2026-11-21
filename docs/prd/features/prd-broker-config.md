@@ -567,6 +567,14 @@ Agent 必须能用工具 `set_broker_online` 使所连 Broker 下线或上线，
 - **状态**：已实现
 - **端到端测试**：`test/e2e/offline_test.go` 的 `TestBrokerOffline/REQ-broker-config-068 status shows the state`（`Status.offline`、`ListBrokers.local.offline`，以及 `peers service status` 与 `broker list` 的下线状态行；上线后状态行消失）
 
+### REQ-broker-config-069
+
+同一来源在合并窗口内被拒绝的未认证连接，不论对方更换多少证书，审计日志中只新增一条记录；同一时段内被拒绝的来源再多，审计日志新增的记录数也有上限。
+
+- **验收**：一个未配对的对端在同一来源地址上用五张不同证书各发起一次连接，每次都被拒绝；随后读取审计日志，只有一条 `connection_rejected` 记录，`count` 为 5，`detail` 带该来源的前缀。伪造大量不同来源的连接时，一个 10 分钟窗口内所有可合并事件合计写入审计日志的普通记录不超过 256 条，超出部分合并为一条 `detail` 为 `other sources` 的汇总记录。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/security_test.go` 的 `TestREQBrokerConfig069_RejectedConnectionsMergeBySource`
+
 ## 数据需求
 
 Broker 的配置和审计日志保存在本机磁盘上，谁能读、谁能改由它们的文件权限决定。用户级 Broker 的配置文件和审计日志属于运行它的账户，只有该账户可以读写。系统级 Broker 的配置文件默认只有 root 与管理组可以读写。审计日志只追加，不由系统删除。
