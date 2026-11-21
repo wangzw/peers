@@ -23,11 +23,12 @@ const bufferedLinger = time.Second
 // so the handshake can start; the accepting side buffers, which is the
 // behaviour the rejection path has to survive.
 type bufferedPairConn struct {
-	peer   *bufferedPairConn
-	eager  bool
-	fp     Fingerprint
-	pub    []byte
-	remote string
+	peer    *bufferedPairConn
+	eager   bool
+	fp      Fingerprint
+	pub     []byte
+	remote  string
+	version uint32
 
 	mu     sync.Mutex
 	queue  []hsFrame // frames this side may read
@@ -41,19 +42,21 @@ type bufferedPairConn struct {
 // other's fingerprint and public key.
 func newBufferedPair(dialFP Fingerprint, dialPub []byte, accFP Fingerprint, accPub []byte) (*bufferedPairConn, *bufferedPairConn) {
 	dialer := &bufferedPairConn{
-		fp:     accFP,
-		pub:    append([]byte(nil), accPub...),
-		remote: "192.0.2.2:40002",
-		eager:  true,
-		wake:   make(chan struct{}, 1),
-		read:   make(chan struct{}, 1),
+		fp:      accFP,
+		pub:     append([]byte(nil), accPub...),
+		remote:  "192.0.2.2:40002",
+		version: hsProtocolVersion,
+		eager:   true,
+		wake:    make(chan struct{}, 1),
+		read:    make(chan struct{}, 1),
 	}
 	acceptor := &bufferedPairConn{
-		fp:     dialFP,
-		pub:    append([]byte(nil), dialPub...),
-		remote: "192.0.2.1:40001",
-		wake:   make(chan struct{}, 1),
-		read:   make(chan struct{}, 1),
+		fp:      dialFP,
+		pub:     append([]byte(nil), dialPub...),
+		remote:  "192.0.2.1:40001",
+		version: hsProtocolVersion,
+		wake:    make(chan struct{}, 1),
+		read:    make(chan struct{}, 1),
 	}
 	dialer.peer = acceptor
 	acceptor.peer = dialer
@@ -70,6 +73,7 @@ func (c *bufferedPairConn) notify() {
 func (c *bufferedPairConn) PeerFingerprint() Fingerprint { return c.fp }
 func (c *bufferedPairConn) PeerPublicKey() []byte        { return append([]byte(nil), c.pub...) }
 func (c *bufferedPairConn) RemoteAddr() string           { return c.remote }
+func (c *bufferedPairConn) ProtocolVersion() uint32      { return c.version }
 
 func (c *bufferedPairConn) Send(ctx context.Context, kind uint32, payload []byte) error {
 	if err := ctx.Err(); err != nil {

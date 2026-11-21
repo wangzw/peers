@@ -21,6 +21,7 @@ type transportTestConn struct {
 func (c *transportTestConn) PeerFingerprint() Fingerprint { return c.fp }
 func (c *transportTestConn) PeerPublicKey() []byte        { return c.pub }
 func (c *transportTestConn) RemoteAddr() string           { return c.remote }
+func (c *transportTestConn) ProtocolVersion() uint32      { return hsProtocolVersion }
 
 func (c *transportTestConn) Send(ctx context.Context, kind uint32, payload []byte) error {
 	if err := ctx.Err(); err != nil {

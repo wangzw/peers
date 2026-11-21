@@ -10,12 +10,13 @@ import (
 // Audit reasons. Detail carries only the reason; it never carries a key, an
 // address or any other secret.
 const (
-	auditReasonKeyInvalid         = "key invalid"
-	auditReasonVerificationFailed = "verification failed"
-	auditReasonTryLater           = "try later"
-	auditReasonKeyExpired         = "key expired"
-	auditReasonTimeout            = "handshake timeout"
-	auditReasonNotConnected       = "not connected"
+	auditReasonKeyInvalid          = "key invalid"
+	auditReasonVerificationFailed  = "verification failed"
+	auditReasonTryLater            = "try later"
+	auditReasonKeyExpired          = "key expired"
+	auditReasonVersionIncompatible = "version incompatible"
+	auditReasonTimeout             = "handshake timeout"
+	auditReasonNotConnected        = "not connected"
 )
 
 // auditPairingSucceeded records a pairing completed on this side. pairing
@@ -26,8 +27,10 @@ func auditPairingSucceeded(s settings, now time.Time, fp Fingerprint, alias stri
 }
 
 // auditPairingFailed records a pairing this side rejected or lost. reason is one
-// of the auditReason constants. mergeKey is set only for a rate-limited failure,
-// where the audit log merges repeated events from the same source.
+// of the auditReason constants. mergeKey is set for a source-level failure that
+// a stranger can repeat without limit, either a rate-limited request or one
+// whose protocol version does not match; the audit log merges repeated events
+// from the same source.
 func auditPairingFailed(s settings, now time.Time, fp Fingerprint, alias, reason, mergeKey string) {
 	s.Audit(newPairingAuditEvent(config.EventPairingFailed, now, fp, alias, reason, mergeKey))
 }
@@ -77,7 +80,7 @@ func sourcePrefix(remote string) string {
 	return netip.PrefixFrom(addr.WithZone(""), 64).Masked().String()
 }
 
-// auditSourceMergeKey builds the merge key for a rate-limited pairing failure.
+// auditSourceMergeKey builds the merge key for a source-level pairing failure.
 // The key is "source:" plus the source prefix, so repeated attempts from one
 // address or one IPv6 /64 collapse in the audit read while the port is
 // ignored. An address with no IP yields no merge key, because grouping

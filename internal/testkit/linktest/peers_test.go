@@ -91,6 +91,12 @@ func (c *memPairConn) PeerPublicKey() []byte { return nil }
 
 func (c *memPairConn) RemoteAddr() string { return c.remote }
 
+// memProtocolVersion stands in for the link protocol version the fake
+// connections speak. The fake pairing flows do not compare versions.
+const memProtocolVersion uint32 = 1
+
+func (c *memPairConn) ProtocolVersion() uint32 { return memProtocolVersion }
+
 func (c *memPairConn) Send(ctx context.Context, kind uint32, payload []byte) error {
 	frame := memFrame{kind: kind, payload: append([]byte(nil), payload...)}
 	select {

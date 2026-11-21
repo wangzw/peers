@@ -10,6 +10,10 @@ message PairRequest {
 
   bytes initiator_nonce = 1;
   bytes lookup_tag = 3;
+  // protocol_version is the speaker's link protocol version. The acceptor
+  // compares it before looking up a key, so a mismatched pairing fails as a
+  // version conflict instead of a wrong key.
+  uint32 protocol_version = 4;
 }
 
 message PairChallenge {
@@ -36,6 +40,7 @@ enum PairingRejectReason {
   PAIRING_REJECT_REASON_VERIFICATION_FAILED = 2;
   PAIRING_REJECT_REASON_TRY_LATER = 3;
   PAIRING_REJECT_REASON_KEY_EXPIRED = 4;
+  PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE = 5;
 }
 
 message AdvertisedAddress {

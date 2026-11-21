@@ -216,9 +216,11 @@ sequenceDiagram
 
 kind 常量手写在相应 proto 包目录内的 `kind.go` 中，不用 proto enum，使对端能够接收不认识的 kind 而无需枚举转换。每个 kind 的载荷消息及其类别（状态帧、请求帧或应答帧），见 [link](modules/design-link.md)、[topic](modules/design-topic.md)、[directory](modules/design-directory.md)、[pairing](modules/design-pairing.md) 与 [broker](modules/design-broker.md)。
 
-协议版本有两个常量：本机接口版本 `localpb.ProtocolVersion` 用于本机 `Local` 服务，链路版本 `linkpb.ProtocolVersion` 用于链路握手。新增 kind 或给已有帧增加字段是兼容变化，不提升版本；改变已有 kind 或已有字段的含义才提升。给已有枚举追加取值同样是兼容变化，例如配对拒绝原因追加的密钥已过期；旧版本收到不认识的取值时按各模块的规则处理，`pairing` 按协议错误处理。版本比较与不兼容时的处理见 [broker](modules/design-broker.md) 与 [link](modules/design-link.md)。
+协议版本有两个常量：本机接口版本 `localpb.ProtocolVersion` 用于本机 `Local` 服务，链路版本 `linkpb.ProtocolVersion` 用于链路握手。配对帧走链路流，由链路版本覆盖，配对没有独立的版本常量；配对发生在链路 `Hello` 之前，所以 `PairRequest` 在字段 4 携带发送方的链路版本，接受方在查找密钥之前比较，这样不同版本的双方不会把版本不兼容误报成密钥无效。新增 kind 或给已有帧增加字段是兼容变化，不提升版本；改变已有 kind 或已有字段的含义才提升。给已有枚举追加取值同样是兼容变化，例如配对拒绝原因追加的密钥已过期；旧版本收到不认识的取值时按各模块的规则处理，`pairing` 按协议错误处理。版本比较与不兼容时的处理见 [broker](modules/design-broker.md) 与 [link](modules/design-link.md)。
 
-版本相等才算兼容，未填写的版本按不兼容处理，两端都比较对方报出的版本。握手本身的编号与含义在所有版本中保持不变：本机 `Hello` 的请求与应答各以第一个字段携带版本，`ErrorDetail` 的三个字段，错误码中 `version_mismatch` 的取值 13，链路 `Hello` 的版本字段，以及 `Reject` 的 `reason` 字段与其中“协议版本不兼容”的取值 1。握手本身改变编号或含义，两端就无法得知彼此不兼容。
+版本相等才算兼容，未填写的版本按不兼容处理，两端都比较对方报出的版本。握手本身的编号与含义在所有版本中保持不变：本机 `Hello` 的请求与应答各以第一个字段携带版本，`ErrorDetail` 的三个字段，错误码中 `version_mismatch` 的取值 13，链路 `Hello` 的版本字段，`Reject` 的 `reason` 字段与其中“协议版本不兼容”的取值 1，以及配对 `PairRequest` 的 `protocol_version`（字段 4）与 `PairReject` 原因中“版本不兼容”的取值 5。握手本身改变编号或含义，两端就无法得知彼此不兼容。
+
+从链路协议版本 1 提升到 2 是第一次发生含义变化的提升。新发起方对旧接受方只能得到“密钥无效”：旧接受方不认识字段 4，按旧的查找方式找不到密钥。这是第一次提升无法避免的不对称；此后的提升两端都按上一段比较，配对阶段即可报出版本不兼容。
 
 对未知输入的处理是统一的：不认识的状态帧与应答帧丢弃；不认识的请求帧以“不支持”应答回复，应答中指明该请求的 kind；已知帧中的未知字段直接忽略；对外地址列表中种类不认识的项逐项跳过，不影响其余项（[link](modules/design-link.md)、[pairing](modules/design-pairing.md)）。
 

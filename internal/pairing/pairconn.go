@@ -26,6 +26,10 @@ type PairConn interface {
 	// only its host for the audit merge key.
 	RemoteAddr() string
 
+	// ProtocolVersion is the link protocol version this side speaks on the
+	// connection. pairing sends it in PairRequest and compares it there.
+	ProtocolVersion() uint32
+
 	// Send writes one frame and flushes it. It must return when ctx is
 	// canceled or expires, returning ctx.Err().
 	Send(ctx context.Context, kind uint32, payload []byte) error

@@ -98,8 +98,9 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	}
 
 	request := &pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      hint,
+		InitiatorNonce:  ni,
+		LookupTag:       hint,
+		ProtocolVersion: conn.ProtocolVersion(),
 	}
 	if err := sendMessage(runCtx, conn, kindPairRequest, request); err != nil {
 		return Peer{}, p.initiatorFrameError(conn, parent, runCtx, err)
@@ -226,6 +227,13 @@ func (p *Pairing) Accept(conn PairConn) error {
 		_ = conn.Close()
 		return fmt.Errorf("%w: cannot decode PairRequest: %v", ErrProtocol, err)
 	}
+	// The version check comes before any key lookup: a peer speaking another
+	// protocol cannot be paired, and reporting a version conflict keeps it from
+	// being mistaken for a wrong key. An unfilled version (0) never matches,
+	// because every link protocol version is at least 1.
+	if request.GetProtocolVersion() != conn.ProtocolVersion() {
+		return p.rejectAcceptor(conn, ctx, initiatorFP, ReasonVersionIncompatible, p.clock.Now())
+	}
 	ni := request.GetInitiatorNonce()
 	if len(ni) != nonceLength || len(request.GetLookupTag()) != lookupTagLength {
 		_ = conn.Close()
@@ -326,7 +334,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 		_ = conn.Close()
 		return err
 	}
-	_, localAlias, token, ok := p.reserveAcceptorAlias(initiatorFP, initiatorAlias, ownAliasNow)
+	finalAlias, localAlias, token, ok := p.reserveAcceptorAlias(initiatorFP, initiatorAlias, ownAliasNow)
 	if !ok {
 		_ = conn.Close()
 		return ErrNeedsLocalAlias
@@ -348,14 +356,14 @@ func (p *Pairing) Accept(conn PairConn) error {
 	}
 
 	if err := sendMessage(ctx, conn, kindPairDone, &pairingpb.PairDone{}); err != nil {
-		return p.acceptFrameError(conn, ctx, initiatorFP, initiatorAlias, err)
+		return p.acceptFrameError(conn, ctx, initiatorFP, finalAlias, err)
 	}
 
 	// The peer becomes a committed peer only after the initiator's first link
 	// Hello arrives. Put that frame back for link to read.
 	kind, payload, err = conn.Receive(ctx)
 	if err != nil {
-		return p.acceptFrameError(conn, ctx, initiatorFP, initiatorAlias, err)
+		return p.acceptFrameError(conn, ctx, initiatorFP, finalAlias, err)
 	}
 	if kind != kindHello {
 		_ = conn.Close()
@@ -415,15 +423,18 @@ func initiatorProof(key, ni, nr []byte, initiator, acceptorSeen Fingerprint) []b
 // happens before the initiator proof verifies, so the audit records the
 // fingerprint alone; the initiator's self-reported alias is not trusted yet.
 func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerprint, reason RejectReason, now time.Time) error {
-	mergeKey := ""
 	switch reason {
 	case ReasonTryLater:
-		mergeKey = auditSourceMergeKey(conn.RemoteAddr())
-		auditPairingFailed(p.settings, now, fp, "", auditReasonTryLater, mergeKey)
+		auditPairingFailed(p.settings, now, fp, "", auditReasonTryLater, auditSourceMergeKey(conn.RemoteAddr()))
 	case ReasonVerificationFailed:
 		auditPairingFailed(p.settings, now, fp, "", auditReasonVerificationFailed, "")
 	case ReasonKeyExpired:
 		auditPairingFailed(p.settings, now, fp, "", auditReasonKeyExpired, "")
+	case ReasonVersionIncompatible:
+		// A stranger can send a mismatched version as often as it likes without
+		// being counted as an attempt, so the audit merges these by source too;
+		// otherwise the log would grow without bound.
+		auditPairingFailed(p.settings, now, fp, "", auditReasonVersionIncompatible, auditSourceMergeKey(conn.RemoteAddr()))
 	default:
 		auditPairingFailed(p.settings, now, fp, "", auditReasonKeyInvalid, "")
 	}
@@ -597,6 +608,8 @@ func rejectReasonToPB(reason RejectReason) (pairingpb.PairingRejectReason, bool)
 		return pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_TRY_LATER, true
 	case ReasonKeyExpired:
 		return pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_KEY_EXPIRED, true
+	case ReasonVersionIncompatible:
+		return pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE, true
 	default:
 		return pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_UNSPECIFIED, false
 	}
@@ -613,6 +626,8 @@ func rejectReasonFromPB(reason pairingpb.PairingRejectReason) (RejectReason, boo
 		return ReasonTryLater, true
 	case pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_KEY_EXPIRED:
 		return ReasonKeyExpired, true
+	case pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE:
+		return ReasonVersionIncompatible, true
 	default:
 		return 0, false
 	}
@@ -633,6 +648,8 @@ func rejectDetail(reason RejectReason) string {
 		return "not connected"
 	case ReasonKeyExpired:
 		return "key expired; ask the other side to generate a new pairing key"
+	case ReasonVersionIncompatible:
+		return "link protocol version incompatible with the other Broker; upgrade the older Broker"
 	default:
 		return "pairing rejected"
 	}

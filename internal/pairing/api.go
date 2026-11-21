@@ -108,6 +108,7 @@ const (
 	ReasonTimeout
 	ReasonNotConnected
 	ReasonKeyExpired
+	ReasonVersionIncompatible
 )
 
 // PairingError is a refusal with a reason and a human-readable detail. Its

@@ -97,6 +97,8 @@ func pairReasonText(reason pairing.RejectReason) string {
 		return "not connected"
 	case pairing.ReasonKeyExpired:
 		return "key expired"
+	case pairing.ReasonVersionIncompatible:
+		return "version incompatible"
 	default:
 		return "rejected"
 	}

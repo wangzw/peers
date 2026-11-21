@@ -188,6 +188,7 @@ type hsConn struct {
 	fp         Fingerprint
 	pub        []byte
 	remote     string
+	version    uint32
 	sent       []uint32
 	sentCh     chan uint32
 	closeCount int
@@ -199,7 +200,7 @@ type hsFrame struct {
 }
 
 func newHSConn() *hsConn {
-	return &hsConn{wake: make(chan struct{}, 1), sentCh: make(chan uint32, 32)}
+	return &hsConn{wake: make(chan struct{}, 1), sentCh: make(chan uint32, 32), version: hsProtocolVersion}
 }
 
 // hsConnPairFor builds endpoints whose reported identities are the given
@@ -228,6 +229,7 @@ func (c *hsConn) notify() {
 func (c *hsConn) PeerFingerprint() Fingerprint { return c.fp }
 func (c *hsConn) PeerPublicKey() []byte        { return append([]byte(nil), c.pub...) }
 func (c *hsConn) RemoteAddr() string           { return c.remote }
+func (c *hsConn) ProtocolVersion() uint32      { return c.version }
 
 func (c *hsConn) Send(ctx context.Context, kind uint32, payload []byte) error {
 	select {
@@ -928,7 +930,7 @@ func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
 		acceptErr := make(chan error, 1)
 		go func() { acceptErr <- accP.Accept(bConn) }()
 
-		request := &pairingpb.PairRequest{InitiatorNonce: ni, LookupTag: hint}
+		request := &pairingpb.PairRequest{InitiatorNonce: ni, LookupTag: hint, ProtocolVersion: aConn.version}
 		if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 			t.Fatalf("replay %d: send PairRequest: %v", i, err)
 		}
@@ -1001,7 +1003,7 @@ func TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid(t *testing.T) {
 	acceptErr := make(chan error, 1)
 	go func() { acceptErr <- accP.Accept(bConn) }()
 
-	if err := hsSendProto(aConn, kindPairRequest, &pairingpb.PairRequest{InitiatorNonce: ni, LookupTag: hint}); err != nil {
+	if err := hsSendProto(aConn, kindPairRequest, &pairingpb.PairRequest{InitiatorNonce: ni, LookupTag: hint, ProtocolVersion: aConn.version}); err != nil {
 		t.Fatalf("send forwarded PairRequest: %v", err)
 	}
 	kind, payload, recvErr := receiveWithTimeout(aConn)
@@ -1262,8 +1264,9 @@ func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
 			t.Fatalf("random nonce: %v", err)
 		}
 		request := &pairingpb.PairRequest{
-			InitiatorNonce: ni,
-			LookupTag:      computeHint([]byte(key), ni, fp),
+			InitiatorNonce:  ni,
+			LookupTag:       computeHint([]byte(key), ni, fp),
+			ProtocolVersion: aConn.version,
 		}
 		if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 			t.Fatalf("send PairRequest: %v", err)
@@ -1420,8 +1423,9 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 				t.Fatalf("random nonce: %v", err)
 			}
 			request := &pairingpb.PairRequest{
-				InitiatorNonce: ni,
-				LookupTag:      computeHint([]byte(oldKey), ni, initiatorFP),
+				InitiatorNonce:  ni,
+				LookupTag:       computeHint([]byte(oldKey), ni, initiatorFP),
+				ProtocolVersion: aConn.version,
 			}
 			if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 				t.Fatalf("send PairRequest: %v", err)
@@ -1559,8 +1563,9 @@ func TestAcceptorReadsAliasFromConfirmedPairConfirm(t *testing.T) {
 
 	ni := makeSeq(0, nonceLength)
 	request, err := proto.Marshal(&pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni, initiatorFP),
+		InitiatorNonce:  ni,
+		LookupTag:       computeHint([]byte(key), ni, initiatorFP),
+		ProtocolVersion: aConn.version,
 	})
 	if err != nil {
 		t.Fatalf("marshal PairRequest: %v", err)
@@ -1641,8 +1646,9 @@ func TestAcceptorFailureAuditsOmitInitiatorAlias(t *testing.T) {
 
 		ni := makeSeq(0, nonceLength)
 		request, err := proto.Marshal(&pairingpb.PairRequest{
-			InitiatorNonce: ni,
-			LookupTag:      computeHint([]byte(key), ni, initiatorFP),
+			InitiatorNonce:  ni,
+			LookupTag:       computeHint([]byte(key), ni, initiatorFP),
+			ProtocolVersion: aConn.version,
 		})
 		if err != nil {
 			t.Fatalf("marshal PairRequest: %v", err)
@@ -1774,8 +1780,9 @@ func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 		t.Fatalf("random nonce: %v", err)
 	}
 	request := &pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni, fp),
+		InitiatorNonce:  ni,
+		LookupTag:       computeHint([]byte(key), ni, fp),
+		ProtocolVersion: aConn.version,
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 		t.Fatalf("send PairRequest: %v", err)
@@ -1812,8 +1819,9 @@ func hsRequestAttemptFrom(t *testing.T, p *Pairing, key string, want RejectReaso
 		t.Fatalf("random nonce: %v", err)
 	}
 	request := &pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni, fp),
+		InitiatorNonce:  ni,
+		LookupTag:       computeHint([]byte(key), ni, fp),
+		ProtocolVersion: aConn.version,
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 		t.Fatalf("send PairRequest: %v", err)
@@ -1848,8 +1856,9 @@ func hsCompleteAsInitiator(t *testing.T, p *Pairing, aConn, bConn *hsConn, initi
 		return err
 	}
 	request := &pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni, initiatorFP),
+		InitiatorNonce:  ni,
+		LookupTag:       computeHint([]byte(key), ni, initiatorFP),
+		ProtocolVersion: aConn.version,
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
 		return err

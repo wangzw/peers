@@ -12,6 +12,9 @@ import (
 // frames.
 type pairConn struct {
 	c *conn
+	// version is the link protocol version this Link speaks, including a test
+	// override. Pairing sends it in PairRequest and compares it there.
+	version uint32
 	// linger is link's rejection linger, shared with rejectAndLinger. It sends
 	// the pairing reject frame and keeps the connection open until the frame
 	// has had time to leave the transport's write buffer.
@@ -20,10 +23,10 @@ type pairConn struct {
 
 var _ pairing.PairConn = (*pairConn)(nil)
 
-// newPairConn wraps c for pairing. linger must be the containing Link's
-// lingerAfterSend.
-func newPairConn(c *conn, linger func(*conn, func(context.Context) error) error) pairing.PairConn {
-	return &pairConn{c: c, linger: linger}
+// newPairConn wraps c for pairing. version is the Link's protocol version and
+// linger must be the containing Link's lingerAfterSend.
+func newPairConn(c *conn, version uint32, linger func(*conn, func(context.Context) error) error) pairing.PairConn {
+	return &pairConn{c: c, version: version, linger: linger}
 }
 
 // PeerFingerprint returns the certificate fingerprint the peer presented.
@@ -39,6 +42,12 @@ func (p *pairConn) PeerPublicKey() []byte {
 // RemoteAddr returns the peer's TCP address in host:port form.
 func (p *pairConn) RemoteAddr() string {
 	return p.c.id.remote
+}
+
+// ProtocolVersion returns the link protocol version this Link speaks on the
+// connection.
+func (p *pairConn) ProtocolVersion() uint32 {
+	return p.version
 }
 
 // Send writes one unprompted frame. Pairing frames carry no request id and are

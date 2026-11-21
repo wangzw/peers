@@ -17,7 +17,7 @@ func TestPairConnSendAndLingerHoldsTheConnection(t *testing.T) {
 		remote: "127.0.0.1:1",
 	}, 8)
 	c.start()
-	pc := newPairConn(c, h.l.lingerAfterSend).(*pairConn)
+	pc := newPairConn(c, h.l.protocolVersion, h.l.lingerAfterSend).(*pairConn)
 
 	payload := []byte("pair-reject")
 	if err := pc.SendAndLinger(context.Background(), 104, payload); err != nil {

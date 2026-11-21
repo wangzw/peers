@@ -183,7 +183,7 @@ func (l *Link) serveInbound(c *conn, t *trackedConn) (<-chan struct{}, bool) {
 	// pushes the following Hello back, so the normal path below sees it.
 	if f.GetKind() == pairingpb.KindPairRequest && classify(f) == classState {
 		c.unread(f)
-		if err := l.peers.Accept(newPairConn(c, l.lingerAfterSend)); err != nil {
+		if err := l.peers.Accept(newPairConn(c, l.protocolVersion, l.lingerAfterSend)); err != nil {
 			// A pairing rejection starts its own linger and owns the close; a
 			// plain handshake failure has no linger and closes here.
 			c.closeAfterFailedHandshake(FailProtocol)

@@ -24,11 +24,12 @@ const (
 type PairingRejectReason int32
 
 const (
-	PairingRejectReason_PAIRING_REJECT_REASON_UNSPECIFIED         PairingRejectReason = 0
-	PairingRejectReason_PAIRING_REJECT_REASON_KEY_INVALID         PairingRejectReason = 1
-	PairingRejectReason_PAIRING_REJECT_REASON_VERIFICATION_FAILED PairingRejectReason = 2
-	PairingRejectReason_PAIRING_REJECT_REASON_TRY_LATER           PairingRejectReason = 3
-	PairingRejectReason_PAIRING_REJECT_REASON_KEY_EXPIRED         PairingRejectReason = 4
+	PairingRejectReason_PAIRING_REJECT_REASON_UNSPECIFIED          PairingRejectReason = 0
+	PairingRejectReason_PAIRING_REJECT_REASON_KEY_INVALID          PairingRejectReason = 1
+	PairingRejectReason_PAIRING_REJECT_REASON_VERIFICATION_FAILED  PairingRejectReason = 2
+	PairingRejectReason_PAIRING_REJECT_REASON_TRY_LATER            PairingRejectReason = 3
+	PairingRejectReason_PAIRING_REJECT_REASON_KEY_EXPIRED          PairingRejectReason = 4
+	PairingRejectReason_PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE PairingRejectReason = 5
 )
 
 // Enum value maps for PairingRejectReason.
@@ -39,13 +40,15 @@ var (
 		2: "PAIRING_REJECT_REASON_VERIFICATION_FAILED",
 		3: "PAIRING_REJECT_REASON_TRY_LATER",
 		4: "PAIRING_REJECT_REASON_KEY_EXPIRED",
+		5: "PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE",
 	}
 	PairingRejectReason_value = map[string]int32{
-		"PAIRING_REJECT_REASON_UNSPECIFIED":         0,
-		"PAIRING_REJECT_REASON_KEY_INVALID":         1,
-		"PAIRING_REJECT_REASON_VERIFICATION_FAILED": 2,
-		"PAIRING_REJECT_REASON_TRY_LATER":           3,
-		"PAIRING_REJECT_REASON_KEY_EXPIRED":         4,
+		"PAIRING_REJECT_REASON_UNSPECIFIED":          0,
+		"PAIRING_REJECT_REASON_KEY_INVALID":          1,
+		"PAIRING_REJECT_REASON_VERIFICATION_FAILED":  2,
+		"PAIRING_REJECT_REASON_TRY_LATER":            3,
+		"PAIRING_REJECT_REASON_KEY_EXPIRED":          4,
+		"PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE": 5,
 	}
 )
 
@@ -80,8 +83,12 @@ type PairRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InitiatorNonce []byte                 `protobuf:"bytes,1,opt,name=initiator_nonce,json=initiatorNonce,proto3" json:"initiator_nonce,omitempty"`
 	LookupTag      []byte                 `protobuf:"bytes,3,opt,name=lookup_tag,json=lookupTag,proto3" json:"lookup_tag,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// protocol_version is the speaker's link protocol version. The acceptor
+	// compares it before looking up a key, so a mismatched pairing fails as a
+	// version conflict instead of a wrong key.
+	ProtocolVersion uint32 `protobuf:"varint,4,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PairRequest) Reset() {
@@ -126,6 +133,13 @@ func (x *PairRequest) GetLookupTag() []byte {
 		return x.LookupTag
 	}
 	return nil
+}
+
+func (x *PairRequest) GetProtocolVersion() uint32 {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return 0
 }
 
 type PairChallenge struct {
@@ -384,11 +398,12 @@ var File_internal_pairing_pairingpb_pairing_proto protoreflect.FileDescriptor
 
 const file_internal_pairing_pairingpb_pairing_proto_rawDesc = "" +
 	"\n" +
-	"(internal/pairing/pairingpb/pairing.proto\x12\x1ainternal.pairing.pairingpb\"l\n" +
+	"(internal/pairing/pairingpb/pairing.proto\x12\x1ainternal.pairing.pairingpb\"\x97\x01\n" +
 	"\vPairRequest\x12'\n" +
 	"\x0finitiator_nonce\x18\x01 \x01(\fR\x0einitiatorNonce\x12\x1d\n" +
 	"\n" +
-	"lookup_tag\x18\x03 \x01(\fR\tlookupTagJ\x04\b\x02\x10\x03R\x0finitiator_alias\"\xd9\x01\n" +
+	"lookup_tag\x18\x03 \x01(\fR\tlookupTag\x12)\n" +
+	"\x10protocol_version\x18\x04 \x01(\rR\x0fprotocolVersionJ\x04\b\x02\x10\x03R\x0finitiator_alias\"\xd9\x01\n" +
 	"\rPairChallenge\x12'\n" +
 	"\x0fresponder_nonce\x18\x01 \x01(\fR\x0eresponderNonce\x12'\n" +
 	"\x0fresponder_alias\x18\x02 \x01(\tR\x0eresponderAlias\x12`\n" +
@@ -404,13 +419,14 @@ const file_internal_pairing_pairingpb_pairing_proto_rawDesc = "" +
 	"\x06reason\x18\x01 \x01(\x0e2/.internal.pairing.pairingpb.PairingRejectReasonR\x06reason\";\n" +
 	"\x11AdvertisedAddress\x12\x12\n" +
 	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
-	"\x04addr\x18\x02 \x01(\tR\x04addr*\xde\x01\n" +
+	"\x04addr\x18\x02 \x01(\tR\x04addr*\x8e\x02\n" +
 	"\x13PairingRejectReason\x12%\n" +
 	"!PAIRING_REJECT_REASON_UNSPECIFIED\x10\x00\x12%\n" +
 	"!PAIRING_REJECT_REASON_KEY_INVALID\x10\x01\x12-\n" +
 	")PAIRING_REJECT_REASON_VERIFICATION_FAILED\x10\x02\x12#\n" +
 	"\x1fPAIRING_REJECT_REASON_TRY_LATER\x10\x03\x12%\n" +
-	"!PAIRING_REJECT_REASON_KEY_EXPIRED\x10\x04B>Z<github.com/wangzw/peers/internal/pairing/pairingpb;pairingpbb\x06proto3"
+	"!PAIRING_REJECT_REASON_KEY_EXPIRED\x10\x04\x12.\n" +
+	"*PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE\x10\x05B>Z<github.com/wangzw/peers/internal/pairing/pairingpb;pairingpbb\x06proto3"
 
 var (
 	file_internal_pairing_pairingpb_pairing_proto_rawDescOnce sync.Once

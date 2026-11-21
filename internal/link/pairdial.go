@@ -31,7 +31,7 @@ func (l *Link) PairDial(ctx context.Context, address string, run func(pairing.Pa
 		return fmt.Errorf("%w: %v", pairing.ErrDialFailed, err)
 	}
 
-	if runErr := run(newPairConn(c, l.lingerAfterSend)); runErr != nil {
+	if runErr := run(newPairConn(c, l.protocolVersion, l.lingerAfterSend)); runErr != nil {
 		c.closeAsync(FailProtocol)
 		return runErr
 	}

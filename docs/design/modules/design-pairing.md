@@ -86,6 +86,8 @@ type PairConn interface {
     PeerFingerprint() Fingerprint
     PeerPublicKey() []byte
     RemoteAddr() string
+    // ProtocolVersion 是本次连接使用的链路协议版本；配对把它写进请求并在接受方比较。
+    ProtocolVersion() uint32
     Send(ctx context.Context, kind uint32, payload []byte) error
     Receive(ctx context.Context) (kind uint32, payload []byte, err error)
     Unread(kind uint32, payload []byte)
@@ -95,6 +97,7 @@ type PairConn interface {
 
 `link` 实现 `PairConn` 与 `Transport` 时必须满足下列契约：
 
+- `ProtocolVersion` 返回该 `Link` 实际使用的链路协议版本，包括测试注入的覆盖值。配对发生在链路 `Hello` 之前，没有独立的配对版本常量，配对帧由链路版本覆盖。
 - 接受方路径：`link` 识别出首帧为 `PairRequest`（kind 100）后把连接交给 `Accept`。适配层必须让 `Accept` 的第一次 `Receive` 返回这一帧，做法可以是在构造适配器时预置首帧，或缓冲后重放。
 - `Send` 与 `Receive` 监听传入 context 的 `Done()`，在它取消或到期时返回 `ctx.Err()`。一次配对的 10 秒期限依靠这一点打断阻塞的读写。
 - `RemoteAddr` 返回对端的 `host:port`。`pairing` 按它得出限流与审计合并所用的来源前缀：IPv4 取 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理并去掉 zone；解析不出 IP 地址的归入同一个未知来源，且不设合并键。
@@ -232,9 +235,10 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 
 ### 接受方
 
+0. 比较 `PairRequest` 中的协议版本与本次连接使用的链路协议版本；不相等，包括未填写的 0，回 `PairReject`（原因为版本不兼容）并关闭，不计入配对尝试计数，写审计 `version incompatible`，与限流失败一样以来源前缀为合并键（见下文“审计的写入方”）。版本比较在查找任何密钥之前，使不同版本的双方不会把版本不兼容误报成密钥无效。
 1. 对密钥表中每个未过期的一次性配对密钥计算查找标记，有与请求相符的即用它，这样的请求不计入配对尝试计数。
 2. 没有相符的一次性配对密钥时，对已过期密钥的记录计算查找标记，相符的回 `PairReject`（原因为密钥已过期）并关闭，这样的请求不计入配对尝试计数，也不受它限制。
-3. 也没有相符的已过期密钥记录时，检查两级配对尝试计数：本来源本分钟已满 `pairing.max_attempts_per_minute`，或全部来源本分钟合计已满它的十倍，回 `PairReject`（原因为稍后再试）并关闭，不计数；两级都未满的，对已配置的预置静态密钥计算查找标记，相符即用它且不计入计数，不相符的本来源与合计各加一并回 `PairReject`（原因为密钥无效），随后关闭。
+3. 也没有相符的已过期密钥记录时，检查两级配对尝试计数：本来源本分钟已满 `pairing.max_attempts_per_minute`，或全部来源本分钟合计已满它的十倍，回 `PairReject`（原因为稍后再试）并关闭，不计数；两级都未满的，对已配置的预置静态密钥计算查找标记，相符即用它且不计入计数，不相符的本来源与合计各加一并回 `PairReject`（原因为密钥无效），随后关闭。计数先于读取预置静态密钥进行，匹配成功后撤销这一次计数：某来源恰好还差一次到上限时，并发的静态密钥请求可能被暂时判为稍后再试，下一次请求即恢复。
 4. 计算 `mr`，回 `PairChallenge`，其中带 `config` 给出的本方对外地址列表；收 `PairConfirm`，验证 `mi`。验证时重新取当前的密钥：一次性配对密钥必须仍在密钥表中，预置静态密钥必须仍是 `config` 给出的当前值。一次性配对密钥在验证时已过期的，回 `PairReject`（原因为密钥已过期）并关闭，不计失败次数。验证失败的，回 `PairReject`（原因为验证失败）并关闭；相符的是一次性配对密钥的，其失败次数加一，达到 `pairing.max_failures` 后作废。
 5. 验证通过：一次性配对密钥立即作废；别名取自 `PairConfirm` 中发起方的自报别名，有冲突或不符合别名的规则时为它准备本地别名；把对方记为待提交的条目，回 `PairDone`。
 6. 在同一连接上收到发起方的首个 `Hello` 后提交：写入对端表，本方是接受方，不记任何地址；对方指纹已在表中时覆盖，角色按本次重新确定，全部候选地址与上一次连通的地址删除，同一对端原有的链路被关闭。连接在此之前关闭或握手超过期限的，丢弃待提交的条目，对端表与原有的链路都不变。
@@ -267,7 +271,7 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 
 ### 审计的写入方
 
-审计事件按触发来源划分写入方。管理调用触发的 `pairing_key_created`、发起方的 `pairing_succeeded`、发起方的 `pairing_failed` 与 `unpaired` 由 `broker` 在调用返回后带调用方的 `agent_id` 写入；对端与链路触发的事件，即接受方的 `pairing_succeeded`、接受方的 `pairing_failed` 与 `local_alias_assigned`，由 `pairing` 写，`Actor` 与 `Account` 留空。限流失败的 `pairing_failed` 以来源前缀为合并键，写作 `source:<前缀>`：来源取 `PairConn.RemoteAddr()` 的主机，IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理并去掉 zone，解析不出 IP 地址时不设合并键，同一 /64 的事件合并为一条。接受方在发起方的 `mi` 验证通过之前的失败审计只记指纹，不带对方别名；验证失败、等待 `PairConfirm` 时的连接中断与超时都属于这类。
+审计事件按触发来源划分写入方。管理调用触发的 `pairing_key_created`、发起方的 `pairing_succeeded`、发起方的 `pairing_failed` 与 `unpaired` 由 `broker` 在调用返回后带调用方的 `agent_id` 写入；对端与链路触发的事件，即接受方的 `pairing_succeeded`、接受方的 `pairing_failed` 与 `local_alias_assigned`，由 `pairing` 写，`Actor` 与 `Account` 留空。限流失败与协议版本不兼容这两种可以由陌生来源反复触发、又不计入尝试次数的 `pairing_failed` 以来源前缀为合并键，写作 `source:<前缀>`：来源取 `PairConn.RemoteAddr()` 的主机，IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理并去掉 zone，解析不出 IP 地址时不设合并键。审计日志在合并键之外还按失败原因分组，同一来源、同一原因的事件合并为一条，同一来源的两类失败各记一条并各自保留原因。接受方在发起方的 `mi` 验证通过之前的失败审计只记指纹，不带对方别名；验证失败、等待 `PairConfirm` 时的连接中断与超时都属于这类。
 
 ## 错误与失败语义
 
@@ -278,6 +282,7 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 | 接受方验证 `mi` 失败 | `pairing_rejected`：验证失败 | 回 `PairReject`（原因：验证失败），关闭连接；相符的是一次性配对密钥的，其失败次数加一；写审计 |
 | 发起方验证 `mr` 失败 | `pairing_rejected`：验证失败 | 无，连接由发起方关闭 |
 | 尝试过于频繁 | `pairing_rejected`：稍后再试 | 回 `PairReject`（原因：稍后再试），关闭连接；写审计，同一来源的重复记录由 `config` 合并 |
+| 发起方的协议版本与本方不同或未填写 | `pairing_rejected`：版本不兼容，说明为 `link protocol version incompatible with the other Broker; upgrade the older Broker` | 回 `PairReject`（原因：版本不兼容），关闭连接；不计入尝试计数，写审计 `version incompatible`，以来源前缀为合并键，同一来源的重复记录由 `config` 合并 |
 | `address` 写法不合法，或提供的本地别名不符合别名的规则 | `invalid_argument` | 无 |
 | 地址无法连接 | `peer_unreachable` | 无 |
 | 别名冲突且未提供本地别名 | `needs_local_alias` | 无，握手未完成 |
@@ -286,6 +291,8 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 | `PairDone` 之前连接被关闭，没有收到 `PairReject`，且发起方自己的 10 秒期限未届满 | `pairing_rejected`：未连接 | 无 |
 
 发起方按下列先后判定失败：收到过 `PairReject` 的，把帧上的原因映射为 `pairing_rejected`；没有收到的，`PairDone` 之前连接关闭时按自己的 10 秒期限决定说明，期限已届满的用“握手超时”，未届满的用“未连接”。
+
+协议版本从 1 提升到 2 是第一次发生含义变化的提升，有一处无法避免的不对称。旧的发起方连新的接受方时，新接受方回“版本不兼容”，但旧发起方不认识原因 5，会按协议错误报告，用户看到 `protocol error: unknown PairReject reason 5`；反过来，新的发起方连旧的接受方时，旧接受方不认识 `PairRequest` 的字段 4，仍按旧方式查找密钥，因此回“密钥无效”，用户看到 `Not connected: pairing key is invalid`。此后的版本提升两端都做上述比较，配对阶段即报出版本不兼容，不再出现“配对成功但链路建不起来”。
 
 `Connect` 对同一个一次性配对密钥不是幂等的：密钥在首次成功后作废。`Unpair` 是幂等的。除发起方已收到 `PairDone` 的情形外，配对失败时双方都不保存对方的身份（`REQ-broker-pairing-011`）。发起方收到 `PairDone` 后即保存接受方，而接受方在 `Hello` 没有到达或随后提交失败时都不保存发起方。发起方此后的重拨会被接受方当作非对端拒绝，只能重新配对。
 

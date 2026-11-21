@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
 // noLinger is a synchronous rejection send for the contract test: the frame is
@@ -31,7 +33,7 @@ func TestPairConnContract(t *testing.T) {
 	id := peerIdentity{fp: fp, pub: pub, remote: "192.0.2.7:17443"}
 	c := newConn(a, a.closeBoth, id, 4)
 	c.start()
-	pc := newPairConn(c, noLinger)
+	pc := newPairConn(c, linkpb.ProtocolVersion, noLinger)
 
 	if got := pc.PeerFingerprint(); got != fp {
 		t.Fatalf("PeerFingerprint() = %v, want %v", got, fp)
@@ -46,6 +48,9 @@ func TestPairConnContract(t *testing.T) {
 	}
 	if got := pc.RemoteAddr(); got != id.remote {
 		t.Fatalf("RemoteAddr() = %q, want %q", got, id.remote)
+	}
+	if got := pc.ProtocolVersion(); got != linkpb.ProtocolVersion {
+		t.Fatalf("ProtocolVersion() = %d, want %d", got, linkpb.ProtocolVersion)
 	}
 
 	// A frame pushed back is received before frames from the stream.

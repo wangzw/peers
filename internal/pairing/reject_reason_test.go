@@ -94,7 +94,7 @@ func TestRejectErrorUnknownReasonStillProtocolError(t *testing.T) {
 	t.Parallel()
 
 	payload, err := proto.Marshal(&pairingpb.PairReject{
-		Reason: pairingpb.PairingRejectReason(5),
+		Reason: pairingpb.PairingRejectReason(99),
 	})
 	if err != nil {
 		t.Fatalf("marshal PairReject: %v", err)
@@ -103,6 +103,32 @@ func TestRejectErrorUnknownReasonStillProtocolError(t *testing.T) {
 	err = rejectError(payload)
 	if !errors.Is(err, ErrProtocol) {
 		t.Fatalf("rejectError = %v, want a protocol error", err)
+	}
+}
+
+// TestRejectErrorVersionIncompatible checks that wire reason 5 becomes the
+// version-incompatible reason with the upgrade detail the user sees.
+func TestRejectErrorVersionIncompatible(t *testing.T) {
+	t.Parallel()
+
+	payload, err := proto.Marshal(&pairingpb.PairReject{
+		Reason: pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_VERSION_INCOMPATIBLE,
+	})
+	if err != nil {
+		t.Fatalf("marshal PairReject: %v", err)
+	}
+
+	err = rejectError(payload)
+	var pairErr *PairingError
+	if !errors.As(err, &pairErr) {
+		t.Fatalf("rejectError = %v (%T), want *PairingError", err, err)
+	}
+	if pairErr.Reason != ReasonVersionIncompatible {
+		t.Fatalf("reason = %v, want version incompatible", pairErr.Reason)
+	}
+	const want = "link protocol version incompatible with the other Broker; upgrade the older Broker"
+	if pairErr.Detail != want {
+		t.Fatalf("detail = %q, want %q", pairErr.Detail, want)
 	}
 }
 

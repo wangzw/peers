@@ -932,8 +932,9 @@ func TestUnverifiedAliasNotAudited(t *testing.T) {
 func hsManualChallenge(t *testing.T, conn *hsConn, initiatorFP Fingerprint, ni []byte, key string) []byte {
 	t.Helper()
 	request := &pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni, initiatorFP),
+		InitiatorNonce:  ni,
+		LookupTag:       computeHint([]byte(key), ni, initiatorFP),
+		ProtocolVersion: conn.version,
 	}
 	if err := hsSendProto(conn, kindPairRequest, request); err != nil {
 		t.Fatalf("send PairRequest: %v", err)
@@ -980,8 +981,9 @@ func hsRequestWithAlias(t *testing.T, p *Pairing, alias, key string) error {
 
 	ni := makeSeq(1, nonceLength)
 	request, err := proto.Marshal(&pairingpb.PairRequest{
-		InitiatorNonce: ni,
-		LookupTag:      computeHint([]byte(key), ni, fp),
+		InitiatorNonce:  ni,
+		LookupTag:       computeHint([]byte(key), ni, fp),
+		ProtocolVersion: aConn.version,
 	})
 	if err != nil {
 		t.Fatalf("marshal PairRequest: %v", err)

@@ -61,9 +61,9 @@ func vlPeer(t *testing.T, n *harness.Node) (*localpb.BrokerInfo, string) {
 
 // TestLinkVersionMismatchAndRecovery checks the link side of the version
 // handshake between two real Brokers: a dialer at the default link protocol
-// version is rejected by an acceptor at version 2, both sides report why, both
-// keep the pair listed, and the link recovers when the acceptor returns at the
-// default version.
+// version is rejected by an acceptor one version ahead, both sides report why,
+// both keep the pair listed, and the link recovers when the acceptor returns at
+// the default version.
 func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 	a := harness.NewLocalHost(t, harness.LocalOptions{Name: "a"})
 	b := harness.NewLocalHost(t, harness.LocalOptions{Name: "b"})
@@ -162,5 +162,72 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 			return false, fmt.Sprintf("status_detail is %q", detail)
 		}
 		return true, ""
+	})
+}
+
+// TestPairingVersionMismatch checks the pairing side of the version check: a
+// Broker at the default link protocol version dials an acceptor that reports
+// the previous one. The acceptor compares the version in PairRequest before it
+// looks up the key, so connect_broker fails with the version-incompatible
+// detail and never reports a paired Broker. Without the check the pairing would
+// succeed and the link would then fail its own version handshake.
+func TestPairingVersionMismatch(t *testing.T) {
+	if linkpb.ProtocolVersion < 2 {
+		t.Skipf("link protocol version %d has no earlier version to inject", linkpb.ProtocolVersion)
+	}
+	a := harness.NewLocalHost(t, harness.LocalOptions{Name: "a"})
+	b := harness.NewLocalHost(t, harness.LocalOptions{Name: "b"})
+	addrB := b.FreeAddr(t)
+	a.WriteConfig(t, harness.ConfigYAML(harness.FastTimers, "broker:\n  alias: a\n  listen: "+a.FreeAddr(t)+"\n"))
+	b.WriteConfig(t, harness.ConfigYAML(harness.FastTimers, "broker:\n  alias: b\n  listen: "+addrB+"\n"))
+	vlStartBroker(t, a, harness.BrokerSpec{})
+	addrB = vlStartBroker(t, b, harness.BrokerSpec{Env: map[string]string{
+		"PEERS_TEST_LINK_PROTOCOL_VERSION": strconv.FormatUint(uint64(linkpb.ProtocolVersion-1), 10),
+	}}).Address(addrB)
+
+	sb := vlOperator(t, b, "operator-b")
+	sa := vlOperator(t, a, "operator-a")
+	r := sb.Call(t, "create_pairing_key", nil)
+	r.MustOK(t)
+	key, err := harness.Decode[mcpserver.CreatePairingKeyOut](string(r.Structured))
+	if err != nil {
+		t.Fatalf("decoding create_pairing_key: %v", err)
+	}
+
+	// Take the audit watermark before connecting: on a slow machine the
+	// rejection record can be written before the calls below return, and a
+	// watermark taken afterwards would miss it.
+	auditSince := time.Now().Add(-time.Second)
+	res := sa.Call(t, "connect_broker", map[string]any{"address": addrB, "key": key.Key})
+	if !res.IsError {
+		t.Fatalf("connect_broker to an acceptor one link protocol version behind succeeded; a pairing must fail: %s", res.Text)
+	}
+	res.MustCode(t, "pairing_rejected")
+	const wantDetail = "link protocol version incompatible with the other Broker; upgrade the older Broker"
+	if !strings.Contains(res.Text, wantDetail) {
+		t.Fatalf("connect_broker error is %q, want it to name %q", res.Text, wantDetail)
+	}
+
+	// Neither side recorded a peer: the pairing never reached PairDone.
+	for _, n := range []*harness.Node{a, b} {
+		resp, detail := n.Oracle().ListBrokers(t)
+		if detail != nil {
+			t.Fatalf("list_brokers: %s", detail.GetMessage())
+		}
+		if got := len(resp.GetBrokers()); got != 0 {
+			t.Fatalf("a Broker lists %d brokers after the version rejection, want 0", got)
+		}
+	}
+
+	// The acceptor audits the rejection as version incompatible, without the
+	// peer's version, because it never looked up a key.
+	harness.Eventually(t, 3*time.Second, "B audits the version-incompatible pairing failure", func() (bool, string) {
+		for _, event := range ctAudit(t, b, auditSince, 0) {
+			if event.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_PAIRING_FAILED &&
+				event.GetDetail() == "version incompatible" {
+				return true, ""
+			}
+		}
+		return false, "no pairing_failed record with detail \"version incompatible\""
 	})
 }
