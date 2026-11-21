@@ -171,7 +171,7 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	// lock in the same critical section that commits, so neither a concurrent
 	// rename nor another handshake can slip in after this point.
 	entry := p.dialerEntry(acceptorFP, acceptorPub, challenge.GetResponderAlias(), local, dialAddr, challenge.GetAdvertisedAddresses())
-	replaced, err := p.peers.commitHandshake(entry, token)
+	replaced, committedAlias, frozen, err := p.peers.commitHandshake(entry, token)
 	if err != nil {
 		_ = conn.Close()
 		return Peer{}, err
@@ -179,6 +179,12 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	committed = true
 	if replaced {
 		p.transport.Drop(acceptorFP)
+	}
+	// Audit the alias the table actually committed when re-pairing froze the
+	// current effective alias instead of adopting the reserved one once the
+	// tombstone cap is reached.
+	if frozen {
+		auditLocalAliasAssigned(p.settings, p.clock.Now(), acceptorFP, committedAlias)
 	}
 	return p.peerView(acceptorFP), nil
 }
@@ -309,7 +315,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 		_ = conn.Close()
 		return err
 	}
-	finalAlias, localAlias, token, ok := p.reserveAcceptorAlias(initiatorFP, initiatorAlias, ownAliasNow)
+	_, localAlias, token, ok := p.reserveAcceptorAlias(initiatorFP, initiatorAlias, ownAliasNow)
 	if !ok {
 		_ = conn.Close()
 		return ErrNeedsLocalAlias
@@ -350,7 +356,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 	// A competing handshake or a concurrent rename between the reservation
 	// before PairDone and this point turns into ErrNeedsLocalAlias instead of an
 	// inconsistent commit.
-	replaced, err := p.peers.commitHandshake(pending, token)
+	replaced, committedAlias, frozen, err := p.peers.commitHandshake(pending, token)
 	if err != nil {
 		_ = conn.Close()
 		return err
@@ -360,10 +366,13 @@ func (p *Pairing) Accept(conn PairConn) error {
 		p.transport.Drop(initiatorFP)
 	}
 
+	// Audit the alias the table actually committed, not the one reserved before
+	// PairDone. Re-pairing can freeze the current effective alias instead of
+	// adopting the reserved one once the tombstone cap is reached.
 	committedAt := p.clock.Now()
-	auditPairingSucceeded(p.settings, committedAt, initiatorFP, finalAlias)
-	if localAlias != "" {
-		auditLocalAliasAssigned(p.settings, committedAt, initiatorFP, finalAlias)
+	auditPairingSucceeded(p.settings, committedAt, initiatorFP, committedAlias)
+	if localAlias != "" || frozen {
+		auditLocalAliasAssigned(p.settings, committedAt, initiatorFP, committedAlias)
 	}
 	return nil
 }

@@ -26,16 +26,20 @@ const (
 // peerEntry is one record in the peer table. The exported Peer view is derived
 // from it.
 type peerEntry struct {
-	fingerprint   Fingerprint
-	publicKey     []byte
-	alias         string // self-reported alias
-	localAlias    string // empty when none was assigned
-	role          Role
-	pairedAt      time.Time
-	acceptor      []config.AdvertisedAddr // acceptor source, dialer peers only
-	card          []config.AdvertisedAddr // directory-card source, dialer peers only
-	pairingAddr   string                  // address dialed during pairing, dialer peers only
-	lastConnected string                  // last address a link was established on, dialer peers only
+	fingerprint Fingerprint
+	publicKey   []byte
+	alias       string // self-reported alias
+	localAlias  string // empty when none was assigned
+	// retiredAliases holds the effective aliases this peer gave up during the
+	// current peer relationship, oldest first. They no longer name this peer,
+	// but they still keep other peers from taking them over.
+	retiredAliases []string
+	role           Role
+	pairedAt       time.Time
+	acceptor       []config.AdvertisedAddr // acceptor source, dialer peers only
+	card           []config.AdvertisedAddr // directory-card source, dialer peers only
+	pairingAddr    string                  // address dialed during pairing, dialer peers only
+	lastConnected  string                  // last address a link was established on, dialer peers only
 }
 
 // clone returns a deep copy: the exported view must never share the table's
@@ -43,6 +47,7 @@ type peerEntry struct {
 func (e *peerEntry) clone() peerEntry {
 	c := *e
 	c.publicKey = append([]byte(nil), e.publicKey...)
+	c.retiredAliases = append([]string(nil), e.retiredAliases...)
 	c.acceptor = append([]config.AdvertisedAddr(nil), e.acceptor...)
 	c.card = append([]config.AdvertisedAddr(nil), e.card...)
 	return c
@@ -56,6 +61,7 @@ func sameEntry(a, b *peerEntry) bool {
 		bytes.Equal(a.publicKey, b.publicKey) &&
 		a.alias == b.alias &&
 		a.localAlias == b.localAlias &&
+		slices.Equal(a.retiredAliases, b.retiredAliases) &&
 		a.role == b.role &&
 		a.pairedAt.Equal(b.pairedAt) &&
 		slices.Equal(a.acceptor, b.acceptor) &&
@@ -71,6 +77,38 @@ func (e *peerEntry) effectiveAlias() string {
 		return e.localAlias
 	}
 	return e.alias
+}
+
+// maxRetiredAliases caps the retired aliases one peer keeps. Once a peer has
+// used them all up, its effective alias is frozen as a local alias instead of
+// retiring another one, so an address already held by a model never moves.
+const maxRetiredAliases = 8
+
+// applyAliasChange records the effective alias prev as retired after the entry
+// moved to a different effective alias, and un-retires an alias the peer is
+// returning to. When the peer already has maxRetiredAliases retired aliases, the
+// change is refused instead: prev becomes the local alias, which freezes the
+// effective alias in place and adds no tombstone. It returns whether the freeze
+// happened, in which case localAlias now holds prev.
+func (e *peerEntry) applyAliasChange(prev string) (frozen bool) {
+	eff := e.effectiveAlias()
+	if prev == "" || prev == eff {
+		return false
+	}
+	if i := slices.Index(e.retiredAliases, eff); i >= 0 {
+		e.retiredAliases = slices.Delete(e.retiredAliases, i, i+1)
+	}
+	if len(e.retiredAliases) >= maxRetiredAliases {
+		e.localAlias = prev
+		return true
+	}
+	e.retiredAliases = append(e.retiredAliases, prev)
+	return false
+}
+
+// retiresAlias reports whether alias is one of the entry's retired aliases.
+func (e *peerEntry) retiresAlias(alias string) bool {
+	return slices.Contains(e.retiredAliases, alias)
 }
 
 // toPeer maps an internal entry to the exported view. Candidate addresses are
@@ -157,6 +195,22 @@ func loadPeerTable(path string, ops fileOps) (*peerTable, error) {
 		aliases[eff] = e.fingerprint
 		t.peers[e.fingerprint] = e
 	}
+	// A retired alias must not collide with any effective alias, including the
+	// peer's own, or with another peer's retired alias.
+	retired := make(map[string]Fingerprint, len(file.Peers))
+	for fp, e := range t.peers {
+		for _, a := range e.retiredAliases {
+			if owner, dup := aliases[a]; dup {
+				return nil, fmt.Errorf("%w: %s retires alias %q, which is the effective alias of %s",
+					ErrStore, path, a, fingerprintHex(owner))
+			}
+			if owner, dup := retired[a]; dup {
+				return nil, fmt.Errorf("%w: %s has duplicate retired alias %q (%s and %s)",
+					ErrStore, path, a, fingerprintHex(owner), fingerprintHex(fp))
+			}
+			retired[a] = fp
+		}
+	}
 	return t, nil
 }
 
@@ -193,7 +247,8 @@ func (t *peerTable) role(fp Fingerprint) Role {
 func (t *peerTable) put(e peerEntry) (replaced bool, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.putLocked(e, 0, false)
+	replaced, _, _, err = t.putLocked(e, 0, false)
+	return replaced, err
 }
 
 // commitHandshake inserts or replaces the entry of a completed handshake. It
@@ -213,7 +268,7 @@ func (t *peerTable) put(e peerEntry) (replaced bool, err error) {
 // a different local alias to an existing peer, the reservation moves to the new
 // effective alias and the commit continues. put keeps its unlocked-check
 // semantics for direct table callers.
-func (t *peerTable) commitHandshake(e peerEntry, token uint64) (replaced bool, err error) {
+func (t *peerTable) commitHandshake(e peerEntry, token uint64) (replaced bool, committedAlias string, frozen bool, err error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.putLocked(e, token, true)
@@ -223,17 +278,23 @@ func (t *peerTable) commitHandshake(e peerEntry, token uint64) (replaced bool, e
 // path: someone else's reservation is always rejected, and the handshake path
 // additionally requires token to hold the effective alias and the effective
 // alias to differ from the cached Broker alias.
-func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (bool, error) {
+func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (replaced bool, committedAlias string, frozen bool, err error) {
 	if e.role != RoleDialer && e.role != RoleAcceptor {
-		return false, fmt.Errorf("%w: invalid role %d", ErrStore, e.role)
+		return false, "", false, fmt.Errorf("%w: invalid role %d", ErrStore, e.role)
 	}
 	// The stored self-reported alias is always the normalized form. The decision
 	// to use it as the effective alias, or to assign a local alias instead, was
 	// already made from the value as reported.
 	e.alias = normalizeAlias(e.alias)
 
-	old, replaced := t.peers[e.fingerprint]
+	old, existed := t.peers[e.fingerprint]
+	replaced = existed
+	prevEff := ""
 	if replaced {
+		// Re-pairing keeps the aliases this peer gave up: the relationship
+		// continues, so addresses already handed out must not move.
+		prevEff = old.effectiveAlias()
+		e.retiredAliases = append([]string(nil), old.retiredAliases...)
 		switch e.role {
 		case RoleDialer:
 			// Keep the directory-card source across re-pairing. The handshake
@@ -265,21 +326,25 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (bool, 
 		e.lastConnected = ""
 	}
 
+	// The effective alias may have changed through re-pairing. Retire the old
+	// one, or freeze the old one as a local alias when tombstones are full.
+	frozen = e.applyAliasChange(prevEff)
+
 	eff := e.effectiveAlias()
 	if eff == "" {
-		return replaced, fmt.Errorf("%w: peer %s has no effective alias", ErrNeedsLocalAlias, fingerprintHex(e.fingerprint))
+		return replaced, "", false, fmt.Errorf("%w: peer %s has no effective alias", ErrNeedsLocalAlias, fingerprintHex(e.fingerprint))
 	}
 	if handshake {
 		if eff == t.ownAlias {
-			return replaced, fmt.Errorf("%w: alias %q is the Broker's own alias", ErrNeedsLocalAlias, eff)
+			return replaced, "", false, fmt.Errorf("%w: alias %q is the Broker's own alias", ErrNeedsLocalAlias, eff)
 		}
 		if err := t.ensureReservationLocked(eff, token, e.fingerprint, t.ownAlias); err != nil {
-			return replaced, err
+			return replaced, "", false, err
 		}
 	} else if owners, ok := t.reserved[eff]; ok {
 		for _, owner := range owners {
 			if owner != e.fingerprint {
-				return replaced, fmt.Errorf("%w: alias %q is reserved by another handshake", ErrNeedsLocalAlias, eff)
+				return replaced, "", false, fmt.Errorf("%w: alias %q is reserved by another handshake", ErrNeedsLocalAlias, eff)
 			}
 		}
 	}
@@ -288,7 +353,10 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (bool, 
 			continue
 		}
 		if other.effectiveAlias() == eff {
-			return replaced, fmt.Errorf("%w: alias %q belongs to %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
+			return replaced, "", false, fmt.Errorf("%w: alias %q belongs to %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
+		}
+		if other.retiresAlias(eff) {
+			return replaced, "", false, fmt.Errorf("%w: alias %q was given up by %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
 		}
 	}
 
@@ -299,7 +367,7 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (bool, 
 	entry := e.clone()
 	next[e.fingerprint] = &entry
 	if err := t.writeLocked(next); err != nil {
-		return replaced, err
+		return replaced, "", false, err
 	}
 	t.peers = next
 
@@ -309,7 +377,7 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (bool, 
 	if handshake {
 		t.releaseTokenLocked(token)
 	}
-	return replaced, nil
+	return replaced, entry.effectiveAlias(), frozen, nil
 }
 
 // ensureReservationLocked makes token cover eff. When the effective alias
@@ -332,6 +400,9 @@ func (t *peerTable) ensureReservationLocked(eff string, token uint64, fp Fingerp
 		}
 		if other.effectiveAlias() == eff {
 			return fmt.Errorf("%w: alias %q belongs to %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
+		}
+		if other.retiresAlias(eff) {
+			return fmt.Errorf("%w: alias %q was given up by %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
 		}
 	}
 	for otherToken, owner := range t.reserved[eff] {
@@ -443,7 +514,7 @@ func (t *peerTable) reserveAliasLocked(alias string, fp Fingerprint) (uint64, bo
 		if otherFP == fp {
 			continue
 		}
-		if e.effectiveAlias() == alias {
+		if e.effectiveAlias() == alias || e.retiresAlias(alias) {
 			return 0, false
 		}
 	}
@@ -527,14 +598,18 @@ func (t *peerTable) makeLocalAliasLocked(fp Fingerprint, reported, ownAlias stri
 }
 
 // takenAliasesLocked collects every alias a new local alias must avoid. The
-// entry for fp itself is excluded so a peer can keep its own alias. It requires
-// t.mu to be held.
+// entry for fp itself is excluded so a peer can keep its own alias, but every
+// retired alias is included, including fp's own: an effective alias may not
+// repeat one of its peer's tombstones. It requires t.mu to be held.
 func (t *peerTable) takenAliasesLocked(fp Fingerprint, ownAlias string) map[string]struct{} {
 	taken := make(map[string]struct{}, len(t.peers)+len(t.reserved)+1)
 	if ownAlias != "" {
 		taken[ownAlias] = struct{}{}
 	}
 	for otherFP, e := range t.peers {
+		for _, retired := range e.retiredAliases {
+			taken[retired] = struct{}{}
+		}
 		if otherFP == fp {
 			continue
 		}
@@ -554,8 +629,9 @@ func (t *peerTable) takenAliasesLocked(fp Fingerprint, ownAlias string) map[stri
 }
 
 // aliasAvailableLocked reports whether a self-reported alias may be used as the
-// effective alias of fp without assigning a local alias. It requires t.mu to be
-// held.
+// effective alias of fp without assigning a local alias. Other peers' retired
+// aliases are taken, but fp's own are not: a peer may return to an alias it
+// gave up earlier. It requires t.mu to be held.
 func (t *peerTable) aliasAvailableLocked(alias string, fp Fingerprint, ownAlias string) bool {
 	if !validAlias(alias) || alias == ownAlias {
 		return false
@@ -569,7 +645,7 @@ func (t *peerTable) aliasAvailableLocked(alias string, fp Fingerprint, ownAlias 
 		if otherFP == fp {
 			continue
 		}
-		if e.effectiveAlias() == alias {
+		if e.effectiveAlias() == alias || e.retiresAlias(alias) {
 			return false
 		}
 	}
@@ -744,6 +820,7 @@ func (t *peerTable) observeAlias(fp Fingerprint, alias string) (localAlias strin
 	if !ok {
 		return "", false, nil
 	}
+	prev := old.effectiveAlias()
 	next := old.clone()
 	// Store the normalized form, but keep deciding availability from the value
 	// as reported: an oversized or malformed alias is still unusable and gets a
@@ -760,6 +837,13 @@ func (t *peerTable) observeAlias(fp Fingerprint, alias string) (localAlias strin
 			localAlias = generated
 			assigned = true
 		}
+	}
+	// Adopting a different effective alias retires the old one. When the peer
+	// has used up its tombstones, the old alias is frozen as a local alias
+	// instead and the change is audited like any other local alias assignment.
+	if next.applyAliasChange(prev) {
+		localAlias = next.localAlias
+		assigned = true
 	}
 	if sameEntry(old, &next) {
 		return "", false, nil
@@ -860,9 +944,11 @@ func (t *peerTable) setOwnAlias(alias string) {
 }
 
 // aliasConflict reports whether alias is used by a committed peer or held by an
-// in-flight handshake. The cached own alias is not a conflict: the validator is
-// checking a new value for the same key, and setting it to its current value
-// must succeed.
+// in-flight handshake, or was given up by a peer during its current
+// relationship. A retired alias is a conflict too: the Broker's own alias must
+// not adopt a name another peer used to answer to. The cached own alias is not a
+// conflict: the validator is checking a new value for the same key, and setting
+// it to its current value must succeed.
 func (t *peerTable) aliasConflict(alias string) bool {
 	if alias == "" {
 		return false
@@ -873,7 +959,7 @@ func (t *peerTable) aliasConflict(alias string) bool {
 		return true
 	}
 	for _, e := range t.peers {
-		if e.effectiveAlias() == alias {
+		if e.effectiveAlias() == alias || e.retiresAlias(alias) {
 			return true
 		}
 	}
@@ -905,14 +991,15 @@ type peersFile struct {
 // peerRecord is the on-disk form of one entry. The field names and shapes are
 // deliberately private so peers.json does not depend on config's struct layout.
 type peerRecord struct {
-	Fingerprint   string        `json:"fingerprint"`
-	PublicKey     string        `json:"public_key"`
-	Alias         string        `json:"alias"`
-	LocalAlias    string        `json:"local_alias"`
-	Role          string        `json:"role"`
-	PairedAt      string        `json:"paired_at"`
-	Addresses     *addressesDoc `json:"addresses,omitempty"`
-	LastConnected string        `json:"last_connected,omitempty"`
+	Fingerprint    string        `json:"fingerprint"`
+	PublicKey      string        `json:"public_key"`
+	Alias          string        `json:"alias"`
+	LocalAlias     string        `json:"local_alias"`
+	RetiredAliases []string      `json:"retired_aliases,omitempty"`
+	Role           string        `json:"role"`
+	PairedAt       string        `json:"paired_at"`
+	Addresses      *addressesDoc `json:"addresses,omitempty"`
+	LastConnected  string        `json:"last_connected,omitempty"`
 }
 
 type addressesDoc struct {
@@ -951,12 +1038,13 @@ func marshalPeers(peers map[Fingerprint]*peerEntry) ([]byte, error) {
 // none.
 func (e *peerEntry) toRecord() peerRecord {
 	r := peerRecord{
-		Fingerprint: fingerprintHex(e.fingerprint),
-		PublicKey:   base64.StdEncoding.EncodeToString(e.publicKey),
-		Alias:       e.alias,
-		LocalAlias:  e.localAlias,
-		Role:        roleName(e.role),
-		PairedAt:    e.pairedAt.UTC().Format(time.RFC3339Nano),
+		Fingerprint:    fingerprintHex(e.fingerprint),
+		PublicKey:      base64.StdEncoding.EncodeToString(e.publicKey),
+		Alias:          e.alias,
+		LocalAlias:     e.localAlias,
+		RetiredAliases: append([]string(nil), e.retiredAliases...),
+		Role:           roleName(e.role),
+		PairedAt:       e.pairedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if e.role == RoleDialer {
 		r.Addresses = &addressesDoc{
@@ -1001,6 +1089,20 @@ func (r *peerRecord) toEntry() (*peerEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("paired_at is not RFC 3339: %v", err)
 	}
+	if len(r.RetiredAliases) > maxRetiredAliases {
+		return nil, fmt.Errorf("retired_aliases has %d entries, want at most %d", len(r.RetiredAliases), maxRetiredAliases)
+	}
+	retired := append([]string(nil), r.RetiredAliases...)
+	seen := make(map[string]struct{}, len(retired))
+	for _, a := range retired {
+		if !validAlias(a) {
+			return nil, fmt.Errorf("retired alias %q is not a valid alias", a)
+		}
+		if _, dup := seen[a]; dup {
+			return nil, fmt.Errorf("retired alias %q is listed twice", a)
+		}
+		seen[a] = struct{}{}
+	}
 
 	e := &peerEntry{
 		fingerprint: fp,
@@ -1008,10 +1110,11 @@ func (r *peerRecord) toEntry() (*peerEntry, error) {
 		// An older build may have persisted an alias that the current rule
 		// rejects. Normalizing it here lets such a file load, and the next write
 		// persists the normalized value.
-		alias:      normalizeAlias(r.Alias),
-		localAlias: r.LocalAlias,
-		role:       role,
-		pairedAt:   pairedAt.UTC(),
+		alias:          normalizeAlias(r.Alias),
+		localAlias:     r.LocalAlias,
+		retiredAliases: retired,
+		role:           role,
+		pairedAt:       pairedAt.UTC(),
 	}
 	if role == RoleDialer && r.Addresses != nil {
 		e.acceptor = capKnown(addrConfigs(r.Addresses.Acceptor))

@@ -5,5 +5,6 @@ package pairing
 // copied onto the pre-fix revision, where commitHandshake took the own-alias
 // callback instead of a cached value.
 func commitHandshakeForTest(p *Pairing, e peerEntry, token uint64) (replaced bool, err error) {
-	return p.peers.commitHandshake(e, token)
+	replaced, _, _, err = p.peers.commitHandshake(e, token)
+	return replaced, err
 }

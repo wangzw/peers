@@ -166,7 +166,7 @@ sequenceDiagram
 | 结构 | 内容 | 存放 |
 |---|---|---|
 | 身份 | Ed25519 私钥与自签证书，证书不含主机名 | 数据目录内的 `identity.key`、`identity.crt` |
-| 对端表 | 每个对端的指纹、公钥、对方自报的别名、本地别名、本方的角色、配对时间；本方是拨号方的，另有候选地址及其来源和上一次连通的地址 | 数据目录内的 `peers.json` |
+| 对端表 | 每个对端的指纹、公钥、对方自报的别名、本地别名、对方在本次对端关系中放弃过的生效别名（至多 8 个）、本方的角色、配对时间；本方是拨号方的，另有候选地址及其来源和上一次连通的地址 | 数据目录内的 `peers.json` |
 | 一次性配对密钥表 | 密钥、生成时间、验证失败次数 | 仅内存 |
 | 已过期密钥的记录 | 按时间过期的一次性配对密钥及其保留截止时间（过期时刻加 24 小时）；只用于计算查找标记，不用于验证，至多 64 条，超出时先丢弃截止时间最早的 | 仅内存 |
 | 配对尝试计数 | 当前这一分钟内既没有匹配上一次性配对密钥、已过期密钥记录，也没有匹配上预置静态密钥的请求数 | 仅内存 |
@@ -257,7 +257,11 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 
 `ObserveAlias` 在每次得知对方当前自报的别名时调用：链路建立时的 `Hello`，以及链路存续期间的 `PeerInfo`。新的自报别名与本机别名或其他对端的生效别名相同，或不符合别名的规则，而该对端没有本地别名时，为它生成本地别名并写审计 `local_alias_assigned`。已有本地别名的对端不受自报别名变化的影响。在同一条对端关系存续期间，一个别名至多解析到一个 Broker，已经交到模型手里的 Agent 地址不会因为该对端改了别名而指向另一个 Broker；解除配对之后，它的本地别名可以分配给别的对端。
 
-本机别名经配置修改时，若新别名与某个已提交对端的生效别名相同，或与一次进行中的握手预占的别名相同，修改以 `invalid_argument` 拒绝。校验由 `broker` 注册，它调用只取本包锁的 `AliasConflict`，不读配置。
+对端在本次对端关系中放弃过的生效别名记录为它的墓碑。生效别名变化时，旧的生效别名成为该对端的墓碑：`ObserveAlias` 采用新的自报别名、为它生成本地别名，或重新配对更换本地别名，都属于这种变化；对端改回自己墓碑中的别名时，该别名移出墓碑，重新生效。其他对端的墓碑在判断别名是否被占用时视同生效别名：`aliasAvailableLocked`、`reserveAliasLocked`、`ensureReservationLocked`、`putLocked` 的冲突检查和生成本地别名时避开的集合 `takenAliasesLocked` 都把它算作已占用。因此另一对端自报某个墓碑别名时按冲突处理：链路上报时生成它的本地别名并写审计 `local_alias_assigned`，发起配对时返回 `needs_local_alias`，接受配对时生成本地别名。墓碑本身不解析到任何对端，向它发消息仍按未知 Broker 失败。
+
+每个对端最多保留 8 个墓碑。墓碑已满时生效别名再要变化，改为把当前生效别名设为该对端的本地别名，此后自报别名的变化不再影响它，也不再新增墓碑，这次赋值写审计 `local_alias_assigned`，事件里的别名是实际提交的生效别名。冻结优先于本次配对原本要采用的本地别名：发起方提供的本地别名或接受方生成的本地别名都让位给冻结的当前生效别名，`Peer.LocalAlias` 返回实际提交的这一个。冻结只改变本机对端表，`PairDone` 不带载荷，冻结的别名不回报发起方；双方在之后的链路 `Hello` 与 `PeerInfo` 中照常只交换各自的自报别名。墓碑随条目保存在 `peers.json` 的 `retired_aliases` 中，为空时省略该字段；加载时校验每个墓碑符合别名规则、每个对端不超过 8 个、且不与任何对端的生效别名或其他对端的墓碑重复，不符合的返回 `ErrStore`。解除配对删除条目时墓碑一并删除；重新配对覆盖条目时保留原有墓碑。
+
+本机别名经配置修改时，若新别名与某个已提交对端的生效别名相同，与某个对端的墓碑相同，或与一次进行中的握手预占的别名相同，修改以 `invalid_argument` 拒绝。校验由 `broker` 注册，它调用只取本包锁的 `AliasConflict`，不读配置。
 
 `ResolveAlias` 只解析已提交的对端：握手预占的别名在提交之前不是 Agent 地址，解析返回 false；提交之后返回该对端的指纹。
 
@@ -322,6 +326,6 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 | 配对尝试的限制 | 已实现 | `internal/pairing/pairkey.go`（`attemptCounter`、`lookupAtRequest`） |
 | 对端表与角色的持久化 | 已实现 | `internal/pairing/peers.go`、`internal/pairing/store.go`（`peerTable`、`atomicWrite`） |
 | 候选地址的记录 | 已实现 | `internal/pairing/addresses.go`（`filterKnown`、`mergeCandidates`） |
-| 别名的解析、冲突检查与本地别名 | 已实现 | `internal/pairing/alias.go`、`internal/pairing/peers.go`（`assignLocalAlias`、`peerTable.resolveAlias`、`SetOwnAlias`、`AliasConflict`） |
+| 别名的解析、冲突检查与本地别名 | 已实现 | `internal/pairing/alias.go`、`internal/pairing/peers.go`（`assignLocalAlias`、`peerTable.resolveAlias`、`SetOwnAlias`、`AliasConflict`、`applyAliasChange`、`retiresAlias`） |
 | 解除配对 | 已实现 | `internal/pairing/peers.go`（`Unpair`） |
 | 签名与验签 | 已实现 | `internal/pairing/queries.go`、`internal/pairing/api.go`（`PublicKey`、`Sign`、`Verify`、`FingerprintOf`） |

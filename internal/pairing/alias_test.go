@@ -292,7 +292,7 @@ func TestCommitHandshakeRequiresOwnReservation(t *testing.T) {
 		fp, pub := peerTestKey(t)
 		entry := peerTestEntry(fp, pub, "contested", RoleDialer)
 
-		_, err := table.commitHandshake(entry, 0)
+		_, _, _, err := table.commitHandshake(entry, 0)
 		if !errors.Is(err, ErrNeedsLocalAlias) {
 			t.Fatalf("commitHandshake error = %v, want ErrNeedsLocalAlias", err)
 		}
@@ -315,7 +315,7 @@ func TestCommitHandshakeRequiresOwnReservation(t *testing.T) {
 		}
 		entry := peerTestEntry(fp, pub, "contested", RoleDialer)
 
-		_, err := table.commitHandshake(entry, 0)
+		_, _, _, err := table.commitHandshake(entry, 0)
 		if !errors.Is(err, ErrNeedsLocalAlias) {
 			t.Fatalf("commitHandshake error = %v, want ErrNeedsLocalAlias", err)
 		}
@@ -340,7 +340,7 @@ func TestCommitHandshakeRequiresOwnReservation(t *testing.T) {
 		}
 		entry := peerTestEntry(fp, pub, "contested", RoleDialer)
 
-		_, err := table.commitHandshake(entry, 0)
+		_, _, _, err := table.commitHandshake(entry, 0)
 		if !errors.Is(err, ErrNeedsLocalAlias) {
 			t.Fatalf("commitHandshake with the cached own alias = %v, want ErrNeedsLocalAlias", err)
 		}
@@ -360,7 +360,7 @@ func TestCommitHandshakeRequiresOwnReservation(t *testing.T) {
 		}
 		entry := peerTestEntry(fp, pub, "contested", RoleDialer)
 
-		if _, err := table.commitHandshake(entry, token); err != nil {
+		if _, _, _, err := table.commitHandshake(entry, token); err != nil {
 			t.Fatalf("commitHandshake with its own reservation: %v", err)
 		}
 		if got, ok := table.get(fp); !ok || got.effectiveAlias() != "contested" {
