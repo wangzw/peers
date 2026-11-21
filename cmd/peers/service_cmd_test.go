@@ -116,7 +116,7 @@ func TestServiceInstallMapsAdminGroup(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"service", "install", "--system"}, service.DefaultAdminGroup},
+		{[]string{"service", "install", "--system"}, ""},
 		{[]string{"service", "install", "--system", "--admin-group", "broker-ops"}, "broker-ops"},
 	}
 	for _, tc := range cases {
@@ -165,14 +165,14 @@ func TestServiceInstallPrintsTheSummary(t *testing.T) {
 				AuditLog:   "/home/alice/.peers/audit.log",
 			},
 			want: "peers 0.1.2 installed (user service, starts at login)\n" +
-				"  binary:     /usr/local/bin/peers\n" +
-				"  config:     /home/alice/.peers/config.yaml (generated)\n" +
-				"  run log:    journalctl --user -u peers.service\n" +
-				"  audit log:  /home/alice/.peers/audit.log\n" +
-				"  start:      peers service start\n" +
-				"  stop:       peers service stop\n" +
-				"  restart:    peers service restart\n" +
-				"  uninstall:  peers uninstall\n",
+				"  binary:      /usr/local/bin/peers\n" +
+				"  config:      /home/alice/.peers/config.yaml (generated)\n" +
+				"  run log:     journalctl --user -u peers.service\n" +
+				"  audit log:   /home/alice/.peers/audit.log\n" +
+				"  start:       peers service start\n" +
+				"  stop:        peers service stop\n" +
+				"  restart:     peers service restart\n" +
+				"  uninstall:   peers uninstall\n",
 		},
 		{
 			name: "user kept configuration",
@@ -183,35 +183,84 @@ func TestServiceInstallPrintsTheSummary(t *testing.T) {
 				AuditLog:   "/home/alice/.peers/audit.log",
 			},
 			want: "peers 0.1.2 installed (user service, starts at login)\n" +
-				"  binary:     /usr/local/bin/peers\n" +
-				"  config:     /home/alice/.peers/config.yaml (kept)\n" +
-				"  run log:    journalctl --user -u peers.service\n" +
-				"  audit log:  /home/alice/.peers/audit.log\n" +
-				"  start:      peers service start\n" +
-				"  stop:       peers service stop\n" +
-				"  restart:    peers service restart\n" +
-				"  uninstall:  peers uninstall\n",
+				"  binary:      /usr/local/bin/peers\n" +
+				"  config:      /home/alice/.peers/config.yaml (kept)\n" +
+				"  run log:     journalctl --user -u peers.service\n" +
+				"  audit log:   /home/alice/.peers/audit.log\n" +
+				"  start:       peers service start\n" +
+				"  stop:        peers service stop\n" +
+				"  restart:     peers service restart\n" +
+				"  uninstall:   peers uninstall\n",
 		},
 		{
 			name:   "system generated configuration",
 			system: true,
 			result: service.Result{
-				Binary:     "/usr/local/bin/peers",
-				ConfigPath: "/etc/peers/config.yaml",
-				ConfigNew:  true,
-				AdminGroup: "peers",
-				RunLog:     "journalctl -u peers.service",
-				AuditLog:   "/var/log/peers/audit.log",
+				Binary:            "/usr/local/bin/peers",
+				ConfigPath:        "/etc/peers/config.yaml",
+				ConfigNew:         true,
+				AdminGroup:        "peers",
+				AdminGroupCreated: true,
+				RunLog:            "journalctl -u peers.service",
+				AuditLog:          "/var/log/peers/audit.log",
 			},
 			want: "peers 0.1.2 installed (system service, starts at boot)\n" +
-				"  binary:     /usr/local/bin/peers\n" +
-				"  config:     /etc/peers/config.yaml (generated)\n" +
-				"  run log:    journalctl -u peers.service\n" +
-				"  audit log:  /var/log/peers/audit.log\n" +
-				"  start:      sudo peers service start\n" +
-				"  stop:       sudo peers service stop\n" +
-				"  restart:    sudo peers service restart\n" +
-				"  uninstall:  peers uninstall\n",
+				"  binary:      /usr/local/bin/peers\n" +
+				"  config:      /etc/peers/config.yaml (generated)\n" +
+				"  admin group: peers (created)\n" +
+				"  run log:     journalctl -u peers.service\n" +
+				"  audit log:   /var/log/peers/audit.log\n" +
+				"  start:       sudo peers service start\n" +
+				"  stop:        sudo peers service stop\n" +
+				"  restart:     sudo peers service restart\n" +
+				"  uninstall:   peers uninstall\n",
+		},
+		{
+			name:   "system reused group with members",
+			system: true,
+			result: service.Result{
+				Binary:                   "/usr/local/bin/peers",
+				ConfigPath:               "/etc/peers/config.yaml",
+				ConfigNew:                true,
+				AdminGroup:               "peers",
+				AdminGroupMembers:        []string{"alice", "bob"},
+				AdminGroupMembersQueried: true,
+				RunLog:                   "journalctl -u peers.service",
+				AuditLog:                 "/var/log/peers/audit.log",
+			},
+			want: "peers 0.1.2 installed (system service, starts at boot)\n" +
+				"  binary:      /usr/local/bin/peers\n" +
+				"  config:      /etc/peers/config.yaml (generated)\n" +
+				"  admin group: peers (existing, members: alice, bob)\n" +
+				"  run log:     journalctl -u peers.service\n" +
+				"  audit log:   /var/log/peers/audit.log\n" +
+				"  start:       sudo peers service start\n" +
+				"  stop:        sudo peers service stop\n" +
+				"  restart:     sudo peers service restart\n" +
+				"  uninstall:   peers uninstall\n",
+		},
+		{
+			name:   "system reused group with no members",
+			system: true,
+			result: service.Result{
+				Binary:                   "/usr/local/bin/peers",
+				ConfigPath:               "/etc/peers/config.yaml",
+				ConfigNew:                true,
+				AdminGroup:               "peers",
+				AdminGroupMembersQueried: true,
+				RunLog:                   "journalctl -u peers.service",
+				AuditLog:                 "/var/log/peers/audit.log",
+			},
+			want: "peers 0.1.2 installed (system service, starts at boot)\n" +
+				"  binary:      /usr/local/bin/peers\n" +
+				"  config:      /etc/peers/config.yaml (generated)\n" +
+				"  admin group: peers (existing, no members listed)\n" +
+				"  run log:     journalctl -u peers.service\n" +
+				"  audit log:   /var/log/peers/audit.log\n" +
+				"  start:       sudo peers service start\n" +
+				"  stop:        sudo peers service stop\n" +
+				"  restart:     sudo peers service restart\n" +
+				"  uninstall:   peers uninstall\n",
 		},
 		{
 			name:   "system kept configuration",
@@ -224,14 +273,15 @@ func TestServiceInstallPrintsTheSummary(t *testing.T) {
 				AuditLog:   "/var/log/peers/audit.log",
 			},
 			want: "peers 0.1.2 installed (system service, starts at boot)\n" +
-				"  binary:     /usr/local/bin/peers\n" +
-				"  config:     /etc/peers/config.yaml (kept)\n" +
-				"  run log:    journalctl -u peers.service\n" +
-				"  audit log:  /var/log/peers/audit.log\n" +
-				"  start:      sudo peers service start\n" +
-				"  stop:       sudo peers service stop\n" +
-				"  restart:    sudo peers service restart\n" +
-				"  uninstall:  peers uninstall\n" +
+				"  binary:      /usr/local/bin/peers\n" +
+				"  config:      /etc/peers/config.yaml (kept)\n" +
+				"  admin group: peers (existing)\n" +
+				"  run log:     journalctl -u peers.service\n" +
+				"  audit log:   /var/log/peers/audit.log\n" +
+				"  start:       sudo peers service start\n" +
+				"  stop:        sudo peers service stop\n" +
+				"  restart:     sudo peers service restart\n" +
+				"  uninstall:   peers uninstall\n" +
 				"To delegate administration, run: chgrp peers /etc/peers/config.yaml && chmod 0660 /etc/peers/config.yaml\n",
 		},
 	}
@@ -273,14 +323,14 @@ func TestServiceInstallReportsDegraded(t *testing.T) {
 		AuditLog:   "/home/alice/.peers/audit.log",
 	}
 	summary := "peers 0.1.2 installed (user service, starts at login)\n" +
-		"  binary:     /usr/local/bin/peers\n" +
-		"  config:     /home/alice/.peers/config.yaml (generated)\n" +
-		"  run log:    journalctl --user -u peers.service\n" +
-		"  audit log:  /home/alice/.peers/audit.log\n" +
-		"  start:      peers service start\n" +
-		"  stop:       peers service stop\n" +
-		"  restart:    peers service restart\n" +
-		"  uninstall:  peers uninstall\n"
+		"  binary:      /usr/local/bin/peers\n" +
+		"  config:      /home/alice/.peers/config.yaml (generated)\n" +
+		"  run log:     journalctl --user -u peers.service\n" +
+		"  audit log:   /home/alice/.peers/audit.log\n" +
+		"  start:       peers service start\n" +
+		"  stop:        peers service stop\n" +
+		"  restart:     peers service restart\n" +
+		"  uninstall:   peers uninstall\n"
 
 	cases := []struct {
 		name  string

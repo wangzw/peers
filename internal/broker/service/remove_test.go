@@ -485,6 +485,8 @@ func purgeGroupOptions(t *testing.T) (Options, int) {
 	opts := baseOptions(t)
 	opts.System = true
 	opts.EUID = 0
+	// The purge tests drive the account list through Run, as production does.
+	opts.PrimaryGroupAccounts = nil
 	writeFileUnder(t, opts.Root, "/etc/peers/config.yaml", "broker: {}\n")
 	return opts, configGID(t, opts, "/etc/peers/config.yaml")
 }

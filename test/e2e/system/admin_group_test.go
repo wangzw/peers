@@ -25,8 +25,8 @@ const (
 	agGroup = "peers"
 	// agConfigPath is the system Broker's configuration file.
 	agConfigPath = "/etc/peers/config.yaml"
-	// agSeedMember is added to the group before the first install, so the
-	// install has an existing membership it must not change.
+	// agSeedMember is the account the confirmation case adds to the group
+	// before installing, so the install meets an existing membership.
 	agSeedMember = "peer"
 	// agNonMember is an ordinary account that never joins the group.
 	agNonMember = "other"
@@ -361,6 +361,52 @@ func TestREQBrokerConfig043_SystemInstallAdminGroup(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation covers the rule
+// that an existing administration group which lists members is only reused
+// when the administrator names it with --admin-group. The refused installation
+// writes no configuration file; the accepted one keeps the members. Naming the
+// group settles the decision, so the member lookup is skipped and the summary
+// only says the group was reused.
+func TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation(t *testing.T) {
+	if !syscontainer.InContainer() {
+		syscontainer.Run(t, syscontainer.Systemd)
+		return
+	}
+
+	agSeedGroup(t)
+	agRunRoot(t, "usermod", "-aG", agGroup, agSeedMember)
+	if _, err := os.Stat(agConfigPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("precondition: %s already exists: %v", agConfigPath, err)
+	}
+
+	res := syscontainer.RunAs(t, "root", nil, "service", "install", "--system")
+	if res.ExitCode == 0 {
+		t.Fatalf("service install --system reused an unnamed group with members:\n%s", res.Stdout)
+	}
+	want := `cannot use the existing group "peers" as the administration group: its member ` + agSeedMember +
+		` would be able to manage the system Broker; pass --admin-group peers to accept them, or pass --admin-group with another name`
+	if !strings.Contains(res.Stderr, want) {
+		t.Errorf("install stderr = %q, want it to contain %q", res.Stderr, want)
+	}
+	if _, err := os.Stat(agConfigPath); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the refused installation wrote %s: %v", agConfigPath, err)
+	}
+
+	res = syscontainer.RunAs(t, "root", nil, "service", "install", "--system", "--admin-group", agGroup)
+	if res.ExitCode != 0 {
+		t.Fatalf("service install --system --admin-group %s: exit %d\nstdout: %s\nstderr: %s",
+			agGroup, res.ExitCode, strings.TrimSpace(res.Stdout), strings.TrimSpace(res.Stderr))
+	}
+	if got, want := summaryValue(t, res.Stdout, "admin group:"), agGroup+" (existing)"; got != want {
+		t.Errorf("summary admin group = %q, want %q", got, want)
+	}
+	agWaitSystemBroker(t)
+	agAssertConfigFile(t)
+	if !agGroupHas(t, agSeedMember) {
+		t.Errorf("the accepted installation changed the group's members: %s", agGroupLine(t))
+	}
+}
+
 // agConfigState is the part of a file's state a reinstall must preserve.
 type agConfigState struct {
 	sum  string
@@ -407,14 +453,15 @@ func agAssertConfigFile(t *testing.T) {
 	}
 }
 
-// agSeedGroup creates the administration group with one member, so the first
-// install has an existing membership it must preserve.
+// agSeedGroup creates the administration group without members, so the first
+// install reuses a group it did not create. A group with members is only reused
+// when the administrator names it, which
+// TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation covers.
 func agSeedGroup(t *testing.T) {
 	t.Helper()
 	if !agGroupExists(t) {
 		agRunRoot(t, "groupadd", "--system", agGroup)
 	}
-	agRunRoot(t, "usermod", "-aG", agGroup, agSeedMember)
 }
 
 // agGroupExists reports whether the group is in the account database.

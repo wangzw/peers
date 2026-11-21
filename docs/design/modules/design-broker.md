@@ -180,17 +180,18 @@ service Local {
 
 ```
 peers <version> installed (<user service|system service>, starts at <login|boot>)
-  binary:     <path>
-  config:     <path> (generated|kept)
-  run log:    journalctl ... | <log file path>
-  audit log:  <path>
-  start:      [sudo ]peers service start
-  stop:       [sudo ]peers service stop
-  restart:    [sudo ]peers service restart
-  uninstall:  peers uninstall
+  binary:      <path>
+  config:      <path> (generated|kept)
+  admin group: <name> (created | existing | existing, members: <names> | existing, no members listed)
+  run log:     journalctl ... | <log file path>
+  audit log:   <path>
+  start:       [sudo ]peers service start
+  stop:        [sudo ]peers service stop
+  restart:     [sudo ]peers service restart
+  uninstall:   peers uninstall
 ```
 
-用户级的命令不带 `sudo`，日志写 `journalctl --user -u peers.service` 或 macOS 的 `~/Library/Logs/peers/broker.log`。路径取 [config](design-config.md) 的路径表，日志位置取现有的 `logHint`。`config` 一行沿用现有的“已生成”与“沿用已有”两种说法；系统级沿用已有配置文件时，把已有文件交给管理组的命令照旧另起一行，放在汇总之后。
+用户级的命令不带 `sudo`，日志写 `journalctl --user -u peers.service` 或 macOS 的 `~/Library/Logs/peers/broker.log`。路径取 [config](design-config.md) 的路径表，日志位置取现有的 `logHint`。`config` 一行沿用现有的“已生成”与“沿用已有”两种说法；系统级沿用已有配置文件时，把已有文件交给管理组的命令照旧另起一行，放在汇总之后。`admin group:` 一行只在系统级安装时出现，写明管理组的名字与来源。
 
 发布包的安装脚本把二进制放进目标目录、以它调用 `service install`、为执行安装的用户注册 MCP 服务（`REQ-broker-config-041`）；服务定义的写入、启动与重装仍只由 `service install` 负责，它可重复执行，安装脚本因此不另做判断。远程安装脚本负责下载发布包、核对发布包的 sha256 并在解压后调用包内的 `install.sh`；权限检查、拒绝以 `root` 走用户级安装等判断仍由包内脚本负责（`REQ-broker-config-042`）。
 
@@ -212,7 +213,7 @@ macOS 上，用户级 plist 写到 `~/Library/LaunchAgents/io.github.wangzw.peer
 
 本次安装写入或启用的服务，在安装失败后都不会在开机或登录时自动启动。macOS 预检失败时，本次新建的 plist 删除，原有 plist 保持原状；Linux 预检失败发生在单元文件写入之前，本次不会新写单元文件。占用者不是本服务时，已安装的服务保持原状，仍按它原来的启用状态运行。就绪失败（Broker 启动失败或 20 秒内不应答）或注册失败后，Linux 执行 `systemctl --user disable --now peers.service`（系统级去掉 `--user`）。macOS 的注册失败包括 bootout 出错、卸载等待超时与 bootstrap 最终失败。清理按写 plist 之前记录的状态决定：本次新建的 plist 删除；安装前已存在的 plist 保留并执行 `launchctl disable <域>/io.github.wangzw.peers`，无论其服务当时是否加载。launchd 会在登录或开机时加载 LaunchAgents 与 LaunchDaemons 目录下的每个 plist，只有删除或 disable 才能阻止它重新加载。就绪失败后 macOS 先 bootout 再 disable，停掉刚加载但不应答的服务。plist 被保留时，恢复命令先 `launchctl enable` 再 `launchctl bootstrap`，也可以重新执行 `service install`。旧服务已卸载的失败，报错写明旧服务已卸载、当前没有 Broker 在运行；未能卸载的失败，报错写明旧服务未能卸载。label 已禁用时说明它不会自动启动，禁用失败时说明服务可能自动启动。配置文件与 Linux 的单元文件保留，macOS 的 plist 按上面的规则删除或保留，报错说明修好后重新执行 `service install`。如果失败发生在停掉原本运行的服务之后，报错写明 `the existing service was stopped`，并给出恢复该服务的命令。预检中停掉原服务失败时，安装照样禁用该服务，报错写明 `will not start automatically` 并给出恢复命令；连禁用也失败时，报错说明它仍可能在下次开机或登录时自动启动。预检与真正的绑定之间仍有竞态；带 `--allow-degraded` 时，启动后进入仅本机降级，由就绪后的 `Status` 检查报告；未带时启动失败，由上面的日志原因兜底。
 
-系统级安装创建管理组：组不存在时 Linux 执行 `groupadd --system <名称>`，macOS 用 `dseditgroup` 创建；组已存在时直接使用，不改成员。组名默认为 `peers`，由 `--admin-group` 指定；建组失败时安装失败，并且不改动配置文件。配置文件已存在时，内容、属组与权限都不动，安装输出给出把已有文件交给管理组的命令 `chgrp <组> <路径> && chmod 0660 <路径>`。发布包内的安装脚本询问是否把执行安装的账户加入该组，默认不加入（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`）。
+系统级安装创建管理组：组不存在时 Linux 执行 `groupadd --system <名称>`，macOS 用 `dseditgroup` 创建；组已存在时沿用，不改成员。组名默认为 `peers`，由 `--admin-group` 指定；建组失败时安装失败，并且不改动配置文件。沿用已有组时，gid 为 0 的组一律拒绝，例如 `cannot use group "wheel" as the administration group: its group id is 0`。下列条件同时成立时也拒绝安装：组已存在且不是本次创建；`/var/lib/peers/admin-group` 没有记录这个组名；这次将生成新的配置文件；管理员没有用 `--admin-group` 显式指定组名；该组列出了成员。错误列出成员，并给出两条出路：显式指定这个组以接受成员，或改用另一个组名，例如 `cannot use the existing group "peers" as the administration group: its members alice and bob would be able to manage the system Broker; pass --admin-group peers to accept them, or pass --admin-group with another name`。拒绝发生在写任何文件之前，不留下配置文件。配置文件已存在时，内容、属组与权限都不动，安装输出给出把已有文件交给管理组的命令 `chgrp <组> <路径> && chmod 0660 <路径>`。无论组是新建还是沿用，汇总的 `admin group:` 一行写明组名与来源：`<名称> (created)`、`<名称> (existing)`、`<名称> (existing, members: <成员列表>)` 或 `<名称> (existing, no members listed)`。成员包括账户数据库列出的附属成员与以该组为主组的账户，macOS 上还包括 `NestedGroups` 列出的嵌套组；嵌套组以 GUID 列出时用 `dscl` 解析为组名展示，解析不了仍按 GUID 计入并照常拒绝。读取成员失败时按拒绝处理。主组账户由 `getent passwd`（macOS 上为 `dscl` 的账户列表）枚举，SSSD 关闭 enumerate 时可能只返回本地账户，目录服务里的账户因此看不到；与目标组共享同一 gid 的别名组不在读取范围内，其成员不计入。管理员用 `--admin-group` 显式指定组名或这次沿用已有配置文件时，安装跳过核对也跳过成员读取，汇总只写 `<名称> (existing)`，重装不会被账户数据库的故障挡住。发布包内的安装脚本询问是否把执行安装的账户加入该组，默认不加入，只把管理员给出的 `--admin-group` 转发给 `service install`（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`）。
 
 `service remove` 先停止并卸载服务，成功后才删除服务定义；停止失败时保留文件并返回错误。Linux 上执行 `systemctl --user disable --now peers.service`，系统级去掉 `--user`，删除单元文件后执行 `daemon-reload`；`daemon-reload` 失败时恢复单元文件，使下一次卸载仍可完成。macOS 上执行 `launchctl bootout <域>/io.github.wangzw.peers`，再删除 plist，bootout 的错误处理与安装相同。判断是否已安装看两样：单元文件或 plist 存在，或服务管理器仍有启用、加载状态；文件已删除但服务仍在加载的照样卸载。配置、身份与审计日志保留。没有安装过时命令直接成功并报告未安装，因此可以重复执行。`--system` 需要 root。
 

@@ -32,6 +32,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `golang.org/x/net` is upgraded from v0.60.0 to v0.62.0, which closes GO-2026-6866 and GO-2026-6860. Both sit in the `html` package, which peers does not call, so neither was reachable, but a release closes every known issue in the module graph.
 - An alias that a peer gave up during a relationship stays reserved for that peer instead of becoming available to another peer, so an Agent address handed out earlier cannot start naming a different Broker.
 - Self-reported aliases and addresses are validated and normalized before they are stored.
+- A system installation no longer hands an existing group's members management of the system Broker without the administrator's knowledge. When the default `peers` group already lists members, was not created by an earlier peers installation and a new configuration file would be generated, `service install --system` refuses before writing any file unless the administrator names the group with `--admin-group`; a group whose id is 0 is refused outright, since its accounts would hold the configuration file's permissions. The member list includes accounts whose primary group is that group and, on macOS, nested groups, and a failed member lookup refuses the installation instead of treating the group as empty; naming the group or keeping an existing configuration file skips the lookup. The install summary names the administration group, where it came from and the members the account database lists.
 
 ## [0.5.0] - 2026-11-21
 

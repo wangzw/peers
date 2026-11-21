@@ -443,41 +443,56 @@ func adminGroupDeleteCommand(opts Options, name string) string {
 	return "groupdel " + name
 }
 
-// primaryGroupOfAnyAccount reports whether gid is the primary group of an
-// account. The list is whatever the platform's directory lookup returns; an
-// account it does not enumerate is not seen. groupdel itself refuses to remove
-// a local account's primary group, so a missed account still leaves the group
-// in place.
-func primaryGroupOfAnyAccount(opts Options, gid int) (bool, error) {
+// primaryGroupAccounts returns the accounts whose primary group is gid, sorted
+// by name. Options.PrimaryGroupAccounts replaces the lookup in a test;
+// otherwise the platform's directory lookup is queried. The list is whatever
+// that lookup returns; an account it does not enumerate is not seen.
+func primaryGroupAccounts(opts Options, gid int) ([]string, error) {
+	if opts.PrimaryGroupAccounts != nil {
+		return opts.PrimaryGroupAccounts(gid)
+	}
 	id := strconv.Itoa(gid)
 	switch opts.GOOS {
 	case "linux":
 		out, err := opts.Run("getent", "passwd")
 		if err != nil {
-			return false, fmt.Errorf("cannot list accounts: %w", err)
+			return nil, fmt.Errorf("cannot list accounts: %w", err)
 		}
+		var names []string
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Split(line, ":")
-			if len(fields) >= 4 && fields[3] == id {
-				return true, nil
+			if len(fields) >= 4 && fields[3] == id && fields[0] != "" {
+				names = append(names, fields[0])
 			}
 		}
-		return false, nil
+		return names, nil
 	case "darwin":
 		out, err := opts.Run("dscl", ".", "-list", "/Users", "PrimaryGroupID")
 		if err != nil {
-			return false, fmt.Errorf("cannot list accounts: %w", err)
+			return nil, fmt.Errorf("cannot list accounts: %w", err)
 		}
+		var names []string
 		for _, line := range strings.Split(string(out), "\n") {
 			fields := strings.Fields(line)
 			if len(fields) == 2 && fields[1] == id {
-				return true, nil
+				names = append(names, fields[0])
 			}
 		}
-		return false, nil
+		return names, nil
 	default:
-		return false, fmt.Errorf("cannot check the primary group on platform %q", opts.GOOS)
+		return nil, fmt.Errorf("cannot check the primary group on platform %q", opts.GOOS)
 	}
+}
+
+// primaryGroupOfAnyAccount reports whether gid is the primary group of an
+// account. groupdel itself refuses to remove a local account's primary group,
+// so a missed account still leaves the group in place.
+func primaryGroupOfAnyAccount(opts Options, gid int) (bool, error) {
+	accounts, err := primaryGroupAccounts(opts, gid)
+	if err != nil {
+		return false, err
+	}
+	return len(accounts) > 0, nil
 }
 
 // groupNameByGID returns the name of the group with gid, or an empty string

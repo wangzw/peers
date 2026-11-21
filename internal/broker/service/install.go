@@ -95,31 +95,33 @@ var (
 // Options is everything Install needs. DefaultOptions fills it from the running
 // process; tests fill it by hand and set Root to a temporary directory.
 type Options struct {
-	System           bool
-	GOOS             string                                                                  // runtime.GOOS
-	EUID             int                                                                     // os.Geteuid()
-	UID              int                                                                     // os.Getuid(), used in the start hint
-	Exe              string                                                                  // absolute path of os.Executable()
-	Home             string                                                                  // account home directory
-	XDGConfigHome    string                                                                  // XDG_CONFIG_HOME
-	TempDir          string                                                                  // os.TempDir()
-	Root             string                                                                  // filesystem prefix for tests; empty in production
-	ProcRoot         string                                                                  // Linux: /proc tree used to find a port's occupant; empty uses /proc
-	AdminGroup       string                                                                  // group that administers a system Broker; empty uses DefaultAdminGroup
-	LookPath         func(file string) (string, error)                                       // exec.LookPath
-	Run              func(name string, args ...string) ([]byte, error)                       // run a command, returning combined output
-	RunOutput        func(name string, args ...string) ([]byte, error)                       // run a command, returning only its standard output; nil uses Run
-	GroupGID         func(name string) (gid int, exists bool, err error)                     // group id lookup; nil queries the platform through Run
-	Owner            func(path string) (uid uint32, mode fs.FileMode, err error)             // owner and permission bits, not following symlinks
-	Chown            func(path string, uid, gid int) error                                   // ownership setter for the configuration file; nil uses os.Chown in production
-	Chmod            func(path string, mode fs.FileMode) error                               // permission setter for the configuration file; nil uses os.Chmod
-	EvalSymlinks     func(path string) (string, error)                                       // filepath.EvalSymlinks
-	Probe            func(socketPath string) (pid int, answering bool)                       // peer pid of the Broker answering on the local socket
-	ListenProbe      func(addr string) error                                                 // whether broker.listen can be bound; nil uses config.ProbeListen
-	StatusProbe      func(socketPath string) (state DegradedState, degraded bool, err error) // Status over the local socket; nil uses the default set by DefaultOptions
-	ReadyTimeout     time.Duration                                                           // wait for the local socket after start; zero uses readyBound
-	StopTimeout      time.Duration                                                           // one stop-and-replace budget; zero uses serviceStopBound
-	BootstrapTimeout time.Duration                                                           // wait for a bootstrap that keeps failing with exit 5; zero uses bootstrapRetryBound
+	System               bool
+	GOOS                 string                                                                  // runtime.GOOS
+	EUID                 int                                                                     // os.Geteuid()
+	UID                  int                                                                     // os.Getuid(), used in the start hint
+	Exe                  string                                                                  // absolute path of os.Executable()
+	Home                 string                                                                  // account home directory
+	XDGConfigHome        string                                                                  // XDG_CONFIG_HOME
+	TempDir              string                                                                  // os.TempDir()
+	Root                 string                                                                  // filesystem prefix for tests; empty in production
+	ProcRoot             string                                                                  // Linux: /proc tree used to find a port's occupant; empty uses /proc
+	AdminGroup           string                                                                  // group that administers a system Broker; empty uses DefaultAdminGroup
+	LookPath             func(file string) (string, error)                                       // exec.LookPath
+	Run                  func(name string, args ...string) ([]byte, error)                       // run a command, returning combined output
+	RunOutput            func(name string, args ...string) ([]byte, error)                       // run a command, returning only its standard output; nil uses Run
+	GroupGID             func(name string) (gid int, exists bool, err error)                     // group id lookup; nil queries the platform through Run
+	GroupMembers         func(name string) ([]string, error)                                     // group member list; nil queries the platform through Run
+	PrimaryGroupAccounts func(gid int) ([]string, error)                                         // accounts whose primary group is gid; nil queries the platform through Run
+	Owner                func(path string) (uid uint32, mode fs.FileMode, err error)             // owner and permission bits, not following symlinks
+	Chown                func(path string, uid, gid int) error                                   // ownership setter for the configuration file; nil uses os.Chown in production
+	Chmod                func(path string, mode fs.FileMode) error                               // permission setter for the configuration file; nil uses os.Chmod
+	EvalSymlinks         func(path string) (string, error)                                       // filepath.EvalSymlinks
+	Probe                func(socketPath string) (pid int, answering bool)                       // peer pid of the Broker answering on the local socket
+	ListenProbe          func(addr string) error                                                 // whether broker.listen can be bound; nil uses config.ProbeListen
+	StatusProbe          func(socketPath string) (state DegradedState, degraded bool, err error) // Status over the local socket; nil uses the default set by DefaultOptions
+	ReadyTimeout         time.Duration                                                           // wait for the local socket after start; zero uses readyBound
+	StopTimeout          time.Duration                                                           // one stop-and-replace budget; zero uses serviceStopBound
+	BootstrapTimeout     time.Duration                                                           // wait for a bootstrap that keeps failing with exit 5; zero uses bootstrapRetryBound
 
 	PPID            func() int                               // caller pid for the launchd helper; nil: os.Getppid
 	StartDetached   func(cmd *exec.Cmd) error                // start the launchd helper and release it; nil: start it in its own session
@@ -137,9 +139,19 @@ type Result struct {
 	// AdminGroupCreated reports that this run created the administration
 	// group, as opposed to reusing one that already existed.
 	AdminGroupCreated bool
-	Commands          []string // commands that changed state, in order
-	Domain            string   // macOS: the launchd domain the service was loaded into or out of
-	Removed           bool     // Uninstall: a unit file or plist was removed
+	// AdminGroupMembers lists the members the account database reports for the
+	// administration group, sorted by name: supplementary members and, on
+	// macOS, nested groups, plus accounts whose primary group is the
+	// administration group. It is empty when the group was created by this run,
+	// lists no members, or was not queried.
+	AdminGroupMembers []string
+	// AdminGroupMembersQueried reports whether this run read the member list.
+	// Naming the group with --admin-group or keeping an existing configuration
+	// file settles the decision without it, so the list is not read.
+	AdminGroupMembersQueried bool
+	Commands                 []string // commands that changed state, in order
+	Domain                   string   // macOS: the launchd domain the service was loaded into or out of
+	Removed                  bool     // Uninstall: a unit file or plist was removed
 
 	Binary   string // Install: the executable the service definition starts
 	RunLog   string // Install: where the Broker's run log is read, as logHint gives it
@@ -189,7 +201,6 @@ func defaultOptions(system bool, home string) (Options, error) {
 		UID:           os.Getuid(),
 		Exe:           exe,
 		Home:          home,
-		AdminGroup:    DefaultAdminGroup,
 		XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"),
 		TempDir:       os.TempDir(),
 		LookPath:      exec.LookPath,

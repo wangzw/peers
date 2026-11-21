@@ -37,7 +37,13 @@ func baseOptions(t *testing.T) Options {
 		// The administration group already exists with a fixed id, so tests that
 		// do not exercise group creation emit no group commands.
 		GroupGID: func(string) (int, bool, error) { return 999, true, nil },
-		Probe:    func(string) (int, bool) { return 0, false },
+		// The group lists no members, so reusing it needs no confirmation. A test
+		// that exercises the member lookup sets this to nil and drives Run.
+		GroupMembers: func(string) ([]string, error) { return nil, nil },
+		// No account has the group as its primary group, so the member lookup
+		// needs no account list. A test that exercises it replaces this.
+		PrimaryGroupAccounts: func(int) ([]string, error) { return nil, nil },
+		Probe:                func(string) (int, bool) { return 0, false },
 		// Most tests are not about degraded running; report a healthy Broker so
 		// the status check after readiness passes.
 		StatusProbe: func(string) (DegradedState, bool, error) { return DegradedState{}, false, nil },

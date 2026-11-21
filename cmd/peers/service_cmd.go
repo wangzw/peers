@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,7 +77,11 @@ func (a *app) serviceInstallCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts.AdminGroup = adminGroup
+			// Only an explicit --admin-group reaches the installation, so it can
+			// tell a group the administrator accepted from the default one.
+			if cmd.Flags().Changed("admin-group") {
+				opts.AdminGroup = adminGroup
+			}
 			result, err := installFn(opts)
 			if err != nil {
 				var degraded *service.DegradedError
@@ -218,21 +223,40 @@ func (a *app) printInstalled(result service.Result, system bool) {
 		level, start, sudo = "system service", "boot", "sudo "
 	}
 	_, _ = fmt.Fprintf(a.stdout, "peers %s installed (%s, starts at %s)\n", a.version, level, start)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%s\n", "binary:", result.Binary)
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%s\n", "binary:", result.Binary)
 	configState := "kept"
 	if result.ConfigNew {
 		configState = "generated"
 	}
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%s (%s)\n", "config:", result.ConfigPath, configState)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%s\n", "run log:", result.RunLog)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%s\n", "audit log:", result.AuditLog)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%speers service start\n", "start:", sudo)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%speers service stop\n", "stop:", sudo)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12s%speers service restart\n", "restart:", sudo)
-	_, _ = fmt.Fprintf(a.stdout, "  %-12speers uninstall\n", "uninstall:")
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%s (%s)\n", "config:", result.ConfigPath, configState)
+	if system && result.AdminGroup != "" {
+		_, _ = fmt.Fprintf(a.stdout, "  %-13s%s (%s)\n", "admin group:", result.AdminGroup, adminGroupState(result))
+	}
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%s\n", "run log:", result.RunLog)
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%s\n", "audit log:", result.AuditLog)
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%speers service start\n", "start:", sudo)
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%speers service stop\n", "stop:", sudo)
+	_, _ = fmt.Fprintf(a.stdout, "  %-13s%speers service restart\n", "restart:", sudo)
+	_, _ = fmt.Fprintf(a.stdout, "  %-13speers uninstall\n", "uninstall:")
 	if !result.ConfigNew && result.AdminGroup != "" {
 		_, _ = fmt.Fprintf(a.stdout, "To delegate administration, run: chgrp %s %s && chmod 0660 %s\n",
 			result.AdminGroup, result.ConfigPath, result.ConfigPath)
+	}
+}
+
+// adminGroupState describes how the installation got the administration group:
+// created by this run, reused with the members it lists, reused with none, or
+// reused without reading the members because the decision was already settled.
+func adminGroupState(result service.Result) string {
+	switch {
+	case result.AdminGroupCreated:
+		return "created"
+	case !result.AdminGroupMembersQueried:
+		return "existing"
+	case len(result.AdminGroupMembers) > 0:
+		return "existing, members: " + strings.Join(result.AdminGroupMembers, ", ")
+	default:
+		return "existing, no members listed"
 	}
 }
 
