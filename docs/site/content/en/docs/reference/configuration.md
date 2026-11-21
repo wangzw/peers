@@ -17,6 +17,7 @@ The template begins with a comment block:
 # peers user Broker configuration.
 #
 # Every key is optional; a key that is absent takes its default value.
+# YAML anchors, aliases and merge keys are not supported.
 # This file belongs to this account only: only this account runs the Broker
 # and reads or writes the file.
 ```
@@ -80,7 +81,7 @@ When `broker.alias` is not set, a system Broker uses the first segment of the sy
 - A duration is a string in Go duration syntax, for example `10m`, `500ms`, `1s` or `1h30m`. Durations must be greater than zero.
 - Integers must be greater than zero, except `send.link_retries` and `send.inbox_retries`, which accept `0`.
 - `link.reconnect_max` must be greater than or equal to `link.reconnect_min`, and `link.keepalive_timeout` must be less than `link.keepalive_interval`. Changing one key of either pair is checked against the other.
-- `broker.listen` is written `host:port`, `:port` or `[v6]:port`; the port is 1 to 65535. Setting a different value probes the address, and an address that cannot be bound is rejected. On a system Broker, a port below 1024 takes effect only while the configuration file can be written by root alone. When a group or others can write the file, a Broker started in the foreground fails to start, and one running as a service enters a local-only degraded run; `chmod g-w <path>` or a port of 1024 or higher fixes it. [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes the rule.
+- `broker.listen` is written `host:port`, `:port` or `[v6]:port`; the port is 1 to 65535. Setting a different value probes the address, and an address that cannot be bound is rejected. On a system Broker, a port below 1024 takes effect only while the configuration file can be written by root alone. When a group or others can write the file, a Broker started in the foreground fails to start, and one running as a service enters a local-only degraded run; `chmod g-w <path>` or a port of 1024 or higher fixes it. A request from root through `set_config` or `peers config set` that sets a port below 1024 is refused while the file is writable by an account other than root, and the error says what the file must be and gives the same two remedies. A request from an account other than root is refused outright, with `changing broker.listen to a port below 1024 requires root`. A refused start or hot reload names the current `broker.listen` value and asks root to check that it is the intended one before narrowing the permissions, because an account able to write the file may have set it. [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes the rule.
 - `broker.advertise` and `broker.advertise_extra` require a listen address, and a port-only `broker.advertise` also requires listening on every address.
 - The configured advertised addresses, including the implicit one for a specific listen address, may hold at most 8 entries. Addresses taken from the default-route interfaces are dropped from the end when the list would exceed 8; configured entries are all kept.
 - `broker.local_socket_group` must name a group that exists; startup fails when it does not, even with `--allow-degraded`.
@@ -89,6 +90,17 @@ When `broker.alias` is not set, a system Broker uses the first segment of the sy
 - `update.check_interval` must be at least `1h`.
 
 A value that fails a check is rejected, and the configuration remains as it was. At startup, a file that cannot be read or parsed, or a value that fails a check, stops the Broker, in the foreground and as a service alike. Only an unavailable data directory or audit log leads to the diagnostics-only degraded run.
+
+## File format and limits
+
+The file is one YAML document. It does not accept YAML anchors, aliases (`&name`, `*name`) or merge keys (`<<`), and mappings and sequences may nest at most 32 levels deep. The file may be at most 1 MiB. A file that breaks one of these rules cannot be loaded:
+
+- `config file parse error: anchors and aliases are not supported at line <line>, column <column>`
+- `config file parse error: merge keys are not supported at line <line>, column <column>`
+- `config file parse error: nesting is deeper than 32 levels at line <line>, column <column>`
+- `cannot read <path>: the file is larger than 1 MiB`
+
+At startup, any of these stops the Broker, with or without `--allow-degraded`. During a run, a reload that hits one of them keeps every current value and writes the error to the run log. `set_config` and `peers config set` fail when the file cannot be parsed, and the configuration stays as it was.
 
 ## Changing the configuration
 

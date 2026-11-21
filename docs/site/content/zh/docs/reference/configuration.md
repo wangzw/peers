@@ -9,7 +9,7 @@ weight: 3
 
 `peers service install` 只在该级别的配置文件不存在时写入模板，已存在的文件不改。模板列出全部键，每个键上方有一行说明。有固定默认值的键直接写出取值。默认值为空或在运行时计算的 5 个键写成注释并附示例：`broker.alias`（默认值在运行时计算），以及默认为空的 `broker.advertise`、`broker.advertise_extra`、`broker.local_socket_group` 和 `pairing.static_key`。取消注释并填入合法值，改动就会像其他合法改动一样在 Broker 运行期间生效。没有配置文件就启动的 Broker 不会得到模板。
 
-两份模板有三处不同。第一行写明级别，分别是 `# peers user Broker configuration.` 与 `# peers system Broker configuration.`。开头注释不同：用户级模板说明这个文件只属于本账户，系统级模板则说明，把文件的读权限授予某个组，该组的账户就能读取配置、完整状态与审计日志，把写权限授予某个组，该组的账户就能修改配置、管理配对。此外，用户级模板在 `broker.local_socket_group` 与 `broker.local_socket_mode` 这两个键的说明后注明，它们只对系统级 Broker 生效。
+两份模板有三处不同。第一行写明级别，分别是 `# peers user Broker configuration.` 与 `# peers system Broker configuration.`。开头注释不同：用户级模板说明这个文件只属于本账户，系统级模板则说明，把文件的读权限授予某个组，该组的账户就能读取配置、完整状态与审计日志，把写权限授予某个组，该组的账户就能修改配置、管理配对。用户级模板还在 `broker.local_socket_group` 与 `broker.local_socket_mode` 这两个键的说明后注明，它们只对系统级 Broker 生效。
 
 模板以一段说明注释开头：
 
@@ -17,6 +17,7 @@ weight: 3
 # peers user Broker configuration.
 #
 # Every key is optional; a key that is absent takes its default value.
+# YAML anchors, aliases and merge keys are not supported.
 # This file belongs to this account only: only this account runs the Broker
 # and reads or writes the file.
 ```
@@ -80,7 +81,7 @@ pairing:
 - 时长写成 Go 时长语法，例如 `10m`、`500ms`、`1s` 或 `1h30m`。时长必须大于零。
 - 整数必须大于零，`send.link_retries` 和 `send.inbox_retries` 例外，可以取 `0`。
 - `link.reconnect_max` 不得小于 `link.reconnect_min`；`link.keepalive_timeout` 必须小于 `link.keepalive_interval`。修改其中一对里的一个键时，会与另一个一起校验。
-- `broker.listen` 写作 `host:port`、`:port` 或 `[v6]:port`，端口为 1 至 65535。修改为另一个值时，系统会先探测该地址，无法绑定的地址会被拒绝。系统级 Broker 的端口小于 1024 时，只有在配置文件只能由 root 写时才生效。配置文件可被组或其他人写入时，前台运行的 Broker 会拒绝启动，作为服务运行的 Broker 会进入仅本机降级；执行 `chmod g-w <path>`，或把端口改为不小于 1024，即可恢复。这条规则见[以配置文件权限管理 Broker]({{< relref "management-permissions.md" >}}#管理组)。
+- `broker.listen` 写作 `host:port`、`:port` 或 `[v6]:port`，端口为 1 至 65535。修改为另一个值时，系统会先探测该地址，无法绑定的地址会被拒绝。系统级 Broker 的端口小于 1024 时，只有在配置文件只能由 root 写时才生效。配置文件可被组或其他人写入时，前台运行的 Broker 会拒绝启动，作为服务运行的 Broker 会进入仅本机降级；执行 `chmod g-w <path>`，或把端口改为不小于 1024，即可恢复。root 经 `set_config` 或 `peers config set` 把端口设为小于 1024 时，配置文件可被 root 以外的账户写入则请求被拒绝，错误说明文件必须具备的条件，并给出同样的两种办法。调用者不是 root 时一律拒绝，报错为 `changing broker.listen to a port below 1024 requires root`。启动或热加载被拒绝时，提示会写出文件中当前的 `broker.listen` 取值，要求 root 先核对该值是不是自己想要的，再收紧权限，因为能写这个文件的账户可能已经改过它。这条规则见[以配置文件权限管理 Broker]({{< relref "management-permissions.md" >}}#管理组)。
 - `broker.advertise` 与 `broker.advertise_extra` 要求有监听地址；只有端口的 `broker.advertise` 还要求监听本机全部地址。
 - 配置的对外地址，连同监听特定地址时隐含的那一项，最多 8 项。默认路由所在接口的地址会使列表超过 8 项时，从这部分末尾舍去；配置的项全部保留。
 - `broker.local_socket_group` 必须指向存在的组，不存在时启动失败，带 `--allow-degraded` 也一样。
@@ -89,6 +90,17 @@ pairing:
 - `update.check_interval` 不得小于 `1h`。
 
 未通过检查的值会被拒绝，配置保持原样。启动时，配置文件读不出、无法解析，或某个值未通过检查，Broker 都会退出，前台运行与作为服务运行都一样。只有数据目录或审计日志不可用时才会进入仅诊断降级。
+
+## 文件格式与上限
+
+配置文件是一份 YAML 文档。它不接受 YAML 的锚点、别名（`&name`、`*name`）和合并键（`<<`），映射与序列最多嵌套 32 层，文件最大 1 MiB。不符合其中任何一条的文件无法加载：
+
+- `config file parse error: anchors and aliases are not supported at line <line>, column <column>`
+- `config file parse error: merge keys are not supported at line <line>, column <column>`
+- `config file parse error: nesting is deeper than 32 levels at line <line>, column <column>`
+- `cannot read <path>: the file is larger than 1 MiB`
+
+启动时遇到这几种错误，Broker 都会退出，带 `--allow-degraded` 也一样。运行中热加载遇到时，全部配置保留原值，错误写入运行日志。`set_config` 与 `peers config set` 在文件无法解析时失败，配置保持原样。
 
 ## 修改配置
 

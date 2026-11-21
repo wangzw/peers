@@ -366,7 +366,7 @@ Removes an installation: the service, the binary that the service starts, the MC
 - For the system installation, answering `y` or giving `--purge` removes the admin group only when the installation created it. Otherwise, or when the group is still in use, the group is kept, and the command prints how to remove it by hand.
 - The MCP registration of every other account stays; each of those accounts removes it with `claude mcp remove -s user peer`. For the system installation, the command removes the registration of the account that ran `sudo`; when it runs as root directly, it prints the command instead.
 
-Before deleting the system installation's binary, the command lists other accounts whose user Broker is running, then deletes the binary anyway.
+Before deleting the system installation's binary, the command lists other accounts whose user Broker is running, then deletes the binary anyway. It checks only the Brokers under `/tmp/peers-*`, so an account whose Broker uses the fallback runtime directory is not listed.
 
 A failure stops the command without undoing the steps that already succeeded; the error says which step failed, and running the command again continues from there. When neither the user service nor the system service is installed but the MCP registration points at this binary, it removes this account's installation: the system installation as root, otherwise the user installation; with nothing installed, it reports that and exits with code 0.
 
