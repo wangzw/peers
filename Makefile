@@ -144,12 +144,24 @@ proto-lint:
 # and a test function is included when it is declared in a file whose
 # //go:build line requires peers_testenv without negating it. A new hook
 # test is therefore executed without an edit here.
+#
+# go vet runs concurrently with the race-enabled tests, writing to its own
+# temporary file so the two outputs do not interleave; vet's output is printed
+# after the tests finish. A failure in either one fails the target.
 test:
 	go build ./...
-	go vet ./...
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
-	go build -o "$$tmp/testreport" ./scripts/testreport || exit $$?; \
-	bash -o pipefail -c 'go test -race -count=1 -json -p $(JOBS) -parallel $(JOBS) ./... | '"$$tmp"'/testreport -label test -'
+	go vet ./... > "$$tmp/vet.log" 2>&1 & \
+	vetpid=$$!; \
+	status=0; \
+	if ! go build -o "$$tmp/testreport" ./scripts/testreport; then status=1; fi; \
+	if [ $$status -eq 0 ]; then \
+		bash -o pipefail -c 'go test -race -count=1 -json -p $(JOBS) -parallel $(JOBS) ./... | '"$$tmp"'/testreport -label test -' || status=$$?; \
+	fi; \
+	wait "$$vetpid"; vetstatus=$$?; \
+	cat "$$tmp/vet.log"; \
+	if [ $$vetstatus -ne 0 ]; then echo "test: go vet failed" >&2; status=1; fi; \
+	exit $$status
 	@root="$$(mktemp -d)"; home="$$(mktemp -d)"; scratch="$$(mktemp -d)"; \
 	cleanup() { status=$$1; rm -rf "$$root" "$$home" "$$scratch"; exit $$status; }; \
 	go list -e -f '{{.ImportPath}}|{{join .GoFiles " "}}|{{join .TestGoFiles " "}}' ./... > "$$scratch/plain" || cleanup $$?; \
