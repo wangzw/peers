@@ -641,6 +641,42 @@ func TestOwnRecordFromNetworkRaisesAndHooks(t *testing.T) {
 	}
 }
 
+// TestRecordListFetchesOwnHigherVersionAtOnce checks that the replacement
+// interval does not defer a record published by the local Broker. The store
+// exempts it, so a RecordList naming a higher version must fetch it at once to
+// raise the issued version, rather than record it for a later refetch.
+func TestRecordListFetchesOwnHigherVersionAtOnce(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	// B accepts its own card from the link, so the held version carries a
+	// recent acceptance instant.
+	v1 := mustSignRecord(t, 1, recKindCard, "", 1, dirTestNow().Add(recordTTL), recTestCard("self"))
+	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
+
+	v2 := mustSignRecord(t, 1, recKindCard, "", 2, dirTestNow().Add(recordTTL), recTestCard("self"))
+	reconcileInject(t, p, v2)
+	b.d.handleRecordList(p.fp, reconcileListPayload(t, v2.recordVersion()))
+
+	reconcileAwait(t, net, "B to fetch its own higher version at once", func() bool {
+		return refetchHeldVersion(b, v2.id) == 2
+	})
+
+	b.d.mu.RLock()
+	deferred := 0
+	if pr := b.d.recon[p.fp]; pr != nil {
+		deferred = len(pr.refetch)
+	}
+	b.d.mu.RUnlock()
+	if deferred != 0 {
+		t.Fatalf("B deferred %d identifiers for its own higher version, want 0", deferred)
+	}
+}
+
 func TestRequestHandlerReturnsHeldOnly(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1057,6 +1093,74 @@ func TestRequestedWindowCappedAtMaxRecords(t *testing.T) {
 	}
 }
 
+// TestCompletedRequestWindowsAreDropped checks that an accept window whose
+// identifiers all arrived is dropped at once. A peer that answers every request
+// immediately must not leave one window per request behind for the whole accept
+// TTL, which would tie memory to the request rate rather than to the
+// outstanding identifiers.
+func TestCompletedRequestWindowsAreDropped(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	b.set.SetMaxRecords(64)
+
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	records := make(map[recordID]*directorypb.Record)
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(_ context.Context, _ Fingerprint, payload []byte) (uint32, []byte) {
+			var req directorypb.RecordRequest
+			if err := proto.Unmarshal(payload, &req); err != nil {
+				return directorypb.KindRecords, nil
+			}
+			out := make([]*directorypb.Record, 0, len(req.GetRecords()))
+			for _, pid := range req.GetRecords() {
+				id, ok := idFromProto(pid)
+				if !ok {
+					continue
+				}
+				if r, ok := records[id]; ok {
+					out = append(out, r)
+				}
+			}
+			reply, err := proto.Marshal(&directorypb.Records{Records: out})
+			if err != nil {
+				return directorypb.KindRecords, nil
+			}
+			return directorypb.KindRecords, reply
+		})
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	const (
+		rounds   = 5
+		perRound = 4
+	)
+	for i := 0; i < rounds; i++ {
+		vs := make([]*directorypb.RecordVersion, 0, perRound)
+		ids := make([]recordID, 0, perRound)
+		for j := 0; j < perRound; j++ {
+			r := reconcileCard(t, byte(100+i*perRound+j), 1, fmt.Sprintf("win-%d-%d", i, j))
+			records[r.id] = r.wire()
+			vs = append(vs, r.recordVersion())
+			ids = append(ids, r.id)
+		}
+		b.d.handleRecordList(pfp, reconcileListPayload(t, vs...))
+		reconcileAwait(t, net, fmt.Sprintf("round %d to be fully answered", i), func() bool {
+			for _, id := range ids {
+				if _, ok := reconcileLookup(b, id); !ok {
+					return false
+				}
+			}
+			b.d.mu.RLock()
+			defer b.d.mu.RUnlock()
+			pr := b.d.recon[pfp]
+			return pr != nil && len(pr.requested) == 0 && len(pr.windows) == 0
+		})
+	}
+}
+
 // TestScheduleFetchCapsPendingAtMaxRecords checks that the identifiers waiting
 // for a request stay bounded by directory.max_records even when more arrive
 // while a request is in flight.
@@ -1197,70 +1301,103 @@ func TestNoFramesToNonPeers(t *testing.T) {
 	}
 }
 
-// TestCompletedRequestWindowsAreDropped checks that an accept window whose
-// identifiers all arrived is dropped at once. A peer that answers every request
-// immediately must not leave one window per request behind for the whole accept
-// TTL, which would tie memory to the request rate rather than to the
-// outstanding identifiers.
-func TestCompletedRequestWindowsAreDropped(t *testing.T) {
+// TestReplaceIntervalDropsNewerVersion checks that a newer version accepted
+// from a link one second after the old one is dropped and not forwarded, and
+// that a version arriving once the 60-second interval has passed replaces the
+// held one and is forwarded.
+func TestReplaceIntervalDropsNewerVersion(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
-	b.set.SetMaxRecords(64)
+	p := newReconcileNode(t, net, 2)
+	c := newReconcileNode(t, net, 3)
 
-	pfp := newTestIdentity(2).Fingerprint()
-	p := net.Endpoint(pfp)
-
-	records := make(map[recordID]*directorypb.Record)
-	p.HandleRequest(directorypb.KindRecordRequest,
-		func(_ context.Context, _ Fingerprint, payload []byte) (uint32, []byte) {
-			var req directorypb.RecordRequest
-			if err := proto.Unmarshal(payload, &req); err != nil {
-				return directorypb.KindRecords, nil
-			}
-			out := make([]*directorypb.Record, 0, len(req.GetRecords()))
-			for _, pid := range req.GetRecords() {
-				id, ok := idFromProto(pid)
-				if !ok {
-					continue
-				}
-				if r, ok := records[id]; ok {
-					out = append(out, r)
-				}
-			}
-			reply, err := proto.Marshal(&directorypb.Records{Records: out})
-			if err != nil {
-				return directorypb.KindRecords, nil
-			}
-			return directorypb.KindRecords, reply
-		})
-
-	net.Connect(b.fp, pfp)
+	net.Connect(p.fp, b.fp)
+	net.Connect(b.fp, c.fp)
 	net.Settle(t)
 
-	const (
-		rounds   = 5
-		perRound = 4
-	)
-	for i := 0; i < rounds; i++ {
-		vs := make([]*directorypb.RecordVersion, 0, perRound)
-		ids := make([]recordID, 0, perRound)
-		for j := 0; j < perRound; j++ {
-			r := reconcileCard(t, byte(100+i*perRound+j), 1, fmt.Sprintf("win-%d-%d", i, j))
-			records[r.id] = r.wire()
-			vs = append(vs, r.recordVersion())
-			ids = append(ids, r.id)
-		}
-		b.d.handleRecordList(pfp, reconcileListPayload(t, vs...))
-		reconcileAwait(t, net, fmt.Sprintf("round %d to be fully answered", i), func() bool {
-			for _, id := range ids {
-				if _, ok := reconcileLookup(b, id); !ok {
-					return false
-				}
-			}
-			b.d.mu.RLock()
-			defer b.d.mu.RUnlock()
-			pr := b.d.recon[pfp]
-			return pr != nil && len(pr.requested) == 0 && len(pr.windows) == 0
-		})
+	v1 := reconcileCard(t, 200, 1, "hostX")
+	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
+	clearReconcileSent(b.ep)
+
+	clk, ok := b.d.clk.(*fakeClock)
+	if !ok {
+		t.Fatalf("clock type = %T, want *fakeClock", b.d.clk)
 	}
+	clk.Advance(time.Second)
+	v2 := reconcileCard(t, 200, 2, "hostX")
+	b.d.acceptBatch(p.fp, []*directorypb.Record{v2.wire()})
+
+	held, present := reconcileLookup(b, v1.id)
+	if !present || held.version != 1 {
+		t.Fatalf("held version = %d (present %v), want 1 after a replacement one second later", heldVersion(held), present)
+	}
+	if got := reconcileFrames(b.ep, c.fp, directorypb.KindRecordList); got != 0 {
+		t.Fatalf("B forwarded %d lists for the dropped version, want 0", got)
+	}
+	if logs := b.logs.String(); !strings.Contains(logs, "limit=replace_interval") {
+		t.Fatalf("drop warning does not name replace_interval: %s", logs)
+	}
+
+	clk.Advance(60 * time.Second)
+	v3 := reconcileCard(t, 200, 3, "hostX")
+	b.d.acceptBatch(p.fp, []*directorypb.Record{v3.wire()})
+
+	held, present = reconcileLookup(b, v1.id)
+	if !present || held.version != 3 {
+		t.Fatalf("held version = %d (present %v), want 3 after the interval", heldVersion(held), present)
+	}
+	if got := reconcileFrames(b.ep, c.fp, directorypb.KindRecordList); got != 1 {
+		t.Fatalf("B forwarded %d lists after the replacement, want 1", got)
+	}
+}
+
+// heldVersion returns r's version, or 0 when r is nil, so a failure message can
+// name the version without dereferencing a missing record.
+func heldVersion(r *storedRecord) uint64 {
+	if r == nil {
+		return 0
+	}
+	return r.version
+}
+
+// TestRecordListDoesNotRequestWithinReplaceInterval checks that a RecordList
+// naming a newer version starts no fetch while the held record was accepted
+// less than the interval ago, and that the fetch runs once the interval has
+// passed.
+func TestRecordListDoesNotRequestWithinReplaceInterval(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	v1 := reconcileCard(t, 200, 1, "hostX")
+	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
+
+	clk, ok := b.d.clk.(*fakeClock)
+	if !ok {
+		t.Fatalf("clock type = %T, want *fakeClock", b.d.clk)
+	}
+	clk.Advance(time.Second)
+
+	v2 := reconcileCard(t, 200, 2, "hostX")
+	reconcileInject(t, p, v2)
+	clearReconcileSent(b.ep)
+
+	b.d.handleRecordList(p.fp, reconcileListPayload(t, v2.recordVersion()))
+	// A fetch started by the list runs as its own goroutine. Wait for it, so
+	// the frame count below sees the request it sent when one was started.
+	b.d.inflight.Wait()
+	net.Settle(t)
+	if got := reconcileFrames(b.ep, p.fp, directorypb.KindRecordRequest); got != 0 {
+		t.Fatalf("B requested a replacement %d times within the interval, want 0", got)
+	}
+
+	clk.Advance(60 * time.Second)
+	b.d.handleRecordList(p.fp, reconcileListPayload(t, v2.recordVersion()))
+	reconcileAwait(t, net, "B to fetch v2 after the interval", func() bool {
+		held, ok := reconcileLookup(b, v1.id)
+		return ok && held.version == 2
+	})
 }

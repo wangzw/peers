@@ -21,26 +21,29 @@ import (
 // instance; there is no package-level singleton, so one process can run several
 // directories in tests.
 type Directory struct {
-	mu              sync.RWMutex
-	st              *store
-	up              map[Fingerprint]bool
-	recon           map[Fingerprint]*peerReconcile // requester-side state per peer
-	public          bool
-	active          map[string]string // public topic name to description
-	reissuePending  bool              // a Reissue could not be signed; renewDue retries it
-	onCard          []func(Fingerprint, []config.AdvertisedAddr)
-	ownHook         func(ids []recordID) // called with own records accepted from a link
-	dirty           bool
-	persistHook     func() // test seam called between taking the snapshot and writing it
-	afterMaintain   func() // test seam called at the end of each maintenance pass
-	started, closed bool
+	mu                  sync.RWMutex
+	st                  *store
+	up                  map[Fingerprint]bool
+	recon               map[Fingerprint]*peerReconcile // requester-side state per peer
+	public              bool
+	active              map[string]string // public topic name to description
+	reissuePending      bool              // a Reissue could not be signed; renewDue retries it
+	onCard              []func(Fingerprint, []config.AdvertisedAddr)
+	ownHook             func(ids []recordID) // called with own records accepted from a link
+	dirty               bool
+	lastMaintainPersist time.Time // last maintenance pass allowed to write; guarded by mu
+	persistHook         func()    // test seam called between taking the snapshot and writing it
+	afterMaintain       func()    // test seam called at the end of each maintenance pass
+	refetchIdle         func()    // test seam called when a refetch loop finds no deferred identifier
+	started, closed     bool
 
-	persistMu sync.Mutex
-	inflight  sync.WaitGroup  // fetch goroutines
-	ctx       context.Context // canceled by Close so blocked requests return
-	cancel    context.CancelFunc
-	stop      chan struct{}
-	loopDone  chan struct{}
+	persistMu  sync.Mutex
+	inflight   sync.WaitGroup  // fetch goroutines
+	refetching sync.WaitGroup  // deferred-refetch waiters
+	ctx        context.Context // canceled by Close so blocked requests return
+	cancel     context.CancelFunc
+	stop       chan struct{}
+	loopDone   chan struct{}
 
 	id       Identity
 	peers    PeerTable
@@ -134,7 +137,8 @@ func openWith(deps Deps, clk clock, ops fileOps) (*Directory, error) {
 }
 
 // Close stops the maintenance loop when it is running, waits for in-flight
-// fetch goroutines, and persists pending changes. Every frame handler and link
+// fetch goroutines and deferred-refetch waiters, and persists pending changes.
+// Every frame handler and link
 // notification returns immediately once Close has been called. Calling Close
 // again is a no-op.
 func (d *Directory) Close() {
@@ -156,6 +160,7 @@ func (d *Directory) Close() {
 		<-d.loopDone
 	}
 	d.inflight.Wait()
+	d.refetching.Wait()
 	d.persistIfDirty()
 }
 
@@ -182,7 +187,16 @@ func (d *Directory) trackLinks() {
 			delete(d.up, peer)
 			// The pending set and the accept window belong to the link: a
 			// reconnected peer starts from nothing, and an accept window left
-			// behind must not legitimize records on the next link.
+			// behind must not legitimize records on the next link. Waking a
+			// deferred-refetch waiter before dropping its state makes it leave
+			// now instead of at its deadline, so a reconnected peer never has
+			// an old waiter and a new one at the same time.
+			if pr := d.recon[peer]; pr != nil && pr.refetchRunning {
+				select {
+				case pr.refetchWake <- struct{}{}:
+				default:
+				}
+			}
 			delete(d.recon, peer)
 			d.mu.Unlock()
 		},
@@ -292,6 +306,26 @@ func (d *Directory) persistIfDirty() {
 		d.mu.Unlock()
 		d.log.Error("persist directory file failed", "error", err)
 	}
+}
+
+// persistDue reports whether a maintenance pass may write the directory now. It
+// gives the maintenance loop at most one write per maintainInterval even when
+// directory.reconcile_interval makes the loop wake more often. A local issue, a
+// revocation and Close write without this gate, so a busy local issuer cannot
+// starve the write of records accepted from a link.
+func (d *Directory) persistDue(now time.Time) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.lastMaintainPersist.IsZero() || now.Sub(d.lastMaintainPersist) >= maintainInterval
+}
+
+// noteMaintainPersist records that a maintenance pass used its write slot.
+func (d *Directory) noteMaintainPersist(now time.Time) {
+	d.mu.Lock()
+	if now.After(d.lastMaintainPersist) {
+		d.lastMaintainPersist = now
+	}
+	d.mu.Unlock()
 }
 
 // limits reads the three record count limits from the settings.

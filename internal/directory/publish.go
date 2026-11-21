@@ -251,7 +251,12 @@ func (d *Directory) renewDue(now time.Time) {
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
+	// A renewal is a local issuance and writes at once. When nothing was
+	// renewed, a dirty flag left by records accepted from a link belongs to the
+	// maintenance throttle, so this must not write it every pass.
+	if len(vs) > 0 {
+		d.persistIfDirty()
+	}
 	d.broadcast(vs, Fingerprint{})
 }
 

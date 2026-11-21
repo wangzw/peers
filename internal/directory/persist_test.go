@@ -8,7 +8,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
 // persistFailRenameOps fails every rename, leaving the temporary file for the
@@ -172,5 +176,80 @@ func TestSaveIsDeterministic(t *testing.T) {
 	}
 	if !bytes.Equal(first, second) {
 		t.Fatalf("file bytes differ between identical saves:\n%s\n%s", first, second)
+	}
+}
+
+// TestMaintainPersistThrottledToOnePerMinute checks that two maintenance passes
+// inside one maintainInterval write the directory file only once, so a short
+// reconcile interval cannot turn the maintenance loop into a write per interval.
+func TestMaintainPersistThrottledToOnePerMinute(t *testing.T) {
+	b := newReconcileNode(t, newFakeNet(), 1)
+
+	var writes int32
+	b.d.persistHook = func() { atomic.AddInt32(&writes, 1) }
+	markDirty := func() {
+		b.d.mu.Lock()
+		b.d.dirty = true
+		b.d.mu.Unlock()
+	}
+	got := func() int32 { return atomic.LoadInt32(&writes) }
+
+	now := b.d.now()
+	markDirty()
+	b.d.maintain(now, now)
+	if n := got(); n != 1 {
+		t.Fatalf("the first pass wrote %d times, want 1", n)
+	}
+
+	// A second pass 30 seconds later is dirty too, but it is inside the same
+	// minute and must not write again.
+	markDirty()
+	b.d.maintain(now.Add(30*time.Second), now)
+	if n := got(); n != 1 {
+		t.Fatalf("the second pass wrote %d times in total, want 1 inside the minute", n)
+	}
+
+	// The pass at the minute boundary may write.
+	markDirty()
+	b.d.maintain(now.Add(60*time.Second), now)
+	if n := got(); n != 2 {
+		t.Fatalf("the pass at the minute boundary wrote %d times in total, want 2", n)
+	}
+}
+
+// TestLinkAcceptsPersistInMaintenance checks that records accepted from a link
+// only mark the directory dirty and are written by a maintenance pass, while a
+// locally issued record is still written at once.
+func TestLinkAcceptsPersistInMaintenance(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	var writes int32
+	b.d.persistHook = func() { atomic.AddInt32(&writes, 1) }
+
+	for i := 0; i < 10; i++ {
+		r := reconcileCard(t, byte(100+i), 1, "hostX")
+		b.d.acceptBatch(p.fp, []*directorypb.Record{r.wire()})
+	}
+	if got := atomic.LoadInt32(&writes); got != 0 {
+		t.Fatalf("link accepts wrote the directory file %d times, want 0 before a maintenance pass", got)
+	}
+
+	b.d.maintain(b.d.now(), b.d.now())
+	if got := atomic.LoadInt32(&writes); got != 1 {
+		t.Fatalf("the maintenance pass wrote the directory file %d times, want 1", got)
+	}
+
+	// A locally issued record still persists immediately.
+	b.set.SetAlias("hostB")
+	if err := b.d.SetPublic(true); err != nil {
+		t.Fatalf("SetPublic(true): %v", err)
+	}
+	if got := atomic.LoadInt32(&writes); got != 2 {
+		t.Fatalf("the local card made the directory file write %d times in total, want 2", got)
 	}
 }

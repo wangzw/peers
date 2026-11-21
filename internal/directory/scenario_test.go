@@ -121,6 +121,19 @@ func scenarioWait(t *testing.T, net *fakeNet, _ []*scenarioNode, desc string, co
 	}
 }
 
+// scenarioRelaxReplaceInterval advances the shared clock past the replacement
+// interval and makes every node reconcile, so a newer version the interval held
+// back is fetched on the next pass, then waits for cond. It models the cost of
+// the interval: a legitimate change can wait for the next reconciliation.
+func scenarioRelaxReplaceInterval(t *testing.T, net *fakeNet, clock *fakeClock, nodes []*scenarioNode, desc string, cond func() bool) {
+	t.Helper()
+	clock.Advance(directoryReplaceInterval())
+	for _, n := range nodes {
+		n.d.reconcileAll()
+	}
+	scenarioWait(t, net, nodes, desc, cond)
+}
+
 // scenarioInject seeds n with an already signed record as if it had arrived
 // from a link. A zero source keeps the per-link limit out of the way.
 func scenarioInject(t *testing.T, n *scenarioNode, r *storedRecord) {
@@ -365,7 +378,7 @@ func TestWalkthrough(t *testing.T) {
 	if !scenarioPushedList(t, a.ep, b.fp, cardID, v2) {
 		t.Fatal("A did not push the revocation to B immediately after going private")
 	}
-	scenarioWait(t, net, all, "A's revocation to reach C", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, all, "A's revocation to reach C", func() bool {
 		r, ok := scenarioHeld(c.d, cardID)
 		return ok && r.isRevocation() && r.version > v2
 	})
@@ -639,7 +652,7 @@ func TestRevocationWithin(t *testing.T) {
 	if err := a.d.SetPublic(false); err != nil {
 		t.Fatalf("SetPublic(false): %v", err)
 	}
-	scenarioWait(t, net, []*scenarioNode{a, b, c}, "C to drop A", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, []*scenarioNode{a, b, c}, "C to drop A", func() bool {
 		return !scenarioHas(c.d.Brokers(), a.fp)
 	})
 
@@ -859,7 +872,7 @@ func TestAddressChangeReissue(t *testing.T) {
 	a.set.SetAdvertised([]config.AdvertisedAddr{{Kind: "direct", Addr: "198.51.100.9:17443"}})
 	a.d.Reissue()
 	want := []config.AdvertisedAddr{{Kind: "direct", Addr: "198.51.100.9:17443"}}
-	scenarioWait(t, net, nodes, "C to see A's new address", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, nodes, "C to see A's new address", func() bool {
 		r, ok := scenarioHeld(c.d, scenarioCardID(a.fp))
 		if !ok || r.version <= old {
 			return false
@@ -983,7 +996,7 @@ func TestGoPrivateRetractsTopics(t *testing.T) {
 	if err := a.d.SetPublic(false); err != nil {
 		t.Fatalf("SetPublic(false): %v", err)
 	}
-	scenarioWait(t, net, []*scenarioNode{a, b, c}, "C to drop infra-help", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, []*scenarioNode{a, b, c}, "C to drop infra-help", func() bool {
 		return !scenarioTopicFound(c.d, "infra-help")
 	})
 	if scenarioTopicFound(c.d, "infra-help") {
@@ -1015,7 +1028,7 @@ func TestLastPublicMemberLeaves(t *testing.T) {
 	})
 
 	a.d.RetirePublicTopic("infra-help")
-	scenarioWait(t, net, nodes, "B to drop infra-help", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, nodes, "B to drop infra-help", func() bool {
 		return !scenarioTopicFound(b.d, "infra-help")
 	})
 	if scenarioTopicFound(b.d, "infra-help") {
@@ -1025,12 +1038,12 @@ func TestLastPublicMemberLeaves(t *testing.T) {
 	if err := a.d.DeclarePublicTopic("infra-help", "ask here"); err != nil {
 		t.Fatalf("DeclarePublicTopic again: %v", err)
 	}
-	scenarioWait(t, net, nodes, "B to list infra-help again", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, nodes, "B to list infra-help again", func() bool {
 		return scenarioTopicFound(b.d, "infra-help")
 	})
 
 	a.d.RetirePublicTopic("infra-help")
-	scenarioWait(t, net, nodes, "B to drop infra-help again", func() bool {
+	scenarioRelaxReplaceInterval(t, net, clock, nodes, "B to drop infra-help again", func() bool {
 		return !scenarioTopicFound(b.d, "infra-help")
 	})
 }

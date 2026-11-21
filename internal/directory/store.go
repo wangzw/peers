@@ -26,6 +26,12 @@ const (
 	// outcomeReplaced means the record replaced a lower version of the same
 	// identifier.
 	outcomeReplaced
+	// outcomeReplaceTooFast means the record is a newer version of an
+	// identifier whose held version was accepted from a link less than
+	// directoryReplaceInterval() ago, so the replacement is held back. The
+	// caller records
+	// the identifier for one fetch once the interval ends.
+	outcomeReplaceTooFast
 	// outcomeStale means the version was not higher than the record already
 	// held for that identifier.
 	outcomeStale
@@ -48,9 +54,14 @@ const (
 // store is the in-memory directory. It is not safe for concurrent use; the
 // owning Directory calls every method under its lock.
 type store struct {
-	records       map[recordID]*storedRecord
-	perLink       map[Fingerprint]int // records with a non-zero source
-	perPublisher  map[Fingerprint]int // records counted toward the per-publisher limit
+	records      map[recordID]*storedRecord
+	perLink      map[Fingerprint]int // records with a non-zero source
+	perPublisher map[Fingerprint]int // records counted toward the per-publisher limit
+	// lastAccepted remembers when an identifier was last accepted from a link,
+	// so a record that expires before the replacement interval ends cannot
+	// come back as a brand-new record and bypass the interval. It holds at most
+	// directory.max_records identifiers; older entries are dropped first.
+	lastAccepted  map[recordID]time.Time
 	highestIssued uint64
 	self          Fingerprint
 }
@@ -61,6 +72,7 @@ func newStore(self Fingerprint) *store {
 		records:      make(map[recordID]*storedRecord),
 		perLink:      make(map[Fingerprint]int),
 		perPublisher: make(map[Fingerprint]int),
+		lastAccepted: make(map[recordID]time.Time),
 		self:         self,
 	}
 }
@@ -68,7 +80,10 @@ func newStore(self Fingerprint) *store {
 // accept applies the acceptance rules to a record received from a link and
 // stores it when the rules allow. The same identifier keeps only the highest
 // version; a replacement is never subject to the count limits, so a renewal is
-// accepted even when the directory is full.
+// accepted even when the directory is full. A replacement waits
+// directoryReplaceInterval() after the held version was accepted from a link,
+// except for a record published
+// by the local Broker.
 func (s *store) accept(r *storedRecord, now time.Time, lim limits) acceptOutcome {
 	if isExpired(r.expires, now) {
 		return outcomeExpired
@@ -80,10 +95,20 @@ func (s *store) accept(r *storedRecord, now time.Time, lim limits) acceptOutcome
 		if r.version <= old.version {
 			return outcomeStale
 		}
+		if !s.mayReplace(r, old, now) {
+			return outcomeReplaceTooFast
+		}
 		s.uncount(old)
+		s.markAccepted(r, now, lim.maxRecords)
 		s.put(r)
 		s.raise(r)
 		return outcomeReplaced
+	}
+	// A record whose predecessor expired before the replacement interval ended
+	// is still a replacement, not a new identifier: otherwise a publisher could
+	// issue short-lived records and replace each one at once.
+	if !r.source.IsZero() && s.withinReplaceInterval(r.id, now) {
+		return outcomeReplaceTooFast
 	}
 	if len(s.records) >= lim.maxRecords {
 		return outcomeQuotaTotal
@@ -94,9 +119,92 @@ func (s *store) accept(r *storedRecord, now time.Time, lim limits) acceptOutcome
 	if countsTowardPublisher(r) && s.perPublisher[r.id.publisher] >= lim.maxTopicsPerPublisher {
 		return outcomeQuotaPublisher
 	}
+	s.markAccepted(r, now, lim.maxRecords)
 	s.put(r)
 	s.raise(r)
 	return outcomeAccepted
+}
+
+// mayReplace reports whether r may replace old. A record published by the local
+// Broker is exempt: it comes back from a link only to raise the issued version.
+// A record with no acceptance instant, such as one loaded from the file, may be
+// replaced at once. Every other replacement waits directoryReplaceInterval()
+// after old was accepted from a link.
+func (s *store) mayReplace(r, old *storedRecord, now time.Time) bool {
+	if r.id.publisher == s.self || old.acceptedAt.IsZero() {
+		return true
+	}
+	return !now.Before(old.acceptedAt.Add(directoryReplaceInterval()))
+}
+
+// withinReplaceInterval reports whether an identifier was accepted from a link
+// less than directoryReplaceInterval() ago, whether or not its record is still
+// held. A record published by the local Broker is exempt.
+func (s *store) withinReplaceInterval(id recordID, now time.Time) bool {
+	if id.publisher == s.self {
+		return false
+	}
+	at, ok := s.lastAccepted[id]
+	return ok && now.Before(at.Add(directoryReplaceInterval()))
+}
+
+// replaceNotBefore returns the instant before which a newer version of id must
+// not replace the held or the last accepted version. The caller adds the
+// replacement interval. It reports false when the identifier was never accepted
+// from a link.
+func (s *store) replaceNotBefore(id recordID) (time.Time, bool) {
+	if old, ok := s.records[id]; ok && !old.acceptedAt.IsZero() {
+		return old.acceptedAt, true
+	}
+	at, ok := s.lastAccepted[id]
+	return at, ok
+}
+
+// markAccepted records when r was accepted from a link. A record with no source,
+// like one loaded from the file, keeps the zero instant and may be replaced at
+// once. The acceptance instant is also remembered per identifier so it still
+// bounds a replacement after the record expires and is purged.
+func (s *store) markAccepted(r *storedRecord, now time.Time, limit int) {
+	if r.source.IsZero() {
+		return
+	}
+	r.acceptedAt = now
+	if r.id.publisher == s.self {
+		return
+	}
+	s.rememberAccepted(r.id, now, limit)
+}
+
+// rememberAccepted records the last link acceptance instant of id, keeping at
+// most limit identifiers. Entries older than the replacement interval are
+// dropped first, then the oldest ones, so the map cannot grow without bound.
+func (s *store) rememberAccepted(id recordID, now time.Time, limit int) {
+	if limit < 1 {
+		limit = 1
+	}
+	s.lastAccepted[id] = now
+	if len(s.lastAccepted) <= limit {
+		return
+	}
+	cutoff := now.Add(-directoryReplaceInterval())
+	for k, at := range s.lastAccepted {
+		if !at.After(cutoff) {
+			delete(s.lastAccepted, k)
+		}
+	}
+	for len(s.lastAccepted) > limit {
+		var (
+			oldestID  recordID
+			oldestAt  time.Time
+			haveFirst bool
+		)
+		for k, at := range s.lastAccepted {
+			if !haveFirst || at.Before(oldestAt) {
+				oldestID, oldestAt, haveFirst = k, at, true
+			}
+		}
+		delete(s.lastAccepted, oldestID)
+	}
 }
 
 // putOwn stores a locally issued record. It does not enforce the count limits,
@@ -203,6 +311,7 @@ func (s *store) load(recs []*storedRecord, highest uint64, now time.Time) int {
 	s.records = make(map[recordID]*storedRecord)
 	s.perLink = make(map[Fingerprint]int)
 	s.perPublisher = make(map[Fingerprint]int)
+	s.lastAccepted = make(map[recordID]time.Time)
 	s.highestIssued = highest
 	dropped := 0
 	for _, r := range recs {

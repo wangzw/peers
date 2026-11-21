@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -46,10 +47,13 @@ func (d *Directory) registerReconcile() {
 // local directory. Missing or older local records are queued for a fetch; for
 // every identifier the local directory holds a strictly higher version of, an
 // incremental RecordList is sent back. Equal versions are ignored, so an
-// exchange always terminates. At most one fetch runs per peer: while it is
-// outstanding, further identifiers merge into that peer's pending set, and the
-// fetch loop sends them when the outstanding request finishes. Records is never
-// sent here.
+// exchange always terminates. An identifier whose held version was accepted from
+// a link less than directoryReplaceInterval() ago is not fetched now; it is
+// recorded in the
+// peer's deferred set and fetched once when the interval ends. At
+// most one fetch runs per peer: while it is outstanding, further identifiers
+// merge into that peer's pending set, and the fetch loop sends them when the
+// outstanding request finishes. Records is never sent here.
 func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	d.mu.RLock()
 	live := !d.closed && d.up[peer]
@@ -65,6 +69,7 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	}
 
 	now := d.now()
+	replaceInterval := directoryReplaceInterval()
 	d.mu.RLock()
 	if d.closed || !d.up[peer] {
 		d.mu.RUnlock()
@@ -72,6 +77,7 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	}
 
 	var fetchIDs []recordID
+	var deferred map[recordID]time.Time
 	var tellBack []*directorypb.RecordVersion
 	for _, item := range list.GetRecords() {
 		id, ok := idFromProto(item.GetId())
@@ -80,11 +86,33 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 		}
 		held, ok := d.st.get(id)
 		if !ok || isExpired(held.expires, now) {
+			// The record may have expired and been purged, but the store still
+			// remembers when the identifier was accepted from a link. Fetching
+			// before that interval ends would only be dropped again.
+			if at, seen := d.st.replaceNotBefore(id); seen && now.Before(at.Add(replaceInterval)) {
+				if deferred == nil {
+					deferred = make(map[recordID]time.Time)
+				}
+				deferred[id] = at.Add(replaceInterval)
+				continue
+			}
 			fetchIDs = append(fetchIDs, id)
 			continue
 		}
 		switch {
 		case item.GetVersion() > held.version:
+			// A record published by the local Broker is exempt: a peer returning
+			// a higher version only raises the issued version, so it is fetched
+			// at once as the store allows it to replace.
+			if id.publisher != d.st.self && !held.acceptedAt.IsZero() && now.Before(held.acceptedAt.Add(replaceInterval)) {
+				// The held version cannot be replaced yet. Remember the
+				// identifier so it is fetched once the window ends.
+				if deferred == nil {
+					deferred = make(map[recordID]time.Time)
+				}
+				deferred[id] = held.acceptedAt.Add(replaceInterval)
+				continue
+			}
 			fetchIDs = append(fetchIDs, id)
 		case item.GetVersion() < held.version:
 			tellBack = append(tellBack, held.recordVersion())
@@ -92,6 +120,9 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	}
 	d.mu.RUnlock()
 
+	if len(deferred) > 0 {
+		d.noteRefetch(peer, deferred)
+	}
 	if len(fetchIDs) > 0 {
 		d.scheduleFetch(peer, fetchIDs)
 	}
@@ -220,9 +251,13 @@ type cardEvent struct {
 
 // acceptBatch verifies and accepts a batch of records received from peer, then
 // pushes the newly accepted identifiers to every other established peer, runs
-// the card callbacks and the own-record hook, and persists the directory. The
-// records are parsed outside the lock; the acceptance and the bookkeeping run
-// under one write lock.
+// the card callbacks and the own-record hook, and marks the directory dirty. A
+// replacement the interval dropped is recorded for one fetch when the interval
+// ends.
+// Records accepted from a link are written to disk by the maintenance loop, at
+// most once a minute; a locally issued record, a revocation and Close still
+// write at once. The records are parsed outside the lock; the acceptance and the
+// bookkeeping run under one write lock.
 func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 	d.mu.RLock()
 	live := !d.closed && d.up[peer]
@@ -257,13 +292,15 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 	lim := d.limits()
 
 	var (
-		accepted  []*directorypb.RecordVersion
-		cards     []cardEvent
-		ownIDs    []recordID
-		dropped   int
-		reasons   []string
-		callbacks []func(Fingerprint, []config.AdvertisedAddr)
-		ownHook   func([]recordID)
+		accepted     []*directorypb.RecordVersion
+		cards        []cardEvent
+		ownIDs       []recordID
+		dropped      int
+		reasons      []string
+		callbacks    []func(Fingerprint, []config.AdvertisedAddr)
+		ownHook      func([]recordID)
+		pr           *peerReconcile
+		startRefetch bool
 	)
 
 	d.mu.Lock()
@@ -271,10 +308,14 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 		d.mu.Unlock()
 		return
 	}
+	pr = d.recon[peer]
 	for _, r := range parsed {
 		switch out := d.st.accept(r, now, lim); out {
 		case outcomeAccepted, outcomeReplaced:
 			accepted = append(accepted, r.recordVersion())
+			if pr != nil {
+				clearRefetchLocked(pr, r.id)
+			}
 			if r.id.publisher == d.st.self {
 				ownIDs = append(ownIDs, r.id)
 			} else if card := r.body.GetBrokerCard(); card != nil {
@@ -289,6 +330,21 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 		case outcomeQuotaPublisher:
 			dropped++
 			reasons = addReason(reasons, "max_topics_per_publisher")
+		case outcomeReplaceTooFast:
+			dropped++
+			reasons = addReason(reasons, "replace_interval")
+			// The held version may already have expired and been purged, but
+			// the store still remembers when the identifier was accepted, so the
+			// newer version is fetched once that interval ends.
+			if at, ok := d.st.replaceNotBefore(r.id); ok {
+				if pr == nil {
+					pr = newPeerReconcile()
+					d.recon[peer] = pr
+				}
+				if d.noteRefetchLocked(pr, r.id, at.Add(directoryReplaceInterval()), lim.maxRecords) {
+					startRefetch = true
+				}
+			}
 		}
 	}
 	if len(accepted) > 0 {
@@ -297,6 +353,10 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 	callbacks = append(callbacks, d.onCard...)
 	ownHook = d.ownHook
 	d.mu.Unlock()
+
+	if startRefetch {
+		go d.refetchLoop(peer, pr)
+	}
 
 	if dropped > 0 {
 		d.log.Warn("dropped records over the directory limits",
@@ -311,7 +371,6 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 	if len(ownIDs) > 0 && ownHook != nil {
 		ownHook(ownIDs)
 	}
-	d.persistIfDirty()
 }
 
 // addReason appends reason to reasons unless it is already there.

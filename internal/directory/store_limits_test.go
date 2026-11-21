@@ -69,25 +69,27 @@ func TestPublisherLimitCountsDeclarationsAndUnknownKinds(t *testing.T) {
 	if got := s.accept(rec(pub, unknown, "x", 1, exp, link), now, lim); got != outcomeQuotaPublisher {
 		t.Fatalf("accept an unknown kind at the limit = %v, want outcomeQuotaPublisher", got)
 	}
-	if got := s.accept(rec(pub, topic, "b", 2, exp, link), now, lim); got != outcomeReplaced {
+	first := now.Add(directoryReplaceInterval())
+	second := first.Add(directoryReplaceInterval())
+	if got := s.accept(rec(pub, topic, "b", 2, exp, link), first, lim); got != outcomeReplaced {
 		t.Fatalf("replace a declaration at the limit = %v, want outcomeReplaced", got)
 	}
-	if got := s.accept(revocation(pub, topic, "a", 2, exp, link), now, lim); got != outcomeReplaced {
+	if got := s.accept(revocation(pub, topic, "a", 2, exp, link), first, lim); got != outcomeReplaced {
 		t.Fatalf("replace the declaration with a revocation = %v, want outcomeReplaced", got)
 	}
-	if got := s.accept(rec(pub, unknown, "x", 1, exp, link), now, lim); got != outcomeAccepted {
+	if got := s.accept(rec(pub, unknown, "x", 1, exp, link), first, lim); got != outcomeAccepted {
 		t.Fatalf("accept an unknown kind after a revocation freed a slot = %v, want outcomeAccepted", got)
 	}
-	if got := s.accept(revocation(pub, card, "", 2, exp, link), now, lim); got != outcomeReplaced {
+	if got := s.accept(revocation(pub, card, "", 2, exp, link), first, lim); got != outcomeReplaced {
 		t.Fatalf("replace the card with a revocation = %v, want outcomeReplaced", got)
 	}
-	if got := s.accept(rec(pub, card, "", 3, exp, link), now, lim); got != outcomeReplaced {
+	if got := s.accept(rec(pub, card, "", 3, exp, link), second, lim); got != outcomeReplaced {
 		t.Fatalf("replace the card with a newer card = %v, want outcomeReplaced", got)
 	}
-	if got := s.accept(rec(pub, topic, "c", 1, exp, link), now, lim); got != outcomeQuotaPublisher {
+	if got := s.accept(rec(pub, topic, "c", 1, exp, link), second, lim); got != outcomeQuotaPublisher {
 		t.Fatalf("accept a declaration when the limit is full again = %v, want outcomeQuotaPublisher", got)
 	}
-	if got := s.accept(rec(other, card, "", 1, exp, link), now, lim); got != outcomeAccepted {
+	if got := s.accept(rec(other, card, "", 1, exp, link), second, lim); got != outcomeAccepted {
 		t.Fatalf("accept a record from another publisher = %v, want outcomeAccepted", got)
 	}
 }
@@ -114,7 +116,7 @@ func TestPublisherTopicLimitIgnoresRevocations(t *testing.T) {
 	if got := s.accept(rec(pub, topic, "c", 1, exp, link), now, lim); got != outcomeQuotaPublisher {
 		t.Fatalf("accept c at quota = %v, want outcomeQuotaPublisher", got)
 	}
-	if got := s.accept(revocation(pub, topic, "a", 2, exp, link), now, lim); got != outcomeReplaced {
+	if got := s.accept(revocation(pub, topic, "a", 2, exp, link), now.Add(directoryReplaceInterval()), lim); got != outcomeReplaced {
 		t.Fatalf("revoke a = %v, want outcomeReplaced", got)
 	}
 	if got := s.accept(rec(pub, topic, "c", 1, exp, link), now, lim); got != outcomeAccepted {

@@ -60,11 +60,12 @@ func TestAcceptKeepsHighestVersion(t *testing.T) {
 	if got := s.accept(rec(pub, card, "", 1, exp, link), now, lim); got != outcomeStale {
 		t.Fatalf("accept v1 after v2 = %v, want outcomeStale", got)
 	}
-	if got := s.accept(rec(pub, card, "", 3, exp, link), now, lim); got != outcomeReplaced {
+	later := now.Add(directoryReplaceInterval())
+	if got := s.accept(rec(pub, card, "", 3, exp, link), later, lim); got != outcomeReplaced {
 		t.Fatalf("accept v3 after v2 = %v, want outcomeReplaced", got)
 	}
 	// Accepting the same version again must not replace the held record.
-	if got := s.accept(rec(pub, card, "", 3, exp, link), now, lim); got != outcomeStale {
+	if got := s.accept(rec(pub, card, "", 3, exp, link), later, lim); got != outcomeStale {
 		t.Fatalf("accept v3 again = %v, want outcomeStale", got)
 	}
 	r, ok := s.get(recordID{publisher: pub, kind: card})
@@ -119,7 +120,7 @@ func TestTotalLimitAllowsRenewal(t *testing.T) {
 		}
 	}
 	for i := byte(1); i <= 3; i++ {
-		if got := s.accept(rec(storeFP(i), card, "", 2, exp, link), now, lim); got != outcomeReplaced {
+		if got := s.accept(rec(storeFP(i), card, "", 2, exp, link), now.Add(directoryReplaceInterval()), lim); got != outcomeReplaced {
 			t.Fatalf("renew publisher %d = %v, want outcomeReplaced", i, got)
 		}
 	}
@@ -193,7 +194,7 @@ func TestReplaceMovesLinkCount(t *testing.T) {
 	if got := s.accept(rec(pub, card, "", 1, exp, linkP), now, lim); got != outcomeAccepted {
 		t.Fatalf("accept v1 from P = %v, want outcomeAccepted", got)
 	}
-	if got := s.accept(rec(pub, card, "", 2, exp, linkQ), now, lim); got != outcomeReplaced {
+	if got := s.accept(rec(pub, card, "", 2, exp, linkQ), now.Add(directoryReplaceInterval()), lim); got != outcomeReplaced {
 		t.Fatalf("accept v2 from Q = %v, want outcomeReplaced", got)
 	}
 	if got := s.perLink[linkP]; got != 0 {
@@ -314,5 +315,149 @@ func TestLoadKeepsOverLimitAndRaisesHighest(t *testing.T) {
 	dropped.load(withExpired, 0, now)
 	if got := len(dropped.all()); got != 5 {
 		t.Fatalf("loaded %d records with one expired, want 5", got)
+	}
+}
+
+// TestPurgedRecordStillWaitsOutReplaceInterval checks that an identifier keeps
+// its replacement interval after its record expires and is purged. Without the
+// remembered acceptance instant, a short-lived record could be replaced at once
+// by presenting the successor as a brand-new identifier.
+func TestPurgedRecordStillWaitsOutReplaceInterval(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
+	pub := storeFP(1)
+	link := storeFP(50)
+	const card = directorypb.RecordKind_RECORD_KIND_BROKER_CARD
+	id := recordID{publisher: pub, kind: card}
+
+	s := newStore(storeFP(99))
+	if got := s.accept(rec(pub, card, "", 1, now.Add(2*time.Second), link), now, lim); got != outcomeAccepted {
+		t.Fatalf("accept v1 = %v, want outcomeAccepted", got)
+	}
+	if n := s.purgeExpired(now.Add(2 * time.Second)); n != 1 {
+		t.Fatalf("purge removed %d records, want 1", n)
+	}
+	if _, ok := s.get(id); ok {
+		t.Fatal("the expired record was not purged")
+	}
+
+	// Six seconds after the first acceptance the successor is still inside the
+	// replacement interval, even though the record it replaces is gone.
+	if got := s.accept(rec(pub, card, "", 2, now.Add(time.Hour), link), now.Add(6*time.Second), lim); got != outcomeReplaceTooFast {
+		t.Fatalf("accept v2 six seconds later = %v, want outcomeReplaceTooFast", got)
+	}
+	if _, ok := s.get(id); ok {
+		t.Fatal("v2 was stored inside the replacement interval")
+	}
+
+	if got := s.accept(rec(pub, card, "", 2, now.Add(time.Hour), link), now.Add(directoryReplaceInterval()), lim); got != outcomeAccepted {
+		t.Fatalf("accept v2 at the interval = %v, want outcomeAccepted", got)
+	}
+}
+
+// TestLastAcceptedSetCappedAtMaxRecords checks that the remembered acceptance
+// instants are bounded by directory.max_records, so cycling short-lived records
+// cannot grow the set without bound.
+func TestLastAcceptedSetCappedAtMaxRecords(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	lim := limits{maxRecords: 2, maxPerLink: 10, maxTopicsPerPublisher: 10}
+	link := storeFP(50)
+	const card = directorypb.RecordKind_RECORD_KIND_BROKER_CARD
+
+	s := newStore(storeFP(99))
+	for i := byte(1); i <= 2; i++ {
+		if got := s.accept(rec(storeFP(i), card, "", 1, now.Add(time.Second), link), now, lim); got != outcomeAccepted {
+			t.Fatalf("accept publisher %d = %v, want outcomeAccepted", i, got)
+		}
+	}
+	s.purgeExpired(now.Add(time.Second))
+
+	for i := byte(3); i <= 4; i++ {
+		if got := s.accept(rec(storeFP(i), card, "", 1, now.Add(time.Hour), link), now.Add(2*time.Second), lim); got != outcomeAccepted {
+			t.Fatalf("accept publisher %d after the purge = %v, want outcomeAccepted", i, got)
+		}
+	}
+	if got := len(s.lastAccepted); got > lim.maxRecords {
+		t.Fatalf("remembered %d identifiers, want at most max_records (%d)", got, lim.maxRecords)
+	}
+}
+
+// TestLastAcceptedDropsOldestEntry checks that when the remembered acceptance
+// instants exceed directory.max_records, the entry with the earliest instant is
+// the one dropped and the newest is kept. The eviction scan walks a map, whose
+// order varies, so the check runs many trials: a scan that picks the last entry
+// it visits would pass by chance only rarely.
+func TestLastAcceptedDropsOldestEntry(t *testing.T) {
+	base := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	const limit = 4
+	const trials = 50
+	for trial := 0; trial < trials; trial++ {
+		s := newStore(storeFP(99))
+		for i := 0; i <= limit; i++ {
+			id := recordID{publisher: storeFP(byte(i + 1)), kind: recKindCard}
+			s.rememberAccepted(id, base.Add(time.Duration(i)*time.Second), limit)
+		}
+		if got := len(s.lastAccepted); got != limit {
+			t.Fatalf("trial %d: remembered %d identifiers, want %d", trial, got, limit)
+		}
+		first := recordID{publisher: storeFP(1), kind: recKindCard}
+		if _, ok := s.lastAccepted[first]; ok {
+			t.Fatalf("trial %d: the earliest entry survived eviction: %v", trial, s.lastAccepted)
+		}
+		last := recordID{publisher: storeFP(byte(limit + 1)), kind: recKindCard}
+		if _, ok := s.lastAccepted[last]; !ok {
+			t.Fatalf("trial %d: the newest entry was evicted: %v", trial, s.lastAccepted)
+		}
+	}
+}
+
+// TestReplaceIntervalLimitsLinkReplacements checks that a newer version arriving
+// from a link replaces a record the directory accepted less than the replacement
+// interval ago only after that interval has passed. A record published by the
+// local Broker is exempt, and a record with no link source, like one loaded from
+// the file, may be replaced at once.
+func TestReplaceIntervalLimitsLinkReplacements(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
+	pub := storeFP(1)
+	link := storeFP(50)
+	exp := now.Add(recordTTL)
+	const card = directorypb.RecordKind_RECORD_KIND_BROKER_CARD
+	id := recordID{publisher: pub, kind: card}
+
+	s := newStore(storeFP(99))
+	if got := s.accept(rec(pub, card, "", 1, exp, link), now, lim); got != outcomeAccepted {
+		t.Fatalf("accept v1 = %v, want outcomeAccepted", got)
+	}
+	if got := s.accept(rec(pub, card, "", 2, exp, link), now.Add(time.Second), lim); got == outcomeReplaced {
+		t.Fatal("replaced a record one second after accepting the old version")
+	}
+	held, ok := s.get(id)
+	if !ok || held.version != 1 {
+		t.Fatalf("held record = %v (present %v), want version 1", held, ok)
+	}
+	if got := s.accept(rec(pub, card, "", 3, exp, link), now.Add(60*time.Second), lim); got != outcomeReplaced {
+		t.Fatalf("accept v3 at the interval = %v, want outcomeReplaced", got)
+	}
+
+	// The local publisher is exempt: a record signed here and returned by a
+	// link may raise its version at any time.
+	self := storeFP(7)
+	own := newStore(self)
+	if got := own.accept(rec(self, card, "", 1, exp, link), now, lim); got != outcomeAccepted {
+		t.Fatalf("accept own v1 = %v, want outcomeAccepted", got)
+	}
+	if got := own.accept(rec(self, card, "", 2, exp, link), now.Add(time.Second), lim); got != outcomeReplaced {
+		t.Fatalf("replace own v1 with v2 = %v, want outcomeReplaced", got)
+	}
+
+	// A record with no link source, like one loaded from the file, may be
+	// replaced at once.
+	loaded := newStore(storeFP(99))
+	if got := loaded.accept(rec(pub, card, "", 1, exp, Fingerprint{}), now, lim); got != outcomeAccepted {
+		t.Fatalf("accept a record without a source = %v, want outcomeAccepted", got)
+	}
+	if got := loaded.accept(rec(pub, card, "", 2, exp, link), now.Add(time.Second), lim); got != outcomeReplaced {
+		t.Fatalf("replace a record without a source = %v, want outcomeReplaced", got)
 	}
 }

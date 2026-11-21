@@ -25,6 +25,13 @@ type storedRecord struct {
 	expires time.Time
 	source  Fingerprint // link it was accepted from; zero means locally issued
 
+	// acceptedAt is when the record was accepted from a link. A newer version
+	// may replace it only once directoryReplaceInterval() has passed. It is kept
+	// in memory
+	// only; a record loaded from disk or seeded without a link leaves it zero
+	// and may be replaced at once.
+	acceptedAt time.Time
+
 	// revokePending marks a locally issued record whose revocation could not be
 	// signed. The maintenance loop retries it until a revocation replaces this
 	// record. It is not persisted.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -268,6 +269,59 @@ func TestPeriodicReconcile(t *testing.T) {
 	})
 }
 
+// TestPersistTimerIndependentOfReconcileInterval checks that the maintenance
+// loop wakes at the persist deadline even when directory.reconcile_interval is
+// shorter than maintainInterval. With a 50-second reconcile interval the loop
+// otherwise wakes at 100 seconds and writes at 150, holding records for 100
+// seconds instead of the promised minute.
+func TestPersistTimerIndependentOfReconcileInterval(t *testing.T) {
+	f := newLoopFixture(t, 1, t.TempDir(), false, newFakeNet(), dirTestNow())
+	f.set.SetReconcileInterval(50 * time.Second)
+
+	var writes int32
+	f.d.persistHook = func() { atomic.AddInt32(&writes, 1) }
+	maintained := make(chan struct{}, 4)
+	f.d.afterMaintain = func() {
+		select {
+		case maintained <- struct{}{}:
+		default:
+		}
+	}
+
+	// dirty before the first pass, which happens at 50 seconds because the
+	// reconcile interval is shorter than the minute.
+	f.d.mu.Lock()
+	f.d.dirty = true
+	f.d.mu.Unlock()
+	f.start()
+
+	f.clk.Advance(50 * time.Second)
+	loopWaitMaintained(t, maintained, "the first pass")
+	if got := atomic.LoadInt32(&writes); got != 1 {
+		t.Fatalf("the first pass wrote %d times, want 1", got)
+	}
+	f.clk.WaitTimers(t, 1)
+
+	// Mark the directory dirty again. The reconcile pass at 100 seconds must
+	// not write, because only 50 seconds have passed; the persist deadline at
+	// 110 seconds must, independent of the reconcile cadence.
+	f.d.mu.Lock()
+	f.d.dirty = true
+	f.d.mu.Unlock()
+	f.clk.Advance(50 * time.Second)
+	loopWaitMaintained(t, maintained, "the reconcile pass at 100 seconds")
+	if got := atomic.LoadInt32(&writes); got != 1 {
+		t.Fatalf("the reconcile pass wrote %d times, want no write before the persist deadline", got)
+	}
+	f.clk.WaitTimers(t, 1)
+
+	f.clk.Advance(10 * time.Second)
+	loopWaitMaintained(t, maintained, "the persist pass at 110 seconds")
+	if got := atomic.LoadInt32(&writes); got != 2 {
+		t.Fatalf("the persist deadline wrote %d times in total, want 2", got)
+	}
+}
+
 func TestLoopRenewsAndPurges(t *testing.T) {
 	net := newFakeNet()
 	f := newLoopFixture(t, 1, t.TempDir(), true, net, dirTestNow())
@@ -411,6 +465,9 @@ func TestBackupRestoreRaisesVersion(t *testing.T) {
 	restored.set.SetAdvertised([]config.AdvertisedAddr{{Kind: "direct", Addr: "10.0.0.2:7000"}})
 	restored.start()
 
+	// B accepted the card from the first session, so let the replacement
+	// interval pass before the restored Broker's newer card may replace it.
+	b.clk.Advance(directoryReplaceInterval())
 	net.Connect(restored.fp, b.fp)
 	reconcileAwait(t, net, "A to publish a card above B's version", func() bool {
 		r, ok := loopPeerCard(b, restored.fp)

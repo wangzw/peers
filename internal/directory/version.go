@@ -17,6 +17,12 @@ const (
 	maintainInterval = time.Minute
 	// requestTimeout bounds one RecordRequest round trip.
 	requestTimeout = 30 * time.Second
+	// defaultReplaceInterval is how long a record accepted from a link must be
+	// held before a newer version of the same identifier may replace it. It
+	// bounds how fast a publisher can make the network rewrite and forward
+	// records. directoryReplaceInterval returns it in release builds and an
+	// override in test builds.
+	defaultReplaceInterval = 60 * time.Second
 )
 
 // nextVersion returns max(now in Unix milliseconds, highest+1). Using the

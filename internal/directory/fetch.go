@@ -45,6 +45,15 @@ type peerReconcile struct {
 	windows []*requestWindow
 	// running reports whether a fetch loop for this peer is alive.
 	running bool
+	// refetch maps an identifier to the instant its held version becomes
+	// replaceable. A newer version that arrived before that instant was
+	// dropped or not requested; the identifier is fetched once when the
+	// window ends.
+	refetch map[recordID]time.Time
+	// refetchRunning reports whether a goroutine is waiting on refetch.
+	refetchRunning bool
+	// refetchWake wakes that goroutine so it re-reads the earliest deadline.
+	refetchWake chan struct{}
 }
 
 // requestedEntry is one identifier's place in the accept window.
@@ -68,9 +77,11 @@ type requestWindow struct {
 // newPeerReconcile returns an empty reconcile state.
 func newPeerReconcile() *peerReconcile {
 	return &peerReconcile{
-		pending:   make(map[recordID]struct{}),
-		inflight:  make(map[recordID]struct{}),
-		requested: make(map[recordID]requestedEntry),
+		pending:     make(map[recordID]struct{}),
+		inflight:    make(map[recordID]struct{}),
+		requested:   make(map[recordID]requestedEntry),
+		refetch:     make(map[recordID]time.Time),
+		refetchWake: make(chan struct{}, 1),
 	}
 }
 
@@ -103,6 +114,8 @@ func (d *Directory) scheduleFetch(peer Fingerprint, ids []recordID) {
 			break
 		}
 		pr.pending[id] = struct{}{}
+		// The identifier is being fetched now, so its deferred entry is moot.
+		clearRefetchLocked(pr, id)
 	}
 	start := d.startFetchLocked(pr)
 	d.mu.Unlock()
@@ -126,6 +139,189 @@ func (d *Directory) startFetchLocked(pr *peerReconcile) bool {
 	pr.running = true
 	d.inflight.Add(1)
 	return true
+}
+
+// noteRefetch records identifiers whose replacement the interval held back so
+// that each is fetched once when its window ends. An identifier already
+// recorded keeps the earlier deadline, and the set holds at most
+// directory.max_records identifiers: one that does not fit waits for the next
+// reconciliation pass. The caller must not hold d.mu.
+func (d *Directory) noteRefetch(peer Fingerprint, deadlines map[recordID]time.Time) {
+	if len(deadlines) == 0 {
+		return
+	}
+	// Read the cap before taking the lock so a config read never nests inside
+	// it.
+	limit := d.settings.MaxRecords()
+
+	d.mu.Lock()
+	if d.closed || !d.up[peer] {
+		d.mu.Unlock()
+		return
+	}
+	pr := d.recon[peer]
+	if pr == nil {
+		pr = newPeerReconcile()
+		d.recon[peer] = pr
+	}
+	start := false
+	for id, deadline := range deadlines {
+		if d.noteRefetchLocked(pr, id, deadline, limit) {
+			start = true
+		}
+	}
+	d.mu.Unlock()
+
+	if start {
+		go d.refetchLoop(peer, pr)
+	}
+}
+
+// noteRefetchLocked adds one deferred identifier and reports whether a refetch
+// loop must be started for pr. The set is capped at limit, the caller's copy of
+// directory.max_records. The caller must hold d.mu.
+func (d *Directory) noteRefetchLocked(pr *peerReconcile, id recordID, deadline time.Time, limit int) bool {
+	if current, ok := pr.refetch[id]; ok {
+		if !deadline.Before(current) {
+			return false
+		}
+	} else if len(pr.refetch) >= limit {
+		return false
+	}
+	pr.refetch[id] = deadline
+	if !pr.refetchRunning {
+		pr.refetchRunning = true
+		d.refetching.Add(1)
+		return true
+	}
+	select {
+	case pr.refetchWake <- struct{}{}:
+	default:
+	}
+	return false
+}
+
+// clearRefetchLocked drops a deferred identifier that no longer needs a
+// refetch, waking the waiting goroutine so it re-reads the earliest deadline.
+// The caller must hold d.mu.
+func clearRefetchLocked(pr *peerReconcile, id recordID) {
+	if _, ok := pr.refetch[id]; !ok {
+		return
+	}
+	delete(pr.refetch, id)
+	if pr.refetchRunning {
+		select {
+		case pr.refetchWake <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// earliestRefetch returns the earliest deadline in pr's deferred set.
+func earliestRefetch(pr *peerReconcile) (time.Time, bool) {
+	var earliest time.Time
+	found := false
+	for _, deadline := range pr.refetch {
+		if !found || deadline.Before(earliest) {
+			earliest = deadline
+			found = true
+		}
+	}
+	return earliest, found
+}
+
+// refetchLoop waits for the earliest deferred deadline, queues every identifier
+// whose window has ended for one fetch, and repeats until the set is empty, the
+// link goes down or the directory closes. It counts as one deferred-refetch
+// waiter for its whole life, so Close waits for it and a peer has at most one
+// such loop.
+func (d *Directory) refetchLoop(peer Fingerprint, pr *peerReconcile) {
+	defer d.refetching.Done()
+
+	for {
+		d.mu.Lock()
+		if d.closed || d.recon[peer] != pr {
+			pr.refetchRunning = false
+			d.mu.Unlock()
+			return
+		}
+		deadline, ok := earliestRefetch(pr)
+		if !ok {
+			// Clear the flag in the same critical section as the emptiness
+			// check. A noteRefetch that runs after this unlock must see
+			// refetchRunning false and start its own loop, because this one is
+			// leaving; releasing the lock between the check and the clear would
+			// let it send a wake to the departing loop and drop the identifier
+			// until the next periodic reconciliation.
+			pr.refetchRunning = false
+		}
+		d.mu.Unlock()
+		if !ok {
+			if d.refetchIdle != nil {
+				d.refetchIdle()
+			}
+			return
+		}
+
+		// A deadline that has already passed is served now rather than through
+		// a zero-length timer, which keeps the wait independent of how late the
+		// loop got to arm it.
+		if wait := deadline.Sub(d.now()); wait > 0 {
+			tm := d.clk.NewTimer(wait)
+			select {
+			case <-tm.C():
+			case <-pr.refetchWake:
+				tm.Stop()
+			case <-d.ctx.Done():
+				tm.Stop()
+				d.mu.Lock()
+				if d.recon[peer] == pr {
+					pr.refetchRunning = false
+				}
+				d.mu.Unlock()
+				return
+			}
+		}
+
+		// Read the queue cap before taking the lock so a config read never
+		// nests inside it.
+		limit := d.settings.MaxRecords()
+		d.mu.Lock()
+		if d.closed || d.recon[peer] != pr {
+			pr.refetchRunning = false
+			d.mu.Unlock()
+			return
+		}
+		now := d.now()
+		var due []recordID
+		for id, at := range pr.refetch {
+			if !now.Before(at) {
+				delete(pr.refetch, id)
+				due = append(due, id)
+			}
+		}
+		start := false
+		if len(due) > 0 {
+			for _, id := range due {
+				if _, ok := pr.inflight[id]; ok {
+					continue
+				}
+				if _, ok := pr.pending[id]; ok {
+					continue
+				}
+				if len(pr.pending) >= limit {
+					// The queue is full; the next reconciliation pass retries.
+					continue
+				}
+				pr.pending[id] = struct{}{}
+			}
+			start = d.startFetchLocked(pr)
+		}
+		d.mu.Unlock()
+		if start {
+			go d.fetchLoop(peer, pr)
+		}
+	}
 }
 
 // fetchLoop asks peer for the queued identifiers one request at a time until

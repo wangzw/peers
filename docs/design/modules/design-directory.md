@@ -197,7 +197,11 @@ C 接受 `v1` 之后，列出已知 Broker 的结果包含 `hostA`，状态为�
 
 ### 对账
 
-链路建立时与每隔 `directory.reconcile_interval`，双方各发出一帧全量 `RecordList`。收到对方的清单后，对每个标识比较版本：对方的更高或本方没有，列入索取清单；本方更高的，以一帧只含这些标识与本方版本的增量 `RecordList` 回告对方，不直接发 `Records`。版本必须严格更高这一条件使往返终止。
+链路建立时与每隔 `directory.reconcile_interval`，双方各发出一帧全量 `RecordList`。收到对方的清单后，对每个标识比较版本：对方的更高或本方没有，列入索取清单；本方更高的，以一帧只含这些标识与本方版本的增量 `RecordList` 回告对方，不直接发 `Records`。版本必须严格更高这一条件使往返终止。本方持有、但从链路接受的现有版本未满 60 秒的标识不立即索取，而是记为待补取，在该版本接受满 60 秒时补取一次并接受。每个标识至多一条待补记录，重复出现只保留最早的到期时刻；待补集合至多 `directory.max_records` 个标识，满了不再记入，留给下一次定期对账；链路断开或解除配对时随该对端的对账状态一起清空。
+
+待补取使撤回不必等到下一次定期对账。现有版本在撤回签发之前已被接受，它接受满 60 秒的时刻因此不晚于撤回签发后 60 秒；窗口一到就补取，撤回在本 Broker 上于签发后 60 秒内生效。撤回逐跳传播，每一跳的等待都不超过一个替换间隔，第二跳及更远还要再加上前面各跳的传播延迟，因此撤回不是在签发后 60 秒内全网同时生效，离发布者越远生效越晚；定期的清单交换照常进行。持续推新版本的发布者仍然每个标识每 60 秒至多替换一次：窗口内的其余版本只会更新待补记录，不会产生额外索取。
+
+替换间隔在发布构建中恒为 60 秒，不读取任何环境变量。带 `peers_testenv` 构建标签的测试构建读取 `PEERS_TEST_DIRECTORY_REPLACE_INTERVAL`（Go duration），未设置、无法解析或非正数时仍取 60 秒；端到端测试用它把窗口缩短到 1 秒，以在既有的等待内覆盖逐跳撤回与地址变更，发布构建忽略该变量，构建钩子检查二进制中不含这个变量名。
 
 接受新记录或签发本机记录后，本包向来源以外的每个已建立链路的对端发一帧只含这些标识与版本的增量 `RecordList`，对方按同样规则索取。`Records` 既作 `RecordRequest` 的应答，也作承载一次应答放不下的后续批次的状态帧；应答按标识去重并按 1 MiB 的字节预算拆成多帧，超出预算的余下部分以 `Records` 状态帧继续发送，不截断，两种到达方式按同一规则接受。本方向只接受向该对端索取过的标识：一个标识自发出请求起 60 秒内（`requestTimeout` 的两倍）可以经该对端的 `Records` 应答或 `Records` 状态帧被接受，每个标识只接受一次；不在其中的记录整条丢弃，同一帧中这类丢弃合并为一条 warn 运行日志，事件名 `directory_unrequested_records`，字段 `peer` 与 `count`。
 
@@ -214,6 +218,7 @@ C 接受 `v1` 之后，列出已知 Broker 的结果包含 `hostA`，状态为�
 - 尚未到期，且到期时间不晚于当前时间加 7 天再加 1 小时的时钟偏差容限。
 - 名片所载的别名符合别名的规则：1 至 24 个字符，取自字母、数字、`.`、`-`、`_`（`REQ-broker-pairing-037`）。
 - 本方没有同一标识的记录，或本方的版本号更低。
+- 同一标识的替换，从链路来的，只有在本方接受现有版本满 60 秒之后才接受；不满的丢弃、不转发，计入同一批的限量丢弃日志，`limit` 取 `replace_interval`，同时把该标识记为待补取，窗口到期时补取一次并接受。`handleRecordList` 因同一原因不能索取的更高版本同样记为待补取。接受时刻只记在内存中，从文件加载的记录视为可以立即替换。每个标识的最后接受时刻保留一个替换间隔，即使记录已过期并被删除也仍然适用，因此短命记录不能靠先过期来绕过间隔；保留的时刻至多 `directory.max_records` 条，更早的先丢弃。发布者是本机的记录不受这条限制，以本机公钥验签通过的回传记录照现有规则抬高版本。
 - 接受后不超出数量限制。同一标识的替换不增加记录数，不受数量限制。新标识的记录要同时满足：总数不超过 `directory.max_records`，经该链路接受的记录数不超过 `directory.max_records_per_link`，该发布者的公开 topic 声明与未知种类记录合计不超过 `directory.max_topics_per_publisher`，名片与撤回不计。本版本不认识的种类计入，使发布者不能借其他种类绕过这项上限。本机签发的记录不受这些限制，但计入总数。
 
 来源不是已建立链路的 `RecordList` 与 `Records` 整帧忽略；来源不是已建立链路的 `RecordRequest` 回以空的 `Records`。
@@ -258,7 +263,9 @@ Broker 离线期间不续签，离线超过 7 天后其记录在各处到期；�
 | 原始字节超过 64 KiB | 丢弃，接收侧记一条带 `reason` 的 warn 日志；本机签发返回错误，不产生记录 |
 | 已到期或到期时间过远 | 丢弃 |
 | 版本不高于已有记录 | 丢弃，不记录日志；对账中属于正常情况 |
-| 超出任一数量限制 | 丢弃新标识的记录；同一批 `Records` 中因限量丢弃的记录按来源链路合并为一条 warn 日志，带丢弃条数与触发的是哪一项上限；已有标识的更新照常接受 |
+| 替换过快 | 丢弃，不转发，记为待补取，现有版本接受满 60 秒时补取一次；同一批 `Records` 中因替换间隔丢弃的记录并入限量丢弃日志，`limit` 取 `replace_interval` |
+| 未索取的记录 | 丢弃整条，同一帧中这类丢弃合并为一条 warn 日志，事件名 `directory_unrequested_records`，带 `peer` 与 `count` |
+| 超出任一数量限制 | 丢弃新标识的记录；同一批 `Records` 中因限量或替换间隔丢弃的记录按来源链路合并为一条 warn 日志，带丢弃条数与触发的是哪一项上限，`limit` 取 `max_records`、`max_records_per_link`、`max_topics_per_publisher` 或 `replace_interval`；已有标识的更新照常接受 |
 | 对账进行中链路断开 | 放弃本次对账，链路重建时重新开始 |
 | 本 Broker 不公开时调用 `DeclarePublicTopic` | 返回 `invalid_argument`，提示先把 Broker 设为公开 |
 | 本机声明的公开 topic 数已达上限 | 返回 `quota_exceeded` |
@@ -267,7 +274,7 @@ Broker 离线期间不续签，离线超过 7 天后其记录在各处到期；�
 
 ## 并发与事务边界
 
-名录由一把读写锁保护。签发与接受的检查、写入在写锁内成批完成；广播与回调在锁外执行。向其他对端的推送在锁内收集清单，锁外调用 `Links.Send`，以缩短持锁时间。对账帧由 `link` 按到达顺序串行交给本包，索取由单独的协程完成。名录文件的写入在锁外由单独的互斥锁串行，先写临时文件再原子替换；写入失败不影响内存中的名录，下次变更或维护时重试。
+名录由一把读写锁保护。签发与接受的检查、写入在写锁内成批完成；广播与回调在锁外执行。向其他对端的推送在锁内收集清单，锁外调用 `Links.Send`，以缩短持锁时间。对账帧由 `link` 按到达顺序串行交给本包，索取由单独的协程完成；待补取的等待每个对端至多一个协程，`Close` 与索取协程一并等待它们结束。名录文件的写入在锁外由单独的互斥锁串行，先写临时文件再原子替换；写入失败不影响内存中的名录，下次变更或维护时重试。从链路接受的记录只置脏标记，由维护循环落盘，每分钟至多一次；落盘按独立的 60 秒节拍安排，不随 `directory.reconcile_interval` 缩短或拉长，`directory.reconcile_interval` 小于 60 秒时也不会把两次落盘的间隔拉长到两个对账间隔。本机签发、撤回与 `Close` 立即落盘。崩溃时至多丢失一分钟内从链路接受的记录，由对账补回。
 
 ## 实现状态
 
@@ -276,7 +283,7 @@ Broker 离线期间不续签，离线超过 7 天后其记录在各处到期；�
 | 名片的签发、续签与撤回 | 已实现 | `internal/directory/publish.go`（`SetPublic`、`renewDue`、`issueRevocationLocked`） |
 | 对外地址列表变化时名片的重新签发 | 已实现 | `internal/directory/publish.go`（`Reissue`） |
 | 公开 topic 声明的签发与续签 | 已实现 | `internal/directory/publish.go`（`DeclarePublicTopic`、`RetirePublicTopic`、`RetireInactiveTopics`） |
-| 对账 | 已实现 | `internal/directory/reconcile.go`（`handleRecordList`、`handleRecordRequest`、`handleRecordsState`、`splitRecords`、`reconcileAll`） |
+| 对账 | 已实现 | `internal/directory/reconcile.go`（`handleRecordList`、`handleRecordRequest`、`handleRecordsState`、`splitRecords`、`reconcileAll`）、`internal/directory/fetch.go`（`scheduleFetch`、`fetchLoop`、`acceptRecords`、`noteRefetch`、`refetchLoop`） |
 | 记录的验证与逐跳推送 | 已实现 | `internal/directory/record.go`（`parseRecord`、`signRecord`）、`internal/directory/reconcile.go`（`acceptBatch`） |
 | 到期清理与数量限制 | 已实现 | `internal/directory/store.go`（`accept`、`purgeExpired`、`load`） |
 | 版本号的持久化与抬高 | 已实现 | `internal/directory/version.go`（`nextVersion`）、`internal/directory/persist.go` |
