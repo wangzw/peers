@@ -8,7 +8,7 @@ weight: 1
 
 ## 选择安装级别
 
-一条命令安装与发布包里的 `sh ./install.sh` 两种级别都能装。以 root 运行时，脚本不经询问直接装系统级。其他账户在终端里运行、又没有给出指定级别的选项时，会看到询问 `Install for every account on this host? [y/N]`：回答 y 经 `sudo` 安装为系统级，其他回答装成本账户的用户级。没有终端时，非 root 账户装用户级。主机上已有系统级服务时，询问改为 `Upgrade the system-level installation? [Y/n]`：直接回车或回答 y 升级系统级安装，回答 n 时主机不做任何改动，以退出码 0 结束，并提示改用 `--user`。`--system` 与 `--user` 跳过询问；同时给出两个是用法错误，以 root 给出 `--user` 会被拒绝并提示去掉它。回答 y 之后 `sudo` 不可用时，脚本失败，并给出 `a system-level install needs sudo, which was not found; install sudo, or pass --user for a user-level install`。
+一条命令安装与发布包里的 `sh ./install.sh` 两种级别都能装。以 root 运行时，脚本不经询问直接装系统级。其他账户在终端里运行、又没有给出指定级别的选项时，会看到询问 `Install for every account on this host? [y/N]`：回答 y 经 `sudo` 安装为系统级，其他回答装成本账户的用户级。没有终端时，非 root 账户装用户级。主机上已有系统级服务时，询问改为 `Upgrade the system installation? [Y/n]`：直接回车或回答 y 升级系统级安装，回答 n 时主机不做任何改动，以退出码 0 结束，并输出 `install.sh: the system installation was left unchanged.`。`--system` 与 `--user` 跳过询问；同时给出两个是用法错误，以 root 给出 `--user` 会被拒绝并提示去掉它。回答 y 之后 `sudo` 不可用时，脚本失败，并给出 `a system install needs sudo, which was not found; install sudo, or pass --user for a user install`。
 
 ## 用一条命令安装
 
@@ -117,7 +117,7 @@ macOS 上，脚本自己清除二进制上的隔离属性，所以用浏览器�
 
 ## 安装输出
 
-安装成功的汇总以 `peers <version> installed (<level>, starts at <login|boot>)` 开头；升级时在这之前先输出 `upgraded from <version>`。带 `--no-service` 时，汇总以 `peers <version> installed (no service)` 开头。汇总给出级别、二进制路径、版本、配置文件路径、运行日志位置、审计日志路径，以及启动、停止、重启与卸载 Broker 的命令。系统级安装的启动、停止、重启命令带 `sudo`。[文件与路径]({{< relref "/docs/reference/files" >}})列出配置、运行日志、审计日志与运行时目录的路径。
+安装成功的汇总以 `peers <version> installed (<level> service, starts at <login|boot>)` 开头。脚本替换已安装的版本时，会在汇总之前先输出一行：新版本更晚时输出 `Upgraded from <old>.`，更早时输出 `Downgraded from <old>.`，相同时输出 `Reinstalled peers <version>.`，两个版本无法比较先后时输出 `Replaced peers <old>.`。带 `--no-service` 时，汇总以 `peers <version> installed (no service)` 开头。汇总给出级别、二进制路径、版本、配置文件路径、运行日志位置、审计日志路径，以及启动、停止、重启与卸载 Broker 的命令。系统级安装的启动、停止、重启命令带 `sudo`。[文件与路径]({{< relref "/docs/reference/files" >}})列出配置、运行日志、审计日志与运行时目录的路径。
 
 安装失败时，输出写明原因：地址已被占用时给出地址、配置文件与 `broker.listen`；服务管理器报错时给出执行的命令与它的输出；权限不足时给出路径和缺少的权限；Broker 在启动阶段退出时给出运行日志里的原因。只有服务在运行、Broker 进入降级运行时，安装才保留服务、给出修复命令，并以退出码 3 结束；安装失败时写入或启用的服务，不会在开机或登录时自动启动。细节见 [peers service install]({{< relref "/docs/reference/cli" >}}#peers-service-install) 与 [FAQ 的端口一问]({{< relref "/docs/faq" >}}#端口被占用时会怎样)。
 
