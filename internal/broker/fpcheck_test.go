@@ -53,8 +53,8 @@ func fpcheckFP(b byte) pairing.Fingerprint {
 // fpcheckMessage is the exact warning text a mismatch at addr produces.
 func fpcheckMessage(addr string, cardFP, peerFP pairing.Fingerprint) string {
 	return fmt.Sprintf(
-		"fingerprint mismatch: the directory card for %s belongs to %s, but the paired Broker presented %s",
-		addr, cardFP.String(), peerFP.String(),
+		"fingerprint mismatch: the directory card of %s lists %s, but the paired Broker presented %s; directory cards are self-reported, so confirm the fingerprint with the other side",
+		cardFP.String(), addr, peerFP.String(),
 	)
 }
 
@@ -225,5 +225,53 @@ func TestFingerprintWarningsIgnoresCardSource(t *testing.T) {
 	}
 	if want := fpcheckMessage(dialAddr, cardOwner, dialed); got[0].Message != want {
 		t.Errorf("message = %q, want %q", got[0].Message, want)
+	}
+}
+
+// TestFingerprintWarningsDedupesCardAcrossAddresses checks that one mismatching
+// card yields one warning even when it advertises several of the peer's
+// addresses, so the result is bounded by the number of cards.
+func TestFingerprintWarningsDedupesCardAcrossAddresses(t *testing.T) {
+	const addr1 = "10.0.0.1:17443"
+	const addr2 = "10.0.0.2:17443"
+	dialed := fpcheckFP(1)
+	cardOwner := fpcheckFP(2)
+	peer := pairing.Peer{
+		Fingerprint: dialed,
+		Candidates: []pairing.Candidate{
+			{Source: pairing.SourcePairing, Addr: addr1},
+			{Source: pairing.SourceAcceptor, Addr: addr2},
+		},
+	}
+	cards := cardMap{addr1: {cardOwner}, addr2: {cardOwner}}
+
+	got := fingerprintWarnings(peer, cards)
+	if len(got) != 1 {
+		t.Fatalf("got %d warnings for one card at two addresses, want 1: %v", len(got), got)
+	}
+	if want := fpcheckMessage(addr1, cardOwner, dialed); got[0].Message != want {
+		t.Errorf("message = %q, want %q", got[0].Message, want)
+	}
+}
+
+// TestFingerprintWarningsCapped checks that a directory naming many publishers
+// at one address cannot grow the Connect response without bound.
+func TestFingerprintWarningsCapped(t *testing.T) {
+	const addr = "10.0.0.1:17443"
+	dialed := fpcheckFP(1)
+	peer := pairing.Peer{
+		Fingerprint: dialed,
+		Candidates: []pairing.Candidate{
+			{Source: pairing.SourcePairing, Addr: addr},
+		},
+	}
+	cards := make([]pairing.Fingerprint, 0, maxFingerprintWarnings+5)
+	for i := 0; i < maxFingerprintWarnings+5; i++ {
+		cards = append(cards, fpcheckFP(byte(10+i)))
+	}
+
+	got := fingerprintWarnings(peer, cardMap{addr: cards})
+	if len(got) != maxFingerprintWarnings {
+		t.Fatalf("got %d warnings, want the cap of %d", len(got), maxFingerprintWarnings)
 	}
 }

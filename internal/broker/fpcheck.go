@@ -7,6 +7,12 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
+// maxFingerprintWarnings bounds the warnings one Connect result carries. The
+// directory lets every publisher name the same address, so without a bound a
+// hostile directory could add one warning per card for every address the peer
+// presented and grow the response without limit.
+const maxFingerprintWarnings = 8
+
 // cardLookup resolves an address to the fingerprints of every publisher whose
 // live directory card advertises it.
 type cardLookup interface {
@@ -31,9 +37,13 @@ type cardLookup interface {
 func fingerprintWarnings(peer pairing.Peer, cards cardLookup) []*localpb.Warning {
 	var warnings []*localpb.Warning
 	seen := make(map[string]bool)
+	// warned deduplicates by card fingerprint: one card may name several of the
+	// peer's addresses, but the mismatch is with the card, not with each
+	// address. The cap then bounds the whole result.
+	warned := make(map[pairing.Fingerprint]bool)
 
 	check := func(addr string) {
-		if addr == "" {
+		if addr == "" || len(warnings) >= maxFingerprintWarnings {
 			return
 		}
 		addr = pairing.CanonicalAddress(addr)
@@ -42,16 +52,20 @@ func fingerprintWarnings(peer pairing.Peer, cards cardLookup) []*localpb.Warning
 		}
 		seen[addr] = true
 		for _, cardFP := range cards.CardsByAddress(addr) {
-			if cardFP == peer.Fingerprint {
+			if cardFP == peer.Fingerprint || warned[cardFP] {
 				continue
 			}
+			warned[cardFP] = true
 			warnings = append(warnings, &localpb.Warning{
 				Kind: localpb.WarningKind_WARNING_KIND_FINGERPRINT_MISMATCH,
 				Message: fmt.Sprintf(
-					"fingerprint mismatch: the directory card for %s belongs to %s, but the paired Broker presented %s",
-					addr, cardFP.String(), peer.Fingerprint.String(),
+					"fingerprint mismatch: the directory card of %s lists %s, but the paired Broker presented %s; directory cards are self-reported, so confirm the fingerprint with the other side",
+					cardFP.String(), addr, peer.Fingerprint.String(),
 				),
 			})
+			if len(warnings) >= maxFingerprintWarnings {
+				return
+			}
 		}
 	}
 

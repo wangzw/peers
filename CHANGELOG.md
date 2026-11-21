@@ -42,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A peer could make every Broker in the network rewrite its directory file and keep forwarding records by issuing a new version of the same record. A replacement received from a link is now accepted at most once every 60 seconds per Broker, and a newer version that arrives inside the window is fetched once the window ends instead of waiting for the next reconciliation. Records accepted from a link are written once a minute by the maintenance loop instead of on every batch; records accepted within the minute before a crash are recovered by reconciliation. The window also applies to an identifier whose record expired and was purged, so a short-lived record cannot bypass it.
 - A public topic whose name or description breaks the format rules and a card address that is not a well-formed host and port are no longer listed, while the record is still accepted and forwarded.
 - A public topic's description declared by this Broker or a peer can no longer be replaced by a remote publisher that claims the largest version. The local interface reports the Broker whose declaration supplied the description, how many Brokers declare the name, and the declarer's alias.
+- The fingerprint mismatch warning now says the directory card is self-reported and asks the user to confirm the fingerprint with the other side, rather than presenting the card's claim as fact. One card yields one warning and a Connect result carries at most eight.
 
 ## [0.5.0] - 2026-11-21
 
