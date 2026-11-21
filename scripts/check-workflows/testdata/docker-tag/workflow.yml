@@ -1,0 +1,8 @@
+name: Docker tag
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker://alpine:3.20

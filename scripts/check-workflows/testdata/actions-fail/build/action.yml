@@ -1,0 +1,6 @@
+name: Build
+description: A composite action that calls an action by its mutable tag
+runs:
+  using: composite
+  steps:
+    - uses: bufbuild/buf-action@v1.7.0

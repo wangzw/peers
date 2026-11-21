@@ -1,0 +1,6 @@
+name: Build
+description: A composite action that calls an action pinned to a commit
+runs:
+  using: composite
+  steps:
+    - uses: bufbuild/buf-action@37ac33d8960807670a6e9719080e885197b09cc6 # v1.7.0
