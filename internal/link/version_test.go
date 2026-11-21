@@ -24,8 +24,7 @@ func TestLinkVersionAcceptorNewer(t *testing.T) {
 	dialer := newNode(t, "a")
 	addr := listenAt(t, acceptor)
 	linktest.Introduce(dialer.Peers, acceptor.Peers, "a", "b", addr)
-	dialer.Start()
-	acceptor.Start()
+	startAcceptorThenDialer(acceptor, dialer)
 
 	fpAcceptor := acceptor.Peers.Fingerprint()
 	fpDialer := dialer.Peers.Fingerprint()
@@ -50,8 +49,7 @@ func TestLinkVersionDialerNewer(t *testing.T) {
 	acceptor := newNode(t, "a")
 	addr := listenAt(t, acceptor)
 	linktest.Introduce(dialer.Peers, acceptor.Peers, "b", "a", addr)
-	dialer.Start()
-	acceptor.Start()
+	startAcceptorThenDialer(acceptor, dialer)
 
 	fpAcceptor := acceptor.Peers.Fingerprint()
 	fpDialer := dialer.Peers.Fingerprint()

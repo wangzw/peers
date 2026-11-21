@@ -205,7 +205,7 @@ func RealClock() Clock
 func ConfigSettings() Settings
 ```
 
-`*Link` 同时实现 `pairing.Transport`。`pairing.Open` 构造时就要这个接口，而 `link.New` 要一个已经打开的 `*pairing.Pairing`，两者因此经一个转接对象装配：转接对象实现 `pairing.Transport`，`PairDial`、`Drop` 转发给稍后填入的 `*Link`；`pairing.Open` 拿到转接对象后，`link.New` 构造 `*Link` 并填入转接对象。`broker` 的 `Run` 依次执行各包注册帧类型与订阅、各组件 `Start`、`Listen`、绑定本机 socket、写出 `ok`、`Start`。`link` 不为 `Subscribe` 之前已经建立的链路补发建立通知，`Run` 让 `Listen` 排在全部组件的 `Start` 之后，`Start` 排在写出 `ok` 之后。
+`*Link` 同时实现 `pairing.Transport`。`pairing.Open` 构造时就要这个接口，而 `link.New` 要一个已经打开的 `*pairing.Pairing`，两者因此经一个转接对象装配：转接对象实现 `pairing.Transport`，`PairDial`、`Drop` 转发给稍后填入的 `*Link`；`pairing.Open` 拿到转接对象后，`link.New` 构造 `*Link` 并填入转接对象。`broker` 的 `Run` 依次执行各包注册帧类型与订阅、各组件 `Start`、`Listen`、绑定本机 socket、写出 `ok`、`Start`。`link` 不为 `Subscribe` 之前已经建立的链路补发建立通知，`Run` 让 `Listen` 排在全部组件的 `Start` 之后，`Start` 排在写出 `ok` 之后。生产路径上这也是先 `Listen` 后 `Start`，版本不兼容的入站失败若落在接受方创建对端记录之前的这段窗口里，这一次不会被记下，但拨号方退避后会重拨，那时记录已存在，失败被记下，因此窗口至多持续一个退避间隔，随后自行恢复。
 
 Broker 之间的传输协议是 gRPC 上的一个双向流方法，承载在 TLS 1.3 之上（[ADR-grpc-stream-links](../../adr/adr-grpc-stream-links.md)）：
 

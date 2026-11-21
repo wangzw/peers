@@ -260,6 +260,22 @@ func connectVia(t *testing.T, dialer, acceptor *node, dialAddr string) {
 	acceptor.waitUp(t, dialer.Peers.Fingerprint(), 1)
 }
 
+// startAcceptorThenDialer starts the accepting node before the dialing node.
+//
+// Link.Start creates one record per peer in the table, and the accepting side
+// records a rejected inbound version only on an existing record
+// (noteVersionFailure). A dial that reaches the listening acceptor before the
+// acceptor has started is still rejected and the dialer still backs off, but
+// the acceptor's record is created afterwards at PhaseWaiting with no failure.
+// The dialer then stays in backoff, so no later event corrects the acceptor
+// state and the test waits forever for a failure that was already handled.
+// Starting the acceptor first removes that ordering race instead of widening a
+// wait.
+func startAcceptorThenDialer(acceptor, dialer *node) {
+	acceptor.Start()
+	dialer.Start()
+}
+
 // dialRecorder counts the addresses handed to the OnDial hook and wakes
 // waiters on every attempt.
 type dialRecorder struct {
@@ -809,8 +825,7 @@ func TestProtocolVersionIncompatible(t *testing.T) {
 	dialer := newNode(t, "b")
 	addr := listenAt(t, acceptor)
 	linktest.Introduce(dialer.Peers, acceptor.Peers, "b", "a", addr)
-	dialer.Start()
-	acceptor.Start()
+	startAcceptorThenDialer(acceptor, dialer)
 
 	fpAcceptor := acceptor.Peers.Fingerprint()
 	fpDialer := dialer.Peers.Fingerprint()
