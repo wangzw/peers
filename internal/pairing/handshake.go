@@ -85,7 +85,10 @@ func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) 
 }
 
 // runInitiator sends PairRequest, verifies the responder proof, reserves the
-// effective alias, sends PairConfirm and commits the peer after PairDone.
+// effective alias and sends PairConfirm with its own alias, then commits the
+// peer after PairDone. The alias travels only in PairConfirm: before the
+// responder proof verifies, the initiator has no evidence that the other side
+// is the expected Broker.
 func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, key string, ni, hint []byte, ownAlias, localAlias, dialAddr string) (Peer, error) {
 	acceptorFP := conn.PeerFingerprint()
 	acceptorPub := conn.PeerPublicKey()
@@ -96,7 +99,6 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		InitiatorAlias: ownAlias,
 		LookupTag:      hint,
 	}
 	if err := sendMessage(runCtx, conn, kindPairRequest, request); err != nil {
@@ -149,7 +151,8 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	}()
 
 	proof := initiatorProof([]byte(key), ni, nr, p.identity.fingerprint(), acceptorFP)
-	if err := sendMessage(runCtx, conn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof}); err != nil {
+	confirm := &pairingpb.PairConfirm{Proof: proof, InitiatorAlias: ownAlias}
+	if err := sendMessage(runCtx, conn, kindPairConfirm, confirm); err != nil {
 		return Peer{}, p.initiatorFrameError(conn, parent, runCtx, err)
 	}
 
@@ -228,7 +231,11 @@ func (p *Pairing) Accept(conn PairConn) error {
 		_ = conn.Close()
 		return fmt.Errorf("%w: PairRequest has a malformed nonce or lookup tag", ErrProtocol)
 	}
-	initiatorAlias := request.GetInitiatorAlias()
+
+	// The alias arrives later, in PairConfirm, and is read only once the
+	// initiator proof verifies. Every failure before that point records the
+	// fingerprint alone.
+	initiatorAlias := ""
 
 	now := p.clock.Now()
 	maxFailures, err := p.settings.MaxFailures()
@@ -250,7 +257,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 				reason = pairErr.Reason
 			}
 		}
-		return p.rejectAcceptor(conn, ctx, initiatorFP, initiatorAlias, reason, now)
+		return p.rejectAcceptor(conn, ctx, initiatorFP, reason, now)
 	}
 
 	nr, err := p.nonce()
@@ -303,12 +310,16 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return p.keys.verifyAtConfirm(match, ni, nr, p.identity.fingerprint(), initiatorFP, p.settings.StaticKey(), verifiedAt)
 	}()
 	if gone != 0 {
-		return p.rejectAcceptor(conn, ctx, initiatorFP, initiatorAlias, gone, verifiedAt)
+		return p.rejectAcceptor(conn, ctx, initiatorFP, gone, verifiedAt)
 	}
 	if !ok {
 		p.keys.recordVerificationFailure(match, maxFailures, verifiedAt)
-		return p.rejectAcceptor(conn, ctx, initiatorFP, initiatorAlias, ReasonVerificationFailed, verifiedAt)
+		return p.rejectAcceptor(conn, ctx, initiatorFP, ReasonVerificationFailed, verifiedAt)
 	}
+
+	// The initiator proved it holds the key, so its self-reported alias is now
+	// trustworthy enough to reserve, commit and audit.
+	initiatorAlias = confirm.GetInitiatorAlias()
 
 	ownAliasNow, err := p.alias()
 	if err != nil {
@@ -400,24 +411,21 @@ func initiatorProof(key, ni, nr []byte, initiator, acceptorSeen Fingerprint) []b
 }
 
 // rejectAcceptor sends PairReject with reason, records the acceptor-owned audit
-// event, closes the connection and returns the matching error. The self-reported
-// alias has not been authenticated on these paths, so an alias outside the alias
-// character set is recorded as empty and never reaches the audit log.
-func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerprint, alias string, reason RejectReason, now time.Time) error {
-	if !validAlias(alias) {
-		alias = ""
-	}
+// event, closes the connection and returns the matching error. Every rejection
+// happens before the initiator proof verifies, so the audit records the
+// fingerprint alone; the initiator's self-reported alias is not trusted yet.
+func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerprint, reason RejectReason, now time.Time) error {
 	mergeKey := ""
 	switch reason {
 	case ReasonTryLater:
 		mergeKey = auditSourceMergeKey(conn.RemoteAddr())
-		auditPairingFailed(p.settings, now, fp, alias, auditReasonTryLater, mergeKey)
+		auditPairingFailed(p.settings, now, fp, "", auditReasonTryLater, mergeKey)
 	case ReasonVerificationFailed:
-		auditPairingFailed(p.settings, now, fp, alias, auditReasonVerificationFailed, "")
+		auditPairingFailed(p.settings, now, fp, "", auditReasonVerificationFailed, "")
 	case ReasonKeyExpired:
-		auditPairingFailed(p.settings, now, fp, alias, auditReasonKeyExpired, "")
+		auditPairingFailed(p.settings, now, fp, "", auditReasonKeyExpired, "")
 	default:
-		auditPairingFailed(p.settings, now, fp, alias, auditReasonKeyInvalid, "")
+		auditPairingFailed(p.settings, now, fp, "", auditReasonKeyInvalid, "")
 	}
 	_ = sendRejectAndLinger(ctx, conn, reason)
 	return &PairingError{Reason: reason, Detail: rejectDetail(reason)}
@@ -425,7 +433,8 @@ func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerpr
 
 // acceptFrameError maps a transport failure on the acceptor side to the
 // handshake error the design assigns it, closing the connection and recording
-// the pairing-owned audit event.
+// the pairing-owned audit event. alias is empty until the initiator proof
+// verifies; after that it is the confirmed self-reported alias.
 func (p *Pairing) acceptFrameError(conn PairConn, ctx context.Context, fp Fingerprint, alias string, err error) error {
 	_ = conn.Close()
 	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {

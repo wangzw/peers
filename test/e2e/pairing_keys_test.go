@@ -59,6 +59,7 @@ func TestPairingKeys(t *testing.T) {
 	}
 
 	a, b, d := nodes["hostA"], nodes["hostB"], nodes["hostD"]
+	nodeC := nodes["hostC"]
 	opA, opB, opC, opD := ops["hostA"], ops["hostB"], ops["hostC"], ops["hostD"]
 	addrA := pkAddr(c, "hostA")
 
@@ -189,7 +190,7 @@ func TestPairingKeys(t *testing.T) {
 		// reason tells the two causes apart.
 		since := time.Now().Add(-time.Second)
 		r := pkConnect(t, opC, address, key.Key, "")
-		pkRejectReason(t, r, a, since, "hostC.peer", "key invalid")
+		pkRejectReason(t, r, a, nodeC, since, "key invalid")
 		if !r.HasPrefix("Not connected") {
 			t.Fatalf("the reuse error is %q, want it to start with Not connected", r.Text)
 		}
@@ -205,7 +206,7 @@ func TestPairingKeys(t *testing.T) {
 		for _, key := range []string{"hello-world-key-123", "wrong-key-one", "wrong-key-two", "wrong-key-three"} {
 			since := time.Now().Add(-time.Second)
 			r := pkConnect(t, opD, addrA, key, "")
-			pkRejectReason(t, r, a, since, "hostD.peer", "key invalid")
+			pkRejectReason(t, r, a, d, since, "key invalid")
 			if !r.HasPrefix("Not connected") {
 				t.Fatalf("a wrong key returned %q, want it to start with Not connected", r.Text)
 			}
@@ -224,7 +225,7 @@ func TestPairingKeys(t *testing.T) {
 	t.Run("REQ-broker-pairing-011 wrong key stores nothing", func(t *testing.T) {
 		since := time.Now().Add(-time.Second)
 		r := pkConnect(t, opD, addrA, "definitely-not-the-key", "")
-		pkRejectReason(t, r, a, since, "hostD.peer", "key invalid")
+		pkRejectReason(t, r, a, d, since, "key invalid")
 
 		aData := pkPeersJSON(t, a)
 		dData := pkPeersJSON(t, d)
@@ -348,7 +349,7 @@ func TestPairingKeys(t *testing.T) {
 		pkWaitAuditConfigChange(t, a, "pairing.static_key", since)
 
 		rejectedAt := time.Now().Add(-time.Second)
-		pkRejectReason(t, pkConnect(t, opC, addrA, pkStatic128, ""), a, rejectedAt, "hostC.peer", "key invalid")
+		pkRejectReason(t, pkConnect(t, opC, addrA, pkStatic128, ""), a, nodeC, rejectedAt, "key invalid")
 		pkConnect(t, opD, addrA, pkStaticReplace, "").MustOK(t)
 		pkWaitConnected(t, b, "hostA.peer", pkRelinkBound)
 	})
@@ -471,8 +472,10 @@ func pkConnect(t *testing.T, op *harness.Session, address, key, localAlias strin
 // pkRejectReason asserts the connect was rejected and that the acceptor
 // audited the failure with reason since since. The acceptor owns the reason,
 // so its audit record is where an invalid key and an expired one are told
-// apart; the dialer only learns that the connection closed.
-func pkRejectReason(t *testing.T, r harness.Result, acceptor *harness.Node, since time.Time, alias, reason string) {
+// apart; the dialer only learns that the connection closed. The acceptor never
+// records the initiator's alias before the proof verifies, so the failure is
+// matched by the initiator's fingerprint instead.
+func pkRejectReason(t *testing.T, r harness.Result, acceptor, initiator *harness.Node, since time.Time, reason string) {
 	t.Helper()
 	r.MustCode(t, "pairing_rejected")
 	// The dialer learns the cause from the acceptor's reject frame. Both sides
@@ -484,6 +487,7 @@ func pkRejectReason(t *testing.T, r harness.Result, acceptor *harness.Node, sinc
 	if !strings.Contains(r.Text, wantText) {
 		t.Fatalf("the dialer's error is %q, want it to name %q", r.Text, wantText)
 	}
+	initiatorFingerprint := pkIdentityFingerprint(t, initiator)
 	harness.Eventually(t, pkWaitBound, "the pairing failure is audited as "+reason, func() (bool, string) {
 		events, detail := acceptor.Oracle().Audit(t, since, 0)
 		if detail != nil {
@@ -494,15 +498,18 @@ func pkRejectReason(t *testing.T, r harness.Result, acceptor *harness.Node, sinc
 			if event.GetEvent() != localpb.AuditEventKind_AUDIT_EVENT_KIND_PAIRING_FAILED {
 				continue
 			}
-			if event.GetPeer().GetAlias() != alias {
+			if hex.EncodeToString(event.GetPeer().GetFingerprint()) != initiatorFingerprint {
 				continue
+			}
+			if event.GetPeer().GetAlias() != "" {
+				return false, fmt.Sprintf("pairing_failed for the initiator carries the unverified alias %q", event.GetPeer().GetAlias())
 			}
 			seen = append(seen, event.GetDetail())
 			if event.GetDetail() == reason {
 				return true, ""
 			}
 		}
-		return false, fmt.Sprintf("pairing_failed events for %s carry details %v", alias, seen)
+		return false, fmt.Sprintf("pairing_failed events for initiator %s carry details %v", initiatorFingerprint, seen)
 	})
 }
 

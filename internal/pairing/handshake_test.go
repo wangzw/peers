@@ -1,6 +1,7 @@
 package pairing
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/hmac"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/pairing/pairingpb"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -1129,7 +1131,6 @@ func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
 		}
 		request := &pairingpb.PairRequest{
 			InitiatorNonce: ni,
-			InitiatorAlias: "intruder",
 			LookupTag:      computeHint([]byte(key), ni),
 		}
 		if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
@@ -1288,7 +1289,6 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 			}
 			request := &pairingpb.PairRequest{
 				InitiatorNonce: ni,
-				InitiatorAlias: "intruder",
 				LookupTag:      computeHint([]byte(oldKey), ni),
 			}
 			if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
@@ -1311,7 +1311,7 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 			tc.swap(accS)
 
 			proof := initiatorProof([]byte(oldKey), ni, challenge.GetResponderNonce(), initiatorFP, accP.identity.fingerprint())
-			if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof}); err != nil {
+			if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof, InitiatorAlias: "intruder"}); err != nil {
 				t.Fatalf("send PairConfirm: %v", err)
 			}
 
@@ -1341,6 +1341,270 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 				t.Fatalf("%d aliases left reserved after the key changed", got)
 			}
 		})
+	}
+}
+
+// TestInitiatorWithholdsAliasUntilResponderVerified proves the initiator does
+// not reveal its alias before it has verified the responder. A fake responder
+// answers with a well-formed challenge whose proof cannot verify, so the
+// initiator must stop without ever sending PairConfirm, the frame that now
+// carries the alias.
+func TestInitiatorWithholdsAliasUntilResponderVerified(t *testing.T) {
+	clk := newHSClock()
+	initS := newHSSettings(t)
+	initS.alias = "initiator-secret"
+	tr := &hsTransport{}
+	p := hsNewPairing(t, initS, tr, clk)
+
+	acceptorFP, acceptorPub := hsKey(t)
+	aConn, bConn := hsConnPairFor(p.identity.fingerprint(), p.identity.publicKey(), acceptorFP, acceptorPub)
+	tr.raw = aConn
+
+	connectErr := make(chan error, 1)
+	go func() {
+		_, _, err := p.Connect(context.Background(), "127.0.0.1:17443", "STATIC-KEY", "")
+		connectErr <- err
+	}()
+
+	kind, payload, err := receiveWithTimeout(bConn)
+	if err != nil || kind != kindPairRequest {
+		t.Fatalf("fake responder received kind=%d err=%v, want PairRequest", kind, err)
+	}
+	if hsHasField(payload, 2) {
+		t.Fatalf("PairRequest carries field 2, so the alias is revealed before the responder is verified: %x", payload)
+	}
+	if bytes.Contains(payload, []byte(initS.alias)) {
+		t.Fatalf("PairRequest contains the initiator alias %q: %x", initS.alias, payload)
+	}
+
+	nr := make([]byte, nonceLength)
+	if _, err := rand.Read(nr); err != nil {
+		t.Fatalf("random nonce: %v", err)
+	}
+	challenge := &pairingpb.PairChallenge{
+		ResponderNonce: nr,
+		ResponderAlias: "acceptor",
+		Proof:          make([]byte, proofLength),
+	}
+	if err := hsSendProto(bConn, kindPairChallenge, challenge); err != nil {
+		t.Fatalf("send PairChallenge: %v", err)
+	}
+
+	select {
+	case err := <-connectErr:
+		var pairErr *PairingError
+		if !errors.As(err, &pairErr) || pairErr.Reason != ReasonVerificationFailed {
+			t.Fatalf("Connect error = %v, want a verification-failure PairingError", err)
+		}
+	case <-time.After(testWaitBound):
+		t.Fatal("Connect did not return within the test wait bound")
+	}
+	for _, sent := range hsSentKinds(aConn) {
+		if sent == kindPairConfirm {
+			t.Fatal("the initiator sent PairConfirm, and with it its alias, before verifying the responder")
+		}
+	}
+}
+
+// TestAcceptorReadsAliasFromConfirmedPairConfirm proves the acceptor takes the
+// initiator's self-reported alias from PairConfirm. The request carries no
+// alias and the confirm carries one, so an acceptor that still reads the
+// request records a generated local alias instead.
+func TestAcceptorReadsAliasFromConfirmedPairConfirm(t *testing.T) {
+	const key = "STATIC-KEY"
+	const alias = "gamma"
+
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = key
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	initiatorFP, initiatorPub := hsKey(t)
+	aConn, bConn := hsConnPairFor(initiatorFP, initiatorPub, accP.identity.fingerprint(), accP.identity.publicKey())
+	acceptErr := make(chan error, 1)
+	go func() { acceptErr <- accP.Accept(bConn) }()
+
+	ni := makeSeq(0, nonceLength)
+	request, err := proto.Marshal(&pairingpb.PairRequest{
+		InitiatorNonce: ni,
+		LookupTag:      computeHint([]byte(key), ni),
+	})
+	if err != nil {
+		t.Fatalf("marshal PairRequest: %v", err)
+	}
+	if err := hsSendRaw(aConn, kindPairRequest, request); err != nil {
+		t.Fatalf("send PairRequest: %v", err)
+	}
+	kind, payload, err := receiveWithTimeout(aConn)
+	if err != nil || kind != kindPairChallenge {
+		t.Fatalf("frame after PairRequest: kind=%d err=%v, want PairChallenge", kind, err)
+	}
+	var challenge pairingpb.PairChallenge
+	if err := proto.Unmarshal(payload, &challenge); err != nil {
+		t.Fatalf("decode PairChallenge: %v", err)
+	}
+
+	proof := initiatorProof([]byte(key), ni, challenge.GetResponderNonce(), initiatorFP, accP.identity.fingerprint())
+	confirm, err := proto.Marshal(&pairingpb.PairConfirm{Proof: proof})
+	if err != nil {
+		t.Fatalf("marshal PairConfirm: %v", err)
+	}
+	if err := hsSendRaw(aConn, kindPairConfirm, hsAppendStringField(confirm, 2, alias)); err != nil {
+		t.Fatalf("send PairConfirm: %v", err)
+	}
+	kind, _, err = receiveWithTimeout(aConn)
+	if err != nil || kind != kindPairDone {
+		t.Fatalf("frame after PairConfirm: kind=%d err=%v, want PairDone", kind, err)
+	}
+	if err := aConn.Send(context.Background(), kindHello, nil); err != nil {
+		t.Fatalf("send Hello: %v", err)
+	}
+	if err := awaitAccept(acceptErr); err != nil {
+		t.Fatalf("Accept: %v", err)
+	}
+
+	peers := accP.Peers()
+	if len(peers) != 1 {
+		t.Fatalf("acceptor peers = %d, want 1", len(peers))
+	}
+	if peers[0].Alias != alias {
+		t.Fatalf("the acceptor recorded the self-reported alias %q, want %q from PairConfirm", peers[0].Alias, alias)
+	}
+
+	var succeeded bool
+	for _, e := range accS.recorded() {
+		if e.Event == config.EventPairingSucceeded {
+			succeeded = true
+			if e.Peer == nil || e.Peer.Alias != alias {
+				t.Fatalf("pairing_succeeded peer = %+v, want alias %q", e.Peer, alias)
+			}
+		}
+	}
+	if !succeeded {
+		t.Fatal("no pairing_succeeded audit event")
+	}
+}
+
+// TestAcceptorFailureAuditsOmitInitiatorAlias proves every failure path before
+// the initiator proof verifies records only the fingerprint. Each subtest puts
+// the alias in a raw field 2 of the request, the field it used to occupy, so an
+// acceptor that still reads it from there leaks the alias into the audit log.
+func TestAcceptorFailureAuditsOmitInitiatorAlias(t *testing.T) {
+	const key = "STATIC-KEY"
+	const alias = "initiator-secret"
+
+	run := func(t *testing.T, fail func(*hsClock, *hsConn, *hsConn)) (config.Event, RejectReason) {
+		t.Helper()
+		clk := newHSClock()
+		accS := newHSSettings(t)
+		accS.alias = "beta"
+		accS.staticKey = key
+		accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+		initiatorFP, initiatorPub := hsKey(t)
+		aConn, bConn := hsConnPairFor(initiatorFP, initiatorPub, accP.identity.fingerprint(), accP.identity.publicKey())
+		acceptErr := make(chan error, 1)
+		go func() { acceptErr <- accP.Accept(bConn) }()
+
+		ni := makeSeq(0, nonceLength)
+		request, err := proto.Marshal(&pairingpb.PairRequest{
+			InitiatorNonce: ni,
+			LookupTag:      computeHint([]byte(key), ni),
+		})
+		if err != nil {
+			t.Fatalf("marshal PairRequest: %v", err)
+		}
+		if err := hsSendRaw(aConn, kindPairRequest, hsAppendStringField(request, 2, alias)); err != nil {
+			t.Fatalf("send PairRequest: %v", err)
+		}
+		kind, payload, err := receiveWithTimeout(aConn)
+		if err != nil || kind != kindPairChallenge {
+			t.Fatalf("frame after PairRequest: kind=%d err=%v, want PairChallenge", kind, err)
+		}
+		var challenge pairingpb.PairChallenge
+		if err := proto.Unmarshal(payload, &challenge); err != nil {
+			t.Fatalf("decode PairChallenge: %v", err)
+		}
+
+		fail(clk, aConn, bConn)
+
+		err = awaitAccept(acceptErr)
+		var pairErr *PairingError
+		if !errors.As(err, &pairErr) {
+			t.Fatalf("Accept error = %v (%T), want *PairingError", err, err)
+		}
+
+		var failed []config.Event
+		for _, e := range accS.recorded() {
+			if e.Event == config.EventPairingFailed {
+				failed = append(failed, e)
+			}
+		}
+		if len(failed) != 1 {
+			t.Fatalf("pairing_failed events = %d, want 1", len(failed))
+		}
+		return failed[0], pairErr.Reason
+	}
+
+	t.Run("verification failed", func(t *testing.T) {
+		failed, reason := run(t, func(_ *hsClock, aConn, _ *hsConn) {
+			confirm, err := proto.Marshal(&pairingpb.PairConfirm{Proof: make([]byte, proofLength)})
+			if err != nil {
+				t.Fatalf("marshal PairConfirm: %v", err)
+			}
+			if err := hsSendRaw(aConn, kindPairConfirm, hsAppendStringField(confirm, 2, alias)); err != nil {
+				t.Fatalf("send PairConfirm: %v", err)
+			}
+			if _, _, err := receiveWithTimeout(aConn); err != nil {
+				t.Fatalf("receive the reply to PairConfirm: %v", err)
+			}
+		})
+		if reason != ReasonVerificationFailed {
+			t.Fatalf("rejection reason = %v, want %v", reason, ReasonVerificationFailed)
+		}
+		if failed.Detail != auditReasonVerificationFailed {
+			t.Fatalf("audit detail = %q, want %q", failed.Detail, auditReasonVerificationFailed)
+		}
+		assertNoAuditedAlias(t, failed)
+	})
+
+	t.Run("connection closed before confirm", func(t *testing.T) {
+		failed, reason := run(t, func(_ *hsClock, aConn, _ *hsConn) {
+			_ = aConn.Close()
+		})
+		if reason != ReasonNotConnected {
+			t.Fatalf("rejection reason = %v, want %v", reason, ReasonNotConnected)
+		}
+		if failed.Detail != auditReasonNotConnected {
+			t.Fatalf("audit detail = %q, want %q", failed.Detail, auditReasonNotConnected)
+		}
+		assertNoAuditedAlias(t, failed)
+	})
+
+	t.Run("handshake timeout", func(t *testing.T) {
+		failed, reason := run(t, func(clk *hsClock, _, _ *hsConn) {
+			clk.Advance(handshakeTimeout + time.Second)
+		})
+		if reason != ReasonTimeout {
+			t.Fatalf("rejection reason = %v, want %v", reason, ReasonTimeout)
+		}
+		if failed.Detail != auditReasonTimeout {
+			t.Fatalf("audit detail = %q, want %q", failed.Detail, auditReasonTimeout)
+		}
+		assertNoAuditedAlias(t, failed)
+	})
+}
+
+// assertNoAuditedAlias checks one pairing_failed event names the peer by
+// fingerprint only.
+func assertNoAuditedAlias(t *testing.T, e config.Event) {
+	t.Helper()
+	if e.Peer == nil {
+		t.Fatal("pairing_failed has no peer reference")
+	}
+	if e.Peer.Alias != "" {
+		t.Fatalf("pairing_failed audited the unverified alias %q", e.Peer.Alias)
 	}
 }
 
@@ -1379,7 +1643,6 @@ func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 	}
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		InitiatorAlias: "intruder",
 		LookupTag:      computeHint([]byte(key), ni),
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
@@ -1389,7 +1652,7 @@ func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 	if err != nil || kind != kindPairChallenge {
 		t.Fatalf("receive challenge: kind=%d err=%v", kind, err)
 	}
-	if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: make([]byte, proofLength)}); err != nil {
+	if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: make([]byte, proofLength), InitiatorAlias: "intruder"}); err != nil {
 		t.Fatalf("send bad PairConfirm: %v", err)
 	}
 	return awaitAccept(acceptErr)
@@ -1418,7 +1681,6 @@ func hsRequestAttemptFrom(t *testing.T, p *Pairing, key string, want RejectReaso
 	}
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		InitiatorAlias: "intruder",
 		LookupTag:      computeHint([]byte(key), ni),
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
@@ -1455,7 +1717,6 @@ func hsCompleteAsInitiator(t *testing.T, p *Pairing, aConn, bConn *hsConn, initi
 	}
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		InitiatorAlias: alias,
 		LookupTag:      computeHint([]byte(key), ni),
 	}
 	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
@@ -1470,7 +1731,7 @@ func hsCompleteAsInitiator(t *testing.T, p *Pairing, aConn, bConn *hsConn, initi
 		return err
 	}
 	proof := initiatorProof([]byte(key), ni, challenge.GetResponderNonce(), initiatorFP, p.identity.fingerprint())
-	if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof}); err != nil {
+	if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof, InitiatorAlias: alias}); err != nil {
 		return err
 	}
 	kind, _, err = receiveWithTimeout(aConn)
@@ -1492,6 +1753,47 @@ func hsSendProto(conn PairConn, kind uint32, msg proto.Message) error {
 }
 
 // --- small helpers ---------------------------------------------------------
+
+// hsSendRaw sends one already encoded frame.
+func hsSendRaw(conn PairConn, kind uint32, payload []byte) error {
+	return conn.Send(context.Background(), kind, payload)
+}
+
+// hsAppendStringField appends one string field to an encoded protobuf message.
+// A test uses it to put a field on the wire by its number, so the same test
+// compiles whether or not the message type still declares that field.
+func hsAppendStringField(payload []byte, num protowire.Number, value string) []byte {
+	payload = protowire.AppendTag(payload, num, protowire.BytesType)
+	return protowire.AppendString(payload, value)
+}
+
+// hsHasField reports whether an encoded protobuf message carries a field with
+// the given number.
+func hsHasField(payload []byte, num protowire.Number) bool {
+	for len(payload) > 0 {
+		n, typ, tagLen := protowire.ConsumeTag(payload)
+		if tagLen < 0 {
+			return false
+		}
+		payload = payload[tagLen:]
+		valueLen := protowire.ConsumeFieldValue(n, typ, payload)
+		if valueLen < 0 {
+			return false
+		}
+		if n == num {
+			return true
+		}
+		payload = payload[valueLen:]
+	}
+	return false
+}
+
+// hsSentKinds returns the frame kinds conn has sent so far.
+func hsSentKinds(conn *hsConn) []uint32 {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	return append([]uint32(nil), conn.sent...)
+}
 
 func makeSeq(start, n int) []byte {
 	out := make([]byte, n)

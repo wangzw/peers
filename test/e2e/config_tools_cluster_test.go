@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,7 @@ func TestConfigToolsCluster(t *testing.T) {
 
 		bAgent := ctcAgentAddress(t, b1, "b1")
 		aAgent := ctcAgentAddress(t, a1, "a1")
+		aFingerprint := pkIdentityFingerprint(t, aNode)
 		bAccount := ctcAccountName(t, bNode)
 		aAccount := ctcAccountName(t, aNode)
 		since := time.Now().Add(-time.Second)
@@ -71,7 +73,7 @@ func TestConfigToolsCluster(t *testing.T) {
 
 		// A wrong key, then the right one.
 		rejectedAt := time.Now().Add(-time.Second)
-		pkRejectReason(t, pkConnect(t, a1, address, "not-the-right-key", ""), bNode, rejectedAt, "hostA.peer", "key invalid")
+		pkRejectReason(t, pkConnect(t, a1, address, "not-the-right-key", ""), bNode, aNode, rejectedAt, "key invalid")
 		pkConnect(t, a1, address, key.Key, "").MustOK(t)
 		pkWaitConnected(t, aNode, "hostB.peer", ctcReconnectBound)
 		pkWaitConnected(t, bNode, "hostA.peer", ctcReconnectBound)
@@ -102,10 +104,14 @@ func TestConfigToolsCluster(t *testing.T) {
 				},
 			},
 			{
+				// The acceptor rejects the wrong key before the initiator
+				// proof verifies, so the record names A by fingerprint and
+				// carries no alias.
 				name: "pairing_failed written by the acceptor",
 				match: func(e *localpb.AuditEvent) bool {
 					return e.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_PAIRING_FAILED &&
-						e.GetActor() == "" && e.GetPeer().GetAlias() == "hostA.peer" &&
+						e.GetActor() == "" && e.GetPeer().GetAlias() == "" &&
+						hex.EncodeToString(e.GetPeer().GetFingerprint()) == aFingerprint &&
 						e.GetDetail() == "key invalid"
 				},
 			},
@@ -324,7 +330,7 @@ func TestConfigToolsCluster(t *testing.T) {
 		// The third host is rejected with the key-invalid reason and neither
 		// side stores the other's identity.
 		rejectedAt := time.Now().Add(-time.Second)
-		pkRejectReason(t, pkConnect(t, cOp, addrA, ctcStaticKeyOne, ""), aNode, rejectedAt, "hostC.peer", "key invalid")
+		pkRejectReason(t, pkConnect(t, cOp, addrA, ctcStaticKeyOne, ""), aNode, cNode, rejectedAt, "key invalid")
 		if bytes.Contains(pkPeersJSON(t, aNode), []byte(cFingerprint)) {
 			t.Fatalf("A's peers.json still contains C's fingerprint %s", cFingerprint)
 		}
@@ -477,7 +483,7 @@ func TestConfigToolsCluster(t *testing.T) {
 		pkConnect(t, aOp, addrB, ctcStaticKeyOne, "").MustOK(t)
 		pkWaitConnected(t, bNode, "hostA.peer", ctcReconnectBound)
 		rejectedAt := time.Now().Add(-time.Second)
-		pkRejectReason(t, pkConnect(t, cOp, addrB, ctcStaticKeyTwo, ""), bNode, rejectedAt, "hostC.peer", "key invalid")
+		pkRejectReason(t, pkConnect(t, cOp, addrB, ctcStaticKeyTwo, ""), bNode, cNode, rejectedAt, "key invalid")
 	})
 }
 

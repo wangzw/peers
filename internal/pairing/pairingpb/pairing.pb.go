@@ -79,7 +79,6 @@ func (PairingRejectReason) EnumDescriptor() ([]byte, []int) {
 type PairRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InitiatorNonce []byte                 `protobuf:"bytes,1,opt,name=initiator_nonce,json=initiatorNonce,proto3" json:"initiator_nonce,omitempty"`
-	InitiatorAlias string                 `protobuf:"bytes,2,opt,name=initiator_alias,json=initiatorAlias,proto3" json:"initiator_alias,omitempty"`
 	LookupTag      []byte                 `protobuf:"bytes,3,opt,name=lookup_tag,json=lookupTag,proto3" json:"lookup_tag,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -120,13 +119,6 @@ func (x *PairRequest) GetInitiatorNonce() []byte {
 		return x.InitiatorNonce
 	}
 	return nil
-}
-
-func (x *PairRequest) GetInitiatorAlias() string {
-	if x != nil {
-		return x.InitiatorAlias
-	}
-	return ""
 }
 
 func (x *PairRequest) GetLookupTag() []byte {
@@ -205,10 +197,11 @@ func (x *PairChallenge) GetProof() []byte {
 }
 
 type PairConfirm struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Proof         []byte                 `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Proof          []byte                 `protobuf:"bytes,1,opt,name=proof,proto3" json:"proof,omitempty"`
+	InitiatorAlias string                 `protobuf:"bytes,2,opt,name=initiator_alias,json=initiatorAlias,proto3" json:"initiator_alias,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PairConfirm) Reset() {
@@ -246,6 +239,13 @@ func (x *PairConfirm) GetProof() []byte {
 		return x.Proof
 	}
 	return nil
+}
+
+func (x *PairConfirm) GetInitiatorAlias() string {
+	if x != nil {
+		return x.InitiatorAlias
+	}
+	return ""
 }
 
 type PairDone struct {
@@ -384,19 +384,19 @@ var File_internal_pairing_pairingpb_pairing_proto protoreflect.FileDescriptor
 
 const file_internal_pairing_pairingpb_pairing_proto_rawDesc = "" +
 	"\n" +
-	"(internal/pairing/pairingpb/pairing.proto\x12\x1ainternal.pairing.pairingpb\"~\n" +
+	"(internal/pairing/pairingpb/pairing.proto\x12\x1ainternal.pairing.pairingpb\"l\n" +
 	"\vPairRequest\x12'\n" +
-	"\x0finitiator_nonce\x18\x01 \x01(\fR\x0einitiatorNonce\x12'\n" +
-	"\x0finitiator_alias\x18\x02 \x01(\tR\x0einitiatorAlias\x12\x1d\n" +
+	"\x0finitiator_nonce\x18\x01 \x01(\fR\x0einitiatorNonce\x12\x1d\n" +
 	"\n" +
-	"lookup_tag\x18\x03 \x01(\fR\tlookupTag\"\xd9\x01\n" +
+	"lookup_tag\x18\x03 \x01(\fR\tlookupTagJ\x04\b\x02\x10\x03R\x0finitiator_alias\"\xd9\x01\n" +
 	"\rPairChallenge\x12'\n" +
 	"\x0fresponder_nonce\x18\x01 \x01(\fR\x0eresponderNonce\x12'\n" +
 	"\x0fresponder_alias\x18\x02 \x01(\tR\x0eresponderAlias\x12`\n" +
 	"\x14advertised_addresses\x18\x03 \x03(\v2-.internal.pairing.pairingpb.AdvertisedAddressR\x13advertisedAddresses\x12\x14\n" +
-	"\x05proof\x18\x04 \x01(\fR\x05proof\"#\n" +
+	"\x05proof\x18\x04 \x01(\fR\x05proof\"L\n" +
 	"\vPairConfirm\x12\x14\n" +
-	"\x05proof\x18\x01 \x01(\fR\x05proof\"\n" +
+	"\x05proof\x18\x01 \x01(\fR\x05proof\x12'\n" +
+	"\x0finitiator_alias\x18\x02 \x01(\tR\x0einitiatorAlias\"\n" +
 	"\n" +
 	"\bPairDone\"U\n" +
 	"\n" +

@@ -611,7 +611,7 @@ func TestConcurrentHandshakesSameKeyOnlyOneSucceeds(t *testing.T) {
 		acceptErr := make(chan error, 1)
 		go func() { acceptErr <- accP.Accept(bConn) }()
 		ni := makeSeq(seed, nonceLength)
-		nr := hsManualChallenge(t, aConn, fp, ni, "dup", key)
+		nr := hsManualChallenge(t, aConn, fp, ni, key)
 		return &attempt{fp: fp, conn: aConn, acceptErr: acceptErr, ni: ni, nr: nr}
 	}
 
@@ -620,7 +620,7 @@ func TestConcurrentHandshakesSameKeyOnlyOneSucceeds(t *testing.T) {
 	first := start(0)
 	second := start(64)
 
-	kind, _ := hsManualConfirm(t, first.conn, key, first.ni, first.nr, first.fp, accP.identity.fingerprint())
+	kind, _ := hsManualConfirm(t, first.conn, key, first.ni, first.nr, first.fp, accP.identity.fingerprint(), "dup")
 	if kind != kindPairDone {
 		t.Fatalf("first reply = %d, want PairDone", kind)
 	}
@@ -633,7 +633,7 @@ func TestConcurrentHandshakesSameKeyOnlyOneSucceeds(t *testing.T) {
 
 	// The key was consumed atomically with the first success, so the second
 	// confirm must be rejected even though its request found the key.
-	kind, payload := hsManualConfirm(t, second.conn, key, second.ni, second.nr, second.fp, accP.identity.fingerprint())
+	kind, payload := hsManualConfirm(t, second.conn, key, second.ni, second.nr, second.fp, accP.identity.fingerprint(), "dup")
 	if kind != kindPairReject {
 		t.Fatalf("second reply = %d, want PairReject", kind)
 	}
@@ -677,7 +677,7 @@ func TestSameFingerprintHandshakesKeepIndependentReservations(t *testing.T) {
 		acceptErr := make(chan error, 1)
 		go func() { acceptErr <- accP.Accept(bConn) }()
 		ni := makeSeq(seed, nonceLength)
-		nr := hsManualChallenge(t, aConn, initiatorFP, ni, "dup", key)
+		nr := hsManualChallenge(t, aConn, initiatorFP, ni, key)
 		return &attempt{conn: aConn, acceptErr: acceptErr, ni: ni, nr: nr}
 	}
 	first := start(0)
@@ -685,7 +685,7 @@ func TestSameFingerprintHandshakesKeepIndependentReservations(t *testing.T) {
 
 	// Both handshakes verified and reserved "dup"; each received PairDone.
 	for _, hs := range []*attempt{first, second} {
-		kind, _ := hsManualConfirm(t, hs.conn, key, hs.ni, hs.nr, initiatorFP, accP.identity.fingerprint())
+		kind, _ := hsManualConfirm(t, hs.conn, key, hs.ni, hs.nr, initiatorFP, accP.identity.fingerprint(), "dup")
 		if kind != kindPairDone {
 			t.Fatalf("reply = %d, want PairDone", kind)
 		}
@@ -839,7 +839,7 @@ func TestRejectAuditUsesVerificationTime(t *testing.T) {
 		go func() { acceptErr <- accP.Accept(bConn) }()
 
 		ni := makeSeq(0, nonceLength)
-		nr := hsManualChallenge(t, aConn, initiatorFP, ni, "intruder", pairingKey)
+		nr := hsManualChallenge(t, aConn, initiatorFP, ni, pairingKey)
 		requestedAt := clk.Now()
 		if removeKey {
 			accP.keys.mu.Lock()
@@ -927,11 +927,10 @@ func TestUnverifiedAliasNotAudited(t *testing.T) {
 
 // hsManualChallenge sends one PairRequest and returns the responder nonce from
 // the PairChallenge. Every wait is bounded by receiveWithTimeout.
-func hsManualChallenge(t *testing.T, conn *hsConn, initiatorFP Fingerprint, ni []byte, alias, key string) []byte {
+func hsManualChallenge(t *testing.T, conn *hsConn, initiatorFP Fingerprint, ni []byte, key string) []byte {
 	t.Helper()
 	request := &pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		InitiatorAlias: alias,
 		LookupTag:      computeHint([]byte(key), ni),
 	}
 	if err := hsSendProto(conn, kindPairRequest, request); err != nil {
@@ -951,11 +950,12 @@ func hsManualChallenge(t *testing.T, conn *hsConn, initiatorFP Fingerprint, ni [
 	return challenge.GetResponderNonce()
 }
 
-// hsManualConfirm sends a correct PairConfirm and returns the reply frame.
-func hsManualConfirm(t *testing.T, conn *hsConn, key string, ni, nr []byte, initiatorFP, acceptorFP Fingerprint) (uint32, []byte) {
+// hsManualConfirm sends a correct PairConfirm, carrying alias as the
+// initiator's self-reported alias, and returns the reply frame.
+func hsManualConfirm(t *testing.T, conn *hsConn, key string, ni, nr []byte, initiatorFP, acceptorFP Fingerprint, alias string) (uint32, []byte) {
 	t.Helper()
 	proof := initiatorProof([]byte(key), ni, nr, initiatorFP, acceptorFP)
-	if err := hsSendProto(conn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof}); err != nil {
+	if err := hsSendProto(conn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof, InitiatorAlias: alias}); err != nil {
 		t.Fatalf("send PairConfirm: %v", err)
 	}
 	kind, payload, err := receiveWithTimeout(conn)
@@ -965,8 +965,10 @@ func hsManualConfirm(t *testing.T, conn *hsConn, key string, ni, nr []byte, init
 	return kind, payload
 }
 
-// hsRequestWithAlias sends one PairRequest carrying alias and returns the error
-// Accept reported.
+// hsRequestWithAlias sends one PairRequest with alias encoded in raw field 2,
+// the field it used to occupy, and returns the error Accept reported. Encoding
+// by number keeps the test meaningful: an acceptor that still reads the alias
+// from the request accepts the field even though the message type reserves it.
 func hsRequestWithAlias(t *testing.T, p *Pairing, alias, key string) error {
 	t.Helper()
 	fp, pub := hsKey(t)
@@ -975,12 +977,14 @@ func hsRequestWithAlias(t *testing.T, p *Pairing, alias, key string) error {
 	go func() { acceptErr <- p.Accept(bConn) }()
 
 	ni := makeSeq(1, nonceLength)
-	request := &pairingpb.PairRequest{
+	request, err := proto.Marshal(&pairingpb.PairRequest{
 		InitiatorNonce: ni,
-		InitiatorAlias: alias,
 		LookupTag:      computeHint([]byte(key), ni),
+	})
+	if err != nil {
+		t.Fatalf("marshal PairRequest: %v", err)
 	}
-	if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
+	if err := hsSendRaw(aConn, kindPairRequest, hsAppendStringField(request, 2, alias)); err != nil {
 		t.Fatalf("send PairRequest: %v", err)
 	}
 	if _, _, err := receiveWithTimeout(aConn); err != nil {

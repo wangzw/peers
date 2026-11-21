@@ -121,7 +121,7 @@ func TestRejectAcceptorAuditsKeyExpired(t *testing.T) {
 
 	rejectErr := make(chan error, 1)
 	go func() {
-		rejectErr <- p.rejectAcceptor(bConn, context.Background(), fp, "intruder", ReasonKeyExpired, clk.Now())
+		rejectErr <- p.rejectAcceptor(bConn, context.Background(), fp, ReasonKeyExpired, clk.Now())
 	}()
 
 	kind, payload, err := receiveWithTimeout(aConn)
@@ -160,5 +160,8 @@ func TestRejectAcceptorAuditsKeyExpired(t *testing.T) {
 	}
 	if events[0].MergeKey != "" {
 		t.Fatalf("audit MergeKey = %q, want empty", events[0].MergeKey)
+	}
+	if events[0].Peer == nil || events[0].Peer.Alias != "" {
+		t.Fatalf("audit peer = %+v, want the fingerprint without the unverified alias", events[0].Peer)
 	}
 }

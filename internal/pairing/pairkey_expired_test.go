@@ -180,7 +180,7 @@ func TestREQBrokerPairing006_UsedAndDiscardedKeysAreNotExpired(t *testing.T) {
 		go func() { acceptErr <- accP.Accept(bConn) }()
 
 		ni := makeSeq(0, nonceLength)
-		hsManualChallenge(t, aConn, initiatorFP, ni, "intruder", key)
+		hsManualChallenge(t, aConn, initiatorFP, ni, key)
 		if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: make([]byte, proofLength)}); err != nil {
 			t.Fatalf("send bad PairConfirm: %v", err)
 		}
@@ -247,7 +247,7 @@ func TestREQBrokerPairing006_KeyExpiresBetweenRequestAndConfirm(t *testing.T) {
 	go func() { acceptErr <- accP.Accept(bConn) }()
 
 	ni := makeSeq(0, nonceLength)
-	nr := hsManualChallenge(t, aConn, initiatorFP, ni, "intruder", key)
+	nr := hsManualChallenge(t, aConn, initiatorFP, ni, key)
 	clk.Advance(2 * time.Second)
 
 	proof := initiatorProof([]byte(key), ni, nr, initiatorFP, accP.identity.fingerprint())

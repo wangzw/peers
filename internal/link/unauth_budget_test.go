@@ -42,7 +42,7 @@ func TestUnauthenticatedReadBudgetClosesLargeFirstFrame(t *testing.T) {
 	c, _ := openTestStream(t, client.Link, addr)
 
 	payload, err := proto.Marshal(&pairingpb.PairRequest{
-		InitiatorAlias: strings.Repeat("a", 1<<20),
+		LookupTag: make([]byte, 1<<20),
 	})
 	if err != nil {
 		t.Fatalf("marshal PairRequest: %v", err)
