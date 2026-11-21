@@ -823,6 +823,125 @@ func TestConfigAuditWindowExpiryFlushesThroughTimer(t *testing.T) {
 	}
 }
 
+// TestConfigAuditTimerEarlyFireRearmsUntilDeadline reproduces a fired timer
+// that is never re-armed: a real timer fires on the monotonic clock, which can
+// reach the scheduled delay a little before the wall-clock deadline. When that
+// early firing expires nothing, it must schedule a new timer for the remaining
+// time. Otherwise the window waits for the next append or Close and a Broker
+// killed in between loses it. No event is appended after the early firing.
+func TestConfigAuditTimerEarlyFireRearmsUntilDeadline(t *testing.T) {
+	log, path, clock, timers, _ := newAuditTestLogAt(t)
+	base := clock.Now()
+	if err := log.append(Event{
+		Time:     base,
+		Event:    EventConnectionRejected,
+		MergeKey: "source:203.0.113.7/32",
+	}); err != nil {
+		t.Fatalf("append connection_rejected: %v", err)
+	}
+
+	// The timer fires one nanosecond before the window's deadline, as a real
+	// monotonic timer may, so nothing is due yet.
+	clock.Advance(auditMergeWindow - time.Nanosecond)
+	timers.fireAll()
+	if records := auditFileRecords(t, path); len(records) != 0 {
+		t.Fatalf("file has %d records before the deadline, want 0", len(records))
+	}
+
+	timers.mu.Lock()
+	armed := append([]time.Duration{}, timers.durations...)
+	timers.mu.Unlock()
+	if len(armed) != 2 {
+		t.Fatalf("early firing armed %d timers in total, want 2", len(armed))
+	}
+	if armed[1] != time.Nanosecond {
+		t.Errorf("re-armed timer delay = %s, want the remaining %s", armed[1], time.Nanosecond)
+	}
+
+	// The deadline passes with no further event. The timer the early firing
+	// must have scheduled has to write the window on its own.
+	clock.Advance(time.Nanosecond)
+	timers.fireAll()
+	records := auditFileRecords(t, path)
+	if len(records) != 1 {
+		t.Fatalf("file has %d records after the deadline with no further events, want 1", len(records))
+	}
+	if !records[0].Time.Equal(base) {
+		t.Errorf("flushed record time = %s, want %s", records[0].Time, base)
+	}
+}
+
+// TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule reproduces a callback
+// running after its timer was replaced. The fake timer's Stop is a no-op, so
+// fireAll still reaches the callback of a timer that stopTimerLocked has since
+// replaced. Opening a window with an earlier deadline replaces the timer and
+// moves to the next generation. Firing the stale callback must do nothing, and
+// firing the current one must re-arm exactly one timer for the remaining
+// window. Without the generation comparison the stale callback re-arms a timer
+// of its own, so two new timers appear instead of one.
+func TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule(t *testing.T) {
+	log, path, clock, timers, _ := newAuditTestLogAt(t)
+	base := clock.Now()
+
+	// Open a window whose deadline is a minute later than the next one.
+	if err := log.append(Event{
+		Time:     base.Add(time.Minute),
+		Event:    EventConnectionRejected,
+		MergeKey: "source:203.0.113.10/32",
+	}); err != nil {
+		t.Fatalf("append the later window: %v", err)
+	}
+	// A window opened at the current time has an earlier deadline, so arming it
+	// replaces the first timer and moves to the next generation.
+	if err := log.append(Event{
+		Time:     base,
+		Event:    EventConnectionRejected,
+		MergeKey: "source:203.0.113.11/32",
+	}); err != nil {
+		t.Fatalf("append the earlier window: %v", err)
+	}
+
+	timers.mu.Lock()
+	armed := append([]time.Duration{}, timers.durations...)
+	timers.mu.Unlock()
+	if len(armed) != 2 {
+		t.Fatalf("scheduling armed %d timers, want 2", len(armed))
+	}
+	if armed[0] != auditMergeWindow+time.Minute {
+		t.Errorf("first timer delay = %s, want %s", armed[0], auditMergeWindow+time.Minute)
+	}
+	if armed[1] != auditMergeWindow {
+		t.Errorf("replacement timer delay = %s, want %s", armed[1], auditMergeWindow)
+	}
+
+	// Fire every callback the fake timers hold: the stale one from the replaced
+	// timer and the current one. The clock has not moved, so nothing is due.
+	timers.fireAll()
+
+	if records := auditFileRecords(t, path); len(records) != 0 {
+		t.Fatalf("stale callback flushed %d records before the deadline, want 0", len(records))
+	}
+	timers.mu.Lock()
+	armed = append([]time.Duration{}, timers.durations...)
+	timers.mu.Unlock()
+	// Only the current callback may re-arm, keeping the same remaining delay;
+	// the stale callback must add none.
+	if len(armed) != 3 {
+		t.Fatalf("firing the stale and current callbacks armed %d timers in total, want 3 (one re-arm)",
+			len(armed))
+	}
+	if armed[2] != auditMergeWindow {
+		t.Errorf("re-armed timer delay = %s, want %s", armed[2], auditMergeWindow)
+	}
+	log.mu.Lock()
+	due := log.timerDue
+	hasTimer := log.timer != nil
+	log.mu.Unlock()
+	if !hasTimer || !due.Equal(base.Add(auditMergeWindow)) {
+		t.Fatalf("after firing, timer due = %s (armed %v), want %s", due, hasTimer, base.Add(auditMergeWindow))
+	}
+}
+
 // TestConfigAuditReadMergesFileAndPendingInTimeOrder checks that a pending
 // record whose window opened before a written record still comes first.
 func TestConfigAuditReadMergesFileAndPendingInTimeOrder(t *testing.T) {

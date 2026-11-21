@@ -167,6 +167,10 @@ type auditLog struct {
 	expiry   auditExpiryHeap
 	timer    auditTimer
 	timerDue time.Time
+	// timerGen identifies the current timer. A callback fires only for the
+	// generation it was armed with, so a callback from a timer that has since
+	// been stopped or replaced does nothing.
+	timerGen uint64
 
 	// scannedWindows counts the pending windows examined while deciding what
 	// has expired. It is guarded by mu and exists so a test can prove that an
@@ -448,26 +452,39 @@ func (a *auditLog) rescheduleLocked() {
 	if delay < 0 {
 		delay = 0
 	}
-	a.timer = a.afterFunc(delay, a.expire)
+	gen := a.timerGen
+	a.timer = a.afterFunc(delay, func() { a.expire(gen) })
 	a.timerDue = earliest
 }
 
+// stopTimerLocked drops the current timer and moves to the next generation, so
+// any callback it may already have started is ignored when it arrives.
 func (a *auditLog) stopTimerLocked() {
 	if a.timer != nil {
 		a.timer.Stop()
 	}
 	a.timer = nil
 	a.timerDue = time.Time{}
+	a.timerGen++
 }
 
-// expire is the timer callback. It takes the audit lock because the timer runs
-// on its own goroutine.
-func (a *auditLog) expire() {
+// expire is the timer callback for generation gen. A timer fires on the
+// monotonic clock, which can reach the delay a little before the wall-clock
+// deadline, so firing does not guarantee that a window is due. The fired handle
+// is cleared before the flush for that reason: if no window is due yet,
+// flushExpiredLocked ends in rescheduleLocked, which must see no timer and arm
+// one for the remaining time. Otherwise the window would wait for the next
+// append or Close. A callback from a timer that was stopped or replaced in the
+// meantime carries a stale generation and returns untouched. It takes the audit
+// lock because the timer runs on its own goroutine.
+func (a *auditLog) expire(gen uint64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.closed {
+	if a.closed || gen != a.timerGen {
 		return
 	}
+	a.timer = nil
+	a.timerDue = time.Time{}
 	a.flushExpiredLocked(a.now())
 }
 

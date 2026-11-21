@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - The link protocol version is now 2, a breaking change: a Broker of this version cannot establish a link with a v0.5.0 or earlier Broker, and the other side is reported as version-incompatible with its version. The digest fields of `TopicDigests`, `Roster` and `RosterDelta` changed meaning because each digest now binds the sender's fingerprint; see the Security entry below.
 - The configuration file no longer accepts YAML anchors and aliases, a breaking change: an existing file that uses anchors fails to load until they are removed. Mappings or sequences nested deeper than 32 levels are now parse errors, and a file larger than 1 MiB is refused before it is parsed.
 
+### Fixed
+
+- The audit log no longer leaves a merge window in memory when its expiry timer fires a little before the wall-clock deadline. Such a firing expires nothing and used to leave no timer armed, so the window was written only on the next append or `Close`, or lost if the Broker was killed first. It now re-arms a timer for the remaining time and is written once the deadline passes, without waiting for another event.
+
 ### Security
 
 - A host that opens many unauthenticated connections can no longer evict the connections of other sources or of paired peers. Unauthenticated connections are limited per source and, once a peer's fingerprint is known, per fingerprint; the bytes and HTTP/2 header size a connection may send before authentication are bounded.
