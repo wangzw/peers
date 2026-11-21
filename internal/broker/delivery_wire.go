@@ -228,13 +228,14 @@ func (deliveryAssembler) Assemble(_ context.Context, cfg ConfigSource, deps *Dep
 	})
 	d.register()
 	deps.Delivery = d
-	return []Component{&deliveryComponent{agents: agents}}, nil
+	return []Component{&deliveryComponent{agents: agents, inbound: d.inbound}}, nil
 }
 
 // deliveryComponent attaches the Broker to the delivery's agent table adapter
 // when the Broker has been constructed.
 type deliveryComponent struct {
-	agents *agentTableAdapter
+	agents  *agentTableAdapter
+	inbound *inboundLimiter
 }
 
 // Name is the component's name in startup errors.
@@ -243,7 +244,16 @@ func (*deliveryComponent) Name() string { return "delivery" }
 // Start attaches the Broker. It runs before the link starts and before the
 // local socket is served, so no delivery can observe a nil Broker.
 func (c *deliveryComponent) Start(_ context.Context, b *Broker) error {
+	if b == nil {
+		// The wiring test starts the component without a Broker to check the
+		// request handler is installed before the link listens.
+		return nil
+	}
 	c.agents.setBroker(b)
+	// A target Agent that leaves the table cannot receive another message;
+	// dropping its buckets keeps the quota table from growing with every name
+	// that ever existed.
+	b.onUnregister(func(id AgentID) { c.inbound.dropTarget(string(id)) })
 	return nil
 }
 

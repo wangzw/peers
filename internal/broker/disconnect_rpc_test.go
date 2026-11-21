@@ -235,3 +235,30 @@ func TestResolvePeerRef(t *testing.T) {
 		})
 	}
 }
+
+// TestDisconnectForgetsInboundBuckets checks that unpairing a peer is what
+// clears its inbound quota. A link drop keeps the buckets so a reconnect cannot
+// refresh them; unpairing starts the peer over.
+func TestDisconnectForgetsInboundBuckets(t *testing.T) {
+	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
+	l := &fakePeerLinks{}
+	tb := newTestBroker(t, withPeers(p, l))
+	d := newDelivery(deliveryDeps{})
+	tb.b.deps.Delivery = d
+
+	for i := 0; i < inboundLimitBurst; i++ {
+		if ok, _ := d.inbound.take(fp(2), "target"); !ok {
+			t.Fatalf("take %d failed, want a full burst", i)
+		}
+	}
+	if ok, _ := d.inbound.take(fp(2), "target"); ok {
+		t.Fatal("take after the burst succeeded, want a refusal")
+	}
+
+	if _, err := tb.client.Disconnect(context.Background(), &localpb.DisconnectRequest{Broker: "hostB"}); err != nil {
+		t.Fatalf("Disconnect: %v", err)
+	}
+	if ok, _ := d.inbound.take(fp(2), "target"); !ok {
+		t.Fatal("unpairing the peer did not forget its buckets")
+	}
+}

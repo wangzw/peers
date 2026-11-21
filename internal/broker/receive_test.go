@@ -1122,9 +1122,14 @@ func TestReceivePerSourceQuota(t *testing.T) {
 
 	// The documented per-source limit (design-broker.md, dedupe table).
 	const perSource = 4096
+	// This case fills the dedupe table, not the inbound quota: advance the
+	// quota clock past one interval per message so every write gets a token.
+	clock := &dedupeFakeClock{now: time.Unix(0, 0)}
+	f.d.inbound = newInboundLimiter(clock.Now)
 	for i := 0; i < perSource; i++ {
 		frame := f.requestFrameWithID(senderA, target, "hello", time.Second, receiveMsgIDN(i))
 		wantDelivered(t, f.handle(frame))
+		clock.Advance(inboundLimitInterval)
 	}
 
 	over := f.requestFrameWithID(senderA, target, "hello", time.Second, receiveMsgIDN(perSource))

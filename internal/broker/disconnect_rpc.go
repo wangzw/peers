@@ -61,6 +61,12 @@ func (b *Broker) Disconnect(ctx context.Context, req *localpb.DisconnectRequest)
 	if err := b.deps.Pairing.Unpair(fingerprint); err != nil {
 		return nil, toStatus(unpairError(err))
 	}
+	// Unpairing is the only event that forgets a peer's inbound buckets: its
+	// next pairing starts with a fresh quota. A dropped link deliberately does
+	// not, or the peer could reconnect to spend another burst.
+	if b.deps.Delivery != nil {
+		b.deps.Delivery.inbound.dropPeer(fingerprint)
+	}
 
 	b.deps.Config.Audit(unpairedEvent(actor, fingerprint, alias))
 	b.log.Info(EvPeerUnpaired, "fingerprint", fingerprint.String(), "alias", alias)

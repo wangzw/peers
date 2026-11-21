@@ -496,8 +496,9 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 2. 未命中时，发送方的名字与消歧标识必须与该链路对端发来的、处在当前交集内的某条成员条目的名字与消歧标识完全相同，否则以 `not_visible` 拒绝，不进去重表。投递请求帧与成员变化的状态帧在接收方不保证顺序（[link](design-link.md)），对端刚改了消歧标识而成员变化尚未处理时，这条投递会被拒；消歧标识只在对端 Broker 的 Agent 增减时变化，这个窗口很短，代价被接受。通过核对后占位为处理中：占位是原子的“未命中则占位”，同一标识的两个并发请求只有一个执行写入。该来源已有 4096 条时以 `quota_exceeded` 拒绝，说明为 `Not sent: this Broker holds too many recent messages from your Broker`，全表已满时以 `inbox_unwritable` 拒绝，说明为 `Not sent: the Broker is temporarily holding too many messages`，两种情形都不写入。查表、核对与占位之间允许并发。
 3. 按上面的规则解析目标，歧义只在对发送方可见的 Agent 中判定，使发送方得不到它看不见的 Agent 的信息。目标不存在或不可见时，说明中的地址只写名字部分（名字，需要时附 ` [消歧标识]`），后接 `on this Broker`，不写别名：接收方不知道发送方对它使用的别名。
 4. 拼出署名，即发送方在接收方视角下的 Agent 地址：名字，需要时附 ` [消歧标识]`，`@`，本方对该对端的生效别名。名字先经 `inbox` 的 `CleanSignature` 清洗，署名使用清洗后的名字；原始名字与清洗结果不同，或发送方的名字在其 Broker 上不唯一时，附消歧标识（`REQ-agent-messaging-029`）。这里的“不唯一”以该链路对端发来的、处在当前交集内的成员条目判定，按名字计不同的消歧标识数。整个署名要不超过 64 个码点，并不超过 200 字节；放不下时从末尾截短名字，并必须附消歧标识，消歧标识与别名保持完整（`REQ-agent-messaging-037`）。生成的署名经 `CleanSignature` 后必须与原文完全相同，接收方因此总能识别出发送方。
-5. 由剩余预算算出本地的截止时刻，为当前时刻加上剩余预算与本机 `send.request_timeout` 中较小者；剩余预算不大于 0 时不写入，结果 `inbox_unwritable`。重读目标的会话记录。在截止时刻之前调用 `inbox` 写入，报告未写入时按 `send.inbox_retries` 重试；过了截止时刻不再写入。这次处理不随链路断开而取消，一直执行到得出结果或到达截止时刻，结果照常记入去重表，发送方重发时得到的是这个结果。
-6. `inbox` 报告已写入时结果为成功，报告不确定时结果为 `delivery_unknown`，其余为 `inbox_unwritable`。结果记入去重表后返回。
+5. 由剩余预算算出本地的截止时刻，为当前时刻加上剩余预算与本机 `send.request_timeout` 中较小者；剩余预算不大于 0 时不写入，结果 `inbox_unwritable`。重读目标的会话记录；目标已结束时不写入，结果 `inbox_unwritable`。
+6. 取一个令牌。每个（来源对端指纹，目标 Agent）一个令牌桶，容量 10，每 10 秒补充 1 个；没有令牌时不写入，结果 `quota_exceeded`，说明为 `Not sent: <目标名字> is receiving too many messages from your Broker; try again in <秒数> seconds`，秒数向上取整，为 1 时单位写作 `second`。一条消息只取一次，下面的 `send.inbox_retries` 重试不再取。令牌桶只在内存中，补满的桶等同于没有；目标 Agent 结束或该对端被解除配对时删除相应的桶，链路断开时不删除，对端重连因此不能刷新额度。表的大小因此不超过已配对的对端数与本机 Agent 数的乘积。在截止时刻之前调用 `inbox` 写入，报告未写入时按 `send.inbox_retries` 重试；过了截止时刻不再写入。这次处理不随链路断开而取消，一直执行到得出结果或到达截止时刻，结果照常记入去重表，发送方重发时得到的是这个结果。本机发送不经这里，不受这条限额约束。
+7. `inbox` 报告已写入时结果为成功，报告不确定时结果为 `delivery_unknown`，其余为 `inbox_unwritable`。结果记入去重表后返回。
 
 投递请求的正文是一个 A2A 的 Message，只含一个文本部分。它的 `message_id` 复用投递请求的消息标识，`role` 取 `ROLE_USER`。接收方取出文本部分作为要写入会话的正文。
 
@@ -708,7 +709,7 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | Agent 标识无效或不属于调用方账户；登记时找不到会话记录、会话名不可用、登记首帧没有 socket 路径、socket 不属于调用方账户，或仅诊断降级时登记被拒 | `not_registered` | 否，等待中的登记随注册表的变化继续 |
 | 链路未建立，请求一次也没有发出 | `peer_unreachable` | 本方是拨号方时重试，是接受方时在预算内等待对方连入；用尽后返回 |
 | `inbox` 确定没有写入 | `inbox_unwritable` | 是，由目标所在的 Broker 重试，用尽后返回 |
-| 对端发来的投递占满该来源的去重表份额 | `quota_exceeded` | 否 |
+| 对端发来的投递占满该来源的去重表份额，或对端发往同一会话超出额度 | `quota_exceeded` | 否 |
 | 请求发出后没有确定应答，或 `inbox` 报告不确定 | `delivery_unknown` | 链路重建后重发；`inbox` 不确定时不重试 |
 | 对端返回的集合内错误 | 保留原错误码，说明由本机以 `Broker <别名> said: "..."` 引用转述 | 否 |
 | 对端返回的集合外错误 | `delivery_unknown`，说明为本机固定文字 | 否 |

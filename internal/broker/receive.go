@@ -201,6 +201,19 @@ func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverR
 		return errorRecord(notSent(localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE, "%s has ended", cands[idx].Name))
 	}
 
+	// The quota is taken once per message, after every check has passed and
+	// before the write. The inbox retries below share this one token.
+	if ok, retryAfter := d.inbound.take(peer, target.ID); !ok {
+		secs := inboundRetrySeconds(retryAfter)
+		unit := "seconds"
+		if secs == 1 {
+			unit = "second"
+		}
+		return errorRecord(notSent(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+			"%s is receiving too many messages from your Broker; try again in %d %s",
+			target.Name, secs, unit))
+	}
+
 	switch d.writeInbox(ctx, deadline, target, sig, req.Text, req.MessageID) {
 	case written:
 		return deliveredRecord()

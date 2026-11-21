@@ -14,6 +14,7 @@ import (
 	"github.com/wangzw/peers/internal/broker/deliverpb"
 	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/link"
+	"github.com/wangzw/peers/internal/testkit/fakesession"
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
@@ -371,4 +372,40 @@ func TestDefaultAssemblersIncludesDelivery(t *testing.T) {
 	if deliveryIndex < topicIndex {
 		t.Fatalf("delivery assembler at %d runs before topic at %d", deliveryIndex, topicIndex)
 	}
+}
+
+// TestUnregisterForgetsTargetBuckets checks that the delivery component wires
+// an Agent leaving the table to the inbound limiter: its buckets are dropped, so
+// the quota table does not grow with every Agent that ever existed. Without the
+// wiring, an ended Agent keeps its exhausted bucket forever.
+func TestUnregisterForgetsTargetBuckets(t *testing.T) {
+	tb := newTestBroker(t)
+	lim := newInboundLimiter(nil)
+	comp := &deliveryComponent{agents: &agentTableAdapter{}, inbound: lim}
+	if err := comp.Start(context.Background(), tb.b); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	fake := fakesession.New(t, fakesession.Options{Name: "leaver"})
+	stream := startRegistration(t, tb, fake)
+	stream.complete(3 * time.Second)
+	id := mustAgentID(t, fake.SocketPath())
+
+	peer := fakenetPeer(20)
+	for i := 0; i < inboundLimitBurst; i++ {
+		if ok, _ := lim.take(peer, string(id)); !ok {
+			t.Fatalf("take %d for the registered Agent failed, want a full burst", i)
+		}
+	}
+	if ok, _ := lim.take(peer, string(id)); ok {
+		t.Fatal("take after the burst succeeded, want a refusal")
+	}
+
+	// The Agent leaves the table. The component's hook must drop its buckets,
+	// so the next take starts a fresh one instead of staying refused.
+	stream.cancel()
+	waitForReg(t, "the Agent's inbound buckets to be dropped", func() bool {
+		ok, _ := lim.take(peer, string(id))
+		return ok
+	})
 }

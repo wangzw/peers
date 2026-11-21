@@ -92,7 +92,7 @@ type deliveryDeps struct {
 	Peers       peerTable
 	Link        deliveryLink
 	Settings    settingsSource
-	Clock       func() time.Time // dedupe expiry only
+	Clock       func() time.Time // dedupe expiry and inbound quota refill
 	WaiterClock Clock            // link waiter timing; nil uses SystemClock
 	NewID       func() string    // nil means newMessageID
 	Log         *slog.Logger
@@ -114,8 +114,9 @@ type delivery struct {
 	deps   deliveryDeps
 	toPeer func(ctx context.Context, r peerSend) error
 
-	dedupe *dedupeTable
-	waiter *linkWaiter
+	dedupe  *dedupeTable
+	inbound *inboundLimiter
+	waiter  *linkWaiter
 
 	// lifecycle is canceled by Run before link Close. A receive handler
 	// processes on a child of it, so a blocked inbox write cannot hold link
@@ -136,7 +137,10 @@ func newDelivery(deps deliveryDeps) *delivery {
 	d.dedupe = newDedupeTable(clock, func() time.Duration {
 		return d.deps.Settings.Send().DedupeWindow
 	})
+	d.inbound = newInboundLimiter(clock)
 	d.waiter = newLinkWaiter(deps.Link, deps.WaiterClock)
+	// A dropped link does not reset the quota: a peer could reconnect to spend
+	// another burst. Only unpairing the peer forgets its buckets.
 	d.toPeer = d.sendToPeer
 	return d
 }
