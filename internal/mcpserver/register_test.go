@@ -41,7 +41,14 @@ type regRun struct {
 // Register frame to arrive at the fake Broker.
 func startRegRun(t *testing.T, first *localpb.RegisterRequest, onComplete completeFunc) *regRun {
 	t.Helper()
-	srv := fakelocal.Start(t, fakelocal.SocketPath(t), fakelocal.Handlers{})
+	return startRegRunOn(t, fakelocal.Handlers{}, first, onComplete)
+}
+
+// startRegRunOn is startRegRun with the fake Broker's handlers supplied by the
+// caller, for tests that need the Broker side to answer topic calls.
+func startRegRunOn(t *testing.T, h fakelocal.Handlers, first *localpb.RegisterRequest, onComplete completeFunc) *regRun {
+	t.Helper()
+	srv := fakelocal.Start(t, fakelocal.SocketPath(t), h)
 	client := regClient(t, srv.Path())
 	st := &statusStore{}
 	ctx, cancel := context.WithCancel(context.Background())

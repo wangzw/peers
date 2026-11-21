@@ -10,8 +10,9 @@ import (
 
 // completeFunc is called after every registration_complete event, in a
 // goroutine of its own, so that joining topics never delays reading the
-// Register stream. Calls are serialized: a completion that arrives while the
-// previous one is still running waits for it.
+// Register stream. Calls are serialized, and a newer registration cancels the
+// context of the one it replaces, so the previous call stops instead of
+// delaying the new one.
 type completeFunc func(ctx context.Context, c localpb.LocalClient, agentID string, autoJoin bool)
 
 // runRegistration opens Register on c, sends first, and processes events until
@@ -21,6 +22,19 @@ func runRegistration(ctx context.Context, c localpb.LocalClient, first *localpb.
 	st *statusStore, onComplete completeFunc, log *slog.Logger) error {
 
 	streamCtx, cancel := context.WithCancel(ctx)
+	// regCtx is the context of the registration that is currently valid, not of
+	// the stream: a newer registration_complete or a not_registered event on
+	// the same stream replaces the registration, so the restore started for the
+	// previous one has to stop instead of retrying with an agent identity the
+	// Broker no longer accepts. Only the goroutine reading the stream touches
+	// regCancel, so it needs no lock.
+	var regCancel context.CancelFunc
+	stopGeneration := func() {
+		if regCancel != nil {
+			regCancel()
+			regCancel = nil
+		}
+	}
 	// Deferred in this order so that cancel runs first, then wg.Wait, then the
 	// state is cleared: every onComplete sees its ctx cancelled before we wait
 	// for it, and no stale identity survives after we return.
@@ -31,6 +45,7 @@ func runRegistration(ctx context.Context, c localpb.LocalClient, first *localpb.
 		// completion and before clearing the identity. A tool call while the
 		// completion finishes must be told the connection is gone and
 		// reconnecting, not that registration is still in progress.
+		stopGeneration()
 		loopSetStatus(st, PhaseUnavailable, loopLostText, "", nil)
 		wg.Wait()
 	}()
@@ -70,15 +85,23 @@ func runRegistration(ctx context.Context, c localpb.LocalClient, first *localpb.
 				s.NotRegisteredDetail = ""
 			})
 			autoJoin := complete.GetAutoJoin()
+			// A new registration replaces the previous one, so its restore stops
+			// now instead of holding the next completion behind an endless retry.
+			stopGeneration()
+			regCtx, cancelReg := context.WithCancel(streamCtx)
+			regCancel = cancelReg
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				runCompletion(streamCtx, serial, func() {
-					onComplete(streamCtx, c, agentID, autoJoin)
+				runCompletion(regCtx, serial, func() {
+					onComplete(regCtx, c, agentID, autoJoin)
 				})
 			}()
 
 		case *localpb.RegisterResponse_NotRegistered:
+			// The Broker revoked this registration on the stream. No restore may
+			// keep joining as the revoked identity until the next completion.
+			stopGeneration()
 			reason := event.NotRegistered.GetReason()
 			detail := event.NotRegistered.GetDetail()
 			st.Update(func(s *Status) {
@@ -106,19 +129,20 @@ func runRegistration(ctx context.Context, c localpb.LocalClient, first *localpb.
 	}
 }
 
-// runCompletion runs f once the serial slot is free, unless the stream context
-// is done first. The slot keeps two completions from running at once.
-func runCompletion(streamCtx context.Context, serial chan struct{}, f func()) {
+// runCompletion runs f once the serial slot is free, unless the registration
+// context is done first. The slot keeps two completions from running at once.
+func runCompletion(regCtx context.Context, serial chan struct{}, f func()) {
 	select {
 	case serial <- struct{}{}:
-	case <-streamCtx.Done():
+	case <-regCtx.Done():
 		return
 	}
 	defer func() { <-serial }()
-	if streamCtx.Err() != nil {
+	if regCtx.Err() != nil {
 		// The cancellation can arrive while the previous completion still holds
 		// the slot; both select cases are then ready at once, and the send case
-		// may win. Do not run the callback for a connection that is gone.
+		// may win. Do not run the callback for a registration that is gone or
+		// has been replaced.
 		return
 	}
 	f()
