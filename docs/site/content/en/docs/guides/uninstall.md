@@ -18,6 +18,8 @@ sudo peers uninstall
 
 The account that runs the command decides the level. Root removes the system-level installation. Another account removes its own user-level installation; when the host has only the system-level installation, the command asks whether to remove it and runs `sudo` when you answer `y`. When an ordinary account has both levels installed, it removes the user-level one and then says how to remove the system-level one.
 
+The uninstall also removes the shell completion files and man pages that the install script wrote.
+
 ## Keep or delete the data
 
 The command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them unless you answer `y`. Without a terminal, add `--yes`: it skips the question and keeps the data, and together with `--purge` it deletes the data. Without `--yes` the command exits with code 1. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) describes `--purge` and the rest of the behaviour.

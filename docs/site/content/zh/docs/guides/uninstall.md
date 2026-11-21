@@ -18,6 +18,8 @@ sudo peers uninstall
 
 作用的级别按执行命令的账户确定。root 卸载系统级安装；其他账户卸载自己的用户级安装；主机上只有系统级安装时，命令询问是否卸载它，回答 `y` 后经 `sudo` 完成卸载。普通账户两个级别都装了时，命令卸载用户级安装，然后说明怎样卸载系统级安装。
 
+卸载还会删除安装脚本在安装时写入的补全文件与 man 页。
+
 ## 保留还是删除数据
 
 命令询问 `Also remove configuration, identity, audit and service logs? [y/N]`，除非回答 `y`，这些数据都会保留。没有终端时要加 `--yes`：它跳过询问并保留数据，与 `--purge` 同用则删除数据；不加 `--yes` 时命令以退出码 1 结束。[`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) 说明 `--purge` 与其余行为。

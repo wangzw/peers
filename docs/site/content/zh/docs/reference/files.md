@@ -18,7 +18,7 @@ Broker 把配置、身份、对端表、名录和审计日志放在固定位置�
 | `/tmp/peers-<uid>/broker.sock` | 本机 socket，权限 `0600`。 |
 | `/tmp/peers-<uid>/broker.lock` | 账户锁，保证每个账户至多一个 Broker。 |
 
-`<uid>` 是账户的数字 ID。运行时目录权限为 `0700`。身份文件在 Broker 第一次启动时创建；`peers.json` 和 `directory.json` 在第一次有内容需要保存时出现。以 root 运行用户级 Broker 时（例如 root 在终端里启动的那一个），运行时目录是 Linux 上的 `/run/peers`、macOS 上的 `/var/run/peers`，与系统级 Broker 相同。不经 `service install` 直接运行 Broker 时不会生成配置文件；文件不存在时，全部键都取默认值。
+`<uid>` 是账户的数字 ID。运行时目录权限为 `0700`。身份文件在 Broker 第一次启动时创建；`peers.json` 和 `directory.json` 在第一次有内容需要保存时出现。以 root 运行用户级 Broker 时（例如 root 在终端里用 `peers service run --user` 启动的那一个），运行时目录是 Linux 上的 `/run/peers`、macOS 上的 `/var/run/peers`，与系统级 Broker 相同。不经 `service install` 直接运行 Broker 时不会生成配置文件；文件不存在时，全部键都取默认值。
 
 ## 系统级 Broker
 
@@ -46,6 +46,21 @@ Broker 把配置、身份、对端表、名录和审计日志放在固定位置�
 | Linux | 系统级 | `/etc/systemd/system/peers.service` |
 | macOS | 用户级 | `~/Library/LaunchAgents/io.github.wangzw.peers.plist` |
 | macOS | 系统级 | `/Library/LaunchDaemons/io.github.wangzw.peers.plist` |
+
+## 补全与 man 页
+
+安装脚本写入 shell 补全，系统级安装还会写入 man 页：
+
+| 级别 | 路径 | 内容 |
+|---|---|---|
+| 用户级 | `~/.local/share/bash-completion/completions/peers` | bash 补全。 |
+| 用户级 | `~/.config/fish/completions/peers.fish` | fish 补全，主机装有 fish 时才写入。 |
+| 系统级 | `/usr/local/share/bash-completion/completions/peers` | bash 补全。 |
+| 系统级 | `/usr/local/share/zsh/site-functions/_peers` | zsh 补全。 |
+| 系统级 | `/usr/local/share/fish/vendor_completions.d/peers.fish` | fish 补全，主机装有 fish 时才写入。 |
+| 系统级 | `/usr/local/share/man/man1/peers.1` 与 `peers-*.1` | `peers` 的 man 页，帮助里列出的每个命令另有一页。 |
+
+用户级安装不装 zsh 补全；`install.sh` 会打印手动启用它的命令。
 
 ## 日志
 

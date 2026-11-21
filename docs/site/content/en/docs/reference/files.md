@@ -18,7 +18,7 @@ The Broker keeps its configuration, identity, peer table, directory and audit lo
 | `/tmp/peers-<uid>/broker.sock` | Local socket, mode `0600`. |
 | `/tmp/peers-<uid>/broker.lock` | Account lock that allows one Broker per account. |
 
-`<uid>` is the numeric account ID. The runtime directory is mode `0700`. The identity files are created at the Broker's first start; `peers.json` and `directory.json` appear when the Broker first has something to store. When a user Broker runs as root (for example one that root started in a terminal), the runtime directory is `/run/peers` on Linux or `/var/run/peers` on macOS, the same directory the system Broker uses. Running the Broker directly without `service install` does not generate the configuration file; when the file does not exist, every key takes its default value.
+`<uid>` is the numeric account ID. The runtime directory is mode `0700`. The identity files are created at the Broker's first start; `peers.json` and `directory.json` appear when the Broker first has something to store. When a user Broker runs as root (for example one that root started with `peers service run --user` in a terminal), the runtime directory is `/run/peers` on Linux or `/var/run/peers` on macOS, the same directory the system Broker uses. Running the Broker directly without `service install` does not generate the configuration file; when the file does not exist, every key takes its default value.
 
 ## System-level Broker
 
@@ -46,6 +46,21 @@ The runtime directory is mode `0755`. The socket's group and mode come from `bro
 | Linux | system | `/etc/systemd/system/peers.service` |
 | macOS | user | `~/Library/LaunchAgents/io.github.wangzw.peers.plist` |
 | macOS | system | `/Library/LaunchDaemons/io.github.wangzw.peers.plist` |
+
+## Shell completions and man pages
+
+The install script writes the shell completions, and a system-level install also writes the man pages:
+
+| Level | Path | Contents |
+|---|---|---|
+| User | `~/.local/share/bash-completion/completions/peers` | Bash completion. |
+| User | `~/.config/fish/completions/peers.fish` | Fish completion, written only when fish is installed. |
+| System | `/usr/local/share/bash-completion/completions/peers` | Bash completion. |
+| System | `/usr/local/share/zsh/site-functions/_peers` | Zsh completion. |
+| System | `/usr/local/share/fish/vendor_completions.d/peers.fish` | Fish completion, written only when fish is installed. |
+| System | `/usr/local/share/man/man1/peers.1` and `peers-*.1` | The man page for `peers`, plus one page for each command in the help. |
+
+The user level does not install a zsh completion; `install.sh` prints the command that enables one by hand.
 
 ## Logs
 

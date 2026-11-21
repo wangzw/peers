@@ -107,6 +107,14 @@ macOS 上，脚本自己清除二进制上的隔离属性，所以用浏览器�
 
 系统级安装要求二进制所在目录及其每一级上级目录属主为 root，组与其他人都不可写。装了 Homebrew 的 Intel Mac 上，`/usr/local/bin` 属于你的账户，安装会被拒绝；先用 `sudo mkdir -p <dir>` 建一个 root 所有的目录，再用 `--prefix` 指定它。
 
+## 补全与 man 页
+
+安装脚本用刚装好的二进制为 `peers` 写入 shell 补全。系统级安装装好 bash、zsh 与 fish 的补全；用户级安装装好 bash 与 fish 的补全，并打印手动启用 zsh 补全的命令。主机上没有 fish 时，两个级别都不装 fish 补全。
+
+也可以用 `peers completion <shell>` 自己生成 shell 补全脚本，写进你的 shell 读取补全的目录；支持 `bash`、`zsh`、`fish` 与 `powershell`。
+
+系统级安装还会把 man 页写入 `/usr/local/share/man/man1`，可以用 `man peers` 查看。man 页也随发布包分发。
+
 ## 安装输出
 
 安装成功的汇总以 `peers <version> installed (<level>, starts at <login|boot>)` 开头；升级时在这之前先输出 `upgraded from <version>`。带 `--no-service` 时，汇总以 `peers <version> installed (no service)` 开头。汇总给出级别、二进制路径、版本、配置文件路径、运行日志位置、审计日志路径，以及启动、停止、重启与卸载 Broker 的命令。系统级安装的启动、停止、重启命令带 `sudo`。[文件与路径]({{< relref "/docs/reference/files" >}})列出配置、运行日志、审计日志与运行时目录的路径。

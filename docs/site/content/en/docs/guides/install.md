@@ -107,6 +107,14 @@ On macOS, the script clears the quarantine attribute from the binary itself, so 
 
 A system-level installation requires the binary's directory and every directory above it to be owned by root and not writable by group or others. On an Intel Mac with Homebrew, `/usr/local/bin` belongs to your account, so the installation is refused; create a root-owned directory with `sudo mkdir -p <dir>` and pass it with `--prefix` instead.
 
+## Shell completions and man pages
+
+The install script writes shell completions for `peers` from the installed binary. At the system level it installs the bash, zsh and fish completions; at the user level it installs the bash and fish ones and prints the command that enables the zsh completion by hand. The fish completion is installed only when `fish` is on the host, at either level.
+
+To generate a completion script yourself, run `peers completion <shell>` and write its output where your shell reads completions; `bash`, `zsh`, `fish` and `powershell` are supported.
+
+A system-level install also writes the man pages into `/usr/local/share/man/man1`, so `man peers` works. The man pages are part of the release archive.
+
 ## Installation output
 
 A successful installation's summary begins with `peers <version> installed (<level>, starts at <login|boot>)`, and an upgrade prints `upgraded from <version>` before it. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path, and the commands to start, stop, restart and uninstall the Broker. The start, stop and restart commands use `sudo` for a system-level installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
