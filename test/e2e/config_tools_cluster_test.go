@@ -219,6 +219,49 @@ func TestConfigToolsCluster(t *testing.T) {
 		}
 	})
 
+	// AuditHasNoSecretsTerminalConnect covers the other way a pairing key
+	// reaches a Broker: as the --key argument of the terminal command. The
+	// key is therefore in this process's argv, which is what makes a leak
+	// through the terminal path worth checking on its own.
+	t.Run("AuditHasNoSecretsTerminalConnect", func(t *testing.T) {
+		t.Parallel()
+		c := harness.Up(t, harness.TopoFlat(2))
+		aNode, bNode := c.Node("hostA"), c.Node("hostB")
+		pkStartBroker(t, aNode, pkConfig())
+		pkStartBroker(t, bNode, pkConfig())
+
+		opB := pkOperator(t, bNode)
+		defer opB.End(t)
+
+		key := pkCreateKey(t, opB)
+		address := pkShownAddress(t, c, "hostB", key.Addresses)
+		res := aNode.Exec(t, []string{"peers", "broker", "connect", address, "--key", key.Key}, nil)
+		if res.ExitCode != 0 {
+			t.Fatalf("broker connect exited %d\nstdout:\n%s\nstderr:\n%s", res.ExitCode, res.Stdout, res.Stderr)
+		}
+		pkWaitConnected(t, aNode, "hostB.peer", ctcReconnectBound)
+		pkWaitConnected(t, bNode, "hostA.peer", ctcReconnectBound)
+
+		// Both audit files have to carry the pairing events before their
+		// absence of the key means anything.
+		nodes := []struct {
+			name string
+			node *harness.Node
+		}{
+			{"A", aNode},
+			{"B", bNode},
+		}
+		for _, entry := range nodes {
+			ctcWaitAuditFileContains(t, entry.node, "pairing_succeeded")
+		}
+		for _, entry := range nodes {
+			data := entry.node.ReadFile(t, ctcAuditLogPath(entry.node))
+			if bytes.Contains(data, []byte(key.Key)) {
+				t.Fatalf("%s's audit log contains the terminal-connect pairing key %q", entry.name, key.Key)
+			}
+		}
+	})
+
 	t.Run("StaticKeyRemovedRejects", func(t *testing.T) {
 		t.Parallel()
 		c := harness.Up(t, harness.TopoFlat(3))

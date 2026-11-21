@@ -99,6 +99,85 @@ func TestPairingKeys(t *testing.T) {
 		// TestREQBrokerPairing006_KeyExpiredAtElevenMinutes.
 	})
 
+	t.Run("REQ-broker-pairing-038 connect prompt", func(t *testing.T) {
+		key := pkCreateKey(t, opA)
+		if key.ConnectPrompt == "" {
+			t.Fatal("create_pairing_key returned no connect prompt")
+		}
+		// The prompt fills in the key and a shown address and carries the
+		// terminal command a user can paste on the other host.
+		for _, want := range []string{
+			"Connect to the peers Broker at ",
+			"using the one-time pairing key " + key.Key,
+			"peers broker connect ",
+			"--key " + key.Key,
+		} {
+			if !strings.Contains(key.ConnectPrompt, want) {
+				t.Fatalf("the connect prompt does not contain %q:\n%s", want, key.ConnectPrompt)
+			}
+		}
+		if len(key.Addresses) == 0 {
+			t.Fatal("create_pairing_key returned no shown address")
+		}
+		for _, address := range key.Addresses {
+			if !strings.Contains(key.ConnectPrompt, address) {
+				t.Fatalf("the connect prompt does not name the shown address %q:\n%s", address, key.ConnectPrompt)
+			}
+		}
+
+		// REQ-broker-pairing-006 above left B paired with A. Unpair B first so
+		// the command is exercised as the first pairing on B, not as a
+		// reconnection of an existing peer.
+		pkDisconnect(t, opB, "hostA.peer")
+		for _, peer := range pkPeers(t, b) {
+			if peer.GetAlias() == "hostA.peer" && peer.GetIsPeer() {
+				t.Fatal("B still lists A as a peer after disconnect_broker")
+			}
+		}
+
+		// Running the command from the prompt verbatim on the other host must
+		// pair it with A: the prompt is usable, not only printed.
+		cmd := pkPromptCommand(t, key.ConnectPrompt)
+		res := b.Exec(t, []string{"sh", "-c", cmd}, map[string]string{
+			"PATH": "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		})
+		if res.ExitCode != 0 {
+			t.Fatalf("running the prompt command %q on hostB: exit %d\nstdout:\n%s\nstderr:\n%s",
+				cmd, res.ExitCode, res.Stdout, res.Stderr)
+		}
+		alias, fingerprint := pkPairedOutput(t, res.Stdout)
+		if alias != "hostA.peer" {
+			t.Fatalf("the prompt command paired with alias %q, want hostA.peer", alias)
+		}
+		if fingerprint != aFingerprint {
+			t.Fatalf("the prompt command paired with fingerprint %q, want A's identity %q", fingerprint, aFingerprint)
+		}
+		pkWaitConnected(t, b, "hostA.peer", pkRelinkBound)
+		pkWaitConnected(t, a, "hostB.peer", pkRelinkBound)
+
+		// Neither the key nor the prompt that embeds it reaches a run log. B
+		// is the dialer, so its log carries the peer_paired record that makes
+		// the absence meaningful. The Broker never receives the prompt (the
+		// MCP server builds it) and its log is JSON, so the multi-line prompt
+		// cannot appear as one string; the first line stands in for it, and
+		// the key check above covers every line that embeds the key. The audit
+		// log's absence of the key is covered by
+		// TestConfigToolsCluster/AuditHasNoSecrets and
+		// TestConfigToolsCluster/AuditHasNoSecretsTerminalConnect.
+		bLog := b.BrokerLog(t)
+		if !bytes.Contains(bLog, []byte(`"event":"peer_paired"`)) {
+			t.Fatalf("B's Broker log has no peer_paired record:\n%s", bLog)
+		}
+		logs := append(append([]byte(nil), a.BrokerLog(t)...), bLog...)
+		if bytes.Contains(logs, []byte(key.Key)) {
+			t.Fatalf("a Broker log contains the pairing key %q", key.Key)
+		}
+		promptLine := strings.SplitN(key.ConnectPrompt, "\n", 2)[0]
+		if bytes.Contains(logs, []byte(promptLine)) {
+			t.Fatalf("a Broker log contains the connect prompt's first line %q", promptLine)
+		}
+	})
+
 	t.Run("REQ-broker-pairing-007 one-time key used once", func(t *testing.T) {
 		key := pkCreateKey(t, opA)
 		address := pkShownAddress(t, c, "hostA", key.Addresses)
@@ -346,6 +425,36 @@ func pkCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOu
 		t.Fatalf("decoding create_pairing_key: %v", err)
 	}
 	return out
+}
+
+// pkPromptCommand returns the terminal command line from a connect prompt: the
+// line that starts with "peers broker connect ".
+func pkPromptCommand(t *testing.T, prompt string) string {
+	t.Helper()
+	for _, line := range strings.Split(prompt, "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "peers broker connect ") {
+			return trimmed
+		}
+	}
+	t.Fatalf("the connect prompt carries no terminal command:\n%s", prompt)
+	return ""
+}
+
+// pkPairedOutput parses the alias and fingerprint from "Paired with <alias>
+// (<fingerprint>)", the line a successful terminal broker connect prints.
+func pkPairedOutput(t *testing.T, stdout string) (alias, fingerprint string) {
+	t.Helper()
+	const prefix = "Paired with "
+	line := strings.TrimSpace(stdout)
+	if !strings.HasPrefix(line, prefix) {
+		t.Fatalf("broker connect printed %q, want %q<alias> (<fingerprint>)", line, prefix)
+	}
+	rest := strings.TrimPrefix(line, prefix)
+	open := strings.LastIndex(rest, " (")
+	if open < 0 || !strings.HasSuffix(rest, ")") {
+		t.Fatalf("broker connect printed %q, want %q<alias> (<fingerprint>)", line, prefix)
+	}
+	return strings.TrimSpace(rest[:open]), rest[open+2 : len(rest)-1]
 }
 
 // pkConnect calls connect_broker and returns the raw result so the caller can
