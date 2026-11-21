@@ -60,14 +60,36 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 			"Broker %s is offline and refuses messages from other hosts", d.deps.Settings.LocalAlias()))
 	}
 
-	entry, owner := d.dedupe.acquire(dedupeKey{Source: peer, MessageID: req.MessageID})
-	if !owner {
-		res, ok := entry.wait(ctx)
-		if !ok {
-			res = errorRecord(unknownResult("the first copy of message %s is still being processed", req.MessageID))
+	key := dedupeKey{Source: peer, MessageID: req.MessageID}
+
+	// A recorded result answers a resend whatever the sender's visibility is
+	// now: the first copy already passed the roster check, and the answer must
+	// stay the same (REQ-agent-messaging-020). Looking up before that check is
+	// what keeps an idempotent resend from turning into not_visible once the
+	// sender leaves the intersection.
+	if entry, ok := d.dedupe.lookup(key); ok {
+		return d.answerHeld(ctx, peer, req, entry, start)
+	}
+
+	members := d.deps.Topics.RemoteMembers(peer)
+	refsByName, senderFound := remoteSenderRoster(members, req.SenderName, req.SenderRef)
+	if !senderFound {
+		// A concurrent copy may have claimed the id between the lookup and
+		// here; its result still wins over this rejection.
+		if entry, ok := d.dedupe.lookup(key); ok {
+			return d.answerHeld(ctx, peer, req, entry, start)
 		}
+		res := errorRecord(notSent(localpb.ErrorCode_ERROR_CODE_NOT_VISIBLE,
+			"sender %s [%s] is not a member this link announced", req.SenderName, req.SenderRef))
 		d.logDeliver(peer, req, resultLabel(res), start)
 		return replyForResult(res)
+	}
+
+	// Only a sender this link announced may hold a table entry: a peer that is
+	// not a member cannot fill the table with ids that can never be delivered.
+	entry, owner := d.dedupe.acquire(key)
+	if !owner {
+		return d.answerHeld(ctx, peer, req, entry, start)
 	}
 
 	// The entry must outlive the sender's budget even when dedupe_window is
@@ -94,33 +116,45 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 
 	processCtx, cancelProcess := d.processContext(ctx)
 	defer cancelProcess()
-	res = d.processDeliver(processCtx, peer, req, start)
+	res = d.processDeliver(processCtx, peer, req, refsByName, start)
 	done = true
 	d.logDeliver(peer, req, resultLabel(res), start)
 	return replyForResult(res)
 }
 
-// processDeliver runs the checks and the write for one owned delivery request.
-// It resolves the target only among local Agents: a received message is never
-// forwarded to another link (architecture.md:281).
-func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverRequest, start time.Time) *deliverpb.DeliverResult {
-	members := d.deps.Topics.RemoteMembers(peer)
+// answerHeld returns the recorded result of an entry this request did not own.
+func (d *delivery) answerHeld(ctx context.Context, peer peerID, req deliverRequest, entry *dedupeEntry, start time.Time) link.Frame {
+	res, ok := entry.wait(ctx)
+	if !ok {
+		res = errorRecord(unknownResult("the first copy of message %s is still being processed", req.MessageID))
+	}
+	d.logDeliver(peer, req, resultLabel(res), start)
+	return replyForResult(res)
+}
+
+// remoteSenderRoster indexes the peer's announced members by name and reports
+// whether the sender's name and ref are among them.
+func remoteSenderRoster(members []remoteMember, name, ref string) (map[string]map[string]struct{}, bool) {
 	refsByName := make(map[string]map[string]struct{}, len(members))
-	senderFound := false
+	found := false
 	for _, m := range members {
 		if refsByName[m.Name] == nil {
 			refsByName[m.Name] = make(map[string]struct{})
 		}
 		refsByName[m.Name][m.Ref] = struct{}{}
-		if m.Name == req.SenderName && m.Ref == req.SenderRef {
-			senderFound = true
+		if m.Name == name && m.Ref == ref {
+			found = true
 		}
 	}
-	if !senderFound {
-		return errorRecord(notSent(localpb.ErrorCode_ERROR_CODE_NOT_VISIBLE,
-			"sender %s [%s] is not a member this link announced", req.SenderName, req.SenderRef))
-	}
+	return refsByName, found
+}
 
+// processDeliver runs the checks and the write for one owned delivery request.
+// The sender is already known to be a member; refsByName carries that roster
+// for the uniqueness rule of the signature. It resolves the target only among
+// local Agents: a received message is never forwarded to another link
+// (architecture.md:281).
+func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverRequest, refsByName map[string]map[string]struct{}, start time.Time) *deliverpb.DeliverResult {
 	alias := d.deps.Peers.EffectiveAlias(peer)
 	addr := func(name, ref string, unique bool) string {
 		sig, ok := signatureFor(name, ref, unique, alias)

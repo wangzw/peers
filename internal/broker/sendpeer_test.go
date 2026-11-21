@@ -797,6 +797,31 @@ func TestSendPeerRecognizedErrorIsQuotedAndBounded(t *testing.T) {
 	}
 }
 
+// TestSendPeerQuotaExceededIsPreserved checks that the quota_exceeded a
+// receiving Broker returns for a full per-source dedupe share or an exhausted
+// inbound quota keeps its code and quoted text, so the model sees
+// quota_exceeded rather than delivery_unknown.
+func TestSendPeerQuotaExceededIsPreserved(t *testing.T) {
+	const peerText = "Not sent: frontend is receiving too many messages from your Broker; try again in 8 seconds"
+	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, peerText)
+
+	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	e := requireSendPeerError(t, err)
+	if e.Code != localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED {
+		t.Fatalf("Code = %v, want QUOTA_EXCEEDED", e.Code)
+	}
+	const prefix = `Not sent: Broker hostB said: "`
+	if !strings.HasPrefix(e.Message, prefix) {
+		t.Fatalf("Message = %q, want prefix %q", e.Message, prefix)
+	}
+	if !strings.Contains(e.Message, "receiving too many messages") {
+		t.Fatalf("Message = %q, want the peer's quota text", e.Message)
+	}
+	if !bytes.Equal(e.Origin, f.peer[:]) {
+		t.Fatalf("Origin = %x, want the peer fingerprint %x", e.Origin, f.peer)
+	}
+}
+
 // TestSendPeerDeliveryUnknownErrorKeepsPrefix checks that a delivery_unknown
 // error keeps the outcome its code names even when the peer's message carried
 // the other lead-in.

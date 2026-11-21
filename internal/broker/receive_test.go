@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -126,8 +127,14 @@ func (f *receiveFixture) setInbox(id string, w inboxWriter) {
 // requestFrame builds a kind-400 frame.
 func (f *receiveFixture) requestFrame(sender remoteMember, target agentView, text string, remaining time.Duration) link.Frame {
 	f.t.Helper()
+	return f.requestFrameWithID(sender, target, text, remaining, receiveMsgID)
+}
+
+// requestFrameWithID builds a kind-400 frame carrying id.
+func (f *receiveFixture) requestFrameWithID(sender remoteMember, target agentView, text string, remaining time.Duration, id string) link.Frame {
+	f.t.Helper()
 	frame, err := encodeDeliverRequest(deliverRequest{
-		MessageID:  receiveMsgID,
+		MessageID:  id,
 		SenderName: sender.Name,
 		SenderRef:  sender.Ref,
 		TargetName: target.Name,
@@ -139,6 +146,12 @@ func (f *receiveFixture) requestFrame(sender remoteMember, target agentView, tex
 		f.t.Fatalf("encodeDeliverRequest: %v", err)
 	}
 	return frame
+}
+
+// receiveMsgIDN returns the receiveMsgID with its last hexadecimal group
+// replaced, so a test can build many distinct ids that are still UUIDs.
+func receiveMsgIDN(n int) string {
+	return fmt.Sprintf("3f2a1c4e-5b6d-4e8f-9a0b-1c2d3e4f%04x", n)
 }
 
 func (f *receiveFixture) handle(frame link.Frame) link.Frame {
@@ -1056,5 +1069,98 @@ func TestReceiveDuplicateLogs(t *testing.T) {
 	}
 	if got := strings.Count(logs, `"result":"delivered"`); got != 2 {
 		t.Fatalf("delivered log lines = %d, want 2: %s", got, logs)
+	}
+}
+
+// TestReceiveInvisibleSenderNotDeduped checks that a delivery whose sender is
+// not on the peer's roster is refused without occupying a dedupe entry: a peer
+// that is not a member must not be able to fill the table with ids that can
+// never be delivered.
+func TestReceiveInvisibleSenderNotDeduped(t *testing.T) {
+	target := testAgent("frontend", "/tmp/ap-receive-invisible.sock")
+	f := newReceiveFixture(t, defaultReceiveSettings(), target)
+	f.keepReread(target.ID)
+	f.member(remoteMember{Name: "someone-else", Ref: "aaaaaa"}, "t1")
+	f.share(target.ID, "t1")
+
+	rec := newRecordingInbox()
+	f.setInbox(target.ID, rec)
+	sender := remoteMember{Name: "api-worker", Ref: "1a2b3c"}
+
+	const requests = 5
+	for i := 0; i < requests; i++ {
+		frame := f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(i))
+		wantReceiveError(t, f.handle(frame), localpb.ErrorCode_ERROR_CODE_NOT_VISIBLE, "Not sent")
+	}
+
+	if got := f.d.dedupe.len(); got != 0 {
+		t.Fatalf("dedupe entries = %d after %d invisible deliveries, want 0", got, requests)
+	}
+	if rec.Count() != 0 {
+		t.Fatalf("inbox calls = %d, want 0", rec.Count())
+	}
+}
+
+// TestReceivePerSourceQuota checks that one source filling its share of the
+// dedupe table refuses only its own further messages, with quota_exceeded, and
+// leaves another source's delivery unaffected.
+func TestReceivePerSourceQuota(t *testing.T) {
+	target := testAgent("frontend", "/tmp/ap-receive-quota.sock")
+	f := newReceiveFixture(t, defaultReceiveSettings(), target)
+	f.keepReread(target.ID)
+
+	senderA := remoteMember{Name: "api-worker", Ref: "1a2b3c"}
+	senderB := remoteMember{Name: "api-worker", Ref: "1a2b3c"}
+	f.member(senderA, "t1")
+	f.topics.remote[f.other] = append(f.topics.remote[f.other], deliveryRemoteEntry{
+		Member: senderB,
+		Topics: []string{"t1"},
+	})
+	f.peers.effective[f.other] = "hostB"
+	f.share(target.ID, "t1")
+	f.setInbox(target.ID, newRecordingInbox())
+
+	// The documented per-source limit (design-broker.md, dedupe table).
+	const perSource = 4096
+	for i := 0; i < perSource; i++ {
+		frame := f.requestFrameWithID(senderA, target, "hello", time.Second, receiveMsgIDN(i))
+		wantDelivered(t, f.handle(frame))
+	}
+
+	over := f.requestFrameWithID(senderA, target, "hello", time.Second, receiveMsgIDN(perSource))
+	wantReceiveError(t, f.handle(over), localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+		"Not sent: this Broker holds too many recent messages from your Broker")
+
+	if got := f.d.dedupe.len(); got != perSource {
+		t.Fatalf("dedupe entries = %d after the quota refusal, want %d", got, perSource)
+	}
+
+	other := f.requestFrameWithID(senderB, target, "hello", time.Second, receiveMsgIDN(perSource+1))
+	wantDelivered(t, f.d.handleDeliver(context.Background(), f.other, other))
+}
+
+// TestReceiveResendAfterVisibilityLossReturnsResult checks that an id already
+// in the table answers a resend with its recorded result after the sender has
+// left the intersection. The visibility check now runs before a claim, so it
+// must not run before the lookup of an existing result
+// (REQ-agent-messaging-020).
+func TestReceiveResendAfterVisibilityLossReturnsResult(t *testing.T) {
+	target := testAgent("frontend", "/tmp/ap-receive-visloss.sock")
+	f := newReceiveFixture(t, defaultReceiveSettings(), target)
+	f.keepReread(target.ID)
+	sender := remoteMember{Name: "api-worker", Ref: "1a2b3c"}
+	f.member(sender, "t1")
+	f.share(target.ID, "t1")
+
+	rec := newRecordingInbox()
+	f.setInbox(target.ID, rec)
+	frame := f.requestFrame(sender, target, "hello", time.Second)
+	wantDelivered(t, f.handle(frame))
+
+	f.topics.remote[f.peer] = nil
+	wantDelivered(t, f.handle(frame))
+
+	if rec.Count() != 1 {
+		t.Fatalf("inbox calls = %d, want 1: the resend was written again", rec.Count())
 	}
 }

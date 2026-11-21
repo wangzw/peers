@@ -258,20 +258,30 @@ func TestDedupeSourcesAreDistinct(t *testing.T) {
 	}
 }
 
-// fillDedupe adds n completed entries with the given expiry. It writes the map
-// directly so a test can reach the limit without 65536 acquires.
+// fillDedupe adds n completed entries with the given expiry, each from a
+// different source so the fill reaches the table limit without hitting the
+// per-source quota. It writes the map directly so a test can do that without
+// 65536 acquires.
 func fillDedupe(tbl *dedupeTable, n int, expires time.Time) {
+	tbl.mu.Lock()
+	defer tbl.mu.Unlock()
 	for i := 0; i < n; i++ {
-		tbl.entries[dedupeKey{MessageID: fmt.Sprintf("filler-%d", i)}] = &dedupeEntry{
+		var source pairing.Fingerprint
+		source[0] = byte(i)
+		source[1] = byte(i >> 8)
+		source[2] = byte(i >> 16)
+		source[3] = 0x9a
+		tbl.putEntryLocked(dedupeKey{Source: source, MessageID: fmt.Sprintf("filler-%d", i)}, &dedupeEntry{
 			done:    make(chan struct{}),
 			expires: expires,
-		}
+		})
 	}
 }
 
 // TestDedupeFullTableRefusesNewKey checks that the table holds at most
 // maxDedupeEntries entries: a message arriving at the limit is not written and
-// gets a not-sent result whose text says the Broker is busy.
+// gets a not-sent result whose text says the Broker is temporarily holding too
+// many messages.
 func TestDedupeFullTableRefusesNewKey(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -300,8 +310,8 @@ func TestDedupeFullTableRefusesNewKey(t *testing.T) {
 	if got.GetCode() != localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE {
 		t.Fatalf("busy result code = %v, want inbox_unwritable", got.GetCode())
 	}
-	if !strings.Contains(got.GetMessage(), "busy") {
-		t.Fatalf("busy result message = %q, want it to mention busy", got.GetMessage())
+	if want := "Not sent: the Broker is temporarily holding too many messages"; got.GetMessage() != want {
+		t.Fatalf("busy result message = %q, want %q", got.GetMessage(), want)
 	}
 }
 
@@ -398,7 +408,9 @@ func TestDedupeExpiredKeyIsNeverReturned(t *testing.T) {
 	fillDedupe(tbl, entries, clock.Now().Add(-time.Second))
 	k := dedupeKey{MessageID: "asked"}
 	old := &dedupeEntry{done: make(chan struct{}), expires: clock.Now()}
-	tbl.entries[k] = old
+	tbl.mu.Lock()
+	tbl.putEntryLocked(k, old)
+	tbl.mu.Unlock()
 
 	e, owner := tbl.acquire(k)
 	if !owner {
@@ -406,5 +418,85 @@ func TestDedupeExpiredKeyIsNeverReturned(t *testing.T) {
 	}
 	if e == old {
 		t.Fatal("acquire returned the expired entry")
+	}
+}
+
+// perSourceDedupeLimit is the documented per-source share of the dedupe table
+// (design-broker.md, dedupe table). It is spelled here instead of using the
+// implementation constant so the reproduction test compiles against the code
+// before the quota exists.
+const perSourceDedupeLimit = 4096
+
+// TestDedupePerSourceQuota checks that one source holding its share of the
+// table has new message ids refused with quota_exceeded, without an entry being
+// written, while another source still acquires normally.
+func TestDedupePerSourceQuota(t *testing.T) {
+	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
+	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Hour })
+
+	var sourceA, sourceB pairing.Fingerprint
+	sourceA[0], sourceB[0] = 1, 2
+
+	for i := 0; i < perSourceDedupeLimit; i++ {
+		e, owner := tbl.acquire(dedupeKey{Source: sourceA, MessageID: fmt.Sprintf("a-%d", i)})
+		if !owner {
+			t.Fatalf("acquire a-%d did not own a key below the source quota", i)
+		}
+		tbl.complete(e, deliveredResult(), time.Time{})
+	}
+
+	over := dedupeKey{Source: sourceA, MessageID: "a-over"}
+	e, owner := tbl.acquire(over)
+	if owner {
+		t.Fatal("acquire owned a new id for a source at its quota")
+	}
+	res, ok := e.wait(context.Background())
+	if !ok {
+		t.Fatal("the quota refusal reported no result")
+	}
+	got := res.GetError()
+	if got.GetCode() != localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED {
+		t.Fatalf("quota refusal code = %v, want quota_exceeded", got.GetCode())
+	}
+	if !strings.Contains(got.GetMessage(), "too many recent messages") {
+		t.Fatalf("quota refusal message = %q, want it to name the cause", got.GetMessage())
+	}
+	if _, ok := tbl.entries[over]; ok {
+		t.Fatal("the refused id was written into the table")
+	}
+	if got := tbl.len(); got != perSourceDedupeLimit {
+		t.Fatalf("len = %d after the quota refusal, want %d", got, perSourceDedupeLimit)
+	}
+
+	eB, ownerB := tbl.acquire(dedupeKey{Source: sourceB, MessageID: "b-1"})
+	if !ownerB || eB == nil {
+		t.Fatal("a source at its quota refused another source's message")
+	}
+	if got := tbl.len(); got != perSourceDedupeLimit+1 {
+		t.Fatalf("len = %d after another source acquired, want %d", got, perSourceDedupeLimit+1)
+	}
+}
+
+// TestDedupePerSourceQuotaReleasesExpired checks that a source's expired
+// entries free its quota, so a source that was over the limit is not refused
+// forever.
+func TestDedupePerSourceQuotaReleasesExpired(t *testing.T) {
+	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
+	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
+
+	var source pairing.Fingerprint
+	source[0] = 1
+	for i := 0; i < perSourceDedupeLimit; i++ {
+		e, _ := tbl.acquire(dedupeKey{Source: source, MessageID: fmt.Sprintf("a-%d", i)})
+		tbl.complete(e, deliveredResult(), time.Time{})
+	}
+
+	if _, owner := tbl.acquire(dedupeKey{Source: source, MessageID: "blocked"}); owner {
+		t.Fatal("acquire owned a new id for a source at its quota")
+	}
+
+	clock.Advance(time.Minute)
+	if _, owner := tbl.acquire(dedupeKey{Source: source, MessageID: "after-expiry"}); !owner {
+		t.Fatal("acquire refused a source whose entries had all expired")
 	}
 }

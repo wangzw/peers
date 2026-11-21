@@ -21,6 +21,7 @@ var peerDeliveryErrorCodes = map[localpb.ErrorCode]bool{
 	localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT: true,
 	localpb.ErrorCode_ERROR_CODE_TOO_LARGE:        true,
 	localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE: true,
+	localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED:   true,
 	localpb.ErrorCode_ERROR_CODE_BROKER_OFFLINE:   true,
 	localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN: true,
 }
