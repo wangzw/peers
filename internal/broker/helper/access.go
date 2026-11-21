@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -34,8 +35,17 @@ const (
 	AccessWrite
 )
 
-// defaultAccessCheckTimeout bounds one permission check from start to result.
+// defaultAccessCheckTimeout bounds one permission check from start to result,
+// including its waits for a check slot.
 const defaultAccessCheckTimeout = 5 * time.Second
+
+// Defaults of AccessChecker.MaxConcurrent and AccessChecker.MaxPerAccount, and
+// how often one account's access_check_busy record is written.
+const (
+	defaultMaxConcurrentChecks = 8
+	defaultMaxChecksPerAccount = 2
+	accessBusyLogInterval      = time.Minute
+)
 
 // RunAccessCheck is the body of `peers internal access-check`: it first
 // drops its effective identity to the account named by the Broker, then reads
@@ -185,14 +195,52 @@ type AccessChecker struct {
 	Timeout time.Duration                                             // default 5s
 	Start   func(ctx context.Context, acct Account) (*Process, error) // default: accountCommand(Exe, []string{"internal", "access-check"}, acct) with pipes
 	Logger  *slog.Logger
+
+	// MaxConcurrent is the most permission checks that may run at once across
+	// all accounts. Zero takes the default of 8.
+	MaxConcurrent int
+	// MaxPerAccount is the most permission checks that may run at once for one
+	// uid. Zero takes the default of 2, so one account cannot take every slot.
+	MaxPerAccount int
+
+	// mu guards the lazily created slots and the times of the per-uid
+	// access_check_busy records. now is a test seam; nil means time.Now.
+	mu     sync.Mutex
+	slots  *accessSlots
+	busyAt map[uint32]time.Time
+	now    func() time.Time
 }
 
-// Check reports whether the account uid may access path. It spawns one process per call.
+// Check reports whether the account uid may access path. It spawns one process
+// per call. The wait for a check slot and the check itself share the Timeout
+// budget; when no slot frees up in time the check fails instead of running.
 func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need Access) (bool, error) {
 	log := c.Logger
 	if log == nil {
 		log = slog.Default()
 	}
+
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = defaultAccessCheckTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Take the account's slot first and the global slot second, so one account
+	// can never hold more than its own share of the global slots while it
+	// waits. Both slots are returned after the process has been reaped.
+	slots := c.slotSet()
+	if err := slots.acquireAccount(ctx, uid, c.maxPerAccount()); err != nil {
+		c.logBusy(log, uid)
+		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
+	}
+	defer slots.releaseAccount(uid)
+	if err := slots.acquireGlobal(ctx, c.maxConcurrent()); err != nil {
+		c.logBusy(log, uid)
+		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
+	}
+	defer slots.releaseGlobal()
 
 	lookup := c.Lookup
 	if lookup == nil {
@@ -214,13 +262,6 @@ func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need
 		}
 		start = accessCheckStart(c.Exe)
 	}
-
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = defaultAccessCheckTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 
 	proc, err := start(ctx, acct)
 	if err != nil {
@@ -293,6 +334,157 @@ func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need
 		return false, fmt.Errorf("cannot check access for uid %d: the check process failed: %w", uid, waitErr)
 	}
 	return res.msg.GetAllowed(), nil
+}
+
+// maxConcurrent returns the global check limit, defaulting a zero value.
+func (c *AccessChecker) maxConcurrent() int {
+	if c.MaxConcurrent > 0 {
+		return c.MaxConcurrent
+	}
+	return defaultMaxConcurrentChecks
+}
+
+// maxPerAccount returns the per-account check limit, defaulting a zero value.
+func (c *AccessChecker) maxPerAccount() int {
+	if c.MaxPerAccount > 0 {
+		return c.MaxPerAccount
+	}
+	return defaultMaxChecksPerAccount
+}
+
+// slotSet returns the checker's slot set, creating it on first use.
+func (c *AccessChecker) slotSet() *accessSlots {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.slots == nil {
+		c.slots = &accessSlots{perAccount: make(map[uint32]int), changed: make(chan struct{})}
+	}
+	return c.slots
+}
+
+// logBusy records that uid could not take a check slot, at most once per
+// minute. The window keeps a caller that retries a full slot set from flooding
+// the runtime log.
+func (c *AccessChecker) logBusy(log *slog.Logger, uid uint32) {
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	t := now()
+
+	c.mu.Lock()
+	if c.busyAt == nil {
+		c.busyAt = make(map[uint32]time.Time)
+	}
+	if last, ok := c.busyAt[uid]; ok && t.Sub(last) < accessBusyLogInterval {
+		c.mu.Unlock()
+		return
+	}
+	// Drop records whose minute has passed so the map tracks only the accounts
+	// that are busy now.
+	for other, at := range c.busyAt {
+		if t.Sub(at) >= accessBusyLogInterval {
+			delete(c.busyAt, other)
+		}
+	}
+	c.busyAt[uid] = t
+	c.mu.Unlock()
+
+	log.Warn("access_check_busy", "uid", uid)
+}
+
+// humanDuration renders d as the error and log lines read it, such as "5
+// seconds", rather than as the time.Duration String method writes it. Any part
+// of a second rounds up, so a short budget still reads as a whole second.
+func humanDuration(d time.Duration) string {
+	if d < time.Second {
+		return "1 second"
+	}
+	seconds := int64(d / time.Second)
+	if d%time.Second != 0 {
+		seconds++
+	}
+	if seconds == 1 {
+		return "1 second"
+	}
+	return fmt.Sprintf("%d seconds", seconds)
+}
+
+// accessSlots bounds how many permission checks run at once. A check takes a
+// slot for its account, then one of the global slots, and returns both after
+// its process has been reaped. Every state change closes changed and installs
+// a fresh channel, waking every waiter to test its condition again.
+type accessSlots struct {
+	mu         sync.Mutex
+	global     int
+	perAccount map[uint32]int
+	changed    chan struct{}
+}
+
+// acquireAccount takes one of the account's slots, waiting until ctx is done.
+func (s *accessSlots) acquireAccount(ctx context.Context, uid uint32, limit int) error {
+	for {
+		s.mu.Lock()
+		if s.perAccount[uid] < limit {
+			s.perAccount[uid]++
+			s.mu.Unlock()
+			return nil
+		}
+		changed := s.changed
+		s.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// acquireGlobal takes one of the global slots, waiting until ctx is done.
+func (s *accessSlots) acquireGlobal(ctx context.Context, limit int) error {
+	for {
+		s.mu.Lock()
+		if s.global < limit {
+			s.global++
+			s.mu.Unlock()
+			return nil
+		}
+		changed := s.changed
+		s.mu.Unlock()
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// releaseAccount returns the account's slot and wakes the waiters.
+func (s *accessSlots) releaseAccount(uid uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.perAccount[uid] > 1 {
+		s.perAccount[uid]--
+	} else {
+		delete(s.perAccount, uid)
+	}
+	s.broadcastLocked()
+}
+
+// releaseGlobal returns a global slot and wakes the waiters.
+func (s *accessSlots) releaseGlobal() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.global > 0 {
+		s.global--
+	}
+	s.broadcastLocked()
+}
+
+// broadcastLocked wakes every waiter. The caller must hold s.mu.
+func (s *accessSlots) broadcastLocked() {
+	close(s.changed)
+	s.changed = make(chan struct{})
 }
 
 // accessCheckStart returns the default Start function for AccessChecker: it

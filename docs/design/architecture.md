@@ -138,7 +138,7 @@ MCP 服务进程由 Claude Code 作为会话的子进程启动，生命周期与
 | 系统级 Broker，`peers service run --system` | 由管理员安装的系统服务启动，以 root 运行 | 每台主机至多一个 | 本机 socket；`broker.listen` 给出的 TCP 地址 |
 | 用户级 Broker，`peers service run --user` | 由用户安装为服务启动（安装后立即启动 Broker，此后随登录启动），或由用户在会话之外的终端启动 | 每个账户至多一个 | 本机 socket；`broker.listen` 给出的 TCP 地址 |
 | 辅助进程 | 系统级 Broker 按需派生（`peers internal account-helper`），切换到被服务的账户后运行 | 每个被服务的账户一个 | 无 |
-| 权限检查进程 | 系统级 Broker 每次判定调用方对配置文件的权限时派生（`peers internal access-check`），以 root 执行后只把有效身份切换到调用方账户，检查后即退出 | 按需 | 无 |
+| 权限检查进程 | 系统级 Broker 每次判定调用方对配置文件的权限时派生（`peers internal access-check`），以 root 执行后只把有效身份切换到调用方账户，检查后即退出；同时至多 8 个，每个账户至多 2 个 | 按需 | 无 |
 | MCP 服务进程，`peers mcp` | Claude Code 按会话的工具配置启动 | 每会话一个 | 无 |
 | 终端命令，例如 `peers service status` | 用户执行 | 按需 | 无 |
 

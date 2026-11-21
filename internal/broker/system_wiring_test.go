@@ -273,6 +273,35 @@ func TestSystemAssemblerFillsDeps(t *testing.T) {
 	}
 }
 
+// TestNewSystemDepsFillsAccessCheckLimits checks that the system Broker's
+// access checker carries the check limits rather than relying on the helper
+// defaults.
+func TestNewSystemDepsFillsAccessCheckLimits(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, checker, closeFn := newSystemDeps(ctx, "/bin/true", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	defer func() {
+		if err := closeFn(); err != nil {
+			t.Errorf("closing the helper pool: %v", err)
+		}
+	}()
+
+	sc, ok := checker.(systemChecker)
+	if !ok {
+		t.Fatalf("checker is %T, want systemChecker", checker)
+	}
+	ac, ok := sc.c.(*helper.AccessChecker)
+	if !ok {
+		t.Fatalf("wrapped checker is %T, want *helper.AccessChecker", sc.c)
+	}
+	if ac.MaxConcurrent != accessChecksConcurrent {
+		t.Errorf("MaxConcurrent = %d, want %d", ac.MaxConcurrent, accessChecksConcurrent)
+	}
+	if ac.MaxPerAccount != accessChecksPerAccount {
+		t.Errorf("MaxPerAccount = %d, want %d", ac.MaxPerAccount, accessChecksPerAccount)
+	}
+}
+
 // inProcessHelperStart serves the helper protocol over pipes instead of
 // spawning a child. exits receives one function per helper that ends it, which
 // stands in for the signal a service manager sends when it stops the Broker.

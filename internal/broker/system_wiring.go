@@ -213,12 +213,26 @@ func (s systemChecker) Check(ctx context.Context, who Caller, path string, need 
 // run the helper protocol in-process while still exercising the wiring below.
 var newHelperPool = helper.NewPool
 
+// The system Broker allows this many permission checks to run at once, with at
+// most accessChecksPerAccount for one account. Repeated status, configuration
+// or audit calls from one account therefore cannot turn into an unbounded
+// number of root check processes.
+const (
+	accessChecksConcurrent = 8
+	accessChecksPerAccount = 2
+)
+
 // newSystemDeps builds the router and checker of a system Broker and a close function.
 // ctx is the process context; the pool uses its cancellation to recognize
 // helper exits that belong to a normal stop.
 func newSystemDeps(ctx context.Context, exe string, logger *slog.Logger) (SessionRouter, accessChecker, func() error) {
 	pool := newHelperPool(helper.PoolOptions{Exe: exe, Logger: logger, Stopping: ctx.Done()})
-	ac := &helper.AccessChecker{Exe: exe, Logger: logger}
+	ac := &helper.AccessChecker{
+		Exe:           exe,
+		Logger:        logger,
+		MaxConcurrent: accessChecksConcurrent,
+		MaxPerAccount: accessChecksPerAccount,
+	}
 	return systemRouter{pool: pool}, systemChecker{c: ac}, pool.Close
 }
 
