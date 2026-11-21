@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
@@ -44,6 +45,51 @@ func errSystemWiring(detail string) error {
 	return fmt.Errorf("system mode access wiring is incomplete: %s", detail)
 }
 
+// runtimeTimestampRefresher sets the account lock, the runtime directory and
+// the local socket to the same moment, so a /tmp cleanup rule that deletes old
+// files does not remove the running Broker's lock. Paths are set without
+// following a symbolic link. Each target logs its failure only when it starts
+// failing and logs the recovery when it succeeds again, so a long-running
+// failure does not fill the log. A failure never stops the Broker: the files
+// still exist, and the next tick tries again.
+type runtimeTimestampRefresher struct {
+	lockFailed bool
+	dirFailed  bool
+	sockFailed bool
+}
+
+func (r *runtimeTimestampRefresher) refresh(lock *AccountLock, lockPath, runtimeDir, sockPath string, now time.Time, touch func(*AccountLock, time.Time) error, logger *slog.Logger) {
+	if err := touch(lock, now); err != nil {
+		if !r.lockFailed {
+			logger.Warn(EvAccountLockTouchFailed, "path", lockPath, "error", err)
+		}
+		r.lockFailed = true
+	} else if r.lockFailed {
+		logger.Info(EvAccountLockTouchRecovered, "path", lockPath)
+		r.lockFailed = false
+	}
+	r.refreshPath(runtimeDir, EvRuntimeDirTouchFailed, EvRuntimeDirTouchRecovered, &r.dirFailed, now, logger)
+	r.refreshPath(sockPath, EvLocalSocketTouchFailed, EvLocalSocketTouchRecovered, &r.sockFailed, now, logger)
+}
+
+func (r *runtimeTimestampRefresher) refreshPath(path, failedEvent, recoveredEvent string, failed *bool, now time.Time, logger *slog.Logger) {
+	if path == "" {
+		return
+	}
+	ts := []unix.Timespec{unix.NsecToTimespec(now.UnixNano()), unix.NsecToTimespec(now.UnixNano())}
+	if err := unix.UtimesNanoAt(unix.AT_FDCWD, path, ts, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if !*failed {
+			logger.Warn(failedEvent, "path", path, "error", err)
+		}
+		*failed = true
+		return
+	}
+	if *failed {
+		logger.Info(recoveredEvent, "path", path)
+		*failed = false
+	}
+}
+
 // RunOptions is the process entry point's input to Run. The exported fields
 // mirror the command line, except Ready, which is a test seam for reading the
 // startup result. checkTick and afterCheck exist only so tests can drive the
@@ -63,6 +109,9 @@ type RunOptions struct {
 
 	checkTick  <-chan time.Time // tests only; nil: time.NewTicker(time.Minute)
 	afterCheck func()           // tests only; called after every periodic check
+	// touchLock replaces AccountLock.Touch in tests that need the periodic
+	// refresh to fail without disturbing the lock itself.
+	touchLock func(*AccountLock, time.Time) error
 
 	// afterUnsuppress runs in the recovery path after the config component's
 	// own rebind is enabled again and before broker.listen is read once more.
@@ -170,7 +219,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 		writeFailure(err)
 		return err
 	}
-	lock, err := AcquireAccountLock(cfg.AccountLock())
+	lockPath := cfg.AccountLock()
+	lock, err := AcquireAccountLock(lockPath)
 	if err != nil {
 		writeFailure(err)
 		return err
@@ -642,6 +692,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			defer ticker.Stop()
 			tick = ticker.C
 		}
+		refresher := &runtimeTimestampRefresher{}
 		for {
 			select {
 			case <-runCtx.Done():
@@ -670,6 +721,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 						deps.Logger.Info(EvLocalSocketRebound, "socket", sockPath)
 					}
 				}
+				touch := opts.touchLock
+				if touch == nil {
+					touch = func(l *AccountLock, now time.Time) error { return l.Touch(now) }
+				}
+				refresher.refresh(lock, lockPath, paths.RuntimeDir, sockPath, deps.Clock.Now(), touch, deps.Logger)
 				if opts.afterCheck != nil {
 					opts.afterCheck()
 				}
@@ -839,6 +895,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		defer ticker.Stop()
 		tick = ticker.C
 	}
+	refresher := &runtimeTimestampRefresher{}
 	for {
 		select {
 		case <-runCtx.Done():
@@ -856,6 +913,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 				return ErrLockLost
 			}
 			rebindDiagSocket()
+			touch := opts.touchLock
+			if touch == nil {
+				touch = func(l *AccountLock, now time.Time) error { return l.Touch(now) }
+			}
+			refresher.refresh(lock, lockPath, diagPaths.RuntimeDir, deriveSockPath(diagPaths), deps.Clock.Now(), touch, deps.Logger)
 		case <-watch.events:
 		}
 

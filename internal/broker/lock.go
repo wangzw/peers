@@ -6,6 +6,7 @@ import (
 	"os"
 	"sync"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -84,6 +85,23 @@ func (l *AccountLock) StillHeld() bool {
 		return false
 	}
 	return uint64(st.Dev) == dev && uint64(st.Ino) == ino
+}
+
+// Touch sets the access and modification times of the lock file to now through
+// the already open descriptor, so the path is neither followed nor reopened. A
+// cleanup rule that deletes old files sees the running Broker's lock as recent
+// and leaves it alone. It fails once the lock is released.
+func (l *AccountLock) Touch(now time.Time) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.released || l.file == nil {
+		return fmt.Errorf("cannot update the timestamps of account lock %s: the lock is released", l.path)
+	}
+	tv := unix.NsecToTimeval(now.UnixNano())
+	if err := unix.Futimes(int(l.file.Fd()), []unix.Timeval{tv, tv}); err != nil {
+		return fmt.Errorf("cannot update the timestamps of account lock %s: %w", l.path, err)
+	}
+	return nil
 }
 
 // Release closes the lock's file descriptor, which releases the flock. It does
