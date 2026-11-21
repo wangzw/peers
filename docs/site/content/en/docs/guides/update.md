@@ -10,7 +10,7 @@ weight: 8
 
 A release build of the Broker checks GitHub shortly after it starts: it waits about one minute, checks once, and then checks every 24 hours by default. The check runs in the Broker process, so one Broker covers every session that connects to it.
 
-When a newer release exists, you see it in two places. The last line of `peers status` is the following, where `<latest>` is the newest release and `<installed>` the installed version:
+When a newer release exists, you see it in two places. The last line of `peers service status` is the following, where `<latest>` is the newest release and `<installed>` the installed version:
 
 ```text
 Update: <latest> available (current <installed>); run peers update
@@ -38,7 +38,7 @@ peers update
 
 It first refuses a binary that is not a release build. It then asks before changing anything; answering `y` or `yes` goes ahead, and any other answer cancels the update and leaves the binary and the service as they were. Only after you confirm does it select a Broker; what it then does depends on that Broker and on how it runs.
 
-Add `--yes` to skip the question. When standard input is not a terminal, as in a script or a scheduled job, the command requires `--yes` and otherwise refuses with `standard input is not a terminal; run "peers update --yes" to update without asking`. When the installed version is already the latest, the command prints `peers 0.4.0 is up to date` and exits without changing anything.
+Add `--yes` to skip the question. When standard input is not a terminal, as in a script or a scheduled job, the command requires `--yes` and otherwise refuses with `standard input is not a terminal; pass --yes to proceed without asking`. When the installed version is already the latest, the command prints `peers 0.4.0 is up to date` and exits without changing anything.
 
 [Command line]({{< relref "/docs/reference/cli" >}}) gives the full description of the command.
 
@@ -69,8 +69,8 @@ An update the Broker applies downloads through the Broker service process, so it
 
 A system-level Broker reads them from its service environment:
 
-- Linux: run `sudo systemctl edit peers.service`, add `[Service]` and `Environment=HTTPS_PROXY=http://proxy.example:8080` (plus `HTTP_PROXY` and `NO_PROXY` as needed), then run `sudo peers service restart`. The drop-in survives a reinstall.
-- macOS: add an `EnvironmentVariables` dictionary to `/Library/LaunchDaemons/io.github.wangzw.peers.plist` with `HTTPS_PROXY` and any other variables, then run `sudo peers service restart`, which reads the plist again. A reinstall rewrites the plist, so add the dictionary again afterwards; an update keeps this dictionary.
+- Linux: run `sudo systemctl edit peers.service`, add `[Service]` and `Environment=HTTPS_PROXY=http://proxy.example:8080` (plus `HTTP_PROXY` and `NO_PROXY` as needed), then run `sudo peers service restart --system`. The drop-in survives a reinstall.
+- macOS: add an `EnvironmentVariables` dictionary to `/Library/LaunchDaemons/io.github.wangzw.peers.plist` with `HTTPS_PROXY` and any other variables, then run `sudo peers service restart --system`, which reads the plist again. A reinstall rewrites the plist, so add the dictionary again afterwards; an update keeps this dictionary.
 
 A user-level service works the same way: on Linux, edit the drop-in with `systemctl --user edit peers.service` and restart the service with `peers service restart`; on macOS, add the dictionary to `~/Library/LaunchAgents/io.github.wangzw.peers.plist` and run `peers service restart`, which reads the plist again. A reinstall rewrites that plist too, so add the dictionary again afterwards; an update keeps it as well.
 
@@ -82,7 +82,7 @@ When no Broker is running, the command replaces the binary itself, after checkin
 The new binary takes effect the next time the Broker starts.
 ```
 
-Start the Broker the way you started it before, for example with `peers broker` in a terminal, to run the new version. If the directory is not writable, the command stops before any download and tells you to run `sudo peers update`.
+Start the Broker the way you started it before, for example with `peers service run` in a terminal, to run the new version. If the directory is not writable, the command stops before any download and tells you to run `sudo peers update`.
 
 ### Update from a session
 
@@ -116,6 +116,6 @@ To stop the Broker from checking:
 peers config set update.check false
 ```
 
-The notice disappears at once: `peers status` no longer prints the `Update` line, and sessions no longer show the update notice. A host without access to GitHub can leave the check off; `peers update` contacts GitHub only when you run it yourself.
+The notice disappears at once: `peers service status` no longer prints the `Update` line, and sessions no longer show the update notice. A host without access to GitHub can leave the check off; `peers update` contacts GitHub only when you run it yourself.
 
 [The security model]({{< relref "/docs/security" >}}) describes the network access the check makes.

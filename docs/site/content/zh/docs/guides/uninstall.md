@@ -20,7 +20,7 @@ sudo peers uninstall
 
 ## 保留还是删除数据
 
-命令询问 `Also remove configuration, identity, audit and service logs? [y/N]`，除非回答 `y`，这些数据都会保留；无法询问时也保留。`peers uninstall --purge` 跳过询问，一并删除这些数据。
+命令询问 `Also remove configuration, identity, audit and service logs? [y/N]`，除非回答 `y`，这些数据都会保留。没有终端时要加 `--yes`：它跳过询问并保留数据，与 `--purge` 同用则删除数据；不加 `--yes` 时命令以退出码 1 结束。[`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) 说明 `--purge` 与其余行为。
 
 ## 删除其他账户的 MCP 注册
 
@@ -28,4 +28,4 @@ sudo peers uninstall
 
 ## 只卸载服务
 
-只想停止并移除服务、保留二进制时，运行 `peers service uninstall`，系统级服务用 `sudo peers service uninstall --system`。退出码与其余行为见 [peers uninstall]({{< relref "/docs/reference/cli" >}}#peers-uninstall)。
+只想停止并移除服务、保留二进制时，运行 `peers service remove`，系统级服务用 `sudo peers service remove --system`。退出码与其余行为见 [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall)。

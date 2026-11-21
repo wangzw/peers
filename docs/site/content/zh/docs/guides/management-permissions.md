@@ -11,20 +11,20 @@ weight: 7
 | 操作 | 对配置文件所需的权限 |
 |---|---|
 | `list_agents`、`list_topics`、`join_topic`、`leave_topic`、`send_message` | 无 |
-| `list_brokers`、`peers peer list` | 无 |
-| `get_config`、`peers config get`、完整的 `peers status` 输出、`peers audit` | 读 |
+| `list_brokers`、`peers broker list` | 无 |
+| `get_config`、`peers config list`、完整的 `peers service status` 输出、`peers service audit` | 读 |
 | `set_config`、`peers config set` | 写 |
-| `set_broker_online`、`peers offline`、`peers online` | 写 |
-| `create_pairing_key`、`peers pairing-key create` | 写 |
-| `connect_broker`、`peers peer connect` | 写 |
-| `disconnect_broker`、`peers peer disconnect` | 写 |
+| `set_broker_online`、`peers service offline`、`peers service online` | 写 |
+| `create_pairing_key`、`peers key create` | 写 |
+| `connect_broker`、`peers broker connect` | 写 |
+| `disconnect_broker`、`peers broker disconnect` | 写 |
 | `update_broker`、经 Broker 执行的 `peers update` | 写 |
 
 `peers update` 在本地替换二进制时，改为检查二进制所在目录的写权限，情形是没有正在运行的 Broker，或选中的用户级 Broker 不在服务管理器下运行。
 
 用户级 Broker 的配置文件属于运行它的账户，所以这些检查对该账户自然通过。系统级 Broker 的文件是 `/etc/peers/config.yaml`。新安装会以属主 root、属组为默认的 `peers`、权限 `0660` 创建它；已存在的文件不改动。读权限还允许账户查看完整状态和审计日志；写权限允许它修改设置、管理配对。两级权限都由普通的文件权限决定，不另设管理员名单。
 
-拥有配置文件的组的成员不用 `sudo` 就能管理 Broker。管理员用 `sudo` 执行终端命令时按 root 的权限判定，所以无论文件的属组是什么，管理员都能用这种方式管理 Broker。本账户还运行着用户级 Broker 时，终端命令连到那个用户级 Broker，要管理系统级 Broker 就得加 `sudo`。[会话或命令使用哪个 Broker]({{< relref "system-broker.md" >}}#会话或命令使用哪个-broker)一节介绍选择顺序。
+拥有配置文件的组的成员不用 `sudo` 就能管理 Broker。`peers service status`、`audit`、`online`、`offline` 加 `--system` 连到系统级 Broker。本账户没有用户级 Broker 时，`peers config`、`peers key`、`peers broker` 也直接连到系统级 Broker；本账户运行着用户级 Broker 时，这三条连到那个用户级 Broker，要管理系统级 Broker 就得加 `sudo`。`peers service start`、`stop`、`restart` 直接调用 `systemctl` 或 `launchctl`，`peers service install`、`remove` 创建或删除系统级服务，这几条仍需 `sudo`。管理员用 `sudo` 执行终端命令时按 root 的权限判定，所以无论文件的属组是什么，管理员都能用这种方式管理 Broker。[会话或命令使用哪个 Broker]({{< relref "system-broker.md" >}}#会话或命令使用哪个-broker)一节介绍选择顺序。
 
 检查识别的是操作系统账户，不是人，也不是模型。同一账户下的任何进程，无论经工具还是从终端，都能发起同样的调用。
 
@@ -58,5 +58,5 @@ sudo chmod 0660 /etc/peers/config.yaml
 
 - Claude Code 自己的权限设置决定一次工具调用是否需要你批准，这只管工具；终端命令不经过 Claude Code 的权限确认。文件权限检查与此独立，工具调用要文件权限检查和会话里的批准都允许才会执行。
 - 不要把 `update_broker` 加入 Claude Code 的自动批准名单。这条确认是升级前的最后一道人工检查；系统级安装时，Broker 替换的是以 root 运行的二进制。
-- 工具和终端命令都不能设置 `pairing.static_key`，也不能读取它的取值。`get_config` 与 `peers config get` 只报告它是否已设置，`set_config` 与 `peers config set` 对它总是失败。要设置、更换或删除它，直接编辑配置文件；Broker 无需重启就会采用改动。
+- 工具和终端命令都不能设置 `pairing.static_key`，也不能读取它的取值。`get_config` 与 `peers config list` 只报告它是否已设置，`set_config` 与 `peers config set` 对它总是失败。要设置、更换或删除它，直接编辑配置文件；Broker 无需重启就会采用改动。
 - 权限不足的错误不会改变任何状态：配置、对端和有效的配对密钥都保持原样。终端命令权限不足时，Broker 给出的英文错误会写到标准错误，其中包含配置文件的路径，命令以退出码 1 结束。

@@ -20,7 +20,7 @@ The account that runs the command decides the level. Root removes the system-lev
 
 ## Keep or delete the data
 
-The command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them unless you answer `y`; without a terminal to ask, it keeps them. `peers uninstall --purge` skips the question and deletes the data too.
+The command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them unless you answer `y`. Without a terminal, add `--yes`: it skips the question and keeps the data, and together with `--purge` it deletes the data. Without `--yes` the command exits with code 1. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) describes `--purge` and the rest of the behaviour.
 
 ## Remove the MCP registration of other accounts
 
@@ -28,4 +28,4 @@ The command removes the MCP registration of the account that ran `sudo`, or of t
 
 ## Remove only the service
 
-To stop and remove the service but keep the binary, run `peers service uninstall`, or `sudo peers service uninstall --system` for a system-level service. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) gives the exit codes and the rest of the behaviour.
+To stop and remove the service but keep the binary, run `peers service remove`, or `sudo peers service remove --system` for a system-level service. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) gives the exit codes and the rest of the behaviour.

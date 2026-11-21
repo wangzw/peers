@@ -27,7 +27,7 @@ A Claude Code session reaches `peers` through the MCP server `peer`, which the i
 
 ## Results
 
-A Broker can report a degraded run through the tools. In a diagnostics-only run every tool returns an error with the code `broker_degraded` and the reason, and `peers status` shows the same reason with the fix. In a local-only run the tools work except `create_pairing_key`, which returns `broker_degraded` with the address that cannot be bound and the `broker.listen` fix. Both kinds of degraded run recover without restarting the process; [`peers broker`]({{< relref "/docs/reference/cli" >}}#peers-broker) describes when they retry.
+A Broker can report a degraded run through the tools. In a diagnostics-only run every tool returns an error with the code `broker_degraded` and the reason, and `peers service status` shows the same reason with the fix. In a local-only run the tools work except `create_pairing_key`, which returns `broker_degraded` with the address that cannot be bound and the `broker.listen` fix. Both kinds of degraded run recover without restarting the process; [`peers service run`]({{< relref "/docs/reference/cli" >}}#peers-service-run) describes when they retry.
 
 ### Agents
 

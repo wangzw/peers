@@ -36,11 +36,11 @@ peers 的工具由模型调用，用自然语言提出要求即可；它们不�
 
 两台主机中至少有一台能连到另一台上的 17443 端口。配对之前，确认两台主机上的 Broker 都在运行，且都用默认配置。
 
-1. 在能被对方连到的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或者在终端运行 `peers pairing-key create`。
+1. 在能被对方连到的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或者在终端运行 `peers key create`。
 2. 结果给出一个一次性配对密钥、它的失效时间，以及本机 Broker 的地址。密钥和地址分开显示，地址不属于密钥。把两者经 peers 之外的途径交给另一台主机。
-3. 在另一台主机上说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”，地址和密钥取自第 2 步，并批准这次调用（模型会调用 `connect_broker`），或者运行 `peers peer connect <address> --key <key>`。
+3. 在另一台主机上说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”，地址和密钥取自第 2 步，并批准这次调用（模型会调用 `connect_broker`），或者运行 `peers broker connect <address> --key <key>`。
 4. 结果显示接受方 Broker 的别名与指纹。两台主机上处在同一个 topic 里的会话此后就能互相看见、互发消息。
 
 `create_pairing_key`、`connect_broker` 等管理工具以及对应的终端命令，要求对 Broker 的配置文件有写权限。你自己的用户级 Broker 的配置文件属于你的账户；系统级 Broker 上，谁拥有这个权限见[管理组]({{< relref "guides/management-permissions.md" >}}#管理组)。
 
-调用 `connect_broker` 或运行 `peers peer connect` 的一方是拨号方，网络中断后由它重新建立链路；接受方不主动拨号。密钥过期、别名冲突、地址连不上等情形见[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
+调用 `connect_broker` 或运行 `peers broker connect` 的一方是拨号方，网络中断后由它重新建立链路；接受方不主动拨号。密钥过期、别名冲突、地址连不上等情形见[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。

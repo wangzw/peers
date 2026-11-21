@@ -11,20 +11,20 @@ The tools and the terminal commands can change a Broker only as far as the calli
 | Operation | Required access to the configuration file |
 |---|---|
 | `list_agents`, `list_topics`, `join_topic`, `leave_topic`, `send_message` | none |
-| `list_brokers`, `peers peer list` | none |
-| `get_config`, `peers config get`, full `peers status` output, `peers audit` | read |
+| `list_brokers`, `peers broker list` | none |
+| `get_config`, `peers config list`, full `peers service status` output, `peers service audit` | read |
 | `set_config`, `peers config set` | write |
-| `set_broker_online`, `peers offline`, `peers online` | write |
-| `create_pairing_key`, `peers pairing-key create` | write |
-| `connect_broker`, `peers peer connect` | write |
-| `disconnect_broker`, `peers peer disconnect` | write |
+| `set_broker_online`, `peers service offline`, `peers service online` | write |
+| `create_pairing_key`, `peers key create` | write |
+| `connect_broker`, `peers broker connect` | write |
+| `disconnect_broker`, `peers broker disconnect` | write |
 | `update_broker`, `peers update` through the Broker | write |
 
 `peers update` checks write permission on the binary's directory instead when it replaces the binary locally, because no Broker is running or the selected user Broker does not run as a service.
 
 A user Broker's configuration file belongs to the account that runs it, so these checks pass for that account without any setup. A system Broker's file is `/etc/peers/config.yaml`. A new installation creates it with owner root, the default group `peers` and mode `0660`; an existing file is left unchanged. Read access also lets an account read the full status and the audit log; write access lets it change settings and manage pairing. Both levels are ordinary file permissions, not a separate list of administrators.
 
-Members of the group that owns the configuration file manage the Broker without `sudo`. An account that runs the terminal commands with `sudo` is checked as root, so an administrator can manage the Broker that way whatever the file's group is. If this account also runs a user-level Broker, its terminal commands connect to that Broker; run them with `sudo` to manage the system Broker. The section [Which Broker a session or command uses]({{< relref "system-broker.md" >}}#which-broker-a-session-or-command-uses) describes the order.
+Members of the group that owns the configuration file manage the Broker without `sudo`. An account that runs the terminal commands with `sudo` is checked as root, so an administrator can manage the Broker that way whatever the file's group is. If this account also runs a user-level Broker, its terminal commands connect to that Broker; run them with `sudo` to manage the system Broker, and pass `--system` to the `peers service` subcommands. The section [Which Broker a session or command uses]({{< relref "system-broker.md" >}}#which-broker-a-session-or-command-uses) describes the order.
 
 The check identifies an operating-system account, not a person or a model. Any process running under the same account can make the same calls, whether through the tools or from the terminal.
 
@@ -58,5 +58,5 @@ Being allowed to use the Broker and being allowed to manage it are separate. The
 
 - Claude Code's own permission settings decide whether a tool call needs your approval. They apply to the tools only: the terminal commands do not go through Claude Code's approval. The file check is independent of both; a tool call runs only when the file check and the approval both allow it.
 - Do not add `update_broker` to Claude Code's auto-approve list. That confirmation is the last manual check before an upgrade, and for a system-level installation the Broker replaces a binary that runs as root.
-- Neither the tools nor the terminal commands can set `pairing.static_key` or read its value. `get_config` and `peers config get` report only whether it is set, and `set_config` and `peers config set` always fail for it. Edit the configuration file to set, replace or delete it; the Broker applies the change without a restart.
+- Neither the tools nor the terminal commands can set `pairing.static_key` or read its value. `get_config` and `peers config list` report only whether it is set, and `set_config` and `peers config set` always fail for it. Edit the configuration file to set, replace or delete it; the Broker applies the change without a restart.
 - A permission error changes nothing: the configuration, the peers and the valid pairing keys stay as they were. When a terminal command lacks the required permission, the Broker's English error, which includes the path of the configuration file, is written to standard error, and the command exits with code 1.

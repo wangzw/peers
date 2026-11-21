@@ -36,11 +36,11 @@ The sending session reports success once the message is written into the receivi
 
 At least one host must be able to reach port 17443 on the other. Before pairing, make sure the Broker is running on both hosts, each with its default configuration.
 
-1. On the host that can be reached, say “Create a pairing key.” and approve the call (the model calls `create_pairing_key`), or run `peers pairing-key create` in a terminal.
+1. On the host that can be reached, say “Create a pairing key.” and approve the call (the model calls `create_pairing_key`), or run `peers key create` in a terminal.
 2. The result gives a one-time key, its expiry time, and this Broker's addresses. The key and an address are shown separately; the addresses are not part of the key. Pass both to the other host through a channel outside `peers`.
-3. On the other host, say “Connect to the Broker at `<address>` with the key `<key>`.”, using the address from step 2 and the key, and approve the call (the model calls `connect_broker`), or run `peers peer connect <address> --key <key>`.
+3. On the other host, say “Connect to the Broker at `<address>` with the key `<key>`.”, using the address from step 2 and the key, and approve the call (the model calls `connect_broker`), or run `peers broker connect <address> --key <key>`.
 4. The result shows the accepting Broker's alias and fingerprint. Sessions on both hosts that share a topic can now see each other and send messages.
 
 `create_pairing_key`, `connect_broker` and the other management tools, and their terminal forms, need write permission on the Broker's configuration file. Your own user Broker's file belongs to your account; for a system Broker, [the admin group]({{< relref "guides/management-permissions.md" >}}#the-admin-group) covers who holds that permission.
 
-The side that calls `connect_broker` or runs `peers peer connect` is the dialer and re-establishes the link after a network drop; the accepting side does not dial. [Pair two hosts]({{< relref "guides/pair-hosts.md" >}}) covers the alternatives, such as an expired key, an alias conflict and an address the other side cannot reach.
+The side that calls `connect_broker` or runs `peers broker connect` is the dialer and re-establishes the link after a network drop; the accepting side does not dial. [Pair two hosts]({{< relref "guides/pair-hosts.md" >}}) covers the alternatives, such as an expired key, an alias conflict and an address the other side cannot reach.

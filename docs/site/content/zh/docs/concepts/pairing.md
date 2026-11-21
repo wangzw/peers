@@ -7,11 +7,11 @@ weight: 4
 
 ## 配对密钥
 
-接受方说“生成一个配对密钥。”（模型会调用 `create_pairing_key`），或用 `peers pairing-key create` 生成一次性配对密钥。密钥在 10 分钟内有效，成功配对一次后失效。用户把密钥和 Broker 的地址经 peers 之外的途径交给对方，地址不是秘密，可以另走一条途径。
+接受方说“生成一个配对密钥。”（模型会调用 `create_pairing_key`），或用 `peers key create` 生成一次性配对密钥。密钥在 10 分钟内有效，成功配对一次后失效。用户把密钥和 Broker 的地址经 peers 之外的途径交给对方，地址不是秘密，可以另走一条途径。
 
 Broker 也可以使用用户或管理员写在配置文件里的预置静态密钥。这种密钥可以用于任意多次配对，不会过期，peers 从不生成它；`peers service install` 生成的配置文件里有一行注释说明生成方法，例如 `openssl rand -hex 32`。
 
-发起方说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`），或运行 `peers peer connect <address> --key <key>`，传入对方的地址和密钥。地址写成 `host:port`，或者按 `create_pairing_key` 的结果或 `peers pairing-key create` 的输出，写成 `hostname(host:port)` 形式。密钥错误、已过期或已被使用时，配对失败，双方都不保存对方的身份。
+发起方说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`），或运行 `peers broker connect <address> --key <key>`，传入对方的地址和密钥。地址写成 `host:port`，或者按 `create_pairing_key` 的结果或 `peers key create` 的输出，写成 `hostname(host:port)` 形式。密钥错误、已过期或已被使用时，配对失败，双方都不保存对方的身份。
 
 ## 配对之后
 

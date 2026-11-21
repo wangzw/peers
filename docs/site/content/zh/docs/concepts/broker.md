@@ -29,6 +29,6 @@ Broker 默认不公开。公开的 Broker 发布一张名片，写明自己的�
 
 配置是一个 YAML 文件。用户级 Broker 读取 `~/.peers/config.yaml`，系统级 Broker 读取 `/etc/peers/config.yaml`。读取或修改配置的工具和终端命令遵循操作系统对这个文件的权限：读权限允许读取配置、完整状态和审计日志，写权限允许修改设置、生成一次性配对密钥、配对和解除配对。列出 Agent 与 topic、加入 topic、发送消息都不需要这些权限。
 
-Broker 还可以设为下线，此时拒绝其他主机发来的消息，链路与配对都照常；两个命令见[命令行]({{< relref "/docs/reference/cli" >}}#peers-offline-and-online)。
+Broker 还可以设为下线，此时拒绝其他主机发来的消息，链路与配对都照常；两个命令见[命令行]({{< relref "/docs/reference/cli" >}}#peers-service-online-and-offline)。
 
 Broker 如何决定可见范围，见[topic]({{< relref "/docs/concepts/topics" >}})；如何信任另一个 Broker，见[配对]({{< relref "/docs/concepts/pairing" >}})；对端之间的连接，见[链路]({{< relref "/docs/concepts/links" >}})。安装服务见[把 Broker 安装为服务]({{< relref "/docs/guides/run-as-service" >}})，多账户部署见[运行系统级 Broker]({{< relref "/docs/guides/system-broker" >}})；配置键与文件路径见[配置键]({{< relref "/docs/reference/configuration" >}})和[文件与路径]({{< relref "/docs/reference/files" >}})。

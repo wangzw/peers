@@ -67,7 +67,7 @@ peers 写入时不带回复地址，所以经同一个用户级 Broker，或经�
 peers config set update.check false
 ```
 
-设置生效后，`peers status` 里的 `Update` 一行和会话里的提示会立刻消失。没有外网的主机关掉检查即可；`peers update` 只在你手动执行时才访问网络。下载使用执行下载的进程的代理环境变量；服务要用的变量怎么设置，见[更新 peers]({{< relref "guides/update.md" >}})。
+设置生效后，`peers service status` 里的 `Update` 一行和会话里的提示会立刻消失。没有外网的主机关掉检查即可；`peers update` 只在你手动执行时才访问网络。下载使用执行下载的进程的代理环境变量；服务要用的变量怎么设置，见[更新 peers]({{< relref "guides/update.md" >}})。
 
 更新只在确认之后进行。`peers update` 会先征求确认，你输入 y 或 yes，或者加上 `--yes` 之后才安装。会话可以用 `update_broker` 工具发起同样的升级，Claude Code 默认会在执行前请你确认；不要把 `update_broker` 加入自动批准名单，因为这条确认是升级前的最后一道人工检查。替换之前，发布包会先用 SHA-256 与 `checksums.txt` 比对，解压时只取名为 `peers` 的普通文件，新二进制的 `--version` 必须报告预期的版本。替换之前的任何一步失败，原有的二进制与服务都保持原样。由 Broker 执行更新时，命令不会自己重启服务：它最多等 60 秒，看 Broker 是否报告新版本；超时就给出服务日志的位置。系统级更新需要对 Broker 配置文件的写权限：没有写权限的账户在下载任何内容之前就会被拒绝。没有系统级 Broker 在运行时，命令改为在本地替换二进制，检查的是二进制所在目录的写权限，不是配置文件的写权限。更新过程见[更新 peers]({{< relref "guides/update.md" >}})。
 

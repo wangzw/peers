@@ -10,7 +10,7 @@ peers 会检查自己有没有新版本，由你在终端或会话里决定是�
 
 Broker 的正式发布版本启动后会检查 GitHub：先等约一分钟，检查一次，此后默认每 24 小时检查一次。检查在 Broker 进程里进行，一个 Broker 覆盖连到它的所有会话。
 
-有新版本时，两个地方会显示。`peers status` 的最后一行如下，其中 `<latest>` 是最新版本，`<installed>` 是已安装版本：
+有新版本时，两个地方会显示。`peers service status` 的最后一行如下，其中 `<latest>` 是最新版本，`<installed>` 是已安装版本：
 
 ```text
 Update: <latest> available (current <installed>); run peers update
@@ -38,7 +38,7 @@ peers update
 
 命令先拒绝不是正式发布版本的二进制，然后在改动任何东西之前询问。回答 `y` 或 `yes` 才会继续；其他回答会取消更新，二进制与服务都保持原样。确认之后才选 Broker；随后做什么，取决于选中的 Broker 以及它怎样运行。
 
-加 `--yes` 可以跳过询问。标准输入不是终端时，例如在脚本或计划任务里，命令要求带 `--yes`，否则拒绝执行，并给出 `standard input is not a terminal; run "peers update --yes" to update without asking`。已经是最新版本时，命令打印 `peers 0.4.0 is up to date`，直接退出，不做任何改动。
+加 `--yes` 可以跳过询问。标准输入不是终端时，例如在脚本或计划任务里，命令要求带 `--yes`，否则拒绝执行，并给出 `standard input is not a terminal; pass --yes to proceed without asking`。已经是最新版本时，命令打印 `peers 0.4.0 is up to date`，直接退出，不做任何改动。
 
 命令的完整说明见[命令行]({{< relref "/docs/reference/cli" >}})。
 
@@ -69,8 +69,8 @@ Sessions that are already open keep the old MCP server until they are reopened; 
 
 系统级 Broker 从服务环境里读取这些变量：
 
-- Linux：运行 `sudo systemctl edit peers.service`，加入 `[Service]` 与 `Environment=HTTPS_PROXY=http://proxy.example:8080`（需要时加上 `HTTP_PROXY` 与 `NO_PROXY`），然后运行 `sudo peers service restart`。drop-in 在重装后仍然保留。
-- macOS：在 `/Library/LaunchDaemons/io.github.wangzw.peers.plist` 里加入 `EnvironmentVariables` 字典，写入 `HTTPS_PROXY` 等变量，然后运行 `sudo peers service restart`，重启会重新读取 plist。重装会重写 plist，之后要重新加入这个字典；更新则会保留这个字典。
+- Linux：运行 `sudo systemctl edit peers.service`，加入 `[Service]` 与 `Environment=HTTPS_PROXY=http://proxy.example:8080`（需要时加上 `HTTP_PROXY` 与 `NO_PROXY`），然后运行 `sudo peers service restart --system`。drop-in 在重装后仍然保留。
+- macOS：在 `/Library/LaunchDaemons/io.github.wangzw.peers.plist` 里加入 `EnvironmentVariables` 字典，写入 `HTTPS_PROXY` 等变量，然后运行 `sudo peers service restart --system`，重启会重新读取 plist。重装会重写 plist，之后要重新加入这个字典；更新则会保留这个字典。
 
 用户级服务的做法相同：Linux 上用 `systemctl --user edit peers.service` 编辑 drop-in，再用 `peers service restart` 重启服务；macOS 上在 `~/Library/LaunchAgents/io.github.wangzw.peers.plist` 里加入字典，再运行 `peers service restart`，重启会重新读取 plist。重装同样会重写这个 plist，之后要重新加入；更新则会保留。
 
@@ -82,7 +82,7 @@ Sessions that are already open keep the old MCP server until they are reopened; 
 The new binary takes effect the next time the Broker starts.
 ```
 
-按你原来启动的方式启动 Broker，例如在终端重新运行 `peers broker`，让它运行新的二进制。目录不可写时，命令在任何下载之前停下，并提示运行 `sudo peers update`。
+按你原来启动的方式启动 Broker，例如在终端重新运行 `peers service run`，让它运行新的二进制。目录不可写时，命令在任何下载之前停下，并提示运行 `sudo peers update`。
 
 ### 在会话里更新
 
@@ -116,6 +116,6 @@ Broker 重启后，连接会自动恢复。发起调用的会话里，MCP 服务
 peers config set update.check false
 ```
 
-提示会立刻消失：`peers status` 不再打印 `Update` 一行，会话也不再出现更新提示。无法访问 GitHub 的主机可以一直关着检查；只有你自己运行 `peers update` 时，命令才会访问 GitHub。
+提示会立刻消失：`peers service status` 不再打印 `Update` 一行，会话也不再出现更新提示。无法访问 GitHub 的主机可以一直关着检查；只有你自己运行 `peers update` 时，命令才会访问 GitHub。
 
 [安全模型]({{< relref "/docs/security" >}})说明检查发出的网络访问。

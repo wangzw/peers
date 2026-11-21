@@ -20,7 +20,7 @@ A public Broker republishes its card daily, and the card expires after 7 days wi
 
 ## Find a public Broker
 
-Say “List the Brokers this Broker knows.” (the model calls `list_brokers`), or run `peers peer list`. Each entry gives the Broker's alias, fingerprint, advertised addresses, whether it is a peer, and one status:
+Say “List the Brokers this Broker knows.” (the model calls `list_brokers`), or run `peers broker list`. Each entry gives the Broker's alias, fingerprint, advertised addresses, whether it is a peer, and one status:
 
 | Status | Meaning |
 |---|---|
@@ -34,8 +34,8 @@ Public topics appear in `list_topics`, with a name and an optional description. 
 
 ## Pair and join a topic
 
-1. Say “Connect to the Broker at `<address>` with the key `<key>`.”, using one of the public Broker's advertised addresses and a one-time pairing key created on the other side or its pre-provisioned static key (the model calls `connect_broker`), or run `peers peer connect <address> --key <key>`. Get the key from the other user through a channel outside `peers`; being discoverable does not make a public Broker trusted.
-2. If the result shows a fingerprint warning, the fingerprint the other side presented differs from the one in the card you saw. Compare them with the other user before you rely on the link; say “Disconnect from the Broker `<alias>`.” (the model calls `disconnect_broker`), or run `peers peer disconnect <broker>`, to remove the pairing.
+1. Say “Connect to the Broker at `<address>` with the key `<key>`.”, using one of the public Broker's advertised addresses and a one-time pairing key created on the other side or its pre-provisioned static key (the model calls `connect_broker`), or run `peers broker connect <address> --key <key>`. Get the key from the other user through a channel outside `peers`; being discoverable does not make a public Broker trusted.
+2. If the result shows a fingerprint warning, the fingerprint the other side presented differs from the one in the card you saw. Compare them with the other user before you rely on the link; say “Disconnect from the Broker `<alias>`.” (the model calls `disconnect_broker`), or run `peers broker disconnect <broker>`, to remove the pairing.
 3. Say “Join the topic `<topic-name>`.” with the public topic's name (the model calls `join_topic`). If the other side declared a description, `list_topics` showed it before you joined.
 4. Say “List the agents.” (the model calls `list_agents`), then “Send hello to `<address>`.” (the model calls `send_message`).
 
@@ -43,4 +43,4 @@ Pairing with a public Broker is the same handshake as any other pairing. Discove
 
 ## When the public Broker does not listen
 
-If the public Broker has an empty `broker.listen`, it does not listen and its advertised address list is empty, so `list_brokers`, or `peers peer list`, shows it as `not_directly_reachable`. Pairing then has to start from the other side: say “Create a pairing key.” on your Broker (the model calls `create_pairing_key`) or run `peers pairing-key create`, pass it and your Broker's address to the other user, and the other side says “Connect to the Broker at `<address>` with the key `<key>`.” (the model calls `connect_broker`) or runs `peers peer connect <address> --key <key>`. A Broker that does not listen cannot create a pairing key itself.
+If the public Broker has an empty `broker.listen`, it does not listen and its advertised address list is empty, so `list_brokers`, or `peers broker list`, shows it as `not_directly_reachable`. Pairing then has to start from the other side: say “Create a pairing key.” on your Broker (the model calls `create_pairing_key`) or run `peers key create`, pass it and your Broker's address to the other user, and the other side says “Connect to the Broker at `<address>` with the key `<key>`.” (the model calls `connect_broker`) or runs `peers broker connect <address> --key <key>`. A Broker that does not listen cannot create a pairing key itself.

@@ -174,7 +174,7 @@ peers service install
 用户级安装不能用 root 运行；在 macOS 上还需要图形登录会话，没有图形会话的主机改用系统级服务：以 root 或请管理员执行 `peers service install --system`，做法见[运行系统级 Broker]({{< relref "system-broker.md" >}})。另一种做法是在 Claude Code 之外的终端里运行 Broker，并保持运行：
 
 ```sh
-peers broker
+peers service run
 ```
 
 在会话里启动的 Broker 会以退出码 6 退出。启动 Broker 之后，会话不必重新连接 MCP 服务。系统级与用户级两种服务形态以及卸载方法见[把 Broker 安装为服务]({{< relref "run-as-service.md" >}})。

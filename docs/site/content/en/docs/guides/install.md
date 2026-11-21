@@ -174,7 +174,7 @@ peers service install
 A user-level install must not run as root, and on macOS it needs a graphical login session; on a host without one, install the system-level service with `peers service install --system`, as root or through an administrator; see [Run a system Broker]({{< relref "system-broker.md" >}}). Alternatively, run the Broker in a terminal outside Claude Code and leave it running:
 
 ```sh
-peers broker
+peers service run
 ```
 
 A Broker started inside a session exits with code 6. Starting the Broker does not require reconnecting the MCP server. [Run the Broker as a service]({{< relref "run-as-service.md" >}}) covers both service forms and uninstalling it.

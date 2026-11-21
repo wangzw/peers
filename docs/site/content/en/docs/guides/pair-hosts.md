@@ -18,7 +18,7 @@ Pairing makes two Brokers trust each other by their fingerprints. It is the only
 On the accepting host, say “Create a pairing key.” and approve the call (the model calls `create_pairing_key`), or run:
 
 ```sh
-peers pairing-key create
+peers key create
 ```
 
 Either way the result gives:
@@ -33,7 +33,7 @@ Pass the key and one address to the other user through a channel outside `peers`
 On the other host, say “Connect to the Broker at `<address>` with the key `<key>`.” (the model calls `connect_broker`), or run:
 
 ```sh
-peers peer connect <address> --key <key>
+peers broker connect <address> --key <key>
 ```
 
 The address is written `host:port`, or `hostname(host:port)` exactly as the other side showed it; the host name in that form is for the user and is not used for the connection.
@@ -42,14 +42,14 @@ Either way the result gives the accepting Broker's alias and fingerprint.
 
 ## Check the link
 
-Say “List the Brokers this Broker knows.” on both hosts (the model calls `list_brokers`), or run `peers peer list`. Each side lists the other as a peer with status `connected`. For a peer, the result also gives this Broker's role: the side that called `connect_broker` or ran `peers peer connect` is the `dialer`, and the side that created the key is the `acceptor`.
+Say “List the Brokers this Broker knows.” on both hosts (the model calls `list_brokers`), or run `peers broker list`. Each side lists the other as a peer with status `connected`. For a peer, the result also gives this Broker's role: the side that called `connect_broker` or ran `peers broker connect` is the `dialer`, and the side that created the key is the `acceptor`.
 
 The dialer re-establishes the link after a network interruption without any user action. The acceptor never dials, so the two-way link only needs one reachable direction.
 
 ## Special cases
 
 - The key expired or was used. A one-time key is valid for 10 minutes and for one pairing. Using it later returns an error that the key is invalid or expired, and neither side stores the other's identity. Create a new key and start again.
-- The alias is already taken. A common cause is the default alias, which contains only the first segment of the hostname: two hosts whose hostnames share that segment, for example `workstation.example.com` and `workstation.example.net`, give their system Brokers the same alias, and so do the user Brokers of the same-named account on each host. If the accepting Broker's alias matches this Broker's own alias or another peer's alias, `connect_broker` asks for a local alias. Say “Connect to the Broker at `<address>` with the key `<key>` and the local alias `<alias>`.” with an alias of up to 24 characters (the model calls `connect_broker`), or run `peers peer connect <address> --key <key> --alias <alias>` with the same limit; the alias applies only on this Broker.
-- The shown address does not work. The addresses returned with the key may not be reachable from the other side, for example when the accepting host is behind port forwarding. Say “Connect to the Broker at `<address>` with the key `<key>`.” with an address that the other side can reach (the model calls `connect_broker`), or use it in `peers peer connect`.
-- The network drops. Once the Brokers are paired, the dialer reconnects without a key. Wait a moment and say “List the Brokers this Broker knows.” again (the model calls `list_brokers`), or run `peers peer list`; the peer returns to `connected`.
-- The deployment is repeated. Instead of a one-time key, the accepting Broker can have a pre-provisioned static key in its configuration file, under `pairing.static_key`. The value is 16 to 128 characters, does not expire, and works for any number of pairings. The tools never generate it, set it or return it; before the deployment, uncomment the `static_key` line in the configuration file and fill in a key such as the output of `openssl rand -hex 32`. A file written by running the Broker or `peers config set` directly has no such line; in that case add `static_key: "<key>"` under `pairing:`. Then say “Connect to the Broker at `<address>` with the key `<key>`.” with that key (the model calls `connect_broker`), or run `peers peer connect <address> --key <key>`.
+- The alias is already taken. A common cause is the default alias, which contains only the first segment of the hostname: two hosts whose hostnames share that segment, for example `workstation.example.com` and `workstation.example.net`, give their system Brokers the same alias, and so do the user Brokers of the same-named account on each host. If the accepting Broker's alias matches this Broker's own alias or another peer's alias, `connect_broker` asks for a local alias. Say “Connect to the Broker at `<address>` with the key `<key>` and the local alias `<alias>`.” with an alias of up to 24 characters (the model calls `connect_broker`), or run `peers broker connect <address> --key <key> --alias <alias>` with the same limit; the alias applies only on this Broker.
+- The shown address does not work. The addresses returned with the key may not be reachable from the other side, for example when the accepting host is behind port forwarding. Say “Connect to the Broker at `<address>` with the key `<key>`.” with an address that the other side can reach (the model calls `connect_broker`), or use it in `peers broker connect`.
+- The network drops. Once the Brokers are paired, the dialer reconnects without a key. Wait a moment and say “List the Brokers this Broker knows.” again (the model calls `list_brokers`), or run `peers broker list`; the peer returns to `connected`.
+- The deployment is repeated. Instead of a one-time key, the accepting Broker can have a pre-provisioned static key in its configuration file, under `pairing.static_key`. The value is 16 to 128 characters, does not expire, and works for any number of pairings. The tools never generate it, set it or return it; before the deployment, uncomment the `static_key` line in the configuration file and fill in a key such as the output of `openssl rand -hex 32`. A file written by running the Broker or `peers config set` directly has no such line; in that case add `static_key: "<key>"` under `pairing:`. Then say “Connect to the Broker at `<address>` with the key `<key>`.” with that key (the model calls `connect_broker`), or run `peers broker connect <address> --key <key>`.

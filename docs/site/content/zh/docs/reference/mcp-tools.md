@@ -27,7 +27,7 @@ Claude Code 会话经名为 `peer` 的 MCP 服务使用 peers，安装会为运�
 
 ## 返回结果
 
-Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个工具都返回错误码为 `broker_degraded` 的错误并附原因，`peers status` 也会给出同样的原因与修复方法。仅本机降级时，工具照常工作，只有 `create_pairing_key` 返回 `broker_degraded`，错误说明里给出无法绑定的地址，以及修改 `broker.listen` 的方法。两档降级都会自行恢复，不重启进程；重试时机见 [peers broker]({{< relref "/docs/reference/cli" >}}#peers-broker)。
+Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个工具都返回错误码为 `broker_degraded` 的错误并附原因，`peers service status` 也会给出同样的原因与修复方法。仅本机降级时，工具照常工作，只有 `create_pairing_key` 返回 `broker_degraded`，错误说明里给出无法绑定的地址，以及修改 `broker.listen` 的方法。两档降级都会自行恢复，不重启进程；重试时机见 [`peers service run`]({{< relref "/docs/reference/cli" >}}#peers-service-run)。
 
 ### Agent
 

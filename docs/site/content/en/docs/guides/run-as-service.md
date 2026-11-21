@@ -10,7 +10,7 @@ The install command already installs and starts the service, so this page covers
 
 ## Stop a Broker you started in a terminal
 
-If you have run `peers broker` in a terminal for this account, stop it there before installing the service. The install refuses while a Broker that this service did not start is answering, because that Broker holds the account lock.
+If you have run `peers service run` in a terminal for this account, stop it there before installing the service. The install refuses while a Broker that this service did not start is answering, because that Broker holds the account lock.
 
 ## Install a user-level service
 
@@ -28,7 +28,7 @@ When `~/.peers/config.yaml` does not exist, the install generates it as a templa
 
 On Linux with systemd, the unit is `~/.config/systemd/user/peers.service` (or under `$XDG_CONFIG_HOME`). On macOS, the LaunchAgent is `~/Library/LaunchAgents/io.github.wangzw.peers.plist`, and the install must run in a graphical login session; a host without one uses the system-level service instead.
 
-The unit or plist runs `peers broker --allow-degraded` as that account, so a Broker that cannot bind its listen address keeps serving this account in a local-only degraded run. It starts when the account logs in and restarts the Broker if it exits.
+The unit or plist runs `peers service run --user --allow-degraded` as that account, so a Broker that cannot bind its listen address keeps serving this account in a local-only degraded run. It starts when the account logs in and restarts the Broker if it exits.
 
 ## Install a system-level service
 
@@ -50,14 +50,14 @@ On Linux the command writes `/etc/systemd/system/peers.service`, enables it and 
 
 ## Uninstall a service
 
-Run `peers service uninstall` as the same account to remove a user-level service. For a system-level service, run `sudo /usr/local/bin/peers service uninstall --system`. The command stops the Broker and removes only the service definition; the binary and the MCP registration stay. If no service is installed, it succeeds and reports that nothing is installed, so it can be run again safely. To remove the whole installation, run [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall), with `sudo` for a system-level installation.
+Run `peers service remove` as the same account to remove a user-level service. For a system-level service, run `sudo /usr/local/bin/peers service remove --system`. The command stops the Broker and removes only the service definition; the binary and the MCP registration stay. If no service is installed, it succeeds and reports that nothing is installed, so it can be run again safely. To remove the whole installation, run [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall), with `sudo` for a system-level installation.
 
 ## Start and stop the service
 
-Run `peers service stop` and `peers service start` to stop and start the service, and `peers service restart` to restart it; use `sudo` for a system-level service. [Command line]({{< relref "/docs/reference/cli" >}}#peers-service-start-stop-and-restart) gives the exit codes.
+Run `peers service stop` and `peers service start` to stop and start the service, and `peers service restart` to restart it; for a system-level service, pass `--system` and run it with `sudo`. [Command line]({{< relref "/docs/reference/cli" >}}#peers-service-start-stop-and-restart) gives the exit codes.
 
 ## Check the service
 
-Run `peers status` in a terminal. The output has an `Agents` table and a `Peers` table, or `Agents: none` and `Peers: none`. The service manager shows the Broker too: `systemctl --user status peers.service`, `systemctl status peers.service`, or `launchctl print` with the label `io.github.wangzw.peers`.
+Run `peers service status` in a terminal, adding `--system` for a system-level service. The output has an `Agents` table and a `Peers` table, or `Agents: none` and `Peers: none`. The service manager shows the Broker too: `systemctl --user status peers.service`, `systemctl status peers.service`, or `launchctl print` with the label `io.github.wangzw.peers`.
 
 Keep one Broker per account. Starting a second Broker under the same account fails with an error that an instance is already running, whichever address it would use. When another account's Broker already holds the port, an install fails; a service that was installed and only later finds the port taken enters local-only degraded run.

@@ -50,7 +50,7 @@ If none is available, tool calls return an error that says what to do, and the M
 
 An account that may use the system Broker but has its own user Broker running registers on the user Broker. To have its sessions use the system Broker instead, do not run a user-level Broker on that account.
 
-The terminal commands `peers config`, `peers pairing-key` and `peers peer`, like `peers status`, choose a Broker in the same order, look only for a Broker that is running, and never start one. If this account has a user Broker running, use `sudo` to manage the system Broker; root selects the system Broker directly.
+The terminal commands `peers config`, `peers key` and `peers broker` choose a Broker in the same order, look only for a Broker that is running, and never start one. The commands under `peers service` do not follow this order: they act only on the level selected by `--system` or `--user`, and never fall back to the other level. If this account has a user Broker running, use `sudo` to manage the system Broker with `peers config`, `peers key` or `peers broker`; root selects the system Broker directly.
 
 ## One identity for several accounts
 

@@ -50,7 +50,7 @@ claude mcp add --scope user peer -- /usr/local/bin/peers mcp
 
 一个账户有权使用系统级 Broker，但它自己的用户级 Broker 正在运行，会话会登记到用户级 Broker 上。要让它的会话改用系统级 Broker，就不要在这个账户上运行用户级 Broker。
 
-终端命令 `peers config`、`peers pairing-key` 和 `peers peer` 与 `peers status` 一样，按同样的顺序选择 Broker，只查找正在运行的 Broker，不会启动 Broker。本账户有用户级 Broker 在运行时，要用 `sudo` 才能管理系统级 Broker；root 直接选中系统级 Broker。
+终端命令 `peers config`、`peers key` 和 `peers broker` 按同样的顺序选择 Broker，只查找正在运行的 Broker，不会启动 Broker。`peers service` 下的命令不按这个顺序，只作用于 `--system` 或 `--user` 选中的级别，不回退到另一级。本账户有用户级 Broker 在运行时，用 `peers config`、`peers key` 或 `peers broker` 管理系统级 Broker 要加 `sudo`；root 直接选中系统级 Broker。
 
 ## 多个账户共用一个身份
 

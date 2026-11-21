@@ -37,11 +37,11 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 ## 需要手动启动 Broker 吗？
 
-会话不会自己启动 Broker。主机上已经有你能使用的系统级 Broker 时，只需注册 MCP 服务，会话会连接到它。否则需要自己启动：用 `peers service install` 把它安装为用户级服务，安装完成就会启动，此后随登录启动；另一种做法是在 Claude Code 之外的终端里运行 `peers broker`。安装脚本已经默认安装并启动用户级服务，用它装好之后无需再做这一步。在会话里启动的 Broker 会以退出码 6 退出。见[把 Broker 安装为服务]({{< relref "guides/run-as-service.md" >}})。
+会话不会自己启动 Broker。主机上已经有你能使用的系统级 Broker 时，只需注册 MCP 服务，会话会连接到它。否则需要自己启动：用 `peers service install` 把它安装为用户级服务，安装完成就会启动，此后随登录启动；另一种做法是在 Claude Code 之外的终端里运行 `peers service run`。安装脚本已经默认安装并启动用户级服务，用它装好之后无需再做这一步。在会话里启动的 Broker 会以退出码 6 退出。见[把 Broker 安装为服务]({{< relref "guides/run-as-service.md" >}})。
 
 ## 没有 Broker 在运行时会怎样？
 
-工具调用返回错误，说明该怎么做，具体视情形而定；MCP 服务进程不会启动 Broker。第一次查找时用户级与系统级 Broker 都找不到，或者用户级 Broker 的 socket 消失、拒绝连接（例如被强杀之后），报的是同一条：先提示本机如有系统级 Broker 请管理员启动它，再给出两种用户级启动方法，即 `peers service install`，或在 Claude Code 之外的终端里运行 `peers broker`。原先连在系统级 Broker 上的会话断开后，只提示联系管理员。用户级 socket 还在应答，但握手或调用失败时，报告 Broker 不可用，并说明 MCP 服务会在后台重试，不给出启动方法。启动 Broker 之后，会话不必重新连接 MCP 服务。需要 Broker 的终端命令，例如 `peers peer list`，做法相同：只查找正在运行的 Broker，不会启动它。见[命令行]({{< relref "reference/cli.md" >}})。
+工具调用返回错误，说明该怎么做，具体视情形而定；MCP 服务进程不会启动 Broker。第一次查找时用户级与系统级 Broker 都找不到，或者用户级 Broker 的 socket 消失、拒绝连接（例如被强杀之后），报的是同一条：先提示本机如有系统级 Broker 请管理员启动它，再给出两种用户级启动方法，即 `peers service install`，或在 Claude Code 之外的终端里运行 `peers service run`。原先连在系统级 Broker 上的会话断开后，只提示联系管理员。用户级 socket 还在应答，但握手或调用失败时，报告 Broker 不可用，并说明 MCP 服务会在后台重试，不给出启动方法。启动 Broker 之后，会话不必重新连接 MCP 服务。需要 Broker 的终端命令，例如 `peers broker list`，做法相同：只查找正在运行的 Broker，不会启动它。见[命令行]({{< relref "reference/cli.md" >}})。
 
 ## 一个账户能运行多个 Broker 吗？
 
@@ -61,7 +61,7 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 ## 两台主机如何开始互相信任？
 
-两台主机里至少要有一台能连到另一台。在对方能连上的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或运行 `peers pairing-key create` 生成一次性配对密钥，连同显示的地址一起，通过系统之外的途径交给另一台。另一台说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”并批准这次调用（模型会调用 `connect_broker`），或运行 `peers peer connect <address> --key <key>` 配对，使用该一次性密钥或接受方配置的预置静态密钥，此后双方各凭指纹认对方。见[配对]({{< relref "concepts/pairing.md" >}})与[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
+两台主机里至少要有一台能连到另一台。在对方能连上的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或运行 `peers key create` 生成一次性配对密钥，连同显示的地址一起，通过系统之外的途径交给另一台。另一台说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”并批准这次调用（模型会调用 `connect_broker`），或运行 `peers broker connect <address> --key <key>` 配对，使用该一次性密钥或接受方配置的预置静态密钥，此后双方各凭指纹认对方。见[配对]({{< relref "concepts/pairing.md" >}})与[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
 
 ## 什么是 topic？需要自己创建吗？
 
@@ -89,7 +89,7 @@ topic 是 Agent 之间可见与通信的范围。同一个项目里工作的会�
 
 ## 谁能修改 Broker 的配置？
 
-对 Broker 配置文件有写权限的账户可以用 `set_config` 或 `peers config set` 修改配置，用 `create_pairing_key` 或 `peers pairing-key create` 生成一次性配对密钥，用 `connect_broker` 与 `disconnect_broker`，或 `peers peer connect` 与 `peers peer disconnect` 配对和解除配对；读权限允许读取配置和审计日志。终端命令按执行命令的账户判定权限。管理组成员在本账户没有运行自己的用户级 Broker 时，不用 `sudo` 就能管理系统级 Broker；管理员用 `sudo` 执行命令时，系统级 Broker 按 root 的权限判定。见[管理权限]({{< relref "guides/management-permissions.md" >}})，管理组的说明见[管理组]({{< relref "guides/management-permissions.md" >}}#管理组)一节。
+对 Broker 配置文件有写权限的账户可以用 `set_config` 或 `peers config set` 修改配置，用 `create_pairing_key` 或 `peers key create` 生成一次性配对密钥，用 `connect_broker` 与 `disconnect_broker`，或 `peers broker connect` 与 `peers broker disconnect` 配对和解除配对；读权限允许读取配置和审计日志。终端命令按执行命令的账户判定权限。管理组成员不用 `sudo` 就能管理系统级 Broker：`peers service status`、`audit`、`online`、`offline` 加 `--system` 连到它，本账户没有运行自己的用户级 Broker 时，`peers config`、`peers key`、`peers broker` 直接连到它；`peers service start`、`stop`、`restart`、`install`、`remove` 仍需 `sudo`；管理员用 `sudo` 执行命令时，系统级 Broker 按 root 的权限判定。见[管理权限]({{< relref "guides/management-permissions.md" >}})，管理组的说明见[管理组]({{< relref "guides/management-permissions.md" >}}#管理组)一节。
 
 ## 端口被占用时会怎样？
 
@@ -97,7 +97,7 @@ topic 是 Agent 之间可见与通信的范围。同一个项目里工作的会�
 
 ## 怎么看运行日志和审计记录？
 
-用 `peers status` 查看 Agent、topic、对端和链路，用 `peers audit` 查看审计日志。Broker 处于降级运行时，`peers status` 会给出原因与修复方法。把 Broker 安装为服务，运行日志由服务管理器保存：Linux 上用 `journalctl --user -u peers.service`，系统级服务用 `journalctl -u peers.service`；macOS 上用户级服务写入 `~/Library/Logs/peers/broker.log`，系统级写入 `/var/log/peers/broker.log`。在终端运行 `peers broker`，日志就留在那个终端里。见[文件与路径]({{< relref "reference/files.md" >}})的“日志”一节。
+用 `peers service status` 查看 Agent、topic、对端和链路，用 `peers service audit` 查看审计日志。Broker 处于降级运行时，`peers service status` 会给出原因与修复方法。把 Broker 安装为服务，运行日志由服务管理器保存：Linux 上用 `journalctl --user -u peers.service`，系统级服务用 `journalctl -u peers.service`；macOS 上用户级服务写入 `~/Library/Logs/peers/broker.log`，系统级写入 `/var/log/peers/broker.log`。在终端运行 `peers service run`，日志就留在那个终端里。见[文件与路径]({{< relref "reference/files.md" >}})的“日志”一节。
 
 ## 无界面会话能收到消息吗？
 
