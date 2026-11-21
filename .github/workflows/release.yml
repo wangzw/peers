@@ -6,11 +6,17 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   goreleaser:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      # A release must build from the module graph recorded in go.sum, never
+      # from a resolution that would update it.
+      GOFLAGS: -mod=readonly
     steps:
       - uses: actions/checkout@v7
         with:
@@ -18,7 +24,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.27"
-          cache: true
+          # The published binary is installed as root by a system Broker. A Go
+          # build cache entry is not covered by go.sum, so this job restores
+          # none: every object is compiled from the source and the modules the
+          # next step verifies.
+          cache: false
+      - name: Verify the module graph
+        run: |
+          go mod download
+          go mod verify
       - name: Extract the release notes
         run: go run ./scripts/release-notes -version "$GITHUB_REF_NAME" > "$RUNNER_TEMP/release-notes.md"
       - uses: goreleaser/goreleaser-action@v7

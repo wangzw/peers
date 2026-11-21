@@ -42,8 +42,10 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: docs/site/go.mod
-          cache: true
-          cache-dependency-path: docs/site/go.sum
+          # The generated website carries the install commands, and its build
+          # feeds the published page, so it must not restore a cache another
+          # workflow can write.
+          cache: false
       - name: Install Hugo
         run: |
           version="$(sed -n 's/^HUGO_VERSION[[:space:]]*[:?]=[[:space:]]*//p' Makefile)"

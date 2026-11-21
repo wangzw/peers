@@ -25,7 +25,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: "1.27"
-          cache: true
+          # The probe runs beside the OAuth token, so this job restores no
+          # build cache that another workflow could write.
+          cache: false
       - name: Select the probe
         run: |
           p="${GITHUB_REF_NAME#probe/}"
@@ -139,7 +141,9 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: "1.27"
-          cache: true
+          # The probe runs beside the OAuth token, so this job restores no
+          # build cache that another workflow could write.
+          cache: false
       - name: Select the probe
         run: |
           p="${GITHUB_REF_NAME#probe-macos/}"
