@@ -208,11 +208,11 @@ sequenceDiagram
 
 | 区段 | 所属包 |
 |---|---|
-| 1–99 | 链路（`linkpb`） |
-| 100–199 | 配对（`pairingpb`） |
-| 200–299 | topic（`topicpb`） |
-| 300–399 | 名录（`directorypb`） |
-| 400–499 | `broker` 的投递包（`deliverpb`） |
+| 1～99 | 链路（`linkpb`） |
+| 100～199 | 配对（`pairingpb`） |
+| 200～299 | topic（`topicpb`） |
+| 300～399 | 名录（`directorypb`） |
+| 400～499 | `broker` 的投递包（`deliverpb`） |
 
 kind 常量手写在相应 proto 包目录内的 `kind.go` 中，不用 proto enum，使对端能够接收不认识的 kind 而无需枚举转换。每个 kind 的载荷消息及其类别（状态帧、请求帧或应答帧），见 [link](modules/design-link.md)、[topic](modules/design-topic.md)、[directory](modules/design-directory.md)、[pairing](modules/design-pairing.md) 与 [broker](modules/design-broker.md)。
 
