@@ -457,18 +457,44 @@ func TestGetentOutputLimit(t *testing.T) {
 	}
 }
 
-// getentLingeringPipeBound is how long the test waits for getentQuery to
-// return while a child holds the output pipe. It must exceed getentWaitDelay
-// (two seconds), or an early return would pass for a release by WaitDelay. The
-// extra second stays inside the review's three-second ceiling for a failing
-// test and leaves room for the detached child to be reaped and for scheduling
-// under -race.
-const getentLingeringPipeBound = getentWaitDelay + time.Second
+// getentLingeringPipeMargin is the headroom the lingering-pipe test allows
+// getentQuery to return above the pipe wait. The wait is the product's
+// getentPipeWait: two seconds in production, shortened in this test so the
+// deadline follows the product timer instead of fixing a limit of its own.
+// What decides pass from fail is the fake getent's child, which holds the
+// output pipe for ten seconds; the margin therefore only has to keep the whole
+// bound below ten seconds while still leaving room for the child to be reaped
+// and for scheduling under -race. Five seconds does both: even the production
+// two-second pipe wait plus this margin is seven seconds, and the shortened
+// test value lands at 5.1 seconds.
+const getentLingeringPipeMargin = 5 * time.Second
+
+// TestGetentPipeWaitDefaultsToTheProductBound proves the test seam starts at
+// the production WaitDelay, so shortening it in one test cannot silently change
+// what release builds enforce.
+func TestGetentPipeWaitDefaultsToTheProductBound(t *testing.T) {
+	if want := 2 * time.Second; getentWaitDelay != want {
+		t.Fatalf("getentWaitDelay = %v, want the %v product bound", getentWaitDelay, want)
+	}
+	if getentPipeWait != getentWaitDelay {
+		t.Fatalf("getentPipeWait = %v, want the product default %v", getentPipeWait, getentWaitDelay)
+	}
+}
 
 func TestGetentWaitDelayBoundsALingeringPipe(t *testing.T) {
 	// The child inherits stdout and outlives the shell, so the output pipe
 	// stays open after getent has exited. WaitDelay must close it. The child
 	// records its pid so the test can kill what the shell leaves behind.
+	//
+	// The seam is shortened here because the wait itself is the product timer;
+	// the deadline below tracks whatever value the seam holds. A test that
+	// spent the full two seconds would only add dead time on the failing and
+	// passing paths alike.
+	oldWait := getentPipeWait
+	getentPipeWait = 100 * time.Millisecond
+	t.Cleanup(func() { getentPipeWait = oldWait })
+	bound := getentPipeWait + getentLingeringPipeMargin
+
 	dir := t.TempDir()
 	pidPath := filepath.Join(dir, "child.pid")
 	path := writeScript(t, dir, "getent", fmt.Sprintf("sleep 10 &\necho $! > %q\n", pidPath))
@@ -497,7 +523,7 @@ func TestGetentWaitDelayBoundsALingeringPipe(t *testing.T) {
 		if err == nil {
 			t.Error("getentQuery trusted an answer whose pipe was still held")
 		}
-	case <-time.After(getentLingeringPipeBound):
+	case <-time.After(bound):
 		t.Fatal("getentQuery did not return while a child held the output pipe")
 	}
 }

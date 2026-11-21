@@ -35,6 +35,12 @@ const getentOutputLimit = 64 << 10
 // the pipe must not defeat the timeout.
 const getentWaitDelay = 2 * time.Second
 
+// getentPipeWait is the pipe wait execGetent applies. Production uses
+// getentWaitDelay; tests shorten it so the lingering-pipe test proves the bound
+// without spending the full two seconds under -race. LookupBound keeps the
+// production value, so callers sizing a wait are unaffected.
+var getentPipeWait = getentWaitDelay
+
 // LookupBound is the upper bound one account lookup can take in production:
 // one getent invocation plus the pipe wait after a timeout. Callers sizing a
 // wait around a startup step that performs a lookup derive it from this.
@@ -263,7 +269,7 @@ func getentExecutable() (string, bool) {
 func execGetent(ctx context.Context, path string, args []string) (getentResult, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = []string{"LANG=C"}
-	cmd.WaitDelay = getentWaitDelay
+	cmd.WaitDelay = getentPipeWait
 	stdout := cappedBuffer{limit: getentOutputLimit}
 	stderr := cappedBuffer{limit: getentOutputLimit}
 	cmd.Stdout = &stdout
