@@ -22,11 +22,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// transportTestTimeout bounds the real-time waits in these tests that move a
-// control-sized frame. The large-payload round trip uses largePayloadTimeout
-// instead. Deadlines under test are driven by FakeClock; this timeout only
-// guards the test itself.
-const transportTestTimeout = 3 * time.Second
+// eventTimeout is the package-wide fallback for the real-time waits in these
+// tests that move a control-sized frame. The large-payload round trip uses
+// largePayloadTimeout instead. It only decides how long a wait that will never
+// complete takes to fail: the success path selects on the event itself and
+// never spends this time, so a larger value costs nothing. It equals the
+// product's default link.keepalive_interval (15s) plus link.keepalive_timeout
+// (10s), the same values linktest.FakeSettings returns: a link the product
+// still considers alive must not be declared dead by the test before the
+// product's own keepalive policy would.
+const eventTimeout = 15*time.Second + 10*time.Second
 
 // largePayloadTimeout is the guard for one wait on the large-payload round
 // trip. It is derived from the product's own liveness bound rather than picked
@@ -95,7 +100,7 @@ func startTransportServer(t *testing.T, l *Link, onStream func(*conn, *trackedCo
 // dialTestConnection dials addr and returns the authenticated TLS connection.
 func dialTestConnection(t *testing.T, l *Link, addr string) (*tls.Conn, peerIdentity) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	tc, id, err := l.dialTLS(ctx, addr)
 	if err != nil {
@@ -149,7 +154,7 @@ func TestServerSeesClientIdentity(t *testing.T) {
 		if want := client.peers.Fingerprint(); id.fp != want {
 			t.Fatalf("server saw %s, want client identity %s", id.fp, want)
 		}
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("server did not accept the stream")
 	}
 }
@@ -175,7 +180,7 @@ func TestServerRejectsClientWithoutCertificate(t *testing.T) {
 	// may succeed; the server must then reject the connection for having no
 	// peer certificate.
 	_ = tc.Handshake()
-	_ = tc.SetReadDeadline(time.Now().Add(transportTestTimeout))
+	_ = tc.SetReadDeadline(time.Now().Add(eventTimeout))
 	if _, err := tc.Read(make([]byte, 1)); err == nil {
 		t.Fatal("server kept a certificate-less connection open")
 	}
@@ -228,7 +233,7 @@ func TestFramesRoundTripOverGRPC(t *testing.T) {
 		if tr != nil {
 			tr.authenticated()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 		frames := make([]*linkpb.Frame, 0, 3)
 		for i := 0; i < 3; i++ {
@@ -246,7 +251,7 @@ func TestFramesRoundTripOverGRPC(t *testing.T) {
 	client := newTransportTestLink(t)
 	c, _ := openTestStream(t, client.Link, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	for i := 0; i < 3; i++ {
 		if err := c.sendDirect(ctx, &linkpb.Frame{Kind: 200, Payload: []byte{byte(i)}}); err != nil {
@@ -257,7 +262,7 @@ func TestFramesRoundTripOverGRPC(t *testing.T) {
 	var frames []*linkpb.Frame
 	select {
 	case frames = <-received:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("server did not receive the frames")
 	}
 	for i, f := range frames {
@@ -293,7 +298,7 @@ func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 	t.Cleanup(func() { _ = cc.Close() })
 	cli := linkpb.NewLinkClient(cc)
 
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	first, err := cli.Connect(ctx)
 	if err != nil {
@@ -302,7 +307,7 @@ func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 	_ = first
 	select {
 	case <-started:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("first stream did not reach the server")
 	}
 
@@ -378,7 +383,7 @@ func TestDialTimeoutUsesClock(t *testing.T) {
 		if err == nil {
 			t.Fatal("dialTLS succeeded against a server that never handshakes")
 		}
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("dialTLS did not return after the dial timeout")
 	}
 }
@@ -397,7 +402,7 @@ func TestOnDialHookCalled(t *testing.T) {
 		if got != addr {
 			t.Fatalf("onDial address = %q, want %q", got, addr)
 		}
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("onDial hook was not called")
 	}
 }
@@ -484,7 +489,7 @@ func TestOversizedFrameRejectedBySender(t *testing.T) {
 	c, _ := openTestStream(t, client.Link, addr)
 	select {
 	case <-started:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("server handler did not start")
 	}
 
@@ -504,7 +509,7 @@ func TestOversizedFrameRejectedBySender(t *testing.T) {
 		if f != nil {
 			t.Fatalf("server received an oversized frame of %d payload bytes", len(f.GetPayload()))
 		}
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("server handler did not finish")
 	}
 }
@@ -530,7 +535,7 @@ func TestAbortDoesNotBlock(t *testing.T) {
 		close(closeStarted)
 		select {
 		case <-release:
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventTimeout):
 			// abort called the close synchronously; it should have returned
 			// while the close was still in progress.
 			t.Error("abort waited for the client connection close")
@@ -542,7 +547,7 @@ func TestAbortDoesNotBlock(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("server did not accept the stream")
 	}
 
@@ -550,7 +555,7 @@ func TestAbortDoesNotBlock(t *testing.T) {
 
 	select {
 	case <-closeStarted:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("abort did not close the client connection")
 	}
 	close(release)
@@ -560,7 +565,7 @@ func TestAbortDoesNotBlock(t *testing.T) {
 		if err == nil {
 			t.Fatal("peer received no error after the abort")
 		}
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("peer did not notice the abort")
 	}
 }
@@ -588,7 +593,7 @@ func TestConnectDoesNotStartAfterClose(t *testing.T) {
 		t.Fatalf("newGRPCClientConn: %v", err)
 	}
 	t.Cleanup(func() { _ = cc.Close() })
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	stream, err := linkpb.NewLinkClient(cc).Connect(ctx)
 	if err != nil {
@@ -597,7 +602,7 @@ func TestConnectDoesNotStartAfterClose(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("Connect handler did not start")
 	}
 
@@ -608,7 +613,7 @@ func TestConnectDoesNotStartAfterClose(t *testing.T) {
 	}()
 	select {
 	case <-closed:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("Close blocked")
 	}
 	close(release)
@@ -633,7 +638,7 @@ func TestServerOversizedFrameRejected(t *testing.T) {
 	server := newTransportTestLink(t)
 	sendErr := make(chan error, 1)
 	addr := startTransportServer(t, server.Link, func(c *conn, _ *trackedConn) {
-		ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 		sendErr <- c.sendDirect(ctx, &linkpb.Frame{Kind: 200, Payload: make([]byte, 4<<20+1)})
 	})
@@ -648,7 +653,7 @@ func TestServerOversizedFrameRejected(t *testing.T) {
 		if code := status.Code(err); code != codes.ResourceExhausted {
 			t.Fatalf("oversized server send error code = %v (%v), want ResourceExhausted", code, err)
 		}
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("server send did not return")
 	}
 }

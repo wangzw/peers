@@ -109,7 +109,7 @@ func newTrackedPair(t *testing.T, reg *unauthRegistry) (*trackedConn, net.Conn) 
 		_ = ln.Close()
 		_ = client.Close()
 		t.Fatalf("accept: %v", err)
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		_ = ln.Close()
 		_ = client.Close()
 		t.Fatal("timed out waiting for accept")

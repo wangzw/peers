@@ -47,13 +47,13 @@ func TestUnauthenticatedReadBudgetClosesLargeFirstFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal PairRequest: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	_ = c.sendDirect(ctx, &linkpb.Frame{Kind: pairingpb.KindPairRequest, Payload: payload})
 
 	select {
 	case <-handlerDone:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("serveInbound did not return after the oversized first frame")
 	}
 	select {
@@ -86,7 +86,7 @@ func TestHeaderListLimitRejectsOversizedMetadata(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cc.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	md := metadata.Pairs("x-link-test-padding", strings.Repeat("m", 32<<10))
 	stream, err := linkpb.NewLinkClient(cc).Connect(metadata.NewOutgoingContext(ctx, md))
@@ -115,7 +115,7 @@ func TestHeaderListLimitRejectsOversizedMetadata(t *testing.T) {
 		}
 	case <-started:
 		t.Fatal("the server accepted a pre-authentication stream carrying 32 KiB of metadata")
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("the stream carrying 32 KiB of metadata was neither rejected nor accepted")
 	}
 }

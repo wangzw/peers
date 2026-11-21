@@ -433,7 +433,7 @@ func TestCloseStopsCallbacksAndGoroutines(t *testing.T) {
 	acceptor.waitUps(t, 2)
 
 	// Prove the state handler runs before Close.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	err := connB.sendDirect(ctx, &linkpb.Frame{Kind: 200})
 	cancel()
 	if err != nil {
@@ -448,8 +448,8 @@ func TestCloseStopsCallbacksAndGoroutines(t *testing.T) {
 	}()
 	select {
 	case <-closed:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Close did not return within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("Close did not return within %v", eventTimeout)
 	}
 
 	ups, downs, handled := acceptor.counts()

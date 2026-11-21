@@ -141,7 +141,7 @@ func pendingPairingFlood(t *testing.T, prepare func(server, client *transportTes
 	}
 	t.Cleanup(func() { _ = cc.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	stream, err := linkpb.NewLinkClient(cc).Connect(ctx)
 	if err != nil {
@@ -153,7 +153,7 @@ func pendingPairingFlood(t *testing.T, prepare func(server, client *transportTes
 
 	select {
 	case <-accepted:
-	case <-time.After(transportTestTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("pairing Accept was not called")
 	}
 

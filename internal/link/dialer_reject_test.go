@@ -150,7 +150,7 @@ func TestDialerRejectReachesAcceptorBeforeClose(t *testing.T) {
 		}
 	case err := <-stub.ended:
 		t.Fatalf("the accepting side never received the dialer's Reject: %v", err)
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("the accepting side never received the dialer's Reject")
 	}
 

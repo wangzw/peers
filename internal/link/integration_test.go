@@ -20,9 +20,15 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// integrationWait bounds every wait in these tests. It matches the limit the
-// linktest fakes use internally.
-const integrationWait = 3 * time.Second
+// eventTimeout is the package-wide fallback for every wait in these tests. It
+// only decides how long a wait that will never complete takes to fail: the
+// success path selects on the event itself and never spends this time, so a
+// larger value costs nothing. It equals the product's default
+// link.keepalive_interval (15s) plus link.keepalive_timeout (10s), the same
+// values linktest.FakeSettings returns: a link the product still considers
+// alive must not be declared dead by the test before the product's own
+// keepalive policy would.
+const eventTimeout = 15*time.Second + 10*time.Second
 
 // node is one Link together with its fake collaborators and a recording
 // subscription. Tests build it through link.New so they exercise the same
@@ -174,10 +180,10 @@ func (n *node) waitDown(t *testing.T, peer link.Fingerprint, atLeast int) {
 }
 
 // waitUntil re-evaluates cond after every wake-up on changed and fails the test
-// when cond is still false three seconds later.
+// when cond is still false after eventTimeout.
 func waitUntil(t testing.TB, what string, changed func() <-chan struct{}, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(integrationWait)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		ch := changed()
 		if cond() {
@@ -211,11 +217,11 @@ func waitWithin(d time.Duration, cond func() bool) bool {
 }
 
 // waitState watches a LinkState that has no notification surface of its own.
-// It polls the public State method until cond holds, with the same three-second
+// It polls the public State method until cond holds, with the same eventTimeout
 // bound as the event-driven waits.
 func waitState(t *testing.T, l *link.Link, peer link.Fingerprint, what string, cond func(link.LinkState) bool) link.LinkState {
 	t.Helper()
-	deadline := time.Now().Add(integrationWait)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		st := l.State(peer)
 		if cond(st) {
@@ -510,7 +516,7 @@ func TestREQBrokerPairing022_UnpairedPeerRejectedUntilRepair(t *testing.T) {
 	}
 
 	acceptor.Peers.SetAccept(linktest.FakePairAccept(acceptor.Peers, "dialer"))
-	ctx, cancel := context.WithTimeout(context.Background(), integrationWait)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if err := dialer.PairDial(ctx, acceptor.Addr().String(), linktest.FakePairRun(dialer.Peers, "acceptor")); err != nil {
 		t.Fatalf("PairDial repair: %v", err)
@@ -694,11 +700,11 @@ func TestREQBrokerPairing013_TrafficEncrypted(t *testing.T) {
 		if string(got) != payloadMarker {
 			t.Fatalf("state payload = %q, want %q", got, payloadMarker)
 		}
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("acceptor did not receive the state frame")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), integrationWait)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	reply, sent, err := dialer.Request(ctx, fpAcceptor, link.Frame{Kind: 201, Payload: []byte(requestMarker)})
 	if err != nil || !sent {
@@ -770,7 +776,7 @@ func TestAcceptorReplacesStaleConnection(t *testing.T) {
 		if string(got) != "after-replace" {
 			t.Fatalf("new connection payload = %q", got)
 		}
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("the new connection did not receive the frame")
 	}
 }
@@ -968,7 +974,7 @@ func TestTopicStyleLockingDoesNotDeadlock(t *testing.T) {
 		upAcceptor := acceptor.upCount(fpDialer)
 		upDialer := dialer.upCount(fpAcceptor)
 		dialer.Drop(fpAcceptor)
-		ctx, cancel := context.WithTimeout(context.Background(), integrationWait)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		err := dialer.PairDial(ctx, proxy.Addr(), linktest.FakePairRun(dialer.Peers, "acceptor"))
 		cancel()
 		if err != nil {
@@ -986,8 +992,8 @@ func TestTopicStyleLockingDoesNotDeadlock(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(integrationWait):
-		t.Fatal("send goroutines did not stop within three seconds")
+	case <-time.After(eventTimeout):
+		t.Fatalf("send goroutines did not stop within %v", eventTimeout)
 	}
 }
 
@@ -1028,7 +1034,7 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 	}
 	select {
 	case <-loopHeld:
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("the dial loop goroutine did not reach the test hook")
 	}
 
@@ -1042,8 +1048,8 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 	close(releaseLoop)
 
 	var failed bool
-	if !waitWithin(integrationWait, func() bool { return dialer.downCount(fpAcceptor) > downBeforeDrop }) {
-		t.Errorf("Drop did not post onDown within %v: down count stayed at %d", integrationWait, downBeforeDrop)
+	if !waitWithin(eventTimeout, func() bool { return dialer.downCount(fpAcceptor) > downBeforeDrop }) {
+		t.Errorf("Drop did not post onDown within %v: down count stayed at %d", eventTimeout, downBeforeDrop)
 		failed = true
 	}
 
@@ -1059,8 +1065,8 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 			t.Errorf("PairDial after Drop: %v", err)
 			failed = true
 		}
-	case <-time.After(integrationWait):
-		t.Errorf("PairDial after Drop did not return within %v", integrationWait)
+	case <-time.After(eventTimeout):
+		t.Errorf("PairDial after Drop did not return within %v", eventTimeout)
 		failed = true
 	}
 
@@ -1071,8 +1077,8 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 	}()
 	select {
 	case <-closed:
-	case <-time.After(integrationWait):
-		t.Errorf("Close did not return within %v", integrationWait)
+	case <-time.After(eventTimeout):
+		t.Errorf("Close did not return within %v", eventTimeout)
 		failed = true
 	}
 	if failed {

@@ -110,7 +110,7 @@ func TestDialerVersionMismatchLingersUntilTheRejectIsWritten(t *testing.T) {
 	// already aborted never gets its buffered Reject written.
 	stream.flush()
 
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(eventTimeout)
 	for {
 		select {
 		case f := <-stream.delivered:

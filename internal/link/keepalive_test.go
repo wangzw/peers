@@ -39,10 +39,10 @@ func dialRawHTTP2(t *testing.T, addr string) *rawHTTP2Client {
 	tc := tls.Client(raw, cfg)
 	t.Cleanup(func() { _ = tc.Close() })
 
-	if err := tc.SetDeadline(time.Now().Add(transportTestTimeout)); err != nil {
+	if err := tc.SetDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set connection deadline: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if err := tc.HandshakeContext(ctx); err != nil {
 		t.Fatalf("TLS handshake: %v", err)
@@ -113,7 +113,7 @@ func TestEnforcementAllowsProbesWithoutStream(t *testing.T) {
 	for i := uint64(0); i < 10; i++ {
 		var data [8]byte
 		binary.BigEndian.PutUint64(data[:], i)
-		if err := client.conn.SetDeadline(time.Now().Add(transportTestTimeout)); err != nil {
+		if err := client.conn.SetDeadline(time.Now().Add(eventTimeout)); err != nil {
 			t.Fatalf("set connection deadline: %v", err)
 		}
 		if err := client.framer.WritePing(false, data); err != nil {
@@ -134,7 +134,7 @@ func TestEnforcementStillRejectsFlood(t *testing.T) {
 	})
 	client := dialRawHTTP2(t, addr)
 
-	if err := client.conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := client.conn.SetDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set connection deadline: %v", err)
 	}
 

@@ -60,7 +60,7 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 	dialer.waitUp(t, fpAcceptor, 1)
 	select {
 	case <-helloSent:
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("the acceptor never sent its Hello")
 	}
 
@@ -73,7 +73,7 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 	// an acceptor that was still unauthenticated closed the connection here.
 	select {
 	case <-readPastBudget:
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("the accepting side never read the frame past the pre-authentication budget")
 	}
 	close(release)
@@ -83,7 +83,7 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 		if !bytes.Equal(got, payload) {
 			t.Fatalf("acceptor received %d bytes, want the 1 MiB payload", len(got))
 		}
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		t.Fatal("acceptor did not receive the 1 MiB state frame")
 	}
 	if st := acceptor.State(dialer.Peers.Fingerprint()); st.Phase != link.PhaseEstablished {
@@ -108,7 +108,7 @@ func TestPairingHandshakeStaysWithinReadBudget(t *testing.T) {
 	fpDialer := dialer.Peers.Fingerprint()
 	acceptor.Peers.SetAccept(linktest.FakePairAccept(acceptor.Peers, "dialer"))
 
-	ctx, cancel := context.WithTimeout(context.Background(), integrationWait)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if err := dialer.PairDial(ctx, addr, linktest.FakePairRun(dialer.Peers, "acceptor")); err != nil {
 		t.Fatalf("PairDial: %v", err)

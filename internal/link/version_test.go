@@ -187,7 +187,7 @@ func TestDialerRejectsAcceptorHello(t *testing.T) {
 		if got := reject.GetReason(); got != linkpb.RejectReason_REJECT_REASON_PROTOCOL_VERSION_INCOMPATIBLE {
 			t.Fatalf("reject reason = %v, want PROTOCOL_VERSION_INCOMPATIBLE", got)
 		}
-	case <-time.After(integrationWait):
+	case <-time.After(eventTimeout):
 		select {
 		case err := <-stub.ended:
 			t.Fatalf("the dialer sent no Reject after the version mismatch (stream ended: %v)", err)
@@ -200,8 +200,8 @@ func TestDialerRejectsAcceptorHello(t *testing.T) {
 		t.Fatalf("the dialer sent an extra frame after the Reject: kind %d", f.GetKind())
 	case err := <-stub.ended:
 		t.Logf("the dialer ended the stream after the Reject: %v", err)
-	case <-time.After(integrationWait):
-		t.Fatal("the dialer did not end the stream within three seconds")
+	case <-time.After(eventTimeout):
+		t.Fatalf("the dialer did not end the stream within %v", eventTimeout)
 	}
 	if got := dialer.upCount(id.Fingerprint); got != 0 {
 		t.Fatalf("dialer reported the link up %d times, want never", got)
