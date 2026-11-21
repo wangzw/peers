@@ -14,17 +14,22 @@
 # in its packages.
 #
 # top-b is the catch-all shard: a new top-level test goes there unless it
-# belongs with the tests in top-a. The coverage check fails until the new test
-# is listed, so a test cannot silently drop out of the gate.
+# belongs with the tests in another shard. The coverage check fails until the
+# new test is listed, so a test cannot silently drop out of the gate.
 #
-# The two top-level shards are split by the slowest-test report of CI run
-# 44861386512. The slow tests assigned to top-a sum to 167.72 s; those in
-# top-b sum to 134.01 s and top-b also runs the helper packages, whose slowest
-# test (harness TestBuildBinaryCachesAndInjectsVersion) took 36.32 s in the
-# same report, so the two shards land near 168 s and 170 s. The remaining
-# tests, all below 8.28 s, are split evenly.
+# The split follows the slowest-test reports of CI runs 44946061099,
+# 44954331524, 44957914658, 44959458729 and 44962755194 on main. top-b was the
+# longest shard at 260-300 s, mostly from two waiting tests: TestCardRenewedDaily
+# (55.5-55.9 s) and TestLocalRegistration (34.4 s). Both drive local processes
+# rather than containers, so they now run in the system shard, where they
+# overlap with the system package's own 165-235 s and do not lengthen it. The
+# two top-level shards keep the remaining tests, all below 16.7 s, beside the
+# helper packages: top-b still runs those, whose slowest test (harness
+# TestBuildBinaryCachesAndInjectsVersion) took 32.9-36.3 s in the same reports.
+# Expected wall times after the move: top-a 226-247 s (unchanged), top-b
+# 170-210 s, system 199-264 s (unchanged).
 shard top-a ./test/e2e -- TestAliases TestBrokerOfflineDirectory TestBrokerProcessLocal TestCardFollowsAddressChange TestCardShowsConfiguredAddresses TestConfigTools TestContainerSessionFakeProxy TestDirectoryPerLinkLimit TestDirectoryRejectsTamperedCards TestDirectoryTotalLimitKeepsRenewals TestDirectoryUnknownAddressKind TestDiscoveryNoDialToCardHolder TestDiscoveryPrivateByDefault TestDiscoveryPublicWithoutListen TestDiscoveryRevokeWithin60s TestInfraCountersAndCapture TestInfraCutRestore TestInfraMITMRedirect TestInfraNoEgress TestInfraPortForward TestJourneyCollaborateInTopic TestJourneyConnectPublicBroker TestJourneyPairBrokers TestLinks TestLinksRestartWithTwoPeers TestLinksSourceFlood TestLocalOracleReconnectsAfterBrokerRestart TestLocalSend TestLocalTopics TestLocalVersionMismatchReq016 TestM1SameHostRoundTrip TestNoDialToCardAddress TestOtherAccountRejected TestPrivateTopicNamesStayHome TestPublicTopicFollowsLastMember TestPublicTopicRejectedOnPrivateBroker TestRegistrationListAgentsAbandonsAStalledCall TestWaitRegisteredRetriesAStalledCall
 
-shard top-b ./test/e2e ./test/e2e/cmd/e2e-node ./test/e2e/ctl ./test/e2e/fakepeer ./test/e2e/fakepeer/fakerec ./test/e2e/harness ./test/e2e/internal/pathcmp ./test/e2e/node ./test/e2e/syscontainer -- TestAdvertisedAddresses TestBrokerOffline TestBrokerProcessInContainer TestCardExpiresAfterSevenDays TestCardRenewedDaily TestConfigToolAnnotations TestConfigToolsCluster TestDegradedRun TestDirectoryHoldsRapidRecordReplacement TestDirectoryMalformedDirectAddress TestDirectoryPublicTopicReceiveLimits TestDirectoryRejectsUnpairedSource TestDiscoveryCardReachesWholeNetwork TestDiscoveryPrivateBrokerLearnsCards TestEchoedTopicDigestsRevealNothing TestInfraBlock TestInfraFlatV6 TestInfraNAT TestInfraNoNetworkResidue TestInfraSingleNode TestLinkEncrypted TestLinkVersionMismatchAndRecovery TestLocalRegistration TestLocalSessionChanges TestLocalVersionMismatchRecoveryReq016 TestLongHostnameAlias TestMITM TestPairingKeys TestPairingVersionMismatch TestPublicTopicExpiresWithDeclarer TestPublicTopicGoneWhenBrokerPrivate TestPublicTopicVisibleAcrossNetwork TestREQBrokerConfig069_RejectedConnectionsMergeBySource TestRegistrationRejectedRetriesAStalledCall TestRemoteSendFaults TestRemoteSendInboundQuota TestRemoteVisibility TestTopicChangeLimits TestTopicRosterBounds TestWaitRegisteredToleratesASlowUpdateCheck
+shard top-b ./test/e2e ./test/e2e/cmd/e2e-node ./test/e2e/ctl ./test/e2e/fakepeer ./test/e2e/fakepeer/fakerec ./test/e2e/harness ./test/e2e/internal/pathcmp ./test/e2e/node ./test/e2e/syscontainer -- TestAdvertisedAddresses TestBrokerOffline TestBrokerProcessInContainer TestCardExpiresAfterSevenDays TestConfigToolAnnotations TestConfigToolsCluster TestDegradedRun TestDirectoryHoldsRapidRecordReplacement TestDirectoryMalformedDirectAddress TestDirectoryPublicTopicReceiveLimits TestDirectoryRejectsUnpairedSource TestDiscoveryCardReachesWholeNetwork TestDiscoveryPrivateBrokerLearnsCards TestEchoedTopicDigestsRevealNothing TestInfraBlock TestInfraFlatV6 TestInfraNAT TestInfraNoNetworkResidue TestInfraSingleNode TestLinkEncrypted TestLinkVersionMismatchAndRecovery TestLocalSessionChanges TestLocalVersionMismatchRecoveryReq016 TestLongHostnameAlias TestMITM TestPairingKeys TestPairingVersionMismatch TestPublicTopicExpiresWithDeclarer TestPublicTopicGoneWhenBrokerPrivate TestPublicTopicVisibleAcrossNetwork TestREQBrokerConfig069_RejectedConnectionsMergeBySource TestRegistrationRejectedRetriesAStalledCall TestRemoteSendFaults TestRemoteSendInboundQuota TestRemoteVisibility TestTopicChangeLimits TestTopicRosterBounds TestWaitRegisteredToleratesASlowUpdateCheck
 
-shard system ./test/e2e/system
+shard system ./test/e2e ./test/e2e/system -- TestCardRenewedDaily TestLocalRegistration
