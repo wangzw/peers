@@ -56,6 +56,27 @@ func TestDescribeNilAndPlainError(t *testing.T) {
 	}
 }
 
+func TestDescribeNeutralizesControlCharacters(t *testing.T) {
+	esc, bel, bidi := rune(0x1b), rune(0x07), rune(0x202e)
+	detail := &localpb.ErrorDetail{
+		Code:    localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
+		Message: "bad" + string(esc) + "]0;title" + string(bel) + " value" + string(bidi),
+	}
+	st, err := status.New(codes.InvalidArgument, "x").WithDetails(detail)
+	if err != nil {
+		t.Fatalf("WithDetails: %v", err)
+	}
+	got := Describe(st.Err())
+	for _, r := range []rune{esc, bel, bidi} {
+		if strings.ContainsRune(got, r) {
+			t.Errorf("Describe = %q, carries the raw character U+%04X", got, r)
+		}
+		if want := escapeForTest(r); !strings.Contains(got, want) {
+			t.Errorf("Describe = %q, want the escaped form %q", got, want)
+		}
+	}
+}
+
 func TestVersionMismatchErrorText(t *testing.T) {
 	err := &VersionMismatchError{Broker: 2, Client: 1}
 	for _, want := range []string{"version_mismatch", "2", "1", "restart the Broker"} {

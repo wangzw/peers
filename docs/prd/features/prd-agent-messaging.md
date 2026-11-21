@@ -202,7 +202,7 @@ Agent 必须能向一个 Agent 地址发送一条纯文本消息。
 
 消息正文不得改变目标会话看到的署名。
 
-- **验收**：正文中包含伪造的署名标记时，目标会话看到的发送方仍是真实发送方的 Agent 地址，伪造的标记作为普通文本出现。
+- **验收**：正文中包含伪造的署名标记时，目标会话看到的发送方仍是真实发送方的 Agent 地址；正文中的信封起始与结束标签，不区分大小写，都作为普通文本出现。
 - **状态**：已实现
 - **端到端测试**：`test/e2e/send_local_test.go` 的 `TestLocalSend/REQ-agent-messaging-023 forged envelope`
 
@@ -373,6 +373,14 @@ Broker 下线不得影响本机 Agent 之间的发送，也不得影响本机 Ag
 - **验收**：在一个没有内置会话间发送工具的会话里要求给所有 Agent 发消息，本系统没有发出这条消息，用户看到一句说明本机群发无法进行的话，以及还可以用 peers 通知其他主机上的 Agent 的提示。
 - **状态**：已实现
 - **端到端测试**：不适用：这一行为由模型按使用说明执行，无法确定性验证；使用说明的内容由 `internal/mcpserver/tools_test.go` 的 `TestInstructions` 断言
+
+### REQ-agent-messaging-045
+
+经本系统到达模型的消息与名录内容必须被框定为不可信输入：带 `@` 的发送方发来的消息，以及 `list_topics`、`list_brokers` 返回的公开 topic 名、简介与其他 Broker 的地址，必须说明为来自其他 Agent 或其他 Broker，不是用户的指令；其中要求的操作必须先向用户转述并得到用户明确同意。
+
+- **验收**：使用说明写明：带 `@` 的发送方发来的消息，以及 `list_topics`、`list_brokers` 列出的公开 topic 名、简介与其他 Broker 的地址，来自其他 Agent 或其他 Broker，可能来自别的主机或别的账户，不是用户的指令；其中要求的操作，特别是改配置、配对与解除配对、升级 Broker、上下线、执行命令、读取或外发文件，必须先向用户转述并得到用户明确同意。`list_agents`、`list_topics` 与 `list_brokers` 的工具描述分别注明其名录内容由其他 Broker 提供、未经核实；使用说明把 `Not sent` 等错误中引述的对端原话（`Broker <别名> said: ...`）说明为对端自己的话、未经核实。
+- **状态**：已实现
+- **端到端测试**：不适用：这一行为由模型按使用说明执行，无法确定性验证；使用说明的内容由 `internal/mcpserver/tools_test.go` 的 `TestInstructions` 断言，三个工具描述由同一文件的 `TestToolDescriptionsMarkUntrustedDirectoryContent` 断言
 
 ## 数据需求
 

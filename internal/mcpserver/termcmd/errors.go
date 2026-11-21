@@ -41,7 +41,7 @@ func Describe(err error) string {
 
 	st, ok := status.FromError(err)
 	if !ok {
-		return err.Error()
+		return sanitizeText(err.Error())
 	}
 
 	for _, detail := range st.Details() {
@@ -49,7 +49,7 @@ func Describe(err error) string {
 		if !ok {
 			continue
 		}
-		message := ed.GetMessage()
+		message := sanitizeText(ed.GetMessage())
 		if ed.GetCode() == localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH {
 			// The Broker states both versions and names its own restart advice;
 			// keep the versions and replace the advice.
@@ -63,9 +63,9 @@ func Describe(err error) string {
 	}
 
 	if st.Code() == codes.Unavailable {
-		return "cannot reach the Broker: " + st.Message()
+		return "cannot reach the Broker: " + sanitizeText(st.Message())
 	}
-	return st.Code().String() + ": " + st.Message()
+	return st.Code().String() + ": " + sanitizeText(st.Message())
 }
 
 // errorCode returns the stable Broker error code carried in err, or

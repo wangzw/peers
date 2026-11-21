@@ -30,7 +30,7 @@ func Deliver(ctx context.Context, s Session, sig, text, msgID string, timeout ti
 		Timeout: timeout,
 	}
 	_, err := client.SendToSocket(ctx, s.SocketPath, ccsock.Message{
-		Text:      text,
+		Text:      escapeBody(text),
 		Priority:  ccsock.PriorityNext,
 		FromName:  sig,
 		From:      "",

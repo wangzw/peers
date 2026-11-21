@@ -124,12 +124,10 @@ func (d *delivery) sendToPeer(ctx context.Context, r peerSend) error {
 				return nil
 			}
 			// The peer speaks for itself only: its own fingerprint is the
-			// source, and any fingerprint it claimed internally is ignored.
-			return &Error{
-				Code:    detail.GetCode(),
-				Message: detail.GetMessage(),
-				Origin:  peerFingerprintBytes(r.Peer),
-			}
+			// source, and any fingerprint it claimed internally is ignored. Its
+			// error message is quoted as the peer's words, never trusted as this
+			// Broker's own text.
+			return d.peerError(r.Peer, alias, detail)
 		}
 		if sent {
 			// Only a dropped link is waited out and resent with the same id; the

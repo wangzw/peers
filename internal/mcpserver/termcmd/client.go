@@ -398,7 +398,7 @@ func dial(ctx context.Context, sel Selector) (localpb.LocalClient, func(), error
 	if err != nil {
 		closeConn()
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-			return nil, nil, fmt.Errorf("cannot reach the Broker at %s: %s", path, st.Message())
+			return nil, nil, fmt.Errorf("cannot reach the Broker at %s: %s", path, sanitizeText(st.Message()))
 		}
 		return nil, nil, errors.New(Describe(err))
 	}

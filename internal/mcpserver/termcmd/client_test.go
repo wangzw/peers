@@ -162,6 +162,34 @@ func TestRunStatusUnreachable(t *testing.T) {
 	}
 }
 
+// TestRunStatusHelloUnavailableNeutralizesMessage checks that the Broker's text
+// on a failed Hello handshake is escaped before it reaches the terminal, since
+// the peer process chose it.
+func TestRunStatusHelloUnavailableNeutralizesMessage(t *testing.T) {
+	path := fakelocal.SocketPath(t)
+	const raw = "starting up\x1b[31m"
+	fakelocal.Start(t, path, fakelocal.Handlers{
+		Hello: func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error) {
+			return nil, status.Error(codes.Unavailable, raw)
+		},
+	})
+
+	var got bytes.Buffer
+	err := RunStatus(t.Context(), fixedSelector(path), &got)
+	if err == nil {
+		t.Fatal("RunStatus returned nil, want an error")
+	}
+	if strings.ContainsRune(err.Error(), '\x1b') {
+		t.Errorf("RunStatus error carries a raw ESC: %q", err.Error())
+	}
+	if want := "starting up" + `\x1b` + "[31m"; !strings.Contains(err.Error(), want) {
+		t.Errorf("RunStatus error = %q, want it to contain %q", err.Error(), want)
+	}
+	if got.Len() != 0 {
+		t.Errorf("RunStatus wrote %q, want nothing", got.String())
+	}
+}
+
 func TestRunStatusVersionMismatch(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{

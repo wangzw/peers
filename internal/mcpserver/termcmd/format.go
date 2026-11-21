@@ -10,6 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -91,7 +93,7 @@ func WriteStatus(w io.Writer, resp *localpb.StatusResponse) error {
 				brokerStatusName(p.GetStatus()),
 				linkStateName(p.GetLinkState()),
 				formatAddresses(p.GetAdvertisedAddresses()),
-				cell(sanitizeDetail(p.GetStatusDetail())),
+				cell(p.GetStatusDetail()),
 			})
 		}
 		header := []string{"ALIAS", "FINGERPRINT", "ROLE", "STATUS", "LINK", "ADDRESSES", "DETAIL"}
@@ -102,7 +104,7 @@ func WriteStatus(w io.Writer, resp *localpb.StatusResponse) error {
 
 	if available := resp.GetAvailableVersion(); available != "" {
 		if _, err := fmt.Fprintf(w, "Update: %s available (current %s); run peers update\n",
-			available, resp.GetCurrentVersion()); err != nil {
+			sanitizeText(available), sanitizeText(resp.GetCurrentVersion())); err != nil {
 			return err
 		}
 	}
@@ -116,10 +118,10 @@ func WriteStatus(w io.Writer, resp *localpb.StatusResponse) error {
 // commands print the same text.
 func WriteDegraded(w io.Writer, level localpb.DegradedLevel, reason, fix string) error {
 	if _, err := fmt.Fprintf(w, "Broker: degraded (%s): %s\n",
-		localpb.DegradedLevelLabel(level), reason); err != nil {
+		localpb.DegradedLevelLabel(level), sanitizeText(reason)); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "Fix: %s\n", fix)
+	_, err := fmt.Fprintf(w, "Fix: %s\n", sanitizeText(fix))
 	return err
 }
 
@@ -214,7 +216,7 @@ func WritePairingKey(w io.Writer, resp *localpb.CreatePairingKeyResponse) error 
 		return err
 	}
 	for _, addr := range resp.GetShownAddresses() {
-		if _, err := fmt.Fprintf(w, "  %s\n", addr); err != nil {
+		if _, err := fmt.Fprintf(w, "  %s\n", sanitizeText(addr)); err != nil {
 			return err
 		}
 	}
@@ -295,7 +297,7 @@ func WritePairingResult(w io.Writer, resp *localpb.ConnectResponse) error {
 // WriteWarnings writes each warning as one line prefixed with "warning: ".
 func WriteWarnings(w io.Writer, warnings []*localpb.Warning) error {
 	for _, warning := range warnings {
-		if _, err := fmt.Fprintf(w, "warning: %s\n", warning.GetMessage()); err != nil {
+		if _, err := fmt.Fprintf(w, "warning: %s\n", sanitizeText(warning.GetMessage())); err != nil {
 			return err
 		}
 	}
@@ -385,7 +387,7 @@ func cell(v string) string {
 	if v == "" {
 		return emptyCell
 	}
-	return v
+	return sanitizeText(v)
 }
 
 func yesNo(v bool) string {
@@ -411,7 +413,7 @@ func formatAddresses(addresses []*localpb.AdvertisedAddress) string {
 		if a == nil {
 			continue
 		}
-		kind, addr := a.GetKind(), a.GetAddr()
+		kind, addr := sanitizeText(a.GetKind()), sanitizeText(a.GetAddr())
 		switch {
 		case kind == "" && addr == "":
 			continue
@@ -429,8 +431,41 @@ func formatAddresses(addresses []*localpb.AdvertisedAddress) string {
 	return strings.Join(parts, ", ")
 }
 
-func sanitizeDetail(detail string) string {
-	return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(detail)
+// sanitizeText makes a string received from the Broker safe to print on a
+// terminal. A tab, newline, carriage return, line separator (U+2028) or
+// paragraph separator (U+2029) becomes a space, so the existing status detail
+// layout is unchanged. Every other control character (C0, DEL and C1) and
+// Unicode format character (category Cf, including bidi overrides) is shown as
+// \xNN below U+0100, as \uNNNN up to U+FFFF and as \UNNNNNNNN above it. An
+// invalid UTF-8 byte is shown as \xNN.
+func sanitizeText(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+			i++
+			continue
+		}
+		switch {
+		case r == '\t' || r == '\n' || r == '\r' || r == 0x2028 || r == 0x2029:
+			b.WriteByte(' ')
+		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
+			switch {
+			case r < 0x100:
+				fmt.Fprintf(&b, `\x%02x`, r)
+			case r <= 0xFFFF:
+				fmt.Fprintf(&b, `\u%04x`, r)
+			default:
+				fmt.Fprintf(&b, `\U%08x`, r)
+			}
+		default:
+			b.WriteString(s[i : i+size])
+		}
+		i += size
+	}
+	return b.String()
 }
 
 func formatPeerRef(p *localpb.PeerRef) string {
@@ -466,7 +501,7 @@ func quoteValue(v string) string {
 	if v == "" || strings.ContainsAny(v, " \"=\n\r\t") {
 		return strconv.Quote(v)
 	}
-	return v
+	return sanitizeText(v)
 }
 
 func auditTime(ts *timestamppb.Timestamp) string {

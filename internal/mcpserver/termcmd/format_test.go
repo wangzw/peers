@@ -2,6 +2,7 @@ package termcmd
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -672,5 +673,152 @@ func TestWriteStatusOmitsUpdateLineWithoutAvailableVersion(t *testing.T) {
 	}
 	if got := buf.String(); strings.Contains(got, "Update:") {
 		t.Errorf("WriteStatus output = %q, want no update line", got)
+	}
+}
+
+// escapeForTest returns how sanitizeText renders r.
+func escapeForTest(r rune) string {
+	if r < 0x100 {
+		return fmt.Sprintf(`\x%02x`, r)
+	}
+	return fmt.Sprintf(`\u%04x`, r)
+}
+
+// assertNoControlCharacters fails when out carries a raw character from chars,
+// and requires its escaped form to appear instead.
+func assertNoControlCharacters(t *testing.T, out string, chars ...rune) {
+	t.Helper()
+	for _, r := range chars {
+		if strings.ContainsRune(out, r) {
+			t.Errorf("output carries the raw character U+%04X: %q", r, out)
+		}
+		if want := escapeForTest(r); !strings.Contains(out, want) {
+			t.Errorf("output is missing the escaped form %q: %q", want, out)
+		}
+	}
+}
+
+// TestTerminalOutputNeutralizesControlCharacters covers every terminal path
+// that prints a string received from the Broker.
+func TestTerminalOutputNeutralizesControlCharacters(t *testing.T) {
+	esc, bel, bidi := rune(0x1b), rune(0x07), rune(0x202e)
+	evil := string(esc) + "]52;c;AAAA" + string(bel) + "x" + string(bidi) + "y"
+
+	t.Run("WriteBrokerList address", func(t *testing.T) {
+		brokers := []*localpb.BrokerInfo{{
+			Alias:               "peer",
+			AdvertisedAddresses: []*localpb.AdvertisedAddress{{Kind: "direct", Addr: evil}},
+		}}
+		var buf bytes.Buffer
+		if err := WriteBrokerList(&buf, brokers, &localpb.LocalBrokerState{}); err != nil {
+			t.Fatalf("WriteBrokerList: %v", err)
+		}
+		assertNoControlCharacters(t, buf.String(), esc, bel, bidi)
+	})
+
+	t.Run("WriteStatus peer status detail", func(t *testing.T) {
+		resp := &localpb.StatusResponse{Peers: []*localpb.BrokerInfo{{
+			Alias:        "peer",
+			StatusDetail: "line\nnext" + string(esc),
+		}}}
+		var buf bytes.Buffer
+		if err := WriteStatus(&buf, resp); err != nil {
+			t.Fatalf("WriteStatus: %v", err)
+		}
+		out := buf.String()
+		assertNoControlCharacters(t, out, esc)
+		if want := "line next" + escapeForTest(esc); !strings.Contains(out, want) {
+			t.Errorf("status detail = %q, want %q", out, want)
+		}
+	})
+
+	t.Run("WriteWarnings", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := WriteWarnings(&buf, []*localpb.Warning{{Message: "warn " + evil}}); err != nil {
+			t.Fatalf("WriteWarnings: %v", err)
+		}
+		assertNoControlCharacters(t, buf.String(), esc, bel, bidi)
+	})
+
+	t.Run("WriteDegraded", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := WriteDegraded(&buf, localpb.DegradedLevel_DEGRADED_LEVEL_LOCAL_ONLY, "reason "+evil, "fix "+string(bel)); err != nil {
+			t.Fatalf("WriteDegraded: %v", err)
+		}
+		assertNoControlCharacters(t, buf.String(), esc, bel, bidi)
+	})
+
+	t.Run("WriteAuditEvent unquoted detail", func(t *testing.T) {
+		var buf bytes.Buffer
+		if err := WriteAuditEvent(&buf, &localpb.AuditEvent{Detail: "x" + string(esc)}); err != nil {
+			t.Fatalf("WriteAuditEvent: %v", err)
+		}
+		out := buf.String()
+		assertNoControlCharacters(t, out, esc)
+		if want := "detail=x" + escapeForTest(esc); !strings.Contains(out, want) {
+			t.Errorf("audit line = %q, want %q", out, want)
+		}
+	})
+
+	t.Run("WriteStatus update line versions", func(t *testing.T) {
+		resp := &localpb.StatusResponse{
+			CurrentVersion:   "0.1.1" + string(esc),
+			AvailableVersion: "0.1.2" + string(bel),
+		}
+		var buf bytes.Buffer
+		if err := WriteStatus(&buf, resp); err != nil {
+			t.Fatalf("WriteStatus: %v", err)
+		}
+		out := buf.String()
+		if !strings.Contains(out, "Update: ") {
+			t.Fatalf("output has no update line: %q", out)
+		}
+		assertNoControlCharacters(t, out, esc, bel)
+	})
+
+	t.Run("WritePairingKey address line", func(t *testing.T) {
+		resp := &localpb.CreatePairingKeyResponse{Key: "k", ShownAddresses: []string{"host(10.0.0.1:1)" + string(esc)}}
+		var buf bytes.Buffer
+		if err := WritePairingKey(&buf, resp); err != nil {
+			t.Fatalf("WritePairingKey: %v", err)
+		}
+		for _, line := range strings.Split(buf.String(), "\n") {
+			if !strings.Contains(line, "host(10.0.0.1:1)") {
+				continue
+			}
+			assertNoControlCharacters(t, line, esc)
+			return
+		}
+		t.Fatal("WritePairingKey printed no address line")
+	})
+}
+
+// TestSanitizeText pins every branch of sanitizeText, including the input forms
+// a valid rune loop does not reach: an invalid UTF-8 byte, a C1 control, a
+// format character above U+FFFF and the Unicode line and paragraph separators.
+func TestSanitizeText(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain text", "host(10.0.0.1:1)", "host(10.0.0.1:1)"},
+		{"multi-byte text", "节点一", "节点一"},
+		{"tab newline carriage return", "a\tb\nc\rd", "a b c d"},
+		{"C0 escape", "\x1b[31m", `\x1b[31m`},
+		{"DEL", "a\x7fb", `a\x7fb`},
+		{"C1 next line", "a\u0085b", `a\x85b`},
+		{"bidi override", "a" + string(rune(0x202e)) + "b", "a" + "\x5c" + "u202eb"},
+		{"format character above U+FFFF", "a" + string(rune(0xE0041)) + "b", `a\U000e0041b`},
+		{"line separator", "a" + string(rune(0x2028)) + "b", "a b"},
+		{"paragraph separator", "a" + string(rune(0x2029)) + "b", "a b"},
+		{"invalid UTF-8", "a\xffb", `a\xffb`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sanitizeText(tc.in); got != tc.want {
+				t.Errorf("sanitizeText(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
 	}
 }

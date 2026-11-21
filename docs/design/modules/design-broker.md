@@ -470,7 +470,7 @@ Linux 上，账户与组经 `getent` 取自系统的账户数据库，来源由 
 2. 解析目标地址的别名。别名的查找先比本机别名（`broker.alias` 的生效值），再查对端表中已提交的对端，比较区分大小写；都不是时返回 `not_found`。地址整体先去首尾空白；名字部分末尾的 ` [` 后跟 6 至 12 位小写十六进制时取作消歧标识，大写十六进制不作消歧标识。
 3. 本机目标：同样以 `send.request_timeout` 为总预算，解析名字部分，向 `topic` 询问调用方与目标是否可见，重读目标的会话记录，然后调用 `inbox` 写入。署名是调用方在本机别名下的地址，按“处理投递请求”第 4 步的规则生成。`inbox` 报告未写入时按 `send.inbox_retries` 重试，报告不确定时不重试；预算用尽即返回未送达。本机的两个 Agent 可以属于不同的账户，可见性的规则不因此改变。
 4. 远端目标：以 `send.request_timeout` 为这次发送的预算，即一次发送的总时限（`REQ-agent-messaging-017`、`REQ-agent-messaging-018`）。链路已建立时，解析名字部分并检查可见性，经 `link` 发出投递请求，等待应答直到预算用尽。投递请求总是带上发送方解析出的目标的名字与消歧标识，即使模型给出的地址没有带消歧标识，接收方因此定位到发送方选定的那一个 Agent。远端成员的消歧标识按互为前缀匹配：地址中的标识与成员条目的标识，一方是另一方的前缀即视为匹配。链路刚建立而对端发来的成员名单尚未到达时，按名单为空解析，返回 `not_found`。链路未建立时，本方是拨号方的，每次等待前先促使 `link` 重新拨号，等待时间从 `send.link_backoff` 起每次翻倍、单次不超过 8 秒（[config](design-config.md)），至多 `send.link_retries` 次；本方是接受方的，不能促使对方连入，只在预算内等待链路建立（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。请求在写出之前因链路刚断开而未能交给传输层时，不立即重发，按同样的规则再等待一次，拨号方消耗一次重试次数；整个发送期间，重试次数只有一份。链路在等待应答期间中断的，重新建立后以同一消息标识重发。
-5. 归结结果。得到对端的确定应答时原样返回；应答是错误时，把 `DeliverResult` 的 `error` 转成本机接口的 `ErrorDetail`，来源 Broker 指纹填入该对端的指纹，对端自带的来源指纹被忽略。对端返回的错误不重试。对端以“不支持”应答时（`link` 返回 `*link.UnsupportedError`），返回 `version_mismatch`，不重发：请求已到达对方，而对方确定没有处理它。应答无法解码，或应答不是 `DeliverResult` 时，结果为 `delivery_unknown`。预算或重试用尽时，投递请求一次也没有发出的返回 `peer_unreachable`，发出过的返回 `delivery_unknown`（`REQ-agent-messaging-017`、`REQ-agent-messaging-027`）。
+5. 归结结果。得到对端的确定应答时原样返回；应答是错误时，把 `DeliverResult` 的 `error` 转成本机接口的 `ErrorDetail`，来源 Broker 指纹填入该对端的指纹，对端自带的来源指纹被忽略。错误码在接收方可能返回的集合（`not_found`、`ambiguous`、`not_visible`、`invalid_argument`、`too_large`、`inbox_unwritable`、`broker_offline`、`delivery_unknown`）内时保留原码，说明由本机生成：去掉对端说明开头的 `Not sent: ` 或 `Delivery unknown: `，在 UTF-8 字符边界上截到不超过 512 字节，截断时末尾加 `...`，再用 `strconv.Quote` 引用，写成 `Not sent: Broker <生效别名> said: "<引用内容>"`，码为 `delivery_unknown` 时开头改为 `Delivery unknown: `。码不在集合内时，结果为 `delivery_unknown`，说明为本机固定文字 `Delivery unknown: Broker <生效别名> returned an error this Broker does not recognize`，不转述对端文字。对端返回的错误不重试。对端以“不支持”应答时（`link` 返回 `*link.UnsupportedError`），返回 `version_mismatch`，不重发：请求已到达对方，而对方确定没有处理它。应答无法解码，或应答不是 `DeliverResult` 时，结果为 `delivery_unknown`。预算或重试用尽时，投递请求一次也没有发出的返回 `peer_unreachable`，发出过的返回 `delivery_unknown`（`REQ-agent-messaging-017`、`REQ-agent-messaging-027`）。
 
 本机 Agent 之间的发送与发往对端的发送不检查 `broker.offline`（`REQ-agent-messaging-041`）。
 
@@ -524,6 +524,8 @@ Linux 上，账户与组经 `getent` 取自系统的账户数据库，来源由 
 ### 列出 Agent 与查看状态
 
 处理之前先重读调用方与本机各个可见 Agent 的会话记录。列出 Agent 的结果由本机可见的 Agent 与各链路上可见的远端 Agent 组成，每项的地址按署名的同一规则拼出，别名取本方的生效别名；远端项的别名取不到时（链路刚断开、对端已解除配对），该项不列出；同一 Broker 上有同名 Agent 时这些项都带消歧标识。曾用名仍在保留期内的，该项注明曾用名（`REQ-agent-messaging-032`）。调用方自己的地址单独给出，别名取本机别名。可见性只取决于 topic，与 Agent 属于哪个账户无关。
+
+终端输出对来自 Broker 的字符串做清理：制表符、换行、回车与行分隔符 U+2028、段分隔符 U+2029 显示为空格，其余控制字符（C0、DEL、C1）与 Unicode 格式字符（类别 Cf，含双向覆盖符）显示为 `\xNN`（码点小于 0x100）、`\uNNNN`（不超过 0xFFFF）或 `\UNNNNNNNN`（超过 0xFFFF），无效的 UTF-8 字节显示为 `\xNN`。已用 `strconv.Quote` 加引号的值不重复处理。
 
 `Status` 的全量输出列出本机全部 Agent 及其成员关系，对端与链路另行列出，远端 Agent 不在 Agent 表中。调用方账户对配置文件没有读权限时，只省略其他账户的 Agent，对端与链路照常列出。
 
@@ -701,7 +703,10 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 链路未建立，请求一次也没有发出 | `peer_unreachable` | 本方是拨号方时重试，是接受方时在预算内等待对方连入；用尽后返回 |
 | `inbox` 确定没有写入 | `inbox_unwritable` | 是，由目标所在的 Broker 重试，用尽后返回 |
 | 请求发出后没有确定应答，或 `inbox` 报告不确定 | `delivery_unknown` | 链路重建后重发；`inbox` 不确定时不重试 |
-| 对端返回的任何错误 | 保留原错误码 | 否 |
+| 对端返回的集合内错误 | 保留原错误码，说明由本机以 `Broker <别名> said: "..."` 引用转述 | 否 |
+| 对端返回的集合外错误 | `delivery_unknown`，说明为本机固定文字 | 否 |
+
+对端返回集合外的错误码时，另以 Warn 级记一条 `peer_delivery_error_unrecognized` 运行日志，字段为对端指纹与错误码的整数值，不记对端说明。
 
 启动阶段的失败不经本机接口返回，带 `--allow-degraded` 时账户锁之后的可降级失败除外：监听绑定失败与数据目录、审计日志不可用经 `Status` 与 `broker_degraded` 返回，见“降级运行”。进程以非零的退出码结束，并在标准错误输出说明原因：`--system` 而不是 root、处在会话的进程树内、已有实例持有账户锁、配置不合法、监听地址不可用。用户级 Broker 由服务管理机制或用户在会话之外的终端启动，会话中的工具调用在它启动并应答本机 socket 之前返回说明没有可用 Broker 的错误。退出码的取值与标准错误的格式见命令行一节。
 

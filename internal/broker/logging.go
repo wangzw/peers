@@ -41,6 +41,10 @@ const (
 	// process survives.
 	EvRemoteMemberInvalid         = "remote_member_invalid"
 	EvSessionProtocolUnrecognized = "session_protocol_unrecognized"
+	// EvPeerDeliveryErrorUnrecognized records a delivery error whose code is
+	// outside the set the receiving Broker defines. The peer's message is not
+	// logged; only its fingerprint and the integer code are.
+	EvPeerDeliveryErrorUnrecognized = "peer_delivery_error_unrecognized"
 )
 
 // NewLogger returns a logger that writes one JSON object per line. The message

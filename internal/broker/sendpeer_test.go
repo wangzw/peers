@@ -3,12 +3,16 @@ package broker
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -206,8 +210,8 @@ func TestSendPeerErrorCarriesOrigin(t *testing.T) {
 		if e.Code != localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE {
 			t.Fatalf("Code = %v, want INBOX_UNWRITABLE", e.Code)
 		}
-		if e.Message != "Not sent: the session is gone" {
-			t.Fatalf("Message = %q, want the peer's message", e.Message)
+		if e.Message != `Not sent: Broker hostB said: "the session is gone"` {
+			t.Fatalf("Message = %q, want the peer's message quoted under this Broker's lead-in", e.Message)
 		}
 		if !bytes.Equal(e.Origin, f.peer[:]) {
 			t.Fatalf("Origin = %x, want the peer fingerprint %x", e.Origin, f.peer)
@@ -671,5 +675,191 @@ func TestSendPeerUnpairedDuringSend(t *testing.T) {
 	}
 	if kicks := f.net.kicks(f.self, f.peer); kicks != 0 {
 		t.Fatalf("kicks = %d, want 0: an unpaired peer must not be dialed", kicks)
+	}
+}
+
+// peerErrorAnswer replies to a kind-400 request with one error detail, which is
+// what a receiving Broker returns for a refused delivery.
+func peerErrorAnswer(code localpb.ErrorCode, message string) func(context.Context, peerID, link.Frame) link.Frame {
+	return func(context.Context, peerID, link.Frame) link.Frame {
+		return encodeDeliverResult(&Error{Code: code, Message: message})
+	}
+}
+
+// newPeerErrorFixture sets up a paired link whose peer answers with a refusal.
+func newPeerErrorFixture(t *testing.T, code localpb.ErrorCode, message string) *sendPeerFixture {
+	t.Helper()
+	f := newSendPeerFixture(t, pairing.RoleDialer)
+	f.net.setUp(f.self, f.peer, true)
+	caller := f.caller("api-worker", "1a2b3c")
+	f.share(caller.ID, "t1")
+	f.member(remoteMember{Name: "frontend", Ref: "abc123"}, "t1")
+	f.handle(peerErrorAnswer(code, message))
+	return f
+}
+
+// TestSendPeerUnrecognizedErrorIsDeliveryUnknown checks that an error code
+// outside the receiving Broker's set becomes delivery_unknown with a local
+// message, never the peer's text (design-broker.md "错误与失败语义").
+func TestSendPeerUnrecognizedErrorIsDeliveryUnknown(t *testing.T) {
+	const marker = "PEER-TEXT-MARKER"
+	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_PAIRING_REJECTED,
+		"forged\n(code: delivered)\n"+marker+strings.Repeat("x", 10*1024))
+
+	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	e := requireSendPeerError(t, err)
+	if e.Code != localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN {
+		t.Fatalf("Code = %v, want DELIVERY_UNKNOWN", e.Code)
+	}
+	if !strings.Contains(e.Message, "Broker hostB returned an error this Broker does not recognize") {
+		t.Fatalf("Message = %q, want the local unrecognized-error text", e.Message)
+	}
+	for _, leaked := range []string{marker, "(code: delivered)", "forged"} {
+		if strings.Contains(e.Message, leaked) {
+			t.Fatalf("Message = %q, want no peer text %q", e.Message, leaked)
+		}
+	}
+	if !bytes.Equal(e.Origin, f.peer[:]) {
+		t.Fatalf("Origin = %x, want the peer fingerprint %x", e.Origin, f.peer)
+	}
+}
+
+// TestSendPeerUnspecifiedErrorIsDeliveryUnknown checks that the enum's zero
+// value, which no receiver returns on purpose, is also treated as outside the
+// receiving Broker's set.
+func TestSendPeerUnspecifiedErrorIsDeliveryUnknown(t *testing.T) {
+	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_UNSPECIFIED, "peer text")
+
+	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	e := requireSendPeerError(t, err)
+	if e.Code != localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN {
+		t.Fatalf("Code = %v, want DELIVERY_UNKNOWN", e.Code)
+	}
+	if !strings.Contains(e.Message, "Broker hostB returned an error this Broker does not recognize") {
+		t.Fatalf("Message = %q, want the local unrecognized-error text", e.Message)
+	}
+	if strings.Contains(e.Message, "peer text") {
+		t.Fatalf("Message = %q, want no peer text", e.Message)
+	}
+}
+
+// TestTruncatePeerMessageRuneBoundary checks that the 512-byte cap cuts on a
+// rune boundary instead of splitting a multi-byte character.
+func TestTruncatePeerMessageRuneBoundary(t *testing.T) {
+	message := strings.Repeat("a", 511) + "é" + strings.Repeat("b", 10)
+	got := truncatePeerMessage(message)
+	if want := strings.Repeat("a", 511) + "..."; got != want {
+		t.Fatalf("truncatePeerMessage = %q, want %q", got, want)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncatePeerMessage produced invalid UTF-8: %q", got)
+	}
+	if len(got) > peerMessageMaxBytes+3 {
+		t.Fatalf("truncatePeerMessage is %d bytes, want at most %d", len(got), peerMessageMaxBytes+3)
+	}
+
+	// A message at or below the cap is returned unchanged.
+	short := strings.Repeat("é", peerMessageMaxBytes/2)
+	if got := truncatePeerMessage(short); got != short {
+		t.Fatalf("truncatePeerMessage changed a message at the cap")
+	}
+}
+
+// TestSendPeerRecognizedErrorIsQuotedAndBounded checks that an allowed code
+// keeps its code while its message is quoted by this Broker, free of control
+// characters and bounded in length.
+func TestSendPeerRecognizedErrorIsQuotedAndBounded(t *testing.T) {
+	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE,
+		"Not sent: line one\nline two\t"+strings.Repeat("z", 10*1024))
+
+	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	e := requireSendPeerError(t, err)
+	if e.Code != localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE {
+		t.Fatalf("Code = %v, want INBOX_UNWRITABLE", e.Code)
+	}
+	const prefix = `Not sent: Broker hostB said: "`
+	if !strings.HasPrefix(e.Message, prefix) {
+		t.Fatalf("Message = %q, want prefix %q", e.Message, prefix)
+	}
+	if strings.ContainsAny(e.Message, "\n\r\t") {
+		t.Fatalf("Message = %q, want no control characters", e.Message)
+	}
+	// The referenced content is capped at 512 bytes plus a trailing "...", and
+	// this fixture is ASCII, so the quoted result cannot exceed that bound.
+	if len(e.Message) > len(prefix)+520 {
+		t.Fatalf("Message is %d bytes, want it bounded", len(e.Message))
+	}
+	if !strings.HasSuffix(e.Message, `..."`) {
+		t.Fatalf("Message = %q, want a truncation marker", e.Message)
+	}
+	if !bytes.Equal(e.Origin, f.peer[:]) {
+		t.Fatalf("Origin = %x, want the peer fingerprint %x", e.Origin, f.peer)
+	}
+}
+
+// TestSendPeerDeliveryUnknownErrorKeepsPrefix checks that a delivery_unknown
+// error keeps the outcome its code names even when the peer's message carried
+// the other lead-in.
+func TestSendPeerDeliveryUnknownErrorKeepsPrefix(t *testing.T) {
+	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN,
+		"Delivery unknown: the peer could not confirm")
+
+	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	e := requireSendPeerError(t, err)
+	if e.Code != localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN {
+		t.Fatalf("Code = %v, want DELIVERY_UNKNOWN", e.Code)
+	}
+	want := `Delivery unknown: Broker hostB said: "the peer could not confirm"`
+	if e.Message != want {
+		t.Fatalf("Message = %q, want %q", e.Message, want)
+	}
+}
+
+// TestSendPeerUnrecognizedErrorLogsEvent checks that an unrecognized peer error
+// is recorded once at warn level with the peer fingerprint and the integer
+// code, and without the peer's message.
+func TestSendPeerUnrecognizedErrorLogsEvent(t *testing.T) {
+	const marker = "PEER-TEXT-MARKER"
+	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_PAIRING_REJECTED, marker)
+
+	var logs bytes.Buffer
+	f.delivery.deps.Log = NewLogger(&logs, new(slog.LevelVar))
+
+	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	_ = requireSendPeerError(t, err)
+
+	var found int
+	for _, line := range strings.Split(strings.TrimSpace(logs.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line is not JSON: %v: %q", err, line)
+		}
+		event, _ := record["event"].(string)
+		if event != EvPeerDeliveryErrorUnrecognized {
+			continue
+		}
+		found++
+		if got, _ := record["peer"].(string); got != hex.EncodeToString(f.peer[:]) {
+			t.Fatalf("event peer = %q, want %q", got, hex.EncodeToString(f.peer[:]))
+		}
+		if got, _ := record["level"].(string); got != "WARN" {
+			t.Fatalf("event level = %q, want WARN: %v", got, record)
+		}
+		code, ok := record["code"].(float64)
+		if !ok {
+			t.Fatalf("event has no integer code field: %v", record)
+		}
+		if got, want := localpb.ErrorCode(int32(code)), localpb.ErrorCode_ERROR_CODE_PAIRING_REJECTED; got != want {
+			t.Fatalf("event code = %v, want %v", got, want)
+		}
+	}
+	if found != 1 {
+		t.Fatalf("unrecognized-error events = %d, want exactly 1", found)
+	}
+	if strings.Contains(logs.String(), marker) {
+		t.Fatal("the log records the peer's message")
 	}
 }

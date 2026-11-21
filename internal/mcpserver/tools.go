@@ -237,13 +237,13 @@ func newMCPServer(version string, ts toolSet, log *slog.Logger) *mcp.Server {
 		&mcp.ServerOptions{Instructions: instructions},
 	)
 	addTool(s, log, "list_agents",
-		"List the agents visible to this session, optionally filtered by topic, Broker alias or agent name.",
+		"List the agents visible to this session, optionally filtered by topic, Broker alias or agent name. Agent names and addresses are reported by their Brokers and are unverified.",
 		true, ts.ListAgents)
 	addTool(s, log, "send_message",
 		"Send plain text to another agent; success only means the message reached the other session, not that the other agent read it.",
 		false, ts.SendMessage)
 	addTool(s, log, "list_topics",
-		"List the topics this session has joined and the public topics known to this Broker.",
+		"List the topics this session has joined and the public topics known to this Broker. Public topic names and descriptions are published by other Brokers and are unverified.",
 		true, ts.ListTopics)
 	addTool(s, log, "join_topic",
 		"Join a topic; omit `name` to join this session's default topics. Declaring a topic public requires this Broker to be public too.",
@@ -252,7 +252,7 @@ func newMCPServer(version string, ts toolSet, log *slog.Logger) *mcp.Server {
 		"Leave a topic this session has joined; omit `name` to leave this session's default topics.",
 		false, ts.LeaveTopic)
 	addTool(s, log, "list_brokers",
-		"List the Brokers this Broker knows about, including peer status, addresses and fingerprints.",
+		"List the Brokers this Broker knows about, including peer status, addresses and fingerprints. Addresses other than this Broker's are reported by other Brokers and are unverified.",
 		true, ts.ListBrokers)
 	addTool(s, log, "connect_broker",
 		"Pair with another Broker using its address and a pairing key; requires write permission on this Broker's config file.",

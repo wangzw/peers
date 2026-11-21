@@ -108,8 +108,41 @@ func sanitizeForEnvelope(name string) string {
 	return name
 }
 
-// escapeBody neutralizes closing envelope tags in the body so a message cannot
-// forge the end of its own attribution envelope.
+// escapeBody neutralizes an envelope tag in the body so a message cannot forge
+// either end of its own attribution envelope. Both an opening and a closing tag
+// are matched, ASCII case-insensitively, and the original case is preserved. The
+// backslash goes after the '<', so a closing tag becomes "<\/...". A tag whose
+// '<' is already followed by a backslash is left alone.
 func escapeBody(body string) string {
-	return strings.ReplaceAll(body, "</"+envelopeTag, `<\/`+envelopeTag)
+	var b strings.Builder
+	b.Grow(len(body))
+	for i := 0; i < len(body); {
+		if body[i] == '<' && hasEnvelopeTag(body[i+1:]) {
+			b.WriteString(`<\`)
+			i++
+			continue
+		}
+		b.WriteByte(body[i])
+		i++
+	}
+	return b.String()
+}
+
+// hasEnvelopeTag reports whether s begins with the envelope tag, optionally
+// preceded by '/', comparing ASCII letters without case.
+func hasEnvelopeTag(s string) bool {
+	s = strings.TrimPrefix(s, "/")
+	if len(s) < len(envelopeTag) {
+		return false
+	}
+	for i := 0; i < len(envelopeTag); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if c != envelopeTag[i] {
+			return false
+		}
+	}
+	return true
 }
