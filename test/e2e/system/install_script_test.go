@@ -213,6 +213,98 @@ func TestREQBrokerConfig041_SystemInstallScript(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory checks
+// that a system install leaves a completion directory owned by another account
+// alone. An account that owns such a directory could otherwise place a symlink
+// under it and have root write through it. The install still succeeds and warns
+// with the command that installs the completion by hand.
+func TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory(t *testing.T) {
+	if !syscontainer.InContainer() {
+		stageInstallArchive(t)
+		syscontainer.Run(t, syscontainer.Systemd)
+		return
+	}
+
+	assertInstallImageHasNoFish(t)
+	installFakeClaude(t)
+	archive := prepareInstallArchive(t)
+	removePreinstalledSystemBinary(t)
+	configureInstallSudo(t)
+
+	// Hand the zsh completion directory to another account, the way a host
+	// where an account other than root owns it would have it. 65534 is neither
+	// root nor the account that ran sudo (2100), so the install must leave the
+	// directory alone.
+	zshDir := filepath.Dir(installSystemZshCompletion)
+	mustRun(t, "root", nil, "mkdir", "-p", zshDir)
+	mustRun(t, "root", nil, "chown", "65534:65534", zshDir)
+	mustRun(t, "root", nil, "chmod", "0755", zshDir)
+
+	res := runInstallScriptAs(t, installAccount, installUserEnv(), archive, "sudo", "-n", "sh", "./install.sh", "--system")
+	if res.ExitCode != 0 {
+		t.Fatalf("the install failed although only the zsh completion should be skipped: exit %d\nstdout: %s\nstderr: %s",
+			res.ExitCode, strings.TrimSpace(res.Stdout), strings.TrimSpace(res.Stderr))
+	}
+
+	output := res.Stdout + res.Stderr
+	for _, want := range []string{"skipped the zsh completion", "is not owned by root", zshDir, "install it with:"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output does not contain %q:\n%s", want, output)
+		}
+	}
+	if _, err := os.Stat(installSystemZshCompletion); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the zsh completion %s was written into a directory owned by another account: %v", installSystemZshCompletion, err)
+	}
+	// The completions and man pages in directories owned by root are still
+	// installed.
+	for _, path := range []string{installSystemBashCompletion, installSystemManPage, installSystemUpdateManPage} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("the install skipped %s as well: %v", path, err)
+		}
+	}
+}
+
+// TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory checks
+// that a system install into a completion directory owned by the account that
+// ran sudo writes the file as that account. Root creating the file would let a
+// process of the account swap a temporary file for a link that root writes
+// through, so the file's owner proves which account performed the write.
+func TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory(t *testing.T) {
+	if !syscontainer.InContainer() {
+		stageInstallArchive(t)
+		syscontainer.Run(t, syscontainer.Systemd)
+		return
+	}
+
+	assertInstallImageHasNoFish(t)
+	installFakeClaude(t)
+	archive := prepareInstallArchive(t)
+	removePreinstalledSystemBinary(t)
+	configureInstallSudo(t)
+
+	for _, dir := range []string{
+		filepath.Dir(installSystemZshCompletion),
+		filepath.Dir(installSystemManPage),
+	} {
+		mustRun(t, "root", nil, "mkdir", "-p", dir)
+		mustRun(t, "root", nil, "chown", "2100:2100", dir)
+		mustRun(t, "root", nil, "chmod", "0755", dir)
+	}
+
+	res := runInstallScriptAs(t, installAccount, installUserEnv(), archive, "sudo", "-n", "sh", "./install.sh", "--system")
+	if res.ExitCode != 0 {
+		t.Fatalf("the install failed: exit %d\nstdout: %s\nstderr: %s",
+			res.ExitCode, strings.TrimSpace(res.Stdout), strings.TrimSpace(res.Stderr))
+	}
+	for _, path := range []string{installSystemZshCompletion, installSystemManPage} {
+		uid, gid, _ := fileOwnerAndMode(t, path)
+		if uid != installUID || gid != installUID {
+			t.Errorf("%s owner = %d:%d, want %d:%d; root created it instead of %s",
+				path, uid, gid, installUID, installUID, installAccount)
+		}
+	}
+}
+
 // TestREQBrokerConfig041_InstallScriptFilesRemovedByUninstall installs through
 // the script at both levels and checks that uninstall removes the completion
 // files it wrote, and the system man pages with them.

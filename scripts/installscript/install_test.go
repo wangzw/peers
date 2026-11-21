@@ -45,6 +45,7 @@ type fixture struct {
 	orderLog     string
 	groupLog     string
 	sudoLog      string
+	writeLog     string
 }
 
 // newFixture builds an archive root with install.sh and a fake peers binary, and
@@ -68,6 +69,7 @@ func newFixture(t *testing.T) *fixture {
 		orderLog:     filepath.Join(base, "order.log"),
 		groupLog:     filepath.Join(base, "group.log"),
 		sudoLog:      filepath.Join(base, "sudo.log"),
+		writeLog:     filepath.Join(base, "write.log"),
 	}
 	for _, dir := range []string{f.home, f.fakes, f.archive} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -78,6 +80,11 @@ func newFixture(t *testing.T) *fixture {
 	realInstall := mustLookPath(t, "install")
 	realID := mustLookPath(t, "id")
 	realUname := mustLookPath(t, "uname")
+	realMktemp := mustLookPath(t, "mktemp")
+	realChmod := mustLookPath(t, "chmod")
+	realMv := mustLookPath(t, "mv")
+	realCp := mustLookPath(t, "cp")
+	realMkdir := mustLookPath(t, "mkdir")
 
 	source, err := filepath.Abs(installScriptPath)
 	if err != nil {
@@ -102,6 +109,11 @@ func newFixture(t *testing.T) *fixture {
 	writeExecutable(t, filepath.Join(f.fakes, "sudo"), fakeSudo)
 	writeExecutable(t, filepath.Join(f.fakes, "usermod"), fakeUsermod)
 	writeExecutable(t, filepath.Join(f.fakes, "dseditgroup"), fakeDseditgroup)
+	writeExecutable(t, filepath.Join(f.fakes, "mktemp"), strings.ReplaceAll(fakeMktemp, "@REAL_MKTEMP@", shellQuote(realMktemp)))
+	writeExecutable(t, filepath.Join(f.fakes, "chmod"), strings.ReplaceAll(fakeChmod, "@REAL_CHMOD@", shellQuote(realChmod)))
+	writeExecutable(t, filepath.Join(f.fakes, "mv"), strings.ReplaceAll(fakeMv, "@REAL_MV@", shellQuote(realMv)))
+	writeExecutable(t, filepath.Join(f.fakes, "cp"), strings.ReplaceAll(fakeCp, "@REAL_CP@", shellQuote(realCp)))
+	writeExecutable(t, filepath.Join(f.fakes, "mkdir"), strings.ReplaceAll(fakeMkdir, "@REAL_MKDIR@", shellQuote(realMkdir)))
 	return f
 }
 
@@ -130,6 +142,7 @@ func (f *fixture) environ(overrides map[string]string) []string {
 		"FAKE_GROUP_LOG":          f.groupLog,
 		"FAKE_GROUP_EXIT":         "0",
 		"FAKE_SUDO_LOG":           f.sudoLog,
+		"FAKE_WRITE_LOG":          f.writeLog,
 	}
 	for key, value := range overrides {
 		env[key] = value
@@ -600,7 +613,9 @@ func TestInstallScriptWarnsAboutCompletionFailure(t *testing.T) {
 // a directory that cannot be created only produces a warning.
 func TestInstallScriptWarnsAboutManPageFailure(t *testing.T) {
 	f := newFixture(t)
-	// A regular file where the man directory belongs makes mkdir -p fail.
+	writeArchiveManPages(t, f)
+	// A regular file where the man directory belongs is refused, not written
+	// through.
 	manDir := filepath.Join(f.destdir, "usr", "local", "share", "man", "man1")
 	if err := os.MkdirAll(filepath.Dir(manDir), 0o755); err != nil {
 		t.Fatal(err)
@@ -613,7 +628,614 @@ func TestInstallScriptWarnsAboutManPageFailure(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	mustContain(t, "stderr", stderr, "warning: could not create the man directory")
+	for _, want := range []string{"skipped the man page peers.1", "is not a directory", "install it with:"} {
+		mustContain(t, "stderr", stderr, want)
+	}
+}
+
+// TestInstallScriptSystemCompletionReplacesSymlink checks that a system install
+// replaces a symlink at the completion target instead of writing through it.
+// The directory may be owned by another account, so a symlink there would
+// otherwise let that account truncate any file the install can write.
+func TestInstallScriptSystemCompletionReplacesSymlink(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	victim := filepath.Join(f.base, "symlink-target")
+	const victimContent = "the install must not rewrite this file\n"
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", victim, err)
+	}
+	target := filepath.Join(zshDir, "_peers")
+	if err := os.Symlink(victim, target); err != nil {
+		t.Fatalf("creating the symlink %s: %v", target, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	_, stderr, code := f.run(f.systemInstallEnv(""), systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+
+	if got := readFile(t, victim); got != victimContent {
+		t.Errorf("the symlink target was rewritten: %q", got)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("reading %s: %v", target, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("%s is still a symlink; the completion must replace the link itself", target)
+	}
+	mustContain(t, "zsh completion", readFile(t, target), "# zsh completion")
+}
+
+// TestInstallScriptSystemWritesInSudoUserDirectoryAsTheAccount checks that a
+// completion directory owned by the account that ran sudo is written by that
+// account through sudo -u: mktemp, the copy of the generated content, chmod and
+// mv all run as the account, and root runs none of them in the directory. A
+// process of the account that swapped a temporary file for a link therefore
+// cannot make root write through it.
+func TestInstallScriptSystemWritesInSudoUserDirectoryAsTheAccount(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = zshDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	mustContain(t, "zsh completion", readFile(t, filepath.Join(zshDir, "_peers")), "# zsh completion")
+
+	seen := map[string]bool{}
+	for _, line := range readLines(t, f.writeLog) {
+		if !strings.Contains(line, zshDir) {
+			continue
+		}
+		if !strings.Contains(line, "as=alice") {
+			t.Errorf("root operated in the account's directory: %q", line)
+		}
+		for _, op := range []string{"mktemp", "cp", "chmod", "mv"} {
+			if strings.HasPrefix(line, op+" ") {
+				seen[op] = true
+			}
+		}
+	}
+	for _, op := range []string{"mktemp", "cp", "chmod", "mv"} {
+		if !seen[op] {
+			t.Errorf("no %s call for %s ran as the account; log: %q", op, zshDir, readLines(t, f.writeLog))
+		}
+	}
+}
+
+// TestInstallScriptSystemCreatesSudoUserDirectoryAsTheAccount checks that a
+// missing completion directory under one owned by the account that ran sudo is
+// created by that account, so root never creates a directory inside it.
+func TestInstallScriptSystemCreatesSudoUserDirectoryAsTheAccount(t *testing.T) {
+	f := newFixture(t)
+	zshParent := f.systemShare(t, "zsh")
+	if err := os.MkdirAll(zshParent, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshParent, err)
+	}
+	zshDir := filepath.Join(zshParent, "site-functions")
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = zshParent
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	created := false
+	for _, line := range readLines(t, f.writeLog) {
+		if !strings.HasPrefix(line, "mkdir ") || !strings.Contains(line, zshDir) {
+			continue
+		}
+		created = true
+		if !strings.Contains(line, "as=alice") {
+			t.Errorf("root created the directory in the account's tree: %q", line)
+		}
+	}
+	if !created {
+		t.Errorf("no mkdir call for %s was logged; log: %q", zshDir, readLines(t, f.writeLog))
+	}
+}
+
+// TestInstallScriptSystemCreatesNestedDirectoryAsTheAccount checks that a
+// missing directory below an ancestor owned by the account that ran sudo is
+// created by that account even when the immediate parent is root-owned. The
+// account owns share but not zsh, so after zsh passes its check the account can
+// replace zsh with a link to a root-owned directory. The link is put in place
+// just before the mkdir: root's mkdir would create site-functions inside the
+// root-owned directory, while the account's own mkdir fails there.
+func TestInstallScriptSystemCreatesNestedDirectoryAsTheAccount(t *testing.T) {
+	f := newFixture(t)
+	zshParent := f.systemShare(t, "zsh")
+	if err := os.MkdirAll(zshParent, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshParent, err)
+	}
+	shareDir := f.systemShare(t)
+	rootDir := filepath.Join(f.base, "root-owned")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", rootDir, err)
+	}
+	zshDir := filepath.Join(zshParent, "site-functions")
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = shareDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+	env["FAKE_MKDIR_SWAP_DIR"] = zshParent
+	env["FAKE_MKDIR_SWAP_TARGET"] = rootDir
+	env["FAKE_MKDIR_REFUSE_DROPPED"] = "1"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", rootDir, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the install created %v in the root-owned directory through the swapped parent", entries)
+	}
+	mustContain(t, "stderr", stderr, "skipped the zsh completion")
+	attempted := false
+	for _, line := range readLines(t, f.writeLog) {
+		if !strings.HasPrefix(line, "mkdir ") || !strings.Contains(line, zshDir) {
+			continue
+		}
+		attempted = true
+		if !strings.Contains(line, "as=alice") {
+			t.Errorf("root created the directory below the account's ancestor: %q", line)
+		}
+	}
+	if !attempted {
+		t.Errorf("no mkdir call for %s was logged; log: %q", zshDir, readLines(t, f.writeLog))
+	}
+}
+
+// TestInstallScriptSystemDoesNotWriteThroughSwappedTemporaryFile reproduces the
+// write race: after mktemp the temporary file is replaced with a link to a
+// victim, which a process of the account can do because it owns the directory.
+// With the write run as that account the victim is untouched; root writing
+// through the link would truncate it.
+func TestInstallScriptSystemDoesNotWriteThroughSwappedTemporaryFile(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	victim := filepath.Join(f.base, "victim")
+	const victimContent = "the install must not truncate this file\n"
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", victim, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = zshDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+	env["FAKE_MKTEMP_SYMLINK"] = victim
+	env["FAKE_MKTEMP_SYMLINK_DIR"] = zshDir
+	env["FAKE_CP_REFUSE_SYMLINK"] = "1"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	if got := readFile(t, victim); got != victimContent {
+		t.Errorf("the swapped temporary file let the install rewrite the victim: %q", got)
+	}
+	mustContain(t, "stderr", stderr, "could not write the zsh completion")
+}
+
+// TestInstallScriptSystemDoesNotWriteThroughSwappedAncestor reproduces the
+// ancestor-symlink attack. The account that ran sudo owns an intermediate
+// directory, so it can replace the completion directory with a link to a
+// root-owned directory right after the install checks the path. A second stat
+// of the target would follow the link and read root as the owner, and root
+// would then create and rename files inside the root-owned directory. The
+// install must carry the result of the first check into the write, write as
+// the account, and leave the root-owned directory untouched.
+func TestInstallScriptSystemDoesNotWriteThroughSwappedAncestor(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	// The account owns the parent of the completion directory, which is what
+	// lets it replace the directory itself; the directory is reported as
+	// root-owned, as it is on the Homebrew layout.
+	zshParent := f.systemShare(t, "zsh")
+	rootDir := filepath.Join(f.base, "root-dir")
+	if err := os.MkdirAll(rootDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", rootDir, err)
+	}
+	victim := filepath.Join(rootDir, "_peers")
+	const victimContent = "the install must not overwrite this root-owned file\n"
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", victim, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = zshParent
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+	// When a mktemp runs against the completion directory, the account has
+	// already swapped it for a link to the root-owned directory. The account's
+	// own mktemp cannot create a file there and fails; root must never run the
+	// mktemp that would follow the link.
+	env["FAKE_MKTEMP_SWAP_DIR"] = zshDir
+	env["FAKE_MKTEMP_SWAP_TARGET"] = rootDir
+	env["FAKE_MKTEMP_REFUSE_DROPPED"] = "1"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	if got := readFile(t, victim); got != victimContent {
+		t.Errorf("the root-owned file was overwritten through the swapped ancestor: %q", got)
+	}
+	entries, err := os.ReadDir(rootDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", rootDir, err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "_peers" {
+		t.Errorf("the install created files in the root-owned directory: %v", entries)
+	}
+	mustContain(t, "stderr", stderr, "could not write the zsh completion")
+}
+
+// TestInstallScriptRemovesStagingFileOnInterrupt checks that an interrupted
+// system install does not leave its root-owned staging file behind. The
+// completion is generated into a temporary file under /tmp; the fake peers
+// signals the installer after that file is created, and the fake mktemp puts
+// the staging file in a directory the test can inspect instead of /tmp.
+func TestInstallScriptRemovesStagingFileOnInterrupt(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	stageDir := filepath.Join(f.base, "stage")
+	if err := os.MkdirAll(stageDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", stageDir, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = zshDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+	env["FAKE_MKTEMP_STAGE_DIR"] = stageDir
+	env["FAKE_PEERS_SIGNAL"] = "TERM"
+	env["FAKE_PEERS_SIGNAL_SHELL"] = "zsh"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 143 {
+		t.Fatalf("exit = %d, want 143 from the SIGTERM trap\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	entries, err := os.ReadDir(stageDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", stageDir, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the interrupt left staging files behind: %v", entries)
+	}
+}
+
+// TestInstallScriptDoesNotRemoveARecreatedStagingPath checks that the install
+// clears the staging path once it has removed the file. Otherwise the exit trap
+// removes whatever another process creates at that path between the removal and
+// the exit. The chmod of the completion's temporary file runs right after the
+// removal and recreates a file at the recorded path; the trap must leave it.
+func TestInstallScriptDoesNotRemoveARecreatedStagingPath(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	stageDir := filepath.Join(f.base, "stage")
+	if err := os.MkdirAll(stageDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", stageDir, err)
+	}
+	stageLog := filepath.Join(f.base, "stage-path")
+
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("alice")
+	env["FAKE_ID_UID_FOR_NAME"] = "2100"
+	env["FAKE_STAT_UNSAFE_PATH"] = zshDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "2100"
+	env["FAKE_STAT_UNSAFE_MODE"] = "755"
+	env["FAKE_MKTEMP_STAGE_DIR"] = stageDir
+	env["FAKE_STAGE_PATH_LOG"] = stageLog
+	env["FAKE_CHMOD_RESTORE_STAGE"] = "1"
+
+	stdout, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	stage := strings.TrimSpace(readFile(t, stageLog))
+	if stage == "" {
+		t.Fatalf("the fake mktemp recorded no staging path")
+	}
+	content, err := os.ReadFile(stage)
+	if err != nil {
+		t.Fatalf("the exit trap removed the file recreated at the staging path %s: %v", stage, err)
+	}
+	mustContain(t, "recreated file", string(content), "recreated after the install removed the staging file")
+}
+
+// TestInstallScriptSystemSkipsCompletionThroughSymlinkedParent checks that a
+// symbolic link in the install path is refused before any directory is created
+// through it.
+func TestInstallScriptSystemSkipsCompletionThroughSymlinkedParent(t *testing.T) {
+	f := newFixture(t)
+	shareDir := filepath.Dir(f.systemShare(t, "zsh"))
+	if err := os.MkdirAll(shareDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", shareDir, err)
+	}
+	elsewhere := filepath.Join(f.base, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", elsewhere, err)
+	}
+	if err := os.Symlink(elsewhere, filepath.Join(shareDir, "zsh")); err != nil {
+		t.Fatalf("creating the symlinked parent: %v", err)
+	}
+
+	prefix := f.systemPrefix(t)
+	stdout, stderr, code := f.run(f.systemInstallEnv(""), systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	for _, want := range []string{"skipped the zsh completion", "is a symbolic link", "install it with:"} {
+		mustContain(t, "stderr", stderr, want)
+	}
+	entries, err := os.ReadDir(elsewhere)
+	if err != nil {
+		t.Fatalf("reading %s: %v", elsewhere, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the install created %v through the symlinked parent", entries)
+	}
+	if _, err := os.Stat(f.systemShare(t, "bash-completion", "completions", "peers")); err != nil {
+		t.Errorf("the bash completion is missing although only the zsh tree is unsafe: %v", err)
+	}
+}
+
+// TestInstallScriptSystemCompletionReplacesSymlinkToDirectory checks the same
+// replacement for a symlink that points at a directory, which mv would
+// otherwise follow and move the completed file inside.
+func TestInstallScriptSystemCompletionReplacesSymlinkToDirectory(t *testing.T) {
+	f := newFixture(t)
+	zshDir := f.systemShare(t, "zsh", "site-functions")
+	if err := os.MkdirAll(zshDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", zshDir, err)
+	}
+	elsewhere := filepath.Join(f.base, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", elsewhere, err)
+	}
+	target := filepath.Join(zshDir, "_peers")
+	if err := os.Symlink(elsewhere, target); err != nil {
+		t.Fatalf("creating the symlink %s: %v", target, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	_, stderr, code := f.run(f.systemInstallEnv(""), systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	entries, err := os.ReadDir(elsewhere)
+	if err != nil {
+		t.Fatalf("reading %s: %v", elsewhere, err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("the completion was moved into the linked directory: %v", entries)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("reading %s: %v", target, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("%s is still a symlink; the completion must replace the link itself", target)
+	}
+	mustContain(t, "zsh completion", readFile(t, target), "# zsh completion")
+}
+
+// TestInstallScriptSystemCompletionSkipsDirectoryTarget checks that a directory
+// at the completion target is refused with a warning instead of receiving the
+// renamed temporary file.
+func TestInstallScriptSystemCompletionSkipsDirectoryTarget(t *testing.T) {
+	f := newFixture(t)
+	target := filepath.Join(f.systemShare(t, "zsh", "site-functions"), "_peers")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", target, err)
+	}
+	sentinel := filepath.Join(target, "keep")
+	if err := os.WriteFile(sentinel, []byte("keep\n"), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", sentinel, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	_, stderr, code := f.run(f.systemInstallEnv(""), systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{"skipped the zsh completion", target + " is a directory", "install it with:"} {
+		mustContain(t, "stderr", stderr, want)
+	}
+	entries, err := os.ReadDir(target)
+	if err != nil {
+		t.Fatalf("reading %s: %v", target, err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "keep" {
+		t.Errorf("the completion was moved into the target directory: %v", entries)
+	}
+	if _, err := os.Stat(f.systemShare(t, "bash-completion", "completions", "peers")); err != nil {
+		t.Errorf("the bash completion is missing although only the zsh target is a directory: %v", err)
+	}
+}
+
+// TestInstallScriptSystemCompletionFailureKeepsTarget checks that a completion
+// that cannot be generated leaves the existing file alone and removes its
+// temporary file.
+func TestInstallScriptSystemCompletionFailureKeepsTarget(t *testing.T) {
+	f := newFixture(t)
+	bashDir := f.systemShare(t, "bash-completion", "completions")
+	if err := os.MkdirAll(bashDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", bashDir, err)
+	}
+	target := filepath.Join(bashDir, "peers")
+	const original = "# completion from an earlier install\n"
+	if err := os.WriteFile(target, []byte(original), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", target, err)
+	}
+
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("")
+	env["FAKE_AGENT_COMPLETION_EXIT"] = "1"
+	_, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	mustContain(t, "stderr", stderr, "warning: could not write the bash completion")
+	if got := readFile(t, target); got != original {
+		t.Errorf("the failed completion run changed the target: %q", got)
+	}
+	entries, err := os.ReadDir(bashDir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", bashDir, err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".peers-") {
+			t.Errorf("a temporary file %s was left behind", entry.Name())
+		}
+	}
+}
+
+// TestInstallScriptSystemSkipsWritableCompletionDirectory checks that a
+// completion directory writable by group or others is left alone with a
+// warning, while the other completions are installed.
+func TestInstallScriptSystemSkipsWritableCompletionDirectory(t *testing.T) {
+	f := newFixture(t)
+	bashDir := f.systemShare(t, "bash-completion", "completions")
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("")
+	env["FAKE_STAT_UNSAFE_PATH"] = bashDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "0"
+	env["FAKE_STAT_UNSAFE_MODE"] = "775"
+	_, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{"skipped the bash completion", bashDir + " is writable by group or others", "install it with:"} {
+		mustContain(t, "stderr", stderr, want)
+	}
+	if _, err := os.Stat(filepath.Join(bashDir, "peers")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the completion was written into a writable directory: %v", err)
+	}
+	if _, err := os.Stat(f.systemShare(t, "zsh", "site-functions", "_peers")); err != nil {
+		t.Errorf("the zsh completion is missing although only the bash directory is unsafe: %v", err)
+	}
+}
+
+// TestInstallScriptSystemSkipsWritableManDirectory checks that the man pages
+// get the same directory check as the completions.
+func TestInstallScriptSystemSkipsWritableManDirectory(t *testing.T) {
+	f := newFixture(t)
+	writeArchiveManPages(t, f)
+	manDir := f.systemShare(t, "man", "man1")
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("")
+	env["FAKE_STAT_UNSAFE_PATH"] = manDir
+	env["FAKE_STAT_UNSAFE_OWNER"] = "0"
+	env["FAKE_STAT_UNSAFE_MODE"] = "777"
+	_, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	for _, want := range []string{"skipped the man page peers.1", manDir + " is writable by group or others", "install it with:"} {
+		mustContain(t, "stderr", stderr, want)
+	}
+	if _, err := os.Stat(filepath.Join(manDir, "peers.1")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the man page was installed into a writable directory: %v", err)
+	}
+}
+
+// TestInstallScriptSystemChecksShareDirectoriesWithBSDStat checks that the
+// directory check for the completions falls back to the BSD stat form, like the
+// binary's directory check does.
+func TestInstallScriptSystemChecksShareDirectoriesWithBSDStat(t *testing.T) {
+	f := newFixture(t)
+	prefix := f.systemPrefix(t)
+	env := f.systemInstallEnv("")
+	env["FAKE_STAT_REJECT_GNU"] = "1"
+	_, stderr, code := f.run(env, systemInstallArgs(prefix, "--no-service")...)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; the BSD stat fallback did not work\nstderr:\n%s", code, stderr)
+	}
+	if _, err := os.Stat(f.systemShare(t, "zsh", "site-functions", "_peers")); err != nil {
+		t.Errorf("the zsh completion is missing: %v", err)
+	}
+}
+
+// TestInstallScriptUserCompletionReplacesSymlink checks that a user install
+// also replaces a symlink at the completion target rather than writing through
+// it; the user install has no owner check.
+func TestInstallScriptUserCompletionReplacesSymlink(t *testing.T) {
+	f := newFixture(t)
+	bashDir := f.pathUnderHome(t, ".local", "share", "bash-completion", "completions")
+	if err := os.MkdirAll(bashDir, 0o755); err != nil {
+		t.Fatalf("creating %s: %v", bashDir, err)
+	}
+	victim := filepath.Join(f.base, "user-symlink-target")
+	const victimContent = "the user install must not rewrite this file\n"
+	if err := os.WriteFile(victim, []byte(victimContent), 0o644); err != nil {
+		t.Fatalf("writing %s: %v", victim, err)
+	}
+	target := filepath.Join(bashDir, "peers")
+	if err := os.Symlink(victim, target); err != nil {
+		t.Fatalf("creating the symlink %s: %v", target, err)
+	}
+
+	_, stderr, code := f.run(nil, "--no-service", "--no-mcp")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstderr:\n%s", code, stderr)
+	}
+	if got := readFile(t, victim); got != victimContent {
+		t.Errorf("the symlink target was rewritten: %q", got)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("reading %s: %v", target, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Errorf("%s is still a symlink; the completion must replace the link itself", target)
+	}
+	mustContain(t, "bash completion", readFile(t, target), "# bash completion")
 }
 
 // writeArchiveManPages adds the man pages a release archive carries to the
@@ -1179,15 +1801,26 @@ func (f *fixture) pathWithout(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("reading %s: %v", f.fakes, err)
 	}
+	// These tools are linked from their real paths below; a fake with the same
+	// name is skipped here so the second link does not collide.
+	realTools := []string{"grep", "dirname", "mkdir", "cp", "mktemp", "chmod", "mv", "rm"}
+	isReal := func(name string) bool {
+		for _, tool := range realTools {
+			if name == tool {
+				return true
+			}
+		}
+		return false
+	}
 	for _, entry := range entries {
-		if entry.Name() == name {
+		if entry.Name() == name || isReal(entry.Name()) {
 			continue
 		}
 		if err := os.Symlink(filepath.Join(f.fakes, entry.Name()), filepath.Join(dir, entry.Name())); err != nil {
 			t.Fatalf("linking %s: %v", entry.Name(), err)
 		}
 	}
-	for _, tool := range []string{"grep", "dirname", "mkdir", "cp"} {
+	for _, tool := range realTools {
 		if err := os.Symlink(mustLookPath(t, tool), filepath.Join(dir, tool)); err != nil {
 			t.Fatalf("linking the real %s: %v", tool, err)
 		}
@@ -2043,6 +2676,12 @@ case $1 in
 	printf '%s\n' "$FAKE_AGENT_VERSION"
 	;;
 completion)
+	# FAKE_PEERS_SIGNAL_SHELL names the shell whose completion sends
+	# FAKE_PEERS_SIGNAL to the installer, standing for a Ctrl-C or a kill while
+	# the staging file exists.
+	if [ "${FAKE_PEERS_SIGNAL_SHELL:-}" = "$2" ] && [ -n "${FAKE_PEERS_SIGNAL:-}" ]; then
+		kill -s "$FAKE_PEERS_SIGNAL" "$PPID" 2>/dev/null || :
+	fi
 	if [ "${FAKE_AGENT_COMPLETION_EXIT:-0}" != "0" ]; then
 		exit "$FAKE_AGENT_COMPLETION_EXIT"
 	fi
@@ -2137,7 +2776,16 @@ esac
 const fakeID = `#!/bin/sh
 case $1 in
 -u)
-	if [ -n "${FAKE_ID_UID:-}" ]; then
+	if [ -n "${2:-}" ]; then
+		if [ -n "${FAKE_ID_UID_FOR_NAME:-}" ]; then
+			printf '%s\n' "$FAKE_ID_UID_FOR_NAME"
+		else
+			# A named lookup is the account that ran sudo. It gets its own
+			# non-zero id so a root-owned directory is never mistaken for one
+			# that account owns.
+			printf '1000\n'
+		fi
+	elif [ -n "${FAKE_ID_UID:-}" ]; then
 		printf '%s\n' "$FAKE_ID_UID"
 	else
 		exec @REAL_ID@ -u
@@ -2191,9 +2839,10 @@ fi
 # system re-exec: it runs the rest of the installation as root, so the
 # fake id reports uid 0 and SUDO_USER names the invoking account.
 privileged=1
+dropped=
 while [ "$#" -gt 0 ]; do
 	case $1 in
-	-u) privileged=0; shift 2 ;;
+	-u) privileged=0; dropped=$2; shift 2 ;;
 	-H) shift ;;
 	*) break ;;
 	esac
@@ -2201,6 +2850,10 @@ done
 if [ "$2" = "-lc" ]; then
 	shift 2
 	exec sh -c "$@"
+fi
+if [ -n "$dropped" ]; then
+	FAKE_SUDO_DROPPED=$dropped
+	export FAKE_SUDO_DROPPED
 fi
 if [ "$privileged" = 1 ]; then
 	FAKE_ID_UID=0
@@ -2239,6 +2892,122 @@ fail)
 	;;
 esac
 exec @REAL_INSTALL@ "$@"
+`
+
+// fakeMktemp logs every call with the account it would run as. In the
+// temporary-file-race test, FAKE_MKTEMP_SYMLINK names a victim and a template
+// ending in .peers-XXXXXX is created and then replaced with a link to it,
+// standing for another process of the account swapping the file after mktemp.
+const fakeMktemp = `#!/bin/sh
+printf 'mktemp as=%s %s\n' "${FAKE_SUDO_DROPPED:-root}" "$*" >> "${FAKE_WRITE_LOG:-/dev/null}"
+if [ -n "${FAKE_MKTEMP_SYMLINK:-}" ] && [ -n "${FAKE_MKTEMP_SYMLINK_DIR:-}" ]; then
+	case $1 in
+	"$FAKE_MKTEMP_SYMLINK_DIR"/.peers-XXXXXX)
+		created=$(@REAL_MKTEMP@ "$@") || exit $?
+		rm -f "$created"
+		ln -s "$FAKE_MKTEMP_SYMLINK" "$created" || exit 1
+		printf '%s\n' "$created"
+		exit 0
+		;;
+	esac
+fi
+# FAKE_MKTEMP_SWAP_DIR reproduces the ancestor swap: right before the template
+# under that directory is filled in, the directory is replaced by a link to
+# FAKE_MKTEMP_SWAP_TARGET. FAKE_MKTEMP_REFUSE_DROPPED makes the call fail for
+# the account the installer dropped to, standing for that account's inability
+# to create a file in the root-owned directory the link points at.
+if [ -n "${FAKE_MKTEMP_SWAP_DIR:-}" ] && [ "$1" = "$FAKE_MKTEMP_SWAP_DIR/.peers-XXXXXX" ]; then
+	if [ ! -L "$FAKE_MKTEMP_SWAP_DIR" ]; then
+		rmdir "$FAKE_MKTEMP_SWAP_DIR" || exit 1
+		ln -s "$FAKE_MKTEMP_SWAP_TARGET" "$FAKE_MKTEMP_SWAP_DIR" || exit 1
+	fi
+	if [ -n "${FAKE_MKTEMP_REFUSE_DROPPED:-}" ] && [ -n "${FAKE_SUDO_DROPPED:-}" ]; then
+		exit 1
+	fi
+fi
+# FAKE_MKTEMP_STAGE_DIR sends the installer's /tmp staging template into a
+# directory the test can inspect, so the cleanup can be checked without
+# touching the real /tmp.
+if [ -n "${FAKE_MKTEMP_STAGE_DIR:-}" ] && [ "$1" = "/tmp/peers-completion-XXXXXX" ]; then
+	set -- "$FAKE_MKTEMP_STAGE_DIR/peers-completion-XXXXXX"
+	stage=1
+fi
+# FAKE_STAGE_PATH_LOG records the staging file mktemp created, so a later fake
+# command can recreate a file at that path and the test can check whether the
+# exit trap removes it again.
+if [ -n "${FAKE_STAGE_PATH_LOG:-}" ] && [ "${stage:-0}" = 1 ]; then
+	created=$(@REAL_MKTEMP@ "$@") || exit $?
+	printf '%s\n' "$created" >> "$FAKE_STAGE_PATH_LOG"
+	printf '%s\n' "$created"
+	exit 0
+fi
+exec @REAL_MKTEMP@ "$@"
+`
+
+// fakeChmod and fakeMv log the call with the account they would run as.
+// FAKE_CHMOD_RESTORE_STAGE makes the chmod of the completion's temporary file,
+// which runs after the install removed its staging file, recreate a file at the
+// recorded staging path. It stands for a process that writes there between the
+// removal and the exit; the exit trap must not remove that file.
+const fakeChmod = `#!/bin/sh
+printf 'chmod as=%s %s\n' "${FAKE_SUDO_DROPPED:-root}" "$*" >> "${FAKE_WRITE_LOG:-/dev/null}"
+if [ -n "${FAKE_CHMOD_RESTORE_STAGE:-}" ] && [ -n "${FAKE_STAGE_PATH_LOG:-}" ]; then
+	case $2 in
+	*/.peers-*)
+		stage=$(sed -n '1p' "$FAKE_STAGE_PATH_LOG")
+		if [ -n "$stage" ] && [ ! -e "$stage" ]; then
+			printf 'recreated after the install removed the staging file\n' > "$stage" || exit 1
+		fi
+		;;
+	esac
+fi
+exec @REAL_CHMOD@ "$@"
+`
+
+const fakeMv = `#!/bin/sh
+printf 'mv as=%s %s\n' "${FAKE_SUDO_DROPPED:-root}" "$*" >> "${FAKE_WRITE_LOG:-/dev/null}"
+exec @REAL_MV@ "$@"
+`
+
+// fakeCp logs the call with the account it would run as. When the destination
+// is a symbolic link and the call runs as the dropped account, it fails the way
+// that account's open of a file it cannot write does, so a test can show that
+// root no longer writes through the link.
+const fakeCp = `#!/bin/sh
+printf 'cp as=%s %s\n' "${FAKE_SUDO_DROPPED:-root}" "$*" >> "${FAKE_WRITE_LOG:-/dev/null}"
+if [ -n "${FAKE_CP_REFUSE_SYMLINK:-}" ] && [ -n "${FAKE_SUDO_DROPPED:-}" ]; then
+	for arg in "$@"; do
+		dest=$arg
+	done
+	if [ -L "$dest" ]; then
+		exit 1
+	fi
+fi
+exec @REAL_CP@ "$@"
+`
+
+// fakeMkdir logs the call with the account it would run as. FAKE_MKDIR_SWAP_DIR
+// reproduces the ancestor swap: right before the directory below it is created,
+// that directory is replaced by a link to FAKE_MKDIR_SWAP_TARGET, standing for
+// the account that owns a higher ancestor swapping the checked parent after the
+// check. FAKE_MKDIR_REFUSE_DROPPED makes the call fail for the account the
+// installer dropped to, which cannot create a directory in the root-owned target
+// the link points at.
+const fakeMkdir = `#!/bin/sh
+printf 'mkdir as=%s %s\n' "${FAKE_SUDO_DROPPED:-root}" "$*" >> "${FAKE_WRITE_LOG:-/dev/null}"
+for arg in "$@"; do
+	dest=$arg
+done
+if [ -n "${FAKE_MKDIR_SWAP_DIR:-}" ] && [ "$dest" = "$FAKE_MKDIR_SWAP_DIR/site-functions" ]; then
+	if [ ! -L "$FAKE_MKDIR_SWAP_DIR" ]; then
+		rmdir "$FAKE_MKDIR_SWAP_DIR" || exit 1
+		ln -s "$FAKE_MKDIR_SWAP_TARGET" "$FAKE_MKDIR_SWAP_DIR" || exit 1
+	fi
+	if [ -n "${FAKE_MKDIR_REFUSE_DROPPED:-}" ] && [ -n "${FAKE_SUDO_DROPPED:-}" ]; then
+		exit 1
+	fi
+fi
+exec @REAL_MKDIR@ "$@"
 `
 
 // writeExecutable writes a file with the executable bit set.

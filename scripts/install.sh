@@ -72,6 +72,26 @@ fail() {
 	exit 1
 }
 
+# The completion writer stages generated content in a root-owned temporary file
+# under /tmp before copying it into the target directory. Remove that file when
+# the script exits or is interrupted, so an abort does not leave it behind.
+# _write_stage names the current file and is empty when there is none.
+_write_stage=
+remove_stage() {
+	if [ -n "$_write_stage" ]; then
+		# Clear the name before removing the file. A signal that arrives while
+		# rm runs then finds no name here, and the trap at exit never removes a
+		# file another process created at the same path after the removal.
+		_stage_path=$_write_stage
+		_write_stage=
+		rm -f "$_stage_path" || :
+	fi
+}
+trap remove_stage EXIT
+trap 'remove_stage; trap - EXIT; exit 129' HUP
+trap 'remove_stage; trap - EXIT; exit 130' INT
+trap 'remove_stage; trap - EXIT; exit 143' TERM
+
 # ask_tty writes the prompt to the controlling terminal and reads one line from
 # it, never from stdin: when the script is piped into sh, stdin is the script
 # itself. It prints the answer without its newline and returns 0 when a line was
@@ -629,48 +649,324 @@ else
 	printf 'install.sh: warning: HOME is not set; the shell completions were not installed\n' >&2
 fi
 
-# install_completion writes one completion script. It returns non-zero when the
-# directory or the file cannot be written, and the caller turns that into a
-# warning.
-install_completion() {
-	_shell=$1
-	_dir=$2
-	_name=$3
-	if ! mkdir -p "$_dir"; then
+# The accounts that may own a directory the system installation writes into:
+# the account running the script, which is root in production, and, when sudo
+# started it, the account that ran sudo. Homebrew on Intel macOS owns the
+# directories under /usr/local/share as the account that installed it, and
+# that account could already become root through sudo.
+if [ "$system" -eq 1 ]; then
+	_allowed_uids=" $_current_uid "
+	_owner_name=root
+	_sudo_uid=
+	if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+		if _sudo_uid=$(id -u "$SUDO_USER" 2>/dev/null); then
+			_allowed_uids="$_allowed_uids $_sudo_uid "
+			_owner_name="root or $SUDO_USER"
+		fi
+	fi
+fi
+
+# as_sudo_user runs a command as the account that ran sudo.
+as_sudo_user() {
+	sudo -u "$SUDO_USER" "$@"
+}
+
+# check_install_dir checks one directory the system installation writes into.
+# It returns 0 when the directory exists, is not a symlink, is owned by an
+# allowed account and is not writable by group or others; otherwise it returns 1
+# and sets _dir_reason, which the caller turns into a warning. On success it
+# sets _dir_needs_user to 1 when the account that ran sudo owns the directory,
+# so the caller must write into it as that account. It reads the owner and mode
+# with the same GNU and BSD stat forms as check_system_dir; a directory writable
+# by group or others is refused outright, which is stricter than writing into it
+# as the account.
+check_install_dir() {
+	_check_dir=$1
+	if [ -L "$_check_dir" ]; then
+		_dir_reason="$_check_dir is a symbolic link"
 		return 1
 	fi
-	if ! "$prefix/peers" completion "$_shell" > "$_dir/$_name"; then
-		# Do not leave a partial file where the completion belongs.
-		rm -f "$_dir/$_name"
+	if [ -e "$_check_dir" ] && [ ! -d "$_check_dir" ]; then
+		_dir_reason="$_check_dir is not a directory"
+		return 1
+	fi
+	if ! _dir_uid=$(stat -L -c '%u' "$_check_dir" 2>/dev/null); then
+		if ! _dir_uid=$(stat -L -f '%u' "$_check_dir" 2>/dev/null); then
+			_dir_reason="cannot read the owner of $_check_dir"
+			return 1
+		fi
+	fi
+	if ! _dir_mode=$(stat -L -c '%a' "$_check_dir" 2>/dev/null); then
+		if ! _dir_mode=$(stat -L -f '%Lp' "$_check_dir" 2>/dev/null); then
+			_dir_reason="cannot read the mode of $_check_dir"
+			return 1
+		fi
+	fi
+	case " $_allowed_uids " in
+		*" $_dir_uid "*) ;;
+		*)
+			_dir_reason="$_check_dir is not owned by $_owner_name"
+			return 1
+			;;
+	esac
+	case $_dir_mode in
+		[0-7][0-7][0-7]|[0-7][0-7][0-7][0-7]) ;;
+		*)
+			_dir_reason="unexpected mode '$_dir_mode' for $_check_dir"
+			return 1
+			;;
+	esac
+	# A directory owned by the account that ran sudo can have an entry swapped
+	# by another process of that account between this check and a later write.
+	# Record the decision here, from the owner this check already read, so the
+	# caller never has to stat the directory a second time; a second stat would
+	# follow a link the account put in place after this check.
+	_dir_needs_user=0
+	if [ -n "${_sudo_uid:-}" ] && [ "$_dir_uid" = "$_sudo_uid" ]; then
+		_dir_needs_user=1
+	fi
+	# The last three octal digits are the permission bits; 022 selects group
+	# write and other write, as in check_system_dir.
+	_dir_last=${_dir_mode#"${_dir_mode%???}"}
+	if [ $((0$_dir_last & 022)) -ne 0 ]; then
+		_dir_reason="$_check_dir is writable by group or others"
 		return 1
 	fi
 	return 0
 }
 
-if [ -n "$_completion_bash_dir" ]; then
-	if ! install_completion bash "$_completion_bash_dir" peers; then
-		printf 'install.sh: warning: could not write the bash completion to %s\n' \
-			"$_completion_bash_dir/peers" >&2
+# ensure_install_dir checks every path component from ${DESTDIR:-}/usr/local
+# down to $1 and creates the missing ones only after the component above them
+# has passed. A symlink anywhere in the path is refused before anything is
+# created through it. On success it sets _ensure_write_as_user to 1 when any
+# component is owned by the account that ran sudo; the caller must then perform
+# every later write into $1 (the temporary file, its content, its mode and the
+# rename) as that account. It is 0 only when every component is owned by root
+# and not writable by group or others, where no other account can replace any
+# component after the check, so root may write directly.
+#
+# A directory created below one owned by the account that ran sudo is created
+# by that account with sudo -u; the decision comes from the accumulated walk,
+# never from a second stat. That account can replace any component below the one
+# it owns, so a root-owned immediate parent does not make root's mkdir safe.
+ensure_install_dir() {
+	_ensure_write_as_user=0
+	_ensure_install_dir_walk "$1"
+}
+
+_ensure_install_dir_walk() {
+	_ensure_stop=${DESTDIR:-}/usr/local
+	if [ "$1" = "$_ensure_stop" ] || [ "$1" = "/" ]; then
+		if [ ! -e "$1" ]; then
+			# In production /usr/local exists; a staged installation under
+			# DESTDIR may not have it yet.
+			if [ "$1" = "/" ] || ! mkdir -p "$1"; then
+				_dir_reason="$1 does not exist"
+				return 1
+			fi
+		fi
+		check_install_dir "$1" || return 1
+		if [ "$_dir_needs_user" -eq 1 ]; then
+			_ensure_write_as_user=1
+		fi
+		return 0
 	fi
+	_ensure_install_dir_walk "$(dirname "$1")" || return 1
+	if [ -L "$1" ] || [ -e "$1" ]; then
+		check_install_dir "$1" || return 1
+		if [ "$_dir_needs_user" -eq 1 ]; then
+			_ensure_write_as_user=1
+		fi
+		return 0
+	fi
+	# _ensure_write_as_user covers every component above this one. When any of
+	# them belongs to the account that ran sudo, that account could swap a
+	# lower component for a link after its check, so the account creates the
+	# directory; root's mkdir would follow such a link.
+	if [ "$_ensure_write_as_user" -eq 1 ]; then
+		as_sudo_user mkdir -m 0755 "$1" || {
+			_dir_reason="cannot create $1"
+			return 1
+		}
+	elif ! mkdir -m 0755 "$1"; then
+		_dir_reason="cannot create $1"
+		return 1
+	fi
+	check_install_dir "$1" || return 1
+	if [ "$_dir_needs_user" -eq 1 ]; then
+		_ensure_write_as_user=1
+	fi
+	return 0
+}
+
+# install_completion writes one completion script through a temporary file in
+# the same directory. The rename replaces a symlink at the target instead of
+# following it, so a link cannot redirect the write. A failed run removes the
+# temporary file and leaves the target unchanged. It returns 0 on success, 1
+# when the file cannot be written, and 2 when a directory, not a symlink, sits
+# at the target, which would swallow the rename; _completion_reason explains
+# the skip in the last case.
+#
+# A directory the caller must write as the account that ran sudo ($4 is 1) is
+# written by that account through sudo -u: it creates the temporary file, copies
+# the generated content into it, sets the mode and renames it into place. The
+# content is generated once into a root-owned temporary file under /tmp, whose
+# sticky bit keeps the account from replacing it, and root never creates, writes
+# or renames a file in the account's directory. $4 is decided once by
+# ensure_install_dir from the owners it already read; this function never stats
+# the directory again, because a second stat would follow a link the account
+# swapped in after the check. Otherwise root writes there directly.
+install_completion() {
+	_write_shell=$1
+	_write_dir=$2
+	_write_name=$3
+	_write_as_user=$4
+	_write_target=$_write_dir/$_write_name
+	_completion_reason=
+	if [ -d "$_write_target" ] && [ ! -L "$_write_target" ]; then
+		_completion_reason="$_write_target is a directory"
+		return 2
+	fi
+	if [ "$_write_as_user" -eq 1 ]; then
+		# /tmp is sticky, so the account cannot replace this root-owned file
+		# after mktemp creates it.
+		_write_stage=$(mktemp /tmp/peers-completion-XXXXXX) || return 1
+		if ! "$prefix/peers" completion "$_write_shell" > "$_write_stage"; then
+			remove_stage
+			return 1
+		fi
+		if ! chmod 0644 "$_write_stage"; then
+			remove_stage
+			return 1
+		fi
+		_write_tmp=$(as_sudo_user mktemp "$_write_dir/.peers-XXXXXX") || {
+			remove_stage
+			return 1
+		}
+		if ! as_sudo_user cp "$_write_stage" "$_write_tmp"; then
+			remove_stage
+			as_sudo_user rm -f "$_write_tmp"
+			return 1
+		fi
+		remove_stage
+		if ! as_sudo_user chmod 0644 "$_write_tmp"; then
+			as_sudo_user rm -f "$_write_tmp"
+			return 1
+		fi
+		# mv follows a symlink that points at a directory and moves the file
+		# inside it. Remove such a link first so the rename replaces the link
+		# itself; rm removes the link, never what it points at.
+		if [ -L "$_write_target" ] && [ -d "$_write_target" ]; then
+			if ! as_sudo_user rm -f "$_write_target"; then
+				as_sudo_user rm -f "$_write_tmp"
+				return 1
+			fi
+		fi
+		if ! as_sudo_user mv -f "$_write_tmp" "$_write_target"; then
+			as_sudo_user rm -f "$_write_tmp"
+			return 1
+		fi
+		return 0
+	fi
+	_write_tmp=$(mktemp "$_write_dir/.peers-XXXXXX") || return 1
+	if ! "$prefix/peers" completion "$_write_shell" > "$_write_tmp"; then
+		rm -f "$_write_tmp"
+		return 1
+	fi
+	if ! chmod 0644 "$_write_tmp"; then
+		rm -f "$_write_tmp"
+		return 1
+	fi
+	# mv follows a symlink that points at a directory and moves the file
+	# inside it. Remove such a link first so the rename replaces the link
+	# itself; rm removes the link, never what it points at.
+	if [ -L "$_write_target" ] && [ -d "$_write_target" ]; then
+		if ! rm -f "$_write_target"; then
+			rm -f "$_write_tmp"
+			return 1
+		fi
+	fi
+	if ! mv -f "$_write_tmp" "$_write_target"; then
+		rm -f "$_write_tmp"
+		return 1
+	fi
+	return 0
+}
+
+# warn_completion_skipped reports a completion the installation left alone,
+# naming the reason and the command that installs it by hand.
+warn_completion_skipped() {
+	_warn_shell=$1
+	_warn_target=$2
+	_warn_reason=$3
+	printf 'install.sh: warning: skipped the %s completion: %s; install it with: %s completion %s > %s\n' \
+		"$_warn_shell" "$_warn_reason" "$prefix/peers" "$_warn_shell" "$_warn_target" >&2
+}
+
+# place_completion installs one completion. $4 is 1 for a system installation,
+# which checks and creates the directory tree first, and 0 for a user
+# installation, which does not. For a system installation the write identity is
+# the one ensure_install_dir decided while it walked the path; it is passed to
+# install_completion unchanged. Every failure is a warning: the service is
+# already installed and the script keeps its exit status.
+place_completion() {
+	_place_shell=$1
+	_place_dir=$2
+	_place_name=$3
+	_place_check=$4
+	_place_target=$_place_dir/$_place_name
+	_place_as_user=0
+	if [ "$_place_check" -eq 1 ]; then
+		if ! ensure_install_dir "$_place_dir"; then
+			warn_completion_skipped "$_place_shell" "$_place_target" "$_dir_reason"
+			return 0
+		fi
+		_place_as_user=$_ensure_write_as_user
+	elif ! mkdir -p "$_place_dir"; then
+		printf 'install.sh: warning: could not write the %s completion to %s\n' "$_place_shell" "$_place_target" >&2
+		return 0
+	fi
+	_place_rc=0
+	install_completion "$_place_shell" "$_place_dir" "$_place_name" "$_place_as_user" || _place_rc=$?
+	case $_place_rc in
+		0) ;;
+		2) warn_completion_skipped "$_place_shell" "$_place_target" "$_completion_reason" ;;
+		*) printf 'install.sh: warning: could not write the %s completion to %s\n' "$_place_shell" "$_place_target" >&2 ;;
+	esac
+	return 0
+}
+
+if [ -n "$_completion_bash_dir" ]; then
+	place_completion bash "$_completion_bash_dir" peers "$system"
 fi
 if [ -n "$_completion_fish_dir" ] && command -v fish >/dev/null 2>&1; then
-	if ! install_completion fish "$_completion_fish_dir" peers.fish; then
-		printf 'install.sh: warning: could not write the fish completion to %s\n' \
-			"$_completion_fish_dir/peers.fish" >&2
-	fi
+	place_completion fish "$_completion_fish_dir" peers.fish "$system"
 fi
 
 if [ "$system" -eq 1 ]; then
-	if ! install_completion zsh "$_completion_zsh_dir" _peers; then
-		printf 'install.sh: warning: could not write the zsh completion to %s\n' \
-			"$_completion_zsh_dir/_peers" >&2
-	fi
-	if ! mkdir -p "$_man_dir"; then
-		printf 'install.sh: warning: could not create the man directory %s\n' "$_man_dir" >&2
-	else
+	place_completion zsh "$_completion_zsh_dir" _peers 1
+	if ! ensure_install_dir "$_man_dir"; then
 		for _page in "$script_dir"/man/*.1; do
 			[ -e "$_page" ] || continue
-			if ! install -o root -g 0 -m 0644 "$_page" "$_man_dir/"; then
+			printf 'install.sh: warning: skipped the man page %s: %s; install it with: install -m 0644 %s %s/\n' \
+				"${_page##*/}" "$_dir_reason" "$_page" "$_man_dir" >&2
+		done
+	else
+		# The write identity comes from the walk above; it is never a second
+		# stat of the destination, which a swapped ancestor could redirect to a
+		# root-owned directory.
+		_man_as_user=$_ensure_write_as_user
+		for _page in "$script_dir"/man/*.1; do
+			[ -e "$_page" ] || continue
+			if [ "$_man_as_user" -eq 1 ]; then
+				# The account that owns the directory writes the page itself, so
+				# root never creates a file there that a swapped link could
+				# redirect.
+				if ! as_sudo_user install -m 0644 "$_page" "$_man_dir/"; then
+					printf 'install.sh: warning: could not install the man page %s\n' \
+						"${_page##*/}" >&2
+				fi
+			elif ! install -o root -g 0 -m 0644 "$_page" "$_man_dir/"; then
 				printf 'install.sh: warning: could not install the man page %s\n' \
 					"${_page##*/}" >&2
 			fi
