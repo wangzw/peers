@@ -22,13 +22,14 @@ type viewCardRecord struct {
 	addresses []config.AdvertisedAddr
 }
 
-// viewTopicRecord is one public topic declaration considered while merging the
-// topic list under the directory lock.
+// viewTopicRecord is one well-formed public topic declaration considered while
+// merging the topic list.
 type viewTopicRecord struct {
 	name        string
 	description string
 	version     uint64
 	publisher   Fingerprint
+	isPeer      bool
 }
 
 // Brokers returns every paired peer and every non-peer that holds a live card.
@@ -95,16 +96,22 @@ func (d *Directory) Brokers() []KnownBroker {
 }
 
 // PublicTopics returns the live public topic declarations of the whole
-// directory, including the local Broker's own. Names are merged: the
-// declaration with the highest version supplies the description. A declaration
-// whose name is not 1 to 256 bytes of valid UTF-8 free of control characters,
-// or whose description is not acceptable to validDescription, is left out; the
-// record is still accepted and forwarded. The result is ordered by name.
+// directory, including the local Broker's own. Names are merged into one entry
+// each. The description is chosen by publisher tier first: the local Broker's
+// declaration, otherwise a peer's, otherwise the declarations of every other
+// publisher. Within a tier the highest version wins, and a tie goes to the
+// smaller publisher fingerprint. A publisher chooses its own version, so the
+// tiering keeps a remote publisher from replacing the local or a peer
+// declaration with a large version. A declaration whose name is not 1 to 256
+// bytes of valid UTF-8 free of control characters, or whose description is not
+// acceptable to validDescription, is left out; the record is still accepted and
+// forwarded. The result is ordered by name.
 func (d *Directory) PublicTopics() []PublicTopic {
 	now := d.now()
 
 	d.mu.RLock()
-	best := make(map[string]viewTopicRecord)
+	self := d.st.self
+	decls := make([]viewTopicRecord, 0, len(d.st.records))
 	for _, r := range d.st.records {
 		if isExpired(r.expires, now) || r.isRevocation() || r.body == nil {
 			continue
@@ -116,26 +123,77 @@ func (d *Directory) PublicTopics() []PublicTopic {
 		if !validPublicTopicName(ann.GetName()) || !validDescription(ann.GetDescription()) {
 			continue
 		}
-		cur := viewTopicRecord{
+		decls = append(decls, viewTopicRecord{
 			name:        ann.GetName(),
 			description: ann.GetDescription(),
 			version:     r.version,
 			publisher:   r.id.publisher,
-		}
-		old, ok := best[cur.name]
-		if !ok || cur.version > old.version ||
-			(cur.version == old.version && bytes.Compare(cur.publisher[:], old.publisher[:]) < 0) {
-			best[cur.name] = cur
-		}
+		})
 	}
 	d.mu.RUnlock()
 
-	out := make([]PublicTopic, 0, len(best))
-	for _, t := range best {
-		out = append(out, PublicTopic{Name: t.name, Description: t.description})
+	// The peer table is queried outside the directory lock: a caller may
+	// re-enter the directory from a peer callback.
+	type mergedTopic struct {
+		best  viewTopicRecord
+		tier  int
+		count int
+	}
+	byName := make(map[string]*mergedTopic, len(decls))
+	for _, decl := range decls {
+		tier := 2
+		switch {
+		case decl.publisher == self:
+			tier = 0
+		case d.peers.IsPeer(decl.publisher):
+			tier = 1
+		}
+		decl.isPeer = tier == 1
+		m, ok := byName[decl.name]
+		if !ok {
+			byName[decl.name] = &mergedTopic{best: decl, tier: tier, count: 1}
+			continue
+		}
+		m.count++
+		if tier < m.tier || (tier == m.tier && betterTopicDeclaration(decl, m.best)) {
+			m.best = decl
+			m.tier = tier
+		}
+	}
+
+	cardAlias := make(map[Fingerprint]string)
+	for _, c := range d.viewCards(now) {
+		cardAlias[c.publisher] = c.alias
+	}
+
+	out := make([]PublicTopic, 0, len(byName))
+	for _, m := range byName {
+		alias := ""
+		if m.best.isPeer {
+			alias = d.peers.EffectiveAlias(m.best.publisher)
+		} else {
+			alias = cardAlias[m.best.publisher]
+		}
+		out = append(out, PublicTopic{
+			Name:           m.best.name,
+			Description:    m.best.description,
+			Publisher:      m.best.publisher,
+			PublisherAlias: alias,
+			Declarers:      m.count,
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// betterTopicDeclaration reports whether a should supply the description over b
+// when both are in the same publisher tier. The higher version wins; a tie goes
+// to the smaller publisher fingerprint.
+func betterTopicDeclaration(a, b viewTopicRecord) bool {
+	if a.version != b.version {
+		return a.version > b.version
+	}
+	return bytes.Compare(a.publisher[:], b.publisher[:]) < 0
 }
 
 // CardsByAddress returns the fingerprints of every publisher whose live card

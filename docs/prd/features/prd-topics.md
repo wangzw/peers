@@ -263,6 +263,14 @@ Broker 由公开改为不公开后，它此前的公开 topic 声明必须从连
 - **状态**：已实现
 - **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryPublicTopicReceiveLimits/REQ-topics-030 malformed declarations are not listed`；单元测试 `internal/directory/views_test.go` 的 `TestPublicTopicsSkipsInvalidDeclarations`、`internal/directory/validate_test.go` 的 `TestValidPublicTopicName`
 
+### REQ-topics-031
+
+同名公开 topic 的简介必须优先取本 Broker 的声明，其次取对端的声明，结果须给出简介出自哪个 Broker 与该名字的有效声明数；远处的其他发布者不能靠把版本号设为最大值替换本机或对端给出的简介。
+
+- **验收**：本机声明 `x`（简介 A，版本 1），另一个非对端发布者声明 `x`（简介 B，版本 `math.MaxUint64`），列出公开 topic 的结果给出简介 A、发布者为本机、声明数为 2；对端与非对端同时声明同名 topic 时给出对端的简介，发布者为该对端；只有非对端声明时仍取版本号最高的声明。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryPublicTopicReceiveLimits/REQ-topics-031 peer description over a maximum version`；单元测试 `internal/directory/views_test.go` 的 `TestPublicTopicsPrefersSelfAndPeerDescriptions`、`internal/broker/topics_rpc_test.go` 的 `TestListTopicsReportsPublisher`
+
 ## 数据需求
 
 topic 成员关系只在内存中保留，不写入磁盘。项目的 topic 声明保存在项目配置文件里，随仓库管理。

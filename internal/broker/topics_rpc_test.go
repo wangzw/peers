@@ -518,6 +518,37 @@ func TestListTopicsSeparatesPublic(t *testing.T) {
 	}
 }
 
+// TestListTopicsReportsPublisher checks that a public topic carries the
+// fingerprint of the Broker whose declaration supplied its description, the
+// alias known for it and the number of declarers.
+func TestListTopicsReportsPublisher(t *testing.T) {
+	// REQ-topics-010, REQ-topics-011
+	tb := newTestBroker(t)
+	publisher := [32]byte{0xde, 0xad, 0xbe, 0xef}
+	setDirectoryKnown(t, tb.dir, []PublicTopic{
+		{Name: "a", Description: "da", Publisher: publisher, PublisherAlias: "alpha", Declarers: 3},
+	})
+	id, _ := registerTopicAgent(t, tb, "lister")
+	list, err := tb.client.ListTopics(topicCallContext(t), &localpb.ListTopicsRequest{AgentId: id})
+	if err != nil {
+		t.Fatalf("ListTopics: %v", err)
+	}
+	public := list.GetPublicTopics()
+	if len(public) != 1 {
+		t.Fatalf("public_topics = %v, want one entry", public)
+	}
+	wantFP := "deadbeef" + strings.Repeat("00", 28)
+	if got := public[0].GetPublisherFingerprint(); got != wantFP {
+		t.Errorf("publisher_fingerprint = %q, want %q", got, wantFP)
+	}
+	if got := public[0].GetPublisherAlias(); got != "alpha" {
+		t.Errorf("publisher_alias = %q, want alpha", got)
+	}
+	if got := public[0].GetDeclarers(); got != 3 {
+		t.Errorf("declarers = %d, want 3", got)
+	}
+}
+
 func TestPublicTopicSet(t *testing.T) {
 	tb := newTestBroker(t)
 	setDirectoryPublic(t, tb.dir, true)

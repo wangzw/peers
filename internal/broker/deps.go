@@ -56,10 +56,17 @@ type TopicTable interface {
 	RemoteMembers(peer [32]byte) []Member
 }
 
-// PublicTopic is one public topic declaration.
+// PublicTopic is one public topic declaration, merged by name.
 type PublicTopic struct {
 	Name        string
 	Description string
+	// Publisher is the fingerprint of the Broker whose declaration supplied
+	// Description.
+	Publisher [32]byte
+	// PublisherAlias is the alias known for Publisher, empty when none is.
+	PublisherAlias string
+	// Declarers is the number of Brokers declaring the name.
+	Declarers int
 }
 
 // PublicTopicDirectory is the broker's view of the directory's public topic

@@ -155,6 +155,13 @@ message ListTopicsResponse {
 message PublicTopic {
   string name = 1;
   string description = 2;
+  // publisher_fingerprint is the 64 lowercase hexadecimal digit fingerprint of
+  // the Broker whose declaration supplied description.
+  string publisher_fingerprint = 3;
+  // publisher_alias is the alias known for publisher, empty when none is.
+  string publisher_alias = 4;
+  // declarers is the number of Brokers declaring name.
+  uint32 declarers = 5;
 }
 
 message ListBrokersRequest {}

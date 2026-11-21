@@ -1612,9 +1612,16 @@ func (x *ListTopicsResponse) GetPublicTopics() []*PublicTopic {
 }
 
 type PublicTopic struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Description string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	// publisher_fingerprint is the 64 lowercase hexadecimal digit fingerprint of
+	// the Broker whose declaration supplied description.
+	PublisherFingerprint string `protobuf:"bytes,3,opt,name=publisher_fingerprint,json=publisherFingerprint,proto3" json:"publisher_fingerprint,omitempty"`
+	// publisher_alias is the alias known for publisher, empty when none is.
+	PublisherAlias string `protobuf:"bytes,4,opt,name=publisher_alias,json=publisherAlias,proto3" json:"publisher_alias,omitempty"`
+	// declarers is the number of Brokers declaring name.
+	Declarers     uint32 `protobuf:"varint,5,opt,name=declarers,proto3" json:"declarers,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1661,6 +1668,27 @@ func (x *PublicTopic) GetDescription() string {
 		return x.Description
 	}
 	return ""
+}
+
+func (x *PublicTopic) GetPublisherFingerprint() string {
+	if x != nil {
+		return x.PublisherFingerprint
+	}
+	return ""
+}
+
+func (x *PublicTopic) GetPublisherAlias() string {
+	if x != nil {
+		return x.PublisherAlias
+	}
+	return ""
+}
+
+func (x *PublicTopic) GetDeclarers() uint32 {
+	if x != nil {
+		return x.Declarers
+	}
+	return 0
 }
 
 type ListBrokersRequest struct {
@@ -3617,10 +3645,13 @@ const file_internal_broker_localpb_local_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x84\x01\n" +
 	"\x12ListTopicsResponse\x12#\n" +
 	"\rjoined_topics\x18\x01 \x03(\tR\fjoinedTopics\x12I\n" +
-	"\rpublic_topics\x18\x02 \x03(\v2$.internal.broker.localpb.PublicTopicR\fpublicTopics\"C\n" +
+	"\rpublic_topics\x18\x02 \x03(\v2$.internal.broker.localpb.PublicTopicR\fpublicTopics\"\xbf\x01\n" +
 	"\vPublicTopic\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
-	"\vdescription\x18\x02 \x01(\tR\vdescription\"\x14\n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x123\n" +
+	"\x15publisher_fingerprint\x18\x03 \x01(\tR\x14publisherFingerprint\x12'\n" +
+	"\x0fpublisher_alias\x18\x04 \x01(\tR\x0epublisherAlias\x12\x1c\n" +
+	"\tdeclarers\x18\x05 \x01(\rR\tdeclarers\"\x14\n" +
 	"\x12ListBrokersRequest\"\x95\x01\n" +
 	"\x13ListBrokersResponse\x12=\n" +
 	"\abrokers\x18\x01 \x03(\v2#.internal.broker.localpb.BrokerInfoR\abrokers\x12?\n" +

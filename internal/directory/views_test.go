@@ -320,16 +320,75 @@ func TestPublicTopicsMerge(t *testing.T) {
 	viewAnnouncement(t, d, 6, "ops", "", 1, expires)
 
 	want := []PublicTopic{
-		{Name: "infra-help", Description: "b"},
-		{Name: "ops"},
+		{Name: "infra-help", Description: "b", Publisher: newTestIdentity(5).Fingerprint(), Declarers: 2},
+		{Name: "ops", Publisher: newTestIdentity(6).Fingerprint(), Declarers: 1},
 	}
 	if got := d.PublicTopics(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("PublicTopics() = %v, want %v", got, want)
 	}
 
 	viewRevocation(t, d, 4, recKindTopic, "infra-help", 3, expires)
+	want[0].Declarers = 1
 	if got := d.PublicTopics(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("PublicTopics() after one publisher revoked = %v, want %v", got, want)
+	}
+}
+
+// TestPublicTopicsPrefersSelfAndPeerDescriptions covers a publisher choosing a
+// large version to take over a name: the local Broker's declaration still
+// supplies the description, a peer outranks a non-peer, and the entry reports
+// which Broker supplied the description and how many declare the name.
+func TestPublicTopicsPrefersSelfAndPeerDescriptions(t *testing.T) {
+	// REQ-topics-010, REQ-topics-011
+	now := dirTestNow()
+	d, peers, _, _ := newViewDirectory(t, 1, now)
+	expires := now.Add(recordTTL)
+	self := newTestIdentity(1).Fingerprint()
+	fpPeer := newTestIdentity(2).Fingerprint()
+	fpOther := newTestIdentity(3).Fingerprint()
+	fpOtherLow := newTestIdentity(4).Fingerprint()
+
+	peers.Add(pairing.Peer{
+		Fingerprint: fpPeer,
+		Alias:       "peer-alias",
+		LocalAlias:  "peer-local",
+		Role:        pairing.RoleAcceptor,
+	})
+
+	// A non-peer picks the maximum version, yet the local declaration wins.
+	viewAnnouncement(t, d, 1, "local-name", "A", 1, expires)
+	viewAnnouncement(t, d, 3, "local-name", "B", math.MaxUint64, expires)
+	// The peer's declaration outranks the non-peer's maximum version.
+	viewAnnouncement(t, d, 2, "peer-name", "P", 1, expires)
+	viewAnnouncement(t, d, 3, "peer-name", "Q", math.MaxUint64, expires)
+	// With only non-peers declaring the name the highest version still wins.
+	viewAnnouncement(t, d, 4, "other-name", "R", 1, expires)
+	viewAnnouncement(t, d, 3, "other-name", "S", 2, expires)
+	// A non-peer publisher carries the alias from its live card.
+	viewCard(t, d, 3, "other-card", 1, expires)
+
+	want := []PublicTopic{
+		{Name: "local-name", Description: "A", Publisher: self, PublisherAlias: "", Declarers: 2},
+		{Name: "other-name", Description: "S", Publisher: fpOther, PublisherAlias: "other-card", Declarers: 2},
+		{Name: "peer-name", Description: "P", Publisher: fpPeer, PublisherAlias: "peer-local", Declarers: 2},
+	}
+	if got := d.PublicTopics(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("PublicTopics() = %v, want %v", got, want)
+	}
+
+	// A tie on version inside one tier goes to the smaller fingerprint.
+	viewAnnouncement(t, d, 4, "tie-name", "U", 5, expires)
+	viewAnnouncement(t, d, 3, "tie-name", "V", 5, expires)
+	first, firstDesc := fpOther, "V"
+	if bytes.Compare(fpOtherLow[:], fpOther[:]) < 0 {
+		first, firstDesc = fpOtherLow, "U"
+	}
+	entry := map[string]PublicTopic{}
+	for _, topic := range d.PublicTopics() {
+		entry[topic.Name] = topic
+	}
+	if got := entry["tie-name"]; got.Publisher != first || got.Description != firstDesc {
+		t.Fatalf("tie-name = %+v, want the smaller fingerprint %v to supply description %q", got, first, firstDesc)
 	}
 }
 
@@ -369,7 +428,12 @@ func TestPublicTopicsSkipsInvalidDeclarations(t *testing.T) {
 		return true
 	})
 
-	want := []PublicTopic{{Name: "good", Description: "ok"}}
+	want := []PublicTopic{{
+		Name:        "good",
+		Description: "ok",
+		Publisher:   newTestIdentity(200).Fingerprint(),
+		Declarers:   1,
+	}}
 	if got := b.d.PublicTopics(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("PublicTopics() = %v, want only the well-formed declaration %v", got, want)
 	}

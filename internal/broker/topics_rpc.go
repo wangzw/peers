@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"sort"
 
@@ -205,7 +206,13 @@ func (b *Broker) ListTopics(ctx context.Context, req *localpb.ListTopicsRequest)
 		if isJoined[p.Name] {
 			continue
 		}
-		public = append(public, &localpb.PublicTopic{Name: p.Name, Description: p.Description})
+		public = append(public, &localpb.PublicTopic{
+			Name:                 p.Name,
+			Description:          p.Description,
+			PublisherFingerprint: hex.EncodeToString(p.Publisher[:]),
+			PublisherAlias:       p.PublisherAlias,
+			Declarers:            uint32(p.Declarers),
+		})
 	}
 	sort.Slice(public, func(i, j int) bool { return public[i].GetName() < public[j].GetName() })
 

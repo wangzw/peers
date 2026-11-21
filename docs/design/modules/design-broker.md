@@ -547,7 +547,7 @@ Broker: offline; messages from other hosts are refused. Run peers service online
 
 正常且上线时不输出状态行，输出与现在相同。仅诊断时第一行写 `Broker: degraded (diagnostics only): <reason>`，只输出前两行，不输出 Agent 段与对端段，`peers service status` 以 1 退出；其余情况以 0 退出。`broker list` 在表格之前输出同样的状态行；仅诊断时得到 `broker_degraded`，按现有错误路径以 1 退出（`REQ-broker-config-068`）。
 
-`ListTopics` 返回调用方已加入的 topic 与已知的公开 topic，公开 topic 只列调用方尚未加入的（`REQ-topics-013`）。
+`ListTopics` 返回调用方已加入的 topic 与已知的公开 topic，公开 topic 只列调用方尚未加入的（`REQ-topics-013`）。每个公开 topic 给出名字、简介、简介的发布者、发布者的别名与该名字的有效声明数：`publisher_fingerprint` 是发布者的 64 位小写十六进制指纹，`publisher_alias` 对端取生效别名、其他发布者取有效名片所载的别名，都没有时为空，`declarers` 是该名字的有效声明数。简介按本机、对端、其他发布者分档取，规则见 [directory](design-directory.md) 的“外部接口契约”。这三个字段只新增，不提升本机协议版本（`REQ-topics-031`）。
 
 ### 更新检查与自我更新
 

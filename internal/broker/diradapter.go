@@ -84,7 +84,13 @@ func (a *directoryAdapter) PublicTopics() []PublicTopic {
 	}
 	out := make([]PublicTopic, 0, len(topics))
 	for _, t := range topics {
-		out = append(out, PublicTopic{Name: t.Name, Description: t.Description})
+		out = append(out, PublicTopic{
+			Name:           t.Name,
+			Description:    t.Description,
+			Publisher:      t.Publisher,
+			PublisherAlias: t.PublisherAlias,
+			Declarers:      t.Declarers,
+		})
 	}
 	return out
 }

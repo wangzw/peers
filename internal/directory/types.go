@@ -94,6 +94,17 @@ type KnownBroker struct {
 
 // PublicTopic is one public topic currently declared by a Broker.
 type PublicTopic struct {
-	Name        string
+	Name string
+	// Description is the description of the chosen declaration: the local
+	// Broker's when it declares the name, otherwise a peer's, otherwise the
+	// highest version among the remaining publishers.
 	Description string
+	// Publisher is the fingerprint of the Broker whose declaration supplied
+	// Description.
+	Publisher Fingerprint
+	// PublisherAlias is the effective alias of a peer publisher, the alias in
+	// the live card of any other publisher, and empty when neither is known.
+	PublisherAlias string
+	// Declarers is the number of live, well-formed declarations of the name.
+	Declarers int
 }

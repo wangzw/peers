@@ -184,15 +184,16 @@ func TestAdapterCardAddresses(t *testing.T) {
 }
 
 func TestAdapterPublicTopicsConverts(t *testing.T) {
+	publisher := directory.Fingerprint{0xde, 0xad, 0xbe, 0xef}
 	d := &discoveryDir{topics: []directory.PublicTopic{
-		{Name: "infra-help", Description: "ask infra"},
+		{Name: "infra-help", Description: "ask infra", Publisher: publisher, PublisherAlias: "alpha", Declarers: 3},
 		{Name: "quiet", Description: ""},
 	}}
 	ad := newDirectoryAdapter(d)
 
 	got := ad.PublicTopics()
 	want := []PublicTopic{
-		{Name: "infra-help", Description: "ask infra"},
+		{Name: "infra-help", Description: "ask infra", Publisher: publisher, PublisherAlias: "alpha", Declarers: 3},
 		{Name: "quiet", Description: ""},
 	}
 	if len(got) != len(want) {
