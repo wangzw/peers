@@ -19,7 +19,7 @@ Update: <latest> available (current <installed>); run peers update
 When a newer release is available, a tool result in the session ends with:
 
 ```text
-peers <latest> is available (this Broker runs <installed>). Ask the agent to call update_broker, or run `peers update` in a terminal.
+peers <latest> is available (this Broker runs <installed>). To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal.
 ```
 
 A session shows the notice once for a given version. If a newer release appears while the session stays open, a later tool call shows the notice again. The MCP server queries the Broker for the update state on its first tool call and then at most once every 10 minutes. A build that is not a formal release, such as a binary built from source without `-ldflags`, does not check and never shows either line.
@@ -48,7 +48,7 @@ When this account's user Broker is running under the service manager, the comman
 
 ```text
 peers <installed> is installed. Update to the latest release? [y/N] y
-The Broker is restarting to version <latest>.
+The Broker is restarting with version <latest>.
 The Broker is running peers <latest>.
 Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.
 ```

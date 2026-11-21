@@ -53,16 +53,16 @@ A Broker can report a degraded run through the tools. In a diagnostics-only run 
 
 ### Updates
 
-`update_broker` returns `from_version`, `to_version`, `restarting` and a `result` sentence. When the Broker upgrades, `restarting` is true and the result is `Upgrading the Broker from <from> to <to>; the Broker restarts and the connection recovers automatically. Reopen this session to use the new MCP server.` When it is already up to date, `to_version` is empty, `restarting` is false, and the result is `The Broker is already up to date (<from>).` The call returns as soon as the Broker answers, before the restart finishes.
+`update_broker` returns `from_version`, `to_version`, `restarting` and a `result` sentence. When the Broker upgrades, `restarting` is true and the result is `Upgrading the Broker from <from> to <to>; the Broker will restart and the connection will recover automatically. Reopen this session to use the new MCP server.` When it is already up to date, `to_version` is empty, `restarting` is false and the result is `The Broker is already up to date (<from>).` The call returns as soon as the Broker answers, before the restart finishes.
 
-A failed call returns an error beginning `Upgrade failed`. When the Broker cannot update itself, the error ends with ``(code: failed_precondition). Run `peers update` in a terminal instead.``; when another update is already in progress, it says `another update is already in progress` and ends with `(code: aborted)`.
+When the Broker rejects the update or the update fails, the call returns an error beginning `Upgrade failed`. When the Broker cannot update itself, the error ends with ``(code: failed_precondition). Run `peers update` in a terminal instead.``; when another update is already in progress, it says `another update is already in progress` and ends with `(code: aborted)`.
 
 ### Update notice
 
 Each MCP server process queries the Broker for the update state on its first tool call, and then at most once every 10 minutes. When a newer formal release is known, that tool result ends with one more text block:
 
 ```text
-peers <latest> is available (this Broker runs <installed>). Ask the agent to call update_broker, or run `peers update` in a terminal.
+peers <latest> is available (this Broker runs <installed>). To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal.
 ```
 
 `<latest>` is the newest release and `<installed>` is the installed version. A session shows the notice once for a given version; if a newer release appears while the session stays open, a later tool call carries the notice again. A tool call that ends in a tool error still carries it. The notice is omitted and the tool result is unchanged when the query fails or times out, or when `update.check` is off. A failed query is not counted, so the next tool call queries again.

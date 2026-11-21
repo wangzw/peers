@@ -19,7 +19,7 @@ Update: <latest> available (current <installed>); run peers update
 有可用新版本时，某次工具结果的末尾会附上：
 
 ```text
-peers <latest> is available (this Broker runs <installed>). Ask the agent to call update_broker, or run `peers update` in a terminal.
+peers <latest> is available (this Broker runs <installed>). To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal.
 ```
 
 同一个版本在一个会话中只提示一次；会话开着期间出了新版本，之后的工具调用会再提示一次。MCP 服务在第一次工具调用时向 Broker 查询更新状态，此后最多每 10 分钟查询一次。不是正式发布版本的构建，例如不带 `-ldflags` 从源码构建的二进制，不检查，也不会出现这两行。
@@ -48,7 +48,7 @@ peers update
 
 ```text
 peers <installed> is installed. Update to the latest release? [y/N] y
-The Broker is restarting to version <latest>.
+The Broker is restarting with version <latest>.
 The Broker is running peers <latest>.
 Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.
 ```

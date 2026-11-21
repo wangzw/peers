@@ -53,16 +53,16 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### 更新
 
-`update_broker` 返回 `from_version`、`to_version`、`restarting` 与一句 `result`。Broker 升级时，`restarting` 为真，结果为 `Upgrading the Broker from <from> to <to>; the Broker restarts and the connection recovers automatically. Reopen this session to use the new MCP server.`。已经是最新版本时，`to_version` 为空，`restarting` 为假，结果为 `The Broker is already up to date (<from>).`。调用在 Broker 应答后立即返回，早于重启完成。
+`update_broker` 返回 `from_version`、`to_version`、`restarting` 与一句 `result`。Broker 升级时，`restarting` 为真，结果为 `Upgrading the Broker from <from> to <to>; the Broker will restart and the connection will recover automatically. Reopen this session to use the new MCP server.`。已经是最新版本时，`to_version` 为空，`restarting` 为假，结果为 `The Broker is already up to date (<from>).`。调用在 Broker 应答后立即返回，早于重启完成。
 
-调用失败时，错误以 `Upgrade failed` 开头。Broker 不能自我更新时，错误以 ``(code: failed_precondition). Run `peers update` in a terminal instead.`` 结尾；已有更新在进行时，错误内容为 `another update is already in progress`，并以 `(code: aborted)` 结尾。
+Broker 拒绝更新或更新失败时，错误以 `Upgrade failed` 开头。Broker 不能自我更新时，错误以 ``(code: failed_precondition). Run `peers update` in a terminal instead.`` 结尾；已有更新在进行时，错误内容为 `another update is already in progress`，并以 `(code: aborted)` 结尾。
 
 ### 更新提示
 
 每个 MCP 服务进程在第一次工具调用时向 Broker 查询更新状态，此后最多每 10 分钟查询一次。已知有更新的正式发布版本时，该次工具结果的末尾多出一段文本：
 
 ```text
-peers <latest> is available (this Broker runs <installed>). Ask the agent to call update_broker, or run `peers update` in a terminal.
+peers <latest> is available (this Broker runs <installed>). To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal.
 ```
 
 `<latest>` 是最新版本，`<installed>` 是已安装版本。同一个版本在一个会话中只提示一次；会话开着期间出了新版本，之后的工具调用会再提示一次。以工具错误结束的调用同样附带。查询失败或超时，或 `update.check` 关闭时，不附提示，工具结果保持原样。查询失败不计入查询间隔，下一次工具调用会重新查询。
