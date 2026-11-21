@@ -336,6 +336,14 @@ Agent 必须能让本机 Broker 解除与一个对端的配对，解除后链路
 - **状态**：已实现
 - **端到端测试**：`test/e2e/links_test.go` 的 `TestLinksSourceFlood/REQ-broker-pairing-039 source flood keeps links and pairing`
 
+### REQ-broker-pairing-040
+
+对端在对端关系存续期间放弃的别名，不得成为其他对端的别名。
+
+- **验收**：A 有别名分别为 `hostB` 和 `hostC` 的两个对端；B 把别名从 `hostB` 改为其他名字，C 再把别名改为 `hostB`。此后 A 列出 Broker 的结果中 C 的别名不是 `hostB`，A 上发往 `agent@hostB` 的消息不投递到 C 上的 Agent，C 上的 Agent 发来的消息署名不以 `@hostB` 结尾。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/aliases_test.go` 的 `TestAliases/REQ-broker-pairing-040 released alias stays with its peer`
+
 ## 数据需求
 
 Broker 的身份密钥、对端的指纹与别名、本方在每对对端中的角色、由本方发起配对的对端的对外地址保存在本机磁盘上，只允许运行该 Broker 的账户读取。一次性配对密钥只在内存中保留。预置静态密钥保存在 Broker 的配置文件中，能读取配置文件的账户都能读到它。

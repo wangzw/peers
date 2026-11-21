@@ -344,6 +344,88 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("the message is signed %q, want B's address %q", frame.FromName, bAddr)
 		}
 	})
+
+	t.Run("REQ-broker-pairing-040 released alias stays with its peer", func(t *testing.T) {
+		// A fresh three hosts: B (hostB) and C (hostC) both dial A. B gives up
+		// hostB, and C then tries to take it. The address A already handed out
+		// for B must not start naming C.
+		tomb := harness.Up(t, harness.TopoFlat(3))
+		aNode, bNode, cNode := tomb.Node("hostA"), tomb.Node("hostB"), tomb.Node("hostC")
+		alStartBroker(t, aNode, alConfig())
+		alStartBroker(t, bNode, alConfig("broker:\n  alias: hostB\n"))
+		alStartBroker(t, cNode, alConfig("broker:\n  alias: hostC\n"))
+		aOp, bOp, cOp := alOperator(t, aNode), alOperator(t, bNode), alOperator(t, cNode)
+
+		a1 := alSession(t, aNode, "a1")
+		b1 := alSession(t, bNode, "b1")
+		c1 := alSession(t, cNode, "c1")
+		defer func() {
+			a1.End(t)
+			b1.End(t)
+			c1.End(t)
+		}()
+
+		for _, pair := range []struct {
+			op   *harness.Session
+			node string
+		}{{bOp, "hostB"}, {cOp, "hostC"}} {
+			key := alCreateKey(t, aOp)
+			alConnect(t, pair.op, alShownAddress(t, tomb, "hostA", key.Addresses), key.Key).MustOK(t)
+			alWaitConnected(t, aNode, pair.node, alRelinkBound)
+		}
+		bFP := alIdentityFingerprint(t, bNode)
+		cFP := alIdentityFingerprint(t, cNode)
+
+		// B stops answering to hostB. Once A has seen the new alias, hostB is
+		// one of B's retired aliases and no longer names B.
+		alSetConfig(t, bOp, "broker.alias", "hostB2")
+		alWaitPeerAlias(t, aNode, bFP, "hostB2", alRelinkBound)
+
+		// C takes hostB. A already handed out an address under that name for B,
+		// so it must give C a local alias instead of letting C adopt it.
+		alSetConfig(t, cOp, "broker.alias", "hostB")
+		var cAlias string
+		harness.Eventually(t, alRelinkBound, "A gives C a local alias instead of hostB", func() (bool, string) {
+			for _, peer := range alPeers(t, aNode) {
+				if hex.EncodeToString(peer.GetFingerprint()) != cFP {
+					continue
+				}
+				alias := peer.GetAlias()
+				if alias == "hostB" {
+					return false, "C still holds hostB"
+				}
+				if !strings.HasPrefix(alias, "hostB-") || !alHexSuffix(alias[len("hostB-"):]) {
+					return false, fmt.Sprintf("C's alias is %q, want hostB-<hex digits>", alias)
+				}
+				cAlias = alias
+				return true, ""
+			}
+			return false, "C is not listed"
+		})
+		if cAlias == "hostB" {
+			t.Fatalf("C's alias is hostB, want a local alias")
+		}
+
+		// hostB names nobody now: a send to it is refused instead of reaching
+		// C's agent.
+		r := a1.Call(t, "send_message", map[string]any{"to": "c1@hostB", "message": "was-for-b"})
+		r.MustCode(t, "not_found")
+		if frames := c1.Fake().Frames(); len(frames) != 0 {
+			t.Fatalf("C received %d frames addressed to hostB, want none", len(frames))
+		}
+
+		// A message from C is signed from A's view, which is C's local alias, so
+		// it never carries the alias B gave up.
+		selfA := alSelfAddress(t, a1, "a1")
+		c1.Call(t, "send_message", map[string]any{"to": selfA, "message": "from-c"}).MustOK(t)
+		frame := a1.WaitFrame(t, alWaitBound)
+		if strings.HasSuffix(frame.FromName, "@hostB") {
+			t.Fatalf("the message from C is signed %q, which still ends with @hostB", frame.FromName)
+		}
+		if want := "c1@" + cAlias; frame.FromName != want {
+			t.Fatalf("the message is signed %q, want C's address %q", frame.FromName, want)
+		}
+	})
 }
 
 // TestLongHostnameAlias covers REQ-broker-pairing-037: the default alias of a
@@ -455,6 +537,13 @@ func alDecodeConnect(t *testing.T, r harness.Result) mcpserver.ConnectBrokerOut 
 	return out
 }
 
+// alSetConfig changes one configuration key through set_config and fails unless
+// the Broker accepts it.
+func alSetConfig(t *testing.T, s *harness.Session, key, value string) {
+	t.Helper()
+	s.Call(t, "set_config", map[string]any{"key": key, "value": value}).MustOK(t)
+}
+
 // alShownAddress picks the shown address of node on the flat network.
 func alShownAddress(t *testing.T, c *harness.Cluster, node string, shown []string) string {
 	t.Helper()
@@ -506,6 +595,24 @@ func alWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.
 				return false, fmt.Sprintf("status is %s", peer.GetStatus())
 			}
 			return true, ""
+		}
+		return false, "the peer is not listed"
+	})
+}
+
+// alWaitPeerAlias waits until node lists the peer with the given fingerprint
+// under alias.
+func alWaitPeerAlias(t *testing.T, node *harness.Node, fingerprint, alias string, bound time.Duration) {
+	t.Helper()
+	harness.Eventually(t, bound, "the peer "+fingerprint+" is listed as "+alias, func() (bool, string) {
+		for _, peer := range alPeers(t, node) {
+			if hex.EncodeToString(peer.GetFingerprint()) != fingerprint {
+				continue
+			}
+			if peer.GetAlias() == alias {
+				return true, ""
+			}
+			return false, fmt.Sprintf("its alias is %q", peer.GetAlias())
 		}
 		return false, "the peer is not listed"
 	})
