@@ -7,7 +7,7 @@ An agent is a Claude Code session that has enabled the `peers` tools and registe
 
 ## Identity and names
 
-A Broker identifies an agent by the session's inbox socket, the local socket Claude Code binds for that session. The session's name gives the agent its name: `peers` applies Claude Code's own name normalization, which removes control and format characters, trims whitespace, lowercases the text and replaces whitespace with `-`. A session whose name becomes empty, is empty after the attribution cleanup (the receiving side removes characters it cannot read in a sender name and truncates the result to 64 characters) or contains `@` or `*` cannot become an agent.
+A Broker identifies an agent by the session's inbox socket, the local socket Claude Code binds for that session. The session's name gives the agent its name: `peers` applies Claude Code's own name normalization, which removes control and format characters, trims whitespace, lowercases the text and replaces whitespace with `-`. A normalized name longer than 128 bytes is truncated at a character boundary and any `-` left at the end by the cut is dropped; the truncated name is the agent's name, also used in its address, and the truncation is not reported as an error. A session whose name becomes empty, is empty after the attribution cleanup (the receiving side removes characters it cannot read in a sender name and truncates the result to 64 characters) or contains `@` or `*` cannot become an agent.
 
 A session that binds no inbox socket cannot become an agent, and neither can one for which Claude Code keeps no session registry record, including an interactive session started from another session's command line.
 

@@ -39,7 +39,7 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### topic
 
-`list_topics` 返回 `joined_topics` 和 `public_topics`，后者每项有 `name` 和可选的 `description`。`join_topic` 与 `leave_topic` 返回更新后的列表 `topics`；本会话没有默认 topic 时返回说明这一点的错误。公开 topic 的名字与简介由其他 Broker 发布，未经核实。
+`list_topics` 返回 `joined_topics` 和 `public_topics`，后者每项有 `name` 和可选的 `description`。`join_topic` 与 `leave_topic` 返回更新后的列表 `topics`；本会话没有默认 topic 时返回说明这一点的错误。公开 topic 的名字与简介由其他 Broker 发布，未经核实。`join_topic` 与 `leave_topic` 超过上限或被限速时返回错误码 `quota_exceeded`，见[上限]({{< relref "/docs/concepts/topics" >}}#上限)。
 
 ### Broker
 

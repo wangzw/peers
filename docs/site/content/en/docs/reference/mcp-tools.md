@@ -39,7 +39,7 @@ A Broker can report a degraded run through the tools. In a diagnostics-only run 
 
 ### Topics
 
-`list_topics` returns `joined_topics` and `public_topics`, each public topic with a `name` and an optional `description`. `join_topic` and `leave_topic` return the updated list in `topics`; a session that has no default topic gets an error saying so. Public topic names and descriptions are published by other Brokers and are unverified.
+`list_topics` returns `joined_topics` and `public_topics`, each public topic with a `name` and an optional `description`. `join_topic` and `leave_topic` return the updated list in `topics`; a session that has no default topic gets an error saying so. Public topic names and descriptions are published by other Brokers and are unverified. A `join_topic` or `leave_topic` call over a limit or the rate returns the code `quota_exceeded`; see [Limits]({{< relref "/docs/concepts/topics" >}}#limits).
 
 ### Brokers
 

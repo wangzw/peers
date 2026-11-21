@@ -25,4 +25,16 @@ topic 未声明为公开时就是不公开的。公开 topic 的名字和简介�
 
 topic 成员关系随会话存续。Broker 重启后，MCP 服务进程重新登记会话时恢复原来的成员关系；新启动的会话只会加入默认 topic。
 
+## 上限
+
+每台 Broker 最多保留 512 个本机 topic，系统级 Broker 上每个账户最多 128 个。每个 topic 的本机成员最多 4096 个。加入与退出 topic 按账户限速，两者共用一份额度：连续最多 64 次，之后每秒恢复 4 次。
+
+超过上限或限速时，`join_topic` 与 `leave_topic` 返回错误码 `quota_exceeded`，附以下原文之一：
+
+- 变更过快：`Too many topic changes. Try again in a moment.`
+- 超过账户的 topic 上限：`This account has reached the limit on topics.`
+- 超过 Broker 的 topic 上限或单个 topic 的成员上限：`This Broker has reached the limit on topics or on members of one topic.`
+
+加入本账户已在其中的 topic 不计入 topic 数量上限。这些上限不可配置。
+
 会话如何成为成员，见 [Agent]({{< relref "/docs/concepts/agents" >}})；两个 Broker 如何建立连接，见[配对]({{< relref "/docs/concepts/pairing" >}})；协作与公开 Broker 的操作见[在同一个 topic 里协作]({{< relref "/docs/guides/collaborate-in-topic" >}})和[发现并连接公开 Broker]({{< relref "/docs/guides/public-brokers" >}})；选择默认 topic 的项目配置文件见[项目配置文件]({{< relref "/docs/reference/project-config" >}})。

@@ -65,6 +65,8 @@ The receiving Broker also drops a copy that a retry within one send produces. It
 
 `peers` writes without a reply address, so everything written through one user Broker, or through one account helper of a system Broker, counts as one sender and shares one token bucket, whichever agent sent it. Claude Code's own loop detection relies on a path recorded in its messages; `peers` messages carry no such record, so the rate limit is the only thing that constrains a loop between two agents. Claude Code can change its rate limits and its 30-second rule, and it can adjust them remotely.
 
+`peers` itself limits topic changes: joining and leaving are rate-limited per account, and the local topics and the members of one topic are capped, as [Limits]({{< relref "/docs/concepts/topics" >}}#limits) describes. A member roster from a paired Broker is held to 4096 entries per topic and 16384 per link; a frame above either limit is dropped whole with a warning in the Broker's log, and the link stays up. Members in a dropped frame stay missing until the link is established again. A frame above 4 MiB is refused before it is sent, and the link is not closed.
+
 ## The operating-system account is the isolation boundary
 
 A user Broker serves only its own account and rejects calls from other accounts. A system Broker serves the accounts allowed to use it, and accepts a registration only for an inbox socket owned by the calling account. Within one account there is no further separation.

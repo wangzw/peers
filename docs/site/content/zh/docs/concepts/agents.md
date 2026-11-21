@@ -7,7 +7,7 @@ Agent 是启用了 peers 工具并登记到本机 Broker 的 Claude Code 会话�
 
 ## 身份与名字
 
-Broker 用会话的 inbox socket 识别 Agent，inbox socket 是 Claude Code 为该会话绑定的本机 socket。会话名决定 Agent 的名字：peers 采用 Claude Code 自己的名字规范化规则，去掉控制字符与格式字符，去掉首尾空白，转为小写，并把空白换成 `-`。名字规范化后为空、经署名清洗后为空（接收方会去掉发送方名字里它读不出的字符，并截短到 64 个字符），或者含有 `@` 或 `*` 的会话不能成为 Agent。
+Broker 用会话的 inbox socket 识别 Agent，inbox socket 是 Claude Code 为该会话绑定的本机 socket。会话名决定 Agent 的名字：peers 采用 Claude Code 自己的名字规范化规则，去掉控制字符与格式字符，去掉首尾空白，转为小写，并把空白换成 `-`。规范化后超过 128 字节的名字在字符边界处截断，截断后末尾若留下 `-` 就去掉；截断后的名字就是 Agent 名，地址里也用它，截断不报错。名字规范化后为空、经署名清洗后为空（接收方会去掉发送方名字里它读不出的字符，并截短到 64 个字符），或者含有 `@` 或 `*` 的会话不能成为 Agent。
 
 不绑定 inbox socket 的会话不能成为 Agent，Claude Code 没有为其保留会话注册表记录的会话也不能，包括从另一个会话的命令行启动的交互式会话。
 
