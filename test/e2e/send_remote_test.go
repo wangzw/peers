@@ -79,6 +79,7 @@ func TestRemoteSendFaults(t *testing.T) {
 	srConnect(t, opB, srShownAddress(t, c, "hostA", key.Addresses), key.Key).MustOK(t)
 	srWaitConnected(t, bNode, "hostA.peer", srRelinkBound)
 	srWaitConnected(t, aNode, "hostB.peer", srRelinkBound)
+	srWaitRoster(t, a1, "a1", b1, "b1")
 
 	t.Run("REQ-broker-pairing-020 both directions behind NAT", func(t *testing.T) {
 		fromA := srMark("nat-a-")
@@ -137,6 +138,8 @@ func TestRemoteSendFaults(t *testing.T) {
 		c.Restore(t)
 		srWaitConnected(t, bNode, "hostA.peer", srRelinkBound)
 		srWaitConnected(t, aNode, "hostB.peer", srRelinkBound)
+		// The restored roster is what makes each sentinel's target resolvable.
+		srWaitRoster(t, a1, "a1", b1, "b1")
 
 		// Sentinels prove the direction works again before the old bodies are
 		// declared absent: a queued message would have to sit in front of them.
@@ -178,7 +181,13 @@ func TestRemoteSendFaults(t *testing.T) {
 		t.Cleanup(func() { a1.Fake().SetMode(fakesession.CloseAfterRead) })
 		marker := srMark("unknown-")
 		ch := srSendAsync(t, b1, "a1@hostA.peer", marker)
-		frame := a1.WaitFrame(t, srWaitBound)
+		// The frame proves the delivery request reached the receiver's inbox
+		// before the link is cut. The sender's send.request_timeout (2s here)
+		// is the product timer that governs it: a frame recorded after that
+		// budget belongs to a request the sender had already given up on, and
+		// the cut could no longer prove a lost reply. srSendBudget is that
+		// timer plus the plan's 500ms allowance.
+		frame := a1.WaitFrame(t, srSendBudget)
 		if !strings.Contains(frame.Content, marker) {
 			t.Fatalf("the in-flight frame carries %q, want the marker %q", frame.Content, marker)
 		}
@@ -198,6 +207,9 @@ func TestRemoteSendFaults(t *testing.T) {
 		}
 		srWaitConnected(t, bNode, "hostA.peer", srRelinkBound)
 		srWaitConnected(t, aNode, "hostB.peer", srRelinkBound)
+		// The next case sends before it cuts anything, so it needs the
+		// restored roster too.
+		srWaitRoster(t, a1, "a1", b1, "b1")
 	})
 
 	t.Run("REQ-agent-messaging-020 reply lost, one copy", func(t *testing.T) {
@@ -232,6 +244,10 @@ func TestRemoteSendFaults(t *testing.T) {
 
 		r := srAwait(t, ch, srReplyBudget, "the reply-loss send")
 		r.MustOK(t)
+
+		// The sentinel below re-resolves its target, which needs the roster
+		// the restore dropped.
+		srWaitRoster(t, a1, "a1", b1, "b1")
 
 		// A second message proves the link is usable again. The first message must
 		// still exist exactly once: the resend reuses its identifier and the
@@ -411,6 +427,17 @@ func srWaitSessionVisible(t *testing.T, s *harness.Session, name string) {
 		}
 		return true, ""
 	})
+}
+
+// srWaitRoster waits until each session's listing contains the other. A link
+// reports itself established before topic exchanges the peer's roster, and a
+// send in that window resolves against an empty roster and returns not_found
+// (design-broker.md). Call it after a link comes up, before a send that needs
+// the peer resolved.
+func srWaitRoster(t *testing.T, a *harness.Session, aName string, b *harness.Session, bName string) {
+	t.Helper()
+	srWaitSessionVisible(t, a, bName)
+	srWaitSessionVisible(t, b, aName)
 }
 
 // srJoin joins name, retrying while the session is still registering.
