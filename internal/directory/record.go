@@ -158,14 +158,16 @@ func validCardAlias(s string) bool {
 }
 
 // knownAddrs returns the addresses of card whose kind is "direct", in order,
-// at most max of them. Address kinds this version does not know are skipped.
+// at most max of them. Address kinds this version does not know and "direct"
+// entries that are not well-formed (see validDirectAddr) are skipped; the card
+// itself is still accepted and forwarded with them.
 func knownAddrs(card *directorypb.BrokerCard, max int) []config.AdvertisedAddr {
 	if card == nil || max <= 0 {
 		return nil
 	}
 	var addrs []config.AdvertisedAddr
 	for _, a := range card.GetAddresses() {
-		if a.GetKind() != "direct" {
+		if a.GetKind() != "direct" || !validDirectAddr(a.GetAddr()) {
 			continue
 		}
 		addrs = append(addrs, config.AdvertisedAddr{Kind: a.GetKind(), Addr: a.GetAddr()})

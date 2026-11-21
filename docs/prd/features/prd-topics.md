@@ -255,6 +255,14 @@ Broker 由公开改为不公开后，它此前的公开 topic 声明必须从连
 - **状态**：已实现
 - **端到端测试**：`test/e2e/topics_limits_test.go` 的 `TestTopicRosterBounds` 覆盖对端批量名单的上限、129 字节名字的丢弃、拒绝后链路仍为已连接；累计条数的精确边界由单元测试 `internal/topic/rosterlimit_test.go` 的 `TestRosterDeltaCumulativeLimit`、`TestRosterMemberNameLength`、`TestPeerRosterCumulativeLimit` 覆盖
 
+### REQ-topics-030
+
+名字或简介不合规定的公开 topic 声明不得出现在列出公开 topic 的结果中。
+
+- **验收**：经链路接受一条简介 60 KiB 的公开 topic 声明，以及名字含换行、名字 300 字节的两条声明；列出公开 topic 的结果不含它们，这三条记录仍被转发到与接收方相连的下一个 Broker。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryPublicTopicReceiveLimits/REQ-topics-030 malformed declarations are not listed`；单元测试 `internal/directory/views_test.go` 的 `TestPublicTopicsSkipsInvalidDeclarations`、`internal/directory/validate_test.go` 的 `TestValidPublicTopicName`
+
 ## 数据需求
 
 topic 成员关系只在内存中保留，不写入磁盘。项目的 topic 声明保存在项目配置文件里，随仓库管理。

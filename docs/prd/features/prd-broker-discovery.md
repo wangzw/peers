@@ -160,6 +160,14 @@ Agent 必须能列出本机 Broker 已知的全部 Broker，包括全部对端�
 - **状态**：已实现
 - **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryUnknownAddressKind`
 
+### REQ-broker-discovery-018
+
+名片中含有书写不合规定的直连地址项的，本 Broker 必须忽略该地址项而仍然接受并传播这张名片，名片中其余地址照常可用。
+
+- **验收**：B 与 C 已连接；B 的对端 A 传来一张有效的名片，其对外地址列表含一项带 ESC 字符的地址和一项 `198.51.100.4:17443`。B 列出已知 Broker 的结果包含该名片的发布者，对外地址列表只有 `198.51.100.4:17443`；C 列出已知 Broker 的结果同样包含该发布者。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryMalformedDirectAddress`；单元测试 `internal/directory/validate_test.go` 的 `TestValidDirectAddr`、`internal/directory/views_test.go` 的 `TestBrokersSkipsMalformedDirectAddresses`
+
 ## 数据需求
 
 名录保存在本机磁盘上，Broker 重启后仍可列出。名片只含指纹、别名和对外地址列表，不含 Agent、topic 成员关系或配置。

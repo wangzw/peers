@@ -96,8 +96,10 @@ func (d *Directory) Brokers() []KnownBroker {
 
 // PublicTopics returns the live public topic declarations of the whole
 // directory, including the local Broker's own. Names are merged: the
-// declaration with the highest version supplies the description. The result is
-// ordered by name.
+// declaration with the highest version supplies the description. A declaration
+// whose name is not 1 to 256 bytes of valid UTF-8 free of control characters,
+// or whose description is not acceptable to validDescription, is left out; the
+// record is still accepted and forwarded. The result is ordered by name.
 func (d *Directory) PublicTopics() []PublicTopic {
 	now := d.now()
 
@@ -109,6 +111,9 @@ func (d *Directory) PublicTopics() []PublicTopic {
 		}
 		ann := r.body.GetTopicAnnouncement()
 		if ann == nil {
+			continue
+		}
+		if !validPublicTopicName(ann.GetName()) || !validDescription(ann.GetDescription()) {
 			continue
 		}
 		cur := viewTopicRecord{

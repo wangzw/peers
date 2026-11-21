@@ -5,6 +5,7 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -329,6 +330,75 @@ func TestPublicTopicsMerge(t *testing.T) {
 	viewRevocation(t, d, 4, recKindTopic, "infra-help", 3, expires)
 	if got := d.PublicTopics(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("PublicTopics() after one publisher revoked = %v, want %v", got, want)
+	}
+}
+
+// TestPublicTopicsSkipsInvalidDeclarations covers declarations accepted from a
+// link: an over-long description, a name holding a control character and an
+// over-long name are still accepted and forwarded, but do not enter the view.
+func TestPublicTopicsSkipsInvalidDeclarations(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	c := newReconcileNode(t, net, 2)
+	p := newReconcileNode(t, net, 3)
+
+	net.Connect(b.fp, c.fp)
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	good := reconcileAnnouncement(t, 200, "good", "ok", 1)
+	longDesc := reconcileAnnouncement(t, 201, "long", strings.Repeat("d", 60<<10), 1)
+	newline := reconcileAnnouncement(t, 202, "bad\nname", "", 1)
+	longName := reconcileAnnouncement(t, 203, strings.Repeat("n", 300), "", 1)
+	recs := []*storedRecord{good, longDesc, newline, longName}
+	vs := make([]*directorypb.RecordVersion, 0, len(recs))
+	for _, r := range recs {
+		reconcileInject(t, p, r)
+		vs = append(vs, r.recordVersion())
+	}
+	p.d.broadcast(vs, Fingerprint{})
+	reconcileAwait(t, net, "B and C to accept and forward the declarations", func() bool {
+		for _, n := range []*reconcileNode{b, c} {
+			for _, r := range recs {
+				got, ok := reconcileLookup(n, r.id)
+				if !ok || !bytes.Equal(got.raw, r.raw) {
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	want := []PublicTopic{{Name: "good", Description: "ok"}}
+	if got := b.d.PublicTopics(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("PublicTopics() = %v, want only the well-formed declaration %v", got, want)
+	}
+}
+
+// TestBrokersSkipsMalformedDirectAddresses checks that a "direct" card entry
+// that cannot be split into a host and port, or whose host carries a control
+// character, is left out of the broker view while the card itself stays usable.
+func TestBrokersSkipsMalformedDirectAddresses(t *testing.T) {
+	now := dirTestNow()
+	d, _, _, _ := newViewDirectory(t, 1, now)
+	fpX := newTestIdentity(2).Fingerprint()
+	good := "198.51.100.4:17443"
+	bad := "\x1b198.51.100.5:17443"
+	viewCard(t, d, 2, "x", 1, now.Add(recordTTL),
+		advAddr("direct", bad),
+		advAddr("direct", "no-port"),
+		advAddr("direct", good))
+
+	entry := viewFind(t, d.Brokers(), fpX)
+	want := []config.AdvertisedAddr{{Kind: "direct", Addr: good}}
+	if !reflect.DeepEqual(entry.Addresses, want) {
+		t.Fatalf("card holder addresses = %v, want only the well-formed entry %v", entry.Addresses, want)
+	}
+	if got := d.CardsByAddress(bad); got != nil {
+		t.Errorf("CardsByAddress(%q) = %v, want nil", bad, got)
+	}
+	if got := d.CardsByAddress(good); !reflect.DeepEqual(got, []Fingerprint{fpX}) {
+		t.Errorf("CardsByAddress(%q) = %v, want %v", good, got, fpX)
 	}
 }
 
