@@ -177,11 +177,48 @@ func (f *Fake) trackConn(conn net.Conn) bool {
 	return true
 }
 
-func (f *Fake) untrackConn(conn net.Conn) {
+// markConnClosed records that the handler closed conn and wakes anyone waiting
+// for a close. The caller closes the connection before calling this, so a
+// waiter that observes the new count also observes EOF.
+func (f *Fake) markConnClosed(conn net.Conn) {
 	f.mu.Lock()
 	delete(f.conns, conn)
+	f.closedConns++
 	f.mu.Unlock()
 	f.signalConns()
+}
+
+// closedConnCount returns how many connections the fake's handlers have closed.
+func (f *Fake) closedConnCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closedConns
+}
+
+// waitClosedSince waits until the fake has closed a connection after base. It is
+// event-driven: a handler closing a connection advances closedConns and wakes
+// the wait, so the returned bool does not depend on how long reading one line
+// takes. timeout only stops a fake that never closes the connection from
+// hanging the test.
+func (f *Fake) waitClosedSince(base int, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		f.mu.Lock()
+		closed := f.closedConns
+		f.mu.Unlock()
+		if closed > base {
+			return true
+		}
+		select {
+		case <-f.connCh:
+		case <-timer.C:
+			f.mu.Lock()
+			closed := f.closedConns
+			f.mu.Unlock()
+			return closed > base
+		}
+	}
 }
 
 // signalConns wakes WaitNoConnections after a connection was added or dropped.
@@ -198,9 +235,11 @@ func (f *Fake) handle(conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
+	// Close before recording the close so a waiter that sees the count advance
+	// also sees EOF on its end of the connection.
 	defer func() {
-		f.untrackConn(conn)
 		_ = conn.Close()
+		f.markConnClosed(conn)
 	}()
 
 	f.mu.Lock()

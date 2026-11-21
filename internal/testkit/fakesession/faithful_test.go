@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"strings"
 	"testing"
 	"time"
@@ -44,10 +43,16 @@ func sendFrameLine(t *testing.T, f *Fake, line string) {
 	assertConnectionClosed(t, conn)
 }
 
-// assertConnectionClosed reports whether the peer closed the connection.
-func assertConnectionClosed(t *testing.T, conn net.Conn) {
+// assertConnectionClosed waits until the fake's handler has closed conn, then
+// asserts the client observes EOF. The wait is driven by the handler's close
+// signal, so a slow read loop on a loaded machine no longer trips it; a fake
+// that never closes the connection fails the wait.
+func assertConnectionClosed(t *testing.T, conn *fakeConn) {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(waitTimeout)); err != nil {
+	if !conn.fake.waitClosedSince(conn.priorClose, closeWaitTimeout) {
+		t.Fatal("the fake did not close the connection")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(closeWaitTimeout)); err != nil {
 		t.Fatalf("setting read deadline: %v", err)
 	}
 	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {

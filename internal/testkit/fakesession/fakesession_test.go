@@ -16,6 +16,11 @@ import (
 
 const waitTimeout = 200 * time.Millisecond
 
+// closeWaitTimeout bounds how long a test waits for the fake to close a
+// connection. Success is signalled by the handler and returns immediately, so
+// this is a hang guard for a fake that never closes, not a latency assertion.
+const closeWaitTimeout = 5 * time.Second
+
 func TestRecordFields(t *testing.T) {
 	f := New(t, Options{
 		PID:    4242,
@@ -253,12 +258,7 @@ func TestCloseAfterReadRecordsFrame(t *testing.T) {
 		t.Errorf("Fields[msgV] = %v, want 1", got)
 	}
 
-	if err := conn.SetReadDeadline(time.Now().Add(waitTimeout)); err != nil {
-		t.Fatalf("setting read deadline: %v", err)
-	}
-	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-		t.Fatalf("read after the frame = %v, want EOF", err)
-	}
+	assertConnectionClosed(t, conn)
 }
 
 func TestFrameWithoutAuth(t *testing.T) {
@@ -351,13 +351,7 @@ func TestHoldOpenRelease(t *testing.T) {
 	// CloseWrite (the vendored client waits 150 ms on darwin) therefore
 	// completes it against a connected socket.
 	closeWrite(t, conn)
-
-	if err := conn.SetReadDeadline(time.Now().Add(waitTimeout)); err != nil {
-		t.Fatalf("setting read deadline: %v", err)
-	}
-	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-		t.Fatalf("read after Release and half-close = %v, want EOF", err)
-	}
+	assertConnectionClosed(t, conn)
 }
 
 func TestWaitNoConnections(t *testing.T) {
@@ -392,12 +386,7 @@ func TestCloseReleasesHeldConnection(t *testing.T) {
 
 	f.Close()
 
-	if err := conn.SetReadDeadline(time.Now().Add(waitTimeout)); err != nil {
-		t.Fatalf("setting read deadline: %v", err)
-	}
-	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-		t.Fatalf("read after Close = %v, want EOF", err)
-	}
+	assertConnectionClosed(t, conn)
 }
 
 func TestCloseImmediately(t *testing.T) {
@@ -609,12 +598,26 @@ func mustModTime(t *testing.T, path string) time.Time {
 	return info.ModTime()
 }
 
-func dialFake(t *testing.T, f *Fake) net.Conn {
+// fakeConn is a client connection to a Fake. It records how many connections
+// the fake had closed when it was dialed, so the test can wait for this
+// connection's own close without assuming a latency bound.
+type fakeConn struct {
+	net.Conn
+	fake       *Fake
+	priorClose int
+}
+
+func dialFake(t *testing.T, f *Fake) *fakeConn {
 	t.Helper()
-	conn, err := net.Dial("unix", f.SocketPath())
+	// The count is sampled before dialing: this connection cannot close before
+	// it exists, so any later advance belongs to it. The tests using dialFake
+	// keep one connection per fake in flight at a time.
+	prior := f.closedConnCount()
+	raw, err := net.Dial("unix", f.SocketPath())
 	if err != nil {
 		t.Fatalf("dialing %s: %v", f.SocketPath(), err)
 	}
+	conn := &fakeConn{Conn: raw, fake: f, priorClose: prior}
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
 }
@@ -628,6 +631,9 @@ func writeAll(t *testing.T, conn net.Conn, data string) {
 
 func closeWrite(t *testing.T, conn net.Conn) {
 	t.Helper()
+	if fc, ok := conn.(*fakeConn); ok {
+		conn = fc.Conn
+	}
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
 		t.Fatalf("connection type = %T, want *net.UnixConn", conn)

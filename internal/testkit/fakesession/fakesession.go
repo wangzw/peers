@@ -154,6 +154,7 @@ type Fake struct {
 	frameCursor   int
 	held          []*heldConn
 	conns         map[net.Conn]struct{}
+	closedConns   int
 	bgErr         error
 
 	done    chan struct{}
