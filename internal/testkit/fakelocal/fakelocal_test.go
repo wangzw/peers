@@ -19,6 +19,15 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
+// eventTimeout is the package-wide fallback for a wait on an event produced by
+// the fake Local server. The waits are driven by socket callbacks and by
+// Recv/Send progress on a real Unix socket. It only decides how long a wait
+// that will never complete takes to fail: the success path selects on the
+// event itself and never spends this time, so a larger value costs nothing.
+// Thirty seconds is far above the worst normal latency under load; it is not a
+// claim that an event should take that long.
+const eventTimeout = 30 * time.Second
+
 func dial(t *testing.T, path string) *grpc.ClientConn {
 	t.Helper()
 	cc, err := grpc.NewClient("unix://"+path, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -31,14 +40,14 @@ func dial(t *testing.T, path string) *grpc.ClientConn {
 
 func waitContext(t *testing.T) (context.Context, context.CancelFunc) {
 	t.Helper()
-	return context.WithTimeout(context.Background(), 3*time.Second)
+	return context.WithTimeout(context.Background(), eventTimeout)
 }
 
 func waitDone(t *testing.T, done <-chan struct{}, what string) {
 	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatalf("timed out waiting for %s", what)
 	}
 }
@@ -56,7 +65,7 @@ func waitStreamError(t *testing.T, stream localpb.Local_RegisterClient) error {
 			t.Fatal("expected the register stream to end with an error")
 		}
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("timed out waiting for the register stream to end")
 		return nil
 	}
@@ -203,7 +212,7 @@ func TestRestart(t *testing.T) {
 	})
 	client := localpb.NewLocalClient(dial(t, path))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if _, err := client.ListAgents(ctx, &localpb.ListAgentsRequest{Topic: "pre"}); err != nil {
 		t.Fatalf("ListAgents: %v", err)
@@ -351,7 +360,7 @@ func TestRegisterWaitsForInFlightSend(t *testing.T) {
 		close(handlerDone)
 	}()
 
-	regCtx, regCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	regCtx, regCancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer regCancel()
 	conn, err := s.NextRegister(regCtx)
 	if err != nil {
@@ -362,7 +371,7 @@ func TestRegisterWaitsForInFlightSend(t *testing.T) {
 	go func() { sendDone <- conn.Send(&localpb.RegisterResponse{}) }()
 	select {
 	case <-stream.sendEntered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Send did not reach the stream")
 	}
 
@@ -379,7 +388,7 @@ func TestRegisterWaitsForInFlightSend(t *testing.T) {
 	}
 	select {
 	case <-handlerDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the Register handler did not return after the Send finished")
 	}
 }
