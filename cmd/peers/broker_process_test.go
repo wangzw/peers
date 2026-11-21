@@ -21,7 +21,7 @@ import (
 func dialBroker(t *testing.T, addr string) {
 	t.Helper()
 
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, processTimeout)
 	if err != nil {
 		t.Fatalf("dial %s: %v", addr, err)
 	}
@@ -37,7 +37,7 @@ func waitBrokerStarted(t *testing.T, p *brokerProc) bool {
 	t.Helper()
 
 	pid := p.cmd.Process.Pid
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(processTimeout)
 	for {
 		select {
 		case <-p.exited:
@@ -139,7 +139,7 @@ func startBrokerTerminalOnFreePort(t *testing.T, sb *sandbox, args ...string) (*
 		select {
 		case <-p.exited:
 		default:
-			t.Fatalf("broker did not report %s on %s within 3s while still running (stderr: %s)", broker.EvBrokerStarted, addr, p.stderr.String())
+			t.Fatalf("broker did not report %s on %s within %s while still running (stderr: %s)", broker.EvBrokerStarted, addr, processTimeout, p.stderr.String())
 		}
 		code := p.cmd.ProcessState.ExitCode()
 		if code != exitListenUnavailable || attempt == attempts {
@@ -179,7 +179,7 @@ func TestBrokerListenFlagOverridesConfig(t *testing.T) {
 	if err := p.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("signal broker: %v", err)
 	}
-	if code := p.wait(3 * time.Second); code != exitOK {
+	if code := p.wait(processTimeout); code != exitOK {
 		t.Fatalf("exit code after SIGTERM = %d, want %d (stderr: %s)", code, exitOK, p.stderr.String())
 	}
 
@@ -216,7 +216,7 @@ func TestBrokerSecondInstanceFailsWithAnotherListenAddress(t *testing.T) {
 	secondPort, _ := occupiedPort(t)
 
 	second := startBrokerTerminal(t, sb, "--listen", listenAddr(secondPort))
-	if code := second.wait(3 * time.Second); code != exitAlreadyRunning {
+	if code := second.wait(processTimeout); code != exitAlreadyRunning {
 		t.Fatalf("second exit code = %d, want %d (stderr: %s)", code, exitAlreadyRunning, second.stderr.String())
 	}
 	reason := second.lastStderrLine("peers service run: ")
@@ -232,7 +232,7 @@ func TestBrokerSecondInstanceFailsWithAnotherListenAddress(t *testing.T) {
 	if err := first.cmd.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatalf("signal first broker: %v", err)
 	}
-	if code := first.wait(3 * time.Second); code != exitOK {
+	if code := first.wait(processTimeout); code != exitOK {
 		t.Fatalf("first exit code after SIGTERM = %d, want %d (stderr: %s)", code, exitOK, first.stderr.String())
 	}
 
@@ -251,7 +251,7 @@ func TestBrokerListenAddressUnavailable(t *testing.T) {
 	addr := listenAddr(port)
 
 	p := startBrokerTerminal(t, sb, "--listen", addr)
-	if code := p.wait(3 * time.Second); code != exitListenUnavailable {
+	if code := p.wait(processTimeout); code != exitListenUnavailable {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitListenUnavailable, p.stderr.String())
 	}
 	reason := p.lastStderrLine("peers service run: ")
@@ -270,7 +270,7 @@ func TestBrokerInvalidConfig(t *testing.T) {
 		sb.writeConfig("broker: [\n")
 
 		p := startBrokerTerminal(t, sb)
-		if code := p.wait(3 * time.Second); code != exitInvalidConfig {
+		if code := p.wait(processTimeout); code != exitInvalidConfig {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitInvalidConfig, p.stderr.String())
 		}
 		reason := p.lastStderrLine("peers service run: ")
@@ -289,7 +289,7 @@ func TestBrokerInvalidConfig(t *testing.T) {
 		}
 
 		p := startBrokerTerminal(t, sb)
-		if code := p.wait(3 * time.Second); code != exitInvalidConfig {
+		if code := p.wait(processTimeout); code != exitInvalidConfig {
 			t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitInvalidConfig, p.stderr.String())
 		}
 		reason := p.lastStderrLine("peers service run: ")
@@ -306,7 +306,7 @@ func TestBrokerInsideSession(t *testing.T) {
 	sb.extraEnv = append(sb.extraEnv, "CLAUDE_CODE_MESSAGING_SOCKET=/tmp/x.sock")
 
 	p := startBrokerTerminal(t, sb)
-	if code := p.wait(3 * time.Second); code != exitInSession {
+	if code := p.wait(processTimeout); code != exitInSession {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitInSession, p.stderr.String())
 	}
 	if reason := p.lastStderrLine("peers service run: "); reason == "" {
@@ -372,7 +372,7 @@ func TestBrokerRuntimeDirBadPermissions(t *testing.T) {
 	}
 
 	p := startBrokerTerminal(t, sb)
-	if code := p.wait(3 * time.Second); code != exitRuntimeDir {
+	if code := p.wait(processTimeout); code != exitRuntimeDir {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitRuntimeDir, p.stderr.String())
 	}
 	reason := p.lastStderrLine("peers service run: ")
@@ -386,7 +386,7 @@ func TestBrokerInvalidListenValue(t *testing.T) {
 
 	sb := newSandbox(t)
 	p := startBrokerTerminal(t, sb, "--listen", "not-an-address")
-	if code := p.wait(3 * time.Second); code != exitUsage {
+	if code := p.wait(processTimeout); code != exitUsage {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitUsage, p.stderr.String())
 	}
 	if stderr := p.stderr.String(); !strings.Contains(stderr, "--listen") {
@@ -409,7 +409,7 @@ func TestBrokerSystemRequiresRoot(t *testing.T) {
 
 	sb := newSandbox(t)
 	p := startBrokerTerminal(t, sb, "--system")
-	if code := p.wait(3 * time.Second); code != exitNotRoot {
+	if code := p.wait(processTimeout); code != exitNotRoot {
 		t.Fatalf("exit code = %d, want %d (stderr: %s)", code, exitNotRoot, p.stderr.String())
 	}
 	if stderr := p.stderr.String(); !strings.Contains(stderr, "must run as root") {
@@ -431,7 +431,7 @@ func TestBrokerShutsDownOnSIGINT(t *testing.T) {
 	if err := p.cmd.Process.Signal(os.Interrupt); err != nil {
 		t.Fatalf("signal broker: %v", err)
 	}
-	if code := p.wait(3 * time.Second); code != exitOK {
+	if code := p.wait(processTimeout); code != exitOK {
 		t.Fatalf("exit code after SIGINT = %d, want %d (stderr: %s)", code, exitOK, p.stderr.String())
 	}
 }

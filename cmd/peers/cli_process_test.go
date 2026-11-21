@@ -217,7 +217,7 @@ func (p *mcpProc) initialize() {
 	p.t.Helper()
 
 	p.writeLine(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"cmdtest","version":"0"}}}`)
-	raw := p.nextLine(3 * time.Second)
+	raw := p.nextLine(processTimeout)
 	var msg map[string]any
 	if err := json.Unmarshal([]byte(raw), &msg); err != nil {
 		p.t.Fatalf("initialize response is not JSON: %v (line %q)", err, raw)
@@ -294,7 +294,7 @@ func countCalls(calls []fakelocal.Call, method string) int {
 func TestBinaryVersionFromLdflags(t *testing.T) {
 	t.Parallel()
 
-	res := runCLI(t, newSandbox(t), 3*time.Second, "--version")
+	res := runCLI(t, newSandbox(t), processTimeout, "--version")
 	if res.code != 0 {
 		t.Fatalf("exit code = %d, want 0 (stderr %q)", res.code, res.stderr)
 	}
@@ -311,14 +311,14 @@ func TestBinaryUnknownCommandExitCode(t *testing.T) {
 
 	sb := newSandbox(t)
 
-	res := runCLI(t, sb, 3*time.Second, "nope")
+	res := runCLI(t, sb, processTimeout, "nope")
 	if res.code != exitUsage {
 		t.Fatalf("unknown command exit code = %d, want %d (stderr %q)", res.code, exitUsage, res.stderr)
 	}
 
 	// A bad flag fails before the command reaches the installation, which would
 	// otherwise write a unit file and run systemctl against the real system.
-	res = runCLI(t, sb, 3*time.Second, "service", "install", "--bogus")
+	res = runCLI(t, sb, processTimeout, "service", "install", "--bogus")
 	if res.code != exitUsage {
 		t.Fatalf("service install --bogus exit code = %d, want %d (stderr %q)", res.code, exitUsage, res.stderr)
 	}
@@ -337,7 +337,7 @@ func TestStatusThroughExplicitSocket(t *testing.T) {
 	fakelocal.Start(t, sock, fakelocal.SampleHandlers(nil, nil))
 	sb.extraEnv = append(sb.extraEnv, "PEERS_TEST_SOCKET="+sock)
 
-	res := runCLI(t, sb, 3*time.Second, "service", "status")
+	res := runCLI(t, sb, processTimeout, "service", "status")
 	if res.code != exitOK {
 		t.Fatalf("exit code = %d, want 0 (stderr %q)", res.code, res.stderr)
 	}
@@ -364,7 +364,7 @@ func TestStatusExplicitSocketUnavailable(t *testing.T) {
 
 	sb.extraEnv = append(sb.extraEnv, "PEERS_TEST_SOCKET="+missing)
 
-	res := runCLI(t, sb, 3*time.Second, "service", "status")
+	res := runCLI(t, sb, processTimeout, "service", "status")
 	if res.code != exitFailure {
 		t.Fatalf("exit code = %d, want %d (stderr %q)", res.code, exitFailure, res.stderr)
 	}
@@ -389,7 +389,7 @@ func TestStatusPrefersUserBroker(t *testing.T) {
 	}
 	fake := fakelocal.Start(t, filepath.Join(dir, "broker.sock"), fakelocal.SampleHandlers(nil, nil))
 
-	res := runCLI(t, sb, 3*time.Second, "service", "status")
+	res := runCLI(t, sb, processTimeout, "service", "status")
 	if res.code != exitOK {
 		t.Fatalf("exit code = %d, want 0 (stderr %q)", res.code, res.stderr)
 	}
@@ -406,7 +406,7 @@ func TestStatusDoesNotLaunchBroker(t *testing.T) {
 
 	sb := newSandbox(t)
 
-	res := runCLI(t, sb, 3*time.Second, "service", "status")
+	res := runCLI(t, sb, processTimeout, "service", "status")
 	if res.code != exitFailure {
 		t.Fatalf("exit code = %d, want %d (stderr %q)", res.code, exitFailure, res.stderr)
 	}
@@ -429,7 +429,7 @@ func TestAuditThroughExplicitSocket(t *testing.T) {
 	fakelocal.Start(t, sock, fakelocal.SampleHandlers(reqs, nil))
 	sb.extraEnv = append(sb.extraEnv, "PEERS_TEST_SOCKET="+sock)
 
-	res := runCLI(t, sb, 3*time.Second, "service", "audit", "--limit", "2")
+	res := runCLI(t, sb, processTimeout, "service", "audit", "--limit", "2")
 	if res.code != exitOK {
 		t.Fatalf("exit code = %d, want 0 (stderr %q)", res.code, res.stderr)
 	}
@@ -452,7 +452,7 @@ func TestAuditPermissionDenied(t *testing.T) {
 	fakelocal.Start(t, sock, fakelocal.SampleHandlers(reqs, fakelocal.PermissionDenied("not allowed")))
 	sb.extraEnv = append(sb.extraEnv, "PEERS_TEST_SOCKET="+sock)
 
-	res := runCLI(t, sb, 3*time.Second, "service", "audit")
+	res := runCLI(t, sb, processTimeout, "service", "audit")
 	if res.code != exitFailure {
 		t.Fatalf("exit code = %d, want %d (stderr %q)", res.code, exitFailure, res.stderr)
 	}
@@ -476,7 +476,7 @@ func TestMCPHandshakeAndSignal(t *testing.T) {
 	p.initialize()
 
 	p.signal(syscall.SIGTERM)
-	if code := p.wait(3 * time.Second); code != 0 {
+	if code := p.wait(processTimeout); code != 0 {
 		t.Fatalf("exit code after SIGTERM = %d, want 0 (stderr %s)", code, p.stderr.String())
 	}
 	assertNoBrokerFiles(t, sb.root)
@@ -508,7 +508,7 @@ func TestMCPSignalClosesRegistration(t *testing.T) {
 			p := startMCP(t, sb)
 			p.initialize()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), processTimeout)
 			defer cancel()
 			conn, err := fake.NextRegister(ctx)
 			if err != nil {
@@ -522,13 +522,13 @@ func TestMCPSignalClosesRegistration(t *testing.T) {
 			}
 
 			p.signal(tt.sig)
-			if code := p.wait(3 * time.Second); code != 0 {
+			if code := p.wait(processTimeout); code != 0 {
 				t.Fatalf("exit code after %s = %d, want 0 (stderr %s)", tt.name, code, p.stderr.String())
 			}
 
 			select {
 			case <-conn.Done():
-			case <-time.After(3 * time.Second):
+			case <-time.After(processTimeout):
 				t.Fatalf("the Register stream was still open after %s", tt.name)
 			}
 		})
@@ -566,7 +566,7 @@ func TestSecondSignalTerminates(t *testing.T) {
 		_ = cmd.Process.Kill()
 		select {
 		case <-exited:
-		case <-time.After(3 * time.Second):
+		case <-time.After(processTimeout):
 			t.Errorf("signal-block process %d did not exit after SIGKILL", cmd.Process.Pid)
 		}
 	})
@@ -581,8 +581,8 @@ func TestSecondSignalTerminates(t *testing.T) {
 			if line != want {
 				t.Fatalf("stderr line = %q, want %q", line, want)
 			}
-		case <-time.After(3 * time.Second):
-			t.Fatalf("no %q line from signal-block within 3s", want)
+		case <-time.After(processTimeout):
+			t.Fatalf("no %q line from signal-block within %s", want, processTimeout)
 		}
 	}
 
@@ -600,8 +600,8 @@ func TestSecondSignalTerminates(t *testing.T) {
 	}
 	select {
 	case <-exited:
-	case <-time.After(3 * time.Second):
-		t.Fatal("process did not exit within 3s of the second SIGTERM")
+	case <-time.After(processTimeout):
+		t.Fatalf("process did not exit within %s of the second SIGTERM", processTimeout)
 	}
 
 	status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)

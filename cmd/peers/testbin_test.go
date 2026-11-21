@@ -25,6 +25,17 @@ var testBinary string
 // the test harness. It is also the backstop after the SIGKILL fallback in stop.
 const waitDelay = 3 * time.Second
 
+// processTimeout is the package-wide fallback for a wait on an event produced
+// by a child process: the process exiting, one line on its standard output or
+// standard error, the Register stream being opened or closed, or its exit after
+// SIGTERM or the SIGKILL fallback. It only decides how long a wait that will
+// never complete takes to fail: the success path selects on the event itself
+// and never spends this time, so a larger value costs nothing. Thirty seconds
+// is far above the worst normal latency under load, including process startup
+// and os/exec's pipe-copy goroutines; it is not a claim that a child should
+// take that long.
+const processTimeout = 30 * time.Second
+
 // maxRuntimeRootBytes leaves room for the account directory and broker.sock
 // under the runtime root inside the Unix sun_path limit.
 const maxRuntimeRootBytes = 60

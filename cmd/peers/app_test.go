@@ -339,7 +339,7 @@ func TestSignalContextCancelsOnSIGTERM(t *testing.T) {
 	}
 	select {
 	case <-ctx.Done():
-	case <-time.After(3 * time.Second):
-		t.Fatal("context was not cancelled within 3s of SIGTERM")
+	case <-time.After(processTimeout):
+		t.Fatalf("context was not cancelled within %s of SIGTERM", processTimeout)
 	}
 }
