@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,10 +26,13 @@ func resetUsernameCache(t *testing.T) {
 	t.Helper()
 	oldLookup, oldNow := lookupUsername, usernameNow
 	oldCache := usernameCache
+	oldInflight := usernameInflight
 	usernameCache = make(map[uint32]usernameCacheEntry)
+	usernameInflight = make(map[uint32]chan struct{})
 	t.Cleanup(func() {
 		lookupUsername, usernameNow = oldLookup, oldNow
 		usernameCache = oldCache
+		usernameInflight = oldInflight
 	})
 }
 
@@ -62,13 +66,43 @@ func TestUsernameForCachesUntilTTL(t *testing.T) {
 	}
 }
 
-func TestUsernameForDoesNotCacheFailure(t *testing.T) {
+func TestUsernameForCachesFailureUntilTTL(t *testing.T) {
 	resetUsernameCache(t)
 
 	calls := 0
 	lookupUsername = func(uint32) (accountdb.User, error) {
 		calls++
 		return accountdb.User{}, errors.New("account database unavailable")
+	}
+	now := time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC)
+	usernameNow = func() time.Time { return now }
+
+	if got := usernameFor(7); got != "7" {
+		t.Fatalf("usernameFor(7) = %q, want the decimal uid", got)
+	}
+	if got := usernameFor(7); got != "7" {
+		t.Fatalf("usernameFor(7) again = %q, want the decimal uid", got)
+	}
+	if calls != 1 {
+		t.Errorf("failed lookup ran %d times inside the failure TTL, want 1", calls)
+	}
+
+	now = now.Add(30 * time.Second)
+	if got := usernameFor(7); got != "7" {
+		t.Fatalf("usernameFor(7) after the failure TTL = %q, want the decimal uid", got)
+	}
+	if calls != 2 {
+		t.Errorf("failed lookup ran %d times after the failure TTL, want 2", calls)
+	}
+}
+
+func TestUsernameForCachesEmptyName(t *testing.T) {
+	resetUsernameCache(t)
+
+	calls := 0
+	lookupUsername = func(uid uint32) (accountdb.User, error) {
+		calls++
+		return accountdb.User{UID: uid}, nil
 	}
 	usernameNow = func() time.Time { return time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC) }
 
@@ -78,8 +112,59 @@ func TestUsernameForDoesNotCacheFailure(t *testing.T) {
 	if got := usernameFor(7); got != "7" {
 		t.Fatalf("usernameFor(7) again = %q, want the decimal uid", got)
 	}
-	if calls != 2 {
-		t.Errorf("failed lookup ran %d times, want 2 (failures are not cached)", calls)
+	if calls != 1 {
+		t.Errorf("empty-name lookup ran %d times, want 1", calls)
+	}
+}
+
+// TestUsernameForCoalescesConcurrentLookups: callers that miss the cache for
+// one uid at the same moment wait for a single lookup instead of each running
+// its own.
+func TestUsernameForCoalescesConcurrentLookups(t *testing.T) {
+	resetUsernameCache(t)
+
+	var calls atomic.Int32
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	lookupUsername = func(uid uint32) (accountdb.User, error) {
+		calls.Add(1)
+		once.Do(func() { close(started) })
+		<-release
+		return accountdb.User{Name: "alice", UID: uid}, nil
+	}
+	usernameNow = func() time.Time { return time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC) }
+
+	const workers = 10
+	ready := make(chan struct{})
+	gate := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			ready <- struct{}{}
+			<-gate
+			if got := usernameFor(7); got != "alice" {
+				t.Errorf("usernameFor(7) = %q, want alice", got)
+			}
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		<-ready
+	}
+	close(gate)
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the lookup never started")
+	}
+	// Give every worker time to reach the cache while the first lookup is held.
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("lookup ran %d times for concurrent callers, want 1", got)
 	}
 }
 

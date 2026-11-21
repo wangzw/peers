@@ -138,6 +138,11 @@ func ReadPeerCred(conn net.Conn) (Caller, error) {
 // database lookup.
 const usernameCacheTTL = 5 * time.Minute
 
+// usernameFailureTTL bounds how long a failed lookup is reused. A uid with no
+// account entry, such as a subuid mapped by a rootless container, would
+// otherwise cost one lookup per connection for as long as it keeps connecting.
+const usernameFailureTTL = 30 * time.Second
+
 // usernameCacheEntry is one cached caller name.
 type usernameCacheEntry struct {
 	name    string
@@ -151,28 +156,50 @@ var (
 
 	usernameMu    sync.Mutex
 	usernameCache = make(map[uint32]usernameCacheEntry)
+	// usernameInflight holds the uid whose lookup is running and the channel
+	// closed when it finishes. A caller that misses the cache while another
+	// lookup for the same uid is running waits on that channel instead of
+	// starting a second lookup.
+	usernameInflight = make(map[uint32]chan struct{})
 )
 
 // usernameFor returns the account name for uid, or the decimal uid when the
-// account cannot be looked up. A failed lookup is not cached.
+// account cannot be looked up. The decimal uid is cached for a shorter time
+// than a resolved name, and concurrent misses for one uid share one lookup.
 func usernameFor(uid uint32) string {
 	now := usernameNow()
 	usernameMu.Lock()
-	entry, ok := usernameCache[uid]
-	usernameMu.Unlock()
-	if ok && now.Before(entry.expires) {
-		return entry.name
+	for {
+		if entry, ok := usernameCache[uid]; ok && now.Before(entry.expires) {
+			usernameMu.Unlock()
+			return entry.name
+		}
+		if wait, ok := usernameInflight[uid]; ok {
+			usernameMu.Unlock()
+			<-wait
+			now = usernameNow()
+			usernameMu.Lock()
+			continue
+		}
+		break
 	}
+	done := make(chan struct{})
+	usernameInflight[uid] = done
+	usernameMu.Unlock()
 
 	id := strconv.FormatUint(uint64(uid), 10)
 	u, err := lookupUsername(uid)
+	name, ttl := u.Name, usernameCacheTTL
 	if err != nil || u.Name == "" {
-		return id
+		name, ttl = id, usernameFailureTTL
 	}
+
 	usernameMu.Lock()
-	usernameCache[uid] = usernameCacheEntry{name: u.Name, expires: now.Add(usernameCacheTTL)}
+	usernameCache[uid] = usernameCacheEntry{name: name, expires: now.Add(ttl)}
+	delete(usernameInflight, uid)
 	usernameMu.Unlock()
-	return u.Name
+	close(done)
+	return name
 }
 
 // callerAuthInfo is the AuthInfo of one local connection.
