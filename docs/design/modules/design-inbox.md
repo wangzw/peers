@@ -107,7 +107,7 @@ type Session struct {
 
 ### 名字规范化
 
-`NormalizeName` 与 Claude Code 自带的发送工具匹配会话名之前的规范化相同：去掉控制字符与格式字符，去掉首尾空白，转为小写，空白换成 `-`。结果用作 Agent 的名字，结果是否可用由 `broker` 判定。
+`NormalizeName` 与 Claude Code 自带的发送工具匹配会话名之前的规范化相同：去掉控制字符与格式字符，去掉首尾空白，转为小写，空白换成 `-`。结果超过 `MaxNameBytes`（128 字节）时在 UTF-8 字符边界上截断到不超过该长度，再删掉末尾的 `-`。`MaxNameBytes` 是 Broker 登记、发布成员名单或接受对端成员条目时使用的最长名字字节数。结果用作 Agent 的名字，结果是否可用由 `broker` 判定。
 
 ### 署名清洗与校验
 
