@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1341,5 +1342,288 @@ func TestAppendAuditWritesWithoutLoading(t *testing.T) {
 func TestAppendAuditRejectsAnEmptyPath(t *testing.T) {
 	if err := AppendAudit("", Event{Event: EventUpdateFailed}); err == nil {
 		t.Fatal("AppendAudit accepted an empty path")
+	}
+}
+
+// newAuditTestLogAt opens an audit log with a controllable clock and timer
+// seam, so a test can move time past a window and fire the expiry callback.
+func newAuditTestLogAt(t *testing.T) (*auditLog, string, *auditTestClockControl, *auditTestTimers, *bytes.Buffer) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "data", "audit.log")
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	clock := &auditTestClockControl{now: auditTestClock(t)}
+	timers := &auditTestTimers{}
+	log, err := openAudit(path, clock.Now, logger)
+	if err != nil {
+		t.Fatalf("open audit log: %v", err)
+	}
+	log.afterFunc = timers.afterFunc
+	t.Cleanup(func() { _ = log.close() })
+	return log, path, clock, timers, &logs
+}
+
+// TestConfigAuditConnectionRejectedMergesBySourceBeforeFingerprint reproduces
+// the bypass: a stranger changes its certificate for every connection, so each
+// rejection carries a new fingerprint. When the caller names the source, the
+// two events must share one window and one file record counting both.
+func TestConfigAuditConnectionRejectedMergesBySourceBeforeFingerprint(t *testing.T) {
+	log, path, clock, timers, _ := newAuditTestLogAt(t)
+	base := auditTestClock(t)
+	source := "source:203.0.113.7/32"
+	first := &PeerRef{Fingerprint: testFingerprint(0x80)}
+	second := &PeerRef{Fingerprint: testFingerprint(0x90)}
+	for index, peer := range []*PeerRef{first, second} {
+		if err := log.append(Event{
+			Time:     base.Add(time.Duration(index) * time.Minute),
+			Event:    EventConnectionRejected,
+			Peer:     peer,
+			MergeKey: source,
+			Detail:   "not a peer from 203.0.113.7/32",
+		}); err != nil {
+			t.Fatalf("append connection_rejected: %v", err)
+		}
+	}
+	clock.Advance(auditMergeWindow + 2*time.Minute)
+	timers.fireAll()
+
+	records := auditFileRecords(t, path)
+	if len(records) != 1 {
+		t.Fatalf("file has %d rejection records, want 1 merged record", len(records))
+	}
+	got := records[0]
+	if got.Count != 2 {
+		t.Errorf("merged count = %d, want 2", got.Count)
+	}
+	if got.Peer == nil || got.Peer.Fingerprint != first.Fingerprint {
+		t.Errorf("merged peer = %+v, want the first event's fingerprint %x", got.Peer, first.Fingerprint)
+	}
+}
+
+// TestConfigAuditAppendDoesNotScanEveryWindow reproduces the per-event full
+// scan: appending to an already open window must not examine the other open
+// windows. scannedWindows counts every window the expiry code looks at, both
+// while finding expired windows and while finding the earliest deadline to
+// schedule, so reverting either path to a full-table scan fails here.
+func TestConfigAuditAppendDoesNotScanEveryWindow(t *testing.T) {
+	log, _, _ := newAuditTestLog(t, 0o700)
+	base := auditTestClock(t)
+	const windows = 1000
+	firstKey := "source:198.51.100.0/32"
+	for index := 0; index < windows; index++ {
+		key := fmt.Sprintf("source:198.51.100.%d/32", index)
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: key,
+		}); err != nil {
+			t.Fatalf("append window %d: %v", index, err)
+		}
+	}
+
+	log.mu.Lock()
+	before := log.scannedWindows
+	log.mu.Unlock()
+	if err := log.append(Event{
+		Time:     base.Add(time.Minute),
+		Event:    EventConnectionRejected,
+		MergeKey: firstKey,
+	}); err != nil {
+		t.Fatalf("append to an open window: %v", err)
+	}
+	log.mu.Lock()
+	scanned := log.scannedWindows - before
+	log.mu.Unlock()
+	// One append examines the heap root once in flushExpiredLocked and once in
+	// rescheduleLocked, so the bound is two no matter how many windows are open.
+	if scanned > 2 {
+		t.Fatalf("appending to an open window examined %d pending windows, want at most 2", scanned)
+	}
+}
+
+// TestConfigAuditExpiryOrdersEqualDeadlinesByKey keeps the documented stable
+// file order: windows that expire at the same instant land in key order, not
+// insertion order.
+func TestConfigAuditExpiryOrdersEqualDeadlinesByKey(t *testing.T) {
+	log, path, clock, timers, _ := newAuditTestLogAt(t)
+	base := auditTestClock(t)
+	later := "source:203.0.113.9/32"
+	earlier := "source:203.0.113.1/32"
+	for _, key := range []string{later, earlier} {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: key,
+			Detail:   key,
+		}); err != nil {
+			t.Fatalf("append %s: %v", key, err)
+		}
+	}
+	clock.Advance(auditMergeWindow)
+	timers.fireAll()
+
+	records := auditFileRecords(t, path)
+	if len(records) != 2 {
+		t.Fatalf("file has %d records, want 2", len(records))
+	}
+	if records[0].Detail != earlier || records[1].Detail != later {
+		t.Fatalf("equal-deadline order = [%s %s], want [%s %s]",
+			records[0].Detail, records[1].Detail, earlier, later)
+	}
+}
+
+// TestConfigAuditPendingWindowCapAndSummary reproduces the unbounded pending
+// table: after the ordinary windows are full, further distinct sources fold
+// into one per-kind summary record instead of opening one window each.
+func TestConfigAuditPendingWindowCapAndSummary(t *testing.T) {
+	log, path, clock, timers, logs := newAuditTestLogAt(t)
+	base := auditTestClock(t)
+	const total = 300
+	for index := 0; index < total; index++ {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: fmt.Sprintf("source:198.51.100.%d/32", index),
+			Detail:   fmt.Sprintf("not a peer from 198.51.100.%d/32", index),
+		}); err != nil {
+			t.Fatalf("append window %d: %v", index, err)
+		}
+	}
+	clock.Advance(auditMergeWindow)
+	timers.fireAll()
+
+	records := auditFileRecords(t, path)
+	if len(records) != 257 {
+		t.Fatalf("file has %d records, want 256 ordinary windows and one summary", len(records))
+	}
+	last := records[len(records)-1]
+	if last.Event != EventConnectionRejected {
+		t.Errorf("summary kind = %q, want connection_rejected", last.Event)
+	}
+	if last.Peer != nil {
+		t.Errorf("summary peer = %+v, want no peer", last.Peer)
+	}
+	if last.Detail != "other sources" {
+		t.Errorf("summary detail = %q, want %q", last.Detail, "other sources")
+	}
+	if last.Count != 44 {
+		t.Errorf("summary count = %d, want 44", last.Count)
+	}
+	if got := strings.Count(logs.String(), "config_audit_merge_overflow"); got != 1 {
+		t.Errorf("overflow logged %d times, want 1", got)
+	}
+}
+
+// TestConfigAuditFullTableStillMergesExistingWindow checks that the cap only
+// diverts sources without a window: a hit on an existing ordinary window is
+// folded into it, never into the summary.
+func TestConfigAuditFullTableStillMergesExistingWindow(t *testing.T) {
+	log, path, clock, timers, _ := newAuditTestLogAt(t)
+	base := auditTestClock(t)
+	for index := 0; index < 256; index++ {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: fmt.Sprintf("source:203.0.113.%d/32", index),
+		}); err != nil {
+			t.Fatalf("append window %d: %v", index, err)
+		}
+	}
+	if err := log.append(Event{
+		Time:     base.Add(time.Minute),
+		Event:    EventConnectionRejected,
+		MergeKey: "source:203.0.113.5/32",
+	}); err != nil {
+		t.Fatalf("append to an existing window: %v", err)
+	}
+	clock.Advance(auditMergeWindow)
+	timers.fireAll()
+
+	records := auditFileRecords(t, path)
+	if len(records) != 256 {
+		t.Fatalf("file has %d records, want 256 ordinary windows and no summary", len(records))
+	}
+	merged := 0
+	for _, record := range records {
+		if record.Detail == "other sources" {
+			t.Fatalf("a hit on an existing window opened a summary: %+v", record)
+		}
+		if record.Count == 2 {
+			merged++
+		}
+	}
+	if merged != 1 {
+		t.Errorf("%d windows counted two events, want the one existing window that was hit", merged)
+	}
+}
+
+// TestConfigAuditCapAppliesToPairingFailed checks that the cap is shared by
+// every mergeable kind: a rate-limited failure cannot open a window once the
+// ordinary table is full, and its summary is kept per kind.
+func TestConfigAuditCapAppliesToPairingFailed(t *testing.T) {
+	log, _, _, _, _ := newAuditTestLogAt(t)
+	base := auditTestClock(t)
+	for index := 0; index < 256; index++ {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: fmt.Sprintf("source:203.0.113.%d/32", index),
+		}); err != nil {
+			t.Fatalf("append window %d: %v", index, err)
+		}
+	}
+	for index := 0; index < 2; index++ {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventPairingFailed,
+			MergeKey: fmt.Sprintf("source:198.51.100.%d/32", index),
+			Detail:   "too many attempts",
+		}); err != nil {
+			t.Fatalf("append pairing_failed %d: %v", index, err)
+		}
+	}
+	events, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	summaries := 0
+	for _, event := range events {
+		if event.Event == EventPairingFailed && event.Detail == "other sources" {
+			summaries++
+			if event.Count != 2 {
+				t.Errorf("pairing_failed summary count = %d, want 2", event.Count)
+			}
+		}
+	}
+	if summaries != 1 {
+		t.Errorf("pairing_failed summaries = %d, want 1", summaries)
+	}
+}
+
+// TestConfigAuditCloseFlushesSummary checks that a summary window is written on
+// Close like any other open window.
+func TestConfigAuditCloseFlushesSummary(t *testing.T) {
+	log, path, _, _, _ := newAuditTestLogAt(t)
+	base := auditTestClock(t)
+	for index := 0; index < 258; index++ {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: fmt.Sprintf("source:198.51.100.%d/32", index),
+		}); err != nil {
+			t.Fatalf("append window %d: %v", index, err)
+		}
+	}
+	if err := log.close(); err != nil {
+		t.Fatalf("close audit log: %v", err)
+	}
+	records := auditFileRecords(t, path)
+	if len(records) != 257 {
+		t.Fatalf("file has %d records after close, want 257", len(records))
+	}
+	last := records[len(records)-1]
+	if last.Detail != "other sources" || last.Peer != nil || last.Count != 2 {
+		t.Errorf("summary after close = %+v, want detail %q, no peer and count 2",
+			last, "other sources")
 	}
 }

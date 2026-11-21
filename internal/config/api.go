@@ -122,17 +122,21 @@ var allEventKinds = map[EventKind]bool{
 
 // Event is one audit record.
 type Event struct {
-	Time     time.Time
-	Event    EventKind
-	Actor    string
-	Account  string
-	Peer     *PeerRef
-	Key      string
-	Old      *Value
-	New      *Value
-	Count    uint64
-	Detail   string
-	MergeKey string // used only to decide whether two events merge; not part of the public record
+	Time    time.Time
+	Event   EventKind
+	Actor   string
+	Account string
+	Peer    *PeerRef
+	Key     string
+	Old     *Value
+	New     *Value
+	Count   uint64
+	Detail  string
+	// MergeKey is used only to decide whether two events merge; it is not part
+	// of the public record. For connection_rejected it takes precedence over
+	// Peer.Fingerprint, which the other side chooses and so cannot identify a
+	// source.
+	MergeKey string
 }
 
 // PathSet is the set of files this package uses.

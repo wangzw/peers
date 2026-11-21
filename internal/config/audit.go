@@ -20,6 +20,7 @@ package config
 
 import (
 	"bytes"
+	"container/heap"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -49,6 +50,15 @@ const (
 	// are folded into the earlier record.
 	auditMergeWindow = 10 * time.Minute
 
+	// auditMaxPendingWindows bounds the ordinary merge windows held in memory,
+	// across every mergeable event kind. Once it is reached, a source without
+	// a window folds into its kind's summary window instead of opening one.
+	auditMaxPendingWindows = 256
+
+	// auditOverflowDetail is the detail written for a summary window, which
+	// stands for sources that could not open an ordinary window.
+	auditOverflowDetail = "other sources"
+
 	// auditTimeLayout has nanosecond precision and always writes nine
 	// fractional digits. The value is always converted to UTC first.
 	auditTimeLayout = "2006-01-02T15:04:05.000000000Z"
@@ -74,11 +84,62 @@ func newRealAuditTimer(d time.Duration, f func()) auditTimer {
 
 // pendingAudit is one open merge window. event is the window's first event,
 // started anchors the ten-minute window, and occurrences counts every event
-// the window received.
+// the window received. key is the merge key for an ordinary window and the
+// event kind for a summary window; summary marks the latter, which is held
+// outside the ordinary window table. index is the window's position in
+// auditLog.expiry, or -1 when it is not in the heap.
 type pendingAudit struct {
+	key         string
 	event       Event
 	started     time.Time
 	occurrences uint64
+	summary     bool
+	index       int
+}
+
+// deadline is the instant at which the window is written in full.
+func (p *pendingAudit) deadline() time.Time {
+	return p.started.Add(auditMergeWindow)
+}
+
+// auditExpiryHeap orders the open windows by deadline, then by merge key so
+// equal deadlines flush in a stable file order. A summary window at the same
+// deadline comes after the ordinary windows.
+type auditExpiryHeap []*pendingAudit
+
+func (h auditExpiryHeap) Len() int { return len(h) }
+
+func (h auditExpiryHeap) Less(i, j int) bool {
+	di, dj := h[i].deadline(), h[j].deadline()
+	if !di.Equal(dj) {
+		return di.Before(dj)
+	}
+	if h[i].summary != h[j].summary {
+		return !h[i].summary
+	}
+	return h[i].key < h[j].key
+}
+
+func (h auditExpiryHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+	h[i].index = i
+	h[j].index = j
+}
+
+func (h *auditExpiryHeap) Push(x any) {
+	window := x.(*pendingAudit)
+	window.index = len(*h)
+	*h = append(*h, window)
+}
+
+func (h *auditExpiryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	window := old[n-1]
+	old[n-1] = nil
+	window.index = -1
+	*h = old[:n-1]
+	return window
 }
 
 // auditLog serializes access to the audit file. Its mutex is independent of
@@ -96,11 +157,21 @@ type auditLog struct {
 	// timer; tests replace it to fire the callback on command.
 	afterFunc func(time.Duration, func()) auditTimer
 
-	// pending holds the open merge windows, keyed by auditMergeKey. Their
-	// events never reach the file until the window closes.
+	// pending holds the open ordinary merge windows, keyed by auditMergeKey,
+	// and summary holds at most one summary window per mergeable kind. Their
+	// events never reach the file until the window closes. expiry orders every
+	// open window by deadline, so neither appending nor scheduling scans the
+	// whole table.
 	pending  map[string]*pendingAudit
+	summary  map[EventKind]*pendingAudit
+	expiry   auditExpiryHeap
 	timer    auditTimer
 	timerDue time.Time
+
+	// scannedWindows counts the pending windows examined while deciding what
+	// has expired. It is guarded by mu and exists so a test can prove that an
+	// append does not scan every open window.
+	scannedWindows uint64
 }
 
 // openAudit opens or creates the audit log at path. It follows the signature
@@ -140,6 +211,7 @@ func openAuditWithDirMode(path string, dirMode os.FileMode, now func() time.Time
 		logger:    logger,
 		afterFunc: newRealAuditTimer,
 		pending:   make(map[string]*pendingAudit),
+		summary:   make(map[EventKind]*pendingAudit),
 	}, nil
 }
 
@@ -230,7 +302,8 @@ func (a *auditLog) append(e Event) error {
 
 // mergeLocked adds an event to the open window for key. An event outside the
 // window, or one whose clock moved backwards, closes the old window and opens
-// a new one at this event's time.
+// a new one at this event's time. A source without a window when the ordinary
+// table is full folds into its kind's summary window.
 func (a *auditLog) mergeLocked(key string, e Event) {
 	a.flushExpiredLocked(a.now())
 	if pending, ok := a.pending[key]; ok {
@@ -238,24 +311,92 @@ func (a *auditLog) mergeLocked(key string, e Event) {
 			pending.occurrences++
 			return
 		}
-		a.writePendingLocked(pending)
-		delete(a.pending, key)
+		a.closeWindowLocked(pending)
 	}
-	a.pending[key] = &pendingAudit{event: e, started: e.Time, occurrences: 1}
+	if len(a.pending) < auditMaxPendingWindows {
+		a.openWindowLocked(&pendingAudit{key: key, event: e, started: e.Time, occurrences: 1})
+		a.rescheduleLocked()
+		return
+	}
+	a.mergeSummaryLocked(e.Event, e)
+}
+
+// mergeSummaryLocked folds an event whose source could not open an ordinary
+// window into the summary window for its kind. Like an ordinary window, the
+// summary is anchored at its first event and is written once, with no peer and
+// the overflow detail.
+func (a *auditLog) mergeSummaryLocked(kind EventKind, e Event) {
+	if pending, ok := a.summary[kind]; ok {
+		if !e.Time.Before(pending.started) && e.Time.Sub(pending.started) <= auditMergeWindow {
+			pending.occurrences++
+			return
+		}
+		a.closeWindowLocked(pending)
+	}
+	event := e
+	event.Peer = nil
+	event.Detail = auditOverflowDetail
+	event.MergeKey = ""
+	a.openWindowLocked(&pendingAudit{
+		key:         string(kind),
+		event:       event,
+		started:     e.Time,
+		occurrences: 1,
+		summary:     true,
+	})
+	a.logger.Warn("config_audit_merge_overflow",
+		"audit_event", string(kind), "limit", auditMaxPendingWindows)
 	a.rescheduleLocked()
 }
 
+// openWindowLocked records a new window in its table and in the expiry heap.
+func (a *auditLog) openWindowLocked(window *pendingAudit) {
+	if window.summary {
+		a.summary[EventKind(window.key)] = window
+	} else {
+		a.pending[window.key] = window
+	}
+	heap.Push(&a.expiry, window)
+}
+
+// closeWindowLocked writes a window and removes it from memory.
+func (a *auditLog) closeWindowLocked(window *pendingAudit) {
+	a.forgetWindowLocked(window)
+	a.writePendingLocked(window)
+}
+
+// forgetWindowLocked removes a window from its table and the expiry heap.
+func (a *auditLog) forgetWindowLocked(window *pendingAudit) {
+	a.deleteWindowKeyLocked(window)
+	if window.index >= 0 {
+		heap.Remove(&a.expiry, window.index)
+	}
+}
+
+// deleteWindowKeyLocked removes a window from its table, leaving the heap
+// entry alone. flushExpiredLocked uses it after heap.Pop has already removed
+// the entry.
+func (a *auditLog) deleteWindowKeyLocked(window *pendingAudit) {
+	if window.summary {
+		delete(a.summary, EventKind(window.key))
+	} else {
+		delete(a.pending, window.key)
+	}
+}
+
 // flushExpiredLocked appends every window whose deadline has passed and
-// reschedules the timer for the remaining windows.
+// reschedules the timer for the remaining windows. The heap puts the earliest
+// deadline first, so an append inspects only the windows that are due.
 func (a *auditLog) flushExpiredLocked(now time.Time) {
-	keys := a.sortedPendingKeysLocked()
-	for _, key := range keys {
-		pending := a.pending[key]
-		if now.Before(pending.started.Add(auditMergeWindow)) {
-			continue
+	for len(a.expiry) > 0 {
+		window := a.expiry[0]
+		a.scannedWindows++
+		if now.Before(window.deadline()) {
+			break
 		}
-		a.writePendingLocked(pending)
-		delete(a.pending, key)
+		heap.Pop(&a.expiry)
+		a.deleteWindowKeyLocked(window)
+		a.writePendingLocked(window)
 	}
 	a.rescheduleLocked()
 }
@@ -286,25 +427,19 @@ func (a *auditLog) writeEventLocked(e Event) error {
 	return nil
 }
 
-// rescheduleLocked arms one timer for the earliest open window. The timer
-// callback flushes every window whose deadline has passed.
+// rescheduleLocked arms one timer for the earliest open window, which is the
+// expiry heap's root. The timer callback flushes every window whose deadline
+// has passed.
 func (a *auditLog) rescheduleLocked() {
-	if a.closed {
+	if a.closed || len(a.expiry) == 0 {
 		a.stopTimerLocked()
 		return
 	}
-	keys := a.sortedPendingKeysLocked()
-	if len(keys) == 0 {
-		a.stopTimerLocked()
-		return
-	}
-	earliest := a.pending[keys[0]].started.Add(auditMergeWindow)
-	for _, key := range keys[1:] {
-		deadline := a.pending[key].started.Add(auditMergeWindow)
-		if deadline.Before(earliest) {
-			earliest = deadline
-		}
-	}
+	// The heap root is the only window this looks at; count it the way
+	// flushExpiredLocked counts the windows it examines, so a reschedule that
+	// falls back to a full-table scan is visible to the scan test.
+	a.scannedWindows++
+	earliest := a.expiry[0].deadline()
 	if a.timer != nil && a.timerDue.Equal(earliest) {
 		return
 	}
@@ -336,15 +471,28 @@ func (a *auditLog) expire() {
 	a.flushExpiredLocked(a.now())
 }
 
-// sortedPendingKeysLocked returns the pending merge keys in a deterministic
-// order, so equal deadlines flush in a stable file order.
-func (a *auditLog) sortedPendingKeysLocked() []string {
+// orderedPendingLocked returns every open window in a deterministic order:
+// ordinary windows by merge key, then summary windows by kind. Reads and Close
+// are low-frequency paths, so they may sort the whole table.
+func (a *auditLog) orderedPendingLocked() []*pendingAudit {
 	keys := make([]string, 0, len(a.pending))
 	for key := range a.pending {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	return keys
+	windows := make([]*pendingAudit, 0, len(a.pending)+len(a.summary))
+	for _, key := range keys {
+		windows = append(windows, a.pending[key])
+	}
+	kinds := make([]string, 0, len(a.summary))
+	for kind := range a.summary {
+		kinds = append(kinds, string(kind))
+	}
+	sort.Strings(kinds)
+	for _, kind := range kinds {
+		windows = append(windows, a.summary[EventKind(kind)])
+	}
+	return windows
 }
 
 // read loads the whole log, filters by since when it is not zero, adds the
@@ -389,8 +537,7 @@ func (a *auditLog) read(since time.Time) ([]Event, error) {
 		}
 		events = append(events, event)
 	}
-	for _, key := range a.sortedPendingKeysLocked() {
-		pending := a.pending[key]
+	for _, pending := range a.orderedPendingLocked() {
 		event := pending.event
 		if pending.occurrences > 1 {
 			event.Count = pending.occurrences
@@ -421,9 +568,10 @@ func (a *auditLog) close() error {
 	}
 	a.closed = true
 	a.stopTimerLocked()
-	for _, key := range a.sortedPendingKeysLocked() {
-		a.writePendingLocked(a.pending[key])
-		delete(a.pending, key)
+	for len(a.expiry) > 0 {
+		window := heap.Pop(&a.expiry).(*pendingAudit)
+		a.deleteWindowKeyLocked(window)
+		a.writePendingLocked(window)
 	}
 	return a.file.Close()
 }
@@ -434,15 +582,17 @@ func (a *auditLog) close() error {
 func auditMergeKey(e Event) (string, bool) {
 	switch e.Event {
 	case EventConnectionRejected:
+		// A caller that knows the network source names it; the fingerprint is
+		// chosen by the other side and cannot stand for the source, so a
+		// stranger changing its certificate would defeat the merge.
+		if e.MergeKey != "" {
+			return "connection_rejected:" + e.MergeKey, true
+		}
 		if e.Peer != nil {
 			var zero [32]byte
 			if e.Peer.Fingerprint != zero {
 				return "connection_rejected:" + hex.EncodeToString(e.Peer.Fingerprint[:]), true
 			}
-		}
-		// A caller may supply a source address instead of a fingerprint.
-		if e.MergeKey != "" {
-			return "connection_rejected:" + e.MergeKey, true
 		}
 		return "", false
 	case EventPairingFailed:
