@@ -236,6 +236,8 @@ peers service status [flags]
 
 Peers 表的 `DETAIL` 列给出对端没有连上的原因。两个 Broker 使用的链路协议版本不同时，这一列是 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方以 `backoff` 状态持续重试，接受方停在 `waiting`。`peers broker list` 没有这一列。
 
+Broker 提供的文字在终端里按转义形式打印：制表符、换行、行分隔符或段落分隔符显示为空格，其余控制字符与 Unicode 格式字符按码点显示为 `\xNN`、`\uNNNN` 或 `\UNNNNNNNN`。
+
 Broker 处于降级运行时，两张表之前先输出 `Broker: degraded (local only): <reason>` 或 `Broker: degraded (diagnostics only): <reason>`，再输出 `Fix: <fix>`。仅本机降级时照常输出两张表。仅诊断降级时只输出这两行，并以退出码 1 结束。
 
 有更新的正式发布版本时，`peers service status` 在最后多打印一行。这一行里，`<latest>` 是最新版本，`<installed>` 是已安装版本。

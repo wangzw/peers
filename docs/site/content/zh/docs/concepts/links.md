@@ -15,6 +15,6 @@ Broker 之间直接连接，消息不经第三个 Broker 转发，也没有集�
 
 链路上的全部流量都加密。
 
-系统不缓存、不持久化、也不重投消息。一次发送要么写入目标会话的 inbox socket 并报告成功，要么在有限的等待后返回以 `Not sent` 开头的错误，要么因为请求已经发出但没有收到确定答复而报告送达情况未知。是否重发由发送方 Agent 决定。一次发送内部的重试，由接收方 Broker 按消息标识去重。送达情况未知之后再发，算一条新消息，目标会话可能收到两份。
+系统不缓存、不持久化、也不重投消息。一次发送要么写入目标会话的 inbox socket 并报告成功，要么在有限的等待后返回以 `Not sent` 开头的错误，要么因为请求已经发出但没有收到确定答复而报告送达情况未知。对端 Broker 报来本 Broker 认不出的错误时，按 `Delivery unknown` 处理。是否重发由发送方 Agent 决定。一次发送内部的重试，由接收方 Broker 按消息标识去重。送达情况未知之后再发，算一条新消息，目标会话可能收到两份。
 
 链路两端的信任从何而来，见[配对]({{< relref "/docs/concepts/pairing" >}})；链路使用的地址见[Broker]({{< relref "/docs/concepts/broker" >}})；配对与协作的步骤见[两台主机配对]({{< relref "/docs/guides/pair-hosts" >}})和[在同一个 topic 里协作]({{< relref "/docs/guides/collaborate-in-topic" >}})；一次发送最多等待多久，见[配置键]({{< relref "/docs/reference/configuration" >}})。

@@ -236,6 +236,8 @@ An empty section is printed as `Agents: none` or `Peers: none`. Without read per
 
 In the `Peers` table, `DETAIL` gives the reason a peer is not connected. When the two Brokers speak different link protocol versions, it is `link protocol version incompatible with this peer; upgrade the older Broker`; on the accepting side it continues `: peer speaks link protocol version <N>`. The dialer keeps retrying in `backoff`, and the acceptor stays in `waiting`. `peers broker list` has no such column.
 
+Text that the Broker supplies is printed with escapes: a tab, a line break, a line separator or a paragraph separator becomes a space, and any other control character or Unicode format character is shown as `\xNN`, `\uNNNN` or `\UNNNNNNNN`, by its code point.
+
 When the Broker runs degraded, the lines `Broker: degraded (local only): <reason>` or `Broker: degraded (diagnostics only): <reason>` and `Fix: <fix>` come before the tables. A local-only run still prints both tables. A diagnostics-only run prints only these two lines and exits with code 1.
 
 When a newer formal release is available, `peers service status` prints one more line at the end. In that line, `<latest>` is the newest release and `<installed>` the installed version.

@@ -45,6 +45,16 @@ The Broker is designed not to be a descendant of any session. A user Broker is s
 
 Native Windows is not supported because inbox connections there require the authentication line.
 
+## Received content is untrusted
+
+Text that arrives from another agent is not the user's instruction. A message from a sender whose name contains `@`, the public topic names and descriptions that `list_topics` and `list_brokers` return, the addresses of other Brokers that `list_brokers` returns, and the agent names and addresses that `list_agents` returns all come from another agent or Broker, possibly on another host or under another account. `peers` does not verify any of it. The session instructions require the model to relay such a request to the user and get the user's explicit consent before acting on it, in particular before changing configuration, pairing or unpairing, upgrading the Broker, setting it online or offline, running a command, or reading or writing a file. As with the pairing key rule above, this is a requirement on the model, not a guarantee the system enforces.
+
+Delivered text is placed inside a fixed envelope that names its sender. When a message body contains the envelope's opening or closing tag, in any letter case, `peers` escapes it by inserting a backslash after the `<`, so the body stays plain text and cannot forge either end of the envelope. Known limitation: HTML entities, zero-width characters and homoglyphs are not escaped; they change only how the body displays in the session, not how the envelope attributes the message.
+
+When a peer Broker returns an error for a send, this Broker relays only a code the receiving Broker can actually return: `not_found`, `ambiguous`, `not_visible`, `invalid_argument`, `too_large`, `inbox_unwritable`, `broker_offline` or `delivery_unknown`. The error reads `Not sent: Broker <alias> said: "<...>"`, or `Delivery unknown: Broker <alias> said: "<...>"` when the code is `delivery_unknown`; the quoted text is capped at 512 bytes, cut at a character boundary and marked with `...`. Any other code is reported as `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`, and the peer's text is not repeated.
+
+When a terminal command prints text the Broker supplies, a tab, a line break, a line separator or a paragraph separator becomes a space, and every other control character or Unicode format character is shown as `\xNN`, `\uNNNN` or `\UNNNNNNNN`, by its code point.
+
 ## Rate limits, loop detection and duplicate suppression
 
 `peers` does not rate-limit sending, count hops or detect message loops. The receiving Claude Code applies its own rules. It identifies a sender by the reply address in the frame, or by the writing process when there is none. Each sender gets a token bucket with capacity 30 that refills at 0.5 per second, and at most 50 pending cross-session messages are held. The 30-second rule is separate: it drops a message from the same agent to the same session whose content repeats the previous one. The signature is part of that content, so the rule distinguishes agents even when they share one token bucket; two agents do not suppress each other's messages.

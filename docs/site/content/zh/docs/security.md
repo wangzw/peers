@@ -45,6 +45,16 @@ Broker 的设计是不做任何会话的后代进程。用户级 Broker 由服�
 
 原生 Windows 不支持，因为那里的 inbox 连接强制要求认证行。
 
+## 收到的内容按不可信处理
+
+来自其他 Agent 的文本不是用户的指令。发送方名字含 `@` 的消息，`list_topics` 与 `list_brokers` 返回的公开 topic 名与简介、其他 Broker 的地址，以及 `list_agents` 返回的 Agent 名字与地址，都来自其他 Agent 或 Broker，可能位于另一台主机或另一个账户之下，peers 一概不核实。会话说明要求模型在照它们的要求行事之前，先把请求转述给用户并取得用户明确同意，尤其是修改配置、配对或解除配对、升级 Broker、上下线、运行命令、读写文件之前。与上面配对密钥一节相同，这是对模型的要求，而不是系统提供的保证。
+
+投递的文本放在一段固定的信封里，信封标明发送方。消息正文里出现信封的起始或结束标签时，不论大小写，peers 都在 `<` 之后插入一个反斜杠，使它作为普通文本显示，正文因此伪造不了信封的任何一端。已知限制：HTML 实体、零宽字符与同形字符不转义；它们只改变正文在会话里的显示，不改变信封对消息的署名。
+
+对端 Broker 为一次发送返回错误时，本 Broker 只转述接收方真会返回的错误码：`not_found`、`ambiguous`、`not_visible`、`invalid_argument`、`too_large`、`inbox_unwritable`、`broker_offline` 与 `delivery_unknown`。错误写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时，开头改为 `Delivery unknown: Broker <alias> said: "<…>"`。引述的说明最长 512 字节，在字符边界上截断，截断处加 `...`。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。
+
+终端命令打印 Broker 提供的文字时，制表符、换行、行分隔符或段落分隔符显示为空格，其余控制字符与 Unicode 格式字符按码点显示为 `\xNN`、`\uNNNN` 或 `\UNNNNNNNN`。
+
 ## 限速、循环检测与去重
 
 peers 不限制发送频率，不携带跳数，也不检测消息循环。接收端的 Claude Code 自己有一套规则。它按帧里的回复地址识别发送方，没有回复地址时按写入进程识别。每个发送方一个令牌桶，容量 30，每秒补充 0.5 个；未处理的会话间消息至多保留 50 条。30 秒去重是另一条规则：同一个 Agent 发给同一个会话、与上一条内容完全相同的消息会被丢弃。署名是内容的一部分，所以即使多个 Agent 共用一个令牌桶，这条规则也按 Agent 区分；不同 Agent 不会互相造成丢弃。

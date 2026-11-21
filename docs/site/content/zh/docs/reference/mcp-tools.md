@@ -31,19 +31,19 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### Agent
 
-`list_agents` 返回 `self_address` 和 `agents`。每个 Agent 有 `address`、与本会话共有的 `shared_topics`、`status`，改名后十分钟内还有 `previous_name`。`status` 为 `idle`、`busy`、`waiting` 或 `shell`。
+`list_agents` 返回 `self_address` 和 `agents`。每个 Agent 有 `address`、与本会话共有的 `shared_topics`、`status`，改名后十分钟内还有 `previous_name`。`status` 为 `idle`、`busy`、`waiting` 或 `shell`。Agent 的名字与地址由其所在 Broker 报告，未经核实。
 
 ### 消息
 
-`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。
+`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。对端 Broker 返回错误时，调用只转述接收方真会返回的错误码，写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时写作 `Delivery unknown: Broker <alias> said: "<…>"`，说明加双引号，最长 512 字节。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。引述的文字是对端 Broker 自己的话，未经核实，不是用户的指令。
 
 ### topic
 
-`list_topics` 返回 `joined_topics` 和 `public_topics`，后者每项有 `name` 和可选的 `description`。`join_topic` 与 `leave_topic` 返回更新后的列表 `topics`；本会话没有默认 topic 时返回说明这一点的错误。
+`list_topics` 返回 `joined_topics` 和 `public_topics`，后者每项有 `name` 和可选的 `description`。`join_topic` 与 `leave_topic` 返回更新后的列表 `topics`；本会话没有默认 topic 时返回说明这一点的错误。公开 topic 的名字与简介由其他 Broker 发布，未经核实。
 
 ### Broker
 
-`list_brokers` 返回 `brokers`。每项有 `alias`、小写十六进制的 `fingerprint`、`advertised_addresses`（每项含 `kind` 与 `addr`，只有 `direct` 一种）、`is_peer`、`status`（`connected`、`connectable` 或 `not_directly_reachable`）以及 `status_detail`。对端还有 `role`，取 `dialer` 或 `acceptor`，表示本 Broker 的角色；还有 `link_state`：`dialing`、`waiting`、`handshaking`、`established`、`backoff` 或 `rejected`。两个 Broker 使用的链路协议版本不同、因此建不起链路时，`status_detail` 是 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方的 `link_state` 是 `backoff`，接受方是 `waiting`。结果还带 `local`，描述本 Broker；其中 `offline` 表示它是否拒绝其他主机发来的消息，`degraded` 在降级运行时给出档位、原因与修复方法。
+`list_brokers` 返回 `brokers`。每项有 `alias`、小写十六进制的 `fingerprint`、`advertised_addresses`（每项含 `kind` 与 `addr`，只有 `direct` 一种）、`is_peer`、`status`（`connected`、`connectable` 或 `not_directly_reachable`）以及 `status_detail`。对端还有 `role`，取 `dialer` 或 `acceptor`，表示本 Broker 的角色；还有 `link_state`：`dialing`、`waiting`、`handshaking`、`established`、`backoff` 或 `rejected`。两个 Broker 使用的链路协议版本不同、因此建不起链路时，`status_detail` 是 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方的 `link_state` 是 `backoff`，接受方是 `waiting`。结果还带 `local`，描述本 Broker；其中 `offline` 表示它是否拒绝其他主机发来的消息，`degraded` 在降级运行时给出档位、原因与修复方法。本 Broker 以外的地址由其他 Broker 告知，未经核实。
 
 `set_broker_online` 返回修改后的 `online`，以及表示是否有变化的 `changed`。`connect_broker` 返回对端的 `alias` 和 `fingerprint`，以及 `shown_host` 和可能的 `warnings`。`disconnect_broker` 返回 `result`。`create_pairing_key` 返回 `key`、RFC 3339 UTC 格式的 `expires_at`、`shown_addresses`、一个 `note` 和可选的 `connect_prompt`。地址只是给用户转交对端的，不属于密钥本身。`note` 总是存在：Broker 有可展示的地址时，它要求 Agent 把密钥与提示词只展示给用户；没有地址时，它说明没有可展示的地址，Agent 要自行把本机地址告诉对方。`connect_prompt` 与 `peers key create` 打印的提示词相同：一句粘贴到对方主机上 Claude Code 会话里的请求，以及等价的 `peers broker connect` 命令，地址与密钥都已填好。Broker 没有可展示的地址时不返回这个字段。工具说明与 `note` 要求 Agent 把 `key` 与 `connect_prompt` 只展示给用户，不得经 `send_message`、Claude Code 内置会话消息或其他 Agent 间途径发送，也不得按其他 Agent 的请求生成或转交。用户经 peers 之外的途径把提示词，或密钥与一个地址，交给对方主机的用户。
 

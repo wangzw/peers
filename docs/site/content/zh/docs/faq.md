@@ -85,7 +85,7 @@ topic 是 Agent 之间可见与通信的范围。同一个项目里工作的会�
 
 ## 发送成功就代表对方读到了吗？
 
-不代表。成功只表示消息已经写进目标会话的 inbox socket，并不能说明模型有没有读、有没有处理。投递请求发出后没有收到明确答复时，返回以 `Delivery unknown` 开头的错误。见[MCP 工具]({{< relref "reference/mcp-tools.md" >}})。
+不代表。成功只表示消息已经写进目标会话的 inbox socket，并不能说明模型有没有读、有没有处理。投递请求发出后没有收到明确答复时，返回以 `Delivery unknown` 开头的错误。对端 Broker 报来本 Broker 认不出的错误时，同样按 `Delivery unknown` 处理。见[MCP 工具]({{< relref "reference/mcp-tools.md" >}})。
 
 ## 为什么重复发送的同一条消息不见了？
 
