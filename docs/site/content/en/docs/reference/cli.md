@@ -23,7 +23,7 @@ Local Broker:
 Installation:
   completion  Generate the autocompletion script for the specified shell
   uninstall   Remove the peers installation
-  update      Install the newest release of peers
+  update      Install the latest release of peers
 
 Flags:
   -h, --help      help for peers
@@ -189,7 +189,7 @@ A usage error exits with code 2; a degraded run exits with code 3; any other fai
 peers service remove [flags]
 ```
 
-Stops and removes only the installed service. The binary and the MCP registration stay, and so do configuration, identity and audit logs; [peers uninstall](#peers-uninstall) removes the whole installation. If no service is installed, the command succeeds, prints `peers service is not installed`, and can be repeated.
+Stops and removes only the installed service. The binary and the MCP registration stay, and so do configuration, identity and audit logs; [peers uninstall](#peers-uninstall) removes the whole installation. If no service is installed, the command prints `The peers service is not installed.` and succeeds, so it can be repeated.
 
 - `--system` and `--user` select the level and are mutually exclusive. Without either, root removes the system service and every other account the user service.
 - `--system` removes the system service. It must run as root.
@@ -208,7 +208,7 @@ Starts, stops or restarts the installed service.
 
 - `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system service and every other account the user service.
 
-On success the command prints `Broker service started (user-level)` or the matching `Broker service stopped (user-level)` or `Broker service restarted (user-level)` line, with `system-level` for the system service.
+On success the command prints `The user Broker service has started.`, `The user Broker service has stopped.` or `The user Broker service has restarted.`, with `system` in place of `user` for the system service.
 
 `stop` does not disable the service, so it starts again at the next login or boot. When that level has no installed service, the command exits with code 1 and says that no service is installed; an account that has only the system service installed is also told to run `sudo peers service <command> --system`.
 
@@ -248,7 +248,7 @@ peers service online [flags]
 peers service offline [flags]
 ```
 
-`peers service offline` makes this Broker refuse messages sent by other hosts, and `peers service online` accepts them again. The commands print `Broker is now offline` and `Broker is now online` respectively.
+`peers service offline` makes this Broker refuse messages sent by other hosts, and `peers service online` accepts them again. The commands print `The Broker is now offline.` and `The Broker is now online.` respectively.
 
 - `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system Broker and every other account its user Broker. The command talks only to the selected level and does not fall back to the other one.
 
@@ -291,7 +291,7 @@ When the command selects a running Broker, that Broker installs the update itsel
 1. Sends the request to the selected Broker. The Broker decides permission from write access to its configuration file; the command does not check it first. On a denial the Broker's error message is written to standard error and the command exits with code 1, with nothing downloaded.
 2. When the current version is already the latest, the command prints `peers <installed> is up to date` and exits with code 0.
 3. The Broker downloads the archive for this platform and `checksums.txt`, verifies the archive's SHA-256, extracts the regular file named `peers` and runs the new binary's `--version` to confirm that it reports the expected version. It then replaces its own binary. A symbolic link keeps pointing at the updated file.
-4. The Broker answers before it restarts. The command prints `The Broker is restarting to version <latest>.` and waits until the restarted Broker reports that version, because the update is complete only when that process runs. On success it prints `The Broker is running peers <latest>.` and then the session notice. When the restarted Broker does not report the new version in time, the command fails and names where that level's service log is.
+4. The Broker answers before it restarts. The command prints `The Broker is restarting with version <latest>.` and waits until the restarted Broker reports that version, because the update is complete only when that process runs. On success it prints `The Broker is running peers <latest>.` and then the session notice. When the restarted Broker does not report the new version in time, the command fails and names where that level's service log is.
 5. The session notice reads `Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.`
 
 A user Broker that was started from a terminal, rather than by a service manager, cannot replace and restart itself. The command then replaces the binary locally, as described below.
@@ -301,7 +301,7 @@ A user Broker that was started from a terminal, rather than by a service manager
 With no running Broker, or after the user Broker above declines, the command replaces the binary in place:
 
 1. Locates the running executable and resolves symbolic links. Only the file they point at is replaced.
-2. Checks that it can write in the target's directory, before any download. Without permission it prints `cannot write to <dir>: ...`, then `run "sudo peers update" to update a system-level installation` and exits with code 1.
+2. Checks that it can write in the target's directory, before any download. Without permission it prints `cannot write to <dir>: ...`, then `run "sudo peers update" to update a system installation` and exits with code 1.
 3. Queries GitHub for the latest formal release. When the current version is already the latest, it prints `peers <installed> is up to date` and exits with code 0.
 4. Prints `peers <installed> is installed; version <latest> is available.` and, when the release has a URL, `Release: <url>`. It then downloads the archive for this platform and `checksums.txt`, verifies the archive's SHA-256, extracts the regular file named `peers` and runs the new binary's `--version` to confirm that it reports the expected version.
 5. Writes the new binary next to the target, gives it the same owner and mode as the old one and renames it into place. The old version is not kept.
@@ -313,7 +313,7 @@ Through the Broker:
 
 ```text
 peers <installed> is installed. Update to the latest release? [y/N] y
-The Broker is restarting to version <latest>.
+The Broker is restarting with version <latest>.
 The Broker is running peers <latest>.
 Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.
 ```
@@ -330,12 +330,12 @@ The new binary takes effect the next time the Broker starts.
 Failures are written to standard error with the prefix `peers update: `. The messages include:
 
 - `version "dev" is not a release build; only release builds can update themselves`
-- `cannot write to <dir>: ...`, followed by `run "sudo peers update" to update a system-level installation`
+- `cannot write to <dir>: ...`, followed by `run "sudo peers update" to update a system installation`
 - `standard input is not a terminal; pass --yes to proceed without asking`
 - `checksum mismatch for <archive>`
 - `downloaded binary reported "<x>", want "peers <latest>"`
-- `the Broker did not report version <latest> within <duration>; check the service log with <command or path>`; when the last status query failed, its reason is in parentheses after the duration: `within <duration> (<error>)`
-- `the Broker is not running under a service manager, so it cannot start the new binary again; install it as a service and run the update against that service (for example, "peers service install" or "sudo peers service install --system")`
+- `the Broker did not report version <latest> within <duration>; check the service log: <command or path>`; when the last status query failed, its reason is in parentheses after the duration: `within <duration> (last error: <error>)`
+- `the Broker is not running under a service manager, so it cannot restart itself with the new binary; install it as a service and run the update against that service (for example, "peers service install" or "sudo peers service install --system")`
 - `another update is already in progress`
 
 When the update goes through a Broker, a checksum or version mismatch appears after `installing <latest> failed: `, and a failure to look up the latest release appears after `looking up the latest release failed: `.
@@ -348,8 +348,8 @@ peers uninstall [flags]
 
 Removes an installation: the service, the binary that the service starts, the MCP registration of the account that ran `sudo` (or of the account that runs the command when it is not run through `sudo`), the shell completion files and man pages the install script placed and the runtime directory.
 
-- Run as root to remove the system installation. Another account removes its own user installation; when the host also has the system installation, the command removes the user one and then prints `A system-level installation is still present; run: sudo peers uninstall --yes`, with `--purge` added when that option was given.
-- An account whose host has only the system installation is asked `Remove the system-level installation through sudo? [y/N]`. Answering `y` runs the command again with `sudo`; `--yes` skips the question and runs it through `sudo` directly. Any other answer prints `Run: sudo peers uninstall --yes` and exits with code 0. Without a terminal and without `--yes`, the command fails, prints the complete `sudo peers uninstall --yes` command to run and exits with code 1. When `--purge` is given, both of those commands carry it: `sudo peers uninstall --purge --yes`.
+- Run as root to remove the system installation. Another account removes its own user installation; when the host also has the system installation, the command removes the user one and then prints `A system installation is still present; run: sudo peers uninstall --yes`, with `--purge` added when that option was given.
+- An account whose host has only the system installation is asked `Remove the system installation through sudo? [y/N]`. Answering `y` runs the command again with `sudo`; `--yes` skips the question and runs it through `sudo` directly. Any other answer prints `Run: sudo peers uninstall --yes` and exits with code 0. Without a terminal and without `--yes`, the command fails, prints the complete `sudo peers uninstall --yes` command to run and exits with code 1. When `--purge` is given, both of those commands carry it: `sudo peers uninstall --purge --yes`.
 - Unless `--purge` is given, the command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them on any answer other than `y`.
 - `--yes` (`-y`) skips the questions. It keeps the configuration, identity, audit and service logs unless `--purge` is also given.
 - `--purge` skips the data question and removes the data too.

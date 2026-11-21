@@ -23,7 +23,7 @@ Local Broker:
 Installation:
   completion  Generate the autocompletion script for the specified shell
   uninstall   Remove the peers installation
-  update      Install the newest release of peers
+  update      Install the latest release of peers
 
 Flags:
   -h, --help      help for peers
@@ -189,7 +189,7 @@ peers service install [flags]
 peers service remove [flags]
 ```
 
-只停止并卸载已安装的服务。二进制与 MCP 注册都保留，配置、身份与审计日志也保留；要卸载整个安装，用 [peers uninstall](#peers-uninstall)。没有安装过服务时，命令照常成功，输出 `peers service is not installed`，所以可以重复执行。
+只停止并卸载已安装的服务。二进制与 MCP 注册都保留，配置、身份与审计日志也保留；要卸载整个安装，用 [peers uninstall](#peers-uninstall)。没有安装过服务时，命令输出 `The peers service is not installed.` 并照常成功，所以可以重复执行。
 
 - `--system` 与 `--user` 选择级别，二者互斥。都不给时，root 选系统级，其他账户选用户级。
 - `--system` 卸载系统级服务，必须以 root 运行。
@@ -208,7 +208,7 @@ peers service restart [flags]
 
 - `--system` 与 `--user` 选择级别，二者互斥。都不给时，root 选系统级，其他账户选用户级。
 
-成功时输出 `Broker service started (user-level)`，或对应的 `Broker service stopped (user-level)`、`Broker service restarted (user-level)`；系统级服务括号里为 `system-level`。
+成功时输出 `The user Broker service has started.`、`The user Broker service has stopped.` 或 `The user Broker service has restarted.`；系统级服务把 `user` 换成 `system`。
 
 `stop` 不禁用服务，下次登录或开机时仍会启动。该级别没有安装服务时，命令以退出码 1 结束，并说明该级别没有安装服务；只有系统级服务的账户还会收到提示，改用 `sudo peers service <command> --system`。
 
@@ -248,7 +248,7 @@ peers service online [flags]
 peers service offline [flags]
 ```
 
-`peers service offline` 让本 Broker 拒绝其他主机发来的消息，`peers service online` 恢复接收。两个命令分别输出 `Broker is now offline` 与 `Broker is now online`。
+`peers service offline` 让本 Broker 拒绝其他主机发来的消息，`peers service online` 恢复接收。两个命令分别输出 `The Broker is now offline.` 与 `The Broker is now online.`。
 
 - `--system` 与 `--user` 选择级别，二者互斥。都不给时，root 选系统级，其他账户选用户级。命令只与选中的级别通信，不会回退到另一级别。
 
@@ -291,7 +291,7 @@ peers update [flags]
 1. 把请求发给选中的 Broker。Broker 按对配置文件的写权限判定权限，命令不先行检查。权限被拒时，Broker 的错误写到标准错误，命令以退出码 1 结束，没有发出任何下载请求。
 2. 已经是最新版本时，命令输出 `peers <installed> is up to date`，以退出码 0 结束。
 3. Broker 下载本平台与架构的发布包和 `checksums.txt`，核对发布包的 SHA-256，取出其中名为 `peers` 的普通文件，并运行新二进制的 `--version`，确认它报告的版本符合预期。然后它替换自己的二进制；符号链接仍指向更新后的文件。
-4. Broker 先应答再重启。命令输出 `The Broker is restarting to version <latest>.`，并等到重启后的 Broker 报告该版本，因为只有新进程在运行，更新才算完成。成功时输出 `The Broker is running peers <latest>.`，随后输出会话提示。重启后的 Broker 未及时报告新版本时，命令失败，并给出该级别服务日志的位置。
+4. Broker 先应答再重启。命令输出 `The Broker is restarting with version <latest>.`，并等到重启后的 Broker 报告该版本，因为只有新进程在运行，更新才算完成。成功时输出 `The Broker is running peers <latest>.`，随后输出会话提示。重启后的 Broker 未及时报告新版本时，命令失败，并给出该级别服务日志的位置。
 5. 会话提示为 `Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.`
 
 在终端里启动、而不是由服务管理器启动的用户级 Broker 不能替换并重启自己，会把命令交给下面的本地替换。
@@ -301,7 +301,7 @@ peers update [flags]
 没有正在运行的 Broker，或上面的用户级 Broker 无法自我更新时，命令在本地替换二进制：
 
 1. 定位正在运行的可执行文件，并解析符号链接。只替换它们指向的文件。
-2. 检查能否写入目标所在的目录，这一步先于任何下载。没有写权限时输出 `cannot write to <dir>: ...`，随后输出 `run "sudo peers update" to update a system-level installation`，以退出码 1 结束。
+2. 检查能否写入目标所在的目录，这一步先于任何下载。没有写权限时输出 `cannot write to <dir>: ...`，随后输出 `run "sudo peers update" to update a system installation`，以退出码 1 结束。
 3. 向 GitHub 查询最新的正式发布版本。已经是最新版本时输出 `peers <installed> is up to date`，以退出码 0 结束。
 4. 先输出 `peers <installed> is installed; version <latest> is available.`；发布填了地址时再输出 `Release: <url>`。然后下载本平台与架构的发布包和 `checksums.txt`，核对发布包的 SHA-256，取出其中名为 `peers` 的普通文件，并运行新二进制的 `--version`，确认它报告的版本符合预期。
 5. 在目标所在的目录写入新二进制，把属主与权限改成与原文件相同，再改名到目标路径。旧版本不保留。
@@ -313,7 +313,7 @@ peers update [flags]
 
 ```text
 peers <installed> is installed. Update to the latest release? [y/N] y
-The Broker is restarting to version <latest>.
+The Broker is restarting with version <latest>.
 The Broker is running peers <latest>.
 Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.
 ```
@@ -330,12 +330,12 @@ The new binary takes effect the next time the Broker starts.
 失败信息写到标准错误，前缀为 `peers update: `，包括：
 
 - `version "dev" is not a release build; only release builds can update themselves`
-- `cannot write to <dir>: ...`，随后是 `run "sudo peers update" to update a system-level installation`
+- `cannot write to <dir>: ...`，随后是 `run "sudo peers update" to update a system installation`
 - `standard input is not a terminal; pass --yes to proceed without asking`
 - `checksum mismatch for <archive>`
 - `downloaded binary reported "<x>", want "peers <latest>"`
-- `the Broker did not report version <latest> within <duration>; check the service log with <command or path>`；最后一次查询出错时，原因放在括号里跟在时长后面：`within <duration> (<error>)`
-- `the Broker is not running under a service manager, so it cannot start the new binary again; install it as a service and run the update against that service (for example, "peers service install" or "sudo peers service install --system")`
+- `the Broker did not report version <latest> within <duration>; check the service log: <command or path>`；最后一次查询出错时，原因放在括号里跟在时长后面：`within <duration> (last error: <error>)`
+- `the Broker is not running under a service manager, so it cannot restart itself with the new binary; install it as a service and run the update against that service (for example, "peers service install" or "sudo peers service install --system")`
 - `another update is already in progress`
 
 经 Broker 更新时，校验和不符、版本不符这类报错出现在 `installing <latest> failed: ` 之后，查询最新发布版本失败出现在 `looking up the latest release failed: ` 之后。
@@ -348,8 +348,8 @@ peers uninstall [flags]
 
 卸载一个安装：服务、服务启动的二进制、执行 `sudo` 的账户（未经 `sudo` 时为执行命令的账户）的 MCP 注册、安装脚本放置的 shell 补全文件与 man 页，以及运行时目录。
 
-- 以 root 执行时，卸载系统级安装。其他账户卸载自己的用户级安装；主机上同时有系统级安装时，命令先卸载用户级安装，结束后输出 `A system-level installation is still present; run: sudo peers uninstall --yes`；给过 `--purge` 时命令里也带 `--purge`。
-- 主机上只有系统级安装时，命令询问 `Remove the system-level installation through sudo? [y/N]`。回答 `y` 时命令经 `sudo` 重新执行；给出 `--yes` 时跳过询问，直接经 `sudo` 执行。回答其他内容时输出 `Run: sudo peers uninstall --yes`，以退出码 0 结束。没有终端又没有 `--yes` 时命令失败，输出可以直接重跑的完整 `sudo peers uninstall --yes` 命令，以退出码 1 结束。给过 `--purge` 时，这两处给出的命令都带 `--purge`，即 `sudo peers uninstall --purge --yes`。
+- 以 root 执行时，卸载系统级安装。其他账户卸载自己的用户级安装；主机上同时有系统级安装时，命令先卸载用户级安装，结束后输出 `A system installation is still present; run: sudo peers uninstall --yes`；给过 `--purge` 时命令里也带 `--purge`。
+- 主机上只有系统级安装时，命令询问 `Remove the system installation through sudo? [y/N]`。回答 `y` 时命令经 `sudo` 重新执行；给出 `--yes` 时跳过询问，直接经 `sudo` 执行。回答其他内容时输出 `Run: sudo peers uninstall --yes`，以退出码 0 结束。没有终端又没有 `--yes` 时命令失败，输出可以直接重跑的完整 `sudo peers uninstall --yes` 命令，以退出码 1 结束。给过 `--purge` 时，这两处给出的命令都带 `--purge`，即 `sudo peers uninstall --purge --yes`。
 - 不给 `--purge` 时，命令询问 `Also remove configuration, identity, audit and service logs? [y/N]`，除回答 `y` 外都保留这些数据。
 - `--yes`（`-y`）跳过询问。除同时给出 `--purge` 外，配置、身份、审计与服务日志都保留。
 - `--purge` 跳过删除数据的询问，一并删除这些数据。
