@@ -145,8 +145,15 @@ func (h *handshakeHarness) eventCount() int {
 // reader. local is the conn's stream end; peer is the other side.
 func (h *handshakeHarness) newConn(t *testing.T, fp Fingerprint) (c *conn, local, peer *pipeEnd) {
 	t.Helper()
+	return h.newConnFrom(t, fp, "127.0.0.1:1")
+}
+
+// newConnFrom builds a conn whose recorded remote address is remote, so a test
+// can exercise behaviour that depends on the network source.
+func (h *handshakeHarness) newConnFrom(t *testing.T, fp Fingerprint, remote string) (c *conn, local, peer *pipeEnd) {
+	t.Helper()
 	local, peer = newPipe(t)
-	c = newConn(local, func() {}, peerIdentity{fp: fp, pub: make([]byte, 32), remote: "127.0.0.1:1"}, 8)
+	c = newConn(local, func() {}, peerIdentity{fp: fp, pub: make([]byte, 32), remote: remote}, 8)
 	c.start()
 	return c, local, peer
 }

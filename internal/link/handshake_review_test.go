@@ -98,6 +98,103 @@ func TestUnknownFingerprintMalformedHelloIsAudited(t *testing.T) {
 	hsWaitClosed(t, c)
 }
 
+// TestRejectedConnectionsMergeBySource checks that a rejection names the
+// network source, not the certificate the stranger chose: two connections from
+// one address with different certificates carry the same merge key and a
+// detail naming the source. The merge key is what config groups on, so the
+// stranger cannot escape the audit merge by rekeying every connection.
+func TestRejectedConnectionsMergeBySource(t *testing.T) {
+	h := newHandshakeHarness(t)
+	const remote = "203.0.113.7:4000"
+	for _, peer := range []Fingerprint{{0xB1}, {0xB2}} {
+		c, _, p := h.newConnFrom(t, peer, remote)
+		res := h.serve(c, nil)
+		hsSend(t, p, encodeHello(linkpb.ProtocolVersion, "stranger", hsNonce(7), nil))
+		if rej := hsRecv(t, p); rej.GetKind() != linkpb.KindReject {
+			t.Fatalf("first reply kind = %d, want reject", rej.GetKind())
+		}
+		h.clock.Advance(h.l.rejectLinger)
+		hsWaitClosed(t, c)
+		if r := waitHSResult(t, res); r.ok {
+			t.Fatal("an unknown peer was installed")
+		}
+	}
+
+	events := h.settings.Events()
+	if len(events) != 2 {
+		t.Fatalf("audit events = %+v, want two connection_rejected", events)
+	}
+	for _, ev := range events {
+		if ev.Event != config.EventConnectionRejected {
+			t.Errorf("audit kind = %q, want connection_rejected", ev.Event)
+		}
+		if ev.MergeKey != "203.0.113.7/32" {
+			t.Errorf("merge key = %q, want the source prefix %q", ev.MergeKey, "203.0.113.7/32")
+		}
+		if ev.Detail != "not a peer from 203.0.113.7/32" {
+			t.Errorf("detail = %q, want %q", ev.Detail, "not a peer from 203.0.113.7/32")
+		}
+		if ev.Peer == nil {
+			t.Error("audit event carries no peer fingerprint")
+		}
+	}
+}
+
+// TestRejectedConnectionsMergeByIPv6Prefix checks the same rule inside one
+// IPv6 /64: two addresses in the prefix share one merge key.
+func TestRejectedConnectionsMergeByIPv6Prefix(t *testing.T) {
+	h := newHandshakeHarness(t)
+	event := func(remote string) config.Event {
+		t.Helper()
+		c, _, p := h.newConnFrom(t, Fingerprint{0xC1}, remote)
+		res := h.serve(c, nil)
+		hsSend(t, p, encodeHello(linkpb.ProtocolVersion, "stranger", hsNonce(8), nil))
+		hsRecv(t, p)
+		h.clock.Advance(h.l.rejectLinger)
+		hsWaitClosed(t, c)
+		if r := waitHSResult(t, res); r.ok {
+			t.Fatal("an unknown peer was installed")
+		}
+		return h.settings.WaitEvent(t, config.EventConnectionRejected)
+	}
+
+	first := event("[2001:db8:1:2::1]:4000")
+	second := event("[2001:db8:1:2::abcd]:4000")
+	const prefix = "2001:db8:1:2::/64"
+	for _, ev := range []config.Event{first, second} {
+		if ev.MergeKey != prefix {
+			t.Errorf("merge key = %q, want %q", ev.MergeKey, prefix)
+		}
+		if ev.Detail != "not a peer from "+prefix {
+			t.Errorf("detail = %q, want %q", ev.Detail, "not a peer from "+prefix)
+		}
+	}
+}
+
+// TestNonHelloFirstFrameRejectionNamesSource covers the other unknown-peer
+// path: a first frame that is neither Hello nor PairRequest still reports the
+// source, so both paths merge alike.
+func TestNonHelloFirstFrameRejectionNamesSource(t *testing.T) {
+	h := newHandshakeHarness(t)
+	const remote = "203.0.113.9:4000"
+	c, _, p := h.newConnFrom(t, Fingerprint{0xC2}, remote)
+	res := h.serve(c, nil)
+	hsSend(t, p, &linkpb.Frame{Kind: 200})
+	hsRecv(t, p)
+	h.clock.Advance(h.l.rejectLinger)
+	hsWaitClosed(t, c)
+	if r := waitHSResult(t, res); r.ok {
+		t.Fatal("a connection with an unknown peer was installed")
+	}
+	ev := h.settings.WaitEvent(t, config.EventConnectionRejected)
+	if ev.MergeKey != "203.0.113.9/32" {
+		t.Errorf("merge key = %q, want %q", ev.MergeKey, "203.0.113.9/32")
+	}
+	if ev.Detail != "not a peer from 203.0.113.9/32" {
+		t.Errorf("detail = %q, want %q", ev.Detail, "not a peer from 203.0.113.9/32")
+	}
+}
+
 // TestRoleMismatchStillRejectsKnownDialer guards the role check order: a peer
 // this Broker dials is still refused with a role mismatch, not with a silent
 // close or a "not a peer" audit.

@@ -296,8 +296,8 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 - 首帧是 `PairRequest`：把连接交给 `pairing` 握手，不论指纹是否已在对端表中。握手成功后发起方接着在同一连接上发 `Hello`；`pairing` 收到这个 `Hello` 时才提交本方的接受方角色，连接随即转为链路。
 - 首帧是 `Hello`，指纹在对端表中且本方是该对端的接受方：回 `Hello`，链路建立。已有一条已建立的链路时，按“同一对端的新连接”处理。
 - 首帧是 `Hello`，指纹在对端表中而本方是该对端的拨号方：回原因为“角色不符”的 `Reject` 并关闭，运行日志记录。
-- 首帧是 `Hello` 而指纹不在对端表中：回原因为“不是对端”的 `Reject` 并关闭，写审计 `connection_rejected`，`Peer` 只填指纹（`REQ-broker-pairing-015`、`REQ-broker-pairing-022`）。
-- 首帧既不是 `Hello` 也不是 `PairRequest`：指纹不在对端表中时回原因为“不是对端”的 `Reject` 并关闭，写审计 `connection_rejected`；指纹在对端表中时直接关闭。
+- 首帧是 `Hello` 而指纹不在对端表中：回原因为“不是对端”的 `Reject` 并关闭，写审计 `connection_rejected`，`Peer` 只填指纹，按来源合并（`REQ-broker-pairing-015`、`REQ-broker-pairing-022`、`REQ-broker-config-069`）。
+- 首帧既不是 `Hello` 也不是 `PairRequest`：指纹不在对端表中时回原因为“不是对端”的 `Reject` 并关闭，写审计 `connection_rejected`，同样按来源合并；指纹在对端表中时直接关闭。
 
 在读到并核实首帧之前，本方不在流上发送任何内容，对方自报的别名、本方的对外地址列表之类的信息不会交给未经核实的连接。
 
@@ -370,7 +370,7 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 | 发送队列已满时调用 `Send` | 返回 `ErrQueueFull`，属于 `peer_unreachable` |
 | 同一 TCP 连接上打开第二个 `Connect` 流 | 第二个流以错误结束，同一连接上已建立的链路不受影响 |
 
-`link` 自己写四类审计事件：`link_up`、`link_down`、`connection_rejected` 与 `rejected_by_peer`。`link_up` 与 `link_down` 在每次投递建立与断开通知时各写一条，`Peer` 填对端指纹与生效别名，`link_down` 的 `detail` 是断开原因的名字；这两类事件不填 `MergeKey`，v0.1.0 不合并。`connection_rejected` 在未知指纹的连接被拒时写，`Peer` 只填指纹，按指纹合并（`REQ-broker-pairing-015`）；`rejected_by_peer` 在收到原因为“不是对端”的 `Reject` 时写（`REQ-broker-pairing-035`）。
+`link` 自己写四类审计事件：`link_up`、`link_down`、`connection_rejected` 与 `rejected_by_peer`。`link_up` 与 `link_down` 在每次投递建立与断开通知时各写一条，`Peer` 填对端指纹与生效别名，`link_down` 的 `detail` 是断开原因的名字；这两类事件不填 `MergeKey`，v0.1.0 不合并。`connection_rejected` 在未知指纹的连接被拒时写，`Peer` 只填指纹，按来源合并，`detail` 写作 `not a peer from <来源前缀>`（`REQ-broker-pairing-015`、`REQ-broker-config-069`）；`rejected_by_peer` 在收到原因为“不是对端”的 `Reject` 时写（`REQ-broker-pairing-035`）。
 
 链路协议与帧不变，链路协议版本不提升。投递应答中的 `broker_offline` 由 [broker](design-broker.md) 解读，本包只转交应答帧，不因新增错误码而改动；未升级的发送方把不认识的数值错误码按 `internal` 处理，提示文字仍带接收方给出的说明。降级只在本机接口体现，链路帧不新增错误码。下线不改变链路状态，`list_brokers` 中对端的状态不反映对端是否下线。降级运行仅本机时，本包没有监听，本方是接受方的对端停在等待对方；本方是拨号方的对端照常拨号。
 

@@ -100,12 +100,20 @@ func (l *Link) rejectAndLinger(c *conn, reason linkpb.RejectReason) {
 // writes the audit event that records the attempt.
 func (l *Link) rejectUnknown(c *conn, fp Fingerprint) {
 	l.rejectAndLinger(c, linkpb.RejectReason_REJECT_REASON_NOT_A_PEER)
-	l.settings.Audit(config.Event{
+	event := config.Event{
 		Time:   l.clock.Now(),
 		Event:  config.EventConnectionRejected,
 		Peer:   &config.PeerRef{Fingerprint: fp},
 		Detail: "not a peer",
-	})
+	}
+	// The fingerprint is the stranger's choice, so it cannot group a source.
+	// Name the network prefix when the address has an IP; config groups on it
+	// and falls back to the fingerprint only when there is none.
+	if source := sourcePrefix(c.id.remote); source != "" {
+		event.MergeKey = source
+		event.Detail = "not a peer from " + source
+	}
+	l.settings.Audit(event)
 }
 
 // closeAfterFailedHandshake closes a connection whose dialer handshake failed.
