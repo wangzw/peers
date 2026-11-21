@@ -217,9 +217,9 @@ message Frame {
 
 对外地址列表取自 [config](design-config.md)，至多 8 项，每项带有种类；本方发出的列表只含直连的项，形如 `主机:端口`。收到的列表中种类不认识的项不用于拨号，不影响帧中其余的内容，也不影响列表中认识的项。发送方是拨号方时这一项为空，收到的一方也不读取它。
 
-流上的首帧由发起连接的一方发送，是 `Hello` 或配对握手的 `PairRequest`。接受连接的一方在核实对方之前不发送任何帧。接受连接后，在未读到首帧的期限之后关闭连接；同时处于未认证状态的连接数有上限，达到上限时关闭最早建立的连接。`Hello` 中的协议版本是一个整数，双方的版本相等才建立链路，不相等时回 `Reject` 并关闭。只增不改的变化不改变协议版本：新增帧类型，以及给已有的帧增加字段；收到不认识的状态帧时丢弃，收到不认识的请求帧时回以“不支持”的应答，不认识的字段被忽略。改变已有帧或已有字段含义的变化，才提升协议版本。帧类型的编号空间按包划分。
+流上的首帧由发起连接的一方发送，是 `Hello` 或配对握手的 `PairRequest`。接受连接的一方在核实对方之前不发送任何帧。接受连接后，在未读到首帧的期限之后关闭连接。同时处于未认证状态的连接按来源限额（[ADR-unauthenticated-connection-limits](../../adr/adr-unauthenticated-connection-limits.md)）：来源取对方地址的网络前缀，IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理，去掉 IPv6 的 zone，地址中没有 IP 地址的连接共同归入一个来源。同一来源超过每来源上限时，关闭该来源最早建立的一条；全部来源合计超过全局上限时，关闭连接数最多的来源中最早建立的一条，连接数并列时取最早连接最早建立的那个来源。`Hello` 中的协议版本是一个整数，双方的版本相等才建立链路，不相等时回 `Reject` 并关闭。只增不改的变化不改变协议版本：新增帧类型，以及给已有的帧增加字段；收到不认识的状态帧时丢弃，收到不认识的请求帧时回以“不支持”的应答，不认识的字段被忽略。改变已有帧或已有字段含义的变化，才提升协议版本。帧类型的编号空间按包划分。
 
-首帧期限 10 秒，自 TCP 接受起计。未认证连接的上限是 64；未认证的范围从 TCP 接受到首帧 `Hello` 核实通过、或首帧 `PairRequest` 交给 `pairing` 且握手成功为止，配对握手期间的连接仍计入上限。每条 TCP 连接只承载一个 `Connect` 流，同一连接上的第二个流以错误结束。`Reject` 发出后，连接最多再保留 1 秒。服务端与客户端一次收发的消息上限都是 4 MiB。
+首帧期限 10 秒，自 TCP 接受起计。每来源上限 8，全局上限 64。TLS 握手完成、证书指纹在本方对端表中的连接转入已知对端池，不计入这两个上限；每个指纹的已知对端池至多 2 条，超过时关闭该指纹最早建立的一条。认证前从一条连接读入的字节数（含 TLS 握手、HTTP/2 前言与帧）上限 64 KiB，超过即关闭；HTTP/2 头部列表上限 16 KiB。未认证的范围从 TCP 接受到首帧 `Hello` 核实通过、或首帧 `PairRequest` 交给 `pairing` 且握手成功为止，配对握手期间的连接仍计入其所在池的上限：指纹不在对端表中的连接计入陌生来源池的每来源上限与全局上限，指纹已在对端表中的连接计入该指纹的已知对端池上限。每条 TCP 连接只承载一个 `Connect` 流，同一连接上的第二个流以错误结束。`Reject` 发出后，连接最多再保留 1 秒。认证后一次收发的消息上限是 4 MiB。驱逐超限的连接、因已知对端池超限关闭连接、以及认证前读取超过预算时，各写一条 Debug 级运行日志 `link: closed an unauthenticated connection`，字段 `source` 为来源前缀，`cause` 为关闭原因（`source_limit`、`global_limit`、`known_peer_limit` 或 `byte_budget`）；首帧期限到期不写这条日志。
 
 ## 依赖
 
@@ -291,7 +291,7 @@ A 自始至终没有向 B 发起连接，也不知道 B 的任何地址。B 在�
 
 ### 入站连接的处理
 
-TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方证书的指纹，再读首帧：
+TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方证书的指纹。指纹在本方对端表中的连接转入已知对端池，不在首帧核实前被陌生来源的连接挤掉；指纹不在对端表中的连接留在陌生来源池，受每来源上限与全局上限约束。之后读首帧：
 
 - 首帧是 `PairRequest`：把连接交给 `pairing` 握手，不论指纹是否已在对端表中。握手成功后发起方接着在同一连接上发 `Hello`；`pairing` 收到这个 `Hello` 时才提交本方的接受方角色，连接随即转为链路。
 - 首帧是 `Hello`，指纹在对端表中且本方是该对端的接受方：回 `Hello`，链路建立。已有一条已建立的链路时，按“同一对端的新连接”处理。
@@ -390,7 +390,7 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 
 | 能力 | 状态 | 代码 |
 |---|---|---|
-| 监听地址的绑定与入站连接的处理 | 已实现 | `internal/link/listen.go`、`internal/link/handshake.go`、`internal/link/unauth.go`（`Listen`、`acceptStream`、`serveInbound`、`unauthRegistry`） |
+| 监听地址的绑定与入站连接的处理 | 已实现 | `internal/link/listen.go`、`internal/link/handshake.go`、`internal/link/unauth.go`、`internal/link/source.go`（`Listen`、`acceptStream`、`serveInbound`、`unauthRegistry`、`sourcePrefix`） |
 | 按候选地址拨号、退避与重新建立 | 已实现 | `internal/link/dial.go`、`internal/link/order.go`、`internal/link/transport.go`（`startDialLoop`、`orderCandidates`、`backoffDelay`、`dialTLS`） |
 | 接受方的等待与同一对端新连接的取代 | 已实现 | `internal/link/record.go`、`internal/link/handshake.go`（`install`、`teardown`、`serveInbound`） |
 | 保活 | 已实现 | `internal/link/transport.go`（`serverOptions`、`newGRPCServer`、`clientKeepalive`） |

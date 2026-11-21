@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Security
 
+- A host that opens many unauthenticated connections can no longer evict the connections of other sources or of paired peers. Unauthenticated connections are limited per source and, once a peer's fingerprint is known, per fingerprint; the bytes and HTTP/2 header size a connection may send before authentication are bounded.
 - `create_pairing_key`'s note, its not-listening error, the server instructions and `connect_broker`'s `key` parameter now say the pairing key and the connect prompt go only to the user, who passes them outside peers. A session no longer relays either to another agent over `send_message`, Claude Code's built-in session messaging or any other agent-to-agent channel when that agent asks for a pairing key.
 
 ## [0.5.0] - 2026-11-21

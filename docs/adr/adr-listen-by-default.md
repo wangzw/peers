@@ -49,3 +49,4 @@ Broker 的默认配置是在本机的全部地址上监听一个固定的端口�
 - Broker 一启动，主机上就多出一个对本机全部地址开放的端口，启用了 IPv6 时也对 IPv6 地址开放。能连到它的任何一方都能看到它的证书；不希望如此的用户必须主动把监听地址配置为空，或限定到某个地址。
 - 同一台主机上第二个账户的 Broker 按默认配置运行时监听地址被占用，该账户的用户必须为它指定另一个地址或端口。新装或重装时预检发现地址被其他进程占用，安装失败且不注册服务（`REQ-broker-config-064`）。已经装好的服务之后再启动时进入降级运行，本机 Agent 照常互通，对端连不进来；在前台运行时启动失败，会话中的工具调用报错说明没有可用 Broker，直到用户改了配置并重新启动它。
 - 默认别名不含端口，见 [ADR-default-alias-host-and-account](adr-default-alias-host-and-account.md)。
+- 监听端口在认证前对任何能连到它的主机开放，它们能建立未认证连接、占用未认证连接的名额。按来源限额收窄这里的暴露面，见 [ADR-unauthenticated-connection-limits](adr-unauthenticated-connection-limits.md)。

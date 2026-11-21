@@ -328,6 +328,14 @@ Agent 必须能让本机 Broker 解除与一个对端的配对，解除后链路
 - **状态**：已实现
 - **端到端测试**：`test/e2e/pairing_keys_test.go` 的 `TestPairingKeys/REQ-broker-pairing-038 connect prompt`；审计不含密钥由 `test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/AuditHasNoSecrets` 覆盖；终端输出同一段提示词与无地址时不输出由 `internal/mcpserver/termcmd/format_test.go` 的 `TestWritePairingKey`、`TestWritePairingKeySingleAddress`、`TestWritePairingKeyUsesSharedConnectPrompt`、`TestWritePairingKeyNoAddressNoPrompt` 覆盖，`connect_prompt` 与生成函数一致由 `internal/mcpserver/handlers_brokers_test.go` 的 `TestCreatePairingKey` 覆盖；密钥只交给用户由 `internal/mcpserver/handlers_brokers_test.go` 的 `TestCreatePairingKey`、`TestCreatePairingKeyNotListening` 与 `internal/mcpserver/tools_test.go` 的 `TestInstructions`、`TestToolsList` 覆盖
 
+### REQ-broker-pairing-039
+
+一个来源同时发起的大量未认证连接，不得使其他来源的对端无法重新建立链路，也不得使其他来源的 Broker 无法完成配对。
+
+- **验收**：主机 B 的监听端口持续收到来自 A 以外的多个来源的大量裸 TCP 连接，这些来源合计的未认证连接数超过 B 的全局上限，期间 A 到 B 的链路断开并重新建立，在 `REQ-broker-pairing-018` 的 120 秒时限内恢复；同一期间第三个来源的主机凭 B 生成的有效一次性配对密钥向 B 发起配对，配对成功。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/links_test.go` 的 `TestLinksSourceFlood/REQ-broker-pairing-039 source flood keeps links and pairing`
+
 ## 数据需求
 
 Broker 的身份密钥、对端的指纹与别名、本方在每对对端中的角色、由本方发起配对的对端的对外地址保存在本机磁盘上，只允许运行该 Broker 的账户读取。一次性配对密钥只在内存中保留。预置静态密钥保存在 Broker 的配置文件中，能读取配置文件的账户都能读到它。
