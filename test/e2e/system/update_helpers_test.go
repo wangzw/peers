@@ -52,12 +52,24 @@ const (
 	// competes for it.
 	updateBrokerListen = "127.0.0.1:17461"
 
-	// updateFirstCheckBound covers the Broker's startup delay before its first
-	// update check. The design names one minute and this bound leaves the
-	// project-wide slack on top of it. The same bound is the quiet window in
-	// which a Broker with checking disabled must stay silent, because a check
-	// that was enabled would have fired within it.
-	updateFirstCheckBound = 2 * time.Minute
+	// updateInitialCheckDelay is the first-check delay the staged old release
+	// is started with through the test-build hook. Only a build carrying the
+	// peers_testenv tag reads the variable; a release build waits one minute.
+	updateInitialCheckDelay = 3 * time.Second
+
+	// updateFirstCheckBound is the quiet window in which a Broker with checking
+	// disabled must send no request. An enabled check fires one
+	// updateInitialCheckDelay after the Broker starts its timer, so four times
+	// the delay still leaves nine seconds for startup before the timer starts.
+	// The window proves the first check after the check is disabled sends no
+	// request.
+	updateFirstCheckBound = 4 * updateInitialCheckDelay
+
+	// updateCheckArrivalBound bounds an enabled Broker's first check: the
+	// shortened delay plus slack for container startup, the loopback request
+	// and the status read. It replaces the product's one-minute delay that the
+	// earlier two-minute bound had to cover.
+	updateCheckArrivalBound = 30 * time.Second
 
 	// updateCheckSettleWindow is how long a Broker whose check found no newer
 	// release must keep status free of an update line after its request was
@@ -156,7 +168,13 @@ func updateBrokerConfig(check bool) string {
 func updateStartPeerBroker(t *testing.T, fake *harness.FakeGitHub, check bool) *syscontainer.Proc {
 	t.Helper()
 	writeAccountFile(t, "peer", "/home/peer/.peers/config.yaml", updateBrokerConfig(check))
-	env := []string{"PEERS_TEST_UPDATE_API=" + fake.URL()}
+	env := []string{
+		"PEERS_TEST_UPDATE_API=" + fake.URL(),
+		// The staged old release is built with peers_testenv, so it reads this
+		// hook and checks after updateInitialCheckDelay instead of the
+		// product's one minute. A release build ignores the variable.
+		"PEERS_TEST_UPDATE_INITIAL_DELAY=" + updateInitialCheckDelay.String(),
+	}
 	return syscontainer.StartUserBrokerPath(t, updateStagedOldBinary(), "peer", env,
 		"--listen", updateBrokerListen)
 }
@@ -236,7 +254,7 @@ func runUpdateStatusClientRole() int {
 // point at which the Broker has learned the check's result.
 func updateWaitStatusLine(t *testing.T, exe, want string) {
 	t.Helper()
-	harness.Eventually(t, updateFirstCheckBound, "status to report the available version", func() (bool, string) {
+	harness.Eventually(t, updateCheckArrivalBound, "status to report the available version", func() (bool, string) {
 		res := updateStatus(t, exe)
 		if res.ExitCode != 0 {
 			return false, fmt.Sprintf("status exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
@@ -250,7 +268,7 @@ func updateWaitStatusLine(t *testing.T, exe, want string) {
 // call. A tool call would consume the session's first-call update hint.
 func updateWaitAgentListed(t *testing.T, name, exe string) {
 	t.Helper()
-	harness.Eventually(t, updateFirstCheckBound, "the session "+name+" to register", func() (bool, string) {
+	harness.Eventually(t, updateCheckArrivalBound, "the session "+name+" to register", func() (bool, string) {
 		res := updateStatus(t, exe)
 		if res.ExitCode != 0 {
 			return false, fmt.Sprintf("status exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))

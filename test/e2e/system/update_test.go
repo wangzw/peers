@@ -57,7 +57,7 @@ func TestREQUpdate001_PeriodicCheck(t *testing.T) {
 	fake.SetFailure(true)
 	fake.ResetRequests()
 	updateStartPeerBroker(t, fake, true)
-	harness.Eventually(t, updateFirstCheckBound, "the Broker's failed update check", func() (bool, string) {
+	harness.Eventually(t, updateCheckArrivalBound, "the Broker's failed update check", func() (bool, string) {
 		return fake.Requests() > 0, fmt.Sprintf("requests: %d", fake.Requests())
 	})
 
@@ -107,7 +107,7 @@ func TestREQUpdate002_StatusShowsAvailableVersion(t *testing.T) {
 	fake.SetRelease(updateLoadRelease(t, updateOldVersion, updateGoodReleaseArtifact, updateGoodChecksumsArtifact))
 	fake.ResetRequests()
 	updateStartPeerBroker(t, fake, true)
-	harness.Eventually(t, updateFirstCheckBound, "the Broker's check against an up-to-date release", func() (bool, string) {
+	harness.Eventually(t, updateCheckArrivalBound, "the Broker's check against an up-to-date release", func() (bool, string) {
 		return fake.Requests() > 0, fmt.Sprintf("requests: %d", fake.Requests())
 	})
 	harness.Consistently(t, updateCheckSettleWindow, "status without an update hint", func() (bool, string) {
