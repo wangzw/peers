@@ -92,7 +92,7 @@ graph TD
 
 图中没有箭头而运行时需要的协作，由 `broker` 以接口注入或转调完成。接口注入用于 `pairing`：它发起握手要拨号，解除配对要关闭链路，拨号与关闭链路由 `link` 实现，`broker` 在装配时以接口的形式交给 `pairing`。其余的协作是转调：配置变更由 `broker` 订阅后分别通知 `link`、`directory`；名片带来的对外地址列表由 `broker` 交给 `pairing` 记入候选地址，本机对外地址列表的变化由 `broker` 通知 `link` 与 `directory`；配对结果与名录的比对、公开 topic 的声明都由 `broker` 依次调用相关的包。
 
-`mcpserver` 只引用 `internal/broker/localpb`，即本机接口的客户端与消息定义所在的 proto 包，从不引用 `broker` 包本身；两者运行在不同进程里。`cmd/peers` 是装配入口，没有自己的设计文档，终端命令的行为记在 [broker](modules/design-broker.md) 的外部接口契约一节。`cmd/peers` 不引用 `localpb`；`service status` 与 `service audit` 的客户端放在 `mcpserver` 的子包 `termcmd` 中，依赖图不变。命令行用 cobra 构建，命令树、帮助分组、用法与 shell 补全由它生成（[ADR-cli-framework](../adr/adr-cli-framework.md)）；cobra 是 `cmd/peers` 的外部依赖，不出现在项目包的依赖图中。
+`mcpserver` 只引用 `internal/broker/localpb`，即本机接口的客户端与消息定义所在的 proto 包，从不引用 `broker` 包本身；两者运行在不同进程里。`cmd/peers` 是装配入口，没有自己的设计文档，终端命令的行为记在 [broker](modules/design-broker.md) 的外部接口契约一节。`cmd/peers` 不引用 `localpb`；`service status` 与 `service audit` 的客户端放在 `mcpserver` 的子包 `termcmd` 中，生成配对连接提示词的 `pairingprompt` 也是它的子包，依赖图不变。命令行用 cobra 构建，命令树、帮助分组、用法与 shell 补全由它生成（[ADR-cli-framework](../adr/adr-cli-framework.md)）；cobra 是 `cmd/peers` 的外部依赖，不出现在项目包的依赖图中。
 
 ## 逻辑部署架构
 

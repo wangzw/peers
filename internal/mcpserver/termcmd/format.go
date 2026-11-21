@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/mcpserver/pairingprompt"
 )
 
 // Table layout shared by both status sections.
@@ -196,8 +197,9 @@ func configValueText(v *localpb.ConfigValue) string {
 }
 
 // WritePairingKey writes a new one-time pairing key: the key, its expiry as
-// RFC 3339 in UTC and the addresses the other Broker can dial, each indented by
-// two spaces.
+// RFC 3339 in UTC, the addresses the other Broker can dial (each indented by two
+// spaces), and then the paste-ready connect prompt built by the same function
+// the MCP tool uses. A Broker with no address shows no prompt.
 func WritePairingKey(w io.Writer, resp *localpb.CreatePairingKeyResponse) error {
 	if resp == nil {
 		resp = &localpb.CreatePairingKeyResponse{}
@@ -213,6 +215,11 @@ func WritePairingKey(w io.Writer, resp *localpb.CreatePairingKeyResponse) error 
 	}
 	for _, addr := range resp.GetShownAddresses() {
 		if _, err := fmt.Fprintf(w, "  %s\n", addr); err != nil {
+			return err
+		}
+	}
+	if prompt := pairingprompt.ConnectPrompt(resp.GetShownAddresses(), resp.GetKey()); prompt != "" {
+		if _, err := fmt.Fprintf(w, "\n%s\n", prompt); err != nil {
 			return err
 		}
 	}

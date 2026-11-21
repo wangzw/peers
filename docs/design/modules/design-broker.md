@@ -114,7 +114,7 @@ service Local {
 | `peers config list` | `GetConfig` | 列出全部配置项（`REQ-broker-config-039`） |
 | `peers config get <key>` | `GetConfig` | 读取一个配置项（`REQ-broker-config-039`） |
 | `peers config set <key> <value>` | `SetConfig` | 修改配置项（`REQ-broker-config-039`） |
-| `peers key create` | `CreatePairingKey` | 生成一次性配对密钥，输出密钥、失效时间与本机对外地址（`REQ-broker-config-039`） |
+| `peers key create` | `CreatePairingKey` | 生成一次性配对密钥，输出密钥、失效时间、本机对外地址与连接提示词（`REQ-broker-config-039`、`REQ-broker-pairing-038`） |
 | `peers broker list` | `ListBrokers` | 列出 Broker 及其连接状态（`REQ-broker-config-039`） |
 | `peers broker connect <address> --key <key> [--alias <alias>]` | `Connect` | 发起配对（`REQ-broker-config-039`） |
 | `peers broker disconnect <broker>` | `Disconnect` | 解除配对（`REQ-broker-config-039`） |
@@ -165,7 +165,7 @@ service Local {
 - `config list`：每项一行，写成 `<key> = <value>`，按 `key` 排序；密钥类配置项只写 `set` 或 `unset`，不输出取值。
 - `config get`：只输出一项，写法与 `config list` 相同；未知键返回错误。
 - `config set`：一行，写成 `<key>: <old> -> <new>`。
-- `key create`：依次输出 `Key: <key>`、`Expires: <RFC 3339 UTC>`、`Addresses:`，之后每个对外地址一行，缩进两格；本次运行不监听时，Broker 以 `invalid_argument` 拒绝，命令以退出码 1 结束。
+- `key create`：依次输出 `Key: <key>`、`Expires: <RFC 3339 UTC>`、`Addresses:`，之后每个对外地址一行，缩进两格；有可展示的地址时，最后再输出一段可直接粘贴的连接提示词，内容与 `create_pairing_key` 的 `connect_prompt` 相同，两者由同一个函数生成（`REQ-broker-pairing-038`）。提示词先给一句可以粘贴到对方主机会话的自然语言请求，再给等价的终端命令 `peers broker connect <地址> --key <密钥>`，地址按 shell 规则加引号；有多个地址时列出全部并说明可任选一个对方能连上的，命令给第一个地址并说明其余可以替换；没有可展示的地址时不输出提示词。本次运行不监听时，Broker 以 `invalid_argument` 拒绝，命令以退出码 1 结束。
 - `broker list`：表格，列为 ALIAS、FINGERPRINT、PEER（yes 或 no）、STATUS、DIRECTION、ADDRESSES（逗号连接）。按别名排序；没有任何 Broker 时输出 `Brokers: none`。应答缺少 `local` 时报错并以退出码 1 结束，不输出表格。
 - `broker connect`：一行 `Paired with <alias> (<fingerprint>)`；应答中的 warnings 每条一行写到标准错误，前缀 `warning: `，退出码仍为 0。
 - `broker disconnect`：一行 `Disconnected <broker>`。

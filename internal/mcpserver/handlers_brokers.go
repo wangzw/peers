@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/mcpserver/pairingprompt"
 )
 
 // Texts added to a create_pairing_key result or error.
@@ -212,7 +213,7 @@ func (h *handlers) CreatePairingKey(ctx context.Context, in NoArgs) (CreatePairi
 		Key:           resp.GetKey(),
 		ExpiresAt:     resp.GetExpiresAt().AsTime().UTC().Format(time.RFC3339),
 		Addresses:     append([]string{}, resp.GetShownAddresses()...),
-		ConnectPrompt: connectPrompt(resp.GetShownAddresses(), resp.GetKey()),
+		ConnectPrompt: pairingprompt.ConnectPrompt(resp.GetShownAddresses(), resp.GetKey()),
 	}
 	if len(out.Addresses) == 0 {
 		out.Note = textPairingNoAddress

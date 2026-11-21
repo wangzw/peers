@@ -63,13 +63,13 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 - `list_brokers`：`brokers` 与 `local`；每个 Broker 项有 `alias`、`fingerprint`、`advertised_addresses`、`is_peer`、`role`、`link_state`、`status`、`status_detail`，地址项有 `kind`、`addr`；`local` 有 `offline`、`degraded`；`degraded` 有 level、step、reason 与 fix。
 - `connect_broker`：`alias`、`fingerprint`、`shown_host`、`warnings`。
 - `disconnect_broker`：`result`。
-- `create_pairing_key`：`key`、`expires_at`、`shown_addresses`、`note`、`connect_prompt`；`connect_prompt` 是没有可展示的地址时为空的那段连接提示词。
+- `create_pairing_key`：`key`、`expires_at`、`shown_addresses`、`note`、`connect_prompt`；`connect_prompt` 是可直接粘贴的连接提示词，由 `internal/mcpserver/pairingprompt` 的 `ConnectPrompt` 生成，与 `peers key create` 输出的那一段相同；没有可展示的地址时结果中不含这个字段。
 - `get_config`：`entries`；每项有 `key`、`value`。
 - `set_config`：`key`、`old_value`、`new_value`。
 - `set_broker_online`：`online`、`changed`。
 - `update_broker`：`from_version`、`to_version`、`restarting`。
 
-终端命令 `peers key create` 在密钥、失效时间与可展示的地址之后，输出与 `connect_prompt` 相同的一段连接提示词，两者由同一个函数生成，内容一致。提示词先给一句可以直接粘贴到对方主机会话的自然语言请求，再给等价的终端命令 `peers broker connect <地址> --key <密钥>`，地址按 shell 规则加引号；有多个地址时列出全部并说明可任选一个对方能连上的，命令给第一个地址并说明其余可以替换。没有可展示的地址时不输出提示词。密钥与提示词都不写入运行日志与审计记录（`REQ-broker-pairing-038`）。
+终端命令 `peers key create` 在密钥、失效时间与可展示的地址之后，输出与 `connect_prompt` 相同的一段连接提示词，两者由同一个函数生成，内容一致；提示词的组成、多地址与加引号的规则，以及没有可展示的地址时不输出，记在 [broker](design-broker.md) 的外部接口契约。密钥与提示词都不写入运行日志与审计记录（`REQ-broker-pairing-038`）。
 
 `update_broker` 作用于本会话已登记的 Broker。它在收到 Broker 的应答后立即返回，不在工具调用中等待重启。成功时的文字为 `Upgrading the Broker from <from> to <to>; the Broker will restart and the connection will recover automatically. Reopen this session to use the new MCP server.`；已经是最新版本时为 `The Broker is already up to date (<from>).`
 
@@ -98,7 +98,7 @@ auto_join: true                               # 设为 false 时不自动加入�
 
 ## 依赖
 
-`mcpserver` 只引用本机接口的 proto 包 `internal/broker/localpb`，不引用 `broker` 包本身，符合模块依赖图的方向。它用系统的 `git` 命令读取 `origin` 地址。两种形态下运行时目录的位置规则与 [config](design-config.md) 所列的一致，`mcpserver` 按这些规则自行算出本机 socket 的路径，不需要引用 `broker` 包。终端命令 `service status` 与 `service audit` 的客户端在 `internal/mcpserver/termcmd`，它们复用本模块选定 Broker 的函数 `FindBrokerWithDial`，选定时只查找正在运行的 Broker，不启动 Broker；进程级信号由 `cmd/peers` 处理。
+`mcpserver` 只引用本机接口的 proto 包 `internal/broker/localpb`，不引用 `broker` 包本身，符合模块依赖图的方向。它用系统的 `git` 命令读取 `origin` 地址。两种形态下运行时目录的位置规则与 [config](design-config.md) 所列的一致，`mcpserver` 按这些规则自行算出本机 socket 的路径，不需要引用 `broker` 包。终端命令 `service status` 与 `service audit` 的客户端在 `internal/mcpserver/termcmd`，它们复用本模块选定 Broker 的函数 `FindBrokerWithDial`，选定时只查找正在运行的 Broker，不启动 Broker；生成配对连接提示词的 `internal/mcpserver/pairingprompt` 由工具输出与 `termcmd` 共用，只依赖标准库；进程级信号由 `cmd/peers` 处理。
 
 ## 核心算法与流程
 
@@ -215,6 +215,7 @@ Broker 返回的错误码转成一句以结果开头的文字，随后附上错�
 | 能力 | 状态 | 代码 |
 |---|---|---|
 | 工具声明与使用说明 | 已实现 | `internal/mcpserver/tools.go`（`newMCPServer`、`toolSet`）、`internal/mcpserver/instructions.go`（`instructions`） |
+| 配对连接提示词 | 已实现 | `internal/mcpserver/pairingprompt`（`ConnectPrompt`）、`internal/mcpserver/handlers_brokers.go`（`CreatePairingKey`）、`internal/mcpserver/termcmd/format.go`（`WritePairingKey`） |
 | Broker 的选定 | 已实现 | `internal/mcpserver/select.go`（`selector.Find`、`FindBroker`） |
 | 握手、版本握手与会话登记 | 已实现 | `internal/mcpserver/run.go`（`Run`、`Options`）、`internal/mcpserver/conn.go`（`dialLocal`、`hello`）、`internal/mcpserver/register.go`（`runRegistration`） |
 | 信号处理 | 已实现 | `internal/mcpserver/run.go`（`Run`：上下文取消时先关闭登记流）、`cmd/peers/app.go`（`newSignalContext`：`signal.NotifyContext` 处理 SIGINT 与 SIGTERM） |

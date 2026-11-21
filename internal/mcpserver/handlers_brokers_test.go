@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/mcpserver/pairingprompt"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
@@ -456,7 +457,7 @@ func TestCreatePairingKey(t *testing.T) {
 	if !strings.Contains(out.Note, "Share the key") {
 		t.Errorf("note = %q, want the sharing note", out.Note)
 	}
-	if want := connectPrompt(out.Addresses, out.Key); out.ConnectPrompt != want {
+	if want := pairingprompt.ConnectPrompt(out.Addresses, out.Key); out.ConnectPrompt != want {
 		t.Errorf("connect_prompt = %q, want the generator output %q", out.ConnectPrompt, want)
 	}
 	if !strings.Contains(out.ConnectPrompt, out.Key) {

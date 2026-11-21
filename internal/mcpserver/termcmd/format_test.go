@@ -10,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/mcpserver/pairingprompt"
 )
 
 func TestWriteStatusListsAgentsAndTopics(t *testing.T) {
@@ -373,9 +374,64 @@ func TestWritePairingKey(t *testing.T) {
 		"Expires: 2026-11-18T10:15:00Z\n" +
 		"Addresses:\n" +
 		"  hostA:17443\n" +
-		"  10.0.0.2:17443\n"
+		"  10.0.0.2:17443\n" +
+		"\n" +
+		"To pair, paste this into a Claude Code session on the other host:\n" +
+		"  Connect to the peers Broker at hostA:17443 or 10.0.0.2:17443 using the one-time pairing key one-time-key, choosing whichever address is reachable from this host.\n" +
+		"Or run this on the other host:\n" +
+		"  peers broker connect hostA:17443 --key one-time-key\n" +
+		"  If that address is not reachable from the other host, use 10.0.0.2:17443 instead.\n"
 	if got := buf.String(); got != want {
 		t.Errorf("WritePairingKey output = %q, want %q", got, want)
+	}
+}
+
+func TestWritePairingKeySingleAddress(t *testing.T) {
+	resp := &localpb.CreatePairingKeyResponse{
+		Key:            "one-time-key",
+		ExpiresAt:      timestamppb.New(time.Date(2026, 11, 18, 10, 15, 0, 0, time.UTC)),
+		ShownAddresses: []string{"laptop(10.12.72.11:17443)"},
+	}
+
+	var buf bytes.Buffer
+	if err := WritePairingKey(&buf, resp); err != nil {
+		t.Fatalf("WritePairingKey: %v", err)
+	}
+
+	want := "Key: one-time-key\n" +
+		"Expires: 2026-11-18T10:15:00Z\n" +
+		"Addresses:\n" +
+		"  laptop(10.12.72.11:17443)\n" +
+		"\n" +
+		"To pair, paste this into a Claude Code session on the other host:\n" +
+		"  Connect to the peers Broker at laptop(10.12.72.11:17443) using the one-time pairing key one-time-key.\n" +
+		"Or run this on the other host:\n" +
+		"  peers broker connect 'laptop(10.12.72.11:17443)' --key one-time-key\n"
+	if got := buf.String(); got != want {
+		t.Errorf("WritePairingKey output = %q, want %q", got, want)
+	}
+}
+
+// TestWritePairingKeyUsesSharedConnectPrompt checks that the prompt the terminal
+// appends is exactly what the function shared with the MCP tool returns, so the
+// two outputs cannot drift apart.
+func TestWritePairingKeyUsesSharedConnectPrompt(t *testing.T) {
+	resp := &localpb.CreatePairingKeyResponse{
+		Key:            "one-time-key",
+		ShownAddresses: []string{"hostA:17443", "10.0.0.2:17443"},
+	}
+
+	var buf bytes.Buffer
+	if err := WritePairingKey(&buf, resp); err != nil {
+		t.Fatalf("WritePairingKey: %v", err)
+	}
+
+	prompt := pairingprompt.ConnectPrompt(resp.GetShownAddresses(), resp.GetKey())
+	if prompt == "" {
+		t.Fatal("ConnectPrompt returned nothing for two addresses")
+	}
+	if got := buf.String(); !strings.HasSuffix(got, "\n\n"+prompt+"\n") {
+		t.Errorf("WritePairingKey output = %q, want it to end with the shared prompt %q", got, prompt)
 	}
 }
 
@@ -385,6 +441,22 @@ func TestWritePairingKeyEmpty(t *testing.T) {
 		t.Fatalf("WritePairingKey: %v", err)
 	}
 	want := "Key: -\nExpires: -\nAddresses:\n"
+	if got := buf.String(); got != want {
+		t.Errorf("WritePairingKey output = %q, want %q", got, want)
+	}
+}
+
+// TestWritePairingKeyNoAddressNoPrompt checks that a response without an
+// address keeps the old output: the prompt needs an address to name.
+func TestWritePairingKeyNoAddressNoPrompt(t *testing.T) {
+	resp := &localpb.CreatePairingKeyResponse{Key: "one-time-key"}
+
+	var buf bytes.Buffer
+	if err := WritePairingKey(&buf, resp); err != nil {
+		t.Fatalf("WritePairingKey: %v", err)
+	}
+
+	want := "Key: one-time-key\nExpires: -\nAddresses:\n"
 	if got := buf.String(); got != want {
 		t.Errorf("WritePairingKey output = %q, want %q", got, want)
 	}
