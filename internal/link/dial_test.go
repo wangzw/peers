@@ -2,6 +2,7 @@ package link
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -15,6 +16,12 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
+
+// unreachableAddr is a dial candidate the harness's dialer refuses to reach.
+// It is not a real endpoint: dialContext intercepts it and returns an error,
+// so a test that needs a failed dial does not depend on an ephemeral port
+// staying free after it was released.
+const unreachableAddr = "127.0.0.1:1"
 
 // dialEvent is one link up or down notification recorded by a dial harness.
 type dialEvent struct {
@@ -64,6 +71,15 @@ func newDialHarnessWithClock(t *testing.T, wrap func(*linktest.FakeClock) Clock)
 		t.Fatalf("New: %v", err)
 	}
 	h.l = l
+	// A dial to unreachableAddr fails deterministically, without a real
+	// connection and without depending on a released port; every other
+	// address reaches the real dialer.
+	l.dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == unreachableAddr {
+			return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
+		}
+		return (&net.Dialer{}).DialContext(ctx, network, address)
+	}
 	l.Subscribe(h.onUp, h.onDown)
 
 	t.Cleanup(l.notifier.stop)
@@ -248,20 +264,6 @@ func serveAcceptorWith(t *testing.T, h *dialHarness, onStream func(c *conn, tr *
 	return raw.Addr().String()
 }
 
-// closedAddr returns a loopback address that no one listens on.
-func closedAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-	return addr
-}
-
 func TestREQBrokerPairing019_StartDialsDialerPeersImmediately(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
@@ -294,7 +296,7 @@ func TestDialOrderUsesLastConnectedFirst(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
 	good := serveAcceptor(t, acceptor)
-	bad := closedAddr(t)
+	bad := unreachableAddr
 
 	dialerFP := dialer.peers.Fingerprint()
 	acceptorFP := acceptor.peers.Fingerprint()
@@ -342,7 +344,7 @@ func TestFingerprintMismatchSkipsAddress(t *testing.T) {
 func TestAllCandidatesFailBackoff(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
-	addr := closedAddr(t)
+	addr := unreachableAddr
 	dialer.peers.Add(fp, pairing.RoleDialer, "peer", addr)
 
 	dialer.start()
@@ -404,7 +406,7 @@ func TestBackoffTimerIsRegisteredWhenPhaseIsVisible(t *testing.T) {
 		return delayedAfterFuncClock{Clock: c, delay: 250 * time.Millisecond}
 	})
 	fp := linktest.NewIdentity(t).Fingerprint
-	dialer.peers.Add(fp, pairing.RoleDialer, "peer", closedAddr(t))
+	dialer.peers.Add(fp, pairing.RoleDialer, "peer", unreachableAddr)
 	dialer.start()
 
 	dialer.waitState(t, fp, "backoff published with its timer", func(st LinkState) bool {
@@ -418,7 +420,7 @@ func TestBackoffTimerIsRegisteredWhenPhaseIsVisible(t *testing.T) {
 func TestKickEndsBackoff(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
-	dialer.peers.Add(fp, pairing.RoleDialer, "peer", closedAddr(t))
+	dialer.peers.Add(fp, pairing.RoleDialer, "peer", unreachableAddr)
 
 	dialer.start()
 	dialer.waitState(t, fp, "backoff", func(st LinkState) bool {
@@ -551,7 +553,7 @@ func TestREQBrokerPairing018_ReconnectAfterOutage(t *testing.T) {
 func TestBackoffCappedOverManyFailures(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
-	dialer.peers.Add(fp, pairing.RoleDialer, "peer", closedAddr(t))
+	dialer.peers.Add(fp, pairing.RoleDialer, "peer", unreachableAddr)
 	dialer.start()
 
 	const max = 60 * time.Second
@@ -571,7 +573,7 @@ func TestBackoffCappedOverManyFailures(t *testing.T) {
 func TestBackoffReadsSettingsEachTime(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
-	dialer.peers.Add(fp, pairing.RoleDialer, "peer", closedAddr(t))
+	dialer.peers.Add(fp, pairing.RoleDialer, "peer", unreachableAddr)
 	dialer.start()
 
 	dialer.waitState(t, fp, "first backoff", func(st LinkState) bool {
@@ -602,7 +604,7 @@ func TestSuccessResetsBackoff(t *testing.T) {
 
 	acceptorFP := acceptor.peers.Fingerprint()
 	dialerFP := dialer.peers.Fingerprint()
-	dialer.peers.Add(acceptorFP, pairing.RoleDialer, "acceptor", closedAddr(t))
+	dialer.peers.Add(acceptorFP, pairing.RoleDialer, "acceptor", unreachableAddr)
 	acceptor.peers.Add(dialerFP, pairing.RoleAcceptor, "dialer")
 	dialer.start()
 
@@ -725,7 +727,7 @@ func TestClosedDialLoopClosesInitialConnection(t *testing.T) {
 func TestDropStopsDialLoop(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
-	dialer.peers.Add(fp, pairing.RoleDialer, "peer", closedAddr(t))
+	dialer.peers.Add(fp, pairing.RoleDialer, "peer", unreachableAddr)
 	dialer.start()
 
 	dialer.waitState(t, fp, "backoff", func(st LinkState) bool {

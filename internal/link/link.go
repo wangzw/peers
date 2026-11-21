@@ -30,6 +30,10 @@ type Link struct {
 	localNets                   func() ([]*net.IPNet, error) // nil in production: the dial loop then uses defaultLocalNets
 	onDial                      func(address string)         // nil in production
 	randRead                    func([]byte) (int, error)    // crypto/rand.Read
+	// dialContext, when not nil, replaces the TCP dial that dialTLS performs.
+	// Tests use it to make a chosen address fail to connect without depending
+	// on an ephemeral port staying free after it was released.
+	dialContext func(ctx context.Context, network, address string) (net.Conn, error) // nil in production
 	// afterHelloSent, when not nil, runs after an accepted connection's Hello
 	// has been sent and before the connection is installed. Tests use it to
 	// hold the accepting side in the window where it has answered the dialer

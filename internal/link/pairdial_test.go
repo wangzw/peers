@@ -124,7 +124,7 @@ func TestREQBrokerPairing020_DialerWithoutListenerBothDirections(t *testing.T) {
 func TestPairDialWrapsDialFailure(t *testing.T) {
 	dialer := newDialHarness(t)
 	runCalled := false
-	err := dialer.l.PairDial(context.Background(), closedAddr(t), func(pairing.PairConn) error {
+	err := dialer.l.PairDial(context.Background(), unreachableAddr, func(pairing.PairConn) error {
 		runCalled = true
 		return nil
 	})

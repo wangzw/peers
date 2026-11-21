@@ -105,6 +105,46 @@ func listenNodeAddr(t *testing.T, n *listenNode) string {
 	return addr.String()
 }
 
+// currentListener returns the listener n accepts on now.
+func (n *listenNode) currentListener(t *testing.T) net.Listener {
+	t.Helper()
+	n.l.mu.Lock()
+	lis := n.l.lis
+	n.l.mu.Unlock()
+	if lis == nil {
+		t.Fatal("the Link is not listening")
+	}
+	return lis
+}
+
+// requireStopped checks that ln no longer accepts connections. Accept is the
+// direct evidence: a closed listener reports net.ErrClosed, while one the
+// product left open times out at the deadline. Dialing the address the
+// listener used to hold is not a substitute: another process can bind that
+// released port and make the dial succeed for a reason unrelated to the
+// listener the product was supposed to close.
+func requireStopped(t *testing.T, ln net.Listener) {
+	t.Helper()
+	base := ln
+	if wrapper, ok := ln.(*trackingListener); ok {
+		base = wrapper.Listener
+	}
+	tcp, ok := base.(*net.TCPListener)
+	if !ok {
+		t.Fatalf("listener is a %T, want a TCP listener", base)
+	}
+	err := tcp.SetDeadline(time.Now().Add(2 * time.Second))
+	if errors.Is(err, net.ErrClosed) {
+		return
+	}
+	if err != nil {
+		t.Fatalf("setting the accept deadline on %s: %v", ln.Addr(), err)
+	}
+	if _, err := ln.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("the old listener on %s still accepts connections: Accept = %v", ln.Addr(), err)
+	}
+}
+
 // waitFirstFrameTimer blocks until the registry holds the accepted connection
 // and its first-frame timer is armed. Unlike clock.WaitPending, which accepts
 // any pending timer, this names the timer the test is about to fire.
@@ -197,6 +237,7 @@ func TestREQBrokerConfig028_EmptyListenStopsAccepting(t *testing.T) {
 	linktest.Introduce(dialer.peers, acceptor.peers, "dialer", "acceptor")
 
 	addr := listenNodeAddr(t, acceptor)
+	old := acceptor.currentListener(t)
 	dialOnce(t, dialer.l, addr)
 	acceptor.waitUps(t, 1)
 
@@ -206,10 +247,7 @@ func TestREQBrokerConfig028_EmptyListenStopsAccepting(t *testing.T) {
 	if got := acceptor.l.Addr(); got != nil {
 		t.Fatalf("Addr after Listen(\"\") = %v, want nil", got)
 	}
-	if c, err := net.DialTimeout("tcp", addr, time.Second); err == nil {
-		_ = c.Close()
-		t.Fatal("the old listen address still accepts connections")
-	}
+	requireStopped(t, old)
 
 	// The same instance still dials out to another listener.
 	linktest.Introduce(acceptor.peers, other.peers, "acceptor", "other")
@@ -256,6 +294,7 @@ func TestListenSwapKeepsEstablishedLinks(t *testing.T) {
 	linktest.Introduce(dialer.peers, acceptor.peers, "dialer", "acceptor")
 
 	oldAddr := listenNodeAddr(t, acceptor)
+	old := acceptor.currentListener(t)
 	dialOnce(t, dialer.l, oldAddr)
 	acceptor.waitUps(t, 1)
 
@@ -267,10 +306,7 @@ func TestListenSwapKeepsEstablishedLinks(t *testing.T) {
 	if newAddr == oldAddr {
 		t.Fatalf("rebinding reused the old address %s", oldAddr)
 	}
-	if c, err := net.DialTimeout("tcp", oldAddr, time.Second); err == nil {
-		_ = c.Close()
-		t.Fatal("the old listen address still accepts connections")
-	}
+	requireStopped(t, old)
 
 	dialOnce(t, dialer.l, newAddr)
 	acceptor.waitUps(t, 2)

@@ -1,6 +1,8 @@
 package node
 
 import (
+	"errors"
+	"net"
 	"os"
 	"runtime"
 	"slices"
@@ -26,19 +28,32 @@ func TestHoldPortAndReachable(t *testing.T) {
 		t.Fatalf("node: closing connection: %v", err)
 	}
 
+	tcp, ok := listener.(*net.TCPListener)
+	if !ok {
+		t.Fatalf("node: HoldPort returned %T, want a TCP listener", listener)
+	}
+	// Accept after Close is the direct proof that the socket stopped
+	// accepting. Dialing the released address instead would also succeed
+	// whenever another process had taken the port in the meantime, so it
+	// cannot tell a listener that failed to close from a busy host. The
+	// deadline makes a Close that does nothing fail the test rather than
+	// block in Accept.
+	if err := tcp.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("node: setting the accept deadline: %v", err)
+	}
 	if err := listener.Close(); err != nil {
 		t.Fatalf("node: closing listener: %v", err)
 	}
+	if _, err := listener.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("node: Accept after the listener closed = %v, want net.ErrClosed", err)
+	}
 
-	// The port stops accepting as soon as the listener closes, but a
-	// connection already in the kernel's backlog may take a moment to be
-	// reset, so poll for a short window instead of asserting immediately.
-	deadline := time.Now().Add(2 * time.Second)
-	for TCPReachable(addr, 200*time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatalf("node: %s is still reachable after the listener closed", addr)
-		}
-		time.Sleep(20 * time.Millisecond)
+	// TCPReachable reports false when the connection cannot be made. Port zero
+	// is never assigned to a listener, so this address is guaranteed
+	// unreachable and does not depend on a released ephemeral port staying
+	// free.
+	if TCPReachable("127.0.0.1:0", 2*time.Second) {
+		t.Fatal("node: 127.0.0.1:0 is reported reachable")
 	}
 }
 

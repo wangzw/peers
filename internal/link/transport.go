@@ -64,7 +64,11 @@ func (l *Link) dialTLS(ctx context.Context, address string) (*tls.Conn, peerIden
 		defer stop()
 	}
 
-	raw, err := (&net.Dialer{}).DialContext(dialCtx, "tcp", address)
+	dial := l.dialContext
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	raw, err := dial(dialCtx, "tcp", address)
 	if err != nil {
 		return nil, peerIdentity{}, err
 	}

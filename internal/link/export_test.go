@@ -1,6 +1,7 @@
 package link
 
 import (
+	"context"
 	"net"
 	"time"
 )
@@ -17,6 +18,7 @@ type TestKnobs struct {
 	EnforcementMinTime    time.Duration
 	LocalNets             func() ([]*net.IPNet, error)
 	OnDial                func(address string)
+	DialContext           func(ctx context.Context, network, address string) (net.Conn, error)
 	BeforeDialLoop        func()
 	OnRejectLingerExit    func()
 	AfterHelloSent        func()
@@ -51,6 +53,9 @@ func SetTestKnobs(l *Link, k TestKnobs) {
 	}
 	if k.OnDial != nil {
 		l.onDial = k.OnDial
+	}
+	if k.DialContext != nil {
+		l.dialContext = k.DialContext
 	}
 	if k.BeforeDialLoop != nil {
 		l.beforeDialLoop = k.BeforeDialLoop

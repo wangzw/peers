@@ -67,6 +67,9 @@ func TestNewDefaults(t *testing.T) {
 	if l.onDial != nil {
 		t.Error("onDial is not nil, want nil in production")
 	}
+	if l.dialContext != nil {
+		t.Error("dialContext is not nil, want nil in production")
+	}
 	if l.randRead == nil {
 		t.Error("randRead is nil, want crypto/rand.Read")
 	}
