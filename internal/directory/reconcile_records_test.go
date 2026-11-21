@@ -3,6 +3,7 @@ package directory
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -151,26 +152,21 @@ func TestRecordRequestSplitsReplyUnderBudget(t *testing.T) {
 }
 
 // TestRecordRequestDeliversAllSplitFrames checks that the requesting peer ends
-// up holding every record when the reply spans several frames.
+// up holding every record when the reply spans several frames: the first batch
+// is the request's reply and the rest arrive as Records state frames.
 func TestRecordRequestDeliversAllSplitFrames(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
 	p := newReconcileNode(t, net, 2)
 
-	net.Connect(p.fp, b.fp)
-	net.Settle(t)
-
 	const count = 20
 	recs := largeAnnouncements(t, count)
-	ids := make([]*directorypb.RecordId, 0, count)
 	for _, r := range recs {
 		reconcileInject(t, b, r)
-		ids = append(ids, r.id.toProto())
 	}
-	clearReconcileSent(b.ep)
 
-	p.d.inflight.Add(1)
-	p.d.fetch(b.fp, ids)
+	clearReconcileSent(b.ep)
+	net.Connect(p.fp, b.fp)
 	reconcileAwait(t, net, "P to hold every record from the split reply", func() bool {
 		for _, r := range recs {
 			got, ok := reconcileLookup(p, r.id)
@@ -182,6 +178,42 @@ func TestRecordRequestDeliversAllSplitFrames(t *testing.T) {
 	})
 	if got := reconcileFrames(b.ep, p.fp, directorypb.KindRecords); got < 1 {
 		t.Fatalf("B sent %d Records continuation frames, want at least 1", got)
+	}
+}
+
+// TestReconcileRequestsInBatches checks that a peer needing 600 identifiers asks
+// for them in three requests of at most 256 identifiers each, and accepts all
+// of them.
+func TestReconcileRequestsInBatches(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+	p.set.SetMaxRecords(1000)
+	p.set.SetMaxRecordsPerLink(1000)
+	p.set.SetMaxTopicsPerPublisher(1000)
+
+	const count = 600
+	for i := 0; i < count; i++ {
+		r := reconcileAnnouncement(t, 200, fmt.Sprintf("news-%03d", i), "", 1)
+		reconcileInject(t, b, r)
+	}
+
+	clearReconcileSent(b.ep)
+	net.Connect(p.fp, b.fp)
+	reconcileAwait(t, net, "P to hold all 600 records", func() bool {
+		p.d.mu.RLock()
+		defer p.d.mu.RUnlock()
+		return len(p.d.st.records) == count
+	})
+
+	sizes := reconcileRequestBatchSizes(t, p.ep, b.fp)
+	if len(sizes) != 3 {
+		t.Fatalf("P sent %d record requests for 600 identifiers, want 3 (sizes %v)", len(sizes), sizes)
+	}
+	for i, n := range sizes {
+		if n > 256 {
+			t.Fatalf("request %d asked for %d identifiers, want at most 256", i, n)
+		}
 	}
 }
 

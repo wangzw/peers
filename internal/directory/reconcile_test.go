@@ -3,6 +3,7 @@ package directory
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
@@ -701,6 +702,472 @@ func TestFetchFailureIsSilent(t *testing.T) {
 	}
 }
 
+// reconcileRecordsPayload encodes a Records frame body.
+func reconcileRecordsPayload(t *testing.T, recs ...*directorypb.Record) []byte {
+	t.Helper()
+	p, err := proto.Marshal(&directorypb.Records{Records: recs})
+	if err != nil {
+		t.Fatalf("marshal Records: %v", err)
+	}
+	return p
+}
+
+// reconcileRequestBatchSizes returns the number of identifiers in every
+// RecordRequest frame ep sent to to, in send order.
+func reconcileRequestBatchSizes(t *testing.T, ep *fakeLinks, to Fingerprint) []int {
+	t.Helper()
+	var sizes []int
+	for _, f := range ep.Sent() {
+		if f.to != to || f.kind != directorypb.KindRecordRequest {
+			continue
+		}
+		var req directorypb.RecordRequest
+		if err := proto.Unmarshal(f.payload, &req); err != nil {
+			t.Fatalf("unmarshal RecordRequest: %v", err)
+		}
+		sizes = append(sizes, len(req.GetRecords()))
+	}
+	return sizes
+}
+
+// TestReconcileCapsInflightFetchPerPeer checks that a peer cannot stack fetch
+// goroutines: while one request is in flight, further RecordList frames for the
+// same identifier merge into the pending set instead of starting another.
+func TestReconcileCapsInflightFetchPerPeer(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+			return directorypb.KindRecords, nil
+		})
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	payload := reconcileListPayload(t, x.recordVersion())
+	b.d.handleRecordList(pfp, payload)
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("B never sent the record request")
+	}
+	for i := 0; i < 99; i++ {
+		b.d.handleRecordList(pfp, payload)
+	}
+	close(release)
+	b.d.inflight.Wait()
+
+	if got := reconcileFrames(b.ep, pfp, directorypb.KindRecordRequest); got != 1 {
+		t.Fatalf("B sent %d record requests for one identifier while one was in flight, want 1", got)
+	}
+}
+
+// TestReconcileMergesDistinctIDsWhileFetching checks that a RecordList naming
+// an identifier other than the one in flight joins the pending set instead of
+// starting a second fetch.
+func TestReconcileMergesDistinctIDsWhileFetching(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			started <- struct{}{}
+			<-release
+			return directorypb.KindRecords, nil
+		})
+
+	first := reconcileCard(t, 200, 1, "hostX")
+	second := reconcileCard(t, 201, 1, "hostY")
+	b.d.handleRecordList(pfp, reconcileListPayload(t, first.recordVersion()))
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("B never sent the first record request")
+	}
+
+	b.d.handleRecordList(pfp, reconcileListPayload(t, second.recordVersion()))
+
+	select {
+	case <-started:
+		close(release)
+		t.Fatal("B started a second fetch while one was in flight")
+	case <-time.After(time.Second):
+	}
+	close(release)
+	b.d.inflight.Wait()
+}
+
+// TestRejectsUnrequestedRecords checks that a Records state frame carrying a
+// record this direction never asked for is dropped as a whole and logged.
+func TestRejectsUnrequestedRecords(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+	clearReconcileSent(b.ep)
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	b.d.handleRecordsState(p.fp, reconcileRecordsPayload(t, x.wire()))
+
+	if _, ok := reconcileLookup(b, x.id); ok {
+		t.Fatal("B accepted a record it never requested")
+	}
+	logs := b.logs.String()
+	if !strings.Contains(logs, "directory_unrequested_records") {
+		t.Fatalf("missing directory_unrequested_records warning: %s", logs)
+	}
+	if !strings.Contains(logs, "count=1") {
+		t.Fatalf("warning does not carry count=1: %s", logs)
+	}
+	if !strings.Contains(logs, p.fp.String()) {
+		t.Fatalf("warning does not name the peer: %s", logs)
+	}
+}
+
+// TestUnrequestedRecordsMergeIntoOneWarning checks that all unrequested records
+// in one frame produce a single warning carrying the total count.
+func TestUnrequestedRecordsMergeIntoOneWarning(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+	clearReconcileSent(b.ep)
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	y := reconcileCard(t, 201, 1, "hostY")
+	b.d.handleRecordsState(p.fp, reconcileRecordsPayload(t, x.wire(), y.wire()))
+
+	logs := b.logs.String()
+	if got := strings.Count(logs, "directory_unrequested_records"); got != 1 {
+		t.Fatalf("directory_unrequested_records warnings = %d, want 1: %s", got, logs)
+	}
+	if !strings.Contains(logs, "count=2") {
+		t.Fatalf("warning does not merge both drops into count=2: %s", logs)
+	}
+}
+
+// TestRequestedRecordWindowExpires checks that a record is accepted only while
+// the request that asked for it is still inside its window.
+func TestRequestedRecordWindowExpires(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	started := make(chan struct{}, 1)
+	p.ep.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			return directorypb.KindRecords, nil
+		})
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	b.d.handleRecordList(p.fp, reconcileListPayload(t, x.recordVersion()))
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("B never sent the record request")
+	}
+	b.d.inflight.Wait()
+
+	clk, ok := b.d.clk.(*fakeClock)
+	if !ok {
+		t.Fatalf("clock type = %T, want *fakeClock", b.d.clk)
+	}
+	clk.Advance(2*requestTimeout + time.Second)
+
+	b.d.handleRecordsState(p.fp, reconcileRecordsPayload(t, x.wire()))
+	if _, ok := reconcileLookup(b, x.id); ok {
+		t.Fatal("B accepted a record after its request window expired")
+	}
+}
+
+// TestDisconnectClearsReconcileState checks that the pending set and the accept
+// window of a peer are dropped when its link goes down.
+func TestDisconnectClearsReconcileState(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	p.ep.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+			return directorypb.KindRecords, nil
+		})
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	b.d.handleRecordList(p.fp, reconcileListPayload(t, x.recordVersion()))
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("B never sent the record request")
+	}
+
+	net.Disconnect(p.fp, b.fp)
+
+	b.d.mu.RLock()
+	_, ok := b.d.recon[p.fp]
+	b.d.mu.RUnlock()
+	if ok {
+		close(release)
+		t.Fatal("the reconcile state survived the link going down")
+	}
+
+	close(release)
+	b.d.inflight.Wait()
+}
+
+// TestReconnectRejectsOldWindowRecords checks that the accept window belongs to
+// the link: a record whose request was sent before the link went down is
+// dropped as a whole, and reported, after the link comes back. Without the
+// per-link reset a reconnected peer could deliver a record requested on the
+// previous link.
+func TestReconnectRejectsOldWindowRecords(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			return directorypb.KindRecords, nil
+		})
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	b.d.handleRecordList(pfp, reconcileListPayload(t, x.recordVersion()))
+	b.d.inflight.Wait()
+
+	b.d.mu.RLock()
+	pr := b.d.recon[pfp]
+	precondition := false
+	if pr != nil {
+		_, precondition = pr.requested[x.id]
+	}
+	b.d.mu.RUnlock()
+	if !precondition {
+		t.Fatal("B's accept window does not hold the requested identifier")
+	}
+
+	net.Disconnect(pfp, b.fp)
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	// x names the identifier requested on the previous link; y was never
+	// requested at all. Both are dropped, and the whole frame is reported once.
+	y := reconcileCard(t, 201, 1, "hostY")
+	b.d.handleRecordsState(pfp, reconcileRecordsPayload(t, x.wire(), y.wire()))
+
+	if _, ok := reconcileLookup(b, x.id); ok {
+		t.Fatal("B accepted a record from the accept window of the previous link")
+	}
+	if _, ok := reconcileLookup(b, y.id); ok {
+		t.Fatal("B accepted a record it never requested")
+	}
+	logs := b.logs.String()
+	if got := strings.Count(logs, "directory_unrequested_records"); got != 1 {
+		t.Fatalf("directory_unrequested_records warnings = %d, want 1: %s", got, logs)
+	}
+	if !strings.Contains(logs, "count=2") {
+		t.Fatalf("warning does not merge both drops into count=2: %s", logs)
+	}
+}
+
+// TestRequestedWindowCappedAtMaxRecords checks that the identifiers this
+// direction has asked a peer for but not yet accepted stay bounded by
+// directory.max_records. A peer that keeps sending fresh RecordList frames and
+// answers every request with an empty Records frame must not be able to grow the
+// accept window without bound: each round would otherwise retain a full batch
+// of new identifiers for the whole 60-second window.
+func TestRequestedWindowCappedAtMaxRecords(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	b.set.SetMaxRecords(4)
+
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			return directorypb.KindRecords, nil
+		})
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	const rounds = 20
+	const perRound = 4
+	for i := 0; i < rounds; i++ {
+		vs := make([]*directorypb.RecordVersion, 0, perRound)
+		for j := 0; j < perRound; j++ {
+			seed := byte(100 + i*perRound + j)
+			vs = append(vs, reconcileCard(t, seed, 1, fmt.Sprintf("host-%d-%d", i, j)).recordVersion())
+		}
+		b.d.handleRecordList(pfp, reconcileListPayload(t, vs...))
+		net.Settle(t)
+		b.d.inflight.Wait()
+	}
+
+	b.d.mu.RLock()
+	held := -1
+	if pr := b.d.recon[pfp]; pr != nil {
+		held = len(pr.requested)
+	}
+	b.d.mu.RUnlock()
+	if held > 4 {
+		t.Fatalf("accept window holds %d identifiers, want at most directory.max_records (4)", held)
+	}
+}
+
+// TestScheduleFetchCapsPendingAtMaxRecords checks that the identifiers waiting
+// for a request stay bounded by directory.max_records even when more arrive
+// while a request is in flight.
+func TestScheduleFetchCapsPendingAtMaxRecords(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	b.set.SetMaxRecords(3)
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			select {
+			case started <- struct{}{}:
+			default:
+			}
+			<-release
+			return directorypb.KindRecords, nil
+		})
+
+	first := make([]*directorypb.RecordVersion, 0, 3)
+	for i := 0; i < 3; i++ {
+		first = append(first, reconcileCard(t, byte(200+i), 1, fmt.Sprintf("first-%d", i)).recordVersion())
+	}
+	b.d.handleRecordList(pfp, reconcileListPayload(t, first...))
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		close(release)
+		t.Fatal("B never sent the first record request")
+	}
+
+	second := make([]*directorypb.RecordVersion, 0, 10)
+	for i := 0; i < 10; i++ {
+		second = append(second, reconcileCard(t, byte(220+i), 1, fmt.Sprintf("second-%d", i)).recordVersion())
+	}
+	b.d.handleRecordList(pfp, reconcileListPayload(t, second...))
+
+	b.d.mu.RLock()
+	pending := -1
+	if pr := b.d.recon[pfp]; pr != nil {
+		pending = len(pr.pending)
+	}
+	b.d.mu.RUnlock()
+	close(release)
+	b.d.inflight.Wait()
+
+	if pending > 3 {
+		t.Fatalf("pending set holds %d identifiers, want at most directory.max_records (3)", pending)
+	}
+}
+
+// TestRequestedRecordAcceptedOnce checks that a requested identifier is accepted
+// only once: the first record consumes its accept entry, so a second copy of the
+// same record names an identifier that is no longer requested and is dropped and
+// reported.
+func TestRequestedRecordAcceptedOnce(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(context.Context, Fingerprint, []byte) (uint32, []byte) {
+			return directorypb.KindRecords, nil
+		})
+
+	x := reconcileCard(t, 200, 1, "hostX")
+	b.d.handleRecordList(pfp, reconcileListPayload(t, x.recordVersion()))
+	b.d.inflight.Wait()
+
+	b.d.handleRecordsState(pfp, reconcileRecordsPayload(t, x.wire()))
+	if _, ok := reconcileLookup(b, x.id); !ok {
+		t.Fatal("B did not accept the requested record")
+	}
+
+	b.d.handleRecordsState(pfp, reconcileRecordsPayload(t, x.wire()))
+	logs := b.logs.String()
+	if got := strings.Count(logs, "directory_unrequested_records"); got != 1 {
+		t.Fatalf("directory_unrequested_records warnings = %d, want 1: %s", got, logs)
+	}
+}
+
+// TestTakeBatchCapsRequestByMaxRecords checks that one RecordRequest never names
+// more identifiers than directory.max_records, even when the pending set holds
+// more.
+func TestTakeBatchCapsRequestByMaxRecords(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	b.set.SetMaxRecords(3)
+
+	b.d.mu.Lock()
+	pr := newPeerReconcile()
+	for i := 0; i < 10; i++ {
+		pr.pending[recordID{publisher: newTestIdentity(byte(150 + i)).Fingerprint(), kind: recKindCard}] = struct{}{}
+	}
+	batch := b.d.takeBatch(pr)
+	b.d.mu.Unlock()
+
+	if len(batch) > 3 {
+		t.Fatalf("one record request named %d identifiers, want at most directory.max_records (3)", len(batch))
+	}
+}
+
 // REQ-broker-pairing-014: accepting a card from a Broker that is not a peer
 // never makes this package send a frame outside the established links.
 func TestNoFramesToNonPeers(t *testing.T) {
@@ -727,5 +1194,73 @@ func TestNoFramesToNonPeers(t *testing.T) {
 	b.d.mu.RUnlock()
 	if ups != 1 || !isUp {
 		t.Fatalf("B's established set has %d entries (P up: %v), want only P", ups, isUp)
+	}
+}
+
+// TestCompletedRequestWindowsAreDropped checks that an accept window whose
+// identifiers all arrived is dropped at once. A peer that answers every request
+// immediately must not leave one window per request behind for the whole accept
+// TTL, which would tie memory to the request rate rather than to the
+// outstanding identifiers.
+func TestCompletedRequestWindowsAreDropped(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	b.set.SetMaxRecords(64)
+
+	pfp := newTestIdentity(2).Fingerprint()
+	p := net.Endpoint(pfp)
+
+	records := make(map[recordID]*directorypb.Record)
+	p.HandleRequest(directorypb.KindRecordRequest,
+		func(_ context.Context, _ Fingerprint, payload []byte) (uint32, []byte) {
+			var req directorypb.RecordRequest
+			if err := proto.Unmarshal(payload, &req); err != nil {
+				return directorypb.KindRecords, nil
+			}
+			out := make([]*directorypb.Record, 0, len(req.GetRecords()))
+			for _, pid := range req.GetRecords() {
+				id, ok := idFromProto(pid)
+				if !ok {
+					continue
+				}
+				if r, ok := records[id]; ok {
+					out = append(out, r)
+				}
+			}
+			reply, err := proto.Marshal(&directorypb.Records{Records: out})
+			if err != nil {
+				return directorypb.KindRecords, nil
+			}
+			return directorypb.KindRecords, reply
+		})
+
+	net.Connect(b.fp, pfp)
+	net.Settle(t)
+
+	const (
+		rounds   = 5
+		perRound = 4
+	)
+	for i := 0; i < rounds; i++ {
+		vs := make([]*directorypb.RecordVersion, 0, perRound)
+		ids := make([]recordID, 0, perRound)
+		for j := 0; j < perRound; j++ {
+			r := reconcileCard(t, byte(100+i*perRound+j), 1, fmt.Sprintf("win-%d-%d", i, j))
+			records[r.id] = r.wire()
+			vs = append(vs, r.recordVersion())
+			ids = append(ids, r.id)
+		}
+		b.d.handleRecordList(pfp, reconcileListPayload(t, vs...))
+		reconcileAwait(t, net, fmt.Sprintf("round %d to be fully answered", i), func() bool {
+			for _, id := range ids {
+				if _, ok := reconcileLookup(b, id); !ok {
+					return false
+				}
+			}
+			b.d.mu.RLock()
+			defer b.d.mu.RUnlock()
+			pr := b.d.recon[pfp]
+			return pr != nil && len(pr.requested) == 0 && len(pr.windows) == 0
+		})
 	}
 }

@@ -24,6 +24,7 @@ type Directory struct {
 	mu              sync.RWMutex
 	st              *store
 	up              map[Fingerprint]bool
+	recon           map[Fingerprint]*peerReconcile // requester-side state per peer
 	public          bool
 	active          map[string]string // public topic name to description
 	reissuePending  bool              // a Reissue could not be signed; renewDue retries it
@@ -108,6 +109,7 @@ func openWith(deps Deps, clk clock, ops fileOps) (*Directory, error) {
 	d := &Directory{
 		st:       newStore(fp),
 		up:       make(map[Fingerprint]bool),
+		recon:    make(map[Fingerprint]*peerReconcile),
 		active:   make(map[string]string),
 		ctx:      ctx,
 		cancel:   cancel,
@@ -178,6 +180,10 @@ func (d *Directory) trackLinks() {
 				return
 			}
 			delete(d.up, peer)
+			// The pending set and the accept window belong to the link: a
+			// reconnected peer starts from nothing, and an accept window left
+			// behind must not legitimize records on the next link.
+			delete(d.recon, peer)
 			d.mu.Unlock()
 		},
 	)

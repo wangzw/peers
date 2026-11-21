@@ -406,3 +406,17 @@ func TestParseCopiesInput(t *testing.T) {
 		t.Errorf("signature changed after the input slice was modified")
 	}
 }
+
+// TestIDFromProtoRejectsOversizedObject checks that a peer-chosen identifier
+// object is bounded before it enters the pending and requested sets.
+func TestIDFromProtoRejectsOversizedObject(t *testing.T) {
+	pub := make([]byte, 32)
+	tooLong := strings.Repeat("x", maxRecordObjectLen+1)
+	if _, ok := idFromProto(&directorypb.RecordId{Publisher: pub, Object: tooLong}); ok {
+		t.Fatalf("idFromProto accepted an object of %d bytes, want at most %d", len(tooLong), maxRecordObjectLen)
+	}
+	atLimit := strings.Repeat("x", maxRecordObjectLen)
+	if _, ok := idFromProto(&directorypb.RecordId{Publisher: pub, Object: atLimit}); !ok {
+		t.Fatalf("idFromProto rejected an object of exactly %d bytes", maxRecordObjectLen)
+	}
+}

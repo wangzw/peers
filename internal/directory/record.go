@@ -31,6 +31,13 @@ var (
 // enter the directory or be issued, and a reconciliation reply stays bounded.
 const maxRecordRaw = 64 << 10
 
+// maxRecordObjectLen is the largest object name accepted in a record
+// identifier. A public topic name is the only non-empty object this version
+// issues, but a malformed one must still be accepted and forwarded, so the
+// limit is generous. It keeps a peer-chosen RecordList from carrying unbounded
+// object strings into the pending and requested sets.
+const maxRecordObjectLen = 4 << 10
+
 // signRecord marshals body deterministically, signs it and returns the stored
 // form. The result is checked with parseRecord so that the local Broker never
 // signs a record it would itself reject.
@@ -190,10 +197,12 @@ func (r *storedRecord) isRevocation() bool {
 }
 
 // idFromProto converts a wire record identifier. It reports false when the
-// publisher is not a 32-byte fingerprint.
+// publisher is not a 32-byte fingerprint or the object exceeds
+// maxRecordObjectLen, so a peer cannot push unbounded identifier strings into
+// the pending and requested sets.
 func idFromProto(id *directorypb.RecordId) (recordID, bool) {
 	pub := id.GetPublisher()
-	if len(pub) != 32 {
+	if len(pub) != 32 || len(id.GetObject()) > maxRecordObjectLen {
 		return recordID{}, false
 	}
 	var publisher Fingerprint

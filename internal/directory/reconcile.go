@@ -43,10 +43,13 @@ func (d *Directory) registerReconcile() {
 }
 
 // handleRecordList compares a peer's list of identifiers and versions with the
-// local directory. Missing or older local records are fetched in a separate
-// goroutine; for every identifier the local directory holds a strictly higher
-// version of, an incremental RecordList is sent back. Equal versions are
-// ignored, so an exchange always terminates. Records is never sent here.
+// local directory. Missing or older local records are queued for a fetch; for
+// every identifier the local directory holds a strictly higher version of, an
+// incremental RecordList is sent back. Equal versions are ignored, so an
+// exchange always terminates. At most one fetch runs per peer: while it is
+// outstanding, further identifiers merge into that peer's pending set, and the
+// fetch loop sends them when the outstanding request finishes. Records is never
+// sent here.
 func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	d.mu.RLock()
 	live := !d.closed && d.up[peer]
@@ -68,7 +71,7 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 		return
 	}
 
-	var fetchIDs []*directorypb.RecordId
+	var fetchIDs []recordID
 	var tellBack []*directorypb.RecordVersion
 	for _, item := range list.GetRecords() {
 		id, ok := idFromProto(item.GetId())
@@ -77,65 +80,24 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 		}
 		held, ok := d.st.get(id)
 		if !ok || isExpired(held.expires, now) {
-			fetchIDs = append(fetchIDs, item.GetId())
+			fetchIDs = append(fetchIDs, id)
 			continue
 		}
 		switch {
 		case item.GetVersion() > held.version:
-			fetchIDs = append(fetchIDs, item.GetId())
+			fetchIDs = append(fetchIDs, id)
 		case item.GetVersion() < held.version:
 			tellBack = append(tellBack, held.recordVersion())
 		}
 	}
-
-	if limit := d.settings.MaxRecords(); len(fetchIDs) > limit {
-		fetchIDs = fetchIDs[:limit]
-	}
-	startFetch := len(fetchIDs) > 0
-	if startFetch {
-		// Adding under the read lock keeps Close, which takes the write lock
-		// before waiting on the group, from missing this goroutine.
-		d.inflight.Add(1)
-	}
 	d.mu.RUnlock()
 
-	if startFetch {
-		go d.fetch(peer, fetchIDs)
+	if len(fetchIDs) > 0 {
+		d.scheduleFetch(peer, fetchIDs)
 	}
 	if len(tellBack) > 0 {
 		d.sendList(peer, tellBack)
 	}
-}
-
-// fetch asks peer for the given records in one RecordRequest and accepts the
-// reply. It runs in its own goroutine and holds an inflight slot. Every failure
-// is logged at debug level and swallowed: the next reconcile pass retries.
-func (d *Directory) fetch(peer Fingerprint, ids []*directorypb.RecordId) {
-	defer d.inflight.Done()
-
-	payload, err := proto.Marshal(&directorypb.RecordRequest{Records: ids})
-	if err != nil {
-		d.log.Debug("encode record request", "peer", peer.String(), "error", err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(d.ctx, requestTimeout)
-	defer cancel()
-
-	kind, reply, _, err := d.links.Request(ctx, peer, directorypb.KindRecordRequest, payload)
-	if err != nil {
-		d.log.Debug("record request failed", "peer", peer.String(), "error", err)
-		return
-	}
-	if kind != directorypb.KindRecords {
-		d.log.Debug("unexpected reply to a record request", "peer", peer.String(), "kind", kind)
-		return
-	}
-	var recs directorypb.Records
-	if err := proto.Unmarshal(reply, &recs); err != nil {
-		d.log.Debug("decode records reply", "peer", peer.String(), "error", err)
-		return
-	}
-	d.acceptBatch(peer, recs.GetRecords())
 }
 
 // handleRecordRequest answers a RecordRequest with the held, unexpired records
@@ -232,9 +194,9 @@ func splitRecords(recs []*directorypb.Record, budget int) [][]*directorypb.Recor
 	return batches
 }
 
-// handleRecordsState accepts a Records frame. These carry the batches of a reply
-// that did not fit in one frame; they are accepted like any other batch from an
-// established link.
+// handleRecordsState accepts a Records frame. These carry the batches of a
+// reply that did not fit in one frame, so their records are accepted only if
+// this direction requested them and their accept window is still open.
 func (d *Directory) handleRecordsState(peer Fingerprint, payload []byte) {
 	d.mu.RLock()
 	live := !d.closed && d.up[peer]
@@ -247,7 +209,7 @@ func (d *Directory) handleRecordsState(peer Fingerprint, payload []byte) {
 		d.log.Debug("dropped a malformed records frame", "peer", peer.String(), "error", err)
 		return
 	}
-	d.acceptBatch(peer, recs.GetRecords())
+	d.acceptRecords(peer, recs.GetRecords())
 }
 
 // cardEvent is one accepted foreign card handed to the OnCard callbacks.
