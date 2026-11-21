@@ -160,6 +160,29 @@ func (o *OracleClient) ListBrokers(t testing.TB) (*localpb.ListBrokersResponse, 
 	return resp, nil
 }
 
+// ListTopics returns the topics of the agent named by agentID and the public
+// topics it has not joined. It reads the local interface directly, so only the
+// local backend supports it; a container node cannot carry the agent id
+// through its control request.
+func (o *OracleClient) ListTopics(t testing.TB, agentID string) (*localpb.ListTopicsResponse, *localpb.ErrorDetail) {
+	t.Helper()
+	if o.remote != nil {
+		t.Fatalf("harness: ListTopics is not available through a container node")
+		return nil, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), oracleBound)
+	defer cancel()
+	resp, err := o.oracle.ListTopics(ctx, agentID)
+	if detail := node.ErrorDetailOf(err); detail != nil {
+		return nil, detail
+	}
+	if err != nil {
+		t.Fatalf("harness: calling Local.ListTopics: %v", err)
+		return nil, nil
+	}
+	return resp, nil
+}
+
 // Status returns the Broker's status.
 func (o *OracleClient) Status(t testing.TB) (*localpb.StatusResponse, *localpb.ErrorDetail) {
 	t.Helper()

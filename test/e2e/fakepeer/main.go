@@ -103,6 +103,23 @@ type recordsSetEvent struct {
 	Count int    `json:"count"`
 }
 
+// wireRecordListEntry is one identifier and version a RecordList carried.
+type wireRecordListEntry struct {
+	Publisher string `json:"publisher"`
+	Kind      string `json:"kind"`
+	Object    string `json:"object"`
+	Version   uint64 `json:"version"`
+}
+
+// recordListEvent reports a RecordList the fake peer received from the Broker.
+// A test uses it to see which identifiers reached the Broker and at which
+// versions.
+type recordListEvent struct {
+	Event   string                `json:"event"`
+	Peer    string                `json:"peer"`
+	Records []wireRecordListEntry `json:"records"`
+}
+
 type closedEvent struct {
 	Event  string `json:"event"`
 	Reason string `json:"reason"`
@@ -478,8 +495,21 @@ func run() error {
 	established := newPeerSet()
 	topics := newTopicFrames()
 
-	l.HandleState(directorypb.KindRecordList, func(peer link.Fingerprint, _ link.Frame) {
+	l.HandleState(directorypb.KindRecordList, func(peer link.Fingerprint, f link.Frame) {
 		_ = l.Send(peer, link.Frame{Kind: directorypb.KindRecordList, Payload: marshal(set.list())})
+		var list directorypb.RecordList
+		entries := []wireRecordListEntry{}
+		if proto.Unmarshal(f.Payload, &list) == nil {
+			for _, rv := range list.GetRecords() {
+				entries = append(entries, wireRecordListEntry{
+					Publisher: hex.EncodeToString(rv.GetId().GetPublisher()),
+					Kind:      rv.GetId().GetKind().String(),
+					Object:    rv.GetId().GetObject(),
+					Version:   rv.GetVersion(),
+				})
+			}
+		}
+		e.emit(recordListEvent{Event: "record_list", Peer: peer.String(), Records: entries})
 	})
 	l.HandleRequest(directorypb.KindRecordRequest, func(_ context.Context, _ link.Fingerprint, f link.Frame) link.Frame {
 		req := new(directorypb.RecordRequest)
@@ -531,7 +561,10 @@ func run() error {
 
 	e.emit(readyEvent{Event: "ready", Fingerprint: p.Fingerprint().String()})
 
+	// A record may be 64 KiB, so its base64 form in one command line is about
+	// 87 KiB; the scanner's default 64 KiB token limit would reject it.
 	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for scanner.Scan() {
 		handleCommand(scanner.Bytes(), p, l, set, established, topics, e)
 	}

@@ -40,6 +40,12 @@ func (o *Oracle) ListBrokers(ctx context.Context) (*localpb.ListBrokersResponse,
 	return o.client.ListBrokers(ctx, &localpb.ListBrokersRequest{})
 }
 
+// ListTopics returns the topics the agent named by id joined and the public
+// topics it has not joined.
+func (o *Oracle) ListTopics(ctx context.Context, agentID string) (*localpb.ListTopicsResponse, error) {
+	return o.client.ListTopics(ctx, &localpb.ListTopicsRequest{AgentId: agentID})
+}
+
 // CreatePairingKey creates a one-time pairing key on this Broker.
 func (o *Oracle) CreatePairingKey(ctx context.Context) (*localpb.CreatePairingKeyResponse, error) {
 	return o.client.CreatePairingKey(ctx, &localpb.CreatePairingKeyRequest{})

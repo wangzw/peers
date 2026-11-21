@@ -38,6 +38,15 @@ type fakePeerWire struct {
 	Topics      []string             `json:"topics"`
 	Digest      string               `json:"digest"`
 	Members     []fakePeerWireMember `json:"members"`
+	Records     []fakePeerWireRecord `json:"records"`
+}
+
+// fakePeerWireRecord is one identifier and version a RecordList carried.
+type fakePeerWireRecord struct {
+	Publisher string `json:"publisher"`
+	Kind      string `json:"kind"`
+	Object    string `json:"object"`
+	Version   uint64 `json:"version"`
 }
 
 // fakePeerWireMember is one member entry in a Roster the fake peer sends or
@@ -339,6 +348,31 @@ func (f *fakePeer) WaitTopicRosterFence(t *testing.T, fence, allowed string, bou
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// recordListVersions returns every version of the identifier seen in the
+// RecordList frames the fake peer received. kind is the protobuf enum name,
+// such as RECORD_KIND_BROKER_CARD. An error the fake peer reported fails the
+// test, so a silent failure cannot pass the negative checks.
+func (f *fakePeer) recordListVersions(t *testing.T, publisher, kind, object string) []uint64 {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []uint64
+	for _, event := range f.events {
+		if event.Event == "error" {
+			t.Fatalf("the fake peer reported an error: %s", event.Message)
+		}
+		if event.Event != "record_list" {
+			continue
+		}
+		for _, record := range event.Records {
+			if record.Publisher == publisher && record.Kind == kind && record.Object == object {
+				out = append(out, record.Version)
+			}
+		}
+	}
+	return out
 }
 
 // close shuts the fake peer down by closing its stdin and waits for it to

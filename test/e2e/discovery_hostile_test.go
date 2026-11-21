@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"math"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,12 @@ import (
 // hostileRecordTTL is comfortably inside the directory's seven-day lifetime,
 // so a record is rejected only for the reason a case tests.
 const hostileRecordTTL = 168 * time.Hour
+
+// replaceIntervalEnv names the variable the peers_testenv build reads for the
+// replacement interval. The harness sets it to one second for every Broker so
+// the other discovery cases can watch a withdrawal or a re-signed card move; a
+// case that needs the release window overrides it per Broker.
+const replaceIntervalEnv = "PEERS_TEST_DIRECTORY_REPLACE_INTERVAL"
 
 // hostilePairKey creates a one-time pairing key through an operator session.
 func hostilePairKey(t *testing.T, d *discNode) string {
@@ -234,6 +242,284 @@ func TestDirectoryPerLinkLimit(t *testing.T) {
 	}
 	if got := len(hostileNonPeers(brokers)); got != 5 {
 		t.Fatalf("B lists %d non-peer records after the second link, want 5", got)
+	}
+}
+
+// hostileAgentID returns the Broker-assigned id of the agent whose address
+// starts with name@. ListTopics needs it to resolve the caller.
+func hostileAgentID(t *testing.T, d *discNode, name string) string {
+	t.Helper()
+	st, detail := d.Oracle().Status(t)
+	if detail != nil {
+		t.Fatalf("reading the status of %s: %s", d.name, detail.GetMessage())
+	}
+	for _, agent := range st.GetAgents() {
+		if strings.HasPrefix(agent.GetAddress(), name+"@") {
+			return agent.GetAgentId()
+		}
+	}
+	t.Fatalf("agent %q is not registered on %s: %+v", name, d.name, st.GetAgents())
+	return ""
+}
+
+// TestDirectoryPublicTopicReceiveLimits covers the receive-side rules for
+// public topic declarations: a declaration whose name or description breaks
+// the format rules is left out of the local listing while the record still
+// reaches the next Broker, and a description declared by a paired peer cannot
+// be replaced by a remote publisher that claims the largest version.
+func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
+	t.Parallel()
+
+	t.Run("REQ-topics-030 malformed declarations are not listed", func(t *testing.T) {
+		t.Parallel()
+
+		b := discNewNode(t, "mal-b", "", false)
+		c := discNewNode(t, "mal-c", "", false)
+		discPair(t, b, c)
+
+		f := startFakePeer(t)
+		f.Pair(t, b.addr, hostilePairKey(t, b))
+		f.WaitLinked(t, 3*time.Second)
+
+		// G observes the far Broker, so a record that reaches C through B is
+		// visible even though C's listing leaves it out too.
+		g := startFakePeer(t)
+		g.Pair(t, c.addr, hostilePairKey(t, c))
+		g.WaitLinked(t, 3*time.Second)
+
+		const topicKind = "RECORD_KIND_TOPIC_ANNOUNCEMENT"
+		longName := strings.Repeat("n", 300)
+		specs := []fakerec.Spec{
+			{Seed: "mal-long-description", Kind: "topic", Topic: "mal-long-description", Description: strings.Repeat("a", 60<<10)},
+			{Seed: "mal-newline-name", Kind: "topic", Topic: "mal\nnewline", Description: "d"},
+			{Seed: "mal-long-name", Kind: "topic", Topic: longName, Description: "d"},
+		}
+		records := make([]*directorypb.Record, 0, len(specs))
+		for _, spec := range specs {
+			records = append(records, hostileBuild(t, spec))
+		}
+		f.Records(t, records...)
+
+		for _, spec := range specs {
+			fp := hostileHexFingerprint(fakerec.PublisherOf(spec.Seed))
+			object := spec.Topic
+			harness.Eventually(t, discBound(3), "C receives the malformed declaration", func() (bool, string) {
+				if versions := g.recordListVersions(t, fp, topicKind, object); len(versions) == 0 {
+					return false, "C has not received it"
+				}
+				return true, ""
+			})
+		}
+
+		watcher := discAgent(t, b, "mal-watcher", t.TempDir())
+		defer watcher.End(t)
+		harness.WaitRegistered(t, watcher, 3*time.Second)
+		harness.Consistently(t, discBound(2), "B never lists the malformed declarations", func() (bool, string) {
+			out, state := discListTopics(t, watcher)
+			if state != "" {
+				return false, state
+			}
+			for _, spec := range specs {
+				if _, ok := discPublicTopic(out, spec.Topic); ok {
+					return false, "the listing contains " + spec.Topic
+				}
+			}
+			return true, ""
+		})
+	})
+
+	t.Run("REQ-topics-031 peer description over a maximum version", func(t *testing.T) {
+		t.Parallel()
+
+		a := discNewNode(t, "pub-src-a", "", true)
+		b := discNewNode(t, "pub-src-b", "", false)
+		paired := discPair(t, a, b)
+
+		agent := discAgent(t, a, "pub-declarer", t.TempDir())
+		defer agent.End(t)
+		harness.WaitRegistered(t, agent, 3*time.Second)
+		discJoinOK(t, agent, "pub-source-topic", true, "from the paired peer")
+
+		// The attacker pairs with A, so at B it is not a peer and its
+		// declaration falls into the lowest tier whatever version it claims.
+		f := startFakePeer(t)
+		f.Pair(t, a.addr, hostilePairKey(t, a))
+		f.WaitLinked(t, 3*time.Second)
+		f.Records(t, hostileBuild(t, fakerec.Spec{
+			Seed:        "pub-attacker",
+			Kind:        "topic",
+			Topic:       "pub-source-topic",
+			Description: "from the attacker",
+			Version:     math.MaxUint64,
+		}))
+
+		watcher := discAgent(t, b, "pub-watcher", t.TempDir())
+		defer watcher.End(t)
+		harness.WaitRegistered(t, watcher, 3*time.Second)
+		agentID := hostileAgentID(t, b, "pub-watcher")
+
+		harness.Eventually(t, discBound(3), "B merges the peer and the attacker declaration", func() (bool, string) {
+			resp, detail := b.Oracle().ListTopics(t, agentID)
+			if detail != nil {
+				return false, detail.GetMessage()
+			}
+			for _, topic := range resp.GetPublicTopics() {
+				if topic.GetName() != "pub-source-topic" {
+					continue
+				}
+				switch {
+				case topic.GetDescription() != "from the paired peer":
+					return false, "description is " + topic.GetDescription()
+				case topic.GetPublisherFingerprint() != paired.Fingerprint:
+					return false, "publisher is " + topic.GetPublisherFingerprint()
+				case topic.GetPublisherAlias() != a.alias:
+					return false, "publisher alias is " + topic.GetPublisherAlias()
+				case topic.GetDeclarers() != 2:
+					return false, fmt.Sprintf("declarers is %d, want 2", topic.GetDeclarers())
+				}
+				return true, ""
+			}
+			return false, "the topic is not listed"
+		})
+
+		out, state := discListTopics(t, watcher)
+		if state != "" {
+			t.Fatalf("list_topics on B failed: %s", state)
+		}
+		topic, ok := discPublicTopic(out, "pub-source-topic")
+		if !ok {
+			t.Fatal("list_topics on B does not list pub-source-topic")
+		}
+		if topic.Description != "from the paired peer" {
+			t.Fatalf("list_topics on B shows description %q, want the peer's", topic.Description)
+		}
+	})
+}
+
+// TestDirectoryHoldsRapidRecordReplacement checks that a newer version of a
+// record accepted from a link is not taken within the replacement interval, so
+// the next Broker sees only the first version while the local listing keeps the
+// first version's alias.
+func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
+	t.Parallel()
+
+	// The suite shortens the interval to one second so the other discovery
+	// cases can watch a withdrawal or a re-signed card propagate. This case
+	// asserts a five-second window in which the held version must not change,
+	// so both Brokers that accept the record from a link get the release
+	// window instead: B holds the second version from its link, and C would
+	// hold it from B even if B forwarded it.
+	releaseInterval := map[string]string{replaceIntervalEnv: "1h"}
+	b := discNewNodeEnv(t, "rep-b", "", false, releaseInterval)
+	c := discNewNodeEnv(t, "rep-c", "", false, releaseInterval)
+	discPair(t, b, c)
+
+	f := startFakePeer(t)
+	f.Pair(t, b.addr, hostilePairKey(t, b))
+	f.WaitLinked(t, 3*time.Second)
+	g := startFakePeer(t)
+	g.Pair(t, c.addr, hostilePairKey(t, c))
+	g.WaitLinked(t, 3*time.Second)
+
+	const (
+		seed     = "replace-card"
+		cardKind = "RECORD_KIND_BROKER_CARD"
+	)
+	fp := hostileHexFingerprint(fakerec.PublisherOf(seed))
+	buildCard := func(version uint64, alias, address string) *directorypb.Record {
+		return hostileBuild(t, fakerec.Spec{
+			Seed:      seed,
+			Kind:      "card",
+			Alias:     alias,
+			Addresses: []fakerec.Addr{{Kind: "direct", Addr: address}},
+			Version:   version,
+		})
+	}
+
+	f.Records(t, buildCard(1, "replace-one", "198.51.100.61:17443"))
+	harness.Eventually(t, discBound(3), "C receives the first version", func() (bool, string) {
+		versions := g.recordListVersions(t, fp, cardKind, "")
+		for _, version := range versions {
+			if version == 1 {
+				return true, ""
+			}
+		}
+		return false, fmt.Sprintf("C has seen versions %v", versions)
+	})
+	discWaitBroker(t, b, fp, discBound(1), func(broker *localpb.BrokerInfo) string {
+		if broker.GetAlias() != "replace-one" {
+			return fmt.Sprintf("alias is %q, want replace-one", broker.GetAlias())
+		}
+		return ""
+	})
+
+	// The second version arrives well inside the replacement interval.
+	f.Records(t, buildCard(2, "replace-two", "198.51.100.62:17443"))
+
+	harness.Consistently(t, discBound(2), "C receives only the first version", func() (bool, string) {
+		for _, version := range g.recordListVersions(t, fp, cardKind, "") {
+			if version != 1 {
+				return false, fmt.Sprintf("C received version %d", version)
+			}
+		}
+		return true, ""
+	})
+	harness.Consistently(t, discBound(2), "B keeps the first version", func() (bool, string) {
+		brokers, state := discList(t, b)
+		if state != "" {
+			return false, state
+		}
+		broker, ok := discFindFingerprint(brokers, fp)
+		if !ok {
+			return false, "the record is not listed"
+		}
+		if broker.GetAlias() != "replace-one" {
+			return false, fmt.Sprintf("alias is %q, want replace-one", broker.GetAlias())
+		}
+		return true, ""
+	})
+}
+
+// TestDirectoryMalformedDirectAddress checks that a card with a well-formed
+// direct address and one containing an ESC byte is accepted, propagated and
+// listed with only the well-formed entry (REQ-broker-discovery-018).
+func TestDirectoryMalformedDirectAddress(t *testing.T) {
+	t.Parallel()
+
+	b := discNewNode(t, "badaddr-b", "", false)
+	c := discNewNode(t, "badaddr-c", "", false)
+	discPair(t, b, c)
+
+	f := startFakePeer(t)
+	f.Pair(t, b.addr, hostilePairKey(t, b))
+	f.WaitLinked(t, 3*time.Second)
+
+	const (
+		seed = "malformed-direct-address"
+		good = "198.51.100.4:17443"
+	)
+	f.Records(t, hostileBuild(t, fakerec.Spec{
+		Seed:  seed,
+		Kind:  "card",
+		Alias: "card-bad-addr",
+		Addresses: []fakerec.Addr{
+			{Kind: "direct", Addr: "198.51.100.\x1b5:17443"},
+			{Kind: "direct", Addr: good},
+		},
+	}))
+
+	fp := hostileHexFingerprint(fakerec.PublisherOf(seed))
+	for _, node := range []*discNode{b, c} {
+		discWaitBroker(t, node, fp, discBound(2), func(broker *localpb.BrokerInfo) string {
+			addrs := broker.GetAdvertisedAddresses()
+			if len(addrs) != 1 || addrs[0].GetKind() != "direct" || addrs[0].GetAddr() != good {
+				return fmt.Sprintf("addresses are %v, want only the well-formed %q", addrs, good)
+			}
+			if broker.GetStatus() != localpb.BrokerStatus_BROKER_STATUS_CONNECTABLE {
+				return fmt.Sprintf("status is %v, want CONNECTABLE", broker.GetStatus())
+			}
+			return ""
+		})
 	}
 }
 

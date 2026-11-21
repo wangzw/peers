@@ -39,11 +39,19 @@ type discNode struct {
 	addr   string
 	alias  string
 	config string
+	env    map[string]string
 }
 
 // discNewNode starts one local node with an explicit listen and advertise
 // address and a stable alias. extra is merged into the configuration.
 func discNewNode(t *testing.T, name, extra string, public bool) *discNode {
+	t.Helper()
+	return discNewNodeEnv(t, name, extra, public, nil)
+}
+
+// discNewNodeEnv is discNewNode with variables that override the node's base
+// environment when its Broker starts. A nil map changes nothing.
+func discNewNodeEnv(t *testing.T, name, extra string, public bool, env map[string]string) *discNode {
 	t.Helper()
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "disc-" + name})
 	d := &discNode{
@@ -51,6 +59,7 @@ func discNewNode(t *testing.T, name, extra string, public bool) *discNode {
 		name:  name,
 		addr:  host.FreeAddr(t),
 		alias: "disc-" + name,
+		env:   env,
 	}
 	d.config = discConfig(d.addr, d.alias, public, extra)
 	d.start(t)
@@ -102,7 +111,7 @@ func discYAMLString(addr string) string {
 // uses, so later comparisons and dials do not go to a stale port.
 func (d *discNode) start(t *testing.T) {
 	t.Helper()
-	start := d.StartBroker(t, harness.BrokerSpec{ConfigYAML: d.config})
+	start := d.StartBroker(t, harness.BrokerSpec{ConfigYAML: d.config, Env: d.env})
 	if !start.Running {
 		t.Fatalf("Broker %s did not start: exit code %d: %s", d.name, start.ExitCode, strings.TrimSpace(start.StderrLast))
 	}
