@@ -37,4 +37,6 @@ topic 成员关系随会话存续。Broker 重启后，MCP 服务进程重新登
 
 加入本账户已在其中的 topic 不计入 topic 数量上限。这些上限不可配置。
 
+会话重新登记时会恢复记住的 topic；被 `quota_exceeded` 拒绝的 topic 会推迟恢复，先继续恢复其他 topic，再在登记有效期间反复重试，间隔从 250 毫秒起每次加倍，最长 30 秒，每次等待再乘以 0.5 到 1.5 的随机系数，结果仍限定在 250 毫秒到 30 秒之间。公开声明因配额以外的原因被拒时，会话改为以私有形式重试加入；这次加入成功，或仅因配额被拒时，私有形式替换记住的条目。连接在恢复该 topic 之前断开时，条目仍会保留，下次登记再试；一旦空出名额，topic 会自动加入，用户不必再调用一次 `join_topic`。Broker 回复 `not_registered`（注册已被撤销）时，恢复停止，所有条目保留到下次登记；因其他原因被拒的 topic（例如名字不合法），不论拒绝发生在第一次加入还是公开声明失败后的私有重试，都会从会话的记忆中删除。用户和模型都不会收到提示。
+
 会话如何成为成员，见 [Agent]({{< relref "/docs/concepts/agents" >}})；两个 Broker 如何建立连接，见[配对]({{< relref "/docs/concepts/pairing" >}})；协作与公开 Broker 的操作见[在同一个 topic 里协作]({{< relref "/docs/guides/collaborate-in-topic" >}})和[发现并连接公开 Broker]({{< relref "/docs/guides/public-brokers" >}})；选择默认 topic 的项目配置文件见[项目配置文件]({{< relref "/docs/reference/project-config" >}})。
