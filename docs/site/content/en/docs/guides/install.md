@@ -15,7 +15,7 @@ The one-command installation and the release archive's `sh ./install.sh` install
 To install a particular version, set it first and pass `--version`:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh -s -- --version "$VERSION"
 ```
 
@@ -39,7 +39,7 @@ The script does the same work as the `install.sh` in the archive, described in t
 `peers` is distributed as a `tar.gz` archive on [GitHub Releases](https://github.com/wangzw/peers/releases/latest). Download the archive for your platform and architecture together with `checksums.txt` from the same release:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 curl -LO https://github.com/wangzw/peers/releases/download/v${VERSION}/peers_${VERSION}_<os>_<arch>.tar.gz
 curl -LO https://github.com/wangzw/peers/releases/download/v${VERSION}/checksums.txt
 ```
@@ -49,21 +49,21 @@ Replace `<os>_<arch>` with `darwin_amd64`, `darwin_arm64`, `linux_amd64` or `lin
 Check the archive against `checksums.txt` before using it. On Linux:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 grep peers_${VERSION}_linux_arm64.tar.gz checksums.txt | sha256sum -c -
 ```
 
 On macOS, use `shasum` instead:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 grep peers_${VERSION}_darwin_arm64.tar.gz checksums.txt | shasum -a 256 -c -
 ```
 
-Create a directory and extract the archive into it: the archive has no top-level directory, so without one its files, including `LICENSE`, `README.md` and `third_party/`, land directly in the current directory:
+Create a directory and extract the archive into it: the archive has no top-level directory, so without one its contents, including the `peers` binary, `LICENSE`, `README.md`, `install.sh`, `third_party/`, `THIRD_PARTY_LICENSES/` and `man/`, land directly in the current directory:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 mkdir peers-${VERSION}
 tar -xzf peers_${VERSION}_darwin_arm64.tar.gz -C peers-${VERSION}
 ```
@@ -73,7 +73,7 @@ Replace `darwin` with `linux` on Linux.
 Enter the extracted directory and run the script:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 cd peers-${VERSION}
 sh ./install.sh
 ```
@@ -113,7 +113,7 @@ The install script writes shell completions for `peers` from the installed binar
 
 To generate a completion script yourself, run `peers completion <shell>` and write its output where your shell reads completions; `bash`, `zsh`, `fish` and `powershell` are supported.
 
-A system-level install also writes the man pages into `/usr/local/share/man/man1`, so `man peers` works. The man pages are part of the release archive.
+A system-level install also writes the man pages into `/usr/local/share/man/man1`, so `man peers` works. The pages are in the archive's `man/` directory.
 
 ## Installation output
 
@@ -130,7 +130,7 @@ Download, verify and extract the archive as described in the previous section, t
 On macOS, a browser download carries the quarantine attribute, and because the binaries are not signed or notarized, macOS blocks the binary until the attribute is removed. Clear it from the extracted binary if a browser downloaded the archive:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 xattr -d com.apple.quarantine peers-${VERSION}/peers
 ```
 
@@ -141,7 +141,7 @@ If you install a system-level service, use the `sudo install` step in [Run the B
 Move the binary into a directory on your `PATH`:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 mkdir -p ~/.local/bin
 mv peers-${VERSION}/peers ~/.local/bin/
 peers --version
@@ -192,7 +192,7 @@ A Broker started inside a session exits with code 6. Starting the Broker does no
 To build from source you need Go 1.27. Clone the repository and build:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 git clone https://github.com/wangzw/peers
 cd peers
 go build -trimpath -ldflags "-X main.version=$VERSION" -o peers ./cmd/peers

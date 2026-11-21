@@ -37,7 +37,7 @@ A system-level install runs as root and makes the Broker start at boot. Answerin
 The binary must be in a directory that root owns and that group and others cannot write, such as `/usr/local/bin`. The service starts the binary as root, so an ordinary account that can modify the binary or one of its parent directories could take over the service:
 
 ```sh
-VERSION=0.4.0
+VERSION=0.5.0
 sudo install -o root -g 0 -m 0755 peers-${VERSION}/peers /usr/local/bin/peers
 sudo /usr/local/bin/peers service install --system
 ```

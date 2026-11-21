@@ -38,7 +38,7 @@ peers update
 
 命令先拒绝不是正式发布版本的二进制，然后在改动任何东西之前询问。回答 `y` 或 `yes` 才会继续；其他回答会取消更新，二进制与服务都保持原样。确认之后才选 Broker；随后做什么，取决于选中的 Broker 以及它怎样运行。
 
-加 `--yes` 可以跳过询问。标准输入不是终端时，例如在脚本或计划任务里，命令要求带 `--yes`，否则拒绝执行，并给出 `standard input is not a terminal; pass --yes to proceed without asking`。已经是最新版本时，命令打印 `peers 0.4.0 is up to date`，直接退出，不做任何改动。
+加 `--yes` 可以跳过询问。标准输入不是终端时，例如在脚本或计划任务里，命令要求带 `--yes`，否则拒绝执行，并给出 `standard input is not a terminal; pass --yes to proceed without asking`。已经是最新版本时，命令打印 `peers 0.5.0 is up to date`，直接退出，不做任何改动。
 
 命令的完整说明见[命令行]({{< relref "/docs/reference/cli" >}})。
 
