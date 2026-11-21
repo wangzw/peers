@@ -685,3 +685,39 @@ func bpCheckStructuredLog(t *testing.T, data []byte, forbidden string) {
 		}
 	}
 }
+
+// TestLocalOracleReconnectsAfterBrokerRestart checks that the one Oracle client
+// a local node keeps survives a Broker restart: the cached connection reports
+// the Broker down, then reconnects with gRPC's backoff once it is back, rather
+// than the harness dialing a new client.
+func TestLocalOracleReconnectsAfterBrokerRestart(t *testing.T) {
+	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "oracle-restart"})
+	host.WriteConfig(t, "broker:\n  listen: "+host.FreeAddr(t)+"\n")
+	if start := host.StartBroker(t, harness.BrokerSpec{}); !start.Running {
+		t.Fatalf("the Broker did not start: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
+	}
+	oracle := host.Oracle()
+	if _, err := oracle.GetConfigRaw(""); err != nil {
+		t.Fatalf("GetConfig before the stop: %v", err)
+	}
+
+	if code := host.StopBroker(t, syscall.SIGTERM); code != 0 {
+		t.Fatalf("the Broker exited %d on SIGTERM, want 0", code)
+	}
+	if _, err := oracle.GetConfigRaw(""); err == nil {
+		t.Fatal("GetConfig succeeded while the Broker was down")
+	}
+
+	if start := host.StartBroker(t, harness.BrokerSpec{}); !start.Running {
+		t.Fatalf("the Broker did not restart: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
+	}
+	harness.Eventually(t, brokerRecoverBound, "the same Oracle client reconnects", func() (bool, string) {
+		if _, err := oracle.GetConfigRaw(""); err != nil {
+			return false, err.Error()
+		}
+		return true, ""
+	})
+	if host.Oracle() != oracle {
+		t.Fatal("the node dialed a new Oracle client instead of reconnecting the cached one")
+	}
+}

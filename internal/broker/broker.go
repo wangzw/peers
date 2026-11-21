@@ -122,6 +122,7 @@ func New(deps Deps) (*Broker, error) {
 		deps.Logger.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
 	}
 	conns := newAccountLimit(localConnLimit, EvLocalConnectionLimitReached, deps.Logger)
+	conns.totalLimit = localTotalConnLimit
 	registers := newAccountLimit(localRegisterLimit, EvRegisterLimitReached, deps.Logger)
 	peerCreds := newPeerCredCreds(deps.ReadPeerCred, allow, logReject, conns)
 
@@ -134,6 +135,9 @@ func New(deps Deps) (*Broker, error) {
 
 	opts := []grpc.ServerOption{
 		grpc.Creds(peerCreds),
+		// Make the handshake deadline explicit: the account lookup that
+		// decides the connection's bucket is bounded by the same value.
+		grpc.ConnectionTimeout(localHandshakeTimeout),
 		// Bound the streams one connection may run at once. A client that
 		// ignores the advertised limit is refused by the HTTP/2 server.
 		grpc.MaxConcurrentStreams(uint32(localStreamLimit)),

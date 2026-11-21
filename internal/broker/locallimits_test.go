@@ -4,13 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/wangzw/peers/internal/accountdb"
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
@@ -25,10 +28,17 @@ const (
 // before newTestBroker so the Broker is built with them.
 func withLocalLimits(t *testing.T, conns, streams, regs int) {
 	t.Helper()
-	oldConns, oldStreams, oldRegs := localConnLimit, localStreamLimit, localRegisterLimit
-	localConnLimit, localStreamLimit, localRegisterLimit = conns, streams, regs
+	withLocalTotalLimit(t, conns, streams, regs, maxLocalConnectionsTotal)
+}
+
+// withLocalTotalLimit lowers the per-account and global connection limits for
+// one test. It must run before newTestBroker so the Broker is built with them.
+func withLocalTotalLimit(t *testing.T, conns, streams, regs, total int) {
+	t.Helper()
+	oldConns, oldStreams, oldRegs, oldTotal := localConnLimit, localStreamLimit, localRegisterLimit, localTotalConnLimit
+	localConnLimit, localStreamLimit, localRegisterLimit, localTotalConnLimit = conns, streams, regs, total
 	t.Cleanup(func() {
-		localConnLimit, localStreamLimit, localRegisterLimit = oldConns, oldStreams, oldRegs
+		localConnLimit, localStreamLimit, localRegisterLimit, localTotalConnLimit = oldConns, oldStreams, oldRegs, oldTotal
 	})
 }
 
@@ -52,20 +62,22 @@ func (l *accountLimit) count(uid uint32) int {
 }
 
 // TestAccountLimitCountsPerAccount pins the accounting under the connection and
-// registration limits: slots are per uid, and a refusal is logged once per
-// over-limit episode.
+// registration limits: slots are per account key, a refusal is logged at most
+// once per account per minute, and the log is written again after a minute.
 func TestAccountLimitCountsPerAccount(t *testing.T) {
 	var logs syncBuffer
 	l := newAccountLimit(1, connectionLimitEventName, NewLogger(&logs, new(slog.LevelVar)))
+	now := time.Unix(1000, 0)
+	l.now = func() time.Time { return now }
 
-	if !l.acquire(1000) {
+	if !l.acquire(1000, 1000) {
 		t.Fatal("uid 1000 was refused its first slot")
 	}
-	if !l.acquire(1001) {
+	if !l.acquire(1001, 1001) {
 		t.Fatal("uid 1001 was refused a slot while uid 1000 held one")
 	}
 	for i := 0; i < 3; i++ {
-		if l.acquire(1000) {
+		if l.acquire(1000, 1000) {
 			t.Fatal("uid 1000 got a slot past the limit")
 		}
 	}
@@ -76,13 +88,14 @@ func TestAccountLimitCountsPerAccount(t *testing.T) {
 		t.Fatalf("uid 1001 holds %d slots, want 1", got)
 	}
 
-	// Releasing the only held slot clears the episode, so the next refusal is
-	// logged again.
+	// Releasing the only held slot frees it, and after the log interval has
+	// passed a later refusal is recorded again.
 	l.release(1000)
-	if !l.acquire(1000) {
+	now = now.Add(overLimitLogInterval)
+	if !l.acquire(1000, 1000) {
 		t.Fatal("uid 1000 was refused a slot after releasing one")
 	}
-	if l.acquire(1000) {
+	if l.acquire(1000, 1000) {
 		t.Fatal("uid 1000 got a slot past the limit after reacquiring")
 	}
 
@@ -93,8 +106,42 @@ func TestAccountLimitCountsPerAccount(t *testing.T) {
 		}
 	}
 	if records != 2 {
-		t.Fatalf("%s records = %d, want 2 (one per over-limit episode)", connectionLimitEventName, records)
+		t.Fatalf("%s records = %d, want 2 (one per minute)", connectionLimitEventName, records)
 	}
+}
+
+// TestAccountLimitLogsOncePerMinute checks that a retrying client cannot flood
+// the runtime log: one hundred refusals within a minute write one record.
+func TestAccountLimitLogsOncePerMinute(t *testing.T) {
+	var logs syncBuffer
+	l := newAccountLimit(1, connectionLimitEventName, NewLogger(&logs, new(slog.LevelVar)))
+	now := time.Unix(1000, 0)
+	l.now = func() time.Time { return now }
+
+	if !l.acquire(1000, 1000) {
+		t.Fatal("uid 1000 was refused its first slot")
+	}
+	for i := 0; i < 100; i++ {
+		if l.acquire(1000, 1000) {
+			t.Fatal("uid 1000 got a slot past the limit")
+		}
+	}
+	records := limitLogRecordsText(t, logs.String(), connectionLimitEventName)
+	if records != 1 {
+		t.Fatalf("%s records = %d, want 1 within one minute", connectionLimitEventName, records)
+	}
+}
+
+// limitLogRecordsText counts the records of one event in a raw log.
+func limitLogRecordsText(t *testing.T, raw, name string) int {
+	t.Helper()
+	n := 0
+	for _, rec := range decodeLogLines(t, raw) {
+		if rec["event"] == name {
+			n++
+		}
+	}
+	return n
 }
 
 // TestLocalConnectionLimitRefusesExtraConnection pins that a third connection
@@ -267,5 +314,185 @@ func TestRegisterLimitRefusesExtraStream(t *testing.T) {
 	}
 	if got := records[0]["limit"]; got != float64(2) {
 		t.Errorf("log limit = %v, want 2", got)
+	}
+}
+
+// stubAccountDB replaces the caller-name lookup for one test. A uid in known
+// resolves to an account; every other uid resolves to no entry.
+func stubAccountDB(t *testing.T, known map[uint32]string) {
+	t.Helper()
+	resetUsernameCache(t)
+	lookupUsername = func(uid uint32) (accountdb.User, error) {
+		if name, ok := known[uid]; ok {
+			return accountdb.User{Name: name, UID: uid}, nil
+		}
+		return accountdb.User{}, accountdb.ErrNotFound
+	}
+}
+
+// credSequence returns a ReadPeerCred that hands out uids in order and repeats
+// the last one. Username is filled from the cache the Broker uses.
+func credSequence(t *testing.T, uids ...uint32) func(net.Conn) (Caller, error) {
+	t.Helper()
+	var mu sync.Mutex
+	next := 0
+	return func(net.Conn) (Caller, error) {
+		mu.Lock()
+		uid := uids[len(uids)-1]
+		if next < len(uids) {
+			uid = uids[next]
+		}
+		next++
+		mu.Unlock()
+		return Caller{UID: uid, Username: usernameFor(uid)}, nil
+	}
+}
+
+// allowEveryCaller lets a test present any uid at the local interface.
+func allowEveryCaller(Caller) bool { return true }
+
+// TestGlobalConnectionLimitRefusesExtraConnection pins the broker-wide
+// connection cap: with the total limited to two, a third account's connection
+// is refused even though no account has reached its own limit.
+func TestGlobalConnectionLimitRefusesExtraConnection(t *testing.T) {
+	withLocalTotalLimit(t, maxLocalConnections, maxLocalStreams, maxLocalRegistrations, 2)
+	stubAccountDB(t, map[uint32]string{1000: "alice", 1001: "bob", 1002: "carol"})
+	tb := newTestBroker(t, func(d *Deps) {
+		d.AllowCaller = allowEveryCaller
+		d.ReadPeerCred = credSequence(t, 1000, 1001, 1002)
+	})
+
+	if err := callHello(t, tb.conn); err != nil {
+		t.Fatalf("first connection: %v", err)
+	}
+	second := newCredClient(t, tb.sock)
+	if err := callHello(t, second); err != nil {
+		t.Fatalf("second connection: %v", err)
+	}
+	third := newCredClient(t, tb.sock)
+	if err := callHello(t, third); status.Code(err) != codes.Unavailable {
+		t.Fatalf("third connection: err = %v (code %v), want the handshake refused", err, status.Code(err))
+	}
+
+	records := limitLogRecords(t, tb, connectionLimitEventName)
+	if len(records) != 1 {
+		t.Fatalf("%s records = %d, want 1", connectionLimitEventName, len(records))
+	}
+	if got := records[0]["scope"]; got != "broker" {
+		t.Errorf("log scope = %v, want broker", got)
+	}
+	if got := records[0]["limit"]; got != float64(2) {
+		t.Errorf("log limit = %v, want 2", got)
+	}
+}
+
+// TestUnknownUIDsShareConnectionQuota checks that uids with no account entry
+// share one account's connection slots, while a normal account keeps its own.
+func TestUnknownUIDsShareConnectionQuota(t *testing.T) {
+	withLocalLimits(t, 2, maxLocalStreams, maxLocalRegistrations)
+	stubAccountDB(t, map[uint32]string{1000: "alice"})
+	tb := newTestBroker(t, func(d *Deps) {
+		d.AllowCaller = allowEveryCaller
+		// Two unknown uids fill the shared bucket; the next unknown uid is
+		// refused; the last uid is a real account and still connects.
+		d.ReadPeerCred = credSequence(t, 300001, 300002, 300003, 1000)
+	})
+
+	if err := callHello(t, tb.conn); err != nil {
+		t.Fatalf("first unknown-uid connection: %v", err)
+	}
+	second := newCredClient(t, tb.sock)
+	if err := callHello(t, second); err != nil {
+		t.Fatalf("second unknown-uid connection: %v", err)
+	}
+	third := newCredClient(t, tb.sock)
+	if err := callHello(t, third); status.Code(err) != codes.Unavailable {
+		t.Fatalf("third unknown-uid connection: err = %v (code %v), want the handshake refused", err, status.Code(err))
+	}
+	known := newCredClient(t, tb.sock)
+	if err := callHello(t, known); err != nil {
+		t.Fatalf("known account connection: %v, want it accepted while the unknown bucket is full", err)
+	}
+}
+
+// TestUnknownUIDsShareRegisterQuota checks that Register streams from uids with
+// no account entry count against one shared per-account limit.
+func TestUnknownUIDsShareRegisterQuota(t *testing.T) {
+	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 2)
+	stubAccountDB(t, map[uint32]string{})
+	tb := newTestBroker(t, func(d *Deps) {
+		d.AllowCaller = allowEveryCaller
+		d.ReadPeerCred = credSequence(t, 300001, 300002, 300003, 300004)
+	})
+	if err := callHello(t, tb.conn); err != nil {
+		t.Fatalf("warm up: %v", err)
+	}
+
+	firstConn := newCredClient(t, tb.sock)
+	first := startRegistrationAt(t, localpb.NewLocalClient(firstConn), "", "")
+	if got := first.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+		t.Fatalf("first registration reason = %v, want socket_path_missing", got)
+	}
+	secondConn := newCredClient(t, tb.sock)
+	secondClient := localpb.NewLocalClient(secondConn)
+	second := startRegistrationAt(t, secondClient, "", "")
+	if got := second.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+		t.Fatalf("second registration reason = %v, want socket_path_missing", got)
+	}
+
+	thirdConn := newCredClient(t, tb.sock)
+	thirdClient := localpb.NewLocalClient(thirdConn)
+	stream, err := thirdClient.Register(context.Background())
+	if err != nil {
+		t.Fatalf("open the third registration: %v", err)
+	}
+	if err := stream.Send(&localpb.RegisterRequest{}); err != nil {
+		t.Fatalf("send the third registration frame: %v", err)
+	}
+	_, err = stream.Recv()
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("third registration from another unknown uid: err = %v (code %v), want ResourceExhausted",
+			err, status.Code(err))
+	}
+}
+
+// TestRegisterSlotReturnsAfterStreamEnds checks that ending a Register stream
+// returns its account's registration slot, so the next stream from the same
+// account is accepted.
+func TestRegisterSlotReturnsAfterStreamEnds(t *testing.T) {
+	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 1)
+	tb := newTestBroker(t)
+	if err := callHello(t, tb.conn); err != nil {
+		t.Fatalf("warm up: %v", err)
+	}
+	uid := uint32(os.Geteuid())
+
+	held := startRegistrationAt(t, tb.client, "", "")
+	if got := held.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+		t.Fatalf("held registration reason = %v, want socket_path_missing", got)
+	}
+	held.cancel()
+
+	waitForReg(t, "the registration slot to return", func() bool {
+		key, err := accountKeyFor(uid)
+		return err == nil && tb.b.registers.count(key) == 0
+	})
+	next := startRegistrationAt(t, tb.client, "", "")
+	if got := next.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+		t.Fatalf("registration after the held one ended = %v, want socket_path_missing", got)
+	}
+}
+
+// TestCountedConnReleasesOnce checks that closing a connection more than once
+// returns its account's slot only once.
+func TestCountedConnReleasesOnce(t *testing.T) {
+	client, server := net.Pipe()
+	defer func() { _ = server.Close() }()
+	releases := 0
+	conn := &countedConn{Conn: client, release: func() { releases++ }}
+	_ = conn.Close()
+	_ = conn.Close()
+	if releases != 1 {
+		t.Fatalf("a connection closed twice released its slot %d times, want 1", releases)
 	}
 }

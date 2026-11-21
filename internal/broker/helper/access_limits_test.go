@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -407,5 +409,358 @@ func TestCheckTimeoutReleasesItsSlot(t *testing.T) {
 	}
 	if !allowed {
 		t.Error("check after a timed-out one was denied, want allowed: its slot was not returned")
+	}
+}
+
+// TestCheckUnknownAccountsShareSlots checks that uids with no account entry
+// share one account bucket: the bucket never holds more than two slots at once,
+// and a normal account still gets its own. The unknown-account record is a
+// shared-window signal now, so the test drives the slot table directly instead
+// of using a log record to hold a check's slot open.
+func TestCheckUnknownAccountsShareSlots(t *testing.T) {
+	checker := &AccessChecker{MaxConcurrent: 8, MaxPerAccount: 2}
+	slots := checker.slotSet()
+	ctx := context.Background()
+
+	first, err := slots.acquireAccount(ctx, unknownCheckAccount)
+	if err != nil {
+		t.Fatalf("first unknown slot: %v", err)
+	}
+	second, err := slots.acquireAccount(ctx, unknownCheckAccount)
+	if err != nil {
+		t.Fatalf("second unknown slot: %v", err)
+	}
+
+	// A third unknown check finds both slots of the shared bucket taken.
+	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+	_, err = slots.acquireAccount(short, unknownCheckAccount)
+	cancel()
+	if err == nil {
+		t.Fatal("a third unknown check took a slot while two were in use")
+	}
+
+	// A real account has its own bucket and is unaffected by the full one.
+	known, err := slots.acquireAccount(ctx, 1000)
+	if err != nil {
+		t.Fatalf("known account slot while the unknown bucket is full: %v", err)
+	}
+	slots.releaseAccount(known)
+	slots.releaseAccount(first)
+	slots.releaseAccount(second)
+
+	slots.mu.Lock()
+	size := len(slots.accounts)
+	slots.mu.Unlock()
+	if size != 2 {
+		t.Fatalf("the account slot table holds %d entries, want the shared bucket and the known account", size)
+	}
+}
+
+// TestCheckRejectsLookupFailureWithoutSlot checks that a lookup failure is not
+// treated as an unknown account and creates no per-uid slot entry: the check
+// fails closed and the account table stays empty.
+func TestCheckRejectsLookupFailureWithoutSlot(t *testing.T) {
+	boom := errors.New("account database unavailable")
+	checker := &AccessChecker{
+		Lookup:  func(uint32) (Account, error) { return Account{}, boom },
+		Timeout: 5 * time.Second,
+		Logger:  accessTestLogger(),
+	}
+
+	allowed, err := checker.Check(context.Background(), 7000, "/config.yaml", AccessRead)
+	if err == nil || allowed {
+		t.Fatalf("Check = (%v, %v), want a failed, denied check", allowed, err)
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("Check error = %v, want the lookup failure", err)
+	}
+
+	slots := checker.slotSet()
+	slots.mu.Lock()
+	size := len(slots.accounts)
+	slots.mu.Unlock()
+	if size != 0 {
+		t.Fatalf("the account slot table holds %d entries after a failed lookup, want 0", size)
+	}
+}
+
+// TestCheckUnknownAccountUsesSharedBucketOnly checks that every uid with no
+// account entry shares one slot entry, so a rotating subuid cannot grow the
+// account slot table.
+func TestCheckUnknownAccountUsesSharedBucketOnly(t *testing.T) {
+	checker := &AccessChecker{
+		Lookup: func(uid uint32) (Account, error) {
+			return Account{}, fmt.Errorf("%w: uid %d", ErrNoAccount, uid)
+		},
+		Timeout:       5 * time.Second,
+		Logger:        accessTestLogger(),
+		MaxConcurrent: 8,
+		MaxPerAccount: 2,
+	}
+
+	for i := 0; i < 5; i++ {
+		allowed, err := checker.Check(context.Background(), uint32(300000+i), "/config.yaml", AccessRead)
+		if err != nil || allowed {
+			t.Fatalf("unknown-account check %d = (%v, %v), want denied without an error", i, allowed, err)
+		}
+	}
+
+	slots := checker.slotSet()
+	slots.mu.Lock()
+	defer slots.mu.Unlock()
+	if len(slots.accounts) != 1 {
+		t.Fatalf("the account slot table holds %d entries for five unknown uids, want 1", len(slots.accounts))
+	}
+	if _, ok := slots.accounts[unknownCheckAccount]; !ok {
+		t.Fatal("the unknown uids did not share unknownCheckAccount's entry")
+	}
+}
+
+// TestCheckSlotTableDropsIdleAccounts checks that the account slot table drops
+// an account that has been idle past accessAccountIdleTTL, so it does not grow
+// with every account ever checked.
+func TestCheckSlotTableDropsIdleAccounts(t *testing.T) {
+	now := time.Unix(1000, 0)
+	started := make(chan uint32, 32)
+	release := make(chan struct{})
+	close(release)
+	checker := &AccessChecker{
+		Lookup:        func(uid uint32) (Account, error) { return Account{UID: uid, GID: uid}, nil },
+		Start:         accessGateStart(started, release),
+		Timeout:       5 * time.Second,
+		Logger:        accessTestLogger(),
+		MaxConcurrent: 8,
+		MaxPerAccount: 2,
+		now:           func() time.Time { return now },
+	}
+
+	for _, uid := range []uint32{2000, 2001, 2002} {
+		if allowed, err := checker.Check(context.Background(), uid, "/config.yaml", AccessRead); err != nil || !allowed {
+			t.Fatalf("check for uid %d = (%v, %v), want allowed", uid, allowed, err)
+		}
+	}
+	slots := checker.slotSet()
+	slots.mu.Lock()
+	before := len(slots.accounts)
+	slots.mu.Unlock()
+	if before != 3 {
+		t.Fatalf("the account slot table holds %d entries, want 3", before)
+	}
+
+	now = now.Add(accessAccountIdleTTL + time.Second)
+	if allowed, err := checker.Check(context.Background(), 2003, "/config.yaml", AccessRead); err != nil || !allowed {
+		t.Fatalf("check for uid 2003 = (%v, %v), want allowed", allowed, err)
+	}
+
+	slots.mu.Lock()
+	after := len(slots.accounts)
+	_, kept := slots.accounts[2000]
+	slots.mu.Unlock()
+	if kept {
+		t.Fatal("an account entry idle past the TTL survived the sweep")
+	}
+	if after != 1 {
+		t.Fatalf("the account slot table holds %d entries after the sweep, want only the new account", after)
+	}
+}
+
+// TestCheckLookupConcurrencyCapped checks that account database lookups run at
+// most lookupgate.Concurrency at once, so a burst of uids with no account entry
+// cannot start one getent process per check.
+func TestCheckLookupConcurrencyCapped(t *testing.T) {
+	release := make(chan struct{})
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(releaseAll)
+
+	var running, peak atomic.Int32
+	started := make(chan uint32, 64)
+	checker := &AccessChecker{
+		Lookup: func(uid uint32) (Account, error) {
+			n := running.Add(1)
+			for {
+				p := peak.Load()
+				if n <= p || peak.CompareAndSwap(p, n) {
+					break
+				}
+			}
+			started <- uid
+			<-release
+			running.Add(-1)
+			return Account{}, fmt.Errorf("%w: uid %d", ErrNoAccount, uid)
+		},
+		Timeout:       5 * time.Second,
+		Logger:        accessTestLogger(),
+		MaxConcurrent: 100,
+		MaxPerAccount: 100,
+	}
+
+	const checks = 20
+	results := make([]<-chan checkResult, 0, checks)
+	for i := 0; i < checks; i++ {
+		results = append(results, checkAsync(checker, uint32(400000+i)))
+	}
+	for i := 0; i < 4; i++ {
+		waitStartedAccount(t, started, 5*time.Second)
+	}
+	select {
+	case <-started:
+		releaseAll()
+		for _, r := range results {
+			<-r
+		}
+		t.Fatal("a fifth account database lookup ran at once")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if got := peak.Load(); got > 4 {
+		releaseAll()
+		for _, r := range results {
+			<-r
+		}
+		t.Fatalf("peak concurrent lookups = %d, want at most 4", got)
+	}
+
+	releaseAll()
+	for _, r := range results {
+		if res := <-r; res.err != nil {
+			t.Errorf("check: %v", res.err)
+		}
+	}
+}
+
+// TestAccessSlotTableIsBounded checks the table's hard cap: with every one of
+// its 4096 account entries holding a slot, a new account is refused instead of
+// growing the table, and a slot returned makes room for it again.
+func TestAccessSlotTableIsBounded(t *testing.T) {
+	const wantMax = 4096
+	now := time.Unix(1000, 0)
+	slots := newAccessSlots(8, 2, func() time.Time { return now })
+	ctx := context.Background()
+
+	held := make(map[uint32]*accessAccountSlot, wantMax)
+	for i := 0; i < wantMax; i++ {
+		entry, err := slots.acquireAccount(ctx, uint32(i+1))
+		if err != nil {
+			t.Fatalf("account %d: %v", i+1, err)
+		}
+		held[uint32(i+1)] = entry
+	}
+	if got := len(slots.accounts); got != wantMax {
+		t.Fatalf("table holds %d entries, want %d", got, wantMax)
+	}
+
+	const extra = uint32(1 << 20)
+	if _, err := slots.acquireAccount(ctx, extra); !errors.Is(err, errAccessSlotTableFull) {
+		t.Fatalf("acquiring a %dth account = %v, want %v", wantMax+1, err, errAccessSlotTableFull)
+	}
+	if _, ok := slots.accounts[extra]; ok {
+		t.Fatal("a refused account got a table entry")
+	}
+
+	// Returning a slot leaves the entry idle, so the next account can replace
+	// it instead of being refused.
+	slots.releaseAccount(held[1])
+	if _, err := slots.acquireAccount(ctx, extra); err != nil {
+		t.Fatalf("acquiring an account after a slot was returned: %v", err)
+	}
+	if got := len(slots.accounts); got != wantMax {
+		t.Fatalf("table holds %d entries after replacing an idle one, want %d", got, wantMax)
+	}
+}
+
+// TestCheckUnknownAccountLogOncePerMinute checks that access_check_unknown_account
+// is written at most once per uid a minute, so a client that keeps checking
+// with the same uid cannot flood the runtime log.
+func TestCheckUnknownAccountLogOncePerMinute(t *testing.T) {
+	uid := uint32(7000)
+	var logBuf bytes.Buffer
+	now := time.Unix(1000, 0)
+	checker := &AccessChecker{
+		Lookup:  func(uint32) (Account, error) { return Account{}, ErrNoAccount },
+		Timeout: 5 * time.Second,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+		now:     func() time.Time { return now },
+	}
+
+	check := func(uid uint32) {
+		t.Helper()
+		allowed, err := checker.Check(context.Background(), uid, "/config.yaml", AccessRead)
+		if err != nil {
+			t.Fatalf("Check for uid %d: %v", uid, err)
+		}
+		if allowed {
+			t.Fatalf("unknown account %d was allowed", uid)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		check(uid)
+	}
+	if got := strings.Count(logBuf.String(), "access_check_unknown_account"); got != 1 {
+		t.Fatalf("logged access_check_unknown_account %d times within one minute, want 1", got)
+	}
+
+	now = now.Add(61 * time.Second)
+	check(uid)
+	if got := strings.Count(logBuf.String(), "access_check_unknown_account"); got != 2 {
+		t.Fatalf("logged access_check_unknown_account %d times after the minute passed, want 2", got)
+	}
+}
+
+// TestCheckUnknownAccountLogsOnceAcrossUIDs checks that rotating through 1000
+// uids with no account entry writes one access_check_unknown_account record,
+// not one per uid: every unknown uid shares one throttle window.
+func TestCheckUnknownAccountLogsOnceAcrossUIDs(t *testing.T) {
+	var logBuf bytes.Buffer
+	now := time.Unix(1000, 0)
+	checker := &AccessChecker{
+		Lookup:  func(uint32) (Account, error) { return Account{}, ErrNoAccount },
+		Timeout: 5 * time.Second,
+		Logger:  slog.New(slog.NewTextHandler(&logBuf, nil)),
+		now:     func() time.Time { return now },
+	}
+
+	const uids = 1000
+	for i := 0; i < uids; i++ {
+		uid := uint32(200000 + i)
+		allowed, err := checker.Check(context.Background(), uid, "/config.yaml", AccessRead)
+		if err != nil {
+			t.Fatalf("Check for unknown uid %d: %v", uid, err)
+		}
+		if allowed {
+			t.Fatalf("unknown account %d was allowed", uid)
+		}
+	}
+	if got := strings.Count(logBuf.String(), "access_check_unknown_account"); got != 1 {
+		t.Fatalf("logged access_check_unknown_account %d times for %d unknown uids, want 1", got, uids)
+	}
+}
+
+// TestReleaseAccountDoesNotTouchAReplacementEntry checks that a slot is
+// returned to the entry it was taken from. If the table swept that entry and a
+// new check rebuilt the same key meanwhile, releasing must not take the
+// replacement's slot.
+func TestReleaseAccountDoesNotTouchAReplacementEntry(t *testing.T) {
+	now := time.Unix(1000, 0)
+	slots := newAccessSlots(8, 1, func() time.Time { return now })
+	ctx := context.Background()
+
+	old, err := slots.acquireAccount(ctx, 7)
+	if err != nil {
+		t.Fatalf("acquiring the first entry: %v", err)
+	}
+
+	// Simulate the sweep dropping the idle entry, then a new check rebuilding
+	// the key and taking its slot before the first check releases.
+	slots.mu.Lock()
+	delete(slots.accounts, 7)
+	fresh := &accessAccountSlot{slots: make(chan struct{}, 1), idleAt: now}
+	fresh.slots <- struct{}{}
+	slots.accounts[7] = fresh
+	slots.mu.Unlock()
+
+	slots.releaseAccount(old)
+
+	if got := len(fresh.slots); got != 1 {
+		t.Fatalf("the replacement entry holds %d slots after the old entry was released, want 1", got)
 	}
 }

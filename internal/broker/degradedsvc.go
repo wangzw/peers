@@ -27,6 +27,10 @@ type degradedService struct {
 	protocol uint32
 	log      *slog.Logger
 
+	// registers bounds the Register streams one account may hold while the
+	// Broker runs diagnostics only, with the same limit the full service uses.
+	registers *accountLimit
+
 	srv  *grpc.Server
 	ln   net.Listener
 	done chan struct{}
@@ -55,15 +59,23 @@ func startDegradedService(
 	if readPeerCred == nil {
 		readPeerCred = ReadPeerCred
 	}
+	conns := newAccountLimit(localConnLimit, EvLocalConnectionLimitReached, log)
+	conns.totalLimit = localTotalConnLimit
+	registers := newAccountLimit(localRegisterLimit, EvRegisterLimitReached, log)
 	creds := newPeerCredCreds(readPeerCred, allow, func(c Caller) {
 		log.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
-	}, nil)
+	}, conns)
 
 	// The version interceptors must run before the degraded ones, so a
 	// connection already refused by Hello sees version_mismatch rather than
 	// broker_degraded.
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
+		grpc.ConnectionTimeout(localHandshakeTimeout),
+		// The diagnostics-only service carries the same per-connection stream
+		// limit as the full one, so a client cannot use it to open streams
+		// without bound while the Broker is degraded.
+		grpc.MaxConcurrentStreams(uint32(localStreamLimit)),
 		grpc.WaitForHandlers(true),
 	}
 	opts = append(opts, versionServerOptions()...)
@@ -73,13 +85,14 @@ func startDegradedService(
 	)
 
 	s := &degradedService{
-		state:    state,
-		version:  version,
-		protocol: protocol,
-		log:      log,
-		srv:      grpc.NewServer(opts...),
-		ln:       dup,
-		done:     make(chan struct{}),
+		state:     state,
+		version:   version,
+		protocol:  protocol,
+		log:       log,
+		registers: registers,
+		srv:       grpc.NewServer(opts...),
+		ln:        dup,
+		done:      make(chan struct{}),
 	}
 	localpb.RegisterLocalServer(s.srv, s)
 	go func() {
@@ -178,6 +191,24 @@ func (s *degradedService) Status(context.Context, *localpb.StatusRequest) (*loca
 func (s *degradedService) Register(stream localpb.Local_RegisterServer) error {
 	if _, err := stream.Recv(); err != nil {
 		return err
+	}
+	caller, ok := CallerFrom(stream.Context())
+	if !ok {
+		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
+			"no caller identified on this connection"))
+	}
+	if s.registers != nil {
+		key, err := accountKeyFor(caller.UID)
+		if err != nil {
+			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
+				"cannot register: looking up account %d: %v", caller.UID, err))
+		}
+		if !s.registers.acquire(key, caller.UID) {
+			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+				"cannot register: account %s already has %d open registrations",
+				callerAccount(caller), s.registers.limit))
+		}
+		defer s.registers.release(key)
 	}
 	detail := ""
 	if d := s.currentState(); d != nil {

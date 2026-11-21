@@ -50,12 +50,19 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 	// before the session backend is acquired, so an account past its limit
 	// costs no backend work. The slot is held for the stream's lifetime.
 	if b.registers != nil {
-		if !b.registers.acquire(caller.UID) {
+		key, err := accountKeyFor(caller.UID)
+		if err != nil {
+			// A failed account lookup is not an unknown account: refuse the
+			// registration instead of counting it in a shared bucket.
+			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
+				"cannot register: looking up account %d: %v", caller.UID, err))
+		}
+		if !b.registers.acquire(key, caller.UID) {
 			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
 				"cannot register: account %s already has %d open registrations",
 				callerAccount(caller), b.registers.limit))
 		}
-		defer b.registers.release(caller.UID)
+		defer b.registers.release(key)
 	}
 	backend, release, err := b.deps.Sessions.Acquire(ctx, caller.UID)
 	if err != nil {

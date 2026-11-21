@@ -40,6 +40,5 @@ func readPeerCred(conn *net.UnixConn) (Caller, error) {
 	if xucred.Ngroups > 0 {
 		c.GID = xucred.Groups[0]
 	}
-	c.Username = usernameFor(c.UID)
 	return c, nil
 }

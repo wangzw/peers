@@ -26,7 +26,5 @@ func readPeerCred(conn *net.UnixConn) (Caller, error) {
 	if credErr != nil {
 		return Caller{}, credErr
 	}
-	c := Caller{UID: ucred.Uid, GID: ucred.Gid, PID: ucred.Pid}
-	c.Username = usernameFor(c.UID)
-	return c, nil
+	return Caller{UID: ucred.Uid, GID: ucred.Gid, PID: ucred.Pid}, nil
 }

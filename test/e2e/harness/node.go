@@ -222,6 +222,20 @@ func (o *OracleClient) GetConfig(t testing.TB, key string) (*localpb.GetConfigRe
 	return resp, nil
 }
 
+// GetConfigRaw is GetConfig but returns a transport error instead of failing
+// the test. A caller uses it to observe a Broker that is down and then wait for
+// the same client to reconnect, which a call that failed the test could not do.
+func (o *OracleClient) GetConfigRaw(key string) (*localpb.GetConfigResponse, error) {
+	if o.remote != nil {
+		// No raw variant crosses the node agent; this helper exists for a test
+		// that runs the Broker on the test host.
+		return nil, fmt.Errorf("GetConfigRaw is not available for a container node")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), oracleBound)
+	defer cancel()
+	return o.oracle.GetConfig(ctx, key)
+}
+
 // Audit reads the audit stream to its end and returns the events in the order
 // the Broker sent them. A zero since does not set AuditRequest.since; a zero
 // limit does not bound the answer.

@@ -88,7 +88,7 @@ graph TD
 
 箭头从使用方指向被使用方。本项目自己的包之间只沿箭头引用；标准库、外部依赖和 `third_party` 下纳入的源码不在此列。`inbox` 不引用本项目自己的任何其他包；`config` 只引用 `accountdb`，用于取当前账户的家目录。`internal/testkit` 下的包只由 `_test.go` 文件引用；非测试文件引用它会被依赖检查拒绝。`link` 只提供带身份认证的帧通道，不解析 topic 和名录的帧；`topic` 与 `directory` 各自在 `link` 上注册自己的帧类型。
 
-`localpb` 与 `deliverpb` 是 `broker` 的 proto 包，在图中单列为节点。`mcpserver` 只引用 `localpb`，不引用 `broker` 包本身；`deliverpb` 承载跨 Broker 的投递帧，只由 `broker` 引用。`accountdb` 是 `broker` 与 `config` 共用的账户数据库查询包，只依赖标准库，在图中单列为节点。`procsig` 是发送进程信号前检查 pid 的共用包，只依赖标准库，在图中单列为节点。
+`localpb` 与 `deliverpb` 是 `broker` 的 proto 包，在图中单列为节点。`mcpserver` 只引用 `localpb`，不引用 `broker` 包本身；`deliverpb` 承载跨 Broker 的投递帧，只由 `broker` 引用。`accountdb` 是 `broker` 与 `config` 共用的账户数据库查询包，只依赖标准库，在图中单列为节点。`broker` 包内的 `lookupgate` 子包是 `broker` 与它的 `helper` 共用的账户数据库查询门，使一个进程同时至多运行 4 个 getent 查询，只依赖标准库，在图中仍归 `broker` 节点。`procsig` 是发送进程信号前检查 pid 的共用包，只依赖标准库，在图中单列为节点。
 
 图中没有箭头而运行时需要的协作，由 `broker` 以接口注入或转调完成。接口注入用于 `pairing`：它发起握手要拨号，解除配对要关闭链路，拨号与关闭链路由 `link` 实现，`broker` 在装配时以接口的形式交给 `pairing`。其余的协作是转调：配置变更由 `broker` 订阅后分别通知 `link`、`directory`；名片带来的对外地址列表由 `broker` 交给 `pairing` 记入候选地址，本机对外地址列表的变化由 `broker` 通知 `link` 与 `directory`；配对结果与名录的比对、公开 topic 的声明都由 `broker` 依次调用相关的包。
 
@@ -138,7 +138,7 @@ MCP 服务进程由 Claude Code 作为会话的子进程启动，生命周期与
 | 系统级 Broker，`peers service run --system` | 由管理员安装的系统服务启动，以 root 运行 | 每台主机至多一个 | 本机 socket；`broker.listen` 给出的 TCP 地址 |
 | 用户级 Broker，`peers service run --user` | 由用户安装为服务启动（安装后立即启动 Broker，此后随登录启动），或由用户在会话之外的终端启动 | 每个账户至多一个 | 本机 socket；`broker.listen` 给出的 TCP 地址 |
 | 辅助进程 | 系统级 Broker 按需派生（`peers internal account-helper`），切换到被服务的账户后运行 | 每个被服务的账户一个 | 无 |
-| 权限检查进程 | 系统级 Broker 每次判定调用方对配置文件的权限时派生（`peers internal access-check`），以 root 执行后只把有效身份切换到调用方账户，检查后即退出；同时至多 8 个，每个账户至多 2 个 | 按需 | 无 |
+| 权限检查进程 | 系统级 Broker 每次判定调用方对配置文件的权限时派生（`peers internal access-check`），以 root 执行后只把有效身份切换到调用方账户，检查后即退出；同时至多 8 个，每个账户至多 2 个，账户查询与调用方名字查询共用进程级 4 个 getent 槽 | 按需 | 无 |
 | MCP 服务进程，`peers mcp` | Claude Code 按会话的工具配置启动 | 每会话一个 | 无 |
 | 终端命令，例如 `peers service status` | 用户执行 | 按需 | 无 |
 
@@ -235,7 +235,7 @@ Local 的错误放在 gRPC status 的 details 里，恰好携带一个 `ErrorDet
 | 边界 | 认证方式 | 授权范围 |
 |---|---|---|
 | MCP 服务进程、终端命令到用户级 Broker | 本机 socket 的权限为 `0600`，Broker 另以进程凭据核对调用方账户与自己相同 | 本机接口的全部操作 |
-| MCP 服务进程、终端命令到系统级 Broker | 本机 socket 的文件权限决定哪些账户能连接；调用方的账户取自进程凭据 | 登记、列出、topic 操作与发送不设前提，其中 topic 变更按账户限速，每个账户同时至多 256 条登记流；读取配置、审计与全量状态要求调用方账户对配置文件有读权限；修改配置、生成配对密钥、发起与解除配对要求写权限 |
+| MCP 服务进程、终端命令到系统级 Broker | 本机 socket 的文件权限决定哪些账户能连接；调用方的账户取自进程凭据；查不到账户条目的 uid 先共用一个未知账户桶，查询失败或超时则拒绝连接 | 登记、列出、topic 操作与发送不设前提，其中 topic 变更按账户限速，每个账户同时至多 256 条登记流、全 Broker 同时至多 4096 条本机连接，其中等待账户查询的连接至多 64 条、每条等待至多 5 秒；读取配置、审计与全量状态要求调用方账户对配置文件有读权限；修改配置、生成配对密钥、发起与解除配对要求写权限 |
 | MCP 服务进程到 Agent 身份 | Broker 在调用方账户的会话注册表中找到登记请求所指的会话记录（系统级形态下经该账户的辅助进程读取），自己核对记录所载 inbox socket 的属主是调用方账户 | 一个连接只能登记属于自己账户的会话；同一账户的任何进程都能登记该账户的任一会话 |
 | Broker 到 Broker | 双向 TLS，对方证书的指纹在对端表中，或在本次连接内完成配对握手 | 交换共同 topic 的成员名单、名录记录，向可见的 Agent 投递消息 |
 | Broker 到 Claude Code 会话 | 不出示会话的认证令牌 | 由该会话的入站控制决定 |

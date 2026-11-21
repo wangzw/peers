@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
@@ -257,5 +259,45 @@ func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 		t.Fatalf("accept after Stop: %v", err)
 	case <-time.After(2 * time.Second):
 		t.Fatal("the original listener did not accept after Stop")
+	}
+}
+
+// TestDegradedServiceEnforcesLimits checks that the diagnostics-only service
+// carries the same local interface limits as the full service: with two
+// registrations allowed per account, a third is refused with quota_exceeded.
+func TestDegradedServiceEnforcesLimits(t *testing.T) {
+	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 2)
+	state := &localpb.DegradedState{
+		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY,
+		Reason: "degraded",
+	}
+	path, _, _ := startTestDegradedService(t, state)
+	client, _ := degradedClient(t, path)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for i := 0; i < 2; i++ {
+		stream, err := client.Register(ctx)
+		if err != nil {
+			t.Fatalf("registration %d: %v", i+1, err)
+		}
+		if err := stream.Send(&localpb.RegisterRequest{InboxSocketPath: "/tmp/inbox.sock"}); err != nil {
+			t.Fatalf("registration %d send: %v", i+1, err)
+		}
+		if _, err := stream.Recv(); err != nil {
+			t.Fatalf("registration %d recv: %v", i+1, err)
+		}
+	}
+
+	stream, err := client.Register(ctx)
+	if err != nil {
+		t.Fatalf("third registration: %v", err)
+	}
+	if err := stream.Send(&localpb.RegisterRequest{InboxSocketPath: "/tmp/inbox.sock"}); err != nil {
+		t.Fatalf("third registration send: %v", err)
+	}
+	_, err = stream.Recv()
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("third registration: err = %v (code %v), want ResourceExhausted", err, status.Code(err))
 	}
 }

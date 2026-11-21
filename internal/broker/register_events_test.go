@@ -304,6 +304,9 @@ func TestRegisterEndsStreamWhenEventBacklogExceedsLimit(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("Register did not end after the event backlog exceeded its limit")
 	}
+	if got := r.tb.sessions.ReleaseCount(); got != 1 {
+		t.Fatalf("session backend released %d times on overflow, want 1", got)
+	}
 
 	assertOverflowLog(t, r.tb, id)
 }

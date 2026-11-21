@@ -14,6 +14,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/wangzw/peers/internal/broker/helperpb"
+	"github.com/wangzw/peers/internal/broker/lookupgate"
 )
 
 // The access-check process execs as root and receives the identity it must
@@ -40,12 +41,32 @@ const (
 const defaultAccessCheckTimeout = 5 * time.Second
 
 // Defaults of AccessChecker.MaxConcurrent and AccessChecker.MaxPerAccount, and
-// how often one account's access_check_busy record is written.
+// how often one account's access_check_busy record is written. The account
+// database lookup bound is process-wide and lives in lookupgate.
 const (
 	defaultMaxConcurrentChecks = 8
 	defaultMaxChecksPerAccount = 2
 	accessBusyLogInterval      = time.Minute
 )
+
+// accessAccountIdleTTL is how long an account's check slots are kept after its
+// last check returned. The table holds only accounts that exist and were
+// checked recently, so a long-running Broker does not keep one entry per
+// account ever seen.
+const accessAccountIdleTTL = 5 * time.Minute
+
+// maxAccessAccounts bounds the account slot table in addition to the idle
+// cleanup. An entry with a check running or waiting is never evicted; when
+// every entry is in use the check is refused rather than growing the table.
+const maxAccessAccounts = 4096
+
+// unknownCheckAccount is the check-slot key shared by every uid with no
+// account database entry. A normal account can own a subuid range, so a
+// rootless container can check from tens of thousands of uids that resolve to
+// no account; they share one account's slots instead of each getting a private
+// quota. Such a check is still denied, because there is no account to run the
+// process as.
+const unknownCheckAccount = ^uint32(0)
 
 // RunAccessCheck is the body of `peers internal access-check`: it first
 // drops its effective identity to the account named by the Broker, then reads
@@ -200,15 +221,46 @@ type AccessChecker struct {
 	// all accounts. Zero takes the default of 8.
 	MaxConcurrent int
 	// MaxPerAccount is the most permission checks that may run at once for one
-	// uid. Zero takes the default of 2, so one account cannot take every slot.
+	// account. Zero takes the default of 2, so one account cannot take every
+	// slot. An account is the bucket every uid without an account entry shares.
 	MaxPerAccount int
 
-	// mu guards the lazily created slots and the times of the per-uid
-	// access_check_busy records. now is a test seam; nil means time.Now.
-	mu     sync.Mutex
-	slots  *accessSlots
-	busyAt map[uint32]time.Time
-	now    func() time.Time
+	// mu guards the lazily created slots, the busy log throttle and the shared
+	// unknown-account log window. now is a test seam; nil means time.Now.
+	mu    sync.Mutex
+	slots *accessSlots
+	busy  logThrottle
+	// unknownLogAt is when access_check_unknown_account was last written.
+	// Every uid with no account entry shares this one window, so the throttle
+	// holds no state per uid.
+	unknownLogAt time.Time
+	now          func() time.Time
+}
+
+// logThrottle writes at most one record per key within
+// accessBusyLogInterval. A client that keeps retrying must not be able to
+// flood the runtime log with records about the same account.
+type logThrottle struct {
+	at map[uint32]time.Time
+}
+
+// allow reports whether a record for key may be written at t, and records the
+// time. Records older than the interval are dropped so the map holds only the
+// keys that were logged recently.
+func (l *logThrottle) allow(key uint32, t time.Time) bool {
+	if l.at == nil {
+		l.at = make(map[uint32]time.Time)
+	}
+	if last, ok := l.at[key]; ok && t.Sub(last) < accessBusyLogInterval {
+		return false
+	}
+	for other, at := range l.at {
+		if t.Sub(at) >= accessBusyLogInterval {
+			delete(l.at, other)
+		}
+	}
+	l.at[key] = t
+	return true
 }
 
 // Check reports whether the account uid may access path. It spawns one process
@@ -227,32 +279,48 @@ func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Take the account's slot first and the global slot second, so one account
-	// can never hold more than its own share of the global slots while it
-	// waits. Both slots are returned after the process has been reaped.
-	slots := c.slotSet()
-	if err := slots.acquireAccount(ctx, uid, c.maxPerAccount()); err != nil {
-		c.logBusy(log, uid)
-		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
-	}
-	defer slots.releaseAccount(uid)
-	if err := slots.acquireGlobal(ctx, c.maxConcurrent()); err != nil {
-		c.logBusy(log, uid)
-		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
-	}
-	defer slots.releaseGlobal()
-
+	// Resolve the account before taking a slot. Only "no such account" is a
+	// decision: that uid shares unknownCheckAccount's slots with every other
+	// such uid, so a rootless container's rotating subuid cannot multiply the
+	// quota. A lookup failure or timeout refuses the check (fail closed), and
+	// creates no per-uid slot entry.
 	lookup := c.Lookup
 	if lookup == nil {
 		lookup = LookupAccount
 	}
-	acct, err := lookup(uid)
+	acct, lookupErr := c.lookupAccount(ctx, lookup, uid)
+	if lookupErr != nil && !errors.Is(lookupErr, ErrNoAccount) {
+		return false, fmt.Errorf("cannot check access for uid %d: %w", uid, lookupErr)
+	}
+	key := uid
+	if errors.Is(lookupErr, ErrNoAccount) {
+		key = unknownCheckAccount
+	}
+
+	// Take the account's slot first and the global slot second, so one account
+	// can never hold more than its own share of the global slots while it
+	// waits. Both slots are returned after the process has been reaped.
+	slots := c.slotSet()
+	entry, err := slots.acquireAccount(ctx, key)
 	if err != nil {
-		if errors.Is(err, ErrNoAccount) {
-			log.Warn("access_check_unknown_account", "uid", uid)
-			return false, nil
-		}
-		return false, fmt.Errorf("cannot check access for uid %d: %w", uid, err)
+		c.logBusy(log, key, uid)
+		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
+	}
+	// Release the exact entry the slot was taken from. Looking the key up again
+	// would find a replacement if the table swept and rebuilt it meanwhile, and
+	// would take that entry's slot instead of returning this one.
+	defer slots.releaseAccount(entry)
+	if err := slots.acquireGlobal(ctx); err != nil {
+		c.logBusy(log, key, uid)
+		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
+	}
+	defer slots.releaseGlobal()
+
+	if lookupErr != nil {
+		// The only lookup error left is ErrNoAccount: there is no account to
+		// run the process as, so the check is denied and not a failure.
+		c.logUnknownAccount(log, uid)
+		return false, nil
 	}
 
 	start := c.Start
@@ -352,45 +420,87 @@ func (c *AccessChecker) maxPerAccount() int {
 	return defaultMaxChecksPerAccount
 }
 
+// lookupAccount runs one account database lookup under the process-wide
+// getent gate, waiting until ctx is done. The broker package resolves caller
+// names through the same gate, so one process never runs more than
+// lookupgate.Concurrency getent processes in total.
+func (c *AccessChecker) lookupAccount(ctx context.Context, lookup func(uint32) (Account, error), uid uint32) (Account, error) {
+	release, err := lookupgate.Acquire(ctx)
+	if err != nil {
+		return Account{}, err
+	}
+	defer release()
+	return lookup(uid)
+}
+
+// nowFunc returns the checker's clock, defaulting to time.Now.
+func (c *AccessChecker) nowFunc() func() time.Time {
+	if c.now != nil {
+		return c.now
+	}
+	return time.Now
+}
+
 // slotSet returns the checker's slot set, creating it on first use.
 func (c *AccessChecker) slotSet() *accessSlots {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.slots == nil {
-		c.slots = &accessSlots{perAccount: make(map[uint32]int), changed: make(chan struct{})}
+		c.slots = newAccessSlots(c.maxConcurrent(), c.maxPerAccount(), c.nowFunc())
 	}
 	return c.slots
 }
 
-// logBusy records that uid could not take a check slot, at most once per
-// minute. The window keeps a caller that retries a full slot set from flooding
-// the runtime log.
-func (c *AccessChecker) logBusy(log *slog.Logger, uid uint32) {
+// logBusy records that the account key could not take a check slot, at most
+// once per minute. uid is the caller named in the record; a uid without an
+// account entry shares the unknown bucket's window with the other such uids,
+// so a rotating subuid cannot flood the runtime log.
+func (c *AccessChecker) logBusy(log *slog.Logger, key, uid uint32) {
+	if !c.allowLog(&c.busy, key) {
+		return
+	}
+	log.Warn("access_check_busy", "uid", uid)
+}
+
+// logUnknownAccount records that a check ran for a uid with no account entry.
+// Every such uid shares one window, so at most one record is written a minute
+// in total: a rootless container may check from a rotating subuid on every
+// connection, and the denial itself is already the answer. The throttle holds
+// one timestamp rather than one entry per uid, so it cannot grow with the uids
+// that check.
+func (c *AccessChecker) logUnknownAccount(log *slog.Logger, uid uint32) {
+	if !c.allowUnknownAccountLog() {
+		return
+	}
+	log.Warn("access_check_unknown_account", "uid", uid)
+}
+
+// allowUnknownAccountLog reports whether the shared unknown-account record may
+// be written now, and records the time when it may.
+func (c *AccessChecker) allowUnknownAccountLog() bool {
 	now := time.Now
 	if c.now != nil {
 		now = c.now
 	}
-	t := now()
-
 	c.mu.Lock()
-	if c.busyAt == nil {
-		c.busyAt = make(map[uint32]time.Time)
+	defer c.mu.Unlock()
+	t := now()
+	if !c.unknownLogAt.IsZero() && t.Sub(c.unknownLogAt) < accessBusyLogInterval {
+		return false
 	}
-	if last, ok := c.busyAt[uid]; ok && t.Sub(last) < accessBusyLogInterval {
-		c.mu.Unlock()
-		return
-	}
-	// Drop records whose minute has passed so the map tracks only the accounts
-	// that are busy now.
-	for other, at := range c.busyAt {
-		if t.Sub(at) >= accessBusyLogInterval {
-			delete(c.busyAt, other)
-		}
-	}
-	c.busyAt[uid] = t
-	c.mu.Unlock()
+	c.unknownLogAt = t
+	return true
+}
 
-	log.Warn("access_check_busy", "uid", uid)
+// allowLog applies the checker's clock and lock to one log throttle.
+func (c *AccessChecker) allowLog(t *logThrottle, key uint32) bool {
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return t.allow(key, now())
 }
 
 // humanDuration renders d as the error and log lines read it, such as "5
@@ -410,81 +520,150 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%d seconds", seconds)
 }
 
-// accessSlots bounds how many permission checks run at once. A check takes a
-// slot for its account, then one of the global slots, and returns both after
-// its process has been reaped. Every state change closes changed and installs
-// a fresh channel, waking every waiter to test its condition again.
-type accessSlots struct {
-	mu         sync.Mutex
-	global     int
-	perAccount map[uint32]int
-	changed    chan struct{}
+// errAccessSlotTableFull reports that the account slot table reached its bound
+// with every entry in use. The check is refused (fail closed) rather than
+// growing the table.
+var errAccessSlotTableFull = errors.New("the account check slot table is full")
+
+// accessAccountSlot is one account's semaphore and the time its last check
+// returned, which the idle cleanup uses.
+type accessAccountSlot struct {
+	slots  chan struct{}
+	idleAt time.Time
 }
 
-// acquireAccount takes one of the account's slots, waiting until ctx is done.
-func (s *accessSlots) acquireAccount(ctx context.Context, uid uint32, limit int) error {
-	for {
-		s.mu.Lock()
-		if s.perAccount[uid] < limit {
-			s.perAccount[uid]++
-			s.mu.Unlock()
-			return nil
-		}
-		changed := s.changed
-		s.mu.Unlock()
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+// accessSlots bounds how many permission checks run at once. A check takes a
+// slot for its account, then one of the global slots, and returns both after
+// its process has been reaped. Each limit is a buffered channel used as a
+// semaphore: a send takes a slot and a receive returns it, so returning one
+// slot wakes exactly one waiter instead of every waiter at once.
+//
+// The account table holds only accounts that exist (a failed lookup never
+// creates an entry, and every uid with no account entry shares
+// unknownCheckAccount), drops entries idle for accessAccountIdleTTL, and is
+// capped at maxAccessAccounts.
+type accessSlots struct {
+	mu       sync.Mutex
+	global   chan struct{}
+	accounts map[uint32]*accessAccountSlot
+	perLimit int
+	now      func() time.Time
+}
+
+func newAccessSlots(globalLimit, perAccountLimit int, now func() time.Time) *accessSlots {
+	if now == nil {
+		now = time.Now
+	}
+	return &accessSlots{
+		global:   make(chan struct{}, globalLimit),
+		accounts: make(map[uint32]*accessAccountSlot),
+		perLimit: perAccountLimit,
+		now:      now,
+	}
+}
+
+// acquireAccount takes one of the account key's slots, waiting until ctx is
+// done, and returns the entry the slot was taken from. The caller must pass
+// that entry to releaseAccount: the key could name a different entry by then
+// if the table swept the old one and a new check rebuilt it.
+func (s *accessSlots) acquireAccount(ctx context.Context, key uint32) (*accessAccountSlot, error) {
+	entry, ok := s.accountSlots(key)
+	if !ok {
+		return nil, errAccessSlotTableFull
+	}
+	select {
+	case entry.slots <- struct{}{}:
+		return entry, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
 // acquireGlobal takes one of the global slots, waiting until ctx is done.
-func (s *accessSlots) acquireGlobal(ctx context.Context, limit int) error {
-	for {
-		s.mu.Lock()
-		if s.global < limit {
-			s.global++
-			s.mu.Unlock()
-			return nil
-		}
-		changed := s.changed
-		s.mu.Unlock()
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+func (s *accessSlots) acquireGlobal(ctx context.Context) error {
+	select {
+	case s.global <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
-// releaseAccount returns the account's slot and wakes the waiters.
-func (s *accessSlots) releaseAccount(uid uint32) {
+// releaseAccount returns a slot to the entry it was taken from and marks that
+// entry idle when no check holds it any more. It takes the entry pointer rather
+// than the key: a key lookup here would find a replacement if the table swept
+// and rebuilt the entry, and would consume the replacement's slot instead of
+// returning the original one.
+func (s *accessSlots) releaseAccount(entry *accessAccountSlot) {
+	if entry == nil {
+		return
+	}
+	<-entry.slots
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.perAccount[uid] > 1 {
-		s.perAccount[uid]--
-	} else {
-		delete(s.perAccount, uid)
+	if len(entry.slots) == 0 {
+		entry.idleAt = s.now()
 	}
-	s.broadcastLocked()
+	s.mu.Unlock()
 }
 
-// releaseGlobal returns a global slot and wakes the waiters.
+// releaseGlobal returns a global slot.
 func (s *accessSlots) releaseGlobal() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.global > 0 {
-		s.global--
-	}
-	s.broadcastLocked()
+	<-s.global
 }
 
-// broadcastLocked wakes every waiter. The caller must hold s.mu.
-func (s *accessSlots) broadcastLocked() {
-	close(s.changed)
-	s.changed = make(chan struct{})
+// accountSlots returns the semaphore of one account bucket, creating it on
+// first use. An unknown uid is counted under unknownCheckAccount, so the map
+// holds one entry per account rather than one per uid. It reports false when
+// the table is full and no idle entry can be dropped.
+func (s *accessSlots) accountSlots(key uint32) (*accessAccountSlot, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := s.now()
+	s.sweepLocked(now)
+	if entry, ok := s.accounts[key]; ok {
+		return entry, true
+	}
+	if len(s.accounts) >= maxAccessAccounts {
+		s.evictOldestIdleLocked()
+		if len(s.accounts) >= maxAccessAccounts {
+			return nil, false
+		}
+	}
+	entry := &accessAccountSlot{slots: make(chan struct{}, s.perLimit), idleAt: now}
+	s.accounts[key] = entry
+	return entry, true
+}
+
+// sweepLocked drops entries that no check holds and that have been idle for
+// accessAccountIdleTTL. The caller must hold s.mu.
+func (s *accessSlots) sweepLocked(now time.Time) {
+	for key, entry := range s.accounts {
+		if len(entry.slots) == 0 && now.Sub(entry.idleAt) >= accessAccountIdleTTL {
+			delete(s.accounts, key)
+		}
+	}
+}
+
+// evictOldestIdleLocked drops the longest-idle entry that no check holds. It
+// is the last resort when the table reaches maxAccessAccounts. The caller must
+// hold s.mu.
+func (s *accessSlots) evictOldestIdleLocked() {
+	var (
+		oldestKey uint32
+		oldestAt  time.Time
+		found     bool
+	)
+	for key, entry := range s.accounts {
+		if len(entry.slots) != 0 {
+			continue
+		}
+		if !found || entry.idleAt.Before(oldestAt) {
+			oldestKey, oldestAt, found = key, entry.idleAt, true
+		}
+	}
+	if found {
+		delete(s.accounts, oldestKey)
+	}
 }
 
 // accessCheckStart returns the default Start function for AccessChecker: it
