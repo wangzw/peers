@@ -68,24 +68,31 @@ func TestListenValidatorSameValueSkipsProbe(t *testing.T) {
 	}
 }
 
-// TestListenProbeCheckClosesProbe checks that a successful check releases its
-// probe listener so the address can actually be bound afterwards.
-func TestListenProbeCheckClosesProbe(t *testing.T) {
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
+// TestListenProbeCheckProbesChangedValue checks that a changed broker.listen
+// reaches the probe with the new value and that a successful probe accepts the
+// change.
+//
+// Whether config.ProbeListen closes the listener it opens is checked by
+// TestProbeListenLeavesNoListener in package config, the only package that can
+// observe the listener the probe opens. Re-binding a released port here would
+// depend on that port staying free, and another process can take it between the
+// release and the probe or between the probe and the re-bind.
+func TestListenProbeCheckProbesChangedValue(t *testing.T) {
+	const addr = "127.0.0.1:17444"
+	calls := 0
+	check := listenProbeCheck(func(got string) error {
+		calls++
+		if got != addr {
+			t.Errorf("probe(%q), want %q", got, addr)
+		}
+		return nil
+	})
+	err := check(config.Value{Kind: config.KindString, String: "127.0.0.1:17443"},
+		config.Value{Kind: config.KindString, String: addr})
 	if err != nil {
-		t.Fatalf("finding a free port: %v", err)
+		t.Fatalf("check(changed value) = %v, want nil", err)
 	}
-	addr := probe.Addr().String()
-	_ = probe.Close()
-
-	check := listenProbeCheck(config.ProbeListen)
-	if err := check(config.Value{}, config.Value{Kind: config.KindString, String: addr}); err != nil {
-		t.Fatalf("check(%q) = %v, want nil for a free port", addr, err)
+	if calls != 1 {
+		t.Fatalf("probe called %d times, want 1", calls)
 	}
-
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		t.Fatalf("binding %q after the check: %v (the probe kept its listener)", addr, err)
-	}
-	_ = ln.Close()
 }

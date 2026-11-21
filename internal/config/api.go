@@ -380,6 +380,11 @@ func Validate(key string, check func(old, new Value) error) {
 	c.validators[key] = append(c.validators[key], check)
 }
 
+// probeListenNet is net.Listen for ProbeListen. Tests replace it to observe the
+// listener a probe opens, so they can assert it was closed without depending on
+// an ephemeral port staying free; production always uses net.Listen.
+var probeListenNet = net.Listen
+
 // ProbeListen reports whether this process can bind addr, which uses the
 // broker.listen syntax. It binds a TCP listener and closes it before returning,
 // so no listener survives the check and the address stays free for the real
@@ -393,7 +398,7 @@ func ProbeListen(addr string) error {
 	if _, err := parseListen(addr); err != nil {
 		return err
 	}
-	ln, err := net.Listen("tcp", addr)
+	ln, err := probeListenNet("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("cannot bind %q: %w", addr, err)
 	}
