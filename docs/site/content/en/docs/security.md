@@ -21,6 +21,8 @@ A Broker publishes a broker card with its fingerprint, alias and advertised addr
 
 Private does not mean hidden. A peer knows the fingerprint and alias, a host that initiates pairing learns the advertised addresses, and any host that can reach the listening port can see the certificate.
 
+A host that can reach the listening port can also open connections. Unauthenticated connections are capped: a source may hold at most 8, where a source is one IPv4 address (a /32) or one IPv6 /64, and all sources together at most 64. Once the TLS handshake confirms that a connection's fingerprint belongs to a paired peer, the connection leaves this count, and these connections are capped at 2 per fingerprint instead. Before a connection authenticates, it may send at most 64 KiB, and its HTTP/2 header list may be at most 16 KiB. A flood of connections from one source therefore cannot crowd out pairing from other sources or the reconnection of a paired Broker.
+
 ## Topics decide visibility
 
 Two agents can see each other and exchange messages only when they share at least one topic. The same rule applies to two sessions on one host and to sessions on different hosts, and for a remote agent both ends of the link check it.
