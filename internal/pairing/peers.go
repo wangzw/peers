@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -45,6 +46,22 @@ func (e *peerEntry) clone() peerEntry {
 	c.acceptor = append([]config.AdvertisedAddr(nil), e.acceptor...)
 	c.card = append([]config.AdvertisedAddr(nil), e.card...)
 	return c
+}
+
+// sameEntry reports whether a and b hold the same persisted state. The
+// observation paths use it to skip a peers.json rewrite when an alias, address
+// list or connected address did not actually change.
+func sameEntry(a, b *peerEntry) bool {
+	return a.fingerprint == b.fingerprint &&
+		bytes.Equal(a.publicKey, b.publicKey) &&
+		a.alias == b.alias &&
+		a.localAlias == b.localAlias &&
+		a.role == b.role &&
+		a.pairedAt.Equal(b.pairedAt) &&
+		slices.Equal(a.acceptor, b.acceptor) &&
+		slices.Equal(a.card, b.card) &&
+		a.pairingAddr == b.pairingAddr &&
+		a.lastConnected == b.lastConnected
 }
 
 // effectiveAlias is the alias used to address this peer: the local alias when
@@ -210,6 +227,10 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (bool, 
 	if e.role != RoleDialer && e.role != RoleAcceptor {
 		return false, fmt.Errorf("%w: invalid role %d", ErrStore, e.role)
 	}
+	// The stored self-reported alias is always the normalized form. The decision
+	// to use it as the effective alias, or to assign a local alias instead, was
+	// already made from the value as reported.
+	e.alias = normalizeAlias(e.alias)
 
 	old, replaced := t.peers[e.fingerprint]
 	if replaced {
@@ -724,7 +745,10 @@ func (t *peerTable) observeAlias(fp Fingerprint, alias string) (localAlias strin
 		return "", false, nil
 	}
 	next := old.clone()
-	next.alias = alias
+	// Store the normalized form, but keep deciding availability from the value
+	// as reported: an oversized or malformed alias is still unusable and gets a
+	// local alias.
+	next.alias = normalizeAlias(alias)
 
 	if next.localAlias == "" {
 		if !t.aliasAvailableLocked(alias, fp, t.ownAlias) {
@@ -736,6 +760,9 @@ func (t *peerTable) observeAlias(fp Fingerprint, alias string) (localAlias strin
 			localAlias = generated
 			assigned = true
 		}
+	}
+	if sameEntry(old, &next) {
+		return "", false, nil
 	}
 
 	updated := make(map[Fingerprint]*peerEntry, len(t.peers))
@@ -762,6 +789,9 @@ func (t *peerTable) observeConnected(fp Fingerprint, address string) error {
 	if !ok || old.role != RoleDialer {
 		return nil
 	}
+	if old.lastConnected == address {
+		return nil
+	}
 	next := old.clone()
 	next.lastConnected = address
 	return t.replaceLocked(fp, &next)
@@ -785,6 +815,9 @@ func (t *peerTable) updateSource(fp Fingerprint, source AddressSource, addrs []c
 		next.card = capKnown(addrs)
 	default:
 		return fmt.Errorf("%w: invalid address source %d", ErrStore, source)
+	}
+	if sameEntry(old, &next) {
+		return nil
 	}
 	return t.replaceLocked(fp, &next)
 }
@@ -972,10 +1005,13 @@ func (r *peerRecord) toEntry() (*peerEntry, error) {
 	e := &peerEntry{
 		fingerprint: fp,
 		publicKey:   pub,
-		alias:       r.Alias,
-		localAlias:  r.LocalAlias,
-		role:        role,
-		pairedAt:    pairedAt.UTC(),
+		// An older build may have persisted an alias that the current rule
+		// rejects. Normalizing it here lets such a file load, and the next write
+		// persists the normalized value.
+		alias:      normalizeAlias(r.Alias),
+		localAlias: r.LocalAlias,
+		role:       role,
+		pairedAt:   pairedAt.UTC(),
 	}
 	if role == RoleDialer && r.Addresses != nil {
 		e.acceptor = capKnown(addrConfigs(r.Addresses.Acceptor))

@@ -668,7 +668,7 @@ func parseConnectAddress(address string) (dialAddr, shownHost string, err error)
 		}
 	}
 	host, port, splitErr := net.SplitHostPort(dialAddr)
-	if splitErr != nil || host == "" || port == "" || !validDialHost(host) {
+	if splitErr != nil || host == "" || port == "" || !config.ValidDialHost(host) {
 		return "", "", ErrInvalidAddress
 	}
 	for i := 0; i < len(port); i++ {
@@ -681,39 +681,6 @@ func parseConnectAddress(address string) (dialAddr, shownHost string, err error)
 		return "", "", ErrInvalidAddress
 	}
 	return dialAddr, shownHost, nil
-}
-
-// validDialHost reports whether host is an IP address or a domain name. The
-// host is the value net.SplitHostPort returns, so an IPv6 address arrives
-// without its mandatory brackets and is recognised by net.ParseIP. Domain
-// names follow the usual label rules: dot-separated labels of 1 to 63 ASCII
-// letters, digits, '-' or '_', no label starting or ending with '-', and at most
-// 253 bytes overall. Spaces, slashes and other invalid host strings are
-// rejected, which net.SplitHostPort alone would accept.
-func validDialHost(host string) bool {
-	if net.ParseIP(host) != nil {
-		return true
-	}
-	if len(host) == 0 || len(host) > 253 {
-		return false
-	}
-	for _, label := range strings.Split(host, ".") {
-		if len(label) == 0 || len(label) > 63 {
-			return false
-		}
-		for i := 0; i < len(label); i++ {
-			c := label[i]
-			switch {
-			case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
-			default:
-				return false
-			}
-		}
-		if label[0] == '-' || label[len(label)-1] == '-' {
-			return false
-		}
-	}
-	return true
 }
 
 // alias reads this Broker's self-reported alias, wrapping a configuration

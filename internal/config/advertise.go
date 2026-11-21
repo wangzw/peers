@@ -145,7 +145,7 @@ func splitAdvertiseHostPort(s string) (host string, port int, hasPort bool, err 
 
 // parseAdvertiseHost validates a host without brackets. IP addresses are
 // parsed and canonicalised; anything else is treated as a domain name and
-// checked against the allowed character set. No DNS resolution happens.
+// checked against ValidDialHost. No DNS resolution happens.
 func parseAdvertiseHost(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("host must not be empty")
@@ -153,14 +153,51 @@ func parseAdvertiseHost(raw string) (string, error) {
 	if addr, err := netip.ParseAddr(raw); err == nil {
 		return canonicalAdvertiseAddr(addr)
 	}
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '-' || c == '_' {
-			continue
-		}
-		return "", fmt.Errorf("host %q contains an invalid character", raw)
+	if !ValidDialHost(raw) {
+		return "", fmt.Errorf("host %q is not a valid host name", raw)
 	}
 	return raw, nil
+}
+
+// ValidDialHost reports whether host, written without brackets, is an IP
+// address or a domain name this system can dial. An IPv6 address reaches this
+// function without its brackets because net.SplitHostPort strips them. Domain
+// names follow the usual label rules: dot-separated labels of 1 to 63 ASCII
+// letters, digits, '-' or '_', no label starting or ending with '-', and at most
+// 253 bytes overall. A fully qualified name may carry one trailing dot, which is
+// removed before the label rules apply; a second trailing dot is an empty label
+// and is rejected. Spaces, slashes and other invalid host strings are rejected,
+// which net.SplitHostPort alone would accept.
+//
+// One function decides this for both a configured advertise address and an
+// address a peer reports, so the two sides cannot disagree: a configuration
+// value that pairing would drop is refused when the configuration is loaded,
+// and a peer-reported value that configuration accepts is not stored.
+func ValidDialHost(host string) bool {
+	if net.ParseIP(host) != nil {
+		return true
+	}
+	host = strings.TrimSuffix(host, ".")
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			switch {
+			case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+			default:
+				return false
+			}
+		}
+		if label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseIPv6Host(raw string) (string, error) {

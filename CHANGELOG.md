@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - The link protocol version is now 2, a breaking change: a Broker of this version cannot establish a link with a v0.5.0 or earlier Broker, and the other side is reported as version-incompatible with its version. The digest fields of `TopicDigests`, `Roster` and `RosterDelta` changed meaning because each digest now binds the sender's fingerprint; see the Security entry below.
 - The configuration file no longer accepts YAML anchors and aliases, a breaking change: an existing file that uses anchors fails to load until they are removed. Mappings or sequences nested deeper than 32 levels are now parse errors, and a file larger than 1 MiB is refused before it is parsed.
+- `broker.advertise` and `broker.advertise_extra` now check each host as an IP address or a domain name this system can dial, a breaking change: a configuration that loaded before may fail to load until the host is corrected, for example one with a space or a slash, an IPv6 address without brackets, a wildcard address, or a domain label over 63 bytes. A fully qualified name may keep one trailing dot.
 
 ### Fixed
 
@@ -29,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - A paired peer can no longer exhaust this Broker's memory, its dedupe table or a session's inbox quota. One connection's state-frame queue is capped at 4096 frames and 64 MiB of payload and runs at most 64 request handlers at once; the dedupe table holds at most 4096 entries per source; and each source gets a token bucket of 10 messages per target, refilled one every 10 seconds. A peer that exceeds a limit loses only its own connection, entries or quota; other peers and local sends are unaffected.
 - Release builds no longer restore an Actions cache. The tagged release job verifies the module graph before goreleaser builds the binary a system Broker installs, and the site and real-session jobs build from source as well. Every third-party action is pinned to a commit SHA, `make lint` rejects a mutable tag, and every checkout leaves no credentials in `.git/config`. `make third-party-check` compares each vendored library with its recorded upstream and local changes, and `make vulncheck` scans the module graph on Linux and macOS.
 - `golang.org/x/net` is upgraded from v0.60.0 to v0.62.0, which closes GO-2026-6866 and GO-2026-6860. Both sit in the `html` package, which peers does not call, so neither was reachable, but a release closes every known issue in the module graph.
+- Self-reported aliases and addresses are validated and normalized before they are stored.
 
 ## [0.5.0] - 2026-11-21
 

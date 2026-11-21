@@ -28,6 +28,20 @@ func validAlias(s string) bool {
 	return true
 }
 
+// normalizeAlias returns the form of a self-reported alias that the peer table
+// stores. A value that satisfies validAlias is returned unchanged. Any other
+// value is reduced to the alias character set and truncated to
+// config.AliasMaxLen, so an oversized or malformed value is never persisted as
+// it was reported; the result may be empty. Whether the reported value counts as
+// usable is still decided by validAlias on the original, not on this stored
+// form.
+func normalizeAlias(alias string) string {
+	if validAlias(alias) {
+		return alias
+	}
+	return truncatePart(sanitizeAliasPart(alias), config.AliasMaxLen)
+}
+
 // sanitizeAliasPart turns s into a string that satisfies the alias character
 // set. Every rune outside [A-Za-z0-9._-] becomes '-'. The result may be longer
 // than an alias; callers truncate it.

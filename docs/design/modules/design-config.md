@@ -59,6 +59,11 @@ type AdvertisedAddr struct {
 // Advertised 返回本次运行的对外地址列表，至多 8 项；不监听时为空。列表中的每一项都是直连的地址项。
 func Advertised() []AdvertisedAddr
 
+// ValidDialHost 报告不带方括号的主机是否是本系统可拨号的 IP 地址或域名。
+// broker.advertise、broker.advertise_extra 与对端自报的地址共用这一条规则，
+// 因此配置接受而配对会丢弃的取值不会出现，反之亦然。
+func ValidDialHost(host string) bool
+
 // Hostname 返回系统主机名，其中不属于别名字符集的字符替换为 "-"。
 func Hostname() string
 
@@ -238,7 +243,7 @@ type PathSet struct {
 | 全部地址 | `:端口` | 默认路由所在接口的地址，每个地址都配上该端口 |
 | 空，不监听 | 空 | 空 |
 
-表外的组合非法，例如监听特定地址而 `broker.advertise` 只有端口，或不监听而 `broker.advertise` 非空；不监听时 `broker.advertise_extra` 也必须为空（`REQ-broker-config-032`）。组合按本次运行生效的监听地址判定，监听地址来自启动参数时以它为准。`broker.advertise_extra` 中不带端口的项取对外地址所用的端口：`broker.advertise` 写出了端口时取它，否则取监听端口。主机是 IP 地址或域名，IPv6 地址写成带方括号的形式。列表中重复的项只保留首次出现的。
+表外的组合非法，例如监听特定地址而 `broker.advertise` 只有端口，或不监听而 `broker.advertise` 非空；不监听时 `broker.advertise_extra` 也必须为空（`REQ-broker-config-032`）。组合按本次运行生效的监听地址判定，监听地址来自启动参数时以它为准。`broker.advertise_extra` 中不带端口的项取对外地址所用的端口：`broker.advertise` 写出了端口时取它，否则取监听端口。主机是 IP 地址或域名，IPv6 地址写成带方括号的形式。域名以 `.` 分隔成标签，每个标签是 1 至 63 个 ASCII 字母、数字、`-` 或 `_`，不以 `-` 开头或结尾，整个域名至多 253 字节；完全限定名可以带一个末尾的 `.`，校验时去掉这个点，末尾带两个点则剩下一个空标签，按不合法拒绝。不满足这条规则的主机在加载配置时就被拒绝，不会留到使用时才失败。列表中重复的项只保留首次出现的。
 
 对外地址列表中的每一项有一个种类，种类决定其他 Broker 怎样经这一项连到本 Broker。Go 接口以 `AdvertisedAddr` 表示一项，`Kind` 是种类，`Addr` 是该种类下的地址写法。本版本产生的种类只有直连，取值为 `direct`，其地址写作 `主机:端口`，表示可以直接向该地址建立连接，IPv6 主机带方括号；本包得出的列表只含直连的项。配置文本没有表示种类的语法：`broker.advertise` 与 `broker.advertise_extra` 的合法写法只有上表列出的形式，其他写法一律按写法不合法处理，因此本版本的配置文本没有可表达的未知种类。线路上种类的具体表示法属于实现。其他 Broker 告知的列表与名片所载的列表中出现不认识的种类时怎样处理，见 [link](design-link.md)、[pairing](design-pairing.md) 与 [directory](design-directory.md)。
 

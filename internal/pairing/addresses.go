@@ -2,6 +2,9 @@ package pairing
 
 import (
 	"log/slog"
+	"net"
+	"strconv"
+	"strings"
 
 	"github.com/wangzw/peers/internal/config"
 )
@@ -9,6 +12,13 @@ import (
 // maxCandidatesPerSource is the cap on one acceptor or card address list. The
 // cap keeps peers.json bounded no matter how large a list a peer advertises.
 const maxCandidatesPerSource = 8
+
+// maxAdvertisedAddrLen bounds one stored candidate address: a 253-byte domain
+// name, ':' and a five-digit port. Longer input is rejected before the port is
+// parsed so a port written with leading zeros cannot stretch the stored string.
+// The bound is measured on the address without a fully qualified name's
+// trailing dot, which config removes before applying its 253-byte domain limit.
+const maxAdvertisedAddrLen = 259
 
 // filterKnown keeps only the address entries this version understands and
 // returns them as a new slice. Unknown kinds are skipped without disturbing the
@@ -28,14 +38,66 @@ func filterKnown(addrs []config.AdvertisedAddr) []config.AdvertisedAddr {
 	return out
 }
 
-// capKnown filters a list and keeps at most maxCandidatesPerSource entries,
-// dropping from the end.
+// capKnown filters a list down to the entries that can be stored as candidates,
+// keeps at most maxCandidatesPerSource of them and drops the rest from the end.
+// Besides the unknown kinds filterKnown removes, an address that is not a
+// dialable host:port is skipped in place so the valid entries around it are
+// kept. A malformed entry is not logged: a hostile peer could repeat one to grow
+// the log.
 func capKnown(addrs []config.AdvertisedAddr) []config.AdvertisedAddr {
-	out := filterKnown(addrs)
-	if len(out) > maxCandidatesPerSource {
-		out = out[:maxCandidatesPerSource]
+	out := make([]config.AdvertisedAddr, 0, len(addrs))
+	for _, a := range filterKnown(addrs) {
+		if !validAdvertisedAddr(a.Addr) {
+			continue
+		}
+		out = append(out, a)
+		if len(out) == maxCandidatesPerSource {
+			break
+		}
 	}
 	return out
+}
+
+// validAdvertisedAddr reports whether addr is a host:port this version can dial.
+// The host follows config.ValidDialHost and the port is a decimal number in 1 to
+// 65535, the same rules connect_broker applies to its address. The "name(addr)" display
+// form is not accepted: the table stores only the bare dialing address, so
+// pairing keys can still be shown with the name without it reaching the table.
+func validAdvertisedAddr(addr string) bool {
+	// Reject an address that is far past the bound before splitting it. The
+	// precise check below gives a fully qualified name one byte of slack for its
+	// trailing dot, so anything longer than that is certainly invalid.
+	if addr == "" || len(addr) > maxAdvertisedAddrLen+1 {
+		return false
+	}
+	if strings.ContainsAny(addr, "()") {
+		return false
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil || host == "" || port == "" || !config.ValidDialHost(host) {
+		return false
+	}
+	// config.ValidDialHost strips one trailing dot from a fully qualified name
+	// before applying the 253-byte domain limit, so the address form may be one
+	// byte longer. Measure the stored address without that dot, or pairing would
+	// drop a boundary address that configuration accepts.
+	stored := len(addr)
+	if strings.HasSuffix(host, ".") {
+		stored--
+	}
+	if stored > maxAdvertisedAddrLen {
+		return false
+	}
+	for i := 0; i < len(port); i++ {
+		if port[i] < '0' || port[i] > '9' {
+			return false
+		}
+	}
+	number, convErr := strconv.Atoi(port)
+	if convErr != nil || number < 1 || number > 65535 {
+		return false
+	}
+	return true
 }
 
 // mergeCandidateList merges the stored sources in the order acceptor, card,

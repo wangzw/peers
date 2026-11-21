@@ -402,6 +402,11 @@ func TestParseAdvertise(t *testing.T) {
 		{in: "b.example:", wantErr: ErrInvalidValue},
 		{in: "bad host:443", wantErr: ErrInvalidValue},
 		{in: "relay://b.example:443", wantErr: ErrInvalidValue},
+		{in: "h.example.:443", want: advertiseSpec{Kind: advertiseKindHostPort, Host: "h.example.", Port: 443}},
+		{in: "h.example..:443", wantErr: ErrInvalidValue},
+		{in: "-h.example:443", wantErr: ErrInvalidValue},
+		{in: strings.Repeat("a", 64) + ".example:443", wantErr: ErrInvalidValue},
+		{in: strings.Repeat("a", 63) + ".example:443", want: advertiseSpec{Kind: advertiseKindHostPort, Host: strings.Repeat("a", 63) + ".example", Port: 443}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
@@ -419,6 +424,27 @@ func TestParseAdvertise(t *testing.T) {
 				t.Fatalf("parseAdvertise(%q) = %+v, want %+v", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestValidDialHostTrailingDot pins the trailing-dot rule: an FQDN written
+// with one trailing dot is dialable and accepted, while two trailing dots
+// leave an empty label and are rejected.
+func TestValidDialHostTrailingDot(t *testing.T) {
+	tests := []struct {
+		host string
+		want bool
+	}{
+		{"h.example.", true},
+		{"h.example..", false},
+		{"h.example", true},
+		{".", false},
+		{"..", false},
+	}
+	for _, tt := range tests {
+		if got := ValidDialHost(tt.host); got != tt.want {
+			t.Fatalf("ValidDialHost(%q) = %v, want %v", tt.host, got, tt.want)
+		}
 	}
 }
 
