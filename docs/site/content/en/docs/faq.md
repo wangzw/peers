@@ -11,13 +11,13 @@ The command installs the latest release and registers the MCP server for your ac
 curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh
 ```
 
-The release archive also contains an `install.sh`; after extracting it, run `sh ./install.sh`, which asks the same question. You can also install the binary by hand. The [Install `peers`]({{< relref "guides/install.md" >}}) guide covers the level question and every way to install, including system-level installation.
+The release archive also contains an `install.sh`; after extracting it, run `sh ./install.sh`, which asks the same question. You can also install the binary by hand. The [Install `peers`]({{< relref "guides/install.md" >}}) guide covers the level question and every way to install, including the system installation.
 
-If the host already has a system Broker you can use, register the MCP server only instead of installing a user-level Broker; [Run a system Broker]({{< relref "guides/system-broker.md" >}}) gives the command.
+If the host already has a system Broker you can use, register the MCP server only instead of installing a user Broker; [Run a system Broker]({{< relref "guides/system-broker.md" >}}) gives the command.
 
 ## How do I uninstall `peers`?
 
-Run `peers uninstall` to remove this account's installation; a system-level installation is removed with `sudo peers uninstall`. The command asks whether to delete configuration, identity, audit and service logs, and keeps them unless you answer `y`. [Uninstall `peers`]({{< relref "guides/uninstall.md" >}}) covers the levels, the questions and removing only the service.
+Run `peers uninstall` to remove this account's installation; the system installation is removed with `sudo peers uninstall`. The command asks whether to delete configuration, identity, audit and service logs, and keeps them unless you answer `y`. [Uninstall `peers`]({{< relref "guides/uninstall.md" >}}) covers the levels, the questions and removing only the service.
 
 ## Where is the configuration file?
 
@@ -37,11 +37,11 @@ No. Brokers connect directly, messages are not relayed, and there is no central 
 
 ## Do I have to start a Broker by hand?
 
-A session never starts a Broker. If the host already has a system Broker you can use, register the MCP server only; the session connects to it. Otherwise, start one yourself: install a user-level service with `peers service install`, which starts it immediately and starts it at login from then on, or run `peers service run` in a terminal outside Claude Code. The install script already installs and starts the user-level service, so an installation done with it needs no further step. A Broker started inside a session exits with code 6. See [Run the Broker as a service]({{< relref "guides/run-as-service.md" >}}).
+A session never starts a Broker. If the host already has a system Broker you can use, register the MCP server only; the session connects to it. Otherwise, start one yourself: install the user service with `peers service install`, which starts it immediately and starts it at login from then on, or run `peers service run` in a terminal outside Claude Code. The install script already installs and starts the user service, so an installation done with it needs no further step. A Broker started inside a session exits with code 6. See [Run the Broker as a service]({{< relref "guides/run-as-service.md" >}}).
 
 ## What happens when no Broker is running?
 
-Tool calls return an error that says what to do, and the guidance depends on the case; the MCP server process does not start a Broker. A first lookup that finds neither a user Broker nor a system Broker, and a user Broker whose socket has disappeared or refuses connections, as after a hard kill, get the same message: it says to ask the administrator to start a system Broker if the host has one, then gives the two user-level methods, `peers service install` and `peers service run` in a terminal outside Claude Code. A session that was registered on the system Broker and loses it is told only to contact the administrator. A user Broker whose socket still answers but whose handshake or a call fails is reported as unavailable, with a note that the MCP server keeps retrying in the background and no instruction to start a Broker. Starting the Broker does not require reconnecting the MCP server. Terminal commands that need a Broker, such as `peers broker list`, behave the same way: they look for a running Broker and never start one. See [Command line]({{< relref "reference/cli.md" >}}).
+Tool calls return an error that says what to do, and the guidance depends on the case; the MCP server process does not start a Broker. A first lookup that finds neither a user Broker nor a system Broker, and a user Broker whose socket has disappeared or refuses connections, as after a hard kill, get the same message: it says to ask the administrator to start a system Broker if the host has one, then gives the two ways to run a user Broker, `peers service install` and `peers service run` in a terminal outside Claude Code. A session that was registered on the system Broker and loses it is told only to contact the administrator. A user Broker whose socket still answers but whose handshake or a call fails is reported as unavailable, with a note that the MCP server keeps retrying in the background and no instruction to start a Broker. Starting the Broker does not require reconnecting the MCP server. Terminal commands that need a Broker, such as `peers broker list`, behave the same way: they look for a running Broker and never start one. See [Command line]({{< relref "reference/cli.md" >}}).
 
 ## Can one account run more than one Broker?
 
@@ -53,7 +53,7 @@ Without `broker.alias` set, a system Broker reports the first segment of the hos
 
 ## How do I update `peers`?
 
-Run `peers update` in a terminal, or say “Update the Broker.” in a session and approve the call (the model calls `update_broker`). A system-level installation is updated without `sudo` by a member of the admin group; an account outside the group uses `sudo peers update`, or joins the group first. When the same account also runs a user-level Broker, `sudo peers update` reaches the system-level Broker. The update verifies the download and replaces the binary; a Broker that runs as a service is restarted with the new version, and one that is not running, or a user-level Broker that does not run under a service manager, takes it up at its next start. Sessions that are already open must reconnect with `/mcp` or be restarted. See [Update `peers`]({{< relref "guides/update.md" >}}).
+Run `peers update` in a terminal, or say “Update the Broker.” in a session and approve the call (the model calls `update_broker`). The system installation is updated without `sudo` by a member of the admin group; an account outside the group uses `sudo peers update`, or joins the group first. When the same account also runs a user Broker, `sudo peers update` reaches the system Broker. The update verifies the download and replaces the binary; a Broker that runs as a service is restarted with the new version, and one that is not running, or a user Broker that does not run under a service manager, takes it up at its next start. Sessions that are already open must reconnect with `/mcp` or be restarted. See [Update `peers`]({{< relref "guides/update.md" >}}).
 
 ## Can I turn off update checks?
 
@@ -89,7 +89,7 @@ The receiving Claude Code drops a message from the same agent to the same sessio
 
 ## Who can change the Broker's configuration?
 
-An account with write permission on the Broker's configuration file can change it with `set_config` or `peers config set`, create one-time pairing keys with `create_pairing_key` or `peers key create`, and pair or unpair with `connect_broker` and `disconnect_broker`, or `peers broker connect` and `peers broker disconnect`. Read permission allows reading the configuration and the audit log. The terminal commands judge permission by the account running them. A member of the admin group manages a system-level Broker without `sudo` when the account runs no user-level Broker of its own, passing `--system` to the `peers service` subcommands; an administrator who runs a command with `sudo` is authorized against root's permissions. See [Management permissions]({{< relref "guides/management-permissions.md" >}}), especially [The admin group]({{< relref "guides/management-permissions.md" >}}#the-admin-group).
+An account with write permission on the Broker's configuration file can change it with `set_config` or `peers config set`, create one-time pairing keys with `create_pairing_key` or `peers key create`, and pair or unpair with `connect_broker` and `disconnect_broker`, or `peers broker connect` and `peers broker disconnect`. Read permission allows reading the configuration and the audit log. The terminal commands judge permission by the account running them. A member of the admin group manages the system Broker without `sudo` when the account runs no user Broker of its own, passing `--system` to the `peers service` subcommands; an administrator who runs a command with `sudo` is authorized against root's permissions. See [Management permissions]({{< relref "guides/management-permissions.md" >}}), especially [The admin group]({{< relref "guides/management-permissions.md" >}}#the-admin-group).
 
 ## What happens if the port is already in use?
 
@@ -97,7 +97,7 @@ A Broker started in the foreground fails to start. A new install or a reinstall 
 
 ## How do I see logs and audit records?
 
-Use `peers service status` for agents, topics, peers, and links, and `peers service audit` for the audit log. When the Broker runs degraded, `peers service status` shows the reason and the fix. Install the Broker as a service and the service manager keeps its run log: on Linux, `journalctl --user -u peers.service`, or `journalctl -u peers.service` for a system-level service; on macOS, `~/Library/Logs/peers/broker.log`, or `/var/log/peers/broker.log` for a system-level service. A Broker run with `peers service run` in a terminal writes its log to that terminal. See the Logs section of [Files and paths]({{< relref "reference/files.md" >}}).
+Use `peers service status` for agents, topics, peers, and links, and `peers service audit` for the audit log. When the Broker runs degraded, `peers service status` shows the reason and the fix. Install the Broker as a service and the service manager keeps its run log: on Linux, `journalctl --user -u peers.service`, or `journalctl -u peers.service` for the system service; on macOS, `~/Library/Logs/peers/broker.log`, or `/var/log/peers/broker.log` for the system service. A Broker run with `peers service run` in a terminal writes its log to that terminal. See the Logs section of [Files and paths]({{< relref "reference/files.md" >}}).
 
 ## Can a headless session receive messages?
 

@@ -5,7 +5,7 @@ weight: 1
 
 This page lists the MCP tools that the model calls on your behalf. You ask for what you want in natural language; the tools are not slash commands, and typing `/` does not list them. Use `/mcp` to check that the `peer` server is connected.
 
-A Claude Code session reaches `peers` through the MCP server `peer`, which the install registers for the account that runs it; a system-level installation registers it for the account that ran the install, including when the command re-runs itself through `sudo`, and prints the command instead of registering when run as root without `sudo`. To register it by hand, run `claude mcp add --scope user peer -- peers mcp`. The model then sees the tools as `mcp__peer__<tool>`, and permission rules use that name, for example `mcp__peer__send_message`.
+A Claude Code session reaches `peers` through the MCP server `peer`, which the install registers for the account that runs it; the system installation registers it for the account that ran the install, including when the command re-runs itself through `sudo`, and prints the command instead of registering when run as root without `sudo`. To register it by hand, run `claude mcp add --scope user peer -- peers mcp`. The model then sees the tools as `mcp__peer__<tool>`, and permission rules use that name, for example `mcp__peer__send_message`.
 
 ## Tools
 

@@ -8,7 +8,7 @@ This guide covers the install level, installing a particular version, installing
 
 ## Choose the install level
 
-The one-command installation and the release archive's `sh ./install.sh` install either level. Run as root, the script installs at the system level without asking. Any other account with a terminal and no option that names the level is asked `Install for every account on this host? [y/N]`: `y` installs at the system level through `sudo`, and any other answer installs for that account. Without a terminal, a non-root account gets a user-level installation. When the host already has a system-level service, the question becomes `Upgrade the system-level installation? [Y/n]`: pressing Enter or answering y upgrades the system-level installation, and answering n leaves the host unchanged, exits with code 0 and suggests `--user`. `--system` and `--user` skip the question; giving both is a usage error, and `--user` as root is refused with a message to drop it. If `sudo` is not available after a `y` answer, the script fails with `a system-level install needs sudo, which was not found; install sudo, or pass --user for a user-level install`.
+The one-command installation and the release archive's `sh ./install.sh` install either level. Run as root, the script installs the system service without asking. Any other account with a terminal and no option that names the level is asked `Install for every account on this host? [y/N]`: `y` installs the system service through `sudo`, and any other answer installs for that account. Without a terminal, a non-root account gets a user installation. When the host already has the system service, the question becomes `Upgrade the system-level installation? [Y/n]`: pressing Enter or answering y upgrades the system installation, and answering n leaves the host unchanged, exits with code 0 and suggests `--user`. `--system` and `--user` skip the question; giving both is a usage error, and `--user` as root is refused with a message to drop it. If `sudo` is not available after a `y` answer, the script fails with `a system-level install needs sudo, which was not found; install sudo, or pass --user for a user-level install`.
 
 ## Install with one command
 
@@ -21,7 +21,7 @@ curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh |
 
 `--version` must come before every other argument. It names a published version to install; when that version has no release archive to install, the script stops with `version <version> not found`. Every other argument is passed unchanged to the archive's `install.sh`, so the options in the next section work here as well.
 
-The command needs macOS or Linux on amd64 or arm64; `curl` to fetch the script, while the script itself uses `curl` or `wget` to download the archive; `tar`; `sha256sum` or `shasum`; and access to github.com. The system-level form needs `sudo`.
+The command needs macOS or Linux on amd64 or arm64; `curl` to fetch the script, while the script itself uses `curl` or `wget` to download the archive; `tar`; `sha256sum` or `shasum`; and access to github.com. The system installation needs `sudo`.
 
 Unless `--version` names a release, the script resolves the latest stable release; it downloads this platform's archive and the same release's `checksums.txt` into a temporary directory, verifies the archive, extracts it and runs the `install.sh` it contains. Every download the script makes goes over HTTPS; with either `curl` or `wget`, it refuses a redirect to an http address. If a download fails or the checksum does not match, it stops and leaves the host unchanged, and the temporary directory is removed when the script exits or is interrupted. An interrupted download of the script itself runs nothing, because the work starts on its last line.
 
@@ -80,15 +80,15 @@ sh ./install.sh
 
 The script asks for the level as the online command does; [Choose the install level](#choose-the-install-level) covers the question.
 
-The user-level form installs the binary into `~/.local/bin`, installs and starts the user-level Broker service, and registers the MCP server for your account. The system-level form installs the binary into `/usr/local/bin`, installs and starts the system-level Broker service, and registers the MCP server for the account that ran the install; it also creates the `peers` group and asks whether to add that account to it. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group, the question and its effect.
+The user installation puts the binary into `~/.local/bin`, installs and starts the user service, and registers the MCP server for your account. The system installation puts the binary into `/usr/local/bin`, installs and starts the system service, and registers the MCP server for the account that ran the install; it also creates the `peers` group and asks whether to add that account to it. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group, the question and its effect.
 
 The script accepts these options:
 
 | Option | Effect |
 |---|---|
-| `--system` | Install at the system level without the level question; the script re-runs itself through `sudo` when it is not root. |
+| `--system` | Install the system service without the level question; the script re-runs itself through `sudo` when it is not root. |
 | `--user` | Install for your account without the level question. Cannot be combined with `--system`. |
-| `--prefix <dir>` | Install the binary into `<dir>` instead of the default, `~/.local/bin` for a user-level installation or `/usr/local/bin` for a system-level one. |
+| `--prefix <dir>` | Install the binary into `<dir>` instead of the default, `~/.local/bin` for the user installation or `/usr/local/bin` for the system installation. |
 | `--no-service` | Do not install the Broker service. [Start the Broker](#start-the-broker) yourself. |
 | `--no-mcp` | Do not register the MCP server. |
 | `--admin-group <name>` | Manage the system Broker through the group `<name>` instead of the default `peers` group; the name may start only with a lowercase letter or an underscore and may contain only lowercase letters, digits, underscores and hyphens. Valid only with `--system`. |
@@ -101,23 +101,23 @@ The script is safe to run again: it replaces the binary, restarts the service wi
 
 With `--no-mcp`, the script skips the registration, and you run the registration command in the manual section yourself. When it cannot find `claude`, or runs as root without `sudo` and has no account to register for, it prints the `claude mcp add` command to run.
 
-If the configuration file for the level does not exist, `service install` creates it with every configuration key listed: `~/.peers/config.yaml` for a user-level service, and `/etc/peers/config.yaml` for a system-level one. [Configuration keys]({{< relref "/docs/reference/configuration" >}}) describes the file.
+If the configuration file for the level does not exist, `service install` creates it with every configuration key listed: `~/.peers/config.yaml` for the user service, and `/etc/peers/config.yaml` for the system service. [Configuration keys]({{< relref "/docs/reference/configuration" >}}) describes the file.
 
-On macOS, the script clears the quarantine attribute from the binary itself, so a browser download needs no extra step. If the user-level install directory is not on `PATH`, the script says so; add it to `PATH` to run `peers` by name. A user-level service on macOS needs a graphical login session; on a host without one, install at the system level or use `--no-service`.
+On macOS, the script clears the quarantine attribute from the binary itself, so a browser download needs no extra step. If the user installation directory is not on `PATH`, the script says so; add it to `PATH` to run `peers` by name. The user service on macOS needs a graphical login session; on a host without one, install the system service or use `--no-service`.
 
-A system-level installation requires the binary's directory and every directory above it to be owned by root and not writable by group or others. On an Intel Mac with Homebrew, `/usr/local/bin` belongs to your account, so the installation is refused; create a root-owned directory with `sudo mkdir -p <dir>` and pass it with `--prefix` instead.
+The system installation requires the binary's directory and every directory above it to be owned by root and not writable by group or others. On an Intel Mac with Homebrew, `/usr/local/bin` belongs to your account, so the installation is refused; create a root-owned directory with `sudo mkdir -p <dir>` and pass it with `--prefix` instead.
 
 ## Shell completions and man pages
 
-The install script writes shell completions for `peers` from the installed binary. At the system level it installs the bash, zsh and fish completions; at the user level it installs the bash and fish ones and prints the command that enables the zsh completion by hand. The fish completion is installed only when `fish` is on the host, at either level.
+The install script writes shell completions for `peers` from the installed binary. The system installation includes the bash, zsh and fish completions; the user installation includes the bash and fish ones and prints the command that enables the zsh completion by hand. The fish completion is installed only when `fish` is on the host, in either installation.
 
 To generate a completion script yourself, run `peers completion <shell>` and write its output where your shell reads completions; `bash`, `zsh`, `fish` and `powershell` are supported.
 
-A system-level install also writes the man pages into `/usr/local/share/man/man1`, so `man peers` works. The pages are in the archive's `man/` directory.
+The system installation also writes the man pages into `/usr/local/share/man/man1`, so `man peers` works. The pages are in the archive's `man/` directory.
 
 ## Installation output
 
-A successful installation's summary begins with `peers <version> installed (<level>, starts at <login|boot>)`, and an upgrade prints `upgraded from <version>` before it. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path, and the commands to start, stop, restart and uninstall the Broker. The start, stop and restart commands use `sudo` for a system-level installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
+A successful installation's summary begins with `peers <version> installed (<level>, starts at <login|boot>)`, and an upgrade prints `upgraded from <version>` before it. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path, and the commands to start, stop, restart and uninstall the Broker. The start, stop and restart commands use `sudo` for the system installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
 
 A failed installation names the cause: an address that is already in use is reported with the address, the configuration file and `broker.listen`; a service manager error gives the command and its output; missing permissions give the path and the missing permission; and a Broker that exits during startup gives the reason from its run log. Only when the service is running and the Broker has entered a degraded run does the install keep the service, give a fix command and exit with code 3; a service that a failed install wrote or enabled does not start at boot or login. [peers service install]({{< relref "/docs/reference/cli" >}}#peers-service-install) and [the port question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-if-the-port-is-already-in-use) give the details.
 
@@ -136,7 +136,7 @@ xattr -d com.apple.quarantine peers-${VERSION}/peers
 
 A command-line download with `curl` or `wget` does not set the attribute.
 
-If you install a system-level service, use the `sudo install` step in [Run the Broker as a service]({{< relref "run-as-service.md" >}}) instead of the `mv` below.
+If you install the system service, use the `sudo install` step in [Run the Broker as a service]({{< relref "run-as-service.md" >}}) instead of the `mv` below.
 
 Move the binary into a directory on your `PATH`:
 
@@ -173,13 +173,13 @@ The output shows `Scope: User config`. A session started afterwards lists `peer`
 
 Sessions connect to a Broker but never start one. If the host already has a system Broker you can use, skip this step; the session connects to it.
 
-Otherwise, install a user-level service; the install starts it right away, and from then on it starts at login:
+Otherwise, install the user service; the install starts it right away, and from then on it starts at login:
 
 ```sh
 peers service install
 ```
 
-A user-level install must not run as root, and on macOS it needs a graphical login session; on a host without one, install the system-level service with `peers service install --system`, as root or through an administrator; see [Run a system Broker]({{< relref "system-broker.md" >}}). Alternatively, run the Broker in a terminal outside Claude Code and leave it running:
+The user installation must not run as root, and on macOS it needs a graphical login session; on a host without one, install the system service with `peers service install --system`, as root or through an administrator; see [Run a system Broker]({{< relref "system-broker.md" >}}). Alternatively, run the Broker in a terminal outside Claude Code and leave it running:
 
 ```sh
 peers service run

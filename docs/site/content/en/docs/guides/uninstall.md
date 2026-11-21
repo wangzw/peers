@@ -10,13 +10,13 @@ To remove this account's installation, run:
 peers uninstall
 ```
 
-A system-level installation, which serves every account on the host, is removed as root:
+The system installation, which serves every account on the host, is removed as root:
 
 ```sh
 sudo peers uninstall
 ```
 
-The account that runs the command decides the level. Root removes the system-level installation. Another account removes its own user-level installation; when the host has only the system-level installation, the command asks whether to remove it and runs `sudo` when you answer `y`. When an ordinary account has both levels installed, it removes the user-level one and then says how to remove the system-level one.
+The account that runs the command decides the level. Root removes the system installation. Another account removes its own user installation; when the host has only the system installation, the command asks whether to remove it and runs `sudo` when you answer `y`. When an ordinary account has both levels installed, it removes the user one and then says how to remove the system one.
 
 The uninstall also removes the shell completion files and man pages that the install script wrote.
 
@@ -30,4 +30,4 @@ The command removes the MCP registration of the account that ran `sudo`, or of t
 
 ## Remove only the service
 
-To stop and remove the service but keep the binary, run `peers service remove`, or `sudo peers service remove --system` for a system-level service. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) gives the exit codes and the rest of the behaviour.
+To stop and remove the service but keep the binary, run `peers service remove`, or `sudo peers service remove --system` for the system service. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) gives the exit codes and the rest of the behaviour.

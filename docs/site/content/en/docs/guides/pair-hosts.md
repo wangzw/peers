@@ -11,7 +11,7 @@ Pairing makes two Brokers trust each other by their fingerprints. It is the only
 - Both Brokers are running and are not paired yet.
 - On the host that will accept the pairing, the Broker listens on its default address: port 17443 on every local address. The other host can reach one of the accepting Broker's advertised addresses; that other host may be behind NAT.
 - The two users have a trusted channel outside `peers` for the key.
-- The account running each session or command has write permission on its Broker's configuration file. A user Broker belongs to that account, so it does. On a system Broker, the admin group holds write permission: a member of the group runs the commands on that side directly, and an account that is not in the group asks an administrator to add it to the group or to run the commands on its behalf. An account whose own user-level Broker is running uses `sudo` to reach the system Broker. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group and the permission rules.
+- The account running each session or command has write permission on its Broker's configuration file. A user Broker belongs to that account, so it does. On a system Broker, the admin group holds write permission: a member of the group runs the commands on that side directly, and an account that is not in the group asks an administrator to add it to the group or to run the commands on its behalf. An account whose own user Broker is running uses `sudo` to reach the system Broker. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group and the permission rules.
 
 ## Create the pairing key
 

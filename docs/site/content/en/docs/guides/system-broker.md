@@ -16,19 +16,19 @@ curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh |
 
 [Install `peers`]({{< relref "install.md" >}}) covers the question and the other ways to install; [Run the Broker as a service]({{< relref "run-as-service.md" >}}) gives the manual commands.
 
-The system Broker takes root's account lock. If a user Broker is already running as root, the system-level install refuses and asks you to stop it first.
+The system Broker takes root's account lock. If a user Broker is already running as root, the system installation refuses and asks you to stop it first.
 
-The system Broker uses `/etc/peers/config.yaml`, `/var/log/peers/audit.log` and `/var/lib/peers`. If the configuration file does not exist, the install generates it as a template that lists every configuration key, with owner root, the default group `peers` and mode `0660`; an existing file is left unchanged. Members of that group manage the Broker without `sudo` when the account runs no user-level Broker of its own; [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes the group and its limits.
+The system Broker uses `/etc/peers/config.yaml`, `/var/log/peers/audit.log` and `/var/lib/peers`. If the configuration file does not exist, the install generates it as a template that lists every configuration key, with owner root, the default group `peers` and mode `0660`; an existing file is left unchanged. Members of that group manage the Broker without `sudo` when the account runs no user Broker of its own; [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes the group and its limits.
 
 ## Let accounts use it
 
-Each account registers the MCP server for itself; registration is per account, not per host. The system-level install registers it for the account that ran the install. Other accounts need only the registration, with the installed binary's absolute path:
+Each account registers the MCP server for itself; registration is per account, not per host. The system installation registers it for the account that ran the install. Other accounts need only the registration, with the installed binary's absolute path:
 
 ```sh
 claude mcp add --scope user peer -- /usr/local/bin/peers mcp
 ```
 
-Do not run the install command on these accounts. On a host that already has a system-level service, the install command asks whether to upgrade the system-level installation instead; answering n leaves the host unchanged; a user-level Broker is installed only with `--user` or when the command runs without a terminal, and the account's sessions then use it. If a user-level installation is already there, remove it with [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall); the uninstall also removes this account's MCP registration, so run the registration command above again.
+Do not run the install command on these accounts. On a host that already has the system service, the install command asks whether to upgrade the system installation instead; answering n leaves the host unchanged; a user Broker is installed only with `--user` or when the command runs without a terminal, and the account's sessions then use it. If a user installation is already there, remove it with [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall); the uninstall also removes this account's MCP registration, so run the registration command above again.
 
 A session reaches the system Broker through the local socket `/run/peers/broker.sock` on Linux, or `/var/run/peers/broker.sock` on macOS. Two settings decide which accounts can connect:
 
@@ -46,9 +46,9 @@ A session's MCP server process selects a Broker in this order:
 1. The user Broker of this account, if one is running.
 2. The system Broker, if this account may use it.
 
-If none is available, tool calls return an error that says what to do, and the MCP server process does not start a Broker; [the no-Broker question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-when-no-broker-is-running) has the details. A host where every account should use the system Broker therefore needs no user Broker for those accounts; installing a user-level service on such an account moves its sessions off the system Broker.
+If none is available, tool calls return an error that says what to do, and the MCP server process does not start a Broker; [the no-Broker question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-when-no-broker-is-running) has the details. A host where every account should use the system Broker therefore needs no user Broker for those accounts; installing the user service on such an account moves its sessions off the system Broker.
 
-An account that may use the system Broker but has its own user Broker running registers on the user Broker. To have its sessions use the system Broker instead, do not run a user-level Broker on that account.
+An account that may use the system Broker but has its own user Broker running registers on the user Broker. To have its sessions use the system Broker instead, do not run a user Broker on that account.
 
 The terminal commands `peers config`, `peers key` and `peers broker` choose a Broker in the same order, look only for a Broker that is running, and never start one. The commands under `peers service` do not follow this order: they act only on the level selected by `--system` or `--user`, and never fall back to the other level. If this account has a user Broker running, use `sudo` to manage the system Broker with `peers config`, `peers key` or `peers broker`; root selects the system Broker directly.
 

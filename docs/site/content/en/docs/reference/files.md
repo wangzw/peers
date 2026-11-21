@@ -5,7 +5,7 @@ weight: 4
 
 The Broker keeps its configuration, identity, peer table, directory and audit log in fixed locations. The locations are chosen by the deployment form: a user Broker serves one account, and a system Broker runs as root and serves every permitted account on the host.
 
-## User-level Broker
+## User Broker
 
 | Path | Contents |
 |---|---|
@@ -20,7 +20,7 @@ The Broker keeps its configuration, identity, peer table, directory and audit lo
 
 `<uid>` is the numeric account ID. The runtime directory is mode `0700`. The identity files are created at the Broker's first start; `peers.json` and `directory.json` appear when the Broker first has something to store. When a user Broker runs as root (for example one that root started with `peers service run --user` in a terminal), the runtime directory is `/run/peers` on Linux or `/var/run/peers` on macOS, the same directory the system Broker uses. Running the Broker directly without `service install` does not generate the configuration file; when the file does not exist, every key takes its default value.
 
-## System-level Broker
+## System Broker
 
 | Path | Contents |
 |---|---|
@@ -49,7 +49,7 @@ The runtime directory is mode `0755`. The socket's group and mode come from `bro
 
 ## Shell completions and man pages
 
-The install script writes the shell completions, and a system-level install also writes the man pages:
+The install script writes the shell completions, and the system installation also writes the man pages:
 
 | Level | Path | Contents |
 |---|---|---|
@@ -60,20 +60,20 @@ The install script writes the shell completions, and a system-level install also
 | System | `/usr/local/share/fish/vendor_completions.d/peers.fish` | Fish completion, written only when fish is installed. |
 | System | `/usr/local/share/man/man1/peers.1` and `peers-*.1` | The man page for `peers`, plus one page for each command in the help. |
 
-The user level does not install a zsh completion; `install.sh` prints the command that enables one by hand.
+The user installation does not install a zsh completion; `install.sh` prints the command that enables one by hand.
 
 ## Logs
 
 The Broker writes its run log to standard error and the audit log to the audit file above.
 
-- A Linux service logs to the systemd journal: `journalctl --user -u peers.service` for the user-level service, or `journalctl -u peers.service` for the system-level service.
-- A macOS user-level service writes to `~/Library/Logs/peers/broker.log`; the system-level daemon writes to `/var/log/peers/broker.log`.
+- A Linux service logs to the systemd journal: `journalctl --user -u peers.service` for the user service, or `journalctl -u peers.service` for the system service.
+- The macOS user service writes to `~/Library/Logs/peers/broker.log`; the system daemon writes to `/var/log/peers/broker.log`.
 - A Broker started in a terminal writes its run log to that terminal.
 
 ## Permissions
 
 A user Broker runs as its account. The Broker creates the data directory with mode `0700` when it does not exist, creates its files with mode `0600`, and binds the local socket with mode `0600`, so only that account can reach them.
 
-A system Broker runs as root. The configuration file's permissions decide what other accounts may do with the management tools and the terminal commands: read access allows reading the configuration, the full status and the audit log; write access allows changing the configuration and managing pairings. The system-level install already gives a new configuration file to the default `peers` group with write access; for an existing file, `chgrp` and `chmod` give it to the group, as [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes. Do not give the file to the group when `broker.listen` uses a port below 1024; [Configuration keys]({{< relref "docs/reference/configuration" >}}#types-and-constraints) gives the rule and the fix. The Broker checks the caller's access to the actual file, so the tools and the terminal commands never let an account do more than editing the file directly would.
+A system Broker runs as root. The configuration file's permissions decide what other accounts may do with the management tools and the terminal commands: read access allows reading the configuration, the full status and the audit log; write access allows changing the configuration and managing pairings. The system installation already gives a new configuration file to the default `peers` group with write access; for an existing file, `chgrp` and `chmod` give it to the group, as [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes. Do not give the file to the group when `broker.listen` uses a port below 1024; [Configuration keys]({{< relref "docs/reference/configuration" >}}#types-and-constraints) gives the rule and the fix. The Broker checks the caller's access to the actual file, so the tools and the terminal commands never let an account do more than editing the file directly would.
 
 The socket and its mode are described under [Configuration keys]({{< relref "docs/reference/configuration" >}}). The project configuration file is described separately under [Project configuration file]({{< relref "docs/reference/project-config" >}}), and [Guides]({{< relref "docs/guides" >}}) covers installing the service.

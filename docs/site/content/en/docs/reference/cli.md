@@ -97,7 +97,7 @@ The command takes no options apart from `-h`/`--help`. Requires write permission
 
 The `config` and `broker` commands and `key create` connect to a running Broker, without starting one. They choose the Broker by the operating system account that runs them, with no command-line option to select a level: this account's running user Broker first, then the system Broker this account may use. An account that runs its own user Broker and wants to manage the system Broker must run the command with `sudo`. `peers update` uses the same account-based choice. The `service` commands that talk to a running Broker, namely `status`, `audit`, `online` and `offline`, take `--system` and `--user` instead; their sections describe the level rule. [Run a system Broker]({{< relref "/docs/guides/system-broker" >}}) explains the choice and the settings.
 
-The Broker decides the permission of each command from the account that runs it, using the same rules as the matching tool. In the audit records left by the write commands, `account` is the account that ran the command and `actor` is empty. When an administrator runs a command with `sudo`, a system Broker authorizes it against root's permissions. A member of the system Broker's admin group can manage it without `sudo` when the account runs no user-level Broker of its own; [Manage a Broker by file permission]({{< relref "/docs/guides/management-permissions" >}}) explains the group. These commands do not pass through Claude Code's approval. When the Broker denies a command, its English error, which contains the path of the configuration file, is written to standard error and the command exits with code 1.
+The Broker decides the permission of each command from the account that runs it, using the same rules as the matching tool. In the audit records left by the write commands, `account` is the account that ran the command and `actor` is empty. When an administrator runs a command with `sudo`, a system Broker authorizes it against root's permissions. A member of the system Broker's admin group can manage it without `sudo` when the account runs no user Broker of its own; [Manage a Broker by file permission]({{< relref "/docs/guides/management-permissions" >}}) explains the group. These commands do not pass through Claude Code's approval. When the Broker denies a command, its English error, which contains the path of the configuration file, is written to standard error and the command exits with code 1.
 
 These commands follow the output conventions of `peers service status`: an empty value is written `-`.
 
@@ -148,7 +148,7 @@ peers service run [flags]
 
 Runs a Broker in the foreground until it receives `SIGINT` or `SIGTERM`. A Broker started inside a session's process tree fails with exit code 6. The service definitions start the Broker this way.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system level and every other account its user level.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root runs the system Broker and every other account its own user Broker.
 - `--system` runs the system Broker. It requires root.
 - `--listen <address>` overrides `broker.listen` for this run only. The address uses the same syntax as the configuration key, for example `:17443` or `127.0.0.1:17443`. An empty value is rejected with a usage error; to stop listening, set `broker.listen` to an empty value in the configuration file.
 - `--allow-degraded` keeps the Broker running after certain startup failures instead of exiting. An unavailable listen address, including one rejected by the low-port rule, leaves it serving local sessions in a local-only degraded run; an unavailable data directory or audit log leaves it in a diagnostics-only run. Either way it answers on the local socket and reports the failure. Without the option, a startup failure reports its cause on standard error and exits, and an unavailable listen address exits with code 4. Configuration errors, a `broker.local_socket_group` that does not exist, and failures before the account lock exit either way. The service definition always passes the option; a foreground run does not. A local-only run starts listening by itself once the address becomes available or `broker.listen` changes. A diagnostics-only run retries when the configuration file changes and once a minute, and `peers service restart` also works after the fix. Neither recovery restarts the process.
@@ -163,11 +163,11 @@ peers service install [flags]
 
 Installs a service definition, enables the service, and starts the Broker immediately. It waits up to 20 seconds for the Broker to answer; a timeout fails the install, reports where the service logs go, and includes the reason from the last `startup_failed` entry in that log. Reinstalling replaces the running Broker with the new binary. [Install `peers`]({{< relref "/docs/guides/install" >}}#installation-output) lists what the install reports.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root installs the system level and every other account its user level.
-- A user-level service starts the Broker when the account logs in. It must not run as root. On macOS it must run in a graphical login session. If `~/.peers/config.yaml` does not exist, it generates the file, owned by the account that runs the install with mode `0600`; an existing file is left unchanged.
-- A system-level service starts the Broker at boot. It must run as root. The command creates the `peers` group when it does not exist, and uses it without changing its members when it does. If `/etc/peers/config.yaml` does not exist, it generates the file, owned by `root` with group `peers` and mode `0660`; an existing file is left unchanged. `--admin-group <name>` takes effect only in a system-level install; when the install resolves to the user level, whether through `--user` or an account other than root, it is a usage error and exits with code 2. It uses another group; the name may start only with a lowercase letter or an underscore and may contain only lowercase letters, digits, underscores and hyphens.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root installs the system service and every other account the user service.
+- The user service starts the Broker when the account logs in. It must not run as root. On macOS it must run in a graphical login session. If `~/.peers/config.yaml` does not exist, it generates the file, owned by the account that runs the install with mode `0600`; an existing file is left unchanged.
+- The system service starts the Broker at boot. It must run as root. The command creates the `peers` group when it does not exist, and uses it without changing its members when it does. If `/etc/peers/config.yaml` does not exist, it generates the file, owned by `root` with group `peers` and mode `0660`; an existing file is left unchanged. `--admin-group <name>` takes effect only in the system installation; when the install resolves to the user installation, whether through `--user` or an account other than root, it is a usage error and exits with code 2. It uses another group; the name may start only with a lowercase letter or an underscore and may contain only lowercase letters, digits, underscores and hyphens.
 
-The generated file is a template that lists every configuration key: keys with a fixed default are written out, and the remaining keys are comments with an example value or an empty placeholder. The install summary's `config:` line ends with `(generated)` when it wrote the file and `(kept)` when the file already existed; a system-level install that kept an existing file also prints `To delegate administration, run: chgrp <group> <path> && chmod 0660 <path>`. Running that command hands an existing installation to the group, whose members then manage the Broker without `sudo`; [Manage a Broker by file permission]({{< relref "/docs/guides/management-permissions" >}}) explains the group. Do not hand the file to the group when `broker.listen` uses a port below 1024; [Configuration keys]({{< relref "docs/reference/configuration" >}}#types-and-constraints) gives the rule and the fix.
+The generated file is a template that lists every configuration key: keys with a fixed default are written out, and the remaining keys are comments with an example value or an empty placeholder. The install summary's `config:` line ends with `(generated)` when it wrote the file and `(kept)` when the file already existed; the system installation that kept an existing file also prints `To delegate administration, run: chgrp <group> <path> && chmod 0660 <path>`. Running that command hands an existing installation to the group, whose members then manage the Broker without `sudo`; [Manage a Broker by file permission]({{< relref "/docs/guides/management-permissions" >}}) explains the group. Do not hand the file to the group when `broker.listen` uses a port below 1024; [Configuration keys]({{< relref "docs/reference/configuration" >}}#types-and-constraints) gives the rule and the fix.
 
 If a Broker that this service did not start is already running at that level, the install refuses and asks you to stop it first.
 
@@ -191,8 +191,8 @@ peers service remove [flags]
 
 Stops and removes only the installed service. The binary and the MCP registration stay, and so do configuration, identity and audit logs; [peers uninstall](#peers-uninstall) removes the whole installation. If no service is installed, the command succeeds, prints `peers service is not installed`, and can be repeated.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system level and every other account its user level.
-- `--system` removes the system-level service. It must run as root.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root removes the system service and every other account the user service.
+- `--system` removes the system service. It must run as root.
 
 A usage error exits with code 2; any other failure exits with code 1.
 
@@ -206,11 +206,11 @@ peers service restart [flags]
 
 Starts, stops or restarts the installed service.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system level and every other account its user level.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system service and every other account the user service.
 
-On success the command prints `Broker service started (user-level)` or the matching `Broker service stopped (user-level)` or `Broker service restarted (user-level)` line, with `system-level` for the system-level service.
+On success the command prints `Broker service started (user-level)` or the matching `Broker service stopped (user-level)` or `Broker service restarted (user-level)` line, with `system-level` for the system service.
 
-`stop` does not disable the service, so it starts again at the next login or boot. When that level has no installed service, the command exits with code 1 and says that no service is installed; an account that has only the system-level service installed is also told to run `sudo peers service <command> --system`.
+`stop` does not disable the service, so it starts again at the next login or boot. When that level has no installed service, the command exits with code 1 and says that no service is installed; an account that has only the system service installed is also told to run `sudo peers service <command> --system`.
 
 `start` and `restart` wait for the Broker to answer and check whether it runs degraded, as an install does; [peers service install](#peers-service-install) gives the exit codes. A usage error exits with code 2.
 
@@ -225,7 +225,7 @@ Connects to a running Broker, without starting one, and prints two tables:
 - `Agents`: each registered agent's address, account, status, topics and previous name.
 - `Peers`: each peer's alias, fingerprint, this Broker's role, status, link state, advertised addresses and detail.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system level and every other account its user level. The command talks only to the selected level and does not fall back to the other one; an account whose Broker runs only at the system level must pass `--system`.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system Broker and every other account its user Broker. The command talks only to the selected level and does not fall back to the other one; an account that uses only the system Broker must pass `--system`.
 
 An empty section is printed as `Agents: none` or `Peers: none`. Without read permission on the Broker's configuration file, only the caller's own agents are listed; the Peers table is still shown. When this Broker is offline, a `Broker: offline; messages from other hosts are refused. Run peers service online to accept them.` line comes before the tables.
 
@@ -250,7 +250,7 @@ peers service offline [flags]
 
 `peers service offline` makes this Broker refuse messages sent by other hosts, and `peers service online` accepts them again. The commands print `Broker is now offline` and `Broker is now online` respectively.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system level and every other account its user level. The command talks only to the selected level and does not fall back to the other one.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system Broker and every other account its user Broker. The command talks only to the selected level and does not fall back to the other one.
 
 A message that another host sends to an agent on an offline Broker is refused with the error code `broker_offline`, reported by this Broker. Agents on this host still reach each other, and an agent on this host can still send to another host, but the receiver's reply is refused; run `peers service online` before a two-way exchange. Links, topic membership, directories and new pairings keep working. A peer learns that this Broker is offline only when a send is refused; its Broker list and link state do not show it.
 
@@ -264,7 +264,7 @@ peers service audit [flags]
 
 Prints the audit log from a running Broker, one line per event, in time order, then exits. It does not start a Broker and does not follow new events while it runs.
 
-- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system level and every other account its user level. The command talks only to the selected level and does not fall back to the other one.
+- `--system` and `--user` select the level and are mutually exclusive. Without either, root selects the system Broker and every other account its user Broker. The command talks only to the selected level and does not fall back to the other one.
 - `--limit <n>` reads at most `n` events, the newest ones, still printed oldest first. `0` means every event and is the default. The maximum is `4294967295`; a value that is not a number or exceeds the maximum is a usage error.
 
 Reading the audit log requires read permission on the Broker's configuration file. On a user Broker the account has that permission. A usage error exits with code 2; any other failure exits with code 1.
@@ -282,7 +282,7 @@ The command installs only a newer formal release: drafts and prereleases are ign
 - `--yes` (`-y`) skips the confirmation question. Without it the command asks `peers <installed> is installed. Update to the latest release? [y/N]`, where `<installed>` is the installed version, and accepts `y` or `yes`, in any case, as confirmation. When standard input is not a terminal, the command fails without `--yes` and exits with code 1. When the user answers `n`, it prints `Update canceled; nothing was changed.` and exits with code 0.
 - A usage error exits with code 2. Any other failure exits with code 1. A successful update, an up-to-date result and a canceled update all exit with code 0.
 
-The command first checks that this binary is a formal release build, then asks for confirmation unless `--yes` is given, and only then selects the Broker. It replaces the binary locally only when no Broker is running or when the selected user-level Broker does not run under a service manager; a system-level Broker that does not run under a service manager makes the command fail instead.
+The command first checks that this binary is a formal release build, then asks for confirmation unless `--yes` is given, and only then selects the Broker. It replaces the binary locally only when no Broker is running or when the selected user Broker does not run under a service manager; a system Broker that does not run under a service manager makes the command fail instead.
 
 ### Through the Broker
 
@@ -294,11 +294,11 @@ When the command selects a running Broker, that Broker installs the update itsel
 4. The Broker answers before it restarts. The command prints `The Broker is restarting to version <latest>.` and waits until the restarted Broker reports that version, because the update is complete only when that process runs. On success it prints `The Broker is running peers <latest>.` and then the session notice. When the restarted Broker does not report the new version in time, the command fails and names where that level's service log is.
 5. The session notice reads `Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically.`
 
-A user-level Broker that was started from a terminal, rather than by a service manager, cannot replace and restart itself. It leaves the command to the local replacement below.
+A user Broker that was started from a terminal, rather than by a service manager, cannot replace and restart itself. It leaves the command to the local replacement below.
 
 ### By replacing the binary
 
-With no running Broker, or after the user-level Broker above declines, the command replaces the binary in place:
+With no running Broker, or after the user Broker above declines, the command replaces the binary in place:
 
 1. Locates the running executable and resolves symbolic links. Only the file they point at is replaced.
 2. Checks that it can write in the target's directory, before any download. Without permission it prints `cannot write to <dir>: ...`, then `run "sudo peers update" to update a system-level installation`, and exits with code 1.
@@ -348,20 +348,20 @@ peers uninstall [flags]
 
 Removes an installation: the service, the binary that the service starts, the MCP registration of the account that ran `sudo` (or of the account that runs the command when it is not run through `sudo`), the shell completion files and man pages the install script placed, and the runtime directory.
 
-- Run as root to remove a system-level installation. Another account removes its own user-level installation; when the host also has a system-level installation, the command removes the user-level one and then prints `A system-level installation is still present; run: sudo peers uninstall --yes`, with `--purge` added when that option was given.
-- An account whose host has only the system-level installation is asked `Remove the system-level installation through sudo? [y/N]`. Answering `y` runs the command again with `sudo`; `--yes` skips the question and runs it through `sudo` directly. Any other answer prints `Run: sudo peers uninstall --yes` and exits with code 0. Without a terminal and without `--yes`, the command fails, prints the complete `sudo peers uninstall --yes` command to run, and exits with code 1. When `--purge` is given, both of those commands carry it: `sudo peers uninstall --purge --yes`.
+- Run as root to remove the system installation. Another account removes its own user installation; when the host also has the system installation, the command removes the user one and then prints `A system-level installation is still present; run: sudo peers uninstall --yes`, with `--purge` added when that option was given.
+- An account whose host has only the system installation is asked `Remove the system-level installation through sudo? [y/N]`. Answering `y` runs the command again with `sudo`; `--yes` skips the question and runs it through `sudo` directly. Any other answer prints `Run: sudo peers uninstall --yes` and exits with code 0. Without a terminal and without `--yes`, the command fails, prints the complete `sudo peers uninstall --yes` command to run, and exits with code 1. When `--purge` is given, both of those commands carry it: `sudo peers uninstall --purge --yes`.
 - Unless `--purge` is given, the command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them on any answer other than `y`.
 - `--yes` (`-y`) skips the questions. It keeps the configuration, identity, audit and service logs unless `--purge` is also given.
 - `--purge` skips the data question and removes the data too.
 - Without a terminal, the command needs `--yes` to proceed, whether or not `--purge` is given; otherwise it fails before removing anything and exits with code 1.
-- At the system level, answering `y` or giving `--purge` removes the admin group only when the installation created it. Otherwise, or when the group is still in use, the group is kept, and the command prints how to remove it by hand.
-- The MCP registration of every other account stays; each of those accounts removes it with `claude mcp remove -s user peer`. At the system level the command removes the registration of the account that ran `sudo`; when it runs as root directly, it prints the command instead.
+- For the system installation, answering `y` or giving `--purge` removes the admin group only when the installation created it. Otherwise, or when the group is still in use, the group is kept, and the command prints how to remove it by hand.
+- The MCP registration of every other account stays; each of those accounts removes it with `claude mcp remove -s user peer`. For the system installation, the command removes the registration of the account that ran `sudo`; when it runs as root directly, it prints the command instead.
 
-Before deleting a system-level binary, the command lists other accounts whose user-level Broker is running, then deletes the binary anyway.
+Before deleting the system installation's binary, the command lists other accounts whose user Broker is running, then deletes the binary anyway.
 
-A failure stops the command without undoing the steps that already succeeded; the error says which step failed, and running the command again continues from there. When no service is installed at either level but the MCP registration points at this binary, it uninstalls at the user level; with nothing installed, it reports that and exits with code 0.
+A failure stops the command without undoing the steps that already succeeded; the error says which step failed, and running the command again continues from there. When neither the user service nor the system service is installed but the MCP registration points at this binary, it removes this account's installation: the system installation as root, otherwise the user installation; with nothing installed, it reports that and exits with code 0.
 
-Exit codes: 0 for a successful uninstall, for nothing to uninstall, and for declining the sudo uninstall of a system-level installation; 1 for a failure, including a missing `--yes` when there is no terminal; 2 for a usage error.
+Exit codes: 0 for a successful uninstall, for nothing to uninstall, and for declining the sudo uninstall of the system installation; 1 for a failure, including a missing `--yes` when there is no terminal; 2 for a usage error.
 
 ## peers completion
 
@@ -372,7 +372,7 @@ peers completion [command]
 
 Prints the autocompletion script for the named shell to standard output. The shells are `bash`, `zsh`, `fish` and `powershell`; each shell's subcommand accepts `--no-descriptions` to leave the descriptions out of the script. `peers completion` without a shell, and an unknown shell name, are usage errors and exit with code 2. A successful run exits with code 0.
 
-The install script writes the completion files for the level it installs: bash at both levels, zsh at the system level, and fish when the host has fish. [Install `peers`]({{< relref "/docs/guides/install" >}}#shell-completion-and-man-pages) describes what the install script writes, and [Files and paths]({{< relref "/docs/reference/files" >}}#shell-completions-and-man-pages) lists the paths.
+The install script writes the completion files for the level it installs: bash in both installations, zsh in the system installation, and fish when the host has fish. [Install `peers`]({{< relref "/docs/guides/install" >}}#shell-completion-and-man-pages) describes what the install script writes, and [Files and paths]({{< relref "/docs/reference/files" >}}#shell-completions-and-man-pages) lists the paths.
 
 Some arguments complete dynamically: `broker disconnect` offers the aliases and fingerprints of the paired Brokers, `config get` and `config set` offer the configuration keys, and `completion` offers the shell names.
 
@@ -382,6 +382,6 @@ Some arguments complete dynamically: `broker disconnect` offers the aliases and 
 peers mcp
 ```
 
-Runs the MCP server for one Claude Code session over the process's standard input and standard output. Claude Code starts this process from the MCP registration, so there is normally no reason to run it by hand. The command is hidden from the help listing. The session uses this account's user Broker when one is running; otherwise it uses the system Broker if this account may connect to it. [Run a system Broker]({{< relref "/docs/guides/system-broker" >}}) explains the choice and the settings. A running user Broker takes precedence over the system Broker; on an account that can use the system Broker, installing a user-level service makes its sessions use the user Broker instead of the system Broker. When no Broker is available, tool calls return an error that says what to do; [the no-Broker question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-when-no-broker-is-running) has the details.
+Runs the MCP server for one Claude Code session over the process's standard input and standard output. Claude Code starts this process from the MCP registration, so there is normally no reason to run it by hand. The command is hidden from the help listing. The session uses this account's user Broker when one is running; otherwise it uses the system Broker if this account may connect to it. [Run a system Broker]({{< relref "/docs/guides/system-broker" >}}) explains the choice and the settings. A running user Broker takes precedence over the system Broker; on an account that can use the system Broker, installing the user service makes its sessions use the user Broker instead of the system Broker. When no Broker is available, tool calls return an error that says what to do; [the no-Broker question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-when-no-broker-is-running) has the details.
 
 A usage error exits with code 2; a failure to run the server exits with code 1.

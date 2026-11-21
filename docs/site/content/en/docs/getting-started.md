@@ -16,7 +16,7 @@ weight: 2
 curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh
 ```
 
-Reopen any Claude Code session that is already open, then check the registration with `claude mcp get peer`. [Install `peers`]({{< relref "guides/install.md" >}}) covers system-level installation and the other ways to install.
+Reopen any Claude Code session that is already open, then check the registration with `claude mcp get peer`. [Install `peers`]({{< relref "guides/install.md" >}}) covers the system installation and the other ways to install.
 
 ## Send a message on one host
 
