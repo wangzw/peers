@@ -22,9 +22,24 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// transportTestTimeout bounds every real-time wait in these tests. Deadlines
-// under test are driven by FakeClock; this timeout only guards the test itself.
+// transportTestTimeout bounds the real-time waits in these tests that move a
+// control-sized frame. The large-payload round trip uses largePayloadTimeout
+// instead. Deadlines under test are driven by FakeClock; this timeout only
+// guards the test itself.
 const transportTestTimeout = 3 * time.Second
+
+// largePayloadTimeout is the guard for one wait on the large-payload round
+// trip. It is derived from the product's own liveness bound rather than picked
+// for the test: a Link keeps a silent connection alive until one keepalive
+// interval has passed and the keepalive that interval prompts goes unanswered
+// for a keepalive timeout (settings.go). A test guard shorter than that would
+// fail a transfer the product still considers alive, which is how the fixed
+// three-second bound fired on a 1.5 MiB frame that was merely slow to be
+// delivered under CI load. The success path is event-driven, so the guard only
+// turns a frame that never arrives into a failure instead of a hang.
+func largePayloadTimeout(settings *linktest.FakeSettings) time.Duration {
+	return settings.KeepaliveInterval() + settings.KeepaliveTimeout()
+}
 
 // transportTestLink bundles a Link with the fakes behind it.
 type transportTestLink struct {
@@ -395,7 +410,9 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 	}
 
 	server := newTransportTestLink(t)
+	guard := largePayloadTimeout(server.settings)
 	serverReceived := make(chan []byte, 1)
+	serverFailed := make(chan error, 1)
 	addr := startTransportServer(t, server.Link, func(c *conn, tr *trackedConn) {
 		// This handler stands in for serveInbound; mark the connection
 		// authenticated so a 1.5 MiB frame is not charged to the
@@ -403,21 +420,28 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 		if tr != nil {
 			tr.authenticated()
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), guard)
 		defer cancel()
 		f, err := c.recv(ctx)
 		if err != nil {
+			serverFailed <- err
 			return
 		}
 		serverReceived <- append([]byte(nil), f.GetPayload()...)
-		_ = c.sendDirect(ctx, &linkpb.Frame{Kind: 200, Payload: payload})
+		// The echo gets its own deadline for the same reason the client gives
+		// each phase one: the receive above may have used much of the guard.
+		echoCtx, echoCancel := context.WithTimeout(context.Background(), guard)
+		defer echoCancel()
+		_ = c.sendDirect(echoCtx, &linkpb.Frame{Kind: 200, Payload: payload})
 	})
 	client := newTransportTestLink(t)
 	c, _ := openTestStream(t, client.Link, addr)
 
-	ctx, cancel := context.WithTimeout(context.Background(), transportTestTimeout)
-	defer cancel()
-	if err := c.sendDirect(ctx, &linkpb.Frame{Kind: 200, Payload: payload}); err != nil {
+	// Each phase gets its own deadline so a slow send cannot consume the time
+	// the reply is later given.
+	sendCtx, sendCancel := context.WithTimeout(context.Background(), guard)
+	defer sendCancel()
+	if err := c.sendDirect(sendCtx, &linkpb.Frame{Kind: 200, Payload: payload}); err != nil {
 		t.Fatalf("send large frame: %v", err)
 	}
 	select {
@@ -425,11 +449,15 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 		if !bytes.Equal(got, payload) {
 			t.Fatal("server received a different payload")
 		}
-	case <-time.After(transportTestTimeout):
+	case err := <-serverFailed:
+		t.Fatalf("server did not receive the large frame: %v", err)
+	case <-time.After(guard):
 		t.Fatal("server did not receive the large frame")
 	}
 
-	reply, err := c.recv(ctx)
+	replyCtx, replyCancel := context.WithTimeout(context.Background(), guard)
+	defer replyCancel()
+	reply, err := c.recv(replyCtx)
 	if err != nil {
 		t.Fatalf("receive large reply: %v", err)
 	}
