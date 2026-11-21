@@ -37,7 +37,11 @@ SITE_DIR ?= docs/site
 # extracts.
 RELEASE_NOTES_VERSION ?= v0.5.0
 
-.PHONY: gen gen-check lint release-notes-check archive-check proto-lint test test-root e2e e2e-darwin docs-check check site site-check
+# govulncheck version for the vulncheck target, the latest release when the
+# target was added.
+GOVULNCHECK_VERSION := v1.10.0
+
+.PHONY: gen gen-check lint release-notes-check archive-check third-party-check vulncheck proto-lint test test-root e2e e2e-darwin docs-check check site site-check
 
 # Regenerate the committed generated artifacts: the protobuf code with buf and
 # the man pages from the cobra command tree. Generated Go code is committed next
@@ -112,6 +116,25 @@ release-notes-check:
 # goreleaser build hook, which fails the run before an archive is written.
 archive-check:
 	go run ./scripts/check-archives
+
+# Compare every vendored library below third_party/ with the upstream module
+# version third_party/UPSTREAM records, plus exactly the local changes it
+# lists. The modules come through the Go module proxy and checksum database,
+# so this target needs the network and is not part of make check.
+third-party-check:
+	go run ./scripts/check-third-party
+
+# Scan the module graph for known vulnerabilities for both platforms the
+# project supports. The vulnerability database is remote, so this target is
+# not part of make check and runs as its own CI job. govulncheck is installed
+# into a temporary directory first: GOOS must reach the go list it runs, not
+# the build of govulncheck itself, or the scan would try to execute a darwin
+# binary on the host.
+vulncheck:
+	@bin="$$(mktemp -d)"; trap 'rm -rf "$$bin"' EXIT HUP INT TERM; \
+	GOBIN="$$bin" go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) || exit $$?; \
+	"$$bin/govulncheck" ./... || exit $$?; \
+	GOOS=darwin "$$bin/govulncheck" ./...
 
 proto-lint:
 	buf lint

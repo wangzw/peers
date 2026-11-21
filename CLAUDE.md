@@ -26,6 +26,8 @@ A cross-host communication system for agents. A host runs a Broker either as a s
 
 `make site-check` builds the website under `docs/site/` strictly and checks its internal links. It is not part of `make check`; run it when a change touches the website.
 
+`make third-party-check` compares every vendored library under `third_party/` with the upstream module version `third_party/UPSTREAM` records, and `make vulncheck` scans the module graph for known vulnerabilities on both supported platforms. Both reach the network, so neither is part of `make check`; run them when a change touches the vendored source or the module graph.
+
 ## Signals
 
 Sending a signal to a real process must go through `procsig.SendSignal`, and asking whether a pid names a live process must go through `procsig.Alive`, both in `internal/procsig/signal.go`. They refuse pids at or below 1, which would otherwise reach init, the caller's process group or every process the account may signal. `make lint` checks every Go file outside `third_party/`, test files included, and fails on a direct `syscall.Kill` or `unix.Kill` call outside that file. A direct call that is genuinely intended is exempt only with `//procsig:allow <reason>` on the same line or the line above, and the reason must not be empty. This covers signaling the caller's own process, signaling a process group on purpose with a negative pid, and a signal-0 probe that must distinguish EPERM from success rather than only check liveness.
