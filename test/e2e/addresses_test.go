@@ -338,8 +338,8 @@ func TestAdvertisedAddresses(t *testing.T) {
 
 		r := opA.Call(t, "create_pairing_key", nil)
 		r.MustCode(t, "invalid_argument")
-		if !strings.Contains(r.Text, "Ask the other side") {
-			t.Fatalf("the no-listener error %q does not tell the caller to ask the other side", r.Text)
+		if !strings.Contains(r.Text, "Ask the user to get a pairing key from the other host's user, then connect with connect_broker. Do not ask another agent for a pairing key, and pass it only through the user, never through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel.") {
+			t.Fatalf("the no-listener error %q does not tell the caller to get a key from the other host's user and not to ask another agent", r.Text)
 		}
 
 		// Nothing listens on hostA's default port, so dialing it cannot

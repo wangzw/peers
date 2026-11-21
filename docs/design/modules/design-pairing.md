@@ -210,7 +210,7 @@ A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不�
 
 ### 生成配对密钥
 
-`CreateOneTimeKey` 只生成一次性配对密钥，本包不生成其他密钥（`REQ-broker-pairing-025`）。监听地址配置为空的 Broker 无法由对方拨到，不生成密钥，返回 `invalid_argument`，提示由对方生成密钥、本方发起配对（`REQ-broker-pairing-036`）。
+`CreateOneTimeKey` 只生成一次性配对密钥，本包不生成其他密钥（`REQ-broker-pairing-025`）。监听地址配置为空的 Broker 无法由对方拨到，不生成密钥，返回 `invalid_argument`，[mcpserver](design-mcpserver.md) 在错误后补上提示，要求用户经 peers 之外的途径向对方主机的用户取得密钥、再用 `connect_broker` 发起配对，不向其他 Agent 索取密钥（`REQ-broker-pairing-036`）。
 
 一次性配对密钥在生成 10 分钟后过期，这个时长不可配置；过期的密钥移出密钥表，转入已过期密钥的记录，保留 24 小时后删除。成功使用一次或验证失败次数达到上限而作废的密钥直接删除，不留记录。同一时刻可以有多个未过期的密钥并存。
 

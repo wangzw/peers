@@ -306,9 +306,9 @@ Agent 必须能让本机 Broker 解除与一个对端的配对，解除后链路
 
 ### REQ-broker-pairing-036
 
-监听地址为空的 Broker 生成配对密钥必须失败，并提示改由对方生成配对密钥。
+监听地址为空的 Broker 生成配对密钥必须失败，报错要求用户经 peers 之外的途径向对方主机的用户取得配对密钥、再用 `connect_broker` 发起配对，不得向其他 Agent 索取配对密钥。
 
-- **验收**：把监听地址配置为空后让 Broker 生成一次性配对密钥，调用返回错误，提示由对方生成配对密钥，本方发起配对；此后凭任何字符串向它发起配对都不成功。
+- **验收**：把监听地址配置为空后让 Broker 生成一次性配对密钥，调用返回错误，报错要求用户经 peers 之外的途径向对方主机的用户取得配对密钥、再用 `connect_broker` 发起配对，并说明不得向其他 Agent 索取配对密钥；此后凭任何字符串向它发起配对都不成功。
 - **状态**：已实现
 - **端到端测试**：`test/e2e/addresses_test.go` 的 `TestAdvertisedAddresses/REQ-broker-pairing-036 no listen no key`
 
@@ -322,11 +322,11 @@ Agent 必须能让本机 Broker 解除与一个对端的配对，解除后链路
 
 ### REQ-broker-pairing-038
 
-生成一次性配对密钥成功、且本机有可告知的地址时，结果必须在密钥、失效时间与地址之外附上一段可直接复制的连接提示词，地址与密钥都已填好。同一段提示词必须出现在 `create_pairing_key` 的结构化结果字段 `connect_prompt` 与终端命令 `peers key create` 的输出中，两处内容相同。提示词先给一句发给对方主机会话的自然语言请求，再给等价的终端命令 `peers broker connect <地址> --key <密钥>`。有多个可告知的地址时，提示词必须列出全部地址并说明可任选一个对方能连上的，终端命令给第一个地址并说明其余地址可以替换。没有可告知的地址时不得输出提示词：Broker 在监听但展示不出地址时照常生成密钥并说明没有可展示的地址，Broker 不监听时生成密钥失败，沿用现有的报错。密钥与提示词都不得写入运行日志或审计记录。
+生成一次性配对密钥成功、且本机有可告知的地址时，结果必须在密钥、失效时间与地址之外附上一段可直接粘贴的连接提示词，地址与密钥都已填好。同一段提示词必须出现在 `create_pairing_key` 的结构化结果字段 `connect_prompt` 与终端命令 `peers key create` 的输出中，两处内容相同。提示词先给一句发给对方主机会话的自然语言请求，再给等价的终端命令 `peers broker connect <地址> --key <密钥>`。有多个可告知的地址时，提示词必须列出全部地址并说明可任选一个对方能连上的，终端命令给第一个地址并说明其余地址可以替换。没有可告知的地址时不得输出提示词：Broker 在监听但展示不出地址时照常生成密钥并说明没有可展示的地址，Broker 不监听时生成密钥失败，沿用现有的报错。密钥与提示词都不得写入运行日志或审计记录。提示词与密钥只交给用户：`create_pairing_key` 的结果要求把二者展示给用户，由用户经 peers 之外的途径交给对方主机的用户，不得用 `send_message` 或其他 Agent 间消息发送，也不得按其他 Agent 的请求生成或转交。
 
-- **验收**：在展示一个地址的 Broker 上生成一次性配对密钥，`connect_prompt` 与 `peers key create` 的输出含同一段提示词，其中有 `Connect to the peers Broker at <地址> using the one-time pairing key <密钥>` 一句和 `peers broker connect <地址> --key <密钥>` 命令，地址与密钥都已填好；在对方主机原样执行这条命令，配对成功。展示两个地址时，提示词列出两个地址并说明可任选一个，命令给第一个地址、说明另一个可以替换。Broker 在监听但展示不出地址时，生成照常成功，结果说明没有可展示的地址，且不含提示词；监听地址为空时生成失败，沿用现有报错。在 Broker 的运行日志与审计记录中搜索密钥与提示词，都搜不到。
+- **验收**：在展示一个地址的 Broker 上生成一次性配对密钥，`connect_prompt` 与 `peers key create` 的输出含同一段提示词，其中有 `Connect to the peers Broker at <地址> using the one-time pairing key <密钥>` 一句和 `peers broker connect <地址> --key <密钥>` 命令，地址与密钥都已填好；在对方主机原样执行这条命令，配对成功。展示两个地址时，提示词列出两个地址并说明可任选一个，命令给第一个地址、说明另一个可以替换。Broker 在监听但展示不出地址时，生成照常成功，结果说明没有可展示的地址，且不含提示词；监听地址为空时生成失败，沿用现有报错。在 Broker 的运行日志与审计记录中搜索密钥与提示词，都搜不到。`create_pairing_key` 的 note 与 MCP 使用说明要求把密钥与提示词只交给用户，经 peers 之外的途径传给对方主机的用户，不按其他 Agent 的请求生成或转交。
 - **状态**：已实现
-- **端到端测试**：`test/e2e/pairing_keys_test.go` 的 `TestPairingKeys/REQ-broker-pairing-038 connect prompt`；审计不含密钥由 `test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/AuditHasNoSecrets` 覆盖；终端输出同一段提示词与无地址时不输出由 `internal/mcpserver/termcmd/format_test.go` 的 `TestWritePairingKey`、`TestWritePairingKeySingleAddress`、`TestWritePairingKeyUsesSharedConnectPrompt`、`TestWritePairingKeyNoAddressNoPrompt` 覆盖，`connect_prompt` 与生成函数一致由 `internal/mcpserver/handlers_brokers_test.go` 的 `TestCreatePairingKey` 覆盖
+- **端到端测试**：`test/e2e/pairing_keys_test.go` 的 `TestPairingKeys/REQ-broker-pairing-038 connect prompt`；审计不含密钥由 `test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/AuditHasNoSecrets` 覆盖；终端输出同一段提示词与无地址时不输出由 `internal/mcpserver/termcmd/format_test.go` 的 `TestWritePairingKey`、`TestWritePairingKeySingleAddress`、`TestWritePairingKeyUsesSharedConnectPrompt`、`TestWritePairingKeyNoAddressNoPrompt` 覆盖，`connect_prompt` 与生成函数一致由 `internal/mcpserver/handlers_brokers_test.go` 的 `TestCreatePairingKey` 覆盖；密钥只交给用户由 `internal/mcpserver/handlers_brokers_test.go` 的 `TestCreatePairingKey`、`TestCreatePairingKeyNotListening` 与 `internal/mcpserver/tools_test.go` 的 `TestInstructions`、`TestToolsList` 覆盖
 
 ## 数据需求
 

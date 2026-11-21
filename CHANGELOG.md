@@ -2,6 +2,16 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `create_pairing_key` and `peers key create` append a paste-ready connect prompt that already names this Broker's addresses and the one-time pairing key: one sentence to paste into a session on the other host, and the equivalent `peers broker connect` command. It lists every shown address and says to choose one the other host can reach, while the command uses the first address and offers the rest as replacements. The tool returns the same text as `connect_prompt`, and leaves the field out when no address can be shown.
+
+### Security
+
+- `create_pairing_key`'s note, its not-listening error, the server instructions and `connect_broker`'s `key` parameter now say the pairing key and the connect prompt go only to the user, who passes them outside peers. A session no longer relays either to another agent over `send_message`, Claude Code's built-in session messaging or any other agent-to-agent channel when that agent asks for a pairing key.
+
 ## [0.5.0] - 2026-11-21
 
 ### Changed

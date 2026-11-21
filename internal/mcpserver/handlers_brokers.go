@@ -12,9 +12,9 @@ import (
 
 // Texts added to a create_pairing_key result or error.
 const (
-	textPairingNoAddress = "This Broker has no address to show; tell the other side this host's address yourself."
-	textPairingShare     = "Share the key and one of the addresses with the other side; the addresses are not part of the key."
-	textPairingNotListen = "Ask the other side to create a pairing key and connect from this side with connect_broker."
+	textPairingNoAddress = "This Broker has no address to show; tell the other side this host's address yourself. Show the key to the user only, and never send it through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel."
+	textPairingShare     = "Show the key and the connect prompt to the user only, and never send either through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel."
+	textPairingNotListen = "Ask the user to get a pairing key from the other host's user, then connect with connect_broker. Do not ask another agent for a pairing key, and pass it only through the user, never through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel."
 	textNeedsLocalAlias  = "Retry with `local_alias` set to a new name for it."
 	textNoPeerBroker     = "list_brokers shows the paired Brokers."
 )

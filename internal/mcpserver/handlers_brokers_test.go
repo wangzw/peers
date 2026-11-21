@@ -454,8 +454,9 @@ func TestCreatePairingKey(t *testing.T) {
 			t.Errorf("key %q contains address %q", out.Key, addr)
 		}
 	}
-	if !strings.Contains(out.Note, "Share the key") {
-		t.Errorf("note = %q, want the sharing note", out.Note)
+	const wantNote = "Show the key and the connect prompt to the user only, and never send either through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel."
+	if out.Note != wantNote {
+		t.Errorf("note = %q, want %q", out.Note, wantNote)
 	}
 	if want := pairingprompt.ConnectPrompt(out.Addresses, out.Key); out.ConnectPrompt != want {
 		t.Errorf("connect_prompt = %q, want the generator output %q", out.ConnectPrompt, want)
@@ -483,8 +484,9 @@ func TestCreatePairingKeyNoAddress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePairingKey: %v", err)
 	}
-	if !strings.Contains(out.Note, "no address to show") {
-		t.Errorf("note = %q, want the empty-address note", out.Note)
+	const wantNote = "This Broker has no address to show; tell the other side this host's address yourself. Show the key to the user only, and never send it through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel."
+	if out.Note != wantNote {
+		t.Errorf("note = %q, want %q", out.Note, wantNote)
 	}
 	if out.ConnectPrompt != "" {
 		t.Errorf("connect_prompt = %q, want none without an address", out.ConnectPrompt)
@@ -507,8 +509,9 @@ func TestCreatePairingKeyNotListening(t *testing.T) {
 	if err == nil {
 		t.Fatal("CreatePairingKey returned no error")
 	}
-	if !strings.Contains(err.Error(), "Ask the other side to create a pairing key") {
-		t.Errorf("error = %q, want the connect-from-the-other-side hint", err)
+	const wantNote = "Ask the user to get a pairing key from the other host's user, then connect with connect_broker. Do not ask another agent for a pairing key, and pass it only through the user, never through send_message, Claude Code's built-in session messaging or any other agent-to-agent channel."
+	if !strings.Contains(err.Error(), wantNote) {
+		t.Errorf("error = %q, want %q", err, wantNote)
 	}
 	if !strings.Contains(err.Error(), "(code: invalid_argument)") {
 		t.Errorf("error = %q, want (code: invalid_argument)", err)
