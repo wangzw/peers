@@ -18,6 +18,14 @@ import (
 	"github.com/wangzw/peers/internal/procsig"
 )
 
+// processExitWait is the package-wide fallback for the wait for
+// waitProcessGone to notice a SIGKILLed child. It only decides how long a wait
+// that will never complete takes to fail: the success path observes the child
+// disappearing and never spends this time, so a larger value costs nothing.
+// Thirty seconds is far above the worst normal latency under load; it is not a
+// claim that a child should take that long.
+const processExitWait = 30 * time.Second
+
 // TestPostUpdateLinuxRewritesTheUnit checks both levels: the main unit is
 // replaced with this binary's format, a drop-in beside it is left untouched,
 // and the only command run is daemon-reload. The Broker is not restarted.
@@ -815,7 +823,7 @@ func TestWaitProcessGoneReturnsAfterTheProcessExits(t *testing.T) {
 		if err != nil {
 			t.Errorf("waitProcessGone: %v", err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(processExitWait):
 		t.Fatal("waitProcessGone did not return after the process exited")
 	}
 }
