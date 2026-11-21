@@ -1,9 +1,11 @@
 package link
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,6 +17,24 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
+// logBuffer is a concurrency-safe bytes.Buffer for a slog JSON handler.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // dispatchHarness is a Link with a started notifier and the fakes it needs.
 type dispatchHarness struct {
 	t        *testing.T
@@ -22,6 +42,7 @@ type dispatchHarness struct {
 	peers    *linktest.FakePeers
 	settings *linktest.FakeSettings
 	clock    *linktest.FakeClock
+	logs     *logBuffer
 }
 
 func newDispatchHarness(t *testing.T) *dispatchHarness {
@@ -29,13 +50,15 @@ func newDispatchHarness(t *testing.T) *dispatchHarness {
 	peers := linktest.NewFakePeers(t)
 	settings := linktest.NewFakeSettings("self")
 	clock := linktest.NewFakeClock(time.Unix(1700000000, 0))
-	l, err := New(Options{Peers: peers, Settings: settings, Clock: clock})
+	logs := &logBuffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	l, err := New(Options{Peers: peers, Settings: settings, Clock: clock, Logger: logger})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	l.notifier.start()
 	t.Cleanup(l.notifier.stop)
-	return &dispatchHarness{t: t, l: l, peers: peers, settings: settings, clock: clock}
+	return &dispatchHarness{t: t, l: l, peers: peers, settings: settings, clock: clock, logs: logs}
 }
 
 // dispatchConn is one installed connection and the pipe end the test drives.

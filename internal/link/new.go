@@ -48,6 +48,8 @@ func New(opts Options) (*Link, error) {
 		rejectLinger:                time.Second,
 		maxUnauthenticated:          64,
 		maxUnauthenticatedPerSource: 8,
+		maxStateFrames:              defaultMaxStateFrames,
+		maxStateBytes:               defaultMaxStateBytes,
 		enforcementMinTime:          5 * time.Second,
 		localNets:                   nil,
 		onDial:                      nil,

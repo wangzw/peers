@@ -55,14 +55,18 @@ func (l *Link) State(peer Fingerprint) LinkState {
 	}
 }
 
-// Drop forgets the peer and closes its connection, if any. It does not wait:
-// the down notification is posted by a goroutine once the state handler of the
-// connection exited. Dropping an absent peer has no effect and may be repeated.
+// Drop forgets the peer, its request-slot semaphore once no handler holds a
+// slot, and closes its connection, if any. It does not wait: the down
+// notification is posted by a goroutine once the state handler of the
+// connection exited. Dropping an absent peer has no effect and may be repeated,
+// and a repeated drop retries the slot cleanup. A peer whose handlers were
+// still running at the drop is forgotten when its last handler returns.
 func (l *Link) Drop(peer Fingerprint) {
 	l.mu.Lock()
 	rec := l.records[peer]
 	delete(l.records, peer)
 	l.dropGen[peer]++
+	l.forgetSlotsLocked(peer)
 	if rec == nil {
 		l.mu.Unlock()
 		return

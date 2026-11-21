@@ -26,8 +26,10 @@ func (l *Link) HandleState(kind FrameKind, h func(peer Fingerprint, f Frame)) {
 
 // HandleRequest registers the handler of a request frame kind. Each request
 // runs in its own goroutine and its returned frame is sent back as the reply.
-// It panics on a reserved kind, a nil handler, or a kind already registered for
-// either class.
+// At most 64 requests of one connection run at once; a handler must not wait
+// for a reply on the same link, because the router stops reading frames while
+// every slot is taken and that reply could then never arrive. It panics on a
+// reserved kind, a nil handler, or a kind already registered for either class.
 func (l *Link) HandleRequest(kind FrameKind, h func(ctx context.Context, peer Fingerprint, f Frame) Frame) {
 	if h == nil {
 		panic(fmt.Sprintf("link: nil request handler for frame kind %d", kind))

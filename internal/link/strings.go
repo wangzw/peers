@@ -43,6 +43,8 @@ func (r FailReason) String() string {
 		return "connection_lost"
 	case FailProtocol:
 		return "protocol"
+	case FailInboundLimit:
+		return "inbound_limit"
 	default:
 		return "unknown"
 	}

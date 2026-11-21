@@ -75,7 +75,7 @@ func (l *Link) Request(ctx context.Context, peer Fingerprint, f Frame) (reply Fr
 // HandleState 注册一种状态帧的处理函数；同一链路上的状态帧按到达顺序逐个调用。
 func (l *Link) HandleState(kind FrameKind, h func(peer Fingerprint, f Frame))
 
-// HandleRequest 注册一种请求帧的处理函数；各请求并发调用，返回值作为应答发回。
+// HandleRequest 注册一种请求帧的处理函数；各请求并发调用，每个对端至多 64 个同时处理，该对端的各条连接共用这份名额；处理函数不得等待同一链路上的应答，返回值作为应答发回。
 func (l *Link) HandleRequest(kind FrameKind, h func(ctx context.Context, peer Fingerprint, f Frame) Frame)
 
 // Subscribe 订阅链路的建立与断开；建立事件带有本次链路的盐值。
@@ -137,6 +137,7 @@ const (
     FailQueueFull
     FailConnectionLost
     FailProtocol
+    FailInboundLimit
 )
 
 type LinkState struct {
@@ -361,7 +362,9 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 
 应答帧超过 `MaxMessageSize` 时不入队，记一条 Warn 运行日志 `link: dropping a reply`，字段为对端指纹、kind 与原因 `frame_too_large`；请求方按现有的超时处理。
 
-读侧分成读协程与路由协程。读协程按到达顺序读帧，路由协程把应答按请求号交给等待它的调用方，把请求帧各起一个协程处理，把状态帧放入该链路的无界队列。状态帧由一个处理协程逐帧处理，前一帧的处理函数返回才处理后一帧；请求与应答都不经过这个协程，因此状态帧的处理函数里可以对同一链路发 `Request` 并等待应答而不死锁。状态帧队列无界：有界队列满时只能阻塞路由协程，使应答停住、进而造成同样的死锁，或无故断开链路；对端已经过身份认证，属于受信任范围（[architecture](../architecture.md) 的“认证与授权边界”）。
+读侧分成读协程与路由协程。读协程按到达顺序读帧，路由协程把应答按请求号交给等待它的调用方，把请求帧交给处理协程（该对端的 64 个处理名额用完时先等名额，各条连接共用这份名额），把状态帧放入该链路的状态帧队列。状态帧由一个处理协程逐帧处理，前一帧的处理函数返回才处理后一帧；请求与应答都不经过这个协程，因此状态帧的处理函数里可以对同一链路发 `Request` 并等待应答而不死锁。
+
+状态帧队列有界：每条连接在队列中的帧与正在处理的帧合计至多 4096 帧，payload 合计至多 64 MiB，任一上限超出即以 `FailInboundLimit` 关闭这条连接。超限时不停读：停读会让排在后面的应答停住，状态帧处理函数中等待应答的调用随之死锁；只断开越限对端的连接，没越限的对端不受影响。上限的取值依据是正常对端在链路建立时的突发（成员名单与名录对账）远低于上限，整体决定见 ADR-peer-resource-limits；已认证的对端不因认证而获得无限占用资源的权利（[architecture](../architecture.md) 的“认证与授权边界”）。
 
 一条连接的 `onDown` 在该连接的状态帧处理协程退出之后才投递，请求处理函数这时可能仍在运行，它们的应答被丢弃。
 
@@ -390,6 +393,7 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 | 已被解除配对的一方再次连入 | 指纹不在对端表中，按上面的未知指纹处理；对方收到 `Reject` 后停止拨号 |
 | 发送队列已满 | 关闭连接；本方是拨号方时进入退避，是接受方时回到等待对方 |
 | 发送队列已满时调用 `Send` | 返回 `ErrQueueFull`，属于 `peer_unreachable` |
+| 状态帧队列超出 4096 帧或 64 MiB 的 payload 上限 | 关闭连接；审计 `link_down` 的 `detail` 为 `inbound_limit`，运行日志 `link_inbound_limit` 带 `peer` 与 `limit`（`state_frames` 或 `state_bytes`）；本方是拨号方时进入退避，是接受方时回到等待对方 |
 | 同一 TCP 连接上打开第二个 `Connect` 流 | 第二个流以错误结束，同一连接上已建立的链路不受影响 |
 
 `link` 自己写四类审计事件：`link_up`、`link_down`、`connection_rejected` 与 `rejected_by_peer`。`link_up` 与 `link_down` 在每次投递建立与断开通知时各写一条，`Peer` 填对端指纹与生效别名，`link_down` 的 `detail` 是断开原因的名字；这两类事件不填 `MergeKey`，v0.1.0 不合并。`connection_rejected` 在未知指纹的连接被拒时写，`Peer` 只填指纹，按来源合并，`detail` 写作 `not a peer from <来源前缀>`（`REQ-broker-pairing-015`、`REQ-broker-config-069`）；`rejected_by_peer` 在收到原因为“不是对端”的 `Reject` 时写（`REQ-broker-pairing-035`）。
@@ -401,6 +405,8 @@ TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方�
 每条链路有一个读协程、一个写协程、一个路由协程和一个状态帧处理协程。写协程从有序发送队列取帧，保证同一链路上的帧按入队顺序发出。`Send` 不阻塞：队列已满时关闭连接并返回 `ErrQueueFull`。
 
 `SendLatest` 与 `SendLatestKey` 的就地替换与写协程取走该帧互斥：写协程先从队列取下该帧并注销它的替换位置，再读取它的内容发送；在这之后到达的替换按新帧入队。因此一帧不会在发送途中被改写，同一 key 在队列中至多有一个待发位置（`SendLatest` 的 key 是 kind），其余帧的相对顺序不变。
+
+同一个对端的各条连接合计同时运行至多 64 个请求处理协程；名额用完时路由协程停在取名额处，不再读帧，压力经 HTTP/2 流控传回对端。替换连接时旧连接的处理协程可能仍在运行，新连接因此先等这些名额，重连不能叠加出第二份并发。连接关闭会让等待名额的路由协程立即退出，`Close` 不因此挂起。处理函数不得等待同一链路上的应答，否则名额全部占用时路由协程不再读帧，应答永远到不了。
 
 建立与断开的通知由一个通知协程串行投递，各事件先进先出，订阅者按 `Subscribe` 的先后被调用。一条连接的状态帧在它的 `onUp` 全部返回之后才开始处理；一条连接的 `onDown` 在该连接的状态帧处理协程退出之后才入队，因此上层不会在 `onDown` 之后再收到这条连接的状态帧。`onDown` 从不在 `Send`、`Drop`、`Kick` 或队列溢出的调用者栈上执行。接受方用新连接取代旧连接时，只发一次 `onDown` 再发一次新连接的 `onUp`。
 

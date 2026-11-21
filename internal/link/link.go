@@ -26,6 +26,8 @@ type Link struct {
 	rejectLinger                time.Duration                // 1s
 	maxUnauthenticated          int                          // 64
 	maxUnauthenticatedPerSource int                          // 8
+	maxStateFrames              int                          // 4096
+	maxStateBytes               int                          // 64 MiB
 	enforcementMinTime          time.Duration                // 5s
 	localNets                   func() ([]*net.IPNet, error) // nil in production: the dial loop then uses defaultLocalNets
 	onDial                      func(address string)         // nil in production
@@ -69,6 +71,11 @@ type Link struct {
 	regMu           sync.RWMutex
 	stateHandlers   map[FrameKind]func(peer Fingerprint, f Frame)
 	requestHandlers map[FrameKind]func(ctx context.Context, peer Fingerprint, f Frame) Frame
+
+	// slots holds the request concurrency semaphore of each paired peer,
+	// shared by its successive connections. Unpairing a peer removes its entry
+	// once no handler holds a slot. Guarded by mu.
+	slots map[Fingerprint]chan struct{}
 
 	// --- listening and closing ---
 	server *grpc.Server      // guarded by mu; created by the first non-empty Listen

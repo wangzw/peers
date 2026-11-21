@@ -135,6 +135,7 @@ func TestPhaseAndFailReasonStrings(t *testing.T) {
 		FailQueueFull:           "queue_full",
 		FailConnectionLost:      "connection_lost",
 		FailProtocol:            "protocol",
+		FailInboundLimit:        "inbound_limit",
 		FailReason(200):         "unknown",
 	}
 	for r, want := range reasons {

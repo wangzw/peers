@@ -15,6 +15,8 @@ type TestKnobs struct {
 	HelloTimeout          time.Duration
 	RejectLinger          time.Duration
 	MaxUnauthenticated    int
+	MaxStateFrames        int
+	MaxStateBytes         int
 	EnforcementMinTime    time.Duration
 	LocalNets             func() ([]*net.IPNet, error)
 	OnDial                func(address string)
@@ -44,6 +46,12 @@ func SetTestKnobs(l *Link, k TestKnobs) {
 	}
 	if k.MaxUnauthenticated != 0 {
 		l.maxUnauthenticated = k.MaxUnauthenticated
+	}
+	if k.MaxStateFrames != 0 {
+		l.maxStateFrames = k.MaxStateFrames
+	}
+	if k.MaxStateBytes != 0 {
+		l.maxStateBytes = k.MaxStateBytes
 	}
 	if k.EnforcementMinTime != 0 {
 		l.enforcementMinTime = k.EnforcementMinTime

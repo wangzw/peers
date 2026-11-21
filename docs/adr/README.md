@@ -41,6 +41,7 @@
 | [对外地址默认取默认路由所在接口的地址](adr-advertised-address.md) |
 | [发起配对的一方负责重新建立链路](adr-initiator-redials.md) |
 | [未认证连接按来源限额](adr-unauthenticated-connection-limits.md) |
+| [已认证的对端按来源限额](adr-peer-resource-limits.md) |
 
 ## 可见性
 

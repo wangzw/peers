@@ -48,6 +48,7 @@ const (
 	FailQueueFull
 	FailConnectionLost
 	FailProtocol
+	FailInboundLimit
 )
 
 // LinkState is the state of the link to one peer.
