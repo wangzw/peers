@@ -74,6 +74,8 @@ func peerStatusDetail(st PeerLinkStatus) string {
 		detail = "both Brokers consider themselves the dialer for this pair; pair again to fix the roles"
 	case FailureVersionIncompatible:
 		detail = "link protocol version incompatible with this peer; upgrade the older Broker"
+	case FailureInboundLimit:
+		detail = "the peer sent more state frames than this Broker's inbound limit allows on one connection; the link was closed and will reconnect after a backoff; check the audit log for the link_down record"
 	default:
 		return ""
 	}

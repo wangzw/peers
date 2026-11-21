@@ -55,6 +55,7 @@ const (
 	FailureNotAPeer                 // the peer answered Reject "not a peer"
 	FailureRoleMismatch             // the peer answered Reject "role mismatch"
 	FailureVersionIncompatible
+	FailureInboundLimit // the peer overran this Broker's inbound limit
 )
 
 // PeerLinkStatus is the link state of one peer as the broker reports it.

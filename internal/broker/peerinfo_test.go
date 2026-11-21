@@ -192,6 +192,11 @@ func TestPeerStatusDetailTable(t *testing.T) {
 			want: "link protocol version incompatible with this peer; upgrade the older Broker: peer speaks link protocol version 2",
 		},
 		{
+			name: "inbound limit",
+			st:   PeerLinkStatus{Phase: LinkBackoff, Failure: FailureInboundLimit},
+			want: "the peer sent more state frames than this Broker's inbound limit allows on one connection; the link was closed and will reconnect after a backoff; check the audit log for the link_down record",
+		},
+		{
 			name: "none",
 			st:   PeerLinkStatus{Failure: FailureNone, Detail: "ignored when there is no failure"},
 			want: "",

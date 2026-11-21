@@ -60,7 +60,7 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 - `send_message`：`result`、`to`。
 - `list_topics`：`joined_topics`、`public_topics`；每项有 `name`、`description`。
 - `join_topic`、`leave_topic`：`topics`。
-- `list_brokers`：`brokers` 与 `local`；每个 Broker 项有 `alias`、`fingerprint`、`advertised_addresses`、`is_peer`、`role`、`link_state`、`status`、`status_detail`，地址项有 `kind`、`addr`；`local` 有 `offline`、`degraded`；`degraded` 有 level、step、reason 与 fix。
+- `list_brokers`：`brokers` 与 `local`；每个 Broker 项有 `alias`、`fingerprint`、`advertised_addresses`、`is_peer`、`role`、`link_state`、`status`、`status_detail`，地址项有 `kind`、`addr`；`local` 有 `offline`、`degraded`；`degraded` 有 level、step、reason 与 fix。`status_detail` 说明本 Broker 认识的对端链路失败原因：被拒绝、角色不符、协议版本不兼容与状态帧入站限额；其余原因留空。
 - `connect_broker`：`alias`、`fingerprint`、`shown_host`、`warnings`。
 - `disconnect_broker`：`result`。
 - `create_pairing_key`：`key`、`expires_at`、`shown_addresses`、`note`、`connect_prompt`；`connect_prompt` 是可直接粘贴的连接提示词，由 `internal/mcpserver/pairingprompt` 的 `ConnectPrompt` 生成，与 `peers key create` 输出的那一段相同；没有可展示的地址时结果中不含这个字段。

@@ -67,6 +67,8 @@ func mapLinkFailure(r link.FailReason) LinkFailure {
 		return FailureRoleMismatch
 	case link.FailVersionIncompatible:
 		return FailureVersionIncompatible
+	case link.FailInboundLimit:
+		return FailureInboundLimit
 	default:
 		return FailureNone
 	}

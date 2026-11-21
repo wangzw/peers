@@ -44,6 +44,7 @@ func TestMapLinkFailure(t *testing.T) {
 		{"queue full", link.FailQueueFull, FailureNone},
 		{"connection lost", link.FailConnectionLost, FailureNone},
 		{"protocol", link.FailProtocol, FailureNone},
+		{"inbound limit", link.FailInboundLimit, FailureInboundLimit},
 		{"unknown", link.FailReason(200), FailureNone},
 	}
 	for _, tt := range tests {
