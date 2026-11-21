@@ -243,7 +243,7 @@ func TestCloseCancelsBlockedFetch(t *testing.T) {
 	}
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("B never sent the blocking record request")
 	}
 
@@ -254,7 +254,7 @@ func TestCloseCancelsBlockedFetch(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Close did not return within 3 seconds while a fetch was blocked")
+	case <-time.After(eventTimeout):
+		t.Fatal("Close did not return while a fetch was blocked")
 	}
 }

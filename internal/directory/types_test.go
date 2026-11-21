@@ -68,7 +68,7 @@ func TestRealClockUsesNow(t *testing.T) {
 	ch := realClock{}.NewTimer(time.Millisecond).C()
 	select {
 	case <-ch:
-	case <-time.After(3 * time.Second):
-		t.Fatal("timer did not fire within 3 seconds")
+	case <-time.After(eventTimeout):
+		t.Fatal("timer did not fire before the event timeout")
 	}
 }

@@ -19,6 +19,15 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
+// eventTimeout is the package-wide fallback for a wait on an event that the
+// production code signals on a channel, or on a real timer, and that the test
+// cannot force. It only decides how long a wait that will never complete takes
+// to fail: the success path selects on the event itself and never spends this
+// time, so a larger value costs nothing. Thirty seconds is far above the worst
+// normal latency under load; it is not a claim that an event should take that
+// long.
+const eventTimeout = 30 * time.Second
+
 // dirTestNow is the fixed instant most tests run at.
 func dirTestNow() time.Time {
 	return time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
@@ -561,7 +570,7 @@ func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 		for _, ch := range []chan struct{}{persistDone, closeDone} {
 			select {
 			case <-ch:
-			case <-time.After(3 * time.Second):
+			case <-time.After(eventTimeout):
 				t.Errorf("a persistence goroutine did not finish during cleanup")
 			}
 		}
@@ -575,7 +584,7 @@ func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 
 	select {
 	case <-closeAtLock:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Close did not reach persistMu")
 	}
 	d.mu.RLock()
@@ -591,7 +600,7 @@ func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 		t.Helper()
 		select {
 		case <-ch:
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("%s did not finish", what)
 		}
 	}

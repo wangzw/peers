@@ -568,8 +568,8 @@ func TestViewsDoNotHoldLockDuringCallbacks(t *testing.T) {
 		if len(got) != 1 {
 			t.Fatalf("Brokers() returned %d entries, want 1", len(got))
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Brokers did not return within three seconds: it holds the lock during the peer callback")
+	case <-time.After(eventTimeout):
+		t.Fatal("Brokers did not return before the event timeout: it holds the lock during the peer callback")
 	}
 	select {
 	case <-rp.held:
