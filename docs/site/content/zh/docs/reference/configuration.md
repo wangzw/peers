@@ -82,7 +82,7 @@ pairing:
 - 整数必须大于零，`send.link_retries` 和 `send.inbox_retries` 例外，可以取 `0`。
 - `link.reconnect_max` 不得小于 `link.reconnect_min`；`link.keepalive_timeout` 必须小于 `link.keepalive_interval`。修改其中一对里的一个键时，会与另一个一起校验。
 - `broker.listen` 写作 `host:port`、`:port` 或 `[v6]:port`，端口为 1 至 65535。修改为另一个值时，系统会先探测该地址，无法绑定的地址会被拒绝。系统级 Broker 的端口小于 1024 时，只有在配置文件只能由 root 写时才生效。配置文件可被组或其他人写入时，前台运行的 Broker 会拒绝启动，作为服务运行的 Broker 会进入仅本机降级；执行 `chmod g-w <path>`，或把端口改为不小于 1024，即可恢复。root 经 `set_config` 或 `peers config set` 把端口设为小于 1024 时，配置文件可被 root 以外的账户写入则请求被拒绝，错误说明文件必须具备的条件，并给出同样的两种办法。调用者不是 root 时一律拒绝，报错为 `changing broker.listen to a port below 1024 requires root`。启动或热加载被拒绝时，提示会写出文件中当前的 `broker.listen` 取值，要求 root 先核对该值是不是自己想要的，再收紧权限，因为能写这个文件的账户可能已经改过它。这条规则见[以配置文件权限管理 Broker]({{< relref "management-permissions.md" >}}#管理组)。
-- `broker.advertise` 与 `broker.advertise_extra` 要求有监听地址；只有端口的 `broker.advertise` 还要求监听本机全部地址。
+- `broker.advertise` 与 `broker.advertise_extra` 要求有监听地址；只有端口的 `broker.advertise` 还要求监听本机全部地址。两者的主机部分是 IP 地址或域名：IP 地址不能是通配地址，IPv6 地址写在方括号里、不带 zone；域名按 `.` 分成的每段 1 至 63 字节，只含 ASCII 字母、数字、`-` 和 `_`，不以 `-` 开头或结尾，总长不超过 253 字节，最多带一个结尾的点。不符合这条规则的值使配置加载失败，`set_config` 与 `peers config set` 也同样拒绝，报错形如 `invalid value: <key>: host "<host>" is not a valid host name`；IPv6 地址未加方括号时报 `invalid value: <key>: IPv6 addresses must be written in brackets`。其中 `<key>` 是所设的键，即 `broker.advertise` 或 `broker.advertise_extra`。
 - 配置的对外地址，连同监听特定地址时隐含的那一项，最多 8 项。默认路由所在接口的地址会使列表超过 8 项时，从这部分末尾舍去；配置的项全部保留。
 - `broker.local_socket_group` 必须指向存在的组，不存在时启动失败，带 `--allow-degraded` 也一样。
 - `broker.local_socket_mode` 接受 3 或 4 位八进制数，最大 `0777`。

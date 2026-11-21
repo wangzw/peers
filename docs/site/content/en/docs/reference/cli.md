@@ -56,7 +56,7 @@ Pairs this Broker with another Broker and prints one line, `Paired with <alias> 
 
 - `address` is written `host:port` or `hostname(host:port)`. It may come before or after the options.
 - `--key <key>` is a one-time pairing key created on the other Broker, or its pre-provisioned static key. The value is required, and only the double-dash form is accepted.
-- `--alias <alias>` sets the local alias. When the other Broker's own alias conflicts with an existing one and no local alias is given, the pairing fails and asks for a local alias.
+- `--alias <alias>` sets the local alias. When the other Broker's own alias conflicts with this Broker's own alias, another peer's alias or a former alias that another peer still keeps reserved, and no local alias is given, the pairing fails and asks for a local alias. When the peer already keeps 8 former aliases or its alias is already frozen, `--alias` has no effect and the frozen alias is used.
 
 Warnings in the reply are written to standard error, one per line with the prefix `warning: `, and the command still exits with code 0.
 

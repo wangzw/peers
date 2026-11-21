@@ -50,7 +50,7 @@ peers broker connect <address> --key <key>
 ## 特殊情况
 
 - 密钥过期或已经用过一次。一次性配对密钥有效期 10 分钟，成功配对一次后失效。超过时间再使用会返回密钥无效或已过期的错误，双方都不保存对方的身份。重新生成一个密钥，从头再来。
-- 别名已被占用。常见起因是默认别名只取主机名的第一段：主机名第一段相同的两台主机，例如 `workstation.example.com` 与 `workstation.example.net`，其系统级 Broker 会得到相同的别名，两台主机上同名账户的用户级 Broker 也是如此。如果接受方 Broker 的别名与本 Broker 自己的别名或另一个对端的别名相同，`connect_broker` 会要求指定本地别名。说“连接到 `<address>` 上的 Broker，密钥是 `<key>`，本地别名是 `<alias>`。”，别名不超过 24 个字符（模型会调用 `connect_broker`）；也可以运行 `peers broker connect <address> --key <key> --alias <alias>`，名字同样不超过 24 个字符。这个别名只在本 Broker 上有效。
+- 别名已被占用。常见起因是默认别名只取主机名的第一段：主机名第一段相同的两台主机，例如 `workstation.example.com` 与 `workstation.example.net`，其系统级 Broker 会得到相同的别名，两台主机上同名账户的用户级 Broker 也是如此。如果接受方 Broker 的别名与本 Broker 自己的别名、另一个对端的别名，或另一个对端仍然保留的旧别名相同，`connect_broker` 会要求指定本地别名。说“连接到 `<address>` 上的 Broker，密钥是 `<key>`，本地别名是 `<alias>`。”，别名不超过 24 个字符（模型会调用 `connect_broker`）；也可以运行 `peers broker connect <address> --key <key> --alias <alias>`，名字同样不超过 24 个字符。这个别名只在本 Broker 上有效。
 - 展示的地址连不上。随密钥给出的地址未必能从对方连上，例如接受方主机位于端口转发之后。提示词列出多个地址时，最后一行给出其余可选地址。改用一个对方能连上的地址，说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”（模型会调用 `connect_broker`），或者在 `peers broker connect` 里使用它。
 - 网络中断。配对完成后，拨号方不需要密钥就会重连。稍等片刻，再说一次“列出本 Broker 知道的 Broker。”（模型会调用 `list_brokers`），或者运行 `peers broker list` 检查，对端会回到 `connected`。
 - 链路一直建不起来，详情显示版本不兼容。两个 Broker 只有使用同一个链路协议版本才能建立链路。`peers service status` 的 `DETAIL` 列与 `list_brokers` 的 `status_detail` 显示 `link protocol version incompatible with this peer; upgrade the older Broker`；本方是接受方时，后面还有 `: peer speaks link protocol version <N>`。拨号方以 `backoff` 状态持续重试，接受方停在 `waiting`。`peers broker list` 不显示原因，运行日志里有 `link: protocol version mismatch`。把较旧的一台更新到与另一台相同的版本，拨号方会自动重新建立链路，不用重新配对。
