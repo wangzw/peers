@@ -487,6 +487,44 @@ func TestConfigAuditMergePairingFailed(t *testing.T) {
 	}
 }
 
+// TestConfigAuditMergePairingFailedByReason checks that two source-level
+// pairing failures from one source but for different reasons keep separate
+// merge windows. A source that first hits the rate limit and then dials with an
+// incompatible protocol version must leave two records, each carrying its own
+// detail, rather than one record whose detail is whichever arrived first.
+func TestConfigAuditMergePairingFailedByReason(t *testing.T) {
+	log, _, _ := newAuditTestLog(t, 0o700)
+	base := auditTestClock(t)
+	details := []string{"try later", "version incompatible", "try later", "version incompatible"}
+	for i, detail := range details {
+		if err := log.append(Event{
+			Time:     base.Add(time.Duration(i) * time.Minute),
+			Event:    EventPairingFailed,
+			MergeKey: "source:192.0.2.10/32",
+			Detail:   detail,
+		}); err != nil {
+			t.Fatalf("append: %v", err)
+		}
+	}
+
+	events, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (one merged record per reason)", len(events))
+	}
+	counts := make(map[string]uint64, len(events))
+	for _, event := range events {
+		counts[event.Detail] = event.Count
+	}
+	for _, detail := range []string{"try later", "version incompatible"} {
+		if got := counts[detail]; got != 2 {
+			t.Errorf("merged count for %q = %d, want 2; events = %+v", detail, got, events)
+		}
+	}
+}
+
 func TestConfigAuditMergeKeyNotPersisted(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)

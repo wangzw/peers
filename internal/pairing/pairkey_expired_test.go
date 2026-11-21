@@ -124,7 +124,7 @@ func TestREQBrokerPairing006_ExpiredHitsNotCounted(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		_ = hsRequestAttempt(t, accP, key, ReasonKeyExpired)
 	}
-	if got := accP.keys.attempts.count; got != 0 {
+	if got := accP.keys.attempts.total; got != 0 {
 		t.Fatalf("attempt counter = %d after expired hits, want 0", got)
 	}
 

@@ -241,7 +241,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 		_ = conn.Close()
 		return fmt.Errorf("%w: %v", ErrStore, err)
 	}
-	match, found, lookupErr := p.keys.lookupAtRequest(ni, request.GetLookupTag(), now, p.settings.StaticKey(), maxAttempts)
+	match, found, lookupErr := p.keys.lookupAtRequest(ni, request.GetLookupTag(), now, sourcePrefix(conn.RemoteAddr()), maxAttempts, p.settings.StaticKey)
 	if !found {
 		reason := ReasonKeyInvalid
 		if lookupErr != nil {

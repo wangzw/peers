@@ -29,7 +29,7 @@ broker:
   public: false
 
 pairing:
-  # Pairing requests per minute that match no pairing key; successful matches of the static key are not counted.
+  # Unmatched pairing requests allowed per source per minute; all sources together are limited to 10 times this, and static-key matches do not count.
   max_attempts_per_minute: 10
   # Failed verifications allowed before a one-time pairing key is invalidated.
   max_failures: 5

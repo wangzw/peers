@@ -152,8 +152,36 @@ func TestRateLimitOrderingStaticKeyHitsAreNotCounted(t *testing.T) {
 	if got := len(accP.Peers()); got != uses {
 		t.Fatalf("acceptor peers = %d, want %d", got, uses)
 	}
-	if got := accP.keys.attempts.count; got != 0 {
+	if got := accP.keys.attempts.total; got != 0 {
 		t.Fatalf("static-key hits counted %d attempts, want 0", got)
+	}
+}
+
+// A "try later" rejection is not itself an attempt. Counting it would let one
+// source exhaust the global allowance by repeating requests the limit already
+// refuses.
+func TestRateLimitTryLaterIsNotCounted(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = ""
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	// One counted request fills the only per-source slot.
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "198.51.100.5:1000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("first request error = %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonTryLater, "198.51.100.5:1001"); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("rate-limited request %d error = %v", i+1, err)
+		}
+	}
+	if got := accP.keys.attempts.total; got != 1 {
+		t.Fatalf("attempt total = %d, want 1: try-later rejections were counted", got)
+	}
+	if got := accP.keys.attempts.bySource["198.51.100.5/32"]; got != 1 {
+		t.Fatalf("source attempts = %d, want 1: try-later rejections were counted", got)
 	}
 }
 

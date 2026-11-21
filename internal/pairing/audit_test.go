@@ -90,8 +90,8 @@ func TestAuditPairingFailedCarriesReasonAndMergeKey(t *testing.T) {
 	if e.Detail != auditReasonTryLater {
 		t.Errorf("Detail = %q, want %q", e.Detail, auditReasonTryLater)
 	}
-	if e.MergeKey != "source:192.0.2.10" {
-		t.Errorf("MergeKey = %q, want source:192.0.2.10", e.MergeKey)
+	if e.MergeKey != "source:192.0.2.10/32" {
+		t.Errorf("MergeKey = %q, want source:192.0.2.10/32", e.MergeKey)
 	}
 	if e.Peer == nil || e.Peer.Alias != "hostB" {
 		t.Errorf("Peer = %+v, want fingerprint with alias hostB", e.Peer)
@@ -170,18 +170,19 @@ func TestAuditReasonVocabulary(t *testing.T) {
 	}
 }
 
-// TestAuditSourceMergeKey covers the source-based merge key: host only, IPv6
-// without brackets, unsplittable strings used whole, and an empty address left
-// ungrouped.
+// TestAuditSourceMergeKey covers the source-based merge key: the IPv4 /32,
+// the IPv6 /64 without brackets, and no key for an address with no IP.
 func TestAuditSourceMergeKey(t *testing.T) {
 	tests := []struct {
 		addr string
 		want string
 	}{
-		{"192.0.2.10:17443", "source:192.0.2.10"},
-		{"[2001:db8::1]:17443", "source:2001:db8::1"},
-		{"peer.example:17443", "source:peer.example"},
-		{"not-an-address", "source:not-an-address"},
+		{"192.0.2.10:17443", "source:192.0.2.10/32"},
+		{"[2001:db8::1]:17443", "source:2001:db8::/64"},
+		{"[2001:db8:1:2::abcd]:17443", "source:2001:db8:1:2::/64"},
+		{"[::ffff:203.0.113.7]:443", "source:203.0.113.7/32"},
+		{"peer.example:17443", ""},
+		{"not-an-address", ""},
 		{"", ""},
 	}
 	for _, tt := range tests {

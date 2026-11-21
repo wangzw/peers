@@ -31,18 +31,19 @@ const testWaitBound = 2 * time.Second
 // hsSettings is a mutable settings fake. aliasFunc, when set, overrides Alias
 // so a test can change the value between the calls a handshake makes.
 type hsSettings struct {
-	mu          sync.Mutex
-	dataDir     string
-	alias       string
-	hostname    string
-	advertised  []config.AdvertisedAddr
-	listen      string
-	staticKey   string
-	maxFailures int
-	maxAttempts int
-	audits      []config.Event
-	aliasFunc   func() (string, error)
-	aliasCalls  int
+	mu             sync.Mutex
+	dataDir        string
+	alias          string
+	hostname       string
+	advertised     []config.AdvertisedAddr
+	listen         string
+	staticKey      string
+	staticKeyCalls int
+	maxFailures    int
+	maxAttempts    int
+	audits         []config.Event
+	aliasFunc      func() (string, error)
+	aliasCalls     int
 }
 
 func newHSSettings(t *testing.T) *hsSettings {
@@ -67,7 +68,16 @@ func (s *hsSettings) ListenAddress() (string, error) {
 func (s *hsSettings) StaticKey() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.staticKeyCalls++
 	return s.staticKey
+}
+
+// staticKeyCallCount reports how many times the handshake read the preset
+// static key, so a test can prove a lookup path never reaches it.
+func (s *hsSettings) staticKeyCallCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.staticKeyCalls
 }
 func (s *hsSettings) MaxFailures() (int, error) {
 	s.mu.Lock()
@@ -429,7 +439,15 @@ func hsKey(t *testing.T) (Fingerprint, []byte) {
 // and waits for both sides. afterRun lets a test control the link Hello.
 func hsPair(t *testing.T, initP, accP *Pairing, initTr *hsTransport, key, localAlias string, afterRun func(context.Context, PairConn) error) (Peer, string, error, error) {
 	t.Helper()
+	return hsPairFrom(t, initP, accP, initTr, key, localAlias, "192.0.2.2:40002", afterRun)
+}
+
+// hsPairFrom is hsPair with the acceptor-side remote address under the test's
+// control, so a test can make the handshake arrive from a chosen source.
+func hsPairFrom(t *testing.T, initP, accP *Pairing, initTr *hsTransport, key, localAlias, acceptorRemote string, afterRun func(context.Context, PairConn) error) (Peer, string, error, error) {
+	t.Helper()
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
+	bConn.remote = acceptorRemote
 	initTr.raw = aConn
 	initTr.runConn = nil
 	initTr.beforeRun = nil
@@ -895,8 +913,8 @@ func TestRateLimitedFailureUsesSourceMergeKey(t *testing.T) {
 			mergeKey = e.MergeKey
 		}
 	}
-	if mergeKey != "source:192.0.2.2" {
-		t.Fatalf("merge key = %q, want source:192.0.2.2", mergeKey)
+	if mergeKey != "source:192.0.2.2/32" {
+		t.Fatalf("merge key = %q, want source:192.0.2.2/32", mergeKey)
 	}
 }
 
@@ -921,6 +939,256 @@ func TestAttemptCounterResetsEachMinute(t *testing.T) {
 	if err := hsRequestAttempt(t, accP, "bad-three", ReasonKeyInvalid); !errors.Is(err, ErrPairingRejected) {
 		t.Fatalf("request after the minute boundary error = %v, want a key-invalid rejection", err)
 	}
+}
+
+// TestAttemptLimitIsPerSource reproduces the global-counter defect: one source
+// exhausting its allowance must not stop another source from pairing with the
+// preset static key in the same minute.
+func TestAttemptLimitIsPerSource(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = "STATIC-KEY"
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	// Source X fills its allowance with a request that matches no key.
+	if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonKeyInvalid, "198.51.100.1:1000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("source X first request error = %v", err)
+	}
+	// One more request from X is rate limited.
+	if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonTryLater, "198.51.100.1:1001"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("source X second request error = %v", err)
+	}
+
+	// Source Y pairs with the correct static key in the same minute.
+	initP, tr := newInitiatorPairing(t, clk)
+	peer, _, connectErr, acceptErr := hsPairFrom(t, initP, accP, tr, "STATIC-KEY", "", "198.51.100.2:2000", func(ctx context.Context, raw PairConn) error {
+		return hsSendHello(raw)
+	})
+	if connectErr != nil {
+		t.Fatalf("source Y Connect with the static key = %v, want success", connectErr)
+	}
+	if acceptErr != nil {
+		t.Fatalf("source Y Accept = %v, want success", acceptErr)
+	}
+	if peer.Fingerprint != accP.identity.fingerprint() {
+		t.Fatalf("paired peer fingerprint = %x, want the acceptor", peer.Fingerprint)
+	}
+}
+
+// TestAttemptLimitGroupsIPv6ByPrefix covers the source unit: two addresses in
+// one /64 share an allowance, and a different /64 has its own.
+func TestAttemptLimitGroupsIPv6ByPrefix(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = ""
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "[2001:db8:1:2::1]:1000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("first address in the /64 error = %v", err)
+	}
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonTryLater, "[2001:db8:1:2::abcd]:2000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("second address in the same /64 error = %v", err)
+	}
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "[2001:db8:1:3::1]:3000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("address in another /64 error = %v", err)
+	}
+}
+
+// TestAttemptLimitSharesOneAllowanceAmongNonIPSources checks that every source
+// without an IP address is one unknown source. Two different address strings
+// that do not parse as host:port must share a single allowance, not each get
+// their own.
+func TestAttemptLimitSharesOneAllowanceAmongNonIPSources(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = ""
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "not-an-ip:1000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("first unknown source error = %v", err)
+	}
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonTryLater, "another-name:2000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("second unknown source error = %v, want the shared allowance to rate-limit it", err)
+	}
+}
+
+// TestAttemptLimitTreatsMappedIPv4AsIPv4 checks that an IPv4-mapped IPv6
+// address and the plain IPv4 address are one source. Without Unmap the mapped
+// address falls into an IPv6 /64 of its own and escapes the plain address's
+// allowance.
+func TestAttemptLimitTreatsMappedIPv4AsIPv4(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = ""
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "198.51.100.7:1000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("plain IPv4 error = %v", err)
+	}
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonTryLater, "[::ffff:198.51.100.7]:2000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("mapped IPv4 error = %v, want it to share the plain address's allowance", err)
+	}
+}
+
+// TestAttemptLimitHasGlobalCap covers the second limit: ten times the
+// per-source allowance across all sources in one minute, after which every
+// source is refused until the minute changes.
+func TestAttemptLimitHasGlobalCap(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = ""
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	for i := 0; i < 10; i++ {
+		remote := fmt.Sprintf("198.51.100.%d:1000", i+1)
+		if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, remote); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("source %d below the global cap error = %v", i+1, err)
+		}
+	}
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonTryLater, "198.51.100.200:1000"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("request above the global cap error = %v", err)
+	}
+
+	// The next minute starts with an empty window, so the same source counts.
+	clk.Advance(time.Minute)
+	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "198.51.100.200:1001"); !errors.Is(err, ErrPairingRejected) {
+		t.Fatalf("request after the minute boundary error = %v", err)
+	}
+}
+
+// TestRateLimitedAuditMergesSeparateIPv6Prefixes checks that the merge key is
+// the source prefix, so two addresses in one /64 share a key and two /64s do
+// not.
+func TestRateLimitedAuditMergesSeparateIPv6Prefixes(t *testing.T) {
+	clk := newHSClock()
+	accS := newHSSettings(t)
+	accS.alias = "beta"
+	accS.staticKey = ""
+	accS.maxAttempts = 1
+	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+	for _, remote := range []string{"[2001:db8:a::1]:1000", "[2001:db8:b::1]:1000"} {
+		if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, remote); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("first request from %s error = %v", remote, err)
+		}
+		if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonTryLater, remote); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("rate-limited request from %s error = %v", remote, err)
+		}
+	}
+
+	got := make(map[string]bool)
+	for _, e := range accS.recorded() {
+		if e.Event == config.EventPairingFailed && e.Detail == auditReasonTryLater {
+			got[e.MergeKey] = true
+		}
+	}
+	for _, want := range []string{"source:2001:db8:a::/64", "source:2001:db8:b::/64"} {
+		if !got[want] {
+			t.Fatalf("merge keys = %v, want %q", got, want)
+		}
+	}
+	if len(got) != 2 {
+		t.Fatalf("merge keys = %v, want exactly two", got)
+	}
+}
+
+// TestStaticKeyUnreadBeforeRateChecks proves the preset static key is read only
+// after the lookup has matched no one-time key, no expired record, and passed
+// both frequency limits.
+func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
+	t.Run("one-time key match", func(t *testing.T) {
+		clk := newHSClock()
+		accS := newHSSettings(t)
+		accS.alias = "beta"
+		accS.staticKey = "STATIC-KEY"
+		accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+		key, _, _, err := accP.CreateOneTimeKey()
+		if err != nil {
+			t.Fatalf("CreateOneTimeKey: %v", err)
+		}
+		fp, pub := hsKey(t)
+		aConn, bConn := hsConnPairFor(fp, pub, accP.identity.fingerprint(), accP.identity.publicKey())
+		bConn.remote = "198.51.100.10:1000"
+		acceptErr := make(chan error, 1)
+		go func() { acceptErr <- accP.Accept(bConn) }()
+
+		ni := make([]byte, nonceLength)
+		if _, err := rand.Read(ni); err != nil {
+			t.Fatalf("random nonce: %v", err)
+		}
+		request := &pairingpb.PairRequest{
+			InitiatorNonce: ni,
+			InitiatorAlias: "intruder",
+			LookupTag:      computeHint([]byte(key), ni),
+		}
+		if err := hsSendProto(aConn, kindPairRequest, request); err != nil {
+			t.Fatalf("send PairRequest: %v", err)
+		}
+		if kind, _, err := receiveWithTimeout(aConn); err != nil || kind != kindPairChallenge {
+			t.Fatalf("receive challenge: kind=%d err=%v", kind, err)
+		}
+		_ = aConn.Close()
+		_ = awaitAccept(acceptErr)
+
+		if got := accS.staticKeyCallCount(); got != 0 {
+			t.Fatalf("a one-time key match read the static key %d times, want 0", got)
+		}
+	})
+
+	t.Run("expired record hit", func(t *testing.T) {
+		clk := newHSClock()
+		accS := newHSSettings(t)
+		accS.alias = "beta"
+		accS.staticKey = "STATIC-KEY"
+		accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+		key, _, _, err := accP.CreateOneTimeKey()
+		if err != nil {
+			t.Fatalf("CreateOneTimeKey: %v", err)
+		}
+		clk.Advance(11 * time.Minute)
+		if err := hsRequestAttemptFrom(t, accP, key, ReasonKeyExpired, "198.51.100.11:1000"); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("expired record request error = %v", err)
+		}
+		if got := accS.staticKeyCallCount(); got != 0 {
+			t.Fatalf("an expired record hit read the static key %d times, want 0", got)
+		}
+	})
+
+	t.Run("rate-limited request", func(t *testing.T) {
+		clk := newHSClock()
+		accS := newHSSettings(t)
+		accS.alias = "beta"
+		accS.staticKey = "STATIC-KEY"
+		accS.maxAttempts = 1
+		accP := hsNewPairing(t, accS, &hsTransport{}, clk)
+
+		// A counted request reads the static key once, after the limits pass.
+		if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonKeyInvalid, "198.51.100.12:1000"); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("counted request error = %v", err)
+		}
+		before := accS.staticKeyCallCount()
+		if before != 1 {
+			t.Fatalf("the counted request read the static key %d times, want 1", before)
+		}
+		if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonTryLater, "198.51.100.12:1001"); !errors.Is(err, ErrPairingRejected) {
+			t.Fatalf("rate-limited request error = %v", err)
+		}
+		if got := accS.staticKeyCallCount(); got != before {
+			t.Fatalf("a rate-limited request read the static key %d times, want %d", got, before)
+		}
+	})
 }
 
 func TestUnknownRejectReasonIsProtocolError(t *testing.T) {
@@ -1131,8 +1399,16 @@ func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 // given reason. It returns the error Accept reported.
 func hsRequestAttempt(t *testing.T, p *Pairing, key string, want RejectReason) error {
 	t.Helper()
+	return hsRequestAttemptFrom(t, p, key, want, "192.0.2.2:40002")
+}
+
+// hsRequestAttemptFrom is hsRequestAttempt with the acceptor-side remote
+// address under the test's control.
+func hsRequestAttemptFrom(t *testing.T, p *Pairing, key string, want RejectReason, acceptorRemote string) error {
+	t.Helper()
 	fp, pub := hsKey(t)
 	aConn, bConn := hsConnPairFor(fp, pub, p.identity.fingerprint(), p.identity.publicKey())
+	bConn.remote = acceptorRemote
 	acceptErr := make(chan error, 1)
 	go func() { acceptErr <- p.Accept(bConn) }()
 

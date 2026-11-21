@@ -58,22 +58,30 @@ type keyMatch struct {
 	proof   []byte
 }
 
-// attemptCounter counts, for one minute, pairing requests that matched neither a
-// one-time key nor the preset static key.
-type attemptCounter struct {
-	minute time.Time
-	count  int
+// attemptGlobalFactor multiplies the per-source allowance into the cap on all
+// sources together. It is a constant, not a configuration value.
+const attemptGlobalFactor = 10
+
+// attemptWindow counts, for one minute, pairing requests that matched neither
+// a one-time key nor the preset static key: per source and in total. The map
+// gains an entry only when a request is counted, and the whole window is
+// replaced when the minute changes, so it never holds more entries than the
+// global cap.
+type attemptWindow struct {
+	minute   time.Time
+	total    int
+	bySource map[string]int
 }
 
 // keyTable holds the one-time keys, the expired-key records and the per-minute
-// attempt counter. One mutex covers all three. Verification and removal of a
+// attempt counters. One mutex covers all three. Verification and removal of a
 // one-time key happen under the same lock, so two concurrent handshakes cannot
 // both consume one key.
 type keyTable struct {
 	mu       sync.Mutex
 	keys     []oneTimeKey
 	expired  []expiredKey
-	attempts attemptCounter
+	attempts attemptWindow
 }
 
 // encodeOneTimeKey renders 10 random bytes as four groups of four Crockford
@@ -150,50 +158,98 @@ func (k *keyTable) expireLocked(now time.Time) {
 
 // lookupAtRequest selects the key for an incoming PairRequest. It first looks
 // for a matching one-time key, then the expired-key records, then checks the
-// per-minute attempt limit, then the preset static key. A request that matches
-// nothing increments the counter. found is false on rejection; the returned
+// per-minute attempt limits, then the preset static key. staticKey is called
+// only after both limits pass, and never while keys.mu is held: it reads
+// config, and pairing must not take a config lock under a pairing lock. A
+// request that matches a one-time key, hits an expired record or is refused by a
+// limit never reads it. A request that matches nothing increments the source's
+// counter and the total; the count is taken before the static key is read and
+// undone when the static key matches. found is false on rejection; the returned
 // error is a PairingError whose reason maps to the PairReject reason.
 //
+// source is the network prefix from sourcePrefix; every address without an IP
+// shares the empty string as one unknown source. A source may make
+// maxAttempts unmatched requests per minute and all sources together may make
+// attemptGlobalFactor times that.
+//
 // A hit on an expired-key record answers KEY_EXPIRED and does not touch the
-// counter: the caller holds that key, and the counter exists to stop guessing.
+// counters: the caller holds that key, and the counters exist to stop guessing.
 //
 // The per-key failure limit is not consulted here: recordVerificationFailure
 // already discards a one-time key once its failures reach that limit, so any key
 // still in the table is eligible.
-func (k *keyTable) lookupAtRequest(ni, hint []byte, now time.Time, staticKey string, maxAttempts int) (keyMatch, bool, error) {
+func (k *keyTable) lookupAtRequest(ni, hint []byte, now time.Time, source string, maxAttempts int, staticKey func() string) (keyMatch, bool, error) {
 	k.mu.Lock()
-	defer k.mu.Unlock()
 
 	k.expireLocked(now)
 	for i := range k.keys {
 		if hmac.Equal(computeHint([]byte(k.keys[i].key), ni), hint) {
-			return keyMatch{key: k.keys[i].key, oneTime: true, index: i}, true, nil
+			key := k.keys[i].key
+			k.mu.Unlock()
+			return keyMatch{key: key, oneTime: true, index: i}, true, nil
 		}
 	}
 
 	for _, e := range k.expired {
 		if hmac.Equal(computeHint([]byte(e.key), ni), hint) {
+			k.mu.Unlock()
 			return keyMatch{}, false, &PairingError{Reason: ReasonKeyExpired, Detail: rejectDetail(ReasonKeyExpired)}
 		}
 	}
 
-	// Reset the counter when the minute changes before consulting the limit;
-	// otherwise a minute that reached the limit would reject forever.
+	// Reset the window when the minute changes before consulting the limits;
+	// otherwise a minute that reached a limit would reject forever.
 	minute := now.Truncate(time.Minute)
 	if !k.attempts.minute.Equal(minute) {
-		k.attempts = attemptCounter{minute: minute}
+		k.attempts = attemptWindow{minute: minute}
 	}
 
-	if k.attempts.count >= maxAttempts {
+	if k.attempts.bySource[source] >= maxAttempts || k.attempts.total >= maxAttempts*attemptGlobalFactor {
+		k.mu.Unlock()
 		return keyMatch{}, false, &PairingError{Reason: ReasonTryLater, Detail: rejectDetail(ReasonTryLater)}
 	}
 
-	if staticKey != "" && hmac.Equal(computeHint([]byte(staticKey), ni), hint) {
-		return keyMatch{key: staticKey}, true, nil
+	// Record the attempt before releasing the lock, so the limit check and the
+	// count happen in one critical section and two concurrent requests cannot
+	// both decide they are within the allowance. A static-key match below undoes
+	// this record, because a matched request is not an attempt.
+	if k.attempts.bySource == nil {
+		k.attempts.bySource = make(map[string]int)
+	}
+	k.attempts.bySource[source]++
+	k.attempts.total++
+	k.mu.Unlock()
+
+	// staticKey reads config's secret, so it must run outside keys.mu: config's
+	// validators take the peer table lock while holding config's lock, and
+	// nesting keys.mu before config's lock would invert that order.
+	key := staticKey()
+	if key != "" && hmac.Equal(computeHint([]byte(key), ni), hint) {
+		k.undoAttempt(source, minute)
+		return keyMatch{key: key}, true, nil
 	}
 
-	k.attempts.count++
 	return keyMatch{}, false, &PairingError{Reason: ReasonKeyInvalid, Detail: rejectDetail(ReasonKeyInvalid)}
+}
+
+// undoAttempt removes one attempt recorded for source in the window opened at
+// minute. lookupAtRequest calls it when a tentative count is followed by a
+// static-key match. When the window has already rolled to a later minute, the
+// record was discarded with the old window and there is nothing to undo.
+func (k *keyTable) undoAttempt(source string, minute time.Time) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if !k.attempts.minute.Equal(minute) {
+		return
+	}
+	if k.attempts.bySource[source] > 1 {
+		k.attempts.bySource[source]--
+	} else {
+		delete(k.attempts.bySource, source)
+	}
+	if k.attempts.total > 0 {
+		k.attempts.total--
+	}
 }
 
 // verifyAtConfirm checks the initiator's proof against the key selected at

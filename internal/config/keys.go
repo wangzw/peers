@@ -188,7 +188,7 @@ var keyTable = map[string]*keySpec{
 	},
 	"pairing.max_attempts_per_minute": {
 		Name: "pairing.max_attempts_per_minute", Kind: keyInt, Default: intValue(10), Validate: positiveInt(),
-		Doc: "Pairing requests per minute that match no pairing key; successful matches of the static key are not counted.",
+		Doc: "Unmatched pairing requests allowed per source per minute; all sources together are limited to 10 times this, and static-key matches do not count.",
 	},
 	"topics.auto_join": {
 		Name: "topics.auto_join", Kind: keyBool, Default: boolValue(true),

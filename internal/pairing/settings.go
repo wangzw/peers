@@ -142,7 +142,8 @@ func (s configSettings) MaxFailures() (int, error) {
 }
 
 // MaxAttemptsPerMinute returns pairing.max_attempts_per_minute, the per-minute
-// cap on pairing requests that match neither a one-time nor the static key.
+// cap on unmatched pairing requests from one source. All sources together are
+// capped at ten times this.
 func (s configSettings) MaxAttemptsPerMinute() (int, error) {
 	return s.intValue("pairing.max_attempts_per_minute")
 }

@@ -1,7 +1,7 @@
 package pairing
 
 import (
-	"net"
+	"net/netip"
 	"time"
 
 	"github.com/wangzw/peers/internal/config"
@@ -56,19 +56,37 @@ func newPairingAuditEvent(kind config.EventKind, now time.Time, fp Fingerprint, 
 	return e
 }
 
-// auditSourceMergeKey builds the merge key for a rate-limited pairing failure.
-// The host is taken from the peer's RemoteAddr so repeated attempts from one
-// source collapse in the audit read; the port is deliberately ignored. When the
-// address cannot be split, the whole string is the host. An empty address yields
-// no merge key, because grouping unrelated events under "source:" would merge
-// failures that have no source in common.
-func auditSourceMergeKey(remoteAddr string) string {
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = h
-	}
-	if host == "" {
+// sourcePrefix returns the network prefix that stands for the source of a
+// pairing connection whose remote address is remote, in host:port form: the
+// address itself as a /32 for IPv4 and the enclosing /64 for IPv6. An
+// IPv4-mapped IPv6 address counts as IPv4 and an IPv6 zone is dropped. It
+// returns "" when remote carries no IP address; every such address counts as
+// one unknown source.
+//
+// It is a deliberate copy of the same-named function in internal/link, because
+// pairing does not import link; keep the two implementations in step.
+func sourcePrefix(remote string) string {
+	ap, err := netip.ParseAddrPort(remote)
+	if err != nil {
 		return ""
 	}
-	return "source:" + host
+	addr := ap.Addr().Unmap()
+	if addr.Is4() {
+		return netip.PrefixFrom(addr, 32).Masked().String()
+	}
+	return netip.PrefixFrom(addr.WithZone(""), 64).Masked().String()
+}
+
+// auditSourceMergeKey builds the merge key for a rate-limited pairing failure.
+// The key is "source:" plus the source prefix, so repeated attempts from one
+// address or one IPv6 /64 collapse in the audit read while the port is
+// ignored. An address with no IP yields no merge key, because grouping
+// unrelated events under a bare "source:" would merge failures that have no
+// source in common.
+func auditSourceMergeKey(remoteAddr string) string {
+	source := sourcePrefix(remoteAddr)
+	if source == "" {
+		return ""
+	}
+	return "source:" + source
 }

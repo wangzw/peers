@@ -358,6 +358,112 @@ func TestREQBrokerPairing009_StaticKeyNotExpired(t *testing.T) {
 	}
 }
 
+// TestLookupAtRequestReadsStaticKeyOutsideTableLock proves that the preset
+// static key is never read while keys.mu is held. The reader reaches config's
+// secret; doing that under keys.mu would nest keys.mu before config's lock, the
+// reverse of the config -> pairing order pairing keeps everywhere else. The
+// injected reader tries the same mutex: TryLock succeeds only when the caller
+// does not hold it.
+func TestLookupAtRequestReadsStaticKeyOutsideTableLock(t *testing.T) {
+	ni := makeSeq(1, nonceLength)
+	fp, _ := hsKey(t)
+	const key = "STATIC-KEY"
+	now := time.Date(2026, 11, 18, 12, 0, 30, 0, time.UTC)
+
+	t.Run("matching static key", func(t *testing.T) {
+		table := &keyTable{}
+		heldWhileReading := false
+		staticKey := func() string {
+			if table.mu.TryLock() {
+				table.mu.Unlock()
+			} else {
+				heldWhileReading = true
+			}
+			return key
+		}
+
+		match, found, err := table.lookupAtRequest(ni, computeHint([]byte(key), ni, fp), fp, now, "192.0.2.1/32", 10, staticKey)
+		if err != nil || !found || match.key != key {
+			t.Fatalf("lookup = (%+v, found=%v, err=%v), want the static key", match, found, err)
+		}
+		if heldWhileReading {
+			t.Fatal("lookupAtRequest read the static key while holding keys.mu")
+		}
+		if table.attempts.total != 0 || len(table.attempts.bySource) != 0 {
+			t.Fatalf("a static-key match was counted: total=%d sources=%v", table.attempts.total, table.attempts.bySource)
+		}
+	})
+
+	t.Run("unmatched key", func(t *testing.T) {
+		table := &keyTable{}
+		heldWhileReading := false
+		staticKey := func() string {
+			if table.mu.TryLock() {
+				table.mu.Unlock()
+			} else {
+				heldWhileReading = true
+			}
+			return key
+		}
+
+		_, found, err := table.lookupAtRequest(ni, computeHint([]byte("OTHER-KEY"), ni, fp), fp, now, "192.0.2.1/32", 10, staticKey)
+		if found || err == nil {
+			t.Fatalf("lookup = (found=%v, err=%v), want a rejection", found, err)
+		}
+		if heldWhileReading {
+			t.Fatal("lookupAtRequest read the static key while holding keys.mu")
+		}
+		if table.attempts.total != 1 || table.attempts.bySource["192.0.2.1/32"] != 1 {
+			t.Fatalf("an unmatched request was not counted once: total=%d sources=%v", table.attempts.total, table.attempts.bySource)
+		}
+	})
+}
+
+// TestUndoAttemptIgnoresARolledWindow proves that undoing a tentative count
+// cannot decrement a later minute's window. lookupAtRequest records the attempt
+// before releasing the lock, reads the static key, and then undoes the record;
+// a concurrent request can roll the window to the next minute in between. The
+// earlier count was discarded with the old window, so the undo must leave the
+// new window untouched.
+func TestUndoAttemptIgnoresARolledWindow(t *testing.T) {
+	ni := makeSeq(2, nonceLength)
+	fp, _ := hsKey(t)
+	const key = "STATIC-KEY"
+	const source = "192.0.2.1/32"
+	const other = "198.51.100.7/32"
+	now := time.Date(2026, 11, 18, 12, 0, 30, 0, time.UTC)
+	next := now.Truncate(time.Minute).Add(time.Minute)
+
+	table := &keyTable{}
+	staticKey := func() string {
+		// A request from another source rolls the window to the next minute
+		// and is counted there, after this request's tentative count landed in
+		// the old window.
+		table.mu.Lock()
+		table.attempts = attemptWindow{minute: next, total: 1, bySource: map[string]int{other: 1}}
+		table.mu.Unlock()
+		return key
+	}
+
+	match, found, err := table.lookupAtRequest(ni, computeHint([]byte(key), ni, fp), fp, now, source, 10, staticKey)
+	if err != nil || !found || match.key != key {
+		t.Fatalf("lookup = (%+v, found=%v, err=%v), want the static key", match, found, err)
+	}
+
+	table.mu.Lock()
+	minute := table.attempts.minute
+	total := table.attempts.total
+	theOther := table.attempts.bySource[other]
+	sources := len(table.attempts.bySource)
+	table.mu.Unlock()
+	if !minute.Equal(next) {
+		t.Fatalf("window minute = %v, want %v", minute, next)
+	}
+	if total != 1 || theOther != 1 || sources != 1 {
+		t.Fatalf("the undo changed the next minute's window: total=%d other=%d sources=%d", total, theOther, sources)
+	}
+}
+
 // --- REQ-broker-pairing-025 ------------------------------------------------
 
 func TestREQBrokerPairing025_OnlyOneTimeKeysAreGenerated(t *testing.T) {

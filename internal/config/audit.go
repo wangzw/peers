@@ -616,7 +616,11 @@ func auditMergeKey(e Event) (string, bool) {
 		if e.MergeKey == "" {
 			return "", false
 		}
-		return "pairing_failed:" + e.MergeKey, true
+		// The reason is part of the key. A source that hits the rate limit and
+		// then dials with an incompatible protocol version opens two windows, so
+		// each record keeps its own detail instead of the first detail standing
+		// for both. Mergeable pairing failures carry only the reason in Detail.
+		return "pairing_failed:" + e.MergeKey + ":" + e.Detail, true
 	default:
 		return "", false
 	}
