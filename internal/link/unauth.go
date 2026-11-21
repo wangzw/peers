@@ -2,36 +2,51 @@ package link
 
 import (
 	"container/list"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 )
 
 // unauthRegistry tracks inbound connections until the peer behind them is
-// authenticated. It enforces two limits from the design: a connection that has
-// not sent its first frame within firstFrame is closed, and the number of
-// unauthenticated connections never exceeds max; when it would, the oldest
-// connection is closed.
+// authenticated. It enforces three limits from the design: a connection that
+// has not sent its first frame within firstFrame is closed; the number of
+// unauthenticated connections from one source never exceeds maxPerSource; and
+// the total never exceeds max. When a source is over its own limit, that
+// source's oldest connection is closed. When the total is over max, the oldest
+// connection of the source with the most connections is closed, so a source
+// that floods the pool spends its own connections before anyone else's.
 type unauthRegistry struct {
-	mu         sync.Mutex
-	conns      list.List // of *trackedConn, oldest first
-	max        int
-	firstFrame time.Duration
-	afterFunc  func(time.Duration, func()) func() bool
+	mu           sync.Mutex
+	conns        list.List // of *trackedConn, oldest first
+	max          int
+	maxPerSource int
+	firstFrame   time.Duration
+	logger       *slog.Logger
+	afterFunc    func(time.Duration, func()) func() bool
 }
 
-func newUnauthRegistry(max int, firstFrame time.Duration, afterFunc func(time.Duration, func()) func() bool) *unauthRegistry {
+func newUnauthRegistry(max, maxPerSource int, firstFrame time.Duration, logger *slog.Logger, afterFunc func(time.Duration, func()) func() bool) *unauthRegistry {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &unauthRegistry{
-		max:        max,
-		firstFrame: firstFrame,
-		afterFunc:  afterFunc,
+		max:          max,
+		maxPerSource: maxPerSource,
+		firstFrame:   firstFrame,
+		logger:       logger,
+		afterFunc:    afterFunc,
 	}
 }
 
 // track registers c as unauthenticated and starts its first-frame deadline.
 // The caller receives the tracked wrapper and should use it in place of c.
 func (r *unauthRegistry) track(c net.Conn) *trackedConn {
-	t := &trackedConn{Conn: c, reg: r}
+	source := ""
+	if addr := c.RemoteAddr(); addr != nil {
+		source = sourcePrefix(addr.String())
+	}
+	t := &trackedConn{Conn: c, reg: r, source: source}
 
 	r.mu.Lock()
 	t.elem = r.conns.PushBack(t)
@@ -55,7 +70,7 @@ func (r *unauthRegistry) track(c net.Conn) *trackedConn {
 		r.mu.Unlock()
 	}
 
-	r.evict()
+	r.evict(t)
 	return t
 }
 
@@ -65,30 +80,95 @@ func (r *unauthRegistry) count() int {
 	return r.conns.Len()
 }
 
-// evict closes the oldest connection while the registry is over its limit.
-func (r *unauthRegistry) evict() {
+// evict enforces the per-source and global limits after t joined the registry.
+// At most one connection is closed for each limit, and the raw connections are
+// closed and logged outside the registry lock.
+func (r *unauthRegistry) evict(t *trackedConn) {
+	type victim struct {
+		source string
+		cause  string
+		stop   func() bool
+		raw    net.Conn
+	}
+	var victims []victim
+
 	r.mu.Lock()
-	var (
-		stop func() bool
-		raw  net.Conn
-	)
+	if r.countSourceLocked(t.source) > r.maxPerSource {
+		if v := r.oldestOfSourceLocked(t.source); v != nil {
+			victims = append(victims, victim{v.source, "source_limit", r.evictLocked(v), v.Conn})
+		}
+	}
 	if r.conns.Len() > r.max {
-		if front := r.conns.Front(); front != nil {
-			t := front.Value.(*trackedConn)
-			t.closed = true
-			t.detachLocked()
-			stop = t.stopTimerLocked()
-			raw = t.Conn
+		if v := r.oldestOfBusiestSourceLocked(); v != nil {
+			victims = append(victims, victim{v.source, "global_limit", r.evictLocked(v), v.Conn})
 		}
 	}
 	r.mu.Unlock()
 
-	if stop != nil {
-		stop()
+	for _, v := range victims {
+		if v.stop != nil {
+			v.stop()
+		}
+		_ = v.raw.Close()
+		r.logger.Debug("link: closed an unauthenticated connection", "source", v.source, "cause", v.cause)
 	}
-	if raw != nil {
-		_ = raw.Close()
+}
+
+// evictLocked marks v closed and removes it from the registry, returning its
+// timer stop function. Caller holds reg.mu and must call the stop function
+// outside the lock.
+func (r *unauthRegistry) evictLocked(v *trackedConn) func() bool {
+	v.closed = true
+	v.detachLocked()
+	return v.stopTimerLocked()
+}
+
+// countSourceLocked returns the number of tracked connections from source.
+// Caller holds reg.mu.
+func (r *unauthRegistry) countSourceLocked(source string) int {
+	n := 0
+	for e := r.conns.Front(); e != nil; e = e.Next() {
+		if e.Value.(*trackedConn).source == source {
+			n++
+		}
 	}
+	return n
+}
+
+// oldestOfSourceLocked returns the oldest tracked connection from source.
+// Caller holds reg.mu.
+func (r *unauthRegistry) oldestOfSourceLocked(source string) *trackedConn {
+	for e := r.conns.Front(); e != nil; e = e.Next() {
+		if t := e.Value.(*trackedConn); t.source == source {
+			return t
+		}
+	}
+	return nil
+}
+
+// oldestOfBusiestSourceLocked returns the earliest connection of the source
+// with the most tracked connections. Ties go to the source whose earliest
+// connection is earliest, found by taking the first element of the oldest-first
+// list whose source has the maximum count. Caller holds reg.mu.
+func (r *unauthRegistry) oldestOfBusiestSourceLocked() *trackedConn {
+	counts := make(map[string]int)
+	maxCount := 0
+	for e := r.conns.Front(); e != nil; e = e.Next() {
+		source := e.Value.(*trackedConn).source
+		counts[source]++
+		if counts[source] > maxCount {
+			maxCount = counts[source]
+		}
+	}
+	if maxCount == 0 {
+		return nil
+	}
+	for e := r.conns.Front(); e != nil; e = e.Next() {
+		if t := e.Value.(*trackedConn); counts[t.source] == maxCount {
+			return t
+		}
+	}
+	return nil
 }
 
 // trackedConn is an inbound connection under the first-frame deadline. All of
@@ -97,8 +177,9 @@ func (r *unauthRegistry) evict() {
 type trackedConn struct {
 	net.Conn
 
-	reg  *unauthRegistry
-	elem *list.Element // nil once detached from the registry
+	reg    *unauthRegistry
+	elem   *list.Element // nil once detached from the registry
+	source string        // sourcePrefix of the remote address; "" groups unknown sources together
 
 	timer   func() bool // first-frame deadline; nil when none is pending
 	seen    bool

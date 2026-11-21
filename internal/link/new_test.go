@@ -55,6 +55,9 @@ func TestNewDefaults(t *testing.T) {
 	if l.maxUnauthenticated != 64 {
 		t.Errorf("maxUnauthenticated = %d, want 64", l.maxUnauthenticated)
 	}
+	if l.maxUnauthenticatedPerSource != 8 {
+		t.Errorf("maxUnauthenticatedPerSource = %d, want 8", l.maxUnauthenticatedPerSource)
+	}
 	if l.enforcementMinTime != 5*time.Second {
 		t.Errorf("enforcementMinTime = %v, want 5s", l.enforcementMinTime)
 	}

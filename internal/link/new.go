@@ -42,15 +42,16 @@ func New(opts Options) (*Link, error) {
 
 		protocolVersion: version,
 
-		sendQueueSize:      1024,
-		firstFrameTimeout:  10 * time.Second,
-		helloTimeout:       10 * time.Second,
-		rejectLinger:       time.Second,
-		maxUnauthenticated: 64,
-		enforcementMinTime: 5 * time.Second,
-		localNets:          nil,
-		onDial:             nil,
-		randRead:           rand.Read,
+		sendQueueSize:               1024,
+		firstFrameTimeout:           10 * time.Second,
+		helloTimeout:                10 * time.Second,
+		rejectLinger:                time.Second,
+		maxUnauthenticated:          64,
+		maxUnauthenticatedPerSource: 8,
+		enforcementMinTime:          5 * time.Second,
+		localNets:                   nil,
+		onDial:                      nil,
+		randRead:                    rand.Read,
 
 		rootCtx:    rootCtx,
 		cancelRoot: cancelRoot,
@@ -63,7 +64,7 @@ func New(opts Options) (*Link, error) {
 	l.notifier = newNotifier(l)
 
 	// TLS dialing, server credentials and gRPC streams
-	l.unauth = newUnauthRegistry(l.maxUnauthenticated, l.firstFrameTimeout, l.clock.AfterFunc)
+	l.unauth = newUnauthRegistry(l.maxUnauthenticated, l.maxUnauthenticatedPerSource, l.firstFrameTimeout, l.logger, l.clock.AfterFunc)
 
 	// frame dispatch and send API
 	l.stateHandlers = make(map[FrameKind]func(peer Fingerprint, f Frame))

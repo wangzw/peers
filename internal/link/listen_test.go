@@ -346,7 +346,7 @@ func TestUnauthenticatedCapAppliesToListener(t *testing.T) {
 
 	// SetTestKnobs changes the fields only; the registry is built in New, so the
 	// listener cap is replaced here before the first Listen.
-	acceptor.l.unauth = newUnauthRegistry(2, acceptor.l.firstFrameTimeout, acceptor.clock.AfterFunc)
+	acceptor.l.unauth = newUnauthRegistry(2, 8, acceptor.l.firstFrameTimeout, acceptor.l.logger, acceptor.clock.AfterFunc)
 	addr := listenNodeAddr(t, acceptor)
 
 	var raw []net.Conn

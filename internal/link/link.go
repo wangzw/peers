@@ -20,15 +20,16 @@ type Link struct {
 	protocolVersion uint32 // Options.ProtocolVersion, or linkpb.ProtocolVersion when 0; not a test knob
 
 	// knobs, fixed after New; tests change them with SetTestKnobs before Listen or Start
-	sendQueueSize      int                          // 1024
-	firstFrameTimeout  time.Duration                // 10s
-	helloTimeout       time.Duration                // 10s
-	rejectLinger       time.Duration                // 1s
-	maxUnauthenticated int                          // 64
-	enforcementMinTime time.Duration                // 5s
-	localNets          func() ([]*net.IPNet, error) // nil in production: the dial loop then uses defaultLocalNets
-	onDial             func(address string)         // nil in production
-	randRead           func([]byte) (int, error)    // crypto/rand.Read
+	sendQueueSize               int                          // 1024
+	firstFrameTimeout           time.Duration                // 10s
+	helloTimeout                time.Duration                // 10s
+	rejectLinger                time.Duration                // 1s
+	maxUnauthenticated          int                          // 64
+	maxUnauthenticatedPerSource int                          // 8
+	enforcementMinTime          time.Duration                // 5s
+	localNets                   func() ([]*net.IPNet, error) // nil in production: the dial loop then uses defaultLocalNets
+	onDial                      func(address string)         // nil in production
+	randRead                    func([]byte) (int, error)    // crypto/rand.Read
 
 	rootCtx    context.Context
 	cancelRoot context.CancelFunc
@@ -46,7 +47,7 @@ type Link struct {
 	notifier *notifier
 
 	// --- TLS dialing, server credentials and gRPC streams ---
-	unauth *unauthRegistry // created in New with maxUnauthenticated, firstFrameTimeout and clock.AfterFunc
+	unauth *unauthRegistry // created in New with maxUnauthenticated, maxUnauthenticatedPerSource, firstFrameTimeout and logger
 	// onConnect runs at the start of every Connect handler. Tests use it to hold
 	// a stream before the handler checks whether the Link closed.
 	onConnect func()
