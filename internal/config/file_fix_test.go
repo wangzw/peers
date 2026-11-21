@@ -89,24 +89,25 @@ func TestLoadStoresHashOfTheBytesItParsed(t *testing.T) {
 
 // TestWriteConfigFileCreatesParentDirWithDeploymentMode covers the case where
 // the config directory disappeared after Load: creating it must use the mode
-// the deployment mode requires, not a user-mode 0700 in system mode.
+// the deployment mode requires, not a user-mode 0700 in system mode. The file
+// mode is 0600 in both modes, so it cannot be used to infer the directory mode.
 func TestWriteConfigFileCreatesParentDirWithDeploymentMode(t *testing.T) {
 	old := syscall.Umask(0o022)
 	t.Cleanup(func() { syscall.Umask(old) })
 
 	cases := []struct {
-		name     string
-		fileMode os.FileMode
-		dirMode  os.FileMode
+		name    string
+		mode    Mode
+		dirMode os.FileMode
 	}{
-		{"user", 0o600, 0o700},
-		{"system", 0o644, 0o755},
+		{"user", ModeUser, 0o700},
+		{"system", ModeSystem, 0o755},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "missing", "peers")
 			path := filepath.Join(dir, "config.yaml")
-			if err := writeConfigFile(path, []byte("broker:\n  alias: a\n"), tc.fileMode); err != nil {
+			if err := writeConfigFile(path, []byte("broker:\n  alias: a\n"), tc.mode); err != nil {
 				t.Fatalf("writeConfigFile: %v", err)
 			}
 			info, err := os.Stat(dir)
@@ -120,8 +121,8 @@ func TestWriteConfigFileCreatesParentDirWithDeploymentMode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("stat file: %v", err)
 			}
-			if got := fileInfo.Mode().Perm(); got != tc.fileMode {
-				t.Fatalf("file mode = %04o, want %04o", got, tc.fileMode)
+			if got := fileInfo.Mode().Perm(); got != 0o600 {
+				t.Fatalf("file mode = %04o, want 0600", got)
 			}
 		})
 	}

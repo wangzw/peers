@@ -168,11 +168,11 @@ func TestConfigSetWriteFailureRestoresOriginalBytes(t *testing.T) {
 
 	realWrite := c.writeFile
 	calls := 0
-	c.writeFile = func(p string, data []byte, mode os.FileMode) error {
+	c.writeFile = func(p string, data []byte, mode Mode) error {
 		calls++
 		if calls == 1 {
 			// Truncate first, then fail, like ENOSPC after the truncate.
-			if err := os.WriteFile(p, nil, mode); err != nil {
+			if err := os.WriteFile(p, nil, 0o600); err != nil {
 				return err
 			}
 			return ErrFileWrite
@@ -230,8 +230,8 @@ func TestConfigSetWriteFailureFailedRestoreDoesNotResetValues(t *testing.T) {
 	body := "broker:\n  listen: \"127.0.0.1:7777\"\n  public: true\npairing:\n  max_failures: 9\n"
 	c, path := newWatchCore(t, body, false, nil)
 
-	c.writeFile = func(p string, data []byte, mode os.FileMode) error {
-		if err := os.WriteFile(p, nil, mode); err != nil {
+	c.writeFile = func(p string, data []byte, mode Mode) error {
+		if err := os.WriteFile(p, nil, 0o600); err != nil {
 			return err
 		}
 		return ErrFileWrite

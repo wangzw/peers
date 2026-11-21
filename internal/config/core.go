@@ -80,7 +80,7 @@ type core struct {
 	homeDir      func() (string, error)
 	euid         func() int
 	routesSrc    addressSource
-	writeFile    func(path string, data []byte, mode os.FileMode) error
+	writeFile    func(path string, data []byte, mode Mode) error
 	readFile     func(path string) ([]byte, error)
 	statFile     func(path string) (os.FileInfo, error)
 	logger       *slog.Logger

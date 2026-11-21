@@ -647,20 +647,24 @@ func valueEqual(a, b Value) bool {
 
 // configFileDirMode returns the mode for the directory holding the config
 // file when writeConfigFile has to create it. The deployment mode fixes the
-// file mode: a user Broker writes 0600 under a 0700 data directory, a system
-// Broker writes 0644 under the group-readable /etc/peers (0755).
-func configFileDirMode(fileMode os.FileMode) os.FileMode {
-	if fileMode.Perm()&0o044 != 0 {
+// directory mode independently of the file mode: a user Broker writes 0600
+// under a 0700 data directory, a system Broker writes 0600 under the
+// group-readable /etc/peers (0755). The file itself is 0600 in both modes,
+// because the Broker cannot know the administration group the installation
+// gives the file.
+func configFileDirMode(mode Mode) os.FileMode {
+	if mode == ModeSystem {
 		return 0o755
 	}
 	return 0o700
 }
 
 // writeConfigFile rewrites path in place: existing ownership, group, mode and
-// ACLs stay in place because the same inode is reused. O_NOFOLLOW makes a path
-// that is a symbolic link fail instead of truncating the link's target, which
-// could be a file outside the configuration directory.
-func writeConfigFile(path string, data []byte, mode os.FileMode) error {
+// ACLs stay in place because the same inode is reused. A new file is created
+// with mode 0600. O_NOFOLLOW makes a path that is a symbolic link fail instead
+// of truncating the link's target, which could be a file outside the
+// configuration directory.
+func writeConfigFile(path string, data []byte, mode Mode) error {
 	f, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
@@ -669,7 +673,7 @@ func writeConfigFile(path string, data []byte, mode os.FileMode) error {
 		if mkErr := os.MkdirAll(filepath.Dir(path), configFileDirMode(mode)); mkErr != nil {
 			return fmt.Errorf("%w: %s: %v", ErrFileWrite, path, mkErr)
 		}
-		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, mode)
+		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o600)
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {
 				f, err = os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
@@ -677,7 +681,7 @@ func writeConfigFile(path string, data []byte, mode os.FileMode) error {
 			if err != nil {
 				return fmt.Errorf("%w: %s: %v", ErrFileWrite, path, err)
 			}
-		} else if chmodErr := f.Chmod(mode); chmodErr != nil {
+		} else if chmodErr := f.Chmod(0o600); chmodErr != nil {
 			_ = f.Close()
 			return fmt.Errorf("%w: %s: %v", ErrFileWrite, path, chmodErr)
 		}

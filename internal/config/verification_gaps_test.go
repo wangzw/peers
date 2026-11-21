@@ -317,8 +317,9 @@ func TestREQBrokerConfig017_ReloadAdoptsLegalListen(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-021: the config file is created with the mode of the
-// deployment form, 0600 for a user Broker and 0644 for a system Broker.
+// REQ-broker-config-021: the config file is created 0600 in both deployment
+// forms. A system Broker cannot know the administration group the installation
+// gives the file, so it writes the conservative mode.
 func TestREQBrokerConfig021_ConfigFileCreationModes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -326,7 +327,7 @@ func TestREQBrokerConfig021_ConfigFileCreationModes(t *testing.T) {
 		want os.FileMode
 	}{
 		{"user", ModeUser, 0o600},
-		{"system", ModeSystem, 0o644},
+		{"system", ModeSystem, 0o600},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -739,7 +740,7 @@ func TestREQBrokerConfig002_SetWriteFailureKeepsMemoryAndAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.writeFile = func(string, []byte, os.FileMode) error { return ErrFileWrite }
+	c.writeFile = func(string, []byte, Mode) error { return ErrFileWrite }
 
 	if _, err := Set(Actor{}, "broker.public", boolValue(true)); !errors.Is(err, ErrFileWrite) {
 		t.Fatalf("Set error = %v, want ErrFileWrite", err)

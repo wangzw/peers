@@ -24,7 +24,7 @@ func TestWriteConfigFileDoesNotFollowSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := writeConfigFile(link, []byte("broker:\n  alias: changed\n"), 0o600)
+	err := writeConfigFile(link, []byte("broker:\n  alias: changed\n"), ModeUser)
 	if err == nil {
 		t.Fatal("writeConfigFile wrote through a symbolic link")
 	}

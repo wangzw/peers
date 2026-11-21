@@ -70,7 +70,7 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 	// adopted and before anything is written, so a refused caller leaves both
 	// the file and the in-memory values untouched.
 	if key == "broker.listen" && c.mode == ModeSystem && lowPrivilegedListenPort(v) {
-		if err := c.checkLowPortAllowed(actor); err != nil {
+		if err := c.checkLowPortAllowed(actor, v); err != nil {
 			return Value{}, err
 		}
 	}
@@ -156,16 +156,12 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	mode := os.FileMode(0o600)
-	if c.mode == ModeSystem {
-		mode = 0o644
-	}
-	if err := c.writeFile(c.paths.ConfigFile, data, mode); err != nil {
+	if err := c.writeFile(c.paths.ConfigFile, data, c.mode); err != nil {
 		c.logger.Error("config: cannot write the configuration file", "error", err)
 		// The in-place rewrite truncates before writing, so a failure can leave
 		// an empty or partial file. Put the previous bytes back when possible.
 		if existed {
-			if restoreErr := c.writeFile(c.paths.ConfigFile, original, mode); restoreErr != nil {
+			if restoreErr := c.writeFile(c.paths.ConfigFile, original, c.mode); restoreErr != nil {
 				c.logger.Error("config: cannot restore the configuration file after a failed write", "error", restoreErr)
 			}
 		}

@@ -310,7 +310,7 @@ func TestConfigFileParseErrors(t *testing.T) {
 func TestConfigFileCreateAndChmod(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := writeConfigFile(path, []byte("broker:\n  alias: a\n"), 0o600); err != nil {
+	if err := writeConfigFile(path, []byte("broker:\n  alias: a\n"), ModeUser); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -336,7 +336,7 @@ func TestConfigFileInPlacePreservesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantSys := before.Sys().(*syscall.Stat_t)
-	if err := writeConfigFile(path, []byte("broker:\n  alias: new\n"), 0o600); err != nil {
+	if err := writeConfigFile(path, []byte("broker:\n  alias: new\n"), ModeUser); err != nil {
 		t.Fatal(err)
 	}
 	after, err := os.Stat(path)
@@ -391,7 +391,7 @@ func TestConfigFileWriteFailure(t *testing.T) {
 	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err := writeConfigFile(filepath.Join(blocker, "config.yaml"), []byte("x: y\n"), 0o600)
+	err := writeConfigFile(filepath.Join(blocker, "config.yaml"), []byte("x: y\n"), ModeUser)
 	if err == nil {
 		t.Fatal("expected a write error")
 	}

@@ -16,13 +16,29 @@ func lowPrivilegedListenPort(v Value) bool {
 	return addr.port < 1024
 }
 
+// lowPortSetRefusal explains a Set that asks for a privileged port while the
+// file is writable by another account. It states what the file must be for the
+// request to be allowed and the two remedies, without telling the operator to
+// widen the file for every account.
+func lowPortSetRefusal(configFile, value string) string {
+	return fmt.Sprintf("cannot set broker.listen to %s while %s is writable by an account other than root; run `chmod g-w %s` (and remove any ACL that grants write), or use a port at or above 1024", value, configFile, configFile)
+}
+
+// lowPortStartupRemedy explains a refused start or hot reload. It names the
+// value found in the file, why the file is not accepted, and the two remedies.
+// The operator checks that the value is the intended one before narrowing the
+// permissions, because an account that can write the file may have written it.
+func lowPortStartupRemedy(configFile, value string) string {
+	return fmt.Sprintf("broker.listen in %s is %s, a port below 1024, and the file is writable by an account other than root, which may have written this value; check that it is the one you want, then run `chmod g-w %s` (and remove any ACL that grants write) or use a port at or above 1024", configFile, value, configFile)
+}
+
 // checkLowPortAllowed enforces the rule for a Set: a system Broker accepts a
 // privileged port only from a known root caller, and only while the
 // configuration file cannot be written by another account. A caller whose
 // identity is unknown is treated as unprivileged. A non-root caller is refused
 // before the file is touched, so a group administrator cannot use the Broker to
 // gain the privileged bind that the kernel reserves for root.
-func (c *core) checkLowPortAllowed(actor Actor) error {
+func (c *core) checkLowPortAllowed(actor Actor, v Value) error {
 	if !actor.UIDKnown || actor.UID != 0 {
 		return fmt.Errorf("%w: changing broker.listen to a port below 1024 requires root", ErrLowPortDenied)
 	}
@@ -31,7 +47,7 @@ func (c *core) checkLowPortAllowed(actor Actor) error {
 		return fmt.Errorf("%w: cannot verify that %s is writable only by root: %v", ErrLowPortDenied, c.paths.ConfigFile, err)
 	}
 	if !ok {
-		return fmt.Errorf("%w: %s is writable by an account other than root; run `chown root:root %s` and `chmod 0644 %s` before setting a privileged port", ErrLowPortDenied, c.paths.ConfigFile, c.paths.ConfigFile, c.paths.ConfigFile)
+		return fmt.Errorf("%w: %s", ErrLowPortDenied, lowPortSetRefusal(c.paths.ConfigFile, v.String))
 	}
 	return nil
 }
@@ -60,7 +76,7 @@ func (c *core) rejectReloadedLowPort(old, next Value) bool {
 	if ok {
 		return false
 	}
-	c.logger.Warn("config: keeping the current listen address; a port below 1024 requires a configuration file that only root can write", "file", c.paths.ConfigFile)
+	c.logger.Warn("config: keeping the current listen address; "+lowPortStartupRemedy(c.paths.ConfigFile, next.String), "file", c.paths.ConfigFile)
 	c.auditAppend(Event{
 		Event:  EventConfigRejected,
 		Key:    "broker.listen",
@@ -103,7 +119,7 @@ func (c *core) checkLowPortAtStartup() error {
 		return fmt.Errorf("%w: cannot verify that %s is writable only by root: %v", ErrLowPortDenied, c.paths.ConfigFile, err)
 	}
 	if !ok {
-		return fmt.Errorf("%w: %s is writable by an account other than root; run `chmod g-w %s` (and remove any ACL that grants write) or use a port at or above 1024", ErrLowPortDenied, c.paths.ConfigFile, c.paths.ConfigFile)
+		return fmt.Errorf("%w: %s", ErrLowPortDenied, lowPortStartupRemedy(c.paths.ConfigFile, c.values["broker.listen"].String))
 	}
 	return nil
 }

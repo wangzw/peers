@@ -10,7 +10,7 @@ import (
 
 // configFileRootOnlyWritable reports whether the file at path is writable only
 // by root. A missing file counts as safe: the write that follows creates it as
-// root with mode 0644.
+// root with mode 0600.
 //
 // A POSIX ACL cannot widen write access past the file mode's group bits: those
 // bits record the ACL mask, so a zero group write bit masks every named user

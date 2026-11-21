@@ -17,7 +17,7 @@ const aclXattr = "com.apple.system.Security"
 
 // configFileRootOnlyWritable reports whether the file at path is writable only
 // by root. A missing file counts as safe: the write that follows creates it as
-// root with mode 0644.
+// root with mode 0600.
 //
 // Any security ACL makes the file ineligible. An ACL that grants no write is
 // also refused: without parsing the Darwin ACL encoding, the presence of one is
