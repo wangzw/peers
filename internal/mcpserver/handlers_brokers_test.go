@@ -456,6 +456,17 @@ func TestCreatePairingKey(t *testing.T) {
 	if !strings.Contains(out.Note, "Share the key") {
 		t.Errorf("note = %q, want the sharing note", out.Note)
 	}
+	if want := connectPrompt(out.Addresses, out.Key); out.ConnectPrompt != want {
+		t.Errorf("connect_prompt = %q, want the generator output %q", out.ConnectPrompt, want)
+	}
+	if !strings.Contains(out.ConnectPrompt, out.Key) {
+		t.Errorf("connect_prompt = %q, want it to name the key %q", out.ConnectPrompt, out.Key)
+	}
+	for _, addr := range out.Addresses {
+		if !strings.Contains(out.ConnectPrompt, addr) {
+			t.Errorf("connect_prompt = %q, want it to name address %q", out.ConnectPrompt, addr)
+		}
+	}
 }
 
 // TestCreatePairingKeyNoAddress covers a Broker that listens nowhere
@@ -473,6 +484,9 @@ func TestCreatePairingKeyNoAddress(t *testing.T) {
 	}
 	if !strings.Contains(out.Note, "no address to show") {
 		t.Errorf("note = %q, want the empty-address note", out.Note)
+	}
+	if out.ConnectPrompt != "" {
+		t.Errorf("connect_prompt = %q, want none without an address", out.ConnectPrompt)
 	}
 }
 

@@ -209,9 +209,10 @@ func (h *handlers) CreatePairingKey(ctx context.Context, in NoArgs) (CreatePairi
 	}
 
 	out := CreatePairingKeyOut{
-		Key:       resp.GetKey(),
-		ExpiresAt: resp.GetExpiresAt().AsTime().UTC().Format(time.RFC3339),
-		Addresses: append([]string{}, resp.GetShownAddresses()...),
+		Key:           resp.GetKey(),
+		ExpiresAt:     resp.GetExpiresAt().AsTime().UTC().Format(time.RFC3339),
+		Addresses:     append([]string{}, resp.GetShownAddresses()...),
+		ConnectPrompt: connectPrompt(resp.GetShownAddresses(), resp.GetKey()),
 	}
 	if len(out.Addresses) == 0 {
 		out.Note = textPairingNoAddress

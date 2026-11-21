@@ -147,12 +147,14 @@ type DisconnectBrokerOut struct {
 }
 
 // CreatePairingKeyOut is the result of create_pairing_key. The addresses are
-// shown to the user but are not part of the key.
+// shown to the user but are not part of the key. ConnectPrompt is text for the
+// other host's user, shown verbatim; it is empty when no address can be named.
 type CreatePairingKeyOut struct {
-	Key       string   `json:"key"`
-	ExpiresAt string   `json:"expires_at"` // RFC 3339, UTC
-	Addresses []string `json:"shown_addresses"`
-	Note      string   `json:"note,omitempty"`
+	Key           string   `json:"key"`
+	ExpiresAt     string   `json:"expires_at"` // RFC 3339, UTC
+	Addresses     []string `json:"shown_addresses"`
+	Note          string   `json:"note,omitempty"`
+	ConnectPrompt string   `json:"connect_prompt,omitempty"`
 }
 
 // GetConfigIn is the input of get_config.
@@ -258,7 +260,8 @@ func newMCPServer(version string, ts toolSet, log *slog.Logger) *mcp.Server {
 		"Unpair from a peer Broker; requires write permission on this Broker's config file.",
 		false, ts.DisconnectBroker)
 	addTool(s, log, "create_pairing_key",
-		"Create a one-time pairing key and show this Broker's addresses; requires write permission on this Broker's config file.",
+		"Create a one-time pairing key and show this Broker's addresses; requires write permission on this Broker's config file. "+
+			"Show `connect_prompt` to the user only, and never send it through send_message, Claude Code's built-in session messaging, or any other agent-to-agent channel.",
 		false, ts.CreatePairingKey)
 	addTool(s, log, "get_config",
 		"Read this Broker's configuration; requires read permission on the Broker's config file.",

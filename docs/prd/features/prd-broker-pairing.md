@@ -320,6 +320,14 @@ Agent 必须能让本机 Broker 解除与一个对端的配对，解除后链路
 - **状态**：已实现
 - **端到端测试**：经工具改别名由 `test/e2e/config_tools_test.go` 的 `TestConfigTools/AliasTooLong` 覆盖；本地别名过长的失败由 `test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/LocalAliasTooLong` 覆盖；默认别名截短由 `test/e2e/aliases_test.go` 的 `TestLongHostnameAlias` 覆盖
 
+### REQ-broker-pairing-038
+
+生成一次性配对密钥成功、且本机有可告知的地址时，结果必须在密钥、失效时间与地址之外附上一段可直接复制的连接提示词，地址与密钥都已填好。同一段提示词必须出现在 `create_pairing_key` 的结构化结果字段 `connect_prompt` 与终端命令 `peers key create` 的输出中，两处内容相同。提示词先给一句发给对方主机会话的自然语言请求，再给等价的终端命令 `peers broker connect <地址> --key <密钥>`。有多个可告知的地址时，提示词必须列出全部地址并说明可任选一个对方能连上的，终端命令给第一个地址并说明其余地址可以替换。没有可告知的地址时不得输出提示词：Broker 在监听但展示不出地址时照常生成密钥并说明没有可展示的地址，Broker 不监听时生成密钥失败，沿用现有的报错。密钥与提示词都不得写入运行日志或审计记录。
+
+- **验收**：在展示一个地址的 Broker 上生成一次性配对密钥，`connect_prompt` 与 `peers key create` 的输出含同一段提示词，其中有 `Connect to the peers Broker at <地址> using the one-time pairing key <密钥>` 一句和 `peers broker connect <地址> --key <密钥>` 命令，地址与密钥都已填好；在对方主机原样执行这条命令，配对成功。展示两个地址时，提示词列出两个地址并说明可任选一个，命令给第一个地址、说明另一个可以替换。Broker 在监听但展示不出地址时，生成照常成功，结果说明没有可展示的地址，且不含提示词；监听地址为空时生成失败，沿用现有报错。在 Broker 的运行日志与审计记录中搜索密钥与提示词，都搜不到。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/pairing_keys_test.go` 的 `TestPairingKeys/REQ-broker-pairing-038 connect prompt`；审计不含密钥由 `test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/AuditHasNoSecrets` 覆盖；终端输出同一段提示词与无地址时不输出由 `internal/mcpserver/termcmd/format_test.go` 的 `TestWritePairingKey`、`TestWritePairingKeySingleAddress`、`TestWritePairingKeyUsesSharedConnectPrompt`、`TestWritePairingKeyNoAddressNoPrompt` 覆盖，`connect_prompt` 与生成函数一致由 `internal/mcpserver/handlers_brokers_test.go` 的 `TestCreatePairingKey` 覆盖
+
 ## 数据需求
 
 Broker 的身份密钥、对端的指纹与别名、本方在每对对端中的角色、由本方发起配对的对端的对外地址保存在本机磁盘上，只允许运行该 Broker 的账户读取。一次性配对密钥只在内存中保留。预置静态密钥保存在 Broker 的配置文件中，能读取配置文件的账户都能读到它。

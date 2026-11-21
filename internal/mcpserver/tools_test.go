@@ -381,6 +381,33 @@ func TestToolsList(t *testing.T) {
 	}
 }
 
+func TestCreatePairingKeyDescription(t *testing.T) {
+	cs := connectTestClient(t, &stubToolSet{})
+	tools := listTools(t, cs)
+
+	const want = "Create a one-time pairing key and show this Broker's addresses; requires write permission on this Broker's config file. " +
+		"Show `connect_prompt` to the user verbatim, and remind them to pass it to the user on the other host over a private channel."
+	if got := tools["create_pairing_key"].Description; got != want {
+		t.Errorf("create_pairing_key description =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestCreatePairingKeyOmitsEmptyConnectPrompt(t *testing.T) {
+	// A result with no address carries no prompt: there is nothing a pasted
+	// request could name.
+	ts := &stubToolSet{
+		createPairingKey: func(context.Context, NoArgs) (CreatePairingKeyOut, error) {
+			return CreatePairingKeyOut{Key: "k", ExpiresAt: "2026-11-18T18:00:00Z", Note: "n"}, nil
+		},
+	}
+	cs := connectTestClient(t, ts)
+
+	pairing := structuredMap(t, callTool(t, cs, "create_pairing_key", nil))
+	if _, ok := pairing["connect_prompt"]; ok {
+		t.Errorf("create_pairing_key has connect_prompt without an address: %v", pairing)
+	}
+}
+
 func keys(m map[string]any) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
@@ -534,10 +561,11 @@ func TestToolResultFieldNames(t *testing.T) {
 		},
 		createPairingKey: func(context.Context, NoArgs) (CreatePairingKeyOut, error) {
 			return CreatePairingKeyOut{
-				Key:       "k",
-				ExpiresAt: "2026-11-18T18:00:00Z",
-				Addresses: []string{"h:1"},
-				Note:      "n",
+				Key:           "k",
+				ExpiresAt:     "2026-11-18T18:00:00Z",
+				Addresses:     []string{"h:1"},
+				Note:          "n",
+				ConnectPrompt: "p",
 			}, nil
 		},
 		updateBroker: func(context.Context, NoArgs) (UpdateBrokerOut, error) {
@@ -605,13 +633,16 @@ func TestToolResultFieldNames(t *testing.T) {
 	}
 
 	pairing := structuredMap(t, callTool(t, cs, "create_pairing_key", nil))
-	for _, field := range []string{"key", "expires_at", "shown_addresses", "note"} {
+	for _, field := range []string{"key", "expires_at", "shown_addresses", "note", "connect_prompt"} {
 		if _, ok := pairing[field]; !ok {
 			t.Errorf("create_pairing_key has no %s: %v", field, pairing)
 		}
 	}
 	if shown, ok := pairing["shown_addresses"].([]any); !ok || len(shown) != 1 || shown[0] != "h:1" {
 		t.Errorf("shown_addresses = %v, want [h:1]", pairing["shown_addresses"])
+	}
+	if pairing["connect_prompt"] != "p" {
+		t.Errorf("connect_prompt = %v, want p", pairing["connect_prompt"])
 	}
 
 	update := structuredMap(t, callTool(t, cs, "update_broker", nil))

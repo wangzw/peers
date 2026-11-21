@@ -40,7 +40,7 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 | `list_brokers` | 无 | 是 | 无 | 每个已知 Broker 的别名、指纹、对外地址列表、是否对端、状态；对端另标明本方是它的拨号方还是接受方；另带 `local`：本 Broker 的 `offline` 与 `degraded`。应答缺少 `local` 时返回错误 | `REQ-broker-discovery-012` 至 `REQ-broker-discovery-014`、`REQ-broker-config-068` |
 | `connect_broker` | `address`，对方的连接地址，写作 `地址:端口` 或 `主机名(地址:端口)`；`key`，配对密钥；`local_alias?` | 否 | 写 | 对方的别名与指纹，`address` 带主机名时一并给出，可能附带警告；或以 `Not connected` 开头的错误 | `REQ-broker-pairing-010`、`REQ-broker-config-021` |
 | `disconnect_broker` | `broker`，对端的别名或 64 位十六进制指纹 | 否 | 写 | 解除配对的结果 | `REQ-broker-pairing-021`、`REQ-broker-config-021` |
-| `create_pairing_key` | 无 | 否 | 写 | 一次性配对密钥及其失效时间；另行展示本机 Broker 的地址，写作 `主机名(地址:端口)`，对外地址列表有多项时一并列出，为空时说明没有可展示的地址、需要用户自行告知对方连接地址；本 Broker 不监听时返回错误，提示由对方生成密钥、本方发起配对 | `REQ-broker-pairing-005`、`REQ-broker-pairing-025`、`REQ-broker-pairing-028`、`REQ-broker-pairing-036`、`REQ-broker-config-021` |
+| `create_pairing_key` | 无 | 否 | 写 | 一次性配对密钥及其失效时间；另行展示本机 Broker 的地址，写作 `主机名(地址:端口)`，对外地址列表有多项时一并列出，为空时说明没有可展示的地址、需要用户自行告知对方连接地址；另附一段填好地址与密钥、可直接粘贴的连接提示词；本 Broker 不监听时返回错误，提示由对方生成密钥、本方发起配对 | `REQ-broker-pairing-005`、`REQ-broker-pairing-025`、`REQ-broker-pairing-028`、`REQ-broker-pairing-036`、`REQ-broker-pairing-038`、`REQ-broker-config-021` |
 | `get_config` | `key?` | 是 | 读 | 配置项及其当前值；密钥类配置项只给出是否已设置 | `REQ-broker-config-001`、`REQ-broker-config-022`、`REQ-broker-pairing-030` |
 | `set_config` | `key`、`value` | 否 | 写 | 修改前后的值；修改密钥类配置项一律失败 | `REQ-broker-config-002`、`REQ-broker-config-021`、`REQ-broker-config-029`、`REQ-broker-pairing-031` |
 | `set_broker_online` | `online`，布尔，必填 | 否 | 写 | `online`，修改后的状态；`changed`，是否有变化 | `REQ-broker-config-067` |
@@ -63,11 +63,13 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 - `list_brokers`：`brokers` 与 `local`；每个 Broker 项有 `alias`、`fingerprint`、`advertised_addresses`、`is_peer`、`role`、`link_state`、`status`、`status_detail`，地址项有 `kind`、`addr`；`local` 有 `offline`、`degraded`；`degraded` 有 level、step、reason 与 fix。
 - `connect_broker`：`alias`、`fingerprint`、`shown_host`、`warnings`。
 - `disconnect_broker`：`result`。
-- `create_pairing_key`：`key`、`expires_at`、`shown_addresses`、`note`。
+- `create_pairing_key`：`key`、`expires_at`、`shown_addresses`、`note`、`connect_prompt`；`connect_prompt` 是没有可展示的地址时为空的那段连接提示词。
 - `get_config`：`entries`；每项有 `key`、`value`。
 - `set_config`：`key`、`old_value`、`new_value`。
 - `set_broker_online`：`online`、`changed`。
 - `update_broker`：`from_version`、`to_version`、`restarting`。
+
+终端命令 `peers key create` 在密钥、失效时间与可展示的地址之后，输出与 `connect_prompt` 相同的一段连接提示词，两者由同一个函数生成，内容一致。提示词先给一句可以直接粘贴到对方主机会话的自然语言请求，再给等价的终端命令 `peers broker connect <地址> --key <密钥>`，地址按 shell 规则加引号；有多个地址时列出全部并说明可任选一个对方能连上的，命令给第一个地址并说明其余可以替换。没有可展示的地址时不输出提示词。密钥与提示词都不写入运行日志与审计记录（`REQ-broker-pairing-038`）。
 
 `update_broker` 作用于本会话已登记的 Broker。它在收到 Broker 的应答后立即返回，不在工具调用中等待重启。成功时的文字为 `Upgrading the Broker from <from> to <to>; the Broker will restart and the connection will recover automatically. Reopen this session to use the new MCP server.`；已经是最新版本时为 `The Broker is already up to date (<from>).`
 
