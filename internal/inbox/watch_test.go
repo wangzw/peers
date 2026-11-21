@@ -10,12 +10,6 @@ import (
 	"time"
 )
 
-const (
-	// aStopTimeout bounds waits for a callback or Stop to finish. The dispatch
-	// ruling allows up to three seconds per test wait.
-	aStopTimeout = 3 * time.Second
-)
-
 func TestREQAgentMessaging001_WatchReportsNewRecord(t *testing.T) {
 	// REQ-agent-messaging-001
 	dir := t.TempDir()
@@ -211,7 +205,7 @@ func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 	close(release)
 	select {
 	case <-oneStopped:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("stopOne did not return after its callback finished")
 	}
 
@@ -434,7 +428,7 @@ func TestWatch_StopWaitsForRunningCallback(t *testing.T) {
 	})
 	select {
 	case <-entered:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("callback did not start")
 	}
 
@@ -467,7 +461,7 @@ func TestWatch_StopWaitsForRunningCallback(t *testing.T) {
 	close(release)
 	select {
 	case <-stopReturned:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("Stop did not return after the callback finished")
 	}
 
@@ -542,7 +536,7 @@ func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("callback did not start")
 	}
 
@@ -553,7 +547,7 @@ func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 
 	select {
 	case <-externalStopCommitted:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("external Stop did not commit to releasing the callback")
 	}
 
@@ -563,12 +557,12 @@ func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 
 	select {
 	case <-callbackStopReturned:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("Stop called from inside its callback deadlocked against the external Stop")
 	}
 	select {
 	case <-externalStopReturned:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("external Stop did not return after the callback finished")
 	}
 }
@@ -606,7 +600,7 @@ func TestWatch_StopFromCallbackDoesNotDeadlock(t *testing.T) {
 	})
 	select {
 	case <-finished:
-	case <-time.After(aStopTimeout):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("Stop called from its own callback deadlocked")
 	}
 

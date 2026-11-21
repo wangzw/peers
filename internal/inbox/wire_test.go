@@ -72,8 +72,8 @@ func bSendWireRaw(t *testing.T, receiver *bWireReceiver, m ccsock.Message) []byt
 			t.Fatalf("reading wire bytes: %v", result.err)
 		}
 		return bytes.TrimSuffix(result.data, []byte("\n"))
-	case <-time.After(bDeliverTimeout):
-		t.Fatalf("no wire bytes received within %s", bDeliverTimeout)
+	case <-time.After(aWaitTimeout):
+		t.Fatalf("no wire bytes received within %s", aWaitTimeout)
 		return nil
 	}
 }

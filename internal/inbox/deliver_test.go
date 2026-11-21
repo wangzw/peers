@@ -15,16 +15,18 @@ import (
 )
 
 const (
-	// bDeliverTimeout bounds every delivery. It must stay well above the
-	// vendored client's fixed 150 ms half-close delay on darwin: a shorter
-	// deadline expires before CloseWrite and turns a receiver that already took
-	// the frame into ErrUncertain.
-	bDeliverTimeout = 2 * time.Second
+	// bDeliverTimeout is the product write timeout the success-path deliveries
+	// run under. It must stay well above the vendored client's fixed 150 ms
+	// half-close delay on darwin: a shorter deadline expires before CloseWrite
+	// and turns a receiver that already took the frame into ErrUncertain. Ten
+	// seconds leaves that path far from the timeout under load; tests that
+	// assert the timeout itself use bHoldOpenTimeout instead.
+	bDeliverTimeout = 10 * time.Second
 
 	// bHoldOpenTimeout bounds the one delivery whose result is defined by the
 	// receiver not closing. The deadline expiring is the condition under
-	// assertion there, so it can be shorter than bDeliverTimeout while still
-	// clearing the darwin delay.
+	// assertion there, so it is deliberately short while still clearing the
+	// darwin delay.
 	bHoldOpenTimeout = time.Second
 )
 
@@ -61,7 +63,7 @@ func bDeliverAndClose(t *testing.T, fake *fakesession.Fake, sig, text, msgID str
 	select {
 	case err := <-done:
 		return frame, err
-	case <-time.After(bDeliverTimeout + time.Second):
+	case <-time.After(aWaitTimeout):
 		t.Fatal("Deliver did not return after the receiver closed the connection")
 		return fakesession.Frame{}, nil
 	}
@@ -102,7 +104,7 @@ func TestREQAgentMessaging015_HoldOpenIsUncertain(t *testing.T) {
 		if !errors.Is(err, ErrUncertain) {
 			t.Fatalf("Deliver returned %v, want ErrUncertain", err)
 		}
-	case <-time.After(bDeliverTimeout + time.Second):
+	case <-time.After(bHoldOpenTimeout + aWaitTimeout):
 		t.Fatal("Deliver did not return after the receiver held the connection open")
 	}
 }
@@ -395,14 +397,14 @@ func TestDeliver_ContextDeadlineBeatsTimeout(t *testing.T) {
 		if !errors.Is(err, ErrUncertain) {
 			t.Fatalf("Deliver returned %v, want ErrUncertain", err)
 		}
-		// bDeliverTimeout is the 2 s write timeout. Returning well before it
-		// proves the context deadline, not the timeout, ended the call; this is
-		// an upper bound on an event, not a wait.
-		if elapsed := time.Since(start); elapsed >= bDeliverTimeout/2 {
+		// bDeliverTimeout is the 10 s product write timeout. Returning within a
+		// second proves the context deadline, not the timeout, ended the call;
+		// this is an upper bound on an event, not a wait.
+		if elapsed := time.Since(start); elapsed >= time.Second {
 			t.Fatalf("Deliver returned after %s, want the %s context deadline to end it well before the %s timeout",
 				elapsed, contextDeadline, bDeliverTimeout)
 		}
-	case <-time.After(bDeliverTimeout + time.Second):
+	case <-time.After(max(contextDeadline, bDeliverTimeout) + aWaitTimeout):
 		t.Fatal("Deliver did not return when the context expired")
 	}
 }
