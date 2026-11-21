@@ -23,6 +23,8 @@ Private does not mean hidden. A peer knows the fingerprint and alias, a host tha
 
 A host that can reach the listening port can also open connections. Unauthenticated connections are capped: a source may hold at most 8, where a source is one IPv4 address (a /32) or one IPv6 /64, and all sources together at most 64. Once the TLS handshake confirms that a connection's fingerprint belongs to a paired peer, the connection leaves this count, and these connections are capped at 2 per fingerprint instead. Before a connection authenticates, it may send at most 64 KiB, and its HTTP/2 header list may be at most 16 KiB. A flood of connections from one source therefore cannot crowd out pairing from other sources or the reconnection of a paired Broker.
 
+A rejected connection leaves a record. When an unpaired host connects and is rejected, the audit log records one `connection_rejected` event whose `detail` is usually `not a peer from <source>`, where the source is the other host's IPv4 address or its IPv6 /64 prefix. When the connection carries no readable source address, the detail is `not a peer`, and when the Broker's merge windows are full, rejections from further sources fold into one record whose detail is `other sources`. Every account that may read the Broker's configuration file can see these records with `peers service audit`.
+
 ## Topics decide visibility
 
 Two agents can see each other and exchange messages only when they share at least one topic. The same rule applies to two sessions on one host and to sessions on different hosts, and for a remote agent both ends of the link check it.
