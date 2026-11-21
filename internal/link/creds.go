@@ -66,6 +66,10 @@ func (clientAuthInfo) AuthType() string { return authType }
 // rather than in a gRPC interceptor.
 type serverCreds struct {
 	cfg func() *tls.Config
+	// known reports whether a fingerprint is in the peer table. It is called
+	// after the TLS handshake, before the registry lock is taken, so a paired
+	// peer's connection can be moved out of the stranger-source pool.
+	known func(fp pairing.Fingerprint) bool
 }
 
 // ServerHandshake wraps raw in a TLS server, completes the handshake and reads
@@ -87,6 +91,14 @@ func (c serverCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthIn
 	if err != nil {
 		_ = tc.Close()
 		return nil, nil, err
+	}
+	// TLS 1.3 and CertificateVerify proved the peer holds this fingerprint's
+	// private key. A fingerprint already in the peer table leaves the
+	// stranger-source pool now, so a flood from other sources cannot evict it
+	// before its Hello is checked. The role query runs outside the registry
+	// lock; promoteKnown takes the lock without calling Peers.
+	if tracked != nil && c.known != nil && c.known(id.fp) {
+		tracked.promoteKnown(id.fp)
 	}
 	return tc, serverAuthInfo{
 		CommonAuthInfo: credentials.CommonAuthInfo{SecurityLevel: credentials.PrivacyAndIntegrity},

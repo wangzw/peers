@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/wangzw/peers/internal/link/linkpb"
+	"github.com/wangzw/peers/internal/pairing"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
@@ -151,12 +152,19 @@ func (l *Link) newGRPCClientConn(tc *tls.Conn, id peerIdentity, address string) 
 	)
 }
 
+// isKnownPeer reports whether fp is in the peer table. serverCreds calls it
+// after the TLS handshake to decide whether the connection leaves the
+// stranger-source pool.
+func (l *Link) isKnownPeer(fp Fingerprint) bool {
+	return l.peers.Role(fp) != pairing.RoleUnknown
+}
+
 // serverOptions returns the gRPC server options for accepted links. The
 // keepalive parameters are read when the server is created, so a later
 // configuration change applies to the next server.
 func (l *Link) serverOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
-		grpc.Creds(serverCreds{cfg: l.peers.TLSConfig}),
+		grpc.Creds(serverCreds{cfg: l.peers.TLSConfig, known: l.isKnownPeer}),
 		grpc.KeepaliveParams(keepalive.ServerParameters{
 			Time:    l.settings.KeepaliveInterval(),
 			Timeout: l.settings.KeepaliveTimeout(),

@@ -8,6 +8,11 @@ import (
 	"time"
 )
 
+// maxKnownPerPeer is the number of unauthenticated connections the known-peer
+// pool keeps for one fingerprint. A third connection for the same fingerprint
+// closes the oldest one.
+const maxKnownPerPeer = 2
+
 // unauthRegistry tracks inbound connections until the peer behind them is
 // authenticated. It enforces three limits from the design: a connection that
 // has not sent its first frame within firstFrame is closed; the number of
@@ -16,9 +21,16 @@ import (
 // source's oldest connection is closed. When the total is over max, the oldest
 // connection of the source with the most connections is closed, so a source
 // that floods the pool spends its own connections before anyone else's.
+//
+// A connection whose TLS fingerprint is already in the peer table moves to the
+// known-peer pool, which neither limit counts; a stranger flood then cannot
+// evict a paired peer that is reconnecting. That pool holds at most
+// maxKnownPerPeer connections per fingerprint, and the first-frame deadline
+// still applies to it.
 type unauthRegistry struct {
 	mu           sync.Mutex
-	conns        list.List // of *trackedConn, oldest first
+	conns        list.List // of *trackedConn from stranger sources, oldest first
+	known        list.List // of *trackedConn whose fingerprint is in the peer table, oldest first
 	max          int
 	maxPerSource int
 	firstFrame   time.Duration
@@ -180,11 +192,76 @@ type trackedConn struct {
 	reg    *unauthRegistry
 	elem   *list.Element // nil once detached from the registry
 	source string        // sourcePrefix of the remote address; "" groups unknown sources together
+	fp     Fingerprint   // fingerprint once the connection moved to the known-peer pool
+	known  bool          // true while the connection is in the known-peer pool
 
 	timer   func() bool // first-frame deadline; nil when none is pending
 	seen    bool
 	closed  bool
 	claimed bool
+}
+
+// promoteKnown moves t from the stranger-source pool to the known-peer pool,
+// which neither the per-source nor the global limit counts. The first-frame
+// deadline keeps running. When the fingerprint already holds maxKnownPerPeer
+// connections, the oldest one is closed with cause known_peer_limit.
+//
+// The caller decides whether fp is in the peer table before calling, outside
+// the registry lock: this method takes the lock but never calls Peers.
+func (t *trackedConn) promoteKnown(fp Fingerprint) {
+	r := t.reg
+	var (
+		victim *trackedConn
+		stop   func() bool
+		source string
+	)
+
+	r.mu.Lock()
+	if !t.closed && !t.known && t.elem != nil {
+		r.conns.Remove(t.elem)
+		t.known = true
+		t.fp = fp
+		t.elem = r.known.PushBack(t)
+		if r.countKnownOfFingerprintLocked(fp) > maxKnownPerPeer {
+			if v := r.oldestKnownOfFingerprintLocked(fp); v != nil {
+				victim = v
+				stop = r.evictLocked(v)
+				source = v.source
+			}
+		}
+	}
+	r.mu.Unlock()
+
+	if victim != nil {
+		if stop != nil {
+			stop()
+		}
+		_ = victim.Conn.Close()
+		r.logger.Debug("link: closed an unauthenticated connection", "source", source, "cause", "known_peer_limit")
+	}
+}
+
+// countKnownOfFingerprintLocked returns the number of known-peer connections
+// for fp. Caller holds reg.mu.
+func (r *unauthRegistry) countKnownOfFingerprintLocked(fp Fingerprint) int {
+	n := 0
+	for e := r.known.Front(); e != nil; e = e.Next() {
+		if e.Value.(*trackedConn).fp == fp {
+			n++
+		}
+	}
+	return n
+}
+
+// oldestKnownOfFingerprintLocked returns the oldest known-peer connection for
+// fp. Caller holds reg.mu.
+func (r *unauthRegistry) oldestKnownOfFingerprintLocked(fp Fingerprint) *trackedConn {
+	for e := r.known.Front(); e != nil; e = e.Next() {
+		if t := e.Value.(*trackedConn); t.fp == fp {
+			return t
+		}
+	}
+	return nil
 }
 
 // firstFrameSeen records that the peer sent its first frame. The connection
@@ -273,12 +350,17 @@ func (t *trackedConn) deadline() {
 	_ = t.Conn.Close()
 }
 
-// detachLocked removes t from the registry. Caller holds reg.mu.
+// detachLocked removes t from whichever pool holds it. Caller holds reg.mu.
 func (t *trackedConn) detachLocked() {
-	if t.elem != nil {
-		t.reg.conns.Remove(t.elem)
-		t.elem = nil
+	if t.elem == nil {
+		return
 	}
+	if t.known {
+		t.reg.known.Remove(t.elem)
+	} else {
+		t.reg.conns.Remove(t.elem)
+	}
+	t.elem = nil
 }
 
 // stopTimerLocked clears the recorded timer and returns its stop function.

@@ -444,6 +444,113 @@ func TestGlobalLimitSparesEarlierLighterSource(t *testing.T) {
 	}
 }
 
+// findClosedLog returns the last "link: closed an unauthenticated connection"
+// record decoded from logs, or nil when there is none.
+func findClosedLog(t *testing.T, logs string) map[string]any {
+	t.Helper()
+	var found map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		var entry map[string]any
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode log line %q: %v", line, err)
+		}
+		if entry["msg"] == "link: closed an unauthenticated connection" {
+			found = entry
+		}
+	}
+	return found
+}
+
+// TestKnownPeerPoolClosesOldestOfFingerprint checks that a fingerprint holds at
+// most two known-peer connections and that a third closes the oldest, with the
+// known_peer_limit cause. Known-peer connections do not count toward the
+// stranger pool.
+func TestKnownPeerPoolClosesOldestOfFingerprint(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	timers := &manualTimers{}
+	reg := newUnauthRegistry(64, 8, 10*time.Second, logger, timers.afterFunc)
+	fp := Fingerprint{0xAB}
+
+	first := &fakeSourceConn{remote: "198.51.100.1:4000"}
+	reg.track(first).promoteKnown(fp)
+	second := &fakeSourceConn{remote: "198.51.100.2:4000"}
+	reg.track(second).promoteKnown(fp)
+
+	if got := reg.count(); got != 0 {
+		t.Fatalf("stranger pool count with only known peers = %d, want 0", got)
+	}
+
+	third := &fakeSourceConn{remote: "198.51.100.3:4000"}
+	reg.track(third).promoteKnown(fp)
+
+	if !first.isClosed() {
+		t.Fatal("oldest known-peer connection is open, want closed when a third joins")
+	}
+	if second.isClosed() || third.isClosed() {
+		t.Fatalf("survivors closed: second=%v third=%v, want both open", second.isClosed(), third.isClosed())
+	}
+	if got := reg.count(); got != 0 {
+		t.Fatalf("stranger pool count after promotion = %d, want 0", got)
+	}
+
+	entry := findClosedLog(t, buf.String())
+	if entry == nil {
+		t.Fatalf("no \"link: closed an unauthenticated connection\" record in %q", buf.String())
+	}
+	if got := entry["source"]; got != "198.51.100.1/32" {
+		t.Fatalf("log source = %v, want %q", got, "198.51.100.1/32")
+	}
+	if got := entry["cause"]; got != "known_peer_limit" {
+		t.Fatalf("log cause = %v, want %q", got, "known_peer_limit")
+	}
+}
+
+// TestKnownPeerKeepsFirstFrameDeadline checks that moving to the known-peer pool
+// does not extend the first-frame deadline.
+func TestKnownPeerKeepsFirstFrameDeadline(t *testing.T) {
+	timers := &manualTimers{}
+	reg := newTestRegistry(64, 8, timers)
+
+	c := &fakeSourceConn{remote: "198.51.100.9:4000"}
+	reg.track(c).promoteKnown(Fingerprint{0x01})
+
+	timers.fireAll()
+
+	if !c.isClosed() {
+		t.Fatal("known-peer connection outlived its first-frame deadline")
+	}
+}
+
+// TestAuthenticatedLeavesKnownPool checks that authentication still removes a
+// known-peer connection from the registry and stops its deadline.
+func TestAuthenticatedLeavesKnownPool(t *testing.T) {
+	timers := &manualTimers{}
+	reg := newTestRegistry(64, 8, timers)
+
+	tc := reg.track(&fakeSourceConn{remote: "198.51.100.9:4000"})
+	tc.promoteKnown(Fingerprint{0x01})
+
+	reg.mu.Lock()
+	known := reg.known.Len()
+	reg.mu.Unlock()
+	if known != 1 {
+		t.Fatalf("known pool size after promotion = %d, want 1", known)
+	}
+
+	tc.authenticated()
+
+	reg.mu.Lock()
+	known = reg.known.Len()
+	reg.mu.Unlock()
+	if known != 0 {
+		t.Fatalf("known pool size after authentication = %d, want 0", known)
+	}
+	if got := timers.pending(); got != 0 {
+		t.Fatalf("pending deadlines after authentication = %d, want 0", got)
+	}
+}
+
 // TestEvictionLogsSourceAndCause checks the Debug record written for each
 // eviction: the event name plus the source prefix and the cause.
 func TestEvictionLogsSourceAndCause(t *testing.T) {
