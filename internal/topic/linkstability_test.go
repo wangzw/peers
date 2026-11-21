@@ -25,7 +25,7 @@ func stablePeer(t *testing.T, agents int) (*fakeLink, *Registry, link.Fingerprin
 	fl := newFakeLink(t, fakeLinkFingerprint(1))
 	r, _ := newLinkRegistry(t, fl)
 
-	r.AgentChanged("a0", "agent0", "", "a00001", "idle")
+	r.AgentChanged("a0", Member{Name: "agent0", Ref: "a00001", Status: "idle"})
 	n := 0
 	for ; n < stableTestCap; n++ {
 		err := r.Join("a0", fmt.Sprintf("t%d", n))
@@ -38,7 +38,7 @@ func stablePeer(t *testing.T, agents int) (*fakeLink, *Registry, link.Fingerprin
 	}
 	for i := 1; i < agents; i++ {
 		id := AgentID(fmt.Sprintf("a%d", i))
-		r.AgentChanged(id, fmt.Sprintf("agent%d", i), "", fmt.Sprintf("a%05d", i), "idle")
+		r.AgentChanged(id, Member{Name: fmt.Sprintf("agent%d", i), Ref: fmt.Sprintf("a%05d", i), Status: "idle"})
 		for j := 0; j < n; j++ {
 			if err := r.Join(id, fmt.Sprintf("t%d", j)); err != nil {
 				t.Fatalf("Join agent %d into topic %d: %v", i, j, err)
@@ -85,7 +85,7 @@ func TestLinkStaysUpWhenAgentAtLimitRenames(t *testing.T) {
 	prev := "agent0"
 	for i := 0; i <= fakeSendQueueLimit/n+1; i++ {
 		name := fmt.Sprintf("renamed-%d", i)
-		r.AgentChanged("a0", name, prev, "a00001", "busy")
+		r.AgentChanged("a0", Member{Name: name, Ref: "a00001", Status: "busy", PrevName: prev})
 		prev = name
 	}
 	up := fl.resume(p)
@@ -111,7 +111,7 @@ func TestLinkStaysUpUnderConcurrentStatusChanges(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			id := AgentID(fmt.Sprintf("a%d", i))
-			r.AgentChanged(id, fmt.Sprintf("agent%d", i), "", fmt.Sprintf("a%05d", i), statuses[i])
+			r.AgentChanged(id, Member{Name: fmt.Sprintf("agent%d", i), Ref: fmt.Sprintf("a%05d", i), Status: statuses[i]})
 		}(i)
 	}
 	wg.Wait()

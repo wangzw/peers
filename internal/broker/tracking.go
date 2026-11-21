@@ -105,20 +105,7 @@ func (b *Broker) refreshAgent(a *agent) {
 	oldName := a.name
 	nameChanged := name != oldName
 	statusChanged := next.Status != a.status
-
-	// A rename changes how many agents carry the old and the new name, which
-	// changes the disambiguation ref in their addresses. Record the addresses
-	// of the agents involved before the change so the ones that moved can be
-	// pushed afterwards.
-	var before map[AgentID]string
-	if nameChanged {
-		before = make(map[AgentID]string)
-		for id, other := range b.agents {
-			if other == a || other.name == oldName || other.name == name {
-				before[id] = b.addressOf(other)
-			}
-		}
-	}
+	oldAddress := a.lastAddress
 
 	a.session = next
 	b.checkSessionProtocolLocked(a)
@@ -131,27 +118,32 @@ func (b *Broker) refreshAgent(a *agent) {
 		at := a.prevNameAt
 		a.prevTimer = b.deps.Clock.AfterFunc(prevNameRetention, func() { b.expirePrevName(a, at) })
 		a.name = name
+		// Record the new name for this account and stamp the old one with the
+		// moment this agent stopped holding it.
+		b.recordNameOwnerLocked(name, a.caller.UID, a.accountKey, a.prevNameAt)
+		b.releaseNameOwnerLocked(oldName, a.caller.UID, a.prevNameAt)
 		b.log.Info(EvAgentRenamed, "agent", shortID(a.id), "old_name", oldName, "new_name", name)
 	}
 	if statusChanged {
 		a.status = next.Status
 	}
 
-	if nameChanged || statusChanged {
-		b.deps.Topics.AgentChanged(a.id, a.name, a.prevName, a.ref, topicStatus(a.status))
-	}
-
 	if nameChanged {
-		for id := range before {
-			other := b.agents[id]
-			if other == nil {
-				continue
-			}
-			// The renamed agent always announces the change: its previous name
-			// moved even if the truncated address happens to be identical.
-			if other == a || b.addressOf(other) != before[id] {
-				b.pushAgentChangedLocked(other)
-			}
+		// A rename can move the old and the new name between accounts, which
+		// changes refs, pins and the need for a ref for this agent and for every
+		// other agent carrying either name. recomputeRefsLocked updates all of
+		// them and pushes what changed.
+		b.recomputeRefsLocked()
+	}
+	if nameChanged || statusChanged {
+		// The topic table must see the new name, the previous name and the status
+		// even when no ref changed.
+		b.deps.Topics.AgentChanged(a.id, b.memberLocked(a, a.ref, a.refPinned))
+		// recomputeRefsLocked pushes an address change to the streams. A rename
+		// whose rendered address is unchanged still moves the previous name, so
+		// announce it here.
+		if nameChanged && a.lastAddress == oldAddress {
+			b.pushAgentChangedLocked(a)
 		}
 	}
 	b.mu.Unlock()
@@ -168,7 +160,7 @@ func (b *Broker) expirePrevName(a *agent, at time.Time) {
 	}
 	a.prevName = ""
 	a.prevTimer = nil
-	b.deps.Topics.AgentChanged(a.id, a.name, a.prevName, a.ref, topicStatus(a.status))
+	b.deps.Topics.AgentChanged(a.id, b.memberLocked(a, a.ref, a.refPinned))
 	b.pushAgentChangedLocked(a)
 }
 

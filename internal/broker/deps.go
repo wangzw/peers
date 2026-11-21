@@ -26,12 +26,17 @@ var ErrUnknownAgent = errors.New("agent not introduced to the topic table")
 // broker maps it to quota_exceeded.
 var ErrTopicQuotaExceeded = errors.New("topic quota exceeded")
 
-// Member is one agent's current roster entry in the topic table.
+// Member is one agent's current roster entry in the topic table. Account is
+// the publisher's account name, for display only. RefRequired means the
+// publisher requires this member to be addressed by its ref; a bare name must
+// not select it.
 type Member struct {
-	Name     string
-	Ref      string
-	Status   string
-	PrevName string
+	Name        string
+	Ref         string
+	Status      string
+	PrevName    string
+	Account     string
+	RefRequired bool
 }
 
 // VisibleAgent is one agent visible to a local agent: the local agent itself
@@ -50,7 +55,7 @@ type TopicTable interface {
 	Leave(agent AgentID, name string) error
 	LeaveAll(agent AgentID)
 	TopicsOf(agent AgentID) []string
-	AgentChanged(agent AgentID, name, prevName, ref, status string)
+	AgentChanged(agent AgentID, m Member)
 	Visible(local AgentID, other VisibleAgent) (shared []string, ok bool)
 	VisibleAgents(local AgentID) []VisibleAgent // excludes local itself
 	RemoteMembers(peer [32]byte) []Member

@@ -16,12 +16,28 @@ type peerID = pairing.Fingerprint
 
 // agentView is a read-only snapshot of one local Agent.
 type agentView struct {
-	ID       string        // 64 lowercase hex chars, SHA-256 of "session:"+socket path
-	Name     string        // normalized session name
-	Ref      string        // current disambiguation ref, 6..12 lowercase hex, prefix of ID
-	PrevName string        // previous name inside the 10-minute window, else ""
-	Session  inbox.Session // the record last read
-	Inbox    inboxWriter   // the account's session backend; writes go through it
+	ID        string // 64 lowercase hex chars, SHA-256 of "session:"+socket path
+	Name      string // normalized session name
+	Ref       string // current disambiguation ref, 6..12 lowercase hex, prefix of ID
+	RefPinned bool   // Ref is 12 chars because Name belongs to another account
+	// UID is the account that registered this Agent. It is 0 for a view built
+	// without an account, which together with NameOwned keeps a by-name
+	// resolution from treating such a view as the owner.
+	UID uint32
+	// NameOwnerUID is the account that owns Name, and NameOwned reports that
+	// the name owner table has an entry for it. A bare name reaches only the
+	// owner's Agents.
+	NameOwnerUID uint32
+	NameOwned    bool
+	// PrevNameOwnerUID and PrevNameOwned do the same for PrevName.
+	PrevNameOwnerUID uint32
+	PrevNameOwned    bool
+	// RefMandatory reports that the address and signature must carry a ref
+	// because of how the name is held (see Broker.nameNeedsRefLocked).
+	RefMandatory bool
+	PrevName     string        // previous name inside the 10-minute window, else ""
+	Session      inbox.Session // the record last read
+	Inbox        inboxWriter   // the account's session backend; writes go through it
 }
 
 // localAgents is the local Agent table a delivery reads. *Broker implements it.
@@ -33,8 +49,16 @@ type localAgents interface {
 	Reread(id string) (agentView, error)
 }
 
-// remoteMember is one member entry a peer reports.
-type remoteMember struct{ Name, Ref, PrevName string }
+// remoteMember is one member entry a peer reports. Account is the publisher's
+// account name, for display only. RefRequired means the publisher requires a
+// disambiguating ref in the address; a bare name must not select it.
+type remoteMember struct {
+	Name        string
+	Ref         string
+	PrevName    string
+	Account     string
+	RefRequired bool
+}
 
 // visibility decides which Agents know each other. topicVisibility implements
 // it over the topic table in production.
@@ -170,6 +194,23 @@ func (d *delivery) processContext(ctx context.Context) (context.Context, context
 		stop()
 		cancel()
 	}
+}
+
+// logDeliveryRefusedOwner records a by-name delivery refused because the name
+// belongs to another account. matched uids are the visible same-name Agents of
+// other accounts, and from identifies the sender: a local Agent's ref or the
+// peer fingerprint. It records no message text.
+func (d *delivery) logDeliveryRefusedOwner(name string, ownerUID uint32, matchedUIDs []uint32, from string) {
+	logger := d.deps.Log
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Info(EvDeliveryRefusedOwner,
+		"name", name,
+		"owner_uid", ownerUID,
+		"matched_uids", matchedUIDs,
+		"from", from,
+	)
 }
 
 // notSent returns an error for a message that was certainly not delivered. The

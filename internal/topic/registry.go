@@ -133,6 +133,7 @@ func (r *Registry) handleRoster(peer link.Fingerprint, f link.Frame) {
 			dropped++
 			continue
 		}
+		m.Account = SanitizeAccountName(m.Account)
 		members = append(members, m)
 	}
 	if dropped > 0 {
@@ -191,6 +192,7 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 			dropped++
 			continue
 		}
+		m.Account = SanitizeAccountName(m.Account)
 		added = append(added, m)
 	}
 	changed := make([]Member, 0, len(msg.Changed))
@@ -200,6 +202,7 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 			dropped++
 			continue
 		}
+		m.Account = SanitizeAccountName(m.Account)
 		changed = append(changed, m)
 	}
 	removed := make([]memberKey, 0, len(msg.Removed))

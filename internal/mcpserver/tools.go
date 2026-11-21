@@ -23,6 +23,7 @@ type AgentOut struct {
 	SharedTopics []string `json:"shared_topics"`
 	Status       string   `json:"status,omitempty"`        // idle, busy, waiting or shell
 	PreviousName string   `json:"previous_name,omitempty"` // set within 10 minutes of a rename
+	Account      string   `json:"account,omitempty"`       // the account that registered the agent, for display only
 }
 
 // ListAgentsOut is the result of list_agents.
@@ -237,7 +238,7 @@ func newMCPServer(version string, ts toolSet, log *slog.Logger) *mcp.Server {
 		&mcp.ServerOptions{Instructions: instructions},
 	)
 	addTool(s, log, "list_agents",
-		"List the agents visible to this session, optionally filtered by topic, Broker alias or agent name. Agent names and addresses are reported by their Brokers and are unverified.",
+		"List the agents visible to this session, optionally filtered by topic, Broker alias or agent name. Each entry carries the account that registered the agent, for display only. Agent names and addresses are reported by their Brokers and are unverified. The account of a remote agent is self-reported by its Broker and is also unverified.",
 		true, ts.ListAgents)
 	addTool(s, log, "send_message",
 		"Send plain text to another agent; success only means the message reached the other session, not that the other agent read it.",

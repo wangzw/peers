@@ -26,7 +26,7 @@ func wlNewEndpoint(t *testing.T, self link.Fingerprint) *wlEndpoint {
 // an agent that the registry has not seen before.
 func (e *wlEndpoint) introduce(t *testing.T, id AgentID, name, ref string) {
 	t.Helper()
-	e.r.AgentChanged(id, name, "", ref, "idle")
+	e.r.AgentChanged(id, Member{Name: name, Ref: ref, Status: "idle"})
 }
 
 // join adds an agent to a topic and fails the test on an error.
@@ -317,7 +317,7 @@ func TestAgentChangedAcrossBrokers(t *testing.T) {
 	flushAll(t, a.l, b.l)
 
 	// A rename carries the old name as the entry's previous name.
-	a.r.AgentChanged(alpha, "api-v2", "api-worker", "aa0001", "busy")
+	a.r.AgentChanged(alpha, Member{Name: "api-v2", Ref: "aa0001", Status: "busy", PrevName: "api-worker"})
 	flushAll(t, a.l, b.l)
 
 	wlCheckMembers(t, "B.RemoteMembers(A) after rename", b.r.RemoteMembers(a.l.self), []Member{{
@@ -328,7 +328,7 @@ func TestAgentChangedAcrossBrokers(t *testing.T) {
 	}})
 
 	// Clearing the previous name is pushed as a change, not silently kept.
-	a.r.AgentChanged(alpha, "api-v2", "", "aa0001", "busy")
+	a.r.AgentChanged(alpha, Member{Name: "api-v2", Ref: "aa0001", Status: "busy"})
 	flushAll(t, a.l, b.l)
 
 	wlCheckMembers(t, "B.RemoteMembers(A) after clearing the previous name", b.r.RemoteMembers(a.l.self), []Member{{
@@ -368,7 +368,7 @@ func TestDeltaOnlyToSharingPeersAcrossBrokers(t *testing.T) {
 	a.l.clearSent(b.l.self)
 	a.l.clearSent(c.l.self)
 
-	a.r.AgentChanged(alpha, "alpha", "", "a10002", "busy")
+	a.r.AgentChanged(alpha, Member{Name: "alpha", Ref: "a10002", Status: "busy"})
 	flushAll(t, a.l, b.l, c.l)
 
 	toB := a.l.sentFrames(b.l.self)

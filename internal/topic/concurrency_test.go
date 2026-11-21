@@ -26,12 +26,12 @@ func TestSendHappensUnderLock(t *testing.T) {
 	rb, _ := newLinkRegistry(t, lb)
 
 	a := AgentID("a")
-	ra.AgentChanged(a, "api", "", "a10003", "idle")
+	ra.AgentChanged(a, Member{Name: "api", Ref: "a10003", Status: "idle"})
 	if err := ra.Join(a, "t1"); err != nil {
 		t.Fatalf("join t1 for a: %v", err)
 	}
 	b := AgentID("b")
-	rb.AgentChanged(b, "web", "", "b10003", "idle")
+	rb.AgentChanged(b, Member{Name: "web", Ref: "b10003", Status: "idle"})
 	if err := rb.Join(b, "t1"); err != nil {
 		t.Fatalf("join t1 for b: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestSendHappensUnderLock(t *testing.T) {
 
 	// Cover the four local operations, including a topic B also has so that
 	// the deltas and rosters are not vacuous.
-	ra.AgentChanged(a, "api2", "api", "a10003", "busy")
+	ra.AgentChanged(a, Member{Name: "api2", Ref: "a10003", Status: "busy", PrevName: "api"})
 	if err := ra.Join(a, "t2"); err != nil {
 		t.Fatalf("join t2 for a: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestOldConnectionFramesDoNotPolluteNewLink(t *testing.T) {
 	// Every frame these produce is queued at B under the old generation.
 	for i := 0; i < 5; i++ {
 		ag := agentsA[i%len(agentsA)]
-		ra.AgentChanged(ag.id, fmt.Sprintf("%s-new%d", ag.base, i), ag.base, ag.ref, "busy")
+		ra.AgentChanged(ag.id, Member{Name: fmt.Sprintf("%s-new%d", ag.base, i), Ref: ag.ref, Status: "busy", PrevName: ag.base})
 		_ = ra.Join(ag.id, fmt.Sprintf("t%d", (i+1)%5))
 		_ = ra.Leave(ag.id, fmt.Sprintf("t%d", i%5))
 	}
@@ -237,7 +237,7 @@ func concSeedSide(t *testing.T, r *Registry, prefix string) []concAgent {
 			ref:  fmt.Sprintf("%s%05x", prefix, i),
 			base: fmt.Sprintf("%s-name%d", prefix, i),
 		}
-		r.AgentChanged(agents[i].id, agents[i].base, "", agents[i].ref, "idle")
+		r.AgentChanged(agents[i].id, Member{Name: agents[i].base, Ref: agents[i].ref, Status: "idle"})
 		if err := r.Join(agents[i].id, fmt.Sprintf("t%d", i%5)); err != nil {
 			t.Fatalf("seed join t%d for %s: %v", i%5, agents[i].id, err)
 		}
@@ -277,10 +277,10 @@ func concRandomOp(rng *rand.Rand, r *Registry, agents []concAgent) {
 		if rng.IntN(2) == 0 {
 			prev = fmt.Sprintf("%s-old%d", ag.base, rng.IntN(3))
 		}
-		r.AgentChanged(ag.id, name, prev, ag.ref, concStatuses[rng.IntN(len(concStatuses))])
+		r.AgentChanged(ag.id, Member{Name: name, Ref: ag.ref, Status: concStatuses[rng.IntN(len(concStatuses))], PrevName: prev})
 	case 3:
 		r.LeaveAll(ag.id)
-		r.AgentChanged(ag.id, ag.base, "", ag.ref, concStatuses[rng.IntN(len(concStatuses))])
+		r.AgentChanged(ag.id, Member{Name: ag.base, Ref: ag.ref, Status: concStatuses[rng.IntN(len(concStatuses))]})
 	}
 }
 
@@ -337,8 +337,8 @@ func concRunConvergence(t *testing.T, seed int64, reconnecting bool) {
 	// Leave a known shared membership behind so the convergence check cannot
 	// pass on two empty views. Every agent still exists: the leave-all case
 	// reintroduces its agent in the same operation.
-	ra.AgentChanged(agentsA[0].id, agentsA[0].base, "", agentsA[0].ref, "idle")
-	rb.AgentChanged(agentsB[0].id, agentsB[0].base, "", agentsB[0].ref, "idle")
+	ra.AgentChanged(agentsA[0].id, Member{Name: agentsA[0].base, Ref: agentsA[0].ref, Status: "idle"})
+	rb.AgentChanged(agentsB[0].id, Member{Name: agentsB[0].base, Ref: agentsB[0].ref, Status: "idle"})
 	_ = ra.Join(agentsA[0].id, "t0")
 	_ = rb.Join(agentsB[0].id, "t0")
 

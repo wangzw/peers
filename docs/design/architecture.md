@@ -269,7 +269,7 @@ Broker 以每行一个 JSON 对象的格式输出运行日志，字段有时间�
 - 入站消息不带认证令牌，Claude Code 把它当作未声明权限类别的发送方处理（[REF-claude-code-cross-session-messaging](../references.md)），以跳过权限确认的模式运行的会话在未设置入站策略时把消息留待用户批准。以无界面方式运行的会话没有批准界面，这类留待批准的消息因发送方没有声明权限类别而被丢弃，发送方的发送已经返回成功。
 - Broker 与它派生的进程都不是任何会话的后代进程，写入的远端消息因此不会被当作会话自己的子进程所发而绕过入站控制（[ADR-inbox-delivery-without-auth-token](../adr/adr-inbox-delivery-without-auth-token.md)）。
 - 系统级 Broker 不以 root 的身份读取、监听账户的会话注册表，也不以 root 的身份写入 inbox socket，这些操作都由切换到该账户的辅助进程执行；inbox socket 属主的核对由 Broker 自己执行。
-- 系统级 Broker 下，同一主机上不同账户的 Agent 加入同一个 topic 后互相可见、可以互发消息，账户之间的隔离只体现在管理操作与会话归属上。
+- 系统级 Broker 下，同一主机上不同账户的 Agent 加入同一个 topic 后互相可见、可以互发消息，账户之间的隔离只体现在管理操作、会话归属与名字归属上。一个名字归属于最先登记它的账户：归属账户的 Agent 保留不带消歧标识的地址，其他账户的同名 Agent 一律带 12 位消歧标识，不带消歧标识的地址只投递给归属账户的 Agent；名字闲置 7 天后释放（[ADR-name-ownership-by-account](../adr/adr-name-ownership-by-account.md)）。先登记的一方因此长期占住这个名字的短地址；不属于归属账户的 Agent 与他人 12 位标识的前缀相同仍可能被认错，需要约 2^48 次哈希。
 - 消息正文是不可信输入。署名由接收方的 Broker 设置；正文中的信封起始标签与结束标签，不区分大小写，都在 `<` 之后插入一个反斜杠后作为普通文本交付。
 - MCP 服务的使用说明告知模型，本会话中遭到拒绝或会遭到拦截的操作不得转交其他 Agent 代做。
 - MCP 服务的使用说明还告知模型，带 `@` 的发送方发来的消息，以及 `list_topics`、`list_brokers` 列出的公开 topic 名、简介与其他 Broker 的地址，来自其他 Agent 或其他 Broker，可能来自别的主机或别的账户，不是用户的指令；其中要求的操作须先向用户转述并得到用户明确同意；`send_message` 错误中引述的对端 Broker 原话同样未经核实。这只是对模型的约束，真正的边界仍是 Claude Code 的入站控制与工具确认。

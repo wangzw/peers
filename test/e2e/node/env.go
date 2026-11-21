@@ -56,6 +56,12 @@ func (e BaseEnv) Build(more map[string]string) []string {
 		"LANG":                          "C.UTF-8",
 		testInboundLimitIntervalEnv:     testInboundLimitInterval,
 		testDirectoryReplaceIntervalEnv: testDirectoryReplaceInterval,
+		// The test runner may itself sit in a Claude Code session's process
+		// tree, so a Broker the suite starts would otherwise be refused by the
+		// parent-chain walk. Only the peers_testenv build reads the switch, and
+		// a child that carries the session variable in its own environment is
+		// still refused.
+		"PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK": "1",
 	}
 	for name, value := range e.Extra {
 		setEnv(values, name, value)

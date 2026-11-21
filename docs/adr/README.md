@@ -19,6 +19,7 @@
 | [账户锁之后的部分启动失败不退出](adr-degraded-run.md) |
 | [会话经 MCP 服务进程登记为 Agent](adr-register-through-mcp-server-process.md) |
 | [Agent 以 inbox socket 为身份，名字取自会话名](adr-agent-identity-by-inbox-socket.md) |
+| [系统级 Broker 的名字按账户归属](adr-name-ownership-by-account.md) |
 
 ## 消息投递
 

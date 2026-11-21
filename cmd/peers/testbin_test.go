@@ -141,12 +141,20 @@ func sandboxRoot() (string, error) {
 // os.Environ so the session variables of the test runner (for example
 // CLAUDE_CODE_MESSAGING_SOCKET or PEERS_TEST_SOCKET) cannot leak into the
 // process under test.
+//
+// The test runner is itself a descendant of a Claude Code session, so a child
+// that does not carry the session variable would still be found by the
+// parent-chain walk. PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK turns only that
+// walk off in the peers_testenv build; a child that sets
+// CLAUDE_CODE_MESSAGING_SOCKET in its own environment is still refused, which
+// is what TestBrokerInsideSession relies on.
 func (s *sandbox) env() []string {
 	env := []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + s.home,
 		"PEERS_TEST_RUNTIME_ROOT=" + s.root,
 		"PEERS_TEST_HOME=" + s.home,
+		"PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK=1",
 	}
 	return append(env, s.extraEnv...)
 }

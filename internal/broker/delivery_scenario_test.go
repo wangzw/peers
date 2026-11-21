@@ -153,6 +153,11 @@ func (b *scenarioBroker) addAgentNamed(name, prevName string, topics ...string) 
 	fake := fakesession.New(b.t, fakesession.Options{Name: name})
 	view := liveTestAgent(b.t, fake, name)
 	view.PrevName = prevName
+	// The Broker gives a name that may render truncated the full ref, so a
+	// copied address is accepted. The fixture stands in for that decision.
+	if addressNameTruncates(view.Name, view.Ref, maxAddressAlias(), false) {
+		view.Ref = view.ID[:12]
+	}
 
 	b.agents.mu.Lock()
 	b.agents.byID[view.ID] = view

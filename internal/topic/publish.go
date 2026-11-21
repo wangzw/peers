@@ -142,19 +142,14 @@ func (r *Registry) LeaveAll(agent AgentID) {
 // AgentChanged stores the agent's new information, which also introduces an
 // agent the registry has not seen before. It pushes a RosterDelta for every
 // topic the agent belongs to inside a peer's intersection: a rename or a Ref
-// change sends the old key as removed and the new entry as added, while a
-// status or previous-name change is a change. When nothing differs it sends no
-// frame.
-func (r *Registry) AgentChanged(agent AgentID, name, prevName, ref, status string) {
+// change sends the old key as removed and the new entry as added, while any
+// other entry change, including the status, previous name, account and
+// ref_required fields, is a change. When nothing differs it sends no frame.
+func (r *Registry) AgentChanged(agent AgentID, m Member) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	m := Member{
-		Name:     name,
-		Ref:      ref,
-		Status:   statusFromWire(statusToWire(status)),
-		PrevName: prevName,
-	}
+	m.Status = statusFromWire(statusToWire(m.Status))
 	old, existed := r.local.setInfo(agent, m)
 	if !existed {
 		return

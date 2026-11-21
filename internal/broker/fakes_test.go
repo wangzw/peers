@@ -587,12 +587,12 @@ func (f *fakeTopics) topicsOfLocked(agent AgentID) []string {
 	return topics
 }
 
-func (f *fakeTopics) AgentChanged(agent AgentID, name, prevName, ref, status string) {
+func (f *fakeTopics) AgentChanged(agent AgentID, m Member) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.introduced[agent] = true
-	f.roster[agent] = Member{Name: name, Ref: ref, Status: status, PrevName: prevName}
-	f.record(topicCall{Method: "agent_changed", Agent: agent, Name: name, PrevName: prevName, Ref: ref, Status: status})
+	f.roster[agent] = m
+	f.record(topicCall{Method: "agent_changed", Agent: agent, Name: m.Name, PrevName: m.PrevName, Ref: m.Ref, Status: m.Status})
 }
 
 func (f *fakeTopics) Visible(local AgentID, other VisibleAgent) ([]string, bool) {
@@ -700,6 +700,14 @@ func (f *fakeTopics) JoinCalls() []topicCall         { return f.callsOf("join") 
 func (f *fakeTopics) LeaveCalls() []topicCall        { return f.callsOf("leave") }
 func (f *fakeTopics) LeaveAllCalls() []topicCall     { return f.callsOf("leave_all") }
 func (f *fakeTopics) AgentChangedCalls() []topicCall { return f.callsOf("agent_changed") }
+
+// Roster returns the latest roster entry stored for agent.
+func (f *fakeTopics) Roster(agent AgentID) (Member, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.roster[agent]
+	return m, ok
+}
 
 // LastAgentChanged returns the latest AgentChanged call for agent.
 func (f *fakeTopics) LastAgentChanged(agent AgentID) (topicCall, bool) {

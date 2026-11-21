@@ -242,11 +242,17 @@ func (x *RosterDelta) GetChanged() []*Member {
 }
 
 type Member struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Ref           string                 `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
-	Status        AgentStatus            `protobuf:"varint,3,opt,name=status,proto3,enum=internal.topic.topicpb.AgentStatus" json:"status,omitempty"`
-	PreviousName  string                 `protobuf:"bytes,4,opt,name=previous_name,json=previousName,proto3" json:"previous_name,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Name         string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Ref          string                 `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
+	Status       AgentStatus            `protobuf:"varint,3,opt,name=status,proto3,enum=internal.topic.topicpb.AgentStatus" json:"status,omitempty"`
+	PreviousName string                 `protobuf:"bytes,4,opt,name=previous_name,json=previousName,proto3" json:"previous_name,omitempty"`
+	// account is the name of the account that published this member. It is for
+	// display only and never takes part in addressing or resolution.
+	Account string `protobuf:"bytes,5,opt,name=account,proto3" json:"account,omitempty"`
+	// ref_required says the publisher requires this member to be addressed by
+	// its disambiguator; a bare name must not select it.
+	RefRequired   bool `protobuf:"varint,6,opt,name=ref_required,json=refRequired,proto3" json:"ref_required,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -307,6 +313,20 @@ func (x *Member) GetPreviousName() string {
 		return x.PreviousName
 	}
 	return ""
+}
+
+func (x *Member) GetAccount() string {
+	if x != nil {
+		return x.Account
+	}
+	return ""
+}
+
+func (x *Member) GetRefRequired() bool {
+	if x != nil {
+		return x.RefRequired
+	}
+	return false
 }
 
 type MemberKey struct {
@@ -375,12 +395,14 @@ const file_internal_topic_topicpb_topic_proto_rawDesc = "" +
 	"\x06digest\x18\x01 \x01(\fR\x06digest\x124\n" +
 	"\x05added\x18\x02 \x03(\v2\x1e.internal.topic.topicpb.MemberR\x05added\x12;\n" +
 	"\aremoved\x18\x03 \x03(\v2!.internal.topic.topicpb.MemberKeyR\aremoved\x128\n" +
-	"\achanged\x18\x04 \x03(\v2\x1e.internal.topic.topicpb.MemberR\achanged\"\x90\x01\n" +
+	"\achanged\x18\x04 \x03(\v2\x1e.internal.topic.topicpb.MemberR\achanged\"\xcd\x01\n" +
 	"\x06Member\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03ref\x18\x02 \x01(\tR\x03ref\x12;\n" +
 	"\x06status\x18\x03 \x01(\x0e2#.internal.topic.topicpb.AgentStatusR\x06status\x12#\n" +
-	"\rprevious_name\x18\x04 \x01(\tR\fpreviousName\"1\n" +
+	"\rprevious_name\x18\x04 \x01(\tR\fpreviousName\x12\x18\n" +
+	"\aaccount\x18\x05 \x01(\tR\aaccount\x12!\n" +
+	"\fref_required\x18\x06 \x01(\bR\vrefRequired\"1\n" +
 	"\tMemberKey\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03ref\x18\x02 \x01(\tR\x03ref*\x8b\x01\n" +

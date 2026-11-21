@@ -42,8 +42,15 @@ func (t topicTable) TopicsOf(agent AgentID) []string {
 }
 
 // AgentChanged stores the agent's current roster information.
-func (t topicTable) AgentChanged(agent AgentID, name, prevName, ref, status string) {
-	t.r.AgentChanged(topic.AgentID(agent), name, prevName, ref, status)
+func (t topicTable) AgentChanged(agent AgentID, m Member) {
+	t.r.AgentChanged(topic.AgentID(agent), topic.Member{
+		Name:        m.Name,
+		Ref:         m.Ref,
+		Status:      m.Status,
+		PrevName:    m.PrevName,
+		Account:     m.Account,
+		RefRequired: m.RefRequired,
+	})
 }
 
 // Visible reports the topics local and other share.
@@ -89,7 +96,14 @@ func (t topicTable) RemoteMembers(peer [32]byte) []Member {
 
 // memberFromTopic converts a roster entry, copying every field.
 func memberFromTopic(m topic.Member) Member {
-	return Member{Name: m.Name, Ref: m.Ref, Status: m.Status, PrevName: m.PrevName}
+	return Member{
+		Name:        m.Name,
+		Ref:         m.Ref,
+		Status:      m.Status,
+		PrevName:    m.PrevName,
+		Account:     m.Account,
+		RefRequired: m.RefRequired,
+	}
 }
 
 // topicRegistryError maps the topic package's sentinels onto the two errors

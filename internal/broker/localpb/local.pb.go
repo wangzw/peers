@@ -1144,11 +1144,14 @@ func (x *ListAgentsResponse) GetAgents() []*AgentEntry {
 }
 
 type AgentEntry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Address       string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
-	SharedTopics  []string               `protobuf:"bytes,2,rep,name=shared_topics,json=sharedTopics,proto3" json:"shared_topics,omitempty"`
-	Status        AgentStatus            `protobuf:"varint,3,opt,name=status,proto3,enum=internal.broker.localpb.AgentStatus" json:"status,omitempty"`
-	PreviousName  string                 `protobuf:"bytes,4,opt,name=previous_name,json=previousName,proto3" json:"previous_name,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Address      string                 `protobuf:"bytes,1,opt,name=address,proto3" json:"address,omitempty"`
+	SharedTopics []string               `protobuf:"bytes,2,rep,name=shared_topics,json=sharedTopics,proto3" json:"shared_topics,omitempty"`
+	Status       AgentStatus            `protobuf:"varint,3,opt,name=status,proto3,enum=internal.broker.localpb.AgentStatus" json:"status,omitempty"`
+	PreviousName string                 `protobuf:"bytes,4,opt,name=previous_name,json=previousName,proto3" json:"previous_name,omitempty"`
+	// account is the name of the account that registered the agent, for display
+	// only. It plays no part in addressing, filtering or resolution.
+	Account       string `protobuf:"bytes,5,opt,name=account,proto3" json:"account,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1207,6 +1210,13 @@ func (x *AgentEntry) GetStatus() AgentStatus {
 func (x *AgentEntry) GetPreviousName() string {
 	if x != nil {
 		return x.PreviousName
+	}
+	return ""
+}
+
+func (x *AgentEntry) GetAccount() string {
+	if x != nil {
+		return x.Account
 	}
 	return ""
 }
@@ -3616,13 +3626,14 @@ const file_internal_broker_localpb_local_proto_rawDesc = "" +
 	"\x04name\x18\x04 \x01(\tR\x04name\"t\n" +
 	"\x12ListAgentsResponse\x12!\n" +
 	"\fself_address\x18\x01 \x01(\tR\vselfAddress\x12;\n" +
-	"\x06agents\x18\x02 \x03(\v2#.internal.broker.localpb.AgentEntryR\x06agents\"\xae\x01\n" +
+	"\x06agents\x18\x02 \x03(\v2#.internal.broker.localpb.AgentEntryR\x06agents\"\xc8\x01\n" +
 	"\n" +
 	"AgentEntry\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12#\n" +
 	"\rshared_topics\x18\x02 \x03(\tR\fsharedTopics\x12<\n" +
 	"\x06status\x18\x03 \x01(\x0e2$.internal.broker.localpb.AgentStatusR\x06status\x12#\n" +
-	"\rprevious_name\x18\x04 \x01(\tR\fpreviousName\"a\n" +
+	"\rprevious_name\x18\x04 \x01(\tR\fpreviousName\x12\x18\n" +
+	"\aaccount\x18\x05 \x01(\tR\aaccount\"a\n" +
 	"\vSendRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +

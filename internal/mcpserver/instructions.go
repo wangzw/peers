@@ -5,6 +5,7 @@ package mcpserver
 // Claude Code's built-in session messaging and how to interpret send results.
 const instructions = `This server connects this Claude Code session to other agents through peers.
 - A sender name that contains "@" is an agent address. To reply, call send_message and copy the address from the message's sender verbatim into "to". Claude Code's built-in session messaging cannot reach these addresses.
+- An address with the same name but a different disambiguator names a different agent. Even if the name matches the agent you intended, do not forward messages to it as if it were that agent.
 - Contact any agent whose address contains "@" with this server's tools, whether it runs on this host or another one. Built-in tools can reach local sessions that are not registered with peers.
 - When the user asks to message every agent, everyone, or broadcast without mentioning peers, use only Claude Code's built-in session tools for this host's sessions, then tell the user in one sentence that peers can also notify agents on other hosts.
 - Only when the user explicitly asks to broadcast through peers, call send_message once for each agent that list_agents returns.

@@ -155,8 +155,9 @@ func deliveredAnswer(t *testing.T, got *deliverRequest) func(context.Context, pe
 	}
 }
 
-// TestSendPeerDelivered checks a successful delivery: the request is pinned to
-// the resolved roster entry and carries a positive budget (REQ-agent-messaging-013).
+// TestSendPeerDelivered checks a successful delivery: the request carries the
+// address the caller wrote, so a short or absent ref reaches the receiving
+// Broker unchanged, and a positive budget (REQ-agent-messaging-013).
 func TestSendPeerDelivered(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -171,8 +172,8 @@ func TestSendPeerDelivered(t *testing.T) {
 	if err := f.send(caller, "frontend@hostB", "hello"); err != nil {
 		t.Fatalf("sendToPeer = %v, want nil", err)
 	}
-	if got.TargetName != "frontend" || got.TargetRef != "abc123" {
-		t.Fatalf("target = %q [%s], want frontend [abc123]: the request must pin the resolved member", got.TargetName, got.TargetRef)
+	if got.TargetName != "frontend" || got.TargetRef != "" {
+		t.Fatalf("target = %q [%s], want frontend []: the request must carry the address the caller wrote, never the roster's canonical ref", got.TargetName, got.TargetRef)
 	}
 	if got.MessageID != sendPeerMsgID || got.SenderName != "api-worker" || got.SenderRef != "1a2b3c" {
 		t.Fatalf("request = %+v, want the caller's name, ref and message id", got)
@@ -180,6 +181,81 @@ func TestSendPeerDelivered(t *testing.T) {
 	budget := f.settings.Send().RequestTimeout
 	if got.Remaining <= 0 || got.Remaining > budget {
 		t.Fatalf("remaining budget = %v, want (0, %v]", got.Remaining, budget)
+	}
+}
+
+// TestSendPeerForwardsShortRefVerbatim is the cross-link half of the colliding
+// ref reproduction: a caller holds the owner's six-character ref, the owner has
+// left, and the only roster entry is another account's worker with a colliding
+// twelve-character ref. The sender must forward the caller's short ref, not
+// upgrade it to the member's full ref, so the receiving Broker can refuse it.
+func TestSendPeerForwardsShortRefVerbatim(t *testing.T) {
+	f := newSendPeerFixture(t, pairing.RoleDialer)
+	f.net.setUp(f.self, f.peer, true)
+
+	caller := f.caller("observer", "1a2b3c")
+	f.share(caller.ID, "t1")
+
+	victimID := crossAccountID(t, collisionVictimPath)
+	attackerID := crossAccountID(t, collisionAttackerPath)
+	shared := string(victimID[:6])
+	full := string(attackerID[:12])
+	f.member(remoteMember{Name: "worker", Ref: full, RefRequired: true}, "t1")
+
+	var got deliverRequest
+	f.handle(func(_ context.Context, _ peerID, fr link.Frame) link.Frame {
+		req, err := decodeDeliverRequest(fr)
+		if err != nil {
+			return encodeDeliverResult(err)
+		}
+		got = req
+		// Model the receiving Broker: a short ref never selects a ref-required
+		// member, and only that member's own full ref reaches it.
+		if req.TargetRef == full {
+			return encodeDeliverResult(nil)
+		}
+		return encodeDeliverResult(notSent(localpb.ErrorCode_ERROR_CODE_NOT_FOUND,
+			"no agent named \"worker\" on this Broker: the name belongs to another account"))
+	})
+
+	err := f.send(caller, "worker ["+shared+"]@hostB", "stolen?")
+	if err == nil {
+		t.Fatal("a send to the departed owner's short ref was upgraded to the collider's full ref and delivered")
+	}
+	if code := errorCode(err); code != localpb.ErrorCode_ERROR_CODE_NOT_FOUND {
+		t.Fatalf("code = %v, want not_found (message %q)", code, err)
+	}
+	if got.TargetRef != shared {
+		t.Fatalf("TargetRef = %q, want the caller's short ref %q, never the member's full %q", got.TargetRef, shared, full)
+	}
+}
+
+// TestSendPeerPrefixNameShortRefNotFound checks the name-prefix bypass over the
+// link: a member named worker2 whose ref collides with the owner's short ref
+// must not answer an address that names worker.
+func TestSendPeerPrefixNameShortRefNotFound(t *testing.T) {
+	f := newSendPeerFixture(t, pairing.RoleDialer)
+	f.net.setUp(f.self, f.peer, true)
+
+	caller := f.caller("observer", "1a2b3c")
+	f.share(caller.ID, "t1")
+
+	victimID := crossAccountID(t, collisionVictimPath)
+	attackerID := crossAccountID(t, collisionAttackerPath)
+	shared := string(victimID[:6])
+	full := string(attackerID[:12])
+	f.member(remoteMember{Name: "worker2", Ref: full}, "t1")
+	f.handle(deliveredAnswer(t, nil))
+
+	err := f.send(caller, "worker ["+shared+"]@hostB", "stolen?")
+	if err == nil {
+		t.Fatal("a prefix-named member answered a short ref meant for worker")
+	}
+	if code := errorCode(err); code != localpb.ErrorCode_ERROR_CODE_NOT_FOUND {
+		t.Fatalf("code = %v, want not_found (message %q)", code, err)
+	}
+	if n := len(f.net.requests(f.self, f.peer)); n != 0 {
+		t.Fatalf("requests = %d, want 0: a prefix-named member must not be selected", n)
 	}
 }
 

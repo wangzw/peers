@@ -87,8 +87,12 @@ func (d *delivery) sendLocal(ctx context.Context, caller agentView, addr parsedA
 			return sig
 		})
 
-	idx, perr := pickTarget(addr, cands, localRefMatch, "on "+alias)
+	var refusal nameOwnerRefusal
+	idx, perr := pickTargetRecording(addr, cands, localRefMatch, "on "+alias, &refusal)
 	if perr != nil {
+		if refusal.OwnerKnown {
+			d.logDeliveryRefusedOwner(refusal.Name, refusal.OwnerUID, refusal.MatchedUIDs, caller.Ref)
+		}
 		return perr
 	}
 	name := cands[idx].Name
@@ -101,14 +105,10 @@ func (d *delivery) sendLocal(ctx context.Context, caller agentView, addr parsedA
 		return notSent(localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE, "%s could not be reread: %v", name, err)
 	}
 
-	// Uniqueness is judged over the whole local table, not only the Agents the
-	// caller can see, so a duplicate elsewhere still forces the ref into the
-	// signature.
-	counts := make(map[string]int, len(all))
-	for _, a := range all {
-		counts[a.Name]++
-	}
-	sig, ok := signatureFor(caller.Name, caller.Ref, counts[caller.Name] == 1, alias)
+	// Whether the caller's signature carries a ref follows the same decision
+	// that renders its address: the Broker already decided it over the whole
+	// table, so a duplicate outside the caller's view does not change it.
+	sig, ok := signatureFor(caller.Name, caller.Ref, !caller.RefMandatory, alias)
 	if !ok {
 		// The caller's own name and ref come from this Broker, so a failure here
 		// is a local defect, not a bad address.

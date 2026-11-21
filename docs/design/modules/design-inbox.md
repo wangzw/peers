@@ -123,7 +123,9 @@ type Session struct {
 
 ### 进程树的判断
 
-Claude Code 把所属会话的 inbox socket 路径放在它启动的命令与 MCP 服务进程的环境变量 `CLAUDE_CODE_MESSAGING_SOCKET` 中。`InSession` 在这个变量非空时报告本进程在某个会话的进程树内；Broker 因此不能在会话的进程树内启动，在会话里启动的 Broker 以退出码 6 失败，见 [broker](design-broker.md)。
+Claude Code 把所属会话的 inbox socket 路径放在它启动的命令与 MCP 服务进程的环境变量 `CLAUDE_CODE_MESSAGING_SOCKET` 中。`InSession` 先看本进程的这个变量；非空时报告本进程在某个会话的进程树内。变量为空时，它沿父进程链向上，直到 pid 1：任一祖先的环境含非空的该变量，或祖先的 pid 在本账户的会话注册表（配置目录下的 `sessions/<pid>.json`，配置目录取 `CLAUDE_CONFIG_DIR`，未设置时取本账户默认的 `~/.claude`）中，也报告在会话的进程树内。读不到的祖先环境，例如权限不足，跳过并继续向上；读不到某个进程的父进程号时停止向上遍历，视为不在会话中，理由是再没有可检查的祖先，猜测只会把会话外的进程误判为在会话内。链长上限 256 层，防止异常数据造成循环。只读取进程信息，不发信号；Linux 从 `/proc/<pid>/stat` 取父进程号、从 `/proc/<pid>/environ` 取环境，macOS 用 `sysctl` 的 `kern.proc.pid` 与 `kern.procargs2`。测试构建（`peers_testenv`）提供环境变量 `PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK`，设置后只关闭沿父进程链的检查，本进程自身环境变量的检查不变，发布构建完全忽略该变量；这样做的理由是测试运行器本身处在会话的进程树内，测试沙箱启动的 Broker 子进程不关闭祖先检查就会被误判为在会话内而拒绝启动。
+
+Broker 因此不能在会话的进程树内启动，在会话里启动的 Broker 以退出码 6 失败，见 [broker](design-broker.md)。先用 `setsid` 或两次 fork 把进程挂到 init 下再启动时，祖先链里已经没有会话，这项检查发现不了；这样的进程是否仍被 Claude Code 视为会话的子进程，取决于 Claude Code 的判定方式（[ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md)）。
 
 ### 写入
 

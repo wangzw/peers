@@ -72,7 +72,7 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 	}
 
 	members := d.deps.Topics.RemoteMembers(peer)
-	refsByName, senderFound := remoteSenderRoster(members, req.SenderName, req.SenderRef)
+	refsByName, senderFound, senderRefRequired := remoteSenderRoster(members, req.SenderName, req.SenderRef)
 	if !senderFound {
 		// A concurrent copy may have claimed the id between the lookup and
 		// here; its result still wins over this rejection.
@@ -116,7 +116,7 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 
 	processCtx, cancelProcess := d.processContext(ctx)
 	defer cancelProcess()
-	res = d.processDeliver(processCtx, peer, req, refsByName, start)
+	res = d.processDeliver(processCtx, peer, req, refsByName, senderRefRequired, start)
 	done = true
 	d.logDeliver(peer, req, resultLabel(res), start)
 	return replyForResult(res)
@@ -133,20 +133,29 @@ func (d *delivery) answerHeld(ctx context.Context, peer peerID, req deliverReque
 }
 
 // remoteSenderRoster indexes the peer's announced members by name and reports
-// whether the sender's name and ref are among them.
-func remoteSenderRoster(members []remoteMember, name, ref string) (map[string]map[string]struct{}, bool) {
+// whether the sender's name and ref are among them, and whether the sender's
+// entry requires a ref in every signature.
+func remoteSenderRoster(members []remoteMember, name, ref string) (map[string]map[string]struct{}, bool, bool) {
 	refsByName := make(map[string]map[string]struct{}, len(members))
 	found := false
+	senderRefRequired := false
 	for _, m := range members {
-		if refsByName[m.Name] == nil {
-			refsByName[m.Name] = make(map[string]struct{})
+		// A ref-required member shares the name but must not add a ref to the
+		// owner's signature: the owner stays ref-free next to it. Only members
+		// whose publisher does not require a ref take part in the uniqueness
+		// count.
+		if !m.RefRequired {
+			if refsByName[m.Name] == nil {
+				refsByName[m.Name] = make(map[string]struct{})
+			}
+			refsByName[m.Name][m.Ref] = struct{}{}
 		}
-		refsByName[m.Name][m.Ref] = struct{}{}
 		if m.Name == name && m.Ref == ref {
 			found = true
+			senderRefRequired = m.RefRequired
 		}
 	}
-	return refsByName, found
+	return refsByName, found, senderRefRequired
 }
 
 // processDeliver runs the checks and the write for one owned delivery request.
@@ -154,7 +163,7 @@ func remoteSenderRoster(members []remoteMember, name, ref string) (map[string]ma
 // for the uniqueness rule of the signature. It resolves the target only among
 // local Agents: a received message is never forwarded to another link
 // (architecture.md:281).
-func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverRequest, refsByName map[string]map[string]struct{}, start time.Time) *deliverpb.DeliverResult {
+func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverRequest, refsByName map[string]map[string]struct{}, senderRefRequired bool, start time.Time) *deliverpb.DeliverResult {
 	alias := d.deps.Peers.EffectiveAlias(peer)
 	addr := func(name, ref string, unique bool) string {
 		sig, ok := signatureFor(name, ref, unique, alias)
@@ -170,12 +179,19 @@ func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverR
 		return d.deps.Topics.VisibleRemote(a.ID, peer, req.SenderName, req.SenderRef)
 	}, addr)
 
-	idx, perr := pickTarget(parsedAddress{Name: req.TargetName, Ref: req.TargetRef}, cands, localRefMatch, "on this Broker")
+	var refusal nameOwnerRefusal
+	idx, perr := pickTargetRecording(parsedAddress{Name: req.TargetName, Ref: req.TargetRef}, cands, localRefMatch, "on this Broker", &refusal)
 	if perr != nil {
+		if refusal.OwnerKnown {
+			d.logDeliveryRefusedOwner(refusal.Name, refusal.OwnerUID, refusal.MatchedUIDs, peer.String())
+		}
 		return errorRecord(perr)
 	}
 
-	sig, ok := signatureFor(req.SenderName, req.SenderRef, len(refsByName[req.SenderName]) == 1, alias)
+	// A member whose publisher requires a ref always carries one in the
+	// signature, the same rule remoteCandidates applies to its address.
+	sig, ok := signatureFor(req.SenderName, req.SenderRef,
+		len(refsByName[req.SenderName]) == 1 && !senderRefRequired, alias)
 	if !ok {
 		return errorRecord(notSent(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, "sender name has no usable signature"))
 	}

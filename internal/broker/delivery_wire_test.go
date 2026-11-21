@@ -134,7 +134,7 @@ func TestTopicVisibilityMapsTable(t *testing.T) {
 	b := AgentID("agent-b")
 	c := AgentID("agent-c")
 	for _, id := range []AgentID{a, b, c} {
-		topics.AgentChanged(id, string(id), "", "1a2b3c", "idle")
+		topics.AgentChanged(id, Member{Name: string(id), Ref: "1a2b3c", Status: "idle"})
 	}
 	if err := topics.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)

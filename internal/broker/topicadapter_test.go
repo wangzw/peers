@@ -115,8 +115,8 @@ func TestTopicAdapterJoinLeave(t *testing.T) {
 	r := topic.New(nopTopicTransport{}, topic.Options{Self: link.Fingerprint{1}})
 	table := NewTopicTable(r)
 
-	table.AgentChanged("ag1", "worker", "", "ref1", "idle")
-	table.AgentChanged("ag2", "front", "old", "ref2", "busy")
+	table.AgentChanged("ag1", Member{Name: "worker", Ref: "ref1", Status: "idle"})
+	table.AgentChanged("ag2", Member{Name: "front", PrevName: "old", Ref: "ref2", Status: "busy", Account: "bob", RefRequired: true})
 	for _, agent := range []AgentID{"ag1", "ag2"} {
 		if err := table.Join(agent, "t1"); err != nil {
 			t.Fatalf("Join(%s, t1): %v", agent, err)
@@ -155,7 +155,7 @@ func TestTopicAdapterJoinLeave(t *testing.T) {
 	if got.Local != "ag2" || got.Peer != ([32]byte{}) {
 		t.Fatalf("VisibleAgents(ag1)[0] = Local %q Peer %x, want ag2 and no peer", got.Local, got.Peer)
 	}
-	want := Member{Name: "front", Ref: "ref2", Status: "busy", PrevName: "old"}
+	want := Member{Name: "front", Ref: "ref2", Status: "busy", PrevName: "old", Account: "bob", RefRequired: true}
 	if got.Member != want {
 		t.Fatalf("VisibleAgents(ag1)[0].Member = %+v, want %+v", got.Member, want)
 	}

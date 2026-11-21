@@ -137,7 +137,7 @@ func TestJoinAndTopicsOf(t *testing.T) {
 	r, _ := pubNewRegistry(t, fl)
 	const a AgentID = "a"
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
 	if err := r.Join(a, "release"); err != nil {
 		t.Fatalf("Join(release): %v", err)
 	}
@@ -167,7 +167,7 @@ func TestJoinFrameOrder(t *testing.T) {
 	pubLinkPeer(t, r, fl, p, salt, "t9")
 	pubLinkPeer(t, r, fl, q, salt)
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
 	if err := r.Join(a, "t9"); err != nil {
 		t.Fatalf("Join(a, t9): %v", err)
 	}
@@ -187,7 +187,7 @@ func TestJoinFrameOrder(t *testing.T) {
 
 	fl.clearSent(p)
 	fl.clearSent(q)
-	r.AgentChanged(b, "frontend", "", "bbbbbb", "")
+	r.AgentChanged(b, Member{Name: "frontend", Ref: "bbbbbb"})
 	if err := r.Join(b, "t9"); err != nil {
 		t.Fatalf("Join(b, t9): %v", err)
 	}
@@ -213,8 +213,8 @@ func TestLeaveFrames(t *testing.T) {
 	p := fakeLinkFingerprint(1)
 	pubLinkPeer(t, r, fl, p, salt, "t1")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
-	r.AgentChanged(b, "frontend", "", "bbbbbb", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
+	r.AgentChanged(b, Member{Name: "frontend", Ref: "bbbbbb"})
 	if err := r.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)
 	}
@@ -255,8 +255,8 @@ func TestLeaveAllFrames(t *testing.T) {
 	p := fakeLinkFingerprint(1)
 	pubLinkPeer(t, r, fl, p, salt, "t1", "t2")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
-	r.AgentChanged(b, "frontend", "", "bbbbbb", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
+	r.AgentChanged(b, Member{Name: "frontend", Ref: "bbbbbb"})
 	for _, step := range []struct {
 		agent AgentID
 		topic string
@@ -298,7 +298,7 @@ func TestIdempotentAndInvalid(t *testing.T) {
 	p := fakeLinkFingerprint(1)
 	pubLinkPeer(t, r, fl, p, salt, "t1")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
 	if err := r.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)
 	}
@@ -340,14 +340,14 @@ func TestAgentChangedFrames(t *testing.T) {
 	p := fakeLinkFingerprint(1)
 	pubLinkPeer(t, r, fl, p, salt, "t1")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
 	if err := r.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)
 	}
 	d := digest(salt, r.self, "t1")
 
 	fl.clearSent(p)
-	r.AgentChanged(a, "api-v2", "api-worker", "aaaaaa", "busy")
+	r.AgentChanged(a, Member{Name: "api-v2", Ref: "aaaaaa", Status: "busy", PrevName: "api-worker"})
 	pf := fl.sentFrames(p)
 	if len(pf) != 1 {
 		t.Fatalf("rename produced %d frames, want 1", len(pf))
@@ -357,7 +357,7 @@ func TestAgentChangedFrames(t *testing.T) {
 		[]memberKey{{Name: "api-worker", Ref: "aaaaaa"}}, nil)
 
 	fl.clearSent(p)
-	r.AgentChanged(a, "api-v2", "", "aaaaaa", "busy")
+	r.AgentChanged(a, Member{Name: "api-v2", Ref: "aaaaaa", Status: "busy"})
 	pf = fl.sentFrames(p)
 	if len(pf) != 1 {
 		t.Fatalf("clearing the previous name produced %d frames, want 1", len(pf))
@@ -366,7 +366,7 @@ func TestAgentChangedFrames(t *testing.T) {
 		[]Member{{Name: "api-v2", Ref: "aaaaaa", Status: "busy"}})
 
 	fl.clearSent(p)
-	r.AgentChanged(a, "api-v2", "", "aaaaaa", "idle")
+	r.AgentChanged(a, Member{Name: "api-v2", Ref: "aaaaaa", Status: "idle"})
 	pf = fl.sentFrames(p)
 	if len(pf) != 1 {
 		t.Fatalf("a status change produced %d frames, want 1", len(pf))
@@ -375,7 +375,7 @@ func TestAgentChangedFrames(t *testing.T) {
 		[]Member{{Name: "api-v2", Ref: "aaaaaa", Status: "idle"}})
 
 	fl.clearSent(p)
-	r.AgentChanged(a, "api-v2", "", "aaaaaaa", "waiting")
+	r.AgentChanged(a, Member{Name: "api-v2", Ref: "aaaaaaa", Status: "waiting"})
 	pf = fl.sentFrames(p)
 	if len(pf) != 1 {
 		t.Fatalf("a Ref change produced %d frames, want 1", len(pf))
@@ -385,7 +385,7 @@ func TestAgentChangedFrames(t *testing.T) {
 		[]memberKey{{Name: "api-v2", Ref: "aaaaaa"}}, nil)
 
 	fl.clearSent(p)
-	r.AgentChanged(a, "api-v2", "", "aaaaaaa", "waiting")
+	r.AgentChanged(a, Member{Name: "api-v2", Ref: "aaaaaaa", Status: "waiting"})
 	if pf := fl.sentFrames(p); len(pf) != 0 {
 		t.Errorf("an unchanged AgentChanged produced %d frames, want 0", len(pf))
 	}
@@ -401,10 +401,10 @@ func TestAgentChangedWithoutTopics(t *testing.T) {
 	p := fakeLinkFingerprint(1)
 	pubLinkPeer(t, r, fl, p, salt, "t1")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
-	r.AgentChanged(a, "api-v2", "api-worker", "aaaaaa", "busy")
-	r.AgentChanged(a, "api-v3", "api-v2", "bbbbbb", "idle")
-	r.AgentChanged(a, "", "", "", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
+	r.AgentChanged(a, Member{Name: "api-v2", Ref: "aaaaaa", Status: "busy", PrevName: "api-worker"})
+	r.AgentChanged(a, Member{Name: "api-v3", Ref: "bbbbbb", Status: "idle", PrevName: "api-v2"})
+	r.AgentChanged(a, Member{})
 
 	if pf := fl.sentFrames(p); len(pf) != 0 {
 		t.Errorf("AgentChanged for an agent without topics sent %d frames, want 0", len(pf))
@@ -423,8 +423,8 @@ func TestDeltaOnlyToSharingPeers(t *testing.T) {
 	pubLinkPeer(t, r, fl, p, salt, "t1")
 	pubLinkPeer(t, r, fl, q, salt, "t2")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
-	r.AgentChanged(b, "frontend", "", "bbbbbb", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
+	r.AgentChanged(b, Member{Name: "frontend", Ref: "bbbbbb"})
 	if err := r.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)
 	}
@@ -434,7 +434,7 @@ func TestDeltaOnlyToSharingPeers(t *testing.T) {
 	fl.clearSent(p)
 	fl.clearSent(q)
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "busy")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa", Status: "busy"})
 
 	if pf := fl.sentFrames(p); len(pf) != 1 {
 		t.Errorf("sharing peer p received %d frames, want 1", len(pf))
@@ -462,7 +462,7 @@ func TestPeersVisitedInFingerprintOrder(t *testing.T) {
 		order = append(order, peer)
 	})
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
 	if err := r.Join(a, "t1"); err != nil {
 		t.Fatalf("Join(a, t1): %v", err)
 	}
@@ -484,7 +484,7 @@ func TestSendErrorIsTolerated(t *testing.T) {
 	pubLinkPeer(t, r, fl, p, salt, "t1")
 	pubLinkPeer(t, r, fl, q, salt, "t1")
 
-	r.AgentChanged(a, "api-worker", "", "aaaaaa", "")
+	r.AgentChanged(a, Member{Name: "api-worker", Ref: "aaaaaa"})
 	fl.clearSent(p)
 	fl.clearSent(q)
 	fl.setFailSend(p, true)

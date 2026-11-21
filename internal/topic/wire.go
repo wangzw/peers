@@ -51,6 +51,8 @@ func memberToWire(m Member) *topicpb.Member {
 		Ref:          m.Ref,
 		Status:       statusToWire(m.Status),
 		PreviousName: m.PrevName,
+		Account:      m.Account,
+		RefRequired:  m.RefRequired,
 	}
 }
 
@@ -61,10 +63,12 @@ func memberFromWire(p *topicpb.Member) Member {
 		return Member{}
 	}
 	return Member{
-		Name:     p.Name,
-		Ref:      p.Ref,
-		Status:   statusFromWire(p.Status),
-		PrevName: p.PreviousName,
+		Name:        p.Name,
+		Ref:         p.Ref,
+		Status:      statusFromWire(p.Status),
+		PrevName:    p.PreviousName,
+		Account:     p.Account,
+		RefRequired: p.RefRequired,
 	}
 }
 
@@ -77,7 +81,8 @@ const MaxMemberNameBytes = 128
 // rules for names, disambiguators and previous names: a Ref of 6 to 12 lowercase
 // hex digits, a non-empty name without whitespace, '@', '*' or control
 // characters, and a previous name that is either empty or follows the same name
-// rule.
+// rule. The account is display-only and is not part of this check: an illegal
+// account is cleared by SanitizeAccountName, never allowed to drop the entry.
 func validMemberEntry(m Member) bool {
 	if len(m.Ref) < 6 || len(m.Ref) > 12 {
 		return false
@@ -94,6 +99,20 @@ func validMemberEntry(m Member) bool {
 		return false
 	}
 	return true
+}
+
+// SanitizeAccountName returns account when it is usable as the display-only
+// account name on a roster entry, or "" when it is not. An illegal account must
+// not cost the whole member entry, and the publisher may have sent one because
+// its own account database allows characters a member name does not.
+func SanitizeAccountName(account string) string {
+	if account == "" {
+		return ""
+	}
+	if len(account) > MaxMemberNameBytes || !validMemberName(account) {
+		return ""
+	}
+	return account
 }
 
 // validMemberName reports whether name is a non-empty member name of at most

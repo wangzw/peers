@@ -2,6 +2,7 @@ package broker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"sort"
@@ -13,6 +14,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakesession"
@@ -215,6 +217,26 @@ func TestListAgentsRemote(t *testing.T) {
 		}
 	})
 
+	t.Run("ref-required collider leaves the owner ref-free", func(t *testing.T) {
+		tb := newTestBroker(t)
+		self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
+		joinListTopics(t, tb, self, "t1")
+
+		var fp [32]byte
+		fp[0] = 0xb5
+		tb.topics.SetRemote(fp, []Member{
+			{Name: "dup", Ref: "aaaaaa"},
+			{Name: "dup", Ref: "bbbbbb", RefRequired: true},
+		}, map[string][]string{"dup": {"t1"}})
+		tb.peers.aliases[fp] = "hostB"
+
+		resp := mustListAgents(t, tb, &localpb.ListAgentsRequest{AgentId: string(self)})
+		want := []string{"dup [bbbbbb]@hostB", "dup@hostB"}
+		if got := listAddresses(resp); !slices.Equal(got, want) {
+			t.Fatalf("agents = %v, want %v: the owner must stay ref-free next to a ref-required collider", got, want)
+		}
+	})
+
 	t.Run("peer without alias is skipped", func(t *testing.T) {
 		tb := newTestBroker(t)
 		self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
@@ -231,6 +253,86 @@ func TestListAgentsRemote(t *testing.T) {
 			t.Fatalf("agents = %v, want the peer without a known alias to be skipped", got)
 		}
 	})
+}
+
+func TestListAgentsEntriesCarryAccount(t *testing.T) {
+	// REQ-agent-messaging-008: every entry names the account that registered the
+	// agent. A local entry takes the registration account; a remote entry takes
+	// the account its publisher put on the roster. The field is display only.
+	tb := newTestBroker(t)
+	b := tb.b
+	// The fixture inserts agents directly, so the session reread would revoke
+	// them; keep it from touching the table.
+	setRefreshOne(b, func(*agent) {})
+
+	caller := testAgentID("cccccc1")
+	owner := testAgentID("aaaaaa1")
+	other := testAgentID("bbbbbb1")
+	anonymous := testAgentID("dddddd1")
+
+	b.mu.Lock()
+	insertCrossAccountAgent(b, caller, "caller", 1003, 3)
+	insertCrossAccountAgent(b, owner, "worker", 1001, 1)
+	insertCrossAccountAgent(b, other, "other", 1002, 2)
+	// An agent whose account name was never looked up falls back to the
+	// decimal uid, the same fallback AgentStatusEntry.account uses.
+	insertCrossAccountAgent(b, anonymous, "anon", 1004, 4)
+	b.agents[anonymous].caller.Username = ""
+	b.recomputeRefsLocked()
+	b.mu.Unlock()
+
+	for _, id := range []AgentID{caller, owner, other, anonymous} {
+		joinListTopics(t, tb, id, "t1")
+	}
+
+	var fp [32]byte
+	fp[0] = 0xc1
+	tb.topics.SetRemote(fp,
+		[]Member{{Name: "remote-worker", Ref: "abcdef", Account: "peeracct"}},
+		map[string][]string{"remote-worker": {"t1"}})
+	tb.peers.aliases[fp] = "hostB"
+
+	resp, err := b.ListAgents(accessCallerContext(1003, "acct1003"), &localpb.ListAgentsRequest{AgentId: string(caller)})
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+
+	// Marshal the response instead of reading the Go field: the assertion then
+	// fails on a missing account rather than the test failing to compile against
+	// code that predates the field.
+	raw, err := protojson.Marshal(resp)
+	if err != nil {
+		t.Fatalf("protojson.Marshal: %v", err)
+	}
+	var decoded struct {
+		Agents []struct {
+			Address string `json:"address"`
+			Account string `json:"account"`
+		} `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	seen := make(map[string]string, len(decoded.Agents))
+	for _, a := range decoded.Agents {
+		seen[a.Address] = a.Account
+	}
+	want := map[string]string{
+		"worker@hostA":        "acct1001",
+		"other@hostA":         "acct1002",
+		"anon@hostA":          "1004",
+		"remote-worker@hostB": "peeracct",
+	}
+	for addr, acct := range want {
+		got, ok := seen[addr]
+		if !ok {
+			t.Errorf("no entry for %s in %v", addr, raw)
+			continue
+		}
+		if got != acct {
+			t.Errorf("account for %s = %q, want %q", addr, got, acct)
+		}
+	}
 }
 
 func TestListAgentsSkipsRemoteMemberWithInvalidRef(t *testing.T) {
@@ -475,6 +577,59 @@ func TestListAgentsLongName(t *testing.T) {
 	}
 	if name == "" || !strings.HasPrefix(long, name) {
 		t.Fatalf("address %q name = %q, want a prefix of the session name", address, name)
+	}
+}
+
+// TestListAgentsLongNameAddressCarriesFullRef checks that the truncated address
+// list_agents shows always carries the full twelve-character ref, and that a
+// caller can select the Agent with exactly that address.
+func TestListAgentsLongNameAddressCarriesFullRef(t *testing.T) {
+	tb := newTestBroker(t)
+	caller := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
+	longName := strings.Repeat("x", 70)
+	longID := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: longName}))
+	joinListTopics(t, tb, caller, "t1")
+	joinListTopics(t, tb, longID, "t1")
+
+	resp := mustListAgents(t, tb, &localpb.ListAgentsRequest{AgentId: string(caller)})
+	if len(resp.GetAgents()) != 1 {
+		t.Fatalf("agents = %v, want one entry", listAddresses(resp))
+	}
+	address := resp.GetAgents()[0].GetAddress()
+	name, ref, alias, ok := ParseAddress(address)
+	if !ok {
+		t.Fatalf("address %q does not parse", address)
+	}
+	if alias != "hostA" {
+		t.Fatalf("address %q alias = %q, want hostA", address, alias)
+	}
+	if len(ref) != 12 {
+		t.Fatalf("address %q carries a %d-character ref, want the full 12", address, len(ref))
+	}
+	if !strings.HasPrefix(longName, name) {
+		t.Fatalf("address %q name = %q, want a prefix of the long name", address, name)
+	}
+
+	agents := newCrossAccountAgents()
+	inbox := newRecordingInbox()
+	agents.refresh(tb.b, map[string]*recordingInbox{string(longID): inbox})
+	topics := &deliveryTopics{
+		local: map[string][]string{
+			string(caller): {"t1"},
+			string(longID): {"t1"},
+		},
+		remote: make(map[peerID][]deliveryRemoteEntry),
+	}
+	d := newCollisionDelivery(agents, topics, &syncBuffer{})
+	if err := d.Send(context.Background(), agents.views[string(caller)], address, "hello"); err != nil {
+		t.Fatalf("Send to the listed truncated address: %v", err)
+	}
+	calls := inbox.Calls()
+	if len(calls) != 1 {
+		t.Fatalf("the long-named Agent received %d messages, want 1", len(calls))
+	}
+	if calls[0].Sig != "caller@hostA" {
+		t.Fatalf("signature = %q, want caller@hostA", calls[0].Sig)
 	}
 }
 

@@ -52,6 +52,7 @@ func (h *handlers) ListAgents(ctx context.Context, in ListAgentsIn) (ListAgentsO
 			SharedTopics: topics,
 			Status:       agentStatusName(a.GetStatus()),
 			PreviousName: a.GetPreviousName(),
+			Account:      a.GetAccount(),
 		})
 	}
 	return out, nil

@@ -13,7 +13,7 @@
 - 接受 MCP 服务进程的登记：经 `inbox` 在调用方账户的会话注册表中找到会话记录，核对记录所载 inbox socket 的属主是调用方账户，会话名可用时以 socket 路径为身份建立 Agent 记录；同一 socket 路径上的多个登记连接归于同一个 Agent，最后一个断开时删除它并通知 `topic` 清除其成员关系；没有完成登记的会话不出现在任何结果中，也不能成为目标（[ADR-register-through-mcp-server-process](../../adr/adr-register-through-mcp-server-process.md)，[ADR-agent-identity-by-inbox-socket](../../adr/adr-agent-identity-by-inbox-socket.md)，`REQ-agent-messaging-001`、`REQ-agent-messaging-002`、`REQ-agent-messaging-012`、`REQ-agent-messaging-030`、`REQ-agent-messaging-034` 至 `REQ-agent-messaging-036`、`REQ-broker-config-020`）。
 - 跟踪已登记会话的变化：经 `inbox` 监听会话注册表目录，并在列出 Agent 与投递之前按需重读；名字变化时更新名字并记下曾用名，状态变化时更新状态，记录消失时注销（`REQ-agent-messaging-005`、`REQ-agent-messaging-010`、`REQ-agent-messaging-033`）。
 - 系统级形态下为每个被服务的账户维持一个辅助进程，把查找、监听、重读该账户的会话注册表和向该账户的会话写入的操作交给它以该账户的身份执行。
-- 为每个 Agent 生成地址：名字取会话名的规范化结果；同名时，或名字不能原样出现在署名中，或放不下时，附消歧标识，别名取看到该地址的 Broker 对其所在 Broker 的生效别名（`REQ-agent-messaging-003`、`REQ-agent-messaging-004`、`REQ-agent-messaging-006`、`REQ-agent-messaging-029`、`REQ-agent-messaging-037`）。
+- 为每个 Agent 生成地址：名字取会话名的规范化结果；名字归属于另一个账户，或归属账户下这个名字不唯一，或名字不能原样出现在署名中，或放不下而截短名字时，附消歧标识，放不下而截短名字时消歧标识固定取完整 12 位，别名取看到该地址的 Broker 对其所在 Broker 的生效别名（`REQ-agent-messaging-003`、`REQ-agent-messaging-004`、`REQ-agent-messaging-006`、`REQ-agent-messaging-029`、`REQ-agent-messaging-037`、`REQ-agent-messaging-047`）。
 - 把 Agent 地址解析为本机 Agent 或远端 Agent，名字有歧义时拒绝，以曾用名为目标时给出现在的地址（`REQ-agent-messaging-007`、`REQ-agent-messaging-031`）。
 - 执行发送：检查帧大小与可见性，本机目标交给 `inbox` 写入，远端目标经 `link` 请求对端投递，全程同步（[ADR-synchronous-delivery](../../adr/adr-synchronous-delivery.md)），结果是成功、未送达或结果未知（`REQ-agent-messaging-013` 至 `REQ-agent-messaging-020`、`REQ-agent-messaging-026` 至 `REQ-agent-messaging-028`）。
 - 处理对端的投递请求：检查 `broker.offline`，去重，核对发送方，检查可见性，拼出署名，在请求的预算内交给 `inbox` 写入并重试，返回结果（`REQ-agent-messaging-018`、`REQ-agent-messaging-022`）。下线时以 `broker_offline` 拒绝，不写入会话；链路、成员关系、名录对账与新的配对不受影响（`REQ-agent-messaging-039` 至 `REQ-agent-messaging-041`）。
@@ -231,7 +231,7 @@ Agent 地址的文法是对模型的稳定承诺：
 别名     = 1 至 24 个字符，取自字母、数字、"."、"-"、"_"
 ```
 
-地址中的名字是 Agent 的名字经署名清洗、必要时截短的结果，见“处理投递请求”中署名的生成；地址整体不超过 64 个码点。Agent 的名字不含空白、`@` 与 `*`，名字部分末尾的 ` [` 因此只出现在消歧标识之前。
+地址中的名字是 Agent 的名字经署名清洗、必要时截短的结果，见“处理投递请求”中署名的生成；地址整体不超过 64 个码点。名字被截短时，地址一定带完整 12 位消歧标识。Agent 的名字不含空白、`@` 与 `*`，名字部分末尾的 ` [` 因此只出现在消歧标识之前。
 
 ## 依赖
 
@@ -276,7 +276,9 @@ Agent 记录，只存在于内存，以 inbox socket 路径为身份（[ADR-agen
 | 字段 | 含义 |
 |---|---|
 | `ID` | 对字符串 `session:` 接 socket 路径求 SHA-256 的十六进制结果，同一 socket 路径的登记总得到同一个 `ID`；socket 路径先规范化为绝对路径，不是绝对路径或含 `..` 的写法按找不到记录等待，以 `session_record_not_found` 报告 |
-| `Ref` | 消歧标识，取 `ID` 的前 12 位中能在本 Broker 的全部 Agent 之间区分的最短前缀，至少 6 位；算法与 Claude Code 会话列表中的标识相同，在 Claude Code 的默认配置下两者取值相同，各自比较的范围不同时长度可能不同，较短的是较长的前缀。本 Broker 上的 Agent 增减使某个 Agent 的 `Ref` 变长或变短时，按 Agent 的变化推送 |
+| `Ref` | 消歧标识，取 `ID` 的前 12 位中能在本 Broker 的全部 Agent 之间区分的最短前缀，至少 6 位；算法与 Claude Code 会话列表中的标识相同，在 Claude Code 的默认配置下两者取值相同，各自比较的范围不同时长度可能不同，较短的是较长的前缀。名字归属于另一个账户时固定取 `ID` 的前 12 位。名字长到在某个合法别名下渲染地址会截短时，也固定取 `ID` 的前 12 位，使截短的地址总能被解析。本 Broker 上的 Agent 增减使某个 Agent 的 `Ref` 变长或变短时，按 Agent 的变化推送（[ADR-name-ownership-by-account](../../adr/adr-name-ownership-by-account.md)，`REQ-agent-messaging-006`、`REQ-agent-messaging-047`） |
+| `RefPinned` | 为真表示名字归属于另一个账户，`Ref` 固定为 12 位，短于 12 位的标识不匹配这个 Agent。名字放不下而固定取 12 位时它为假 |
+| `RefMandatory` | 为真表示地址与署名必须带消歧标识：名字归属于另一个账户，或归属账户下这个名字不唯一，或名字没有归属而全表不唯一。`recomputeRefsLocked` 随 Agent 表重算，变化时推送 `agent_changed` 并更新 topic 成员 |
 | `SocketPath` | 会话的 inbox socket 路径 |
 | `Account` | 登记连接的进程凭据给出的账户，也是 socket 文件的属主 |
 | `ConfigDir`、`RecordPID` | 会话记录所在的配置目录与记录的进程号，用于重读 |
@@ -285,6 +287,16 @@ Agent 记录，只存在于内存，以 inbox socket 路径为身份（[ADR-agen
 | `PublicTopics` | 该 Agent 以公开方式加入的 topic 名集合，用于退出或注销时撤回公开声明，以及 Broker 改为公开时重新声明 |
 | `Status` | 会话状态，取 `idle`、`busy`、`waiting`、`shell` 之一；记录中缺失或不认识的值记为未知，线上以 `AGENT_STATUS_UNSPECIFIED` 表示状态未知 |
 | `Conns` | 归于该 Agent 的登记连接数 |
+
+名字归属表，持久保存在数据目录的 `name-owners.json`（[ADR-name-ownership-by-account](../../adr/adr-name-ownership-by-account.md)）：
+
+| 字段 | 含义 |
+|---|---|
+| 名字 | 经 `inbox` 的 `NormalizeName` 规范化后的名字，也是文件中的键 |
+| 归属账户 | 最先登记这个名字的账户 uid，持有期间或释放前沿用 |
+| 最后持有时刻 | 归属账户的最后一个持有者离开或改名时的时刻，RFC 3339；持有中的条目在每小时扫描时更新为扫描时刻，写盘时写成写盘时刻 |
+
+“持有”指归属账户下至少有一个已登记的 Agent 当前叫这个名字。文件格式为 `{"format":1,"records":[{"name":<名字>,"uid":<uint32>,"last_held":<RFC 3339>}]}`；条目按账户键计额度，键与 uid 不同时（该 uid 查不到账户条目，共用未知账户键）另写 `account_key`，缺省按 uid 计，旧文件因此照常读入。登记或改名到某个名字时，该名字没有未过期的条目就记为当前账户，有则不变。条目只在无人持有且距最后持有时刻满 7 天时过期；每小时扫一遍，查表时也判断过期，释放的精度在一小时以内。每小时扫描同时把当前持有的条目刷新为扫描时刻并标脏写盘，使重启后仍持有的名字从最近一次写盘时刻重新起算 7 天，而不是从登记时刻起算而被误释放。查询路径（例如 `list_agents`）触发的过期与扫描走同一条路径：归属变化时重算消歧标识并推送 `agent_changed` 与成员变化，不静默转移。条目过期而其他账户此刻正持有这个名字时，归属转给其中登记最早的 Agent 所在账户。每个账户至多 1024 条，查不到账户条目的 uid 共用同一份额度（按 `accountKeyFor` 的结果计，与其它每账户上限一致，一个轮换 subuid 的容器不能倍增它），全表至多 65536 条；超出时淘汰最旧的、未被持有的条目（单账户上限先淘汰该账户的，全表上限再淘汰全表最旧的）。账户键在 `Broker.mu` 之外算出，登记与改名路径都不在锁内查询账户数据库。该账户的条目全部在持有中时不记录新名字，名字暂时没有归属，行为与没有归属表时相同，并记一次 Warn `name_owner_table_full`（字段 uid、account_key、limit），回落到上限以下之前同一账户只记一次。文件按名字排序，内容相同则字节相同，权限 0600，写入经临时文件加改名并同步目录；写盘与扫描都不在持有 `Broker.mu` 时进行，锁内只取快照。文件无法解析或格式未知时记 Warn `name_owners_unreadable` 并从空表开始，该文件在下次写入前改名为 `name-owners.json.corrupt-<时刻>` 保留；读取本身失败按数据目录不可用处理。写盘失败以 Warn 记录，连续失败只记第一条，成功一次后恢复记录。用户级 Broker 走同一份代码，全部条目归属同一个账户。
 
 调用方记录，每个本机接口连接一条，在接受连接时建立，连接关闭时丢弃：进程凭据给出的账户、附属组所依据的账户名。同一连接上的全部调用都归于这个账户。
 
@@ -323,7 +335,7 @@ Broker A 自报的别名是 `hostA`，Broker B 自报的别名是 `hostB`，A �
 ### 进程启动与单实例
 
 1. 确定形态。带 `--system` 而进程不是以 root 运行的，报错退出。
-2. 经 `inbox` 的 `InSession` 检查自己是否运行在某个 Claude Code 会话的进程树内，是则报错退出。
+2. 经 `inbox` 的 `InSession` 检查自己是否运行在某个 Claude Code 会话的进程树内，是则报错退出，说明为 `this process or one of its parent processes belongs to a Claude Code session`，退出码 6。`InSession` 先看本进程的环境变量，再沿父进程链向上：任一祖先的环境含非空的 `CLAUDE_CODE_MESSAGING_SOCKET`，或祖先的 pid 出现在本账户的会话注册表中，即判定在会话的进程树内；读不到的祖先跳过，链长上限 256 层（`REQ-broker-config-056`）。
 3. 对账户锁加排他的文件锁，拿不到即报告已有实例在运行并退出；取得解析出的那把锁之后，再检查本账户另一处候选运行时目录的账户锁，任一处被本账户运行中的实例持有都按已有实例处理，错误文字相同。账户锁的路径由 `config` 给出，只取决于本进程的账户，与形态、配置内容和监听地址无关；以不同的监听地址再启动一个实例，同样拿不到锁。系统级 Broker 取的是 root 的账户锁，root 因此不能同时运行一个系统级和一个用户级的实例。
 4. 加载配置，把 `--listen` 给出的地址作为本次运行的监听地址。带 `--allow-degraded` 时，`Load` 因审计日志不可用而失败使进程转入仅诊断；配置文件读取与解析、取值校验、对外地址准备的失败都与不带该参数时一样使进程退出。
 5. 按顺序执行各装配器：由装配器依次打开身份与对端表、构造 link 并把拨号与关闭链路的能力注入 `pairing`、构造 topic 与名录，各包实例在此时建立；配置读写与审计的装配器排在最后，把权限拦截器加入本机接口的服务端选项；随后构造本机接口并启动各组件，各组件在此时注册链路帧处理、配置变更的订阅与 `broker.listen` 的校验函数，早于本机 socket 的绑定与 `link` 的启动，因此先于任何入站连接和链路事件生效。身份、对端表与名录由装配器打开，不在 `Load` 里；装配器把打开它们时的“数据目录不可用”错误包上 `config` 导出的哨兵（[config](design-config.md) 的“错误与失败语义”）。带 `--allow-degraded` 时，`run.go` 用 `errors.Is` 认出这个哨兵并转入仅诊断；其余装配或组件启动失败照常致命退出。
@@ -405,7 +417,7 @@ stateDiagram-v2
 | 步骤 | `fix` |
 |---|---|
 | 监听绑定 | `peers config set broker.listen <free address>`，或编辑 `<配置文件路径>` 中的 `broker.listen`；系统级加 `sudo`。低端口规则拒绝时改为 `chmod g-w <配置文件>`，或改用 1024 以上的端口 |
-| 数据目录（身份、对端表、名录） | 检查 `<数据目录>` 的属主与权限，然后 `peers service restart`；不重启时每分钟重试 |
+| 数据目录（身份、对端表、名录、名字归属） | 检查 `<数据目录>` 的属主与权限，然后 `peers service restart`；不重启时每分钟重试 |
 | 审计日志 | 检查 `<审计日志路径>` 的属主与权限，然后 `peers service restart`；不重启时每分钟重试 |
 
 ### 调用方的识别与权限判定
@@ -453,15 +465,15 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 4. 以 `NormalizeName` 规范化记录中的会话名；规范化结果在 UTF-8 字符边界上截到不超过 128 字节，截断后留在末尾的 `-` 去掉。结果为空、经 `CleanSignature` 清洗后为空或含有 `@` 或 `*` 时名字不可用，没有替代名（`REQ-agent-messaging-030`）。
 5. 找不到记录或名字不可用时，登记处于等待，随注册表目录的变化重新执行第 2 步至第 4 步；10 秒后仍不满足时，在下行流上发出 `not_registered`，说明是哪一种原因，流保持打开，继续等待。事件除原因枚举外带一个可选的 `detail` 说明：名字不可用时它写明具体规则（会话名为空、清洗后没有接收方可见的字符、含 `@` 或含 `*`），不回显会话名本身；其余原因没有更细的信息时留空。
 6. 第 2 步由辅助进程执行时，`Lookup` 返回的错误若包装了哨兵 `helper.ErrUnavailable`（用 `errors.Is` 判定，不按错误文本匹配），说明该账户的辅助进程未能启动，或与它的通信失败。派生失败（包括派生之前查询账户数据库失败）、就绪帧超时和管道断开都由辅助进程一侧用 `%w` 包装该哨兵。登记同样等待并重试，10 秒后以 `account_helper_failed` 报告。记录存在但读不到，例如权限拒绝，不包装该哨兵，仍按 `session_record_not_found` 报告。除找不到记录与记录只写了一半之外，`Lookup` 的每次失败都记一条 Warn 运行日志，因此即使原因仍是 `session_record_not_found`，失败也留在 Broker 日志里。报告因此指向辅助进程与 Broker 日志，不会把读者引向一条可能存在的会话记录。本机接口只追加这一个枚举取值，不提升本机协议版本。
-7. 条件满足后，socket 路径上已有 Agent 的，把这条连接归于它，`Conns` 加一；没有的，以 socket 路径为身份建立 Agent 记录。在下行流上发出登记完成。
+7. 条件满足后，socket 路径上已有 Agent 的，把这条连接归于它，`Conns` 加一；没有的，以 socket 路径为身份建立 Agent 记录。在下行流上发出登记完成。新 Agent 的名字在归属表中没有未过期的条目时，记为本次登记的账户；有未过期的条目时不改变归属。
 
-最后一个登记连接断开时 Agent 注销，`topic` 清除它的全部成员关系。用户在会话中停用本系统的 MCP 服务后，MCP 服务进程被结束，连接断开，Agent 随之注销；重新启用后新的 MCP 服务进程以同一个 socket 路径登记，得到同一个 Agent 标识，地址的消歧标识按当时的 Agent 集合计算（`REQ-agent-messaging-034`）。子代理经主会话的 MCP 服务进程调用工具，以主会话的 Agent 身份行事；子代理定义中自行声明本服务而另起的进程，以同一个 socket 路径登记，归于同一个 Agent（`REQ-agent-messaging-035`）。无界面运行的会话与交互式会话同样有注册表记录并绑定 inbox，登记没有区别（`REQ-agent-messaging-036`）。
+最后一个登记连接断开时 Agent 注销，`topic` 清除它的全部成员关系，该名字若因此不再被归属账户持有，最后持有时刻更新为当时。用户在会话中停用本系统的 MCP 服务后，MCP 服务进程被结束，连接断开，Agent 随之注销；重新启用后新的 MCP 服务进程以同一个 socket 路径登记，得到同一个 Agent 标识，地址的消歧标识按当时的 Agent 集合计算（`REQ-agent-messaging-034`）。子代理经主会话的 MCP 服务进程调用工具，以主会话的 Agent 身份行事；子代理定义中自行声明本服务而另起的进程，以同一个 socket 路径登记，归于同一个 Agent（`REQ-agent-messaging-035`）。无界面运行的会话与交互式会话同样有注册表记录并绑定 inbox，登记没有区别（`REQ-agent-messaging-036`）。
 
 ### 跟踪会话的变化
 
 `inbox` 监听那些有 Agent 或有等待中登记的配置目录，不设周期性的检查。某个 Agent 的记录变化时，经 `Reread` 重读该记录；读到写了一半的内容时保留上一次的值，等待下一次变化。处理列出 Agent 的请求和投递请求之前，另重读所涉及的本机 Agent 的记录；`Status` 不重读会话记录。重读的结果按下列规则处理：
 
-- 名字变化且新名字可用：`Name` 换成新名字，原来的名字记入 `PrevName` 与 `PrevNameAt`，旧地址随即失效，下行流通知地址变化，`topic` 推送成员的变化（`REQ-agent-messaging-005`）。
+- 名字变化且新名字可用：`Name` 换成新名字，原来的名字记入 `PrevName` 与 `PrevNameAt`，旧地址随即失效，下行流通知地址变化，`topic` 推送成员的变化（`REQ-agent-messaging-005`）。新名字在归属表中没有未过期的条目时记为当前账户；旧名字若不再被归属账户持有，最后持有时刻更新为当时。
 - 状态变化：更新 `Status` 并推送。
 - 名字变得不可用：Agent 注销，各登记连接回到第 5 步的等待；名字恢复可用后重新完成登记，MCP 服务进程按重新登记恢复它记着的 topic。
 - 记录消失：视为会话结束，Agent 注销。
@@ -489,16 +501,18 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 
 1. 校验正文非空，生成消息标识，向 `inbox` 询问该正文连同最长可能的署名编码成帧后的字节数，超过 1 000 000 字节时返回 `too_large`（`REQ-agent-messaging-026`）。这个上限是常量，不可配置。最长可能的署名以发送方当前的名字与消歧标识为根据：别名长度取 1 至 24，发送方的名字在自己的 Broker 上是否唯一取两种情形，逐一按署名的规则生成，取编码后帧长最大的一个。远端目标的别名由接收方决定，发送方不知道，因此按全部别名长度与两种唯一性取上界；本机目标用同一个值，使同机与跨主机的上限一致（`REQ-agent-messaging-028`）。这个帧长由导出的 `MaxSendFrameSize` 计算，端到端测试用它求 `too_large` 的边界。
 2. 解析目标地址的别名。别名的查找先比本机别名（`broker.alias` 的生效值），再查对端表中已提交的对端，比较区分大小写；都不是时返回 `not_found`。地址整体先去首尾空白；名字部分末尾的 ` [` 后跟 6 至 12 位小写十六进制时取作消歧标识，大写十六进制不作消歧标识。
-3. 本机目标：同样以 `send.request_timeout` 为总预算，解析名字部分，向 `topic` 询问调用方与目标是否可见，重读目标的会话记录，然后调用 `inbox` 写入。署名是调用方在本机别名下的地址，按“处理投递请求”第 4 步的规则生成。`inbox` 报告未写入时按 `send.inbox_retries` 重试，报告不确定时不重试；预算用尽即返回未送达。本机的两个 Agent 可以属于不同的账户，可见性的规则不因此改变。
-4. 远端目标：以 `send.request_timeout` 为这次发送的预算，即一次发送的总时限（`REQ-agent-messaging-017`、`REQ-agent-messaging-018`）。链路已建立时，解析名字部分并检查可见性，经 `link` 发出投递请求，等待应答直到预算用尽。投递请求总是带上发送方解析出的目标的名字与消歧标识，即使模型给出的地址没有带消歧标识，接收方因此定位到发送方选定的那一个 Agent。远端成员的消歧标识按互为前缀匹配：地址中的标识与成员条目的标识，一方是另一方的前缀即视为匹配。链路刚建立而对端发来的成员名单尚未到达时，按名单为空解析，返回 `not_found`。链路未建立时，本方是拨号方的，每次等待前先促使 `link` 重新拨号，等待时间从 `send.link_backoff` 起每次翻倍、单次不超过 8 秒（[config](design-config.md)），至多 `send.link_retries` 次；本方是接受方的，不能促使对方连入，只在预算内等待链路建立（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。请求在写出之前因链路刚断开而未能交给传输层时，不立即重发，按同样的规则再等待一次，拨号方消耗一次重试次数；整个发送期间，重试次数只有一份。链路在等待应答期间中断的，重新建立后以同一消息标识重发。
+3. 本机目标：同样以 `send.request_timeout` 为总预算，解析名字部分，向 `topic` 询问调用方与目标是否可见，重读目标的会话记录，然后调用 `inbox` 写入。署名是调用方在本机别名下的地址，按地址的同一判断生成：`RefMandatory` 为真或名字放不下而截短时带消歧标识，否则不带。`inbox` 报告未写入时按 `send.inbox_retries` 重试，报告不确定时不重试；预算用尽即返回未送达。本机的两个 Agent 可以属于不同的账户，可见性的规则不因此改变。
+4. 远端目标：以 `send.request_timeout` 为这次发送的预算，即一次发送的总时限（`REQ-agent-messaging-017`、`REQ-agent-messaging-018`）。链路已建立时，解析名字部分并检查可见性，经 `link` 发出投递请求，等待应答直到预算用尽。投递请求原样带上调用方在地址里写的名字与消歧标识，不替换成成员条目的完整标识：短标识可能来自归属账户的旧地址，只有接收方按本机归属才能判断它指向谁。远端成员的消歧标识按互为前缀匹配：地址中的标识与成员条目的标识，一方是另一方的前缀即视为匹配。链路刚建立而对端发来的成员名单尚未到达时，按名单为空解析，返回 `not_found`。链路未建立时，本方是拨号方的，每次等待前先促使 `link` 重新拨号，等待时间从 `send.link_backoff` 起每次翻倍、单次不超过 8 秒（[config](design-config.md)），至多 `send.link_retries` 次；本方是接受方的，不能促使对方连入，只在预算内等待链路建立（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。请求在写出之前因链路刚断开而未能交给传输层时，不立即重发，按同样的规则再等待一次，拨号方消耗一次重试次数；整个发送期间，重试次数只有一份。链路在等待应答期间中断的，重新建立后以同一消息标识重发。
 5. 归结结果。得到对端的确定应答时原样返回；应答是错误时，把 `DeliverResult` 的 `error` 转成本机接口的 `ErrorDetail`，来源 Broker 指纹填入该对端的指纹，对端自带的来源指纹被忽略。错误码在接收方可能返回的集合（`not_found`、`ambiguous`、`not_visible`、`invalid_argument`、`too_large`、`inbox_unwritable`、`broker_offline`、`delivery_unknown`）内时保留原码，说明由本机生成：去掉对端说明开头的 `Not sent: ` 或 `Delivery unknown: `，在 UTF-8 字符边界上截到不超过 512 字节，截断时末尾加 `...`，再用 `strconv.Quote` 引用，写成 `Not sent: Broker <生效别名> said: "<引用内容>"`，码为 `delivery_unknown` 时开头改为 `Delivery unknown: `。码不在集合内时，结果为 `delivery_unknown`，说明为本机固定文字 `Delivery unknown: Broker <生效别名> returned an error this Broker does not recognize`，不转述对端文字。对端返回的错误不重试。对端以“不支持”应答时（`link` 返回 `*link.UnsupportedError`），返回 `version_mismatch`，不重发：请求已到达对方，而对方确定没有处理它。应答无法解码，或应答不是 `DeliverResult` 时，结果为 `delivery_unknown`。预算或重试用尽时，投递请求一次也没有发出的返回 `peer_unreachable`，发出过的返回 `delivery_unknown`（`REQ-agent-messaging-017`、`REQ-agent-messaging-027`）。
 
 本机 Agent 之间的发送与发往对端的发送不检查 `broker.offline`（`REQ-agent-messaging-041`）。
 
 名字部分的解析，别名与名字部分在地址的最后一个 `@` 处分开，名字先经 `NormalizeName` 规范化。解析先在调用方可见的 Agent 中进行，歧义也只在可见的 Agent 中判定：
 
-- 末尾形如 ` [6 至 12 位小写十六进制]` 的，以消歧标识定位 Agent，名字只作参考：在可见的 Agent 中取 `ID` 以该标识开头的，恰有一个时，地址中的名字与该 Agent 的现名、曾用名都经署名清洗，地址中的名字是清洗后现名的开头时取它；是清洗后曾用名的开头而与现名不符时返回 `not_found`，说明中给出它现在的地址；都不是开头时返回 `not_found`；地址中的名字清洗后为空时不匹配，同样返回 `not_found`。以该标识开头的有多个时返回 `ambiguous` 并列出各自现在的地址。
-- 其余整体当作名字，在可见的 Agent 中查找名字相同的，恰有一个时取它，有多个时返回 `ambiguous` 并列出各自带消歧标识的地址。一个也没有而有可见的 Agent 以它为曾用名时，返回 `not_found`，说明中给出该 Agent 现在的地址（`REQ-agent-messaging-031`）。
+- 末尾形如 ` [6 至 12 位小写十六进制]` 的，以消歧标识定位 Agent，名字作核对。在可见的 Agent 中取 `ID` 以该标识开头的，恰有一个时再比对名字，地址中的名字先经署名清洗：标识为 12 位时，清洗后的名字与现名完全相同，或等于这个 Agent 在某个合法别名长度（1 至 24 字节）下渲染地址时截短得到的名字即取它（别名长度由看的一方决定，对端看到并据此回复的地址未必按本机当前别名渲染，所以不按本机当前视图比对），只是现名的开头而不等于任何合法别名长度下的截短名字时不匹配；标识短于 12 位时，清洗后的名字必须与现名完全相同，或候选属于这个名字的归属账户，否则不匹配，截短的前缀不再因地址被截短而匹配。不属于归属账户的前缀名（例如把自己的 Agent 命名为 `worker2` 来回应 `worker`，或命名为 `worker` 加填充字符让地址截短）因此不会被短标识选中。清洗后的名字等于曾用名而与现名不符时返回 `not_found`，说明中给出它现在的地址；既不是现名也不是曾用名时返回 `not_found`；地址中的名字清洗后为空时不匹配，同样返回 `not_found`。以该标识开头的有多个时返回 `ambiguous` 并列出各自现在的地址。
+- 其余整体当作名字。名字有归属时，只在归属账户的可见 Agent 中查找名字相同的，恰有一个时取它，有多个时返回 `ambiguous` 并列出各自带消歧标识的地址；其他账户的同名 Agent 不参与按名查找，只能用带消歧标识的地址定位。名字没有归属时，在全部可见 Agent 中查找。远端成员条目的 `RefRequired` 为真时不参与按名查找。
+- 归属账户没有可见的同名 Agent，而有其他账户的可见同名 Agent 或 `RefRequired` 为真的可见同名成员时，返回 `not_found`，说明文字为 `no agent named "worker" on this Broker: the name belongs to another account; an agent of a different account is reached only by its full address with a disambiguator`。接收方处理投递请求时用 `on this Broker`，本机发送与发往对端的发送把 `on this Broker` 换成地址中的别名。说明不给出这些 Agent 的地址。归属账户有这个名字但不可见时仍返回 `not_visible`。
+- 目标都不存在而有可见的 Agent 以它为曾用名时，返回 `not_found`，说明中给出该 Agent 现在的地址；曾用名的提示同样只取归属账户的 Agent（`REQ-agent-messaging-031`、`REQ-agent-messaging-048`）。
 
 目标存在但只在调用方不可见的 Agent 中有匹配时返回 `not_visible`，说明中不含该 Agent 的地址；可见与不可见都没有匹配时，按上面的曾用名规则返回 `not_found`。`not_visible` 的含义是调用方与目标没有共同的 topic（[architecture](../architecture.md)）。
 
@@ -511,8 +525,8 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 0. 读取 `broker.offline`，为真时以 `broker_offline` 应答，说明为 `Broker <本机生效别名> is offline and refuses messages from other hosts`，不进去重表，不写审计，以 Debug 级记一条 `delivery_refused_offline` 运行日志。
 1. 查去重表。已有结果的返回该结果，处理中的等待其结果。已有条目与发送方此刻是否仍在成员名单中无关：第一次请求已经通过核对，重发必须得到同一个结果。
 2. 未命中时，发送方的名字与消歧标识必须与该链路对端发来的、处在当前交集内的某条成员条目的名字与消歧标识完全相同，否则以 `not_visible` 拒绝，不进去重表。投递请求帧与成员变化的状态帧在接收方不保证顺序（[link](design-link.md)），对端刚改了消歧标识而成员变化尚未处理时，这条投递会被拒；消歧标识只在对端 Broker 的 Agent 增减时变化，这个窗口很短，代价被接受。通过核对后占位为处理中：占位是原子的“未命中则占位”，同一标识的两个并发请求只有一个执行写入。该来源已有 4096 条时以 `quota_exceeded` 拒绝，说明为 `Not sent: this Broker holds too many recent messages from your Broker`，全表已满时以 `inbox_unwritable` 拒绝，说明为 `Not sent: the Broker is temporarily holding too many messages`，两种情形都不写入。查表、核对与占位之间允许并发。
-3. 按上面的规则解析目标，歧义只在对发送方可见的 Agent 中判定，使发送方得不到它看不见的 Agent 的信息。目标不存在或不可见时，说明中的地址只写名字部分（名字，需要时附 ` [消歧标识]`），后接 `on this Broker`，不写别名：接收方不知道发送方对它使用的别名。
-4. 拼出署名，即发送方在接收方视角下的 Agent 地址：名字，需要时附 ` [消歧标识]`，`@`，本方对该对端的生效别名。名字先经 `inbox` 的 `CleanSignature` 清洗，署名使用清洗后的名字；原始名字与清洗结果不同，或发送方的名字在其 Broker 上不唯一时，附消歧标识（`REQ-agent-messaging-029`）。这里的“不唯一”以该链路对端发来的、处在当前交集内的成员条目判定，按名字计不同的消歧标识数。整个署名要不超过 64 个码点，并不超过 200 字节；放不下时从末尾截短名字，并必须附消歧标识，消歧标识与别名保持完整（`REQ-agent-messaging-037`）。生成的署名经 `CleanSignature` 后必须与原文完全相同，接收方因此总能识别出发送方。
+3. 按上面的规则解析目标，歧义只在对发送方可见的 Agent 中判定，使发送方得不到它看不见的 Agent 的信息。接收方按本机名字归属再判断一次：不带消歧标识的地址只解析到归属账户的 Agent，名字属于另一个账户时返回 `not_found` 并记 `delivery_refused_owner`，发送方的判断只是提前失败。目标不存在或不可见时，说明中的地址只写名字部分（名字，需要时附 ` [消歧标识]`），后接 `on this Broker`，不写别名：接收方不知道发送方对它使用的别名。
+4. 拼出署名，即发送方在接收方视角下的 Agent 地址：名字，需要时附 ` [消歧标识]`，`@`，本方对该对端的生效别名。名字先经 `inbox` 的 `CleanSignature` 清洗，署名使用清洗后的名字；原始名字与清洗结果不同，发送方所在成员条目的 `RefRequired` 为真，或发送方的名字在其 Broker 上不唯一时，附消歧标识（`REQ-agent-messaging-029`、`REQ-agent-messaging-047`）。这里的“不唯一”以该链路对端发来的、处在当前交集内的成员条目判定，按名字计不同的消歧标识数。整个署名要不超过 64 个码点，并不超过 200 字节；放不下时从末尾截短名字，并必须附完整 12 位消歧标识，消歧标识与别名保持完整（`REQ-agent-messaging-037`）。生成的署名经 `CleanSignature` 后必须与原文完全相同，接收方因此总能识别出发送方。
 5. 由剩余预算算出本地的截止时刻，为当前时刻加上剩余预算与本机 `send.request_timeout` 中较小者；剩余预算不大于 0 时不写入，结果 `inbox_unwritable`。重读目标的会话记录；目标已结束时不写入，结果 `inbox_unwritable`。
 6. 取一个令牌。每个（来源对端指纹，目标 Agent）一个令牌桶，容量 10，每 10 秒补充 1 个；没有令牌时不写入，结果 `quota_exceeded`，说明为 `Not sent: <目标名字> is receiving too many messages from your Broker; try again in <秒数> seconds`，秒数向上取整，为 1 时单位写作 `second`。一条消息只取一次，下面的 `send.inbox_retries` 重试不再取。令牌桶只在内存中，补满的桶等同于没有；目标 Agent 结束或该对端被解除配对时删除相应的桶，链路断开时不删除，对端重连因此不能刷新额度。表的大小因此不超过已配对的对端数与本机 Agent 数的乘积。在截止时刻之前调用 `inbox` 写入，报告未写入时按 `send.inbox_retries` 重试；过了截止时刻不再写入。这次处理不随链路断开而取消，一直执行到得出结果或到达截止时刻，结果照常记入去重表，发送方重发时得到的是这个结果。本机发送不经这里，不受这条限额约束。
 7. `inbox` 报告已写入时结果为成功，报告不确定时结果为 `delivery_unknown`，其余为 `inbox_unwritable`。结果记入去重表后返回。
@@ -545,7 +559,7 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 
 ### 列出 Agent 与查看状态
 
-处理之前先重读调用方与本机各个可见 Agent 的会话记录。列出 Agent 的结果由本机可见的 Agent 与各链路上可见的远端 Agent 组成，每项的地址按署名的同一规则拼出，别名取本方的生效别名；远端项的别名取不到时（链路刚断开、对端已解除配对），该项不列出；同一 Broker 上有同名 Agent 时这些项都带消歧标识。曾用名仍在保留期内的，该项注明曾用名（`REQ-agent-messaging-032`）。调用方自己的地址单独给出，别名取本机别名。可见性只取决于 topic，与 Agent 属于哪个账户无关。
+处理之前先重读调用方与本机各个可见 Agent 的会话记录。列出 Agent 的结果由本机可见的 Agent 与各链路上可见的远端 Agent 组成，每项的地址按生成地址的同一规则拼出，别名取本方的生效别名；远端项的别名取不到时（链路刚断开、对端已解除配对），该项不列出。本机 Agent 的地址按名字归属决定是否带消歧标识：归属账户的 Agent 在不与其他同名 Agent 并存时不带，其他账户的同名 Agent 一律带 12 位；名字放不下而截短时也带完整 12 位；远端成员按其发布方的 `RefRequired` 决定是否带。每项另给出登记账户的账户名，远端成员给出其发布方自报的账户名，账户名只用于展示，不参与地址、过滤与解析（`REQ-agent-messaging-050`）。曾用名仍在保留期内的，该项注明曾用名（`REQ-agent-messaging-032`）。调用方自己的地址单独给出，别名取本机别名。可见性只取决于 topic，与 Agent 属于哪个账户无关。
 
 终端输出对来自 Broker 的字符串做清理：制表符、换行、回车与行分隔符 U+2028、段分隔符 U+2029 显示为空格，其余控制字符（C0、DEL、C1）与 Unicode 格式字符（类别 Cf，含双向覆盖符）显示为 `\xNN`（码点小于 0x100）、`\uNNNN`（不超过 0xFFFF）或 `\UNNNNNNNN`（超过 0xFFFF），无效的 UTF-8 字节显示为 `\xNN`。已用 `strconv.Quote` 加引号的值不重复处理。
 
@@ -717,7 +731,7 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 本账户的并发登记流数达上限 | `quota_exceeded` | 否 |
 | 公开 topic 简介不合法 | `invalid_argument` | 否 |
 | 编码后的帧超过上限 | `too_large` | 否 |
-| 别名未知，名字或消歧标识不存在；目标是某个 Agent 的曾用名，说明中给出它现在的地址 | `not_found` | 否 |
+| 别名未知，名字或消歧标识不存在；目标是某个 Agent 的曾用名，说明中给出它现在的地址；不带消歧标识的地址所指的名字归属于另一个账户，说明写明名字属于另一个账户 | `not_found` | 否 |
 | 名字对应多个可见的 Agent | `ambiguous` | 否 |
 | 调用方与目标不可见 | `not_visible` | 否 |
 | 调用方账户对配置文件没有所需的权限 | `permission_denied` | 否 |
@@ -734,6 +748,8 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 对端返回的集合外错误 | `delivery_unknown`，说明为本机固定文字 | 否 |
 
 对端返回集合外的错误码时，另以 Warn 级记一条 `peer_delivery_error_unrecognized` 运行日志，字段为对端指纹与错误码的整数值，不记对端说明。
+
+因名字归属拒绝按名解析时以 Info 级记一条 `delivery_refused_owner`，字段为 name、owner_uid、matched_uids（被跳过的同名 Agent 的 uid，升序）与 from（本机发送方的短标识或对端指纹），不记正文；原主人离开后的正常发送也会触发它，所以用 Info 不用 Warn。归属表满且该账户的条目全部在持有中时记 Warn `name_owner_table_full`（uid、account_key、limit），同一账户键回落到上限以下之前只记一次。`name-owners.json` 无法解析或格式未知时记 Warn `name_owners_unreadable` 并从空表开始。
 
 启动阶段的失败不经本机接口返回，带 `--allow-degraded` 时账户锁之后的可降级失败除外：监听绑定失败与数据目录、审计日志不可用经 `Status` 与 `broker_degraded` 返回，见“降级运行”。进程以非零的退出码结束，并在标准错误输出说明原因：`--system` 而不是 root、处在会话的进程树内、已有实例持有账户锁、配置不合法、监听地址不可用。用户级 Broker 由服务管理机制或用户在会话之外的终端启动，会话中的工具调用在它启动并应答本机 socket 之前返回说明没有可用 Broker 的错误。退出码的取值与标准错误的格式见命令行一节。
 
@@ -798,7 +814,8 @@ Agent 表由一把读写锁保护。发送过程只在解析地址时短暂读�
 | Agent 登记与注销 | 已实现 | `internal/broker/register.go`（`Register`）、`internal/broker/agents.go`（`lookupAgent`）、`internal/broker/localalias.go`（`localAliasChanged`） |
 | 会话变化的跟踪与曾用名 | 已实现 | `internal/broker/tracking.go`（`refreshAgent`） |
 | 账户辅助进程 | 已实现 | `internal/broker/helper/`（`Serve`、`Client`、`Pool`）、`internal/broker/system_wiring.go`（`helperPool`） |
-| 地址生成与解析 | 已实现 | `internal/broker/address.go`（`AgentIDFor`、`FormatAddress`、`ParseAddress`）、`internal/broker/resolve.go`（`parseTarget`、`pickTarget`） |
+| 地址生成与解析 | 已实现 | `internal/broker/address.go`（`AgentIDFor`、`FormatAddress`、`ParseAddress`）、`internal/broker/resolve.go`（`parseTarget`、`pickTarget`、`pickTargetByName`、`localRefMatch`）、`internal/broker/agents.go`（`nameRefFlagsLocked`、`recomputeRefsLocked`） |
+| 名字归属与过期释放 | 已实现 | `internal/broker/nameowner.go`（`nameOwnerState`、`recordNameOwnerLocked`、`expireNameOwnerLocked`、`releaseNameOwnerLocked`）、`internal/broker/agents.go`（`nonOwnerRef`、`memberLocked`） |
 | 发送、重试与结果归结 | 已实现 | `internal/broker/send.go`（`Send`）、`internal/broker/sendpeer.go`（`sendToPeer`）、`internal/broker/inboxwrite.go`（`writeInbox`） |
 | 投递请求处理、署名与去重 | 已实现 | `internal/broker/receive.go`（`handleDeliver`）、`internal/broker/signature.go`（`signatureFor`）、`internal/broker/dedupe.go`（`dedupeTable`） |
 | 各包之间的转接 | 已实现 | `internal/broker/latetransport.go`、`internal/broker/aliaswire.go`、`internal/broker/peerassemble.go`、`internal/broker/topicassemble.go` |

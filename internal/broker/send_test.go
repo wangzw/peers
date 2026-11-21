@@ -237,6 +237,11 @@ func TestSendLocalDuplicateSenderHasRef(t *testing.T) {
 	f.share(duplicate.ID, "t2")
 	f.share(target.ID, "t1")
 
+	// The Broker sets this bit on the view it hands the delivery when another
+	// agent of the same account holds the caller's name.
+	caller.RefMandatory = true
+	f.agents.put(caller)
+
 	if err := f.delivery.Send(context.Background(), caller, "frontend@hostA", "hi"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}

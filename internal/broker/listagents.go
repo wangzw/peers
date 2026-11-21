@@ -51,6 +51,15 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	// A listing must not silently take a name from one account and give it to
+	// another. Expire idle entries here and, when ownership moved, recompute the
+	// refs and push agent_changed to every registration stream and the roster,
+	// the same way the hourly sweep does.
+	if b.nameOwnerPushPending || b.expireNameOwnersLocked(b.deps.Clock.Now()) {
+		b.recomputeRefsLocked()
+		b.nameOwnerPushPending = false
+	}
+
 	selfAgent, ok := b.agents[selfID]
 	if !ok {
 		return nil, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_NOT_REGISTERED,
@@ -75,6 +84,7 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 					SharedTopics: append([]string(nil), v.Shared...),
 					Status:       statusToProto(ag.status),
 					PreviousName: ag.prevName,
+					Account:      accountNameOf(ag.caller),
 				},
 				alias: b.localAlias(),
 				name:  ag.name,
@@ -98,18 +108,23 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 			b.log.Warn(EvRemoteMemberInvalid, "peer", fmt.Sprintf("%x", v.Peer))
 			continue
 		}
-		duplicates := 0
+		// A member whose publisher requires a ref always shows one. Other
+		// members of the same name count only among themselves, so a
+		// ref-required collider does not add a ref to the owner's address.
+		plainDuplicates := 0
 		for _, m := range b.deps.Topics.RemoteMembers(v.Peer) {
-			if m.Name == v.Member.Name {
-				duplicates++
+			if m.Name == v.Member.Name && !m.RefRequired {
+				plainDuplicates++
 			}
 		}
+		needRef := v.Member.RefRequired || plainDuplicates > 1
 		items = append(items, listAgentEntry{
 			entry: &localpb.AgentEntry{
-				Address:      FormatAddress(v.Member.Name, v.Member.Ref, alias, duplicates > 1),
+				Address:      FormatAddress(v.Member.Name, v.Member.Ref, alias, needRef),
 				SharedTopics: append([]string(nil), v.Shared...),
 				Status:       statusToProto(v.Member.Status),
 				PreviousName: v.Member.PrevName,
+				Account:      v.Member.Account,
 			},
 			alias: alias,
 			name:  inbox.NormalizeName(v.Member.Name),

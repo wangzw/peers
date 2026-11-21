@@ -46,23 +46,29 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
 			"no caller identified on this connection"))
 	}
+	// Look the account up once, outside Broker.mu, and use the result both for
+	// the registration slot and for the name ownership table's per-account
+	// limit. A failed account lookup is not an unknown account: refuse the
+	// registration instead of counting it in a shared bucket.
+	var accountKey uint32
+	if b.registers != nil || b.nameOwners != nil {
+		key, err := accountKeyFor(caller.UID)
+		if err != nil {
+			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
+				"cannot register: looking up account %d: %v", caller.UID, err))
+		}
+		accountKey = key
+	}
 	// Count the stream only after the first frame identified the caller, and
 	// before the session backend is acquired, so an account past its limit
 	// costs no backend work. The slot is held for the stream's lifetime.
 	if b.registers != nil {
-		key, err := accountKeyFor(caller.UID)
-		if err != nil {
-			// A failed account lookup is not an unknown account: refuse the
-			// registration instead of counting it in a shared bucket.
-			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
-				"cannot register: looking up account %d: %v", caller.UID, err))
-		}
-		if !b.registers.acquire(key, caller.UID) {
+		if !b.registers.acquire(accountKey, caller.UID) {
 			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
 				"cannot register: account %s already has %d open registrations",
 				callerAccount(caller), b.registers.limit))
 		}
-		defer b.registers.release(key)
+		defer b.registers.release(accountKey)
 	}
 	backend, release, err := b.deps.Sessions.Acquire(ctx, caller.UID)
 	if err != nil {
@@ -71,12 +77,13 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 	}
 
 	c := &regConn{
-		caller:    caller,
-		rawPath:   first.GetInboxSocketPath(),
-		configDir: first.GetClaudeConfigDir(),
-		backend:   backend,
-		release:   release,
-		out:       newEventQueue(),
+		caller:     caller,
+		accountKey: accountKey,
+		rawPath:    first.GetInboxSocketPath(),
+		configDir:  first.GetClaudeConfigDir(),
+		backend:    backend,
+		release:    release,
+		out:        newEventQueue(),
 	}
 
 	// sendCtx stops the sender when this handler ends the stream on overflow.
@@ -408,6 +415,7 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 				id:         c.id,
 				socketPath: c.socketPath,
 				caller:     c.caller,
+				accountKey: c.accountKey,
 				backend:    c.backend,
 				session:    s,
 				name:       name,
@@ -416,6 +424,9 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 				conns:      make(map[*regConn]struct{}),
 			}
 			b.agents[a.id] = a
+			b.nextAgentSeq++
+			a.seq = b.nextAgentSeq
+			b.recordNameOwnerLocked(name, c.caller.UID, c.accountKey, b.deps.Clock.Now())
 			a.conns[c] = struct{}{}
 			c.agent = a
 			if withWatch {

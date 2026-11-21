@@ -430,8 +430,10 @@ func TestRunRefusesInsideSession(t *testing.T) {
 	if !errors.Is(err, ErrInSession) {
 		t.Fatalf("Run error = %v, want ErrInSession", err)
 	}
-	if got := rt.readyLine(); !strings.Contains(got, "process tree") {
-		t.Errorf("readiness line = %q, want it to mention the process tree", got)
+	if got := rt.readyLine(); !strings.Contains(got, "parent processes") {
+		t.Errorf("readiness line = %q, want it to mention the parent processes", got)
+	} else if strings.Contains(got, "CLAUDE_CODE_MESSAGING_SOCKET") {
+		t.Errorf("readiness line = %q, want it to avoid naming the environment variable", got)
 	}
 	lock, err := AcquireAccountLock(rt.cfg.AccountLock())
 	if err != nil {

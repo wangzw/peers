@@ -67,14 +67,14 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 	if err := ra.Join(aID, secret); err != ErrUnknownAgent {
 		t.Fatalf("Join before AgentChanged: err = %v, want %v", err, ErrUnknownAgent)
 	}
-	ra.AgentChanged(aID, "api-worker", "", "a10004", "idle")
+	ra.AgentChanged(aID, Member{Name: "api-worker", Ref: "a10004", Status: "idle"})
 	if err := ra.Join(aID, secret); err != nil {
 		t.Fatalf("Join %q: %v", secret, err)
 	}
 	if err := ra.Join(aID, shared); err != nil {
 		t.Fatalf("Join %q: %v", shared, err)
 	}
-	rb.AgentChanged(cID, "frontend", "", "c10004", "busy")
+	rb.AgentChanged(cID, Member{Name: "frontend", Ref: "c10004", Status: "busy"})
 	if err := rb.Join(cID, shared); err != nil {
 		t.Fatalf("Join %q: %v", shared, err)
 	}
@@ -91,8 +91,8 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 	if err := ra.Join(aID, shared); err != nil {
 		t.Fatalf("rejoin %q: %v", shared, err)
 	}
-	ra.AgentChanged(aID, "api-v2", "api-worker", "a10004", "busy")
-	ra.AgentChanged(aID, "api-v2", "", "a10004", "waiting")
+	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10004", Status: "busy", PrevName: "api-worker"})
+	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10004", Status: "waiting"})
 	flushAll(t, la, lb)
 
 	// A new connection with a new salt: the exchange starts over.
@@ -157,11 +157,11 @@ func TestRosterOnlyToPeersWithMembers(t *testing.T) {
 	rb, bufB := newLinkRegistry(t, lb)
 
 	const aID, cID = AgentID("agent-a"), AgentID("agent-c")
-	ra.AgentChanged(aID, member, "", "a10004", "idle")
+	ra.AgentChanged(aID, Member{Name: member, Ref: "a10004", Status: "idle"})
 	if err := ra.Join(aID, shared); err != nil {
 		t.Fatalf("Join %q: %v", shared, err)
 	}
-	rb.AgentChanged(cID, "frontend", "", "c10004", "idle")
+	rb.AgentChanged(cID, Member{Name: "frontend", Ref: "c10004", Status: "idle"})
 
 	connect(la, lb, []byte("salt"))
 	flushAll(t, la, lb)
@@ -224,14 +224,14 @@ func TestLogsCarryNoNames(t *testing.T) {
 	rb, bufB := newLinkRegistry(t, lb)
 
 	const aID, cID = AgentID("agent-a"), AgentID("agent-c")
-	ra.AgentChanged(aID, "api-worker", "", "a10005", "idle")
+	ra.AgentChanged(aID, Member{Name: "api-worker", Ref: "a10005", Status: "idle"})
 	if err := ra.Join(aID, "secret-alpha"); err != nil {
 		t.Fatalf("Join secret-alpha: %v", err)
 	}
 	if err := ra.Join(aID, "shared-beta"); err != nil {
 		t.Fatalf("Join shared-beta: %v", err)
 	}
-	rb.AgentChanged(cID, "frontend-controller", "", "b10005", "idle")
+	rb.AgentChanged(cID, Member{Name: "frontend-controller", Ref: "b10005", Status: "idle"})
 	if err := rb.Join(cID, "shared-beta"); err != nil {
 		t.Fatalf("Join shared-beta on B: %v", err)
 	}
@@ -241,8 +241,8 @@ func TestLogsCarryNoNames(t *testing.T) {
 
 	// A rename with a previous name and a new Ref, a status change, a leave and
 	// rejoin: every path that pushes entries or digests.
-	ra.AgentChanged(aID, "api-v2", "api-legacy", "a10006", "busy")
-	ra.AgentChanged(aID, "api-v2", "api-legacy", "a10006", "waiting")
+	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10006", Status: "busy", PrevName: "api-legacy"})
+	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10006", Status: "waiting", PrevName: "api-legacy"})
 	if err := ra.Leave(aID, "shared-beta"); err != nil {
 		t.Fatalf("Leave shared-beta: %v", err)
 	}

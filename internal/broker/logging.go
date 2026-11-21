@@ -53,6 +53,21 @@ const (
 	// outside the set the receiving Broker defines. The peer's message is not
 	// logged; only its fingerprint and the integer code are.
 	EvPeerDeliveryErrorUnrecognized = "peer_delivery_error_unrecognized"
+	// EvNameOwnerTableFull is logged when an account has used every name owner
+	// entry and every one of them is still held, so a new name cannot be
+	// recorded. One warning per account suffices until it has room again.
+	EvNameOwnerTableFull = "name_owner_table_full"
+	// EvNameOwnersUnreadable is logged when name-owners.json cannot be used.
+	// The Broker keeps running with an empty table.
+	EvNameOwnersUnreadable = "name_owners_unreadable"
+	// EvNameOwnersWriteFailed is logged when the name owner table cannot be
+	// written. The in-memory table stays authoritative and the next change
+	// retries the write.
+	EvNameOwnersWriteFailed = "name_owners_write_failed"
+	// EvDeliveryRefusedOwner is logged when a bare name was refused because it
+	// belongs to another account. It is an Info event: an ordinary send to a
+	// departed owner's name lands here too.
+	EvDeliveryRefusedOwner = "delivery_refused_owner"
 )
 
 // Event names of the local interface limits.

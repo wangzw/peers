@@ -64,7 +64,7 @@ func TestTopicAssemblerFillsTopics(t *testing.T) {
 		t.Fatal("Assemble left Deps.Topics nil")
 	}
 
-	deps.Topics.AgentChanged("ag1", "worker", "", "ref1", "idle")
+	deps.Topics.AgentChanged("ag1", Member{Name: "worker", Ref: "ref1", Status: "idle"})
 	if err := deps.Topics.Join("ag1", "t1"); err != nil {
 		t.Fatalf("Join through the assembled table: %v", err)
 	}

@@ -104,6 +104,9 @@ message AgentEntry {
   repeated string shared_topics = 2;
   AgentStatus status = 3;
   string previous_name = 4;
+  // account is the name of the account that registered the agent, for display
+  // only. It plays no part in addressing, filtering or resolution.
+  string account = 5;
 }
 
 enum AgentStatus {

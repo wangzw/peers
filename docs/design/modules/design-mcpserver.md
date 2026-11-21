@@ -32,7 +32,7 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 
 | 工具 | 参数 | 只读 | 权限 | 返回 | 需求 |
 |---|---|---|---|---|---|
-| `list_agents` | `topic?`、`broker?`、`name?` 作为过滤条件 | 是 | 无 | 调用方自己的地址；每个可见 Agent 的地址、共同 topic、状态，改名后 10 分钟内的另注明曾用名；Agent 的名字与地址由其所在 Broker 报告，未经核实 | `REQ-agent-messaging-008` 至 `REQ-agent-messaging-011`、`REQ-agent-messaging-032`、`REQ-agent-messaging-045` |
+| `list_agents` | `topic?`、`broker?`、`name?` 作为过滤条件 | 是 | 无 | 调用方自己的地址；每个可见 Agent 的地址、共同 topic、状态、登记账户的账户名，改名后 10 分钟内的另注明曾用名；Agent 的名字与地址由其所在 Broker 报告，未经核实 | `REQ-agent-messaging-008` 至 `REQ-agent-messaging-011`、`REQ-agent-messaging-032`、`REQ-agent-messaging-045`、`REQ-agent-messaging-050` |
 | `send_message` | `to`、`message` | 否 | 无 | 成功；以 `Not sent` 开头的错误；以 `Delivery unknown` 开头的结果未知 | `REQ-agent-messaging-013`、`REQ-agent-messaging-027` |
 | `list_topics` | 无 | 是 | 无 | 已加入的 topic；已知的公开 topic 及简介，其名字与简介由其他 Broker 发布，未经核实 | `REQ-topics-013`、`REQ-agent-messaging-045` |
 | `join_topic` | `name?`、`public?`、`description?` | 否 | 无 | 加入后的 topic 列表；`name` 为空时加入本会话的默认 topic | `REQ-topics-001`、`REQ-topics-010`、`REQ-topics-023`、`REQ-topics-026` |
@@ -52,11 +52,11 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 
 `set_broker_online` 调用 `SetConfig`，键为 `broker.offline`，取值为 `online` 的反值，带本会话的 `agent_id` 填审计；声明 `readOnlyHint=false`，不声明 `destructiveHint`，与 `set_config` 分开声明，Claude Code 的权限设置可以单独放行它。说明文字写明它只影响其他主机发来的消息。
 
-`list_agents` 的过滤条件均为可选，同时给出时须全部满足。`topic` 按精确匹配筛选，保留共同 topic 中含有该 topic 的条目；`broker` 与 Agent 地址中 `@` 后的生效别名精确匹配；`name` 先按名字规范化规则规范化过滤值，再与 Agent 当前规范化后的名字精确比较。过滤只决定返回哪些条目，不改变每个条目列出的共同 topic。
+`list_agents` 的过滤条件均为可选，同时给出时须全部满足。`topic` 按精确匹配筛选，保留共同 topic 中含有该 topic 的条目；`broker` 与 Agent 地址中 `@` 后的生效别名精确匹配；`name` 先按名字规范化规则规范化过滤值，再与 Agent 当前规范化后的名字精确比较。过滤只决定返回哪些条目，不改变每个条目列出的共同 topic。`account` 只是展示字段，不参与过滤，也不进入地址或解析。
 
 工具成功的结果是 JSON 对象，作为结构化内容返回；字段名与 Broker 本机接口应答的字段名一致，本机接口没有对应字段的沿用下列名字：
 
-- `list_agents`：`self_address`、`agents`；每项有 `address`、`shared_topics`、`status`、`previous_name`。
+- `list_agents`：`self_address`、`agents`；每项有 `address`、`shared_topics`、`status`、`account`、`previous_name`。
 - `send_message`：`result`、`to`。
 - `list_topics`：`joined_topics`、`public_topics`；每项有 `name`、`description`。
 - `join_topic`、`leave_topic`：`topics`。
@@ -78,6 +78,7 @@ MCP 服务的名字是 `peer`，模型看到的工具全名是 `mcp__peer__<工�
 MCP 服务的使用说明随工具一起进入会话上下文。下列要点是必须包含的内容，说明可以有其他文字：
 
 - 带 `@` 的发送方名字是 Agent 地址。回复时用 `send_message`，把来信署名中的地址原样填入 `to`；Claude Code 自带的会话间发送工具到不了这类地址（`REQ-agent-messaging-025`）。
+- 地址的名字相同而消歧标识不同的是另一个 Agent。即使名字与想联系的对象相同，也不要把它当作原来那位转发消息（`REQ-agent-messaging-051`）。
 - 地址带 `@` 的 Agent 用本服务的工具联系，不论它在本机还是在别的主机上；没有登记到本系统的本机会话用 Claude Code 自带的工具联系。
 - 用户要求给所有 Agent 发消息或广播、且没有提到 peers 时，只用 Claude Code 自带的会话间发送工具发给本机会话，不经本服务发送；发送后用一句话提示用户还可以用 peers 通知其他主机上的 Agent（`REQ-agent-messaging-042`）。
 - 只有用户明确要求用 peers 广播或通知时，才用 `send_message` 逐个发给 `list_agents` 列出的每个 Agent（`REQ-agent-messaging-043`）。

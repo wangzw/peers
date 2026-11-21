@@ -145,6 +145,12 @@ func aliasCharsValid(alias string) bool {
 // A result that exceeds MaxAddressRunes or MaxAddressBytes always carries the
 // ref and has the name truncated from the end rune by rune until it fits.
 //
+// A caller that may render a truncated name must pass the full twelve-character
+// ref. A truncated address is accepted for delivery only together with that
+// full ref, so the Broker gives it to every Agent whose name may not fit an
+// address (Broker.recomputeRefsLocked); a short ref would make the address
+// unusable and let a colliding short ref answer it.
+//
 // name must already have been normalized with inbox.NormalizeName; FormatAddress
 // applies CleanSignature but does not normalize.
 //
@@ -152,6 +158,26 @@ func aliasCharsValid(alias string) bool {
 // ValidAlias. FormatAddress panics on a violation, because both are the
 // caller's own bookkeeping rather than untrusted input.
 func FormatAddress(name, ref, alias string, needRef bool) string {
+	out, _ := formatAddress(name, ref, alias, needRef)
+	return out
+}
+
+// addressNameTruncates reports whether FormatAddress would shorten name when it
+// renders with this ref, alias and needRef decision.
+func addressNameTruncates(name, ref, alias string, needRef bool) bool {
+	_, truncated := formatAddress(name, ref, alias, needRef)
+	return truncated
+}
+
+// maxAddressAlias is the longest alias any viewer can use. A name that fits an
+// address at this alias fits at every shorter alias, so testing here tells
+// whether some viewer would see the name truncated.
+func maxAddressAlias() string {
+	return strings.Repeat("a", config.AliasMaxLen)
+}
+
+// formatAddress is FormatAddress plus whether the name was shortened to fit.
+func formatAddress(name, ref, alias string, needRef bool) (string, bool) {
 	if !validRef(ref) {
 		panic("broker: FormatAddress: ref must be 6 to 12 lowercase hex characters")
 	}
@@ -168,19 +194,22 @@ func FormatAddress(name, ref, alias string, needRef bool) string {
 		}
 		return n + "@" + alias
 	}
+	fits := func(s string) bool {
+		return utf8.RuneCountInString(s) <= MaxAddressRunes && len(s) <= MaxAddressBytes
+	}
 	out := render(clean, needRef)
-	if utf8.RuneCountInString(out) <= MaxAddressRunes && len(out) <= MaxAddressBytes {
-		return out
+	if fits(out) {
+		return out, false
 	}
 	runes := []rune(clean)
 	for len(runes) > 0 {
 		runes = runes[:len(runes)-1]
 		out = render(string(runes), true)
-		if utf8.RuneCountInString(out) <= MaxAddressRunes && len(out) <= MaxAddressBytes {
-			return out
+		if fits(out) {
+			return out, true
 		}
 	}
-	return render("", true)
+	return render("", true), true
 }
 
 // ParseAddress splits an address into its name, ref and alias. It splits at the

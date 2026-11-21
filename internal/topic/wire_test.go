@@ -48,7 +48,7 @@ func TestMemberNameLengthLimit(t *testing.T) {
 
 func TestMemberRoundTrip(t *testing.T) {
 	members := []Member{
-		{Name: "api-worker", Ref: "abc123", Status: "busy", PrevName: "api-v1"},
+		{Name: "api-worker", Ref: "abc123", Status: "busy", PrevName: "api-v1", Account: "bob", RefRequired: true},
 		{Name: "frontend", Ref: "def456", Status: "idle"},
 	}
 	for _, m := range members {

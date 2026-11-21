@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
@@ -159,6 +160,51 @@ func TestListAgentsOutput(t *testing.T) {
 	}
 	if len(topics) != 0 {
 		t.Errorf("shared_topics = %v, want empty", topics)
+	}
+}
+
+func TestListAgentsOutputAccount(t *testing.T) {
+	// REQ-agent-messaging-008: the result carries the account that registered
+	// each agent, so the model can tell apart agents with the same name. The
+	// entry is decoded from JSON with unknown fields discarded, so the test
+	// builds and fails on the missing output field against code that predates
+	// it instead of failing to compile.
+	var entry localpb.AgentEntry
+	build := protojson.UnmarshalOptions{DiscardUnknown: true}
+	if err := build.Unmarshal([]byte(`{"address":"other@host","sharedTopics":["topic-a"],"account":"alice"}`), &entry); err != nil {
+		t.Fatalf("building the roster entry: %v", err)
+	}
+
+	path := fakelocal.SocketPath(t)
+	fakelocal.Start(t, path, fakelocal.Handlers{
+		ListAgents: func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
+			return &localpb.ListAgentsResponse{
+				SelfAddress: "me@host",
+				Agents:      []*localpb.AgentEntry{&entry},
+			}, nil
+		},
+	})
+	h := messagingTestHandlers(messagingTestClient(t, path), "agent-7")
+
+	out, err := h.ListAgents(context.Background(), ListAgentsIn{})
+	if err != nil {
+		t.Fatalf("ListAgents: %v", err)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatalf("marshaling the result: %v", err)
+	}
+	var decoded struct {
+		Agents []map[string]any `json:"agents"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("decoding the result: %v", err)
+	}
+	if len(decoded.Agents) != 1 {
+		t.Fatalf("agents = %v, want one entry", decoded.Agents)
+	}
+	if got := decoded.Agents[0]["account"]; got != "alice" {
+		t.Errorf("account = %v, want alice (result %s)", got, raw)
 	}
 }
 

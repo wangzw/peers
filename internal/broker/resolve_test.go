@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/config"
 )
 
 // resolveAgent describes one Agent independently of whether it is local or
@@ -237,19 +238,48 @@ func TestPickInvisibleIsNotVisible(t *testing.T) {
 	})
 }
 
-// TestPickTruncatedNamePrefix checks that the truncated name an address carries
-// in a reply still selects its Agent (REQ-agent-messaging-037, :025).
+// TestPickTruncatedNamePrefix checks that the truncated address an Agent
+// renders selects it in a reply (REQ-agent-messaging-037, :025). The address
+// carries the full twelve-character ref. The name written may be the shortened
+// name this Broker renders or the shortened name another alias length renders,
+// because the address may have been made by another Broker; a prefix that no
+// legal alias length produces is not accepted.
 func TestPickTruncatedNamePrefix(t *testing.T) {
 	long := strings.Repeat("x", 70)
-	agents := []resolveAgent{{name: long, ref: "1a2b3c", visible: true}}
+	agents := []resolveAgent{{name: long, ref: "1a2b3c4d5e6f", visible: true}}
 	resolveBothKinds(t, agents, func(t *testing.T, cands []candidate, refMatch func(candidate, string) bool, where string) {
-		addr := parsedAddress{Name: strings.Repeat("x", 40), Ref: "1a2b3c", Alias: "h"}
-		idx, err := pickTarget(addr, cands, refMatch, where)
+		name, ref, alias, ok := ParseAddress(cands[0].Address)
+		if !ok {
+			t.Fatalf("candidate address %q does not parse", cands[0].Address)
+		}
+		if len(ref) != 12 {
+			t.Fatalf("candidate address %q carries a %d-character ref, want 12", cands[0].Address, len(ref))
+		}
+		idx, err := pickTarget(parsedAddress{Name: name, Ref: ref, Alias: alias}, cands, refMatch, where)
 		if err != nil {
 			t.Fatalf("pickTarget: %v", err)
 		}
 		if idx != 0 {
 			t.Fatalf("idx = %d, want 0", idx)
+		}
+
+		// One rune shorter is the shortened name at the next alias length, which
+		// another Broker would render, so the full ref still selects it.
+		runes := []rune(name)
+		fromLongerAlias := parsedAddress{Name: string(runes[:len(runes)-1]), Ref: ref, Alias: alias}
+		idx, err = pickTarget(fromLongerAlias, cands, refMatch, where)
+		if err != nil {
+			t.Fatalf("pickTarget for a name shortened by another alias: %v", err)
+		}
+		if idx != 0 {
+			t.Fatalf("idx = %d, want 0 for a name shortened by another alias", idx)
+		}
+
+		// A prefix that no legal alias length produces is not the rendered name
+		// at any alias, so the full ref does not select it.
+		unreachable := parsedAddress{Name: string(runes[:len(runes)-config.AliasMaxLen-1]), Ref: ref, Alias: alias}
+		if _, err := pickTarget(unreachable, cands, refMatch, where); err == nil {
+			t.Fatal("a prefix no legal alias length renders selected the Agent")
 		}
 	})
 }
@@ -323,4 +353,25 @@ func TestPickNotFound(t *testing.T) {
 		resolveWantCode(t, err, localpb.ErrorCode_ERROR_CODE_NOT_FOUND)
 		resolveWantContains(t, err.Message, where)
 	})
+}
+
+// TestRemoteCandidatesRefRequired checks that a remote member whose publisher
+// requires a ref always gets a ref in its address, even when its name is unique
+// in the roster. A member without the flag keeps the plain address when unique.
+func TestRemoteCandidatesRefRequired(t *testing.T) {
+	members := []remoteMember{
+		{Name: "worker", Ref: "abcdef", RefRequired: true},
+		{Name: "steve", Ref: "123456"},
+	}
+	cands := remoteCandidates(members, func(remoteMember) bool { return true }, resolveTestAddr)
+	byName := make(map[string]candidate, len(cands))
+	for _, c := range cands {
+		byName[c.Name] = c
+	}
+	if got, want := byName["worker"].Address, resolveTestAddr("worker", "abcdef", false); got != want {
+		t.Fatalf("RefRequired member Address = %q, want the ref-forced %q", got, want)
+	}
+	if got, want := byName["steve"].Address, resolveTestAddr("steve", "123456", true); got != want {
+		t.Fatalf("ordinary member Address = %q, want the plain %q", got, want)
+	}
 }

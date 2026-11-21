@@ -217,7 +217,7 @@ type PathSet struct {
 | 内容 | 用户级 | 系统级 |
 |---|---|---|
 | 配置文件 | `~/.peers/config.yaml` | `/etc/peers/config.yaml` |
-| 数据目录：身份、对端表、名录 | `~/.peers/` | `/var/lib/peers/` |
+| 数据目录：身份、对端表、名录、名字归属 | `~/.peers/` | `/var/lib/peers/` |
 | 审计日志 | `~/.peers/audit.log` | `/var/log/peers/audit.log` |
 
 运行时目录内有本机 socket `broker.sock` 和账户锁 `broker.lock`。运行时目录只取决于进程的账户与文件系统的状态，与形态、环境变量、配置内容和监听地址无关：root 的是 Linux 上的 `/run/peers/`、macOS 上的 `/var/run/peers/`，系统级 Broker 与 root 的用户级 Broker 因此争用同一把锁；其他账户的首选位置是 `/tmp/peers-<uid>/`，`<uid>` 是进程的账户。首选位置已存在且是符号链接、不是目录或属主不是本账户时，视为被其他账户占用，改用后备位置：Linux 的是 `/run/user/<uid>/peers/`，macOS 的是 `getconf` 的 `DARWIN_USER_TEMP_DIR` 给出的每用户临时目录下的 `peers/`。后备位置的上级目录必须是本账户拥有、不是符号链接、组与其他人都没有任何权限的目录；首选位置的属主是本账户而权限过宽时不算被占用，仍按权限规则拒绝启动，因为账户自己能改正。两处都不可用时拒绝启动，错误写出首选位置的占用者与原因，退出码沿用运行时目录失败时的取值。这条规则只取决于文件系统的状态与进程的账户，不读环境变量；Broker、MCP 服务、终端命令、`service install` 的预检与 `service remove` 使用同一组规则。占用者可以删除并重建首选位置，因此同一账户的不同进程在不同时刻可能算出不同的位置；为此 Broker 启动时在首选与后备两处都检查账户锁，任一处被本账户运行中的实例持有就拒绝启动，MCP 服务与终端命令在同样的两处探测本机 socket，只采用通过进程凭据检查的那个，两处都通过时采用账户锁被持有的那个，都没有持有时采用位置规则选出的那个（`REQ-broker-config-013`）。root 的运行时目录权限 `0755`；系统级 Broker 的本机 socket 在绑定后按 `broker.local_socket_group` 与 `broker.local_socket_mode` 设置属组与权限，哪些账户能连接由它决定；用户级的 socket 固定为 `0600`；其他账户的运行时目录权限 `0700`。运行时目录的属主必须是本账户，不符时拒绝启动。以上位置规则对发布构建成立。带 `peers_testenv` 构建标签的测试构建例外：`PEERS_TEST_RUNTIME_ROOT` 非空时运行时目录的根取它的值，`PEERS_TEST_HOME` 非空时账户家目录取它的值；两者为空时不生效，发布构建不含这段代码。

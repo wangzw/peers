@@ -40,7 +40,10 @@ func (d *delivery) sendToPeer(ctx context.Context, r peerSend) error {
 	start := time.Now()
 
 	// target is resolved once and reused: the message must stay pinned to the
-	// member the sender picked, even if the roster changes during a retry.
+	// address the caller wrote, even if the roster changes during a retry. The
+	// request carries that name and ref verbatim, never the roster's canonical
+	// ref: a short ref may be one the owner's callers hold, and only the
+	// receiving Broker may decide whether it selects the owner's Agent.
 	var target *remoteMember
 
 	for ctx.Err() == nil {
@@ -75,16 +78,15 @@ func (d *delivery) sendToPeer(ctx context.Context, r peerSend) error {
 					sig, _ := signatureFor(name, ref, unique, alias)
 					return sig
 				})
-			idx, perr := pickTarget(r.Addr, cands, remoteRefMatch, "on "+alias)
+			_, perr := pickTarget(r.Addr, cands, remoteRefMatch, "on "+alias)
 			if perr != nil {
 				// A resolution failure is decided by the sender; retrying the
 				// link cannot change it.
 				return perr
 			}
 			target = &remoteMember{
-				Name:     cands[idx].Name,
-				Ref:      cands[idx].Ref,
-				PrevName: cands[idx].PrevName,
+				Name: r.Addr.Name,
+				Ref:  r.Addr.Ref,
 			}
 		}
 

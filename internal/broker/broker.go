@@ -39,6 +39,17 @@ type Broker struct {
 	refreshOne func(a *agent)
 	lastAlias  string // last broker.alias value read successfully, guarded by mu
 
+	// nextAgentSeq numbers agents in registration order, so the name owner
+	// table can tell which account registered a name first. Guarded by mu.
+	nextAgentSeq uint64
+	// nameOwners is the name ownership table and its persistence state.
+	// Guarded by mu, except for the fields nameOwnerState documents otherwise.
+	nameOwners *nameOwnerState
+	// nameOwnerPushPending reports that a read path expired a name and moved its
+	// ownership. The next snapshot rebuild recomputes the refs and pushes the
+	// change, so a query never transfers a name silently. Guarded by mu.
+	nameOwnerPushPending bool
+
 	// degradedMu guards degraded, the state a --allow-degraded run reports.
 	degradedMu sync.Mutex
 	degraded   *localpb.DegradedState
@@ -164,6 +175,10 @@ func New(deps Deps) (*Broker, error) {
 		registers: registers,
 	}
 	b.refreshOne = b.refreshAgent
+	if err := b.initNameOwners(); err != nil {
+		cancel()
+		return nil, err
+	}
 	b.events.start(ctx, b.handleRegistryEvent)
 	localpb.RegisterLocalServer(b.grpc, b)
 	return b, nil
@@ -220,6 +235,7 @@ func (b *Broker) Serve(ln net.Listener) error {
 func (b *Broker) Stop() {
 	b.cancel()
 	b.grpc.Stop()
+	b.stopNameOwners()
 }
 
 // Logger returns the Broker's structured logger.

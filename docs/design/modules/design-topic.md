@@ -42,9 +42,9 @@ func (r *Registry) Leave(agent AgentID, name string) error
 func (r *Registry) LeaveAll(agent AgentID)
 func (r *Registry) TopicsOf(agent AgentID) []string
 
-// AgentChanged 在本机 Agent 的名字、曾用名、消歧标识或状态变化时由 broker 调用；
+// AgentChanged 在本机 Agent 的名字、曾用名、消歧标识、状态、账户名或“必须带消歧标识”变化时由 broker 调用；
 // 曾用名为空表示没有，或已过保留期。
-func (r *Registry) AgentChanged(agent AgentID, name, prevName, ref, status string)
+func (r *Registry) AgentChanged(agent AgentID, m Member)
 
 // Visible 判定本机 Agent 与另一个 Agent 是否可见，并返回共同的 topic。
 // other 可以是本机 Agent，也可以是某条链路上的远端 Agent。
@@ -67,7 +67,7 @@ type Transport interface {
 
 `AgentID` 是 broker 内部的 Agent 标识，是 `"session:" + socket 路径` 的 SHA-256 小写十六进制。`AgentRef` 指明一个 Agent：`Peer` 为零值时是本机 Agent，由 `ID` 指明；`Peer` 非零时是这条链路上的远端 Agent，`Ref` 是它在对端成员名单里的消歧标识，`ID` 忽略。
 
-`Member` 是一个成员条目，字段是名字、消歧标识、状态和曾用名。`Status` 取 `idle`、`busy`、`waiting`、`shell` 之一，空串表示未知；`PrevName` 为空表示没有曾用名。
+`Member` 是一个成员条目，字段是名字、消歧标识、状态、曾用名、发布方账户名（`Account`，只用于显示）与 `RefRequired`（发布方要求以消歧标识称呼该成员，按名解析不得选中它）。`Status` 取 `idle`、`busy`、`waiting`、`shell` 之一，空串表示未知；`PrevName` 为空表示没有曾用名。
 
 `VisibleAgent` 是一个可见的 Agent 及其共同 topic。`Agent` 指本机 Agent 时 `Peer` 为零值、`ID` 已填，指远端 Agent 时 `Peer` 与 `Ref` 已填；`Member` 是该 Agent 当前的条目；`Shared` 是共同 topic 的名字，升序。
 
@@ -117,7 +117,7 @@ sequenceDiagram
 | 对端摘要集合，每条链路一个 | — | 对端最近一次发来的全部摘要 | 随链路存续 |
 | 对端成员名单，每条链路一张 | 比对用摘要，消歧标识 | 对端在该 topic 下的成员条目 | 随链路存续 |
 
-成员条目的字段是名字、消歧标识、状态和曾用名，不含别名、工作目录或其他信息。曾用名由 Agent 所在的 Broker 在保留期满后清除，清除也作为一次变化推送，其他 Broker 因此能对以曾用名为目标的发送给出同样的提示。对端成员名单在比对用摘要下按消歧标识保存条目，依据是同一 Broker 上各 Agent 的消歧标识两两不同，对端的一个条目由消歧标识唯一确定。只有摘要处在当前交集内时才保存对端成员名单；判定可见性和回答查询时也只使用这些条目。
+成员条目的字段是名字、消歧标识、状态、曾用名、发布方账户名（`Account`）与 `RefRequired`，不含别名、工作目录或其他信息。`Account` 只用于显示；`RefRequired` 让发布方告诉对端这个成员只能用消歧标识称呼，即使它的名字在对端唯一。曾用名由 Agent 所在的 Broker 在保留期满后清除，清除也作为一次变化推送，其他 Broker 因此能对以曾用名为目标的发送给出同样的提示。对端成员名单在比对用摘要下按消歧标识保存条目，依据是同一 Broker 上各 Agent 的消歧标识两两不同，对端的一个条目由消歧标识唯一确定。只有摘要处在当前交集内时才保存对端成员名单；判定可见性和回答查询时也只使用这些条目。
 
 链路上的帧：
 
@@ -127,7 +127,7 @@ sequenceDiagram
 | `Roster` | 状态帧 | 发送方的发出用摘要，成员条目的完整列表 | 该 topic 下发送方的全部成员，覆盖此前的列表 |
 | `RosterDelta` | 状态帧 | 发送方的发出用摘要，新增、移除与变更的成员条目 | 增量 |
 
-`RosterDelta` 的组成规则是：成员加入放进新增，退出放进移除；名字或消歧标识变化，以移除旧键、新增新条目表示，因为消歧标识会随本机 Agent 增减而变长变短；只有状态或曾用名变化时放进变更；名字、消歧标识、状态、曾用名都不变时不发帧。接收方按移除、新增、变更的顺序应用：移除要求名字与消歧标识都相符才删除，不相符的忽略；新增与变更都按消歧标识写入，已有则覆盖，没有则新增；消歧标识为空的条目跳过。
+`RosterDelta` 的组成规则是：成员加入放进新增，退出放进移除；名字或消歧标识变化，以移除旧键、新增新条目表示，因为消歧标识会随本机 Agent 增减而变长变短；只有状态、曾用名、账户名或 `RefRequired` 变化时放进变更；名字、消歧标识、状态、曾用名、账户名与 `RefRequired` 都不变时不发帧。接收方按移除、新增、变更的顺序应用：移除要求名字与消歧标识都相符才删除，不相符的忽略；新增与变更都按消歧标识写入，已有则覆盖，没有则新增；消歧标识为空的条目跳过。
 
 链路建立时总是发送一帧 `TopicDigests`，本机没有任何 topic 时也发送，内容为空集合，对端据此得到确定的初始集合。
 
@@ -183,7 +183,7 @@ Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broke
 - `TopicDigests` 中有任何一项不是 32 字节，此时整帧丢弃，保留此前的对端集合。其中重复的摘要按集合去重。
 - `Roster` 或 `RosterDelta` 的摘要不是 32 字节：整帧丢弃，记 Warn。
 - `Roster` 或 `RosterDelta` 的摘要不在对端最近一次的摘要集合中，或在对端最近一次的摘要集合中但不在当前交集内：忽略，记 debug `topic.frame_ignored`，不保存其中的名单。合并发送使较新的 `TopicDigests` 先于旧的名单帧到达，第一种情形因此是合法到达顺序。
-- 成员条目不合规：消歧标识不是 6 至 12 位小写十六进制，或名字为空、超过 `MaxMemberNameBytes` 字节、含空白、`@`、`*` 或控制字符，或曾用名非空却超过 `MaxMemberNameBytes` 字节或含上述字符。不合规的条目整条丢弃，其余条目照常应用；每帧记一条 `topic.member_dropped`，带该帧丢弃的条数，日志不写成员名与曾用名。
+- 成员条目不合规：消歧标识不是 6 至 12 位小写十六进制，或名字为空、超过 `MaxMemberNameBytes` 字节、含空白、`@`、`*` 或控制字符，或曾用名非空却超过 `MaxMemberNameBytes` 字节或含上述字符。不合规的条目整条丢弃，其余条目照常应用；每帧记一条 `topic.member_dropped`，带该帧丢弃的条数，日志不写成员名与曾用名。账户名不合规（非空却超过 `MaxMemberNameBytes` 字节或含有 `validMemberName` 不允许的字符）时只清空该条目的账户名，条目照常应用：账户名只用于展示，不能因此丢掉整条成员。
 - 单个 `TopicDigests` 帧的摘要超过 4096 项，或 `Roster`、`RosterDelta` 的任一成员列表超过 4096 条：整帧丢弃，不改变此前的状态，记 `topic.frame_dropped`，原因分别为 `too_many_digests` 与 `too_many_members`。
 - 应用一帧 `Roster` 或 `RosterDelta` 后，该摘要下的条目超过 4096 条：整帧丢弃，此前的状态不变，记 `topic.frame_dropped`，原因 `roster_full`。
 - 应用一帧 `Roster` 或 `RosterDelta` 后，该对端在全部共同摘要下的条目合计超过 16384 条：整帧丢弃，此前的状态不变，记 `topic.frame_dropped`，原因 `peer_roster_full`。

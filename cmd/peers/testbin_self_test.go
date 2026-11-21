@@ -36,7 +36,7 @@ func TestSandboxEnvFromEmpty(t *testing.T) {
 		got[name] = value
 	}
 
-	want := []string{"HOME", "PATH", "PEERS_TEST_HOME", "PEERS_TEST_RUNTIME_ROOT"}
+	want := []string{"HOME", "PATH", "PEERS_TEST_HOME", "PEERS_TEST_RUNTIME_ROOT", "PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK"}
 	if len(got) != len(want) {
 		t.Fatalf("env has %d variables, want exactly %d: %q", len(got), len(want), env)
 	}
@@ -44,6 +44,9 @@ func TestSandboxEnvFromEmpty(t *testing.T) {
 		if _, ok := got[name]; !ok {
 			t.Fatalf("env is missing %s: %q", name, env)
 		}
+	}
+	if got["PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK"] != "1" {
+		t.Fatalf("PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK = %q, want 1", got["PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK"])
 	}
 	for _, name := range []string{"CLAUDE_CODE_MESSAGING_SOCKET", "PEERS_TEST_SOCKET"} {
 		if _, ok := got[name]; ok {

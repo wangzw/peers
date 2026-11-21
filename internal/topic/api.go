@@ -20,12 +20,17 @@ type AgentRef struct {
 }
 
 // Member is one roster entry. Status is "idle", "busy", "waiting", "shell",
-// or "" when unknown. PrevName is "" when there is none.
+// or "" when unknown. PrevName is "" when there is none. Account is the
+// publisher's account name, for display only. RefRequired means the publisher
+// requires this member to be addressed by its disambiguator; a bare name must
+// not select it.
 type Member struct {
-	Name     string
-	Ref      string
-	Status   string
-	PrevName string
+	Name        string
+	Ref         string
+	Status      string
+	PrevName    string
+	Account     string
+	RefRequired bool
 }
 
 // VisibleAgent is one agent visible to a local agent, with the topics they share.

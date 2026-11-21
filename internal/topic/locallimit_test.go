@@ -45,14 +45,14 @@ func TestJoinMemberLimit(t *testing.T) {
 
 	for i := 0; i < maxInboundMembers; i++ {
 		id := AgentID(fmt.Sprintf("agent-%05d", i))
-		r.AgentChanged(id, fmt.Sprintf("m%d", i), "", fmt.Sprintf("%06x", i), "idle")
+		r.AgentChanged(id, Member{Name: fmt.Sprintf("m%d", i), Ref: fmt.Sprintf("%06x", i), Status: "idle"})
 		if err := r.Join(id, "t1"); err != nil {
 			t.Fatalf("Join member %d: %v", i, err)
 		}
 	}
 
 	extra := AgentID("agent-extra")
-	r.AgentChanged(extra, "extra", "", "fffffe", "idle")
+	r.AgentChanged(extra, Member{Name: "extra", Ref: "fffffe", Status: "idle"})
 	if err := r.Join(extra, "t1"); !errors.Is(err, ErrTopicLimit) {
 		t.Fatalf("Join past the member limit = %v, want ErrTopicLimit", err)
 	}

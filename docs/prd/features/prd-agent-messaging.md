@@ -48,9 +48,9 @@ Agent 的名字必须是所在 Claude Code 会话的会话名按 Claude Code 匹
 
 ### REQ-agent-messaging-004
 
-Agent 地址必须由下列部分依次组成：Agent 的名字；名字在所在 Broker 上不足以唯一确定该 Agent，或名字不能原样出现在署名中、放不下时的消歧标识；`@`；看到该地址的一方的 Broker 对该 Agent 所在 Broker 使用的别名。
+Agent 地址必须由下列部分依次组成：Agent 的名字；名字在所在 Broker 上不足以唯一确定该 Agent，名字归属于另一个账户，或名字不能原样出现在署名中、放不下时的消歧标识；`@`；看到该地址的一方的 Broker 对该 Agent 所在 Broker 使用的别名。
 
-- **验收**：主机 A 以别名 `hostB` 称呼主机 B 的 Broker。B 上只有一个名为 `api-worker` 的 Agent 时，A 上看到的地址是 `api-worker@hostB`；B 上有两个同名的 Agent 时，A 上看到的两个地址都以 `api-worker` 开头、以 `@hostB` 结尾，中间各带一个不同的消歧标识。
+- **验收**：主机 A 以别名 `hostB` 称呼主机 B 的 Broker。B 上只有一个名为 `api-worker` 的 Agent 时，A 上看到的地址是 `api-worker@hostB`；B 上有两个同名且属于同一账户的 Agent 时，A 上看到的两个地址都以 `api-worker` 开头、以 `@hostB` 结尾，中间各带一个不同的消歧标识；两个同名 Agent 属于不同账户时，名字归属账户的那个不带消歧标识，另一个账户的带 12 位消歧标识（`REQ-agent-messaging-047`）。
 - **状态**：已实现
 - **端到端测试**：`test/e2e/visibility_remote_test.go` 的 `TestRemoteVisibility/REQ-agent-messaging-004 remote refs`
 
@@ -64,7 +64,7 @@ Agent 地址必须由下列部分依次组成：Agent 的名字；名字在所�
 
 ### REQ-agent-messaging-006
 
-Agent 的消歧标识必须采用与 Claude Code 在其会话列表中为同一会话显示的标识相同的算法，由会话的 inbox socket 路径算出；候选集合相同时两者取值相同，候选集合不同时本 Broker 的取值是该标识的前缀。它在会话改名和清空对话之后必须保持不变。
+Agent 的消歧标识必须采用与 Claude Code 在其会话列表中为同一会话显示的标识相同的算法，由会话的 inbox socket 路径算出；候选集合相同时两者取值相同，候选集合不同时本 Broker 的取值是该标识的前缀。它在会话改名和清空对话之后必须保持不变。系统级 Broker 上，名字归属于另一个账户的同名 Agent 的消歧标识取 12 位。
 
 - **验收**：在 Claude Code 的默认配置下以会话名 `a<b` 启动一个启用了工具的会话，列表中它的地址带消歧标识，该标识是 Claude Code 会话列表中该会话方括号内标识的前缀；把会话改名为 `c<d`，再清空对话，它的消歧标识不变。
 - **状态**：已实现
@@ -312,9 +312,9 @@ Agent 的名字经接收方会话对署名的清洗后与原名不同时，该 A
 
 ### REQ-agent-messaging-037
 
-系统生成的署名必须能被接收方会话识别为发送方。Agent 地址超出可署名的长度时，系统必须截短名字部分并附上消歧标识，使署名仍能唯一指向发送方。
+系统生成的署名必须能被接收方会话识别为发送方。Agent 地址超出可署名的长度时，系统必须截短名字部分并附上完整的 12 位消歧标识，使署名仍能唯一指向发送方。解析带消歧标识的地址时，名字部分等于该 Agent 在某个合法别名长度（1 至 24 字节）下渲染出的截短名字即视为匹配，不要求等于接收方按自己别名渲染的结果：两台主机为对方设置的别名长度不同时截短点也不同，按署名原样回复仍必须送达。
 
-- **验收**：以 70 个字符的会话名启动的 Agent 向另一台主机上的 Agent 发送消息，目标会话显示出发送方，署名带消歧标识，名字部分是会话名的开头部分；目标 Agent 按署名原样回复，回复送达原发送方。
+- **验收**：以 70 个字符的会话名启动的 Agent 向另一台主机上的 Agent 发送消息，目标会话显示出发送方，署名带 12 位消歧标识，名字部分是会话名的开头部分；目标 Agent 按署名原样回复，回复送达原发送方。
 - **状态**：已实现
 - **端到端测试**：`test/e2e/visibility_remote_test.go` 的 `TestRemoteVisibility/REQ-agent-messaging-037 truncated signature`
 
@@ -390,9 +390,49 @@ Broker 下线不得影响本机 Agent 之间的发送，也不得影响本机 Ag
 - **状态**：已实现
 - **端到端测试**：`test/e2e/send_remote_test.go` 的 `TestRemoteSendFaults/REQ-agent-messaging-046 inbound quota per peer` 与 `TestRemoteSendInboundQuota/REQ-agent-messaging-046 another peer still reaches the session`
 
+### REQ-agent-messaging-047
+
+系统级 Broker 上，一个名字归属于某个账户时，该账户下这个名字唯一的 Agent 的地址与署名必须不带消歧标识，其他账户的同名 Agent 必须一律带 12 位消歧标识。
+
+- **验收**：两个账户各登记一个名为 `worker` 的 Agent，先登记的一方保留 `worker@<别名>`，另一个账户的地址带 12 个十六进制字符的消歧标识；先登记的一方离开后，另一个账户的地址仍是 12 位；对端 Broker 的列表中两者的账户名正确。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/system/cross_account_names_test.go` 的 `TestREQAgentMessaging047_CrossAccountImpersonation`
+
+### REQ-agent-messaging-048
+
+不带消歧标识的地址必须只投递给名字归属账户的 Agent。名字属于另一个账户时，发送必须失败，错误码为 `not_found`，说明写明名字属于另一个账户。
+
+- **验收**：系统级 Broker 上，归属账户的 Agent 登记 `worker` 后离开，另一个账户登记 `worker`。同一 Broker 上的第三个 Agent 与对端主机经链路向 `worker@<别名>` 发送，两次都返回 `not_found` 且说明含名字属于另一个账户，持名的另一个账户都没有收到；用该账户的 12 位消歧标识发送时送达。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/system/cross_account_names_test.go` 的 `TestREQAgentMessaging048_CrossAccountInterception`
+
+### REQ-agent-messaging-049
+
+一个名字在归属账户不再持有它满 7 天后必须释放，此后登记该名字的账户取得归属；归属账户仍持有时不释放。
+
+- **验收**：账户甲的 Agent 登记 `worker` 后离开，7 天减 1 秒时归属仍是甲；满 7 天并经过一次过期扫描后，正持有 `worker` 的账户乙取得归属。甲仍有一个叫 `worker` 的 Agent 时，不论过多久都不释放。
+- **状态**：已实现
+- **端到端测试**：不适用：归属表的过期由注入的时钟在单元测试中验证，不依赖真实时间；由 `internal/broker/nameowner_test.go` 的 `TestNameOwnerExpiresAfterSevenDays`、`TestNameOwnerScanExpiresIdleEntry` 与 `TestNameOwnerHeldEntryDoesNotExpire` 覆盖
+
+### REQ-agent-messaging-050
+
+`list_agents` 的每一项必须给出登记该 Agent 的账户名，对端成员给出其发布方自报的账户名。账户名只用于展示，不参与地址、过滤与解析。
+
+- **验收**：两个账户的 Agent 同在一个 topic 时，`list_agents` 每一项的 `account` 是对应的账户名；对端成员给出对端自报的账户名；`topic`、`broker` 与 `name` 的过滤结果不受账户名影响。
+- **状态**：已实现
+- **端到端测试**：`test/e2e/system/cross_account_names_test.go` 的 `TestREQAgentMessaging047_CrossAccountImpersonation`；本机与对端成员、账户名缺失时退回十进制 uid 由单元测试 `internal/broker/listagents_test.go` 的 `TestListAgentsEntriesCarryAccount` 覆盖
+
+### REQ-agent-messaging-051
+
+MCP 服务的使用说明必须告知模型，名字相同而消歧标识不同的地址是另一个 Agent，不要把它当作原来的 Agent 转发消息。
+
+- **验收**：使用说明含一句说明名字相同而消歧标识不同的地址指向另一个 Agent，即使名字与想联系的对象相同，也不要把它当作原来那位转发。
+- **状态**：已实现
+- **端到端测试**：不适用：这一行为由模型按使用说明执行，无法确定性验证；使用说明的内容由 `internal/mcpserver/tools_test.go` 的 `TestInstructions` 断言
+
 ## 数据需求
 
-消息正文只在投递过程中存在于内存，系统不把它写入磁盘。Agent 的登记信息只在所在会话存续期间保留。
+消息正文只在投递过程中存在于内存，系统不把它写入磁盘。Agent 的登记信息只在所在会话存续期间保留。名字归属保存在 Broker 的数据目录，保留到名字释放。
 
 ## 外部接口需求
 

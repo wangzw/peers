@@ -219,7 +219,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 	// Step 2: never run inside a Claude Code session's process tree.
 	if baseDeps.InSession() {
-		err := fmt.Errorf("%w: CLAUDE_CODE_MESSAGING_SOCKET is set", ErrInSession)
+		err := fmt.Errorf("%w: this process or one of its parent processes belongs to a Claude Code session", ErrInSession)
 		writeFailure(err)
 		return err
 	}

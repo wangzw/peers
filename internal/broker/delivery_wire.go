@@ -50,7 +50,13 @@ func (v topicVisibility) RemoteMembers(peer peerID) []remoteMember {
 	members := v.t.RemoteMembers(peer)
 	out := make([]remoteMember, len(members))
 	for i, m := range members {
-		out[i] = remoteMember{Name: m.Name, Ref: m.Ref, PrevName: m.PrevName}
+		out[i] = remoteMember{
+			Name:        m.Name,
+			Ref:         m.Ref,
+			PrevName:    m.PrevName,
+			Account:     m.Account,
+			RefRequired: m.RefRequired,
+		}
 	}
 	return out
 }
@@ -188,12 +194,19 @@ func (a *agentTableAdapter) Reread(id string) (agentView, error) {
 // Inbox stays nil so writeInbox can report it.
 func viewOf(s agentSnapshot) agentView {
 	return agentView{
-		ID:       string(s.ID),
-		Name:     s.Name,
-		Ref:      s.Ref,
-		PrevName: s.PrevName,
-		Session:  s.Session,
-		Inbox:    s.Inbox,
+		ID:               string(s.ID),
+		Name:             s.Name,
+		Ref:              s.Ref,
+		RefPinned:        s.RefPinned,
+		RefMandatory:     s.RefMandatory,
+		UID:              s.Caller.UID,
+		NameOwnerUID:     s.NameOwnerUID,
+		NameOwned:        s.NameOwned,
+		PrevNameOwnerUID: s.PrevNameOwnerUID,
+		PrevNameOwned:    s.PrevNameOwned,
+		PrevName:         s.PrevName,
+		Session:          s.Session,
+		Inbox:            s.Inbox,
 	}
 }
 

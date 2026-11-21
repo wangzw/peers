@@ -43,10 +43,11 @@ Agent 的身份是会话的 inbox socket 路径。Agent 的名字是会话名按
 
 ## 后果
 
-清空对话不影响 Agent 的地址与成员关系。同一个会话的多个 MCP 服务进程归于同一个 Agent。用户在 Claude Code 中看到的会话名与标识，就是其他 Agent 看到的名字与消歧标识。
+清空对话不影响 Agent 的地址与成员关系。同一个会话的多个 MCP 服务进程归于同一个 Agent。用户在 Claude Code 中看到的会话名，就是其他 Agent 看到的名字。系统级 Broker 上，不属于名字归属账户的同名 Agent 的消歧标识取 12 位，可能与 Claude Code 会话列表中为它显示的标识不同（[ADR-name-ownership-by-account](adr-name-ownership-by-account.md)）。
 
 **接受的代价：**
 
 - Claude Code 改变其标识的算法，或启用按会话标识计算标识的方式后，两边的标识不再相同。
 - 名字含 `@` 或 `*` 的会话、没有会话注册表记录的会话不能参与。
 - 改名即改变地址，持有旧地址的一方要重新获取。
+- 系统级 Broker 上跨账户的同名由名字归属规则处理：后登记的账户只能用带 12 位消歧标识的地址被找到，其地址与署名不再与 Claude Code 会话列表中看到的标识相同。
