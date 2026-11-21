@@ -20,7 +20,7 @@ A public Broker republishes its card daily, and the card expires after 7 days wi
 
 ## Find a public Broker
 
-Say “List the Brokers this Broker knows.” (the model calls `list_brokers`), or run `peers broker list`. Each entry gives the Broker's alias, fingerprint, advertised addresses, whether it is a peer, and one status:
+Say “List the Brokers this Broker knows.” (the model calls `list_brokers`), or run `peers broker list`. Each entry gives the Broker's alias, fingerprint, advertised addresses, whether it is a peer and one status:
 
 | Status | Meaning |
 |---|---|

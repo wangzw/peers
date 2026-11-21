@@ -4,7 +4,7 @@ linkTitle: 更新
 weight: 8
 ---
 
-peers 会检查自己有没有新版本，由你在终端或会话里决定是否安装。检查是自动的；安装前默认先确认，除非加 `--yes`；会话里 Claude Code 默认会请你确认 `update_broker` 调用。
+peers 会检查自己有没有新版本，由你在终端或会话里决定是否安装。检查是自动的；`peers update` 默认先请你确认，除非加 `--yes`；会话里 Claude Code 默认会请你确认 `update_broker` 调用。
 
 ## 检查新版本
 
@@ -44,7 +44,7 @@ peers update
 
 ### 更新用户级安装
 
-本账户的用户级 Broker 在服务管理器下运行时，命令请这个 Broker 自己更新。Broker 下载适用于本平台与架构的发布包，与 `checksums.txt` 比对，运行新二进制核对它报出的版本是否符合预期，在保留原有权限模式与属主的前提下替换自己的二进制，按新版本的格式重写用户级服务定义（systemd 的 drop-in 与 macOS plist 里的 `EnvironmentVariables` 都原样保留），然后退出；服务管理器以新版本重新启动它。重写失败或超时时，二进制与服务定义都恢复为旧版本，Broker 继续以旧版本运行，命令报告原因。命令要等到新 Broker 报出新版本才返回，输出如下：
+本账户的用户级 Broker 在服务管理器下运行时，命令请这个 Broker 自己更新。Broker 下载适用于本平台与架构的发布包，并与 `checksums.txt` 比对。它运行新二进制核对报出的版本是否符合预期，然后在保留原有权限模式与属主的前提下替换自己的二进制。它按新版本的格式重写用户级服务定义；systemd 的 drop-in 与 macOS plist 里的 `EnvironmentVariables` 都原样保留。随后 Broker 退出，服务管理器以新版本重新启动它。重写失败或超时时，Broker 把二进制与服务定义恢复为旧版本，不重启，继续以旧版本运行，命令报告原因。命令要等到新 Broker 报出新版本才返回，输出如下：
 
 ```text
 peers <installed> is installed. Update to the latest release? [y/N] y
@@ -100,7 +100,7 @@ Broker 重启后，连接会自动恢复。发起调用的会话里，MCP 服务
 
 | 安装方式 | 命令 | 处理方式 |
 |---|---|---|
-| 用户级：主机上没有系统级服务时，对 `Install for every account on this host? [y/N]` 回答 n 或直接回车；非 root 账户没有终端时运行；带 `--user`；或手工把二进制放进 `~/.local/bin` | `peers update` | 装有服务时，Broker 替换自己的二进制，服务管理器重启它；没有服务时，命令替换二进制，下次启动时生效。 |
+| 用户级：未安装系统级服务，由以下任一方式安装：对 `Install for every account on this host? [y/N]` 回答 n 或直接回车、以非 root 账户在没有终端时运行、带 `--user`，或手工把二进制放进 `~/.local/bin` | `peers update` | 装有服务时，Broker 替换自己的二进制，服务管理器重启它；没有服务时，命令替换二进制，下次启动时生效。 |
 | 系统级：带 `--system` 或对级别询问回答 y 的安装命令，或以 root 运行，或手工 `sudo install` 到 `/usr/local/bin` | 管理组成员且本账户没有运行用户级 Broker 时用 `peers update`；其余情形用 `sudo peers update`；不在组内的，也可以先加入管理组 | Broker 替换自己的二进制，服务管理器重启它。 |
 | 没有正在运行的 Broker | `peers update` | 命令替换二进制，不启动也不重启任何服务。 |
 

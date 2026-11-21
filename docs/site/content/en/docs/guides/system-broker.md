@@ -8,7 +8,7 @@ A system Broker runs as a service with root privileges and serves agents of seve
 
 ## Install and enable it
 
-Install the binary in a directory that root owns and that group and others cannot write, and install the service as root. The install command does both: answer y to its level question. Run it from the account whose Claude Code should use the system Broker. The install registers the MCP server only for the account that ran it, including when it re-runs itself through `sudo`. It starts the Broker immediately, and it starts at boot from then on.
+Install the binary in a directory that root owns and that group and others cannot write, and install the service as root. The install command does both: answer y to its level question. Run it from the account whose Claude Code should use the system Broker. The install registers the MCP server only for the account that ran it, including when it re-runs itself through `sudo`. It starts the Broker immediately, and the Broker starts at boot from then on.
 
 ```sh
 curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh
@@ -16,7 +16,7 @@ curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh |
 
 [Install `peers`]({{< relref "install.md" >}}) covers the question and the other ways to install; [Run the Broker as a service]({{< relref "run-as-service.md" >}}) gives the manual commands.
 
-The system Broker takes root's account lock. If a user Broker is already running as root, the system installation refuses and asks you to stop it first.
+The system Broker takes root's account lock. If a user Broker is already running as root, installing the system service fails and asks you to stop that Broker first.
 
 The system Broker uses `/etc/peers/config.yaml`, `/var/log/peers/audit.log` and `/var/lib/peers`. If the configuration file does not exist, the install generates it as a template that lists every configuration key, with owner root, the default group `peers` and mode `0660`; an existing file is left unchanged. Members of that group manage the Broker without `sudo` when the account runs no user Broker of its own; [Manage a Broker by file permission]({{< relref "management-permissions.md" >}}#the-admin-group) describes the group and its limits.
 
@@ -28,7 +28,7 @@ Each account registers the MCP server for itself; registration is per account, n
 claude mcp add --scope user peer -- /usr/local/bin/peers mcp
 ```
 
-Do not run the install command on these accounts. On a host that already has the system service, the install command asks whether to upgrade the system installation instead; answering n leaves the host unchanged; a user Broker is installed only with `--user` or when the command runs without a terminal, and the account's sessions then use it. If a user installation is already there, remove it with [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall); the uninstall also removes this account's MCP registration, so run the registration command above again.
+Do not run the install command as these accounts. On a host that already has the system service, the install command asks whether to upgrade the system installation instead. Answering n leaves the host unchanged. A user Broker is installed only with `--user` or when the command runs without a terminal, and the account's sessions then use it. If a user installation is already there, remove it with [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall); the uninstall also removes this account's MCP registration, so run the registration command above again.
 
 A session reaches the system Broker through the local socket `/run/peers/broker.sock` on Linux, or `/var/run/peers/broker.sock` on macOS. Two settings decide which accounts can connect:
 
@@ -50,7 +50,7 @@ If none is available, tool calls return an error that says what to do, and the M
 
 An account that may use the system Broker but has its own user Broker running registers on the user Broker. To have its sessions use the system Broker instead, do not run a user Broker on that account.
 
-The terminal commands `peers config`, `peers key` and `peers broker` choose a Broker in the same order, look only for a Broker that is running, and never start one. The commands under `peers service` do not follow this order: they act only on the level selected by `--system` or `--user`, and never fall back to the other level. If this account has a user Broker running, use `sudo` to manage the system Broker with `peers config`, `peers key` or `peers broker`; root selects the system Broker directly.
+The terminal commands `peers config`, `peers key` and `peers broker` choose a Broker in the same order, look only for a Broker that is running and never start one. The commands under `peers service` do not follow this order: they act only on the level selected by `--system` or `--user`, and never fall back to the other level. If this account has a user Broker running, use `sudo` to manage the system Broker with `peers config`, `peers key` or `peers broker`; root selects the system Broker directly.
 
 ## One identity for several accounts
 

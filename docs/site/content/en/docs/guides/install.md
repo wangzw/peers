@@ -4,7 +4,7 @@ linkTitle: Install
 weight: 1
 ---
 
-This guide covers the install level, installing a particular version, installing from the release archive, the install script's options, the installation output, install failures, manual installation and building from source. [Getting Started]({{< relref "/docs/getting-started" >}}) gives the one-command installation; to keep an installation up to date with `peers update`, see [Update `peers`]({{< relref "update.md" >}}).
+This guide covers the install level, installing a particular version, installing from the release archive, the install script's options, the installation output, install failures, manual installation and building from source. [Getting started]({{< relref "/docs/getting-started" >}}) gives the one-command installation; to keep an installation up to date with `peers update`, see [Update `peers`]({{< relref "update.md" >}}).
 
 ## Choose the install level
 
@@ -25,7 +25,7 @@ The command needs macOS or Linux on amd64 or arm64; `curl` to fetch the script, 
 
 Unless `--version` names a release, the script resolves the latest stable release; it downloads this platform's archive and the same release's `checksums.txt` into a temporary directory, verifies the archive, extracts it and runs the `install.sh` it contains. Every download the script makes goes over HTTPS; with either `curl` or `wget`, it refuses a redirect to an http address. If a download fails or the checksum does not match, it stops and leaves the host unchanged, and the temporary directory is removed when the script exits or is interrupted. An interrupted download of the script itself runs nothing, because the work starts on its last line.
 
-Piping a script into a shell trusts it to the same degree as downloading the archive by hand from GitHub Releases. Releases are not signed, and `checksums.txt` comes from the same release as the archive, so a matching checksum catches a damaged download but does not prove that the release is trustworthy. To inspect the script first, download it, read it, and run it from the directory that holds it:
+Piping a script into a shell means trusting it as much as downloading the archive by hand from GitHub Releases. Releases are not signed, and `checksums.txt` comes from the same release as the archive, so a matching checksum catches a damaged download but does not prove that the release is trustworthy. To inspect the script first, download it, read it and run it from the directory that holds it:
 
 ```sh
 curl -fsSLO https://github.com/wangzw/peers/releases/latest/download/install.sh
@@ -80,7 +80,7 @@ sh ./install.sh
 
 The script asks for the level as the online command does; [Choose the install level](#choose-the-install-level) covers the question.
 
-The user installation puts the binary into `~/.local/bin`, installs and starts the user service, and registers the MCP server for your account. The system installation puts the binary into `/usr/local/bin`, installs and starts the system service, and registers the MCP server for the account that ran the install; it also creates the `peers` group and asks whether to add that account to it. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group, the question and its effect.
+The user installation puts the binary into `~/.local/bin`, installs and starts the user service and registers the MCP server for your account. The system installation puts the binary into `/usr/local/bin`, installs and starts the system service and registers the MCP server for the account that ran the install; it also creates the `peers` group and asks whether to add that account to it. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group, the question and its effect.
 
 The script accepts these options:
 
@@ -97,7 +97,7 @@ The script accepts these options:
 
 Giving both `--join-admin-group` and `--no-admin-group` is a usage error.
 
-The script is safe to run again: it replaces the binary, restarts the service with it, and does not register the MCP server twice. If the server is already registered with a different command, the script keeps the existing registration; to change it, run `claude mcp remove -s user peer` and run the script again. It never accesses the network; everything it installs comes from the extracted archive.
+The script is safe to run again: it replaces the binary, restarts the service with it and does not register the MCP server twice. If the server is already registered with a different command, the script keeps the existing registration; to change it, run `claude mcp remove -s user peer` and run the script again. It never accesses the network; everything it installs comes from the extracted archive.
 
 With `--no-mcp`, the script skips the registration, and you run the registration command in the manual section yourself. When it cannot find `claude`, or runs as root without `sudo` and has no account to register for, it prints the `claude mcp add` command to run.
 
@@ -117,7 +117,7 @@ The system installation also writes the man pages into `/usr/local/share/man/man
 
 ## Installation output
 
-A successful installation's summary begins with `peers <version> installed (<level>, starts at <login|boot>)`, and an upgrade prints `upgraded from <version>` before it. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path, and the commands to start, stop, restart and uninstall the Broker. The start, stop and restart commands use `sudo` for the system installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
+A successful installation's summary begins with `peers <version> installed (<level>, starts at <login|boot>)`, and an upgrade prints `upgraded from <version>` before it. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path and the commands to start, stop, restart and uninstall the Broker. The start, stop and restart commands use `sudo` for the system installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
 
 A failed installation names the cause: an address that is already in use is reported with the address, the configuration file and `broker.listen`; a service manager error gives the command and its output; missing permissions give the path and the missing permission; and a Broker that exits during startup gives the reason from its run log. Only when the service is running and the Broker has entered a degraded run does the install keep the service, give a fix command and exit with code 3; a service that a failed install wrote or enabled does not start at boot or login. [peers service install]({{< relref "/docs/reference/cli" >}}#peers-service-install) and [the port question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-if-the-port-is-already-in-use) give the details.
 
@@ -179,7 +179,7 @@ Otherwise, install the user service; the install starts it right away, and from 
 peers service install
 ```
 
-The user installation must not run as root, and on macOS it needs a graphical login session; on a host without one, install the system service with `peers service install --system`, as root or through an administrator; see [Run a system Broker]({{< relref "system-broker.md" >}}). Alternatively, run the Broker in a terminal outside Claude Code and leave it running:
+The user installation must not run as root, and on macOS it needs a graphical login session; on a host without one, install the system service with `peers service install --system`, as root, or ask an administrator to run it; see [Run a system Broker]({{< relref "system-broker.md" >}}). Alternatively, run the Broker in a terminal outside Claude Code and leave it running:
 
 ```sh
 peers service run

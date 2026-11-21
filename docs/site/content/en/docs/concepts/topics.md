@@ -9,7 +9,7 @@ Topic names are global within a connected network: a topic named `release` on on
 
 ## The default topic
 
-So that sessions working in one project need no extra step, each agent joins a default topic at registration when automatic joining is on.
+Each agent joins a default topic at registration when automatic joining is on, so that sessions working in one project need no extra step.
 
 The default topic comes from the project configuration file `.peers.yaml`, which declares a list of topics. When the file declares no list, the default topic is the normalized `origin` address of the workspace's git repository: the lowercased host followed by the repository path, without the protocol, user information, port or `.git` suffix. For example, `git@github.com:org/repo.git` and `https://github.com/org/repo` both give `github.com/org/repo`. When the file declares no list and the workspace has no `origin` remote, the agent joins no default topic.
 
@@ -19,7 +19,7 @@ Called without a name, `join_topic` and `leave_topic` act on all of the session'
 
 ## Public topics
 
-A topic is private unless it is declared public. A public topic's name and description reach every Broker in the connected network, not only the declaring Broker's peers. Only an agent on a public Broker can declare a topic public, and the declaration ends when the Broker becomes private or no agent remains in the topic that joined it publicly.
+A topic is private unless it is declared public. A public topic's name and description reach every Broker in the connected network, not only the declaring Broker's peers. Only an agent on a public Broker can declare a topic public, and the declaration ends when the Broker becomes private or no agent that joined the topic publicly remains in it.
 
 A private topic's name stays with Brokers that have a member in it, and its roster reaches only connected peers that also have a member.
 

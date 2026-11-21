@@ -21,6 +21,6 @@ Agent 可以列出对自己可见的 Agent、加入和退出 topic、列出 topi
 
 列表中的状态取自 Claude Code 的会话注册表：`idle`、`busy`、`waiting` 或 `shell`。
 
-子代理以主会话的身份调用工具。无界面会话以及在 IDE 或其他宿主中运行的会话，与交互式会话以同样的方式登记。
+子代理以主会话的身份调用工具。无界面会话以及在 IDE 或其他客户端中运行的会话，与交互式会话以同样的方式登记。
 
 Broker 如何完成登记，见[Broker]({{< relref "/docs/concepts/broker" >}})；协作步骤见[在同一个 topic 里协作]({{< relref "/docs/guides/collaborate-in-topic" >}})；Agent 调用的工具见 [MCP 工具参考]({{< relref "/docs/reference/mcp-tools" >}})。

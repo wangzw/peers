@@ -97,7 +97,7 @@ Addresses:
 
 `config` 与 `broker` 两组命令以及 `key create` 连接正在运行的 Broker，不会启动 Broker。它们按执行命令的操作系统账户选择 Broker，没有按级别指定 Broker 的命令行选项：先找本账户正在运行的用户级 Broker，再找本账户有权使用的系统级 Broker。本账户运行着自己的用户级 Broker、又要管理系统级 Broker 时，必须以 `sudo` 执行命令。`peers update` 遵循同一账户选择规则。与正在运行的 Broker 通信的 `service` 命令，即 `status`、`audit`、`online` 与 `offline`，改用 `--system` 与 `--user` 选择级别，规则见各自小节。选择规则与相关设置见[运行系统级 Broker]({{< relref "/docs/guides/system-broker" >}})。
 
-Broker 按执行命令的账户判定每个命令的权限，规则与对应的工具相同。写操作留下的审计记录中，`account` 是执行命令的账户，`actor` 为空。管理员以 `sudo` 执行时，系统级 Broker 按 root 的权限判定。系统级 Broker 管理组的成员在本账户没有运行自己的用户级 Broker 时，不用 `sudo` 也能管理它；管理组见[以配置文件权限管理 Broker]({{< relref "/docs/guides/management-permissions" >}})。这些命令不经过 Claude Code 的权限确认。Broker 拒绝某个命令时，它给出的英文错误写到标准错误，其中包含配置文件的路径，命令以退出码 1 结束。
+Broker 按执行命令的账户判定每个命令的权限，规则与对应的工具相同。写操作留下的审计记录中，`account` 是执行命令的账户，`actor` 为空。管理员以 `sudo` 执行时，系统级 Broker 按 root 的权限判定。系统级 Broker 管理组的成员在本账户没有运行自己的用户级 Broker 时，不用 `sudo` 也能管理它；管理组见[以配置文件权限管理 Broker]({{< relref "/docs/guides/management-permissions" >}})。这些命令不经过 Claude Code 的权限确认。Broker 拒绝某个命令时，它给出的错误写到标准错误，其中包含配置文件的路径，命令以退出码 1 结束。
 
 这些命令的输出沿用 `peers service status` 的约定：空值写 `-`。
 
@@ -288,7 +288,7 @@ peers update [flags]
 
 命令选中正在运行的 Broker 时，由它自己安装更新。系统级 Broker 管理组的成员不用 `sudo` 就能更新它；本账户运行着自己的用户级 Broker 时，用 `sudo peers update` 作用于系统级 Broker。
 
-1. 把请求发给选中的 Broker。Broker 按对配置文件的写权限判定权限，命令不先行检查。权限被拒时，Broker 的英文错误写到标准错误，命令以退出码 1 结束，没有发出任何下载请求。
+1. 把请求发给选中的 Broker。Broker 按对配置文件的写权限判定权限，命令不先行检查。权限被拒时，Broker 的错误写到标准错误，命令以退出码 1 结束，没有发出任何下载请求。
 2. 已经是最新版本时，命令输出 `peers <installed> is up to date`，以退出码 0 结束。
 3. Broker 下载本平台与架构的发布包和 `checksums.txt`，核对发布包的 SHA-256，取出其中名为 `peers` 的普通文件，并运行新二进制的 `--version`，确认它报告的版本符合预期。然后它替换自己的二进制；符号链接仍指向更新后的文件。
 4. Broker 先应答再重启。命令输出 `The Broker is restarting to version <latest>.`，并等到重启后的 Broker 报告该版本，因为只有新进程在运行，更新才算完成。成功时输出 `The Broker is running peers <latest>.`，随后输出会话提示。重启后的 Broker 未及时报告新版本时，命令失败，并给出该级别服务日志的位置。
@@ -303,7 +303,7 @@ peers update [flags]
 1. 定位正在运行的可执行文件，并解析符号链接。只替换它们指向的文件。
 2. 检查能否写入目标所在的目录，这一步先于任何下载。没有写权限时输出 `cannot write to <dir>: ...`，随后输出 `run "sudo peers update" to update a system-level installation`，以退出码 1 结束。
 3. 向 GitHub 查询最新的正式发布版本。已经是最新版本时输出 `peers <installed> is up to date`，以退出码 0 结束。
-4. 下载本平台与架构的发布包和 `checksums.txt`，核对发布包的 SHA-256，取出其中名为 `peers` 的普通文件，并运行新二进制的 `--version`，确认它报告的版本符合预期。它输出 `peers <installed> is installed; version <latest> is available.`；发布填了地址时再输出 `Release: <url>`。
+4. 先输出 `peers <installed> is installed; version <latest> is available.`；发布填了地址时再输出 `Release: <url>`。然后下载本平台与架构的发布包和 `checksums.txt`，核对发布包的 SHA-256，取出其中名为 `peers` 的普通文件，并运行新二进制的 `--version`，确认它报告的版本符合预期。
 5. 在目标所在的目录写入新二进制，把属主与权限改成与原文件相同，再改名到目标路径。旧版本不保留。
 6. 不启动也不重启任何服务，因为服务可能是有意停掉的。它输出 `The new binary takes effect the next time the Broker starts.`。
 

@@ -7,7 +7,7 @@ An agent is a Claude Code session that has enabled the `peers` tools and registe
 
 ## Identity and names
 
-A Broker identifies an agent by the session's inbox socket, the local socket Claude Code binds for that session. The session's name gives the agent its name: `peers` applies Claude Code's own name normalization, which removes control and format characters, trims whitespace, lowercases the text and replaces whitespace with `-`. A session whose name becomes empty, is empty after the attribution cleanup (the receiving side removes characters it cannot read in a sender name and truncates the result to 64 characters), or contains `@` or `*` cannot become an agent.
+A Broker identifies an agent by the session's inbox socket, the local socket Claude Code binds for that session. The session's name gives the agent its name: `peers` applies Claude Code's own name normalization, which removes control and format characters, trims whitespace, lowercases the text and replaces whitespace with `-`. A session whose name becomes empty, is empty after the attribution cleanup (the receiving side removes characters it cannot read in a sender name and truncates the result to 64 characters) or contains `@` or `*` cannot become an agent.
 
 A session that binds no inbox socket cannot become an agent, and neither can one for which Claude Code keeps no session registry record, including an interactive session started from another session's command line.
 
@@ -21,6 +21,6 @@ Messages are plain text. A send succeeds once the message has been written into 
 
 A session's status in a list comes from Claude Code's session registry: `idle`, `busy`, `waiting` or `shell`.
 
-Subagents call the tools as their main session. Headless sessions and sessions in an IDE or another host register the same way interactive sessions do.
+Subagents call the tools under their main session's identity. Headless sessions and sessions in an IDE or another client register the same way interactive sessions do.
 
-See [Broker]({{< relref "/docs/concepts/broker" >}}) for the daemon behind the registration, [Collaborate in a topic]({{< relref "/docs/guides/collaborate-in-topic" >}}) for collaboration steps, and the [MCP tools reference]({{< relref "/docs/reference/mcp-tools" >}}) for the tools an agent calls.
+See [Broker]({{< relref "/docs/concepts/broker" >}}) for the daemon behind the registration, [Collaborate in a topic]({{< relref "/docs/guides/collaborate-in-topic" >}}) for collaboration steps and the [MCP tools reference]({{< relref "/docs/reference/mcp-tools" >}}) for the tools an agent calls.

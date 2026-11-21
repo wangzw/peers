@@ -4,13 +4,13 @@ linkTitle: Run the Broker as a service
 weight: 5
 ---
 
-A Claude Code session connects to a Broker but never starts one. You start a Broker either by installing it as a service or by running it in a terminal. A service starts the Broker right away, starts it at login or at boot, keeps it running, and brings it back after a machine restart.
+A Claude Code session connects to a Broker but never starts one. You start a Broker either by installing it as a service or by running it in a terminal. A service starts the Broker right away, starts it at login or at boot, keeps it running and brings it back after a machine restart.
 
 The install command already installs and starts the service, so this page covers a manual installation or installing the service after `--no-service`. The sections on stopping a Broker you started in a terminal and on uninstalling a service apply to every installation.
 
 ## Stop a Broker you started in a terminal
 
-If you have run `peers service run` in a terminal for this account, stop it there before installing the service. The install refuses while a Broker that this service did not start is answering, because that Broker holds the account lock.
+If you have run `peers service run` in a terminal for this account, stop it there before installing the service. The install fails while a Broker that this service did not start is answering, because that Broker holds the account lock.
 
 ## Install the user service
 
@@ -22,7 +22,7 @@ Run the install command as the account that owns the sessions:
 peers service install
 ```
 
-The command writes the unit file or plist, enables the service, and starts the Broker immediately. It waits up to 20 seconds for the Broker to answer; if it does not answer, the install fails and reports where the service logs go. Reinstalling replaces the running Broker with the new binary. The user installation must not run as root, because the unit belongs to one account. The install refuses a binary inside the temporary directory; this applies to both the user and the system installation.
+The command writes the unit file or plist, enables the service and starts the Broker immediately. It waits up to 20 seconds for the Broker to answer; if it does not answer, the install fails and reports where the service logs go. Reinstalling replaces the running Broker with the new binary. The user installation must not run as root, because the unit belongs to one account. The install refuses a binary inside the temporary directory; this applies to both the user and the system installation.
 
 When `~/.peers/config.yaml` does not exist, the install generates it as a template that lists every configuration key: keys with a fixed default are written out, and the remaining keys are comments with an example value or an empty placeholder. The file belongs to the account that runs the install and has mode `0600`; an existing file is left unchanged. The install summary's `config:` line ends with `(generated)` or `(kept)`. [Configuration keys]({{< relref "docs/reference/configuration" >}}) describes the generated file.
 
@@ -46,7 +46,7 @@ On an Intel Mac with Homebrew, `/usr/local/bin` belongs to the ordinary user, so
 
 The install checks the binary and every directory above it, then starts the Broker immediately.
 
-On Linux the command writes `/etc/systemd/system/peers.service`, enables it and starts it. On macOS it writes and loads `/Library/LaunchDaemons/io.github.wangzw.peers.plist`. A system install also generates the configuration file at `/etc/peers/config.yaml` from the system template if it does not exist, owned by root, with group `peers` and mode `0660`; an existing file is left unchanged, and the install prints the command to give it to the group. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group.
+On Linux the command writes `/etc/systemd/system/peers.service`, enables it and starts it. On macOS it writes and loads `/Library/LaunchDaemons/io.github.wangzw.peers.plist`. A system install also generates the configuration file at `/etc/peers/config.yaml` from the system template if it does not exist, owned by root, with group `peers` and mode `0660`; an existing file is left unchanged, and the install prints the command to assign it to the group. [The admin group]({{< relref "management-permissions.md" >}}#the-admin-group) covers the group.
 
 ## Uninstall a service
 
@@ -58,6 +58,6 @@ Run `peers service stop` and `peers service start` to stop and start the service
 
 ## Check the service
 
-Run `peers service status` in a terminal, adding `--system` for the system service. The output has an `Agents` table and a `Peers` table, or `Agents: none` and `Peers: none`. The service manager shows the Broker too: `systemctl --user status peers.service`, `systemctl status peers.service`, or `launchctl print` with the label `io.github.wangzw.peers`.
+Run `peers service status` in a terminal, adding `--system` for the system service. The output has an `Agents` table and a `Peers` table, or `Agents: none` and `Peers: none`. The service manager shows the Broker too: `systemctl --user status peers.service`, `systemctl status peers.service` or `launchctl print` with the label `io.github.wangzw.peers`.
 
-Keep one Broker per account. Starting a second Broker under the same account fails with an error that an instance is already running, whichever address it would use. When another account's Broker already holds the port, an install fails; a service that was installed and only later finds the port taken enters local-only degraded run.
+Keep one Broker per account. Starting a second Broker under the same account fails with an error that an instance is already running, whichever address it would use. When another account's Broker already holds the port, an install fails; a service that was installed and only later finds the port taken enters a local-only degraded run.

@@ -41,7 +41,7 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 ## 没有 Broker 在运行时会怎样？
 
-工具调用返回错误，说明该怎么做，具体视情形而定；MCP 服务进程不会启动 Broker。第一次查找时用户级与系统级 Broker 都找不到，或者用户级 Broker 的 socket 消失、拒绝连接（例如被强杀之后），报的是同一条：先提示本机如有系统级 Broker 请管理员启动它，再给出两种用户级启动方法，即 `peers service install`，或在 Claude Code 之外的终端里运行 `peers service run`。原先连在系统级 Broker 上的会话断开后，只提示联系管理员。用户级 socket 还在应答，但握手或调用失败时，报告 Broker 不可用，并说明 MCP 服务会在后台重试，不给出启动方法。启动 Broker 之后，会话不必重新连接 MCP 服务。需要 Broker 的终端命令，例如 `peers broker list`，做法相同：只查找正在运行的 Broker，不会启动它。见[命令行]({{< relref "reference/cli.md" >}})。
+工具调用返回错误，说明该怎么做，具体视情形而定。MCP 服务进程不会启动 Broker。有两种情形得到同一条提示：第一次查找时既找不到用户级 Broker 也找不到系统级 Broker，以及用户级 Broker 的 socket 消失、拒绝连接（例如被强杀之后）。提示先说明：本机如有系统级 Broker，请管理员启动它；再给出两种运行用户级 Broker 的方法：`peers service install`，或在 Claude Code 之外的终端里运行 `peers service run`。原先连在系统级 Broker 上的会话断开后，提示联系管理员；本账户是 root 时，提示用 `peers service start --system` 启动它。用户级 socket 还在应答，但握手或调用失败时，报告 Broker 不可用，并说明 MCP 服务会在后台重试，不给出启动方法。启动 Broker 之后，会话不必重新连接 MCP 服务。需要 Broker 的终端命令，例如 `peers broker list`，做法相同：只查找正在运行的 Broker，不会启动它。见[命令行]({{< relref "reference/cli.md" >}})。
 
 ## 一个账户能运行多个 Broker 吗？
 
@@ -53,7 +53,7 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 ## 怎样更新 peers？
 
-在终端运行 `peers update`，或在会话里说“更新 Broker。”并批准这次调用（模型会调用 `update_broker`）。系统级安装由管理组成员更新，不用 `sudo`；不在组内的账户用 `sudo peers update`，或先加入管理组。同一账户还运行着用户级 Broker 时，用 `sudo peers update` 到达系统级 Broker。更新会校验下载内容、替换二进制；作为服务运行的 Broker 会用新版本重启，没有在运行的 Broker，或者不在服务管理器下运行的用户级 Broker，下次启动时才用上新版本。已经打开的会话要用 `/mcp` 重连或重开。见[更新 peers]({{< relref "guides/update.md" >}})。
+在终端运行 `peers update`，或在会话里说“更新 Broker。”并批准这次调用（模型会调用 `update_broker`）。系统级安装由管理组成员更新，不用 `sudo`；不在组内的账户用 `sudo peers update`，或先加入管理组。同一账户还运行着用户级 Broker 时，用 `sudo peers update` 到达系统级 Broker。更新会校验下载内容，替换二进制。作为服务运行的 Broker 会用新版本重启。没有在运行的 Broker，或者不在服务管理器下运行的用户级 Broker，下次启动时才用上新版本。已经打开的会话要用 `/mcp` 重连或重开。见[更新 peers]({{< relref "guides/update.md" >}})。
 
 ## 能关闭更新检查吗？
 
@@ -61,7 +61,7 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 ## 两台主机如何开始互相信任？
 
-两台主机里至少要有一台能连到另一台。在对方能连上的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或运行 `peers key create` 生成一次性配对密钥，连同显示的地址一起，通过系统之外的途径交给另一台。另一台说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”并批准这次调用（模型会调用 `connect_broker`），或运行 `peers broker connect <address> --key <key>` 配对，使用该一次性密钥或接受方配置的预置静态密钥，此后双方各凭指纹认对方。见[配对]({{< relref "concepts/pairing.md" >}})与[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
+两台主机里至少要有一台能连到另一台。在对方能连上的那台主机上说“生成一个配对密钥。”并批准这次调用（模型会调用 `create_pairing_key`），或运行 `peers key create` 生成一次性配对密钥，连同显示的地址一起，通过系统之外的途径交给另一台。另一台说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”并批准这次调用（模型会调用 `connect_broker`），或运行 `peers broker connect <address> --key <key>` 配对。配对使用该一次性密钥或接受方配置的预置静态密钥。此后双方各凭指纹认对方。见[配对]({{< relref "concepts/pairing.md" >}})与[两台主机配对]({{< relref "guides/pair-hosts.md" >}})。
 
 ## 什么是 topic？需要自己创建吗？
 

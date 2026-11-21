@@ -15,7 +15,7 @@ Broker 以两种形态之一运行。
 
 以服务方式安装的 Broker 无法绑定监听地址时不会退出，而是进入仅本机降级，继续服务本机会话，见 [FAQ 的端口一问]({{< relref "/docs/faq" >}}#端口被占用时会怎样)。
 
-每个实例有自己的指纹、对端和配置。同一台主机上的两个 Broker 在网络中是彼此独立的 Broker，不是同一个进程的两个部分。它们的默认别名各不相同，规则见下文“地址与身份”。在主机名为 `workstation.example.com` 的主机上，系统级 Broker 取 `workstation`，账户 alice 与 bob 的用户级 Broker 分别取 `workstation.alice` 与 `workstation.bob`。这是三个别名互不相同的 Broker，按别名排序时同一主机上的 Broker 排在一起。
+每个实例有自己的指纹、对端和配置。同一台主机上的两个 Broker 在网络中是彼此独立的 Broker，不是同一个进程的两个部分。它们的默认别名各不相同，规则见下文[地址与身份](#地址与身份)。在主机名为 `workstation.example.com` 的主机上，系统级 Broker 取 `workstation`，账户 alice 与 bob 的用户级 Broker 分别取 `workstation.alice` 与 `workstation.bob`。这是三个别名互不相同的 Broker，按别名排序时同一主机上的 Broker 排在一起。
 
 ## 地址与身份
 

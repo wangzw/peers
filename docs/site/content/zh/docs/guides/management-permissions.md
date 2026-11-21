@@ -34,11 +34,10 @@ weight: 7
 
 安装脚本会询问是否把执行安装的账户加入该组，默认不加入。`--join-admin-group` 不询问直接加入，`--no-admin-group` 既不询问也不加入。没有终端时，脚本不加入任何账户，并打印加入组的命令。Broker 每次判定权限都从账户数据库读取账户的组，所以经 Broker 做的管理操作，加入组后下一次调用就生效。要让本账户自己的进程带上新的成员关系，例如直接编辑配置文件，先重新登录或执行 `newgrp peers`。要把别的账户加入组，Linux 上执行 `sudo usermod -aG peers <account>`，macOS 上执行 `sudo dseditgroup -o edit -a <account> -t user peers`；设置过 `--admin-group` 时，把命令里的 `peers` 换成那个组名。
 
-已有安装用安装输出给出的命令把文件交给这个组：
+已有安装时，以 root 运行安装输出给出的这条命令：
 
 ```sh
-sudo chgrp peers /etc/peers/config.yaml
-sudo chmod 0660 /etc/peers/config.yaml
+chgrp peers /etc/peers/config.yaml && chmod 0660 /etc/peers/config.yaml
 ```
 
 只授予读权限时，把 `0660` 换成 `0640`。
@@ -59,4 +58,4 @@ sudo chmod 0660 /etc/peers/config.yaml
 - Claude Code 自己的权限设置决定一次工具调用是否需要你批准，这只管工具；终端命令不经过 Claude Code 的权限确认。文件权限检查与此独立，工具调用要文件权限检查和会话里的批准都允许才会执行。
 - 不要把 `update_broker` 加入 Claude Code 的自动批准名单。这条确认是升级前的最后一道人工检查；系统级安装时，Broker 替换的是以 root 运行的二进制。
 - 工具和终端命令都不能设置 `pairing.static_key`，也不能读取它的取值。`get_config` 与 `peers config list` 只报告它是否已设置，`set_config` 与 `peers config set` 对它总是失败。要设置、更换或删除它，直接编辑配置文件；Broker 无需重启就会采用改动。
-- 权限不足的错误不会改变任何状态：配置、对端和有效的配对密钥都保持原样。终端命令权限不足时，Broker 给出的英文错误会写到标准错误，其中包含配置文件的路径，命令以退出码 1 结束。
+- 权限不足的错误不会改变任何状态：配置、对端和有效的配对密钥都保持原样。终端命令权限不足时，Broker 给出的错误会写到标准错误，其中包含配置文件的路径，命令以退出码 1 结束。

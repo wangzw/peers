@@ -34,19 +34,18 @@ The check identifies an operating-system account, not a person or a model. Any p
 
 The install script asks whether to add the account that ran the install to the group, and does not add it by default. `--join-admin-group` adds that account without asking, and `--no-admin-group` neither asks nor adds it. Without a terminal, the script adds nothing and prints the command to join the group. A new membership applies from the next call through the Broker, because the Broker reads the account's groups from the account database on each check. Log in again, or run `newgrp peers`, before the account's own processes use the new membership, for example to edit the configuration file directly. To add another account, run `sudo usermod -aG peers <account>` on Linux, or `sudo dseditgroup -o edit -a <account> -t user peers` on macOS; if you set `--admin-group`, use that group name instead.
 
-For an existing installation, give the file to the group with the command the install output prints:
+For an existing installation, run, as root, the command the install output prints:
 
 ```sh
-sudo chgrp peers /etc/peers/config.yaml
-sudo chmod 0660 /etc/peers/config.yaml
+chgrp peers /etc/peers/config.yaml && chmod 0660 /etc/peers/config.yaml
 ```
 
 Use `0640` instead of `0660` to grant read access only.
 
 These limits come with the group:
 
-- a port below 1024 in `broker.listen` takes effect only while the configuration file can be written by root alone; `chmod g-w <path>` or a port of 1024 or higher fixes it, and [Configuration keys]({{< relref "configuration.md" >}}#types-and-constraints) gives the rule.
-- installing and uninstalling the system service still needs root.
+- A port below 1024 in `broker.listen` takes effect only while the configuration file can be written by root alone. `chmod g-w <path>` or a port of 1024 or higher fixes it, and [Configuration keys]({{< relref "configuration.md" >}}#types-and-constraints) gives the rule.
+- Installing and uninstalling the system service still needs root.
 
 A read-only grant (`0640`) is not subject to the low-port rule, because it looks only at whether the group or others can write the file.
 
@@ -59,4 +58,4 @@ Being allowed to use the Broker and being allowed to manage it are separate. The
 - Claude Code's own permission settings decide whether a tool call needs your approval. They apply to the tools only: the terminal commands do not go through Claude Code's approval. The file check is independent of both; a tool call runs only when the file check and the approval both allow it.
 - Do not add `update_broker` to Claude Code's auto-approve list. That confirmation is the last manual check before an upgrade, and for the system installation the Broker replaces a binary that runs as root.
 - Neither the tools nor the terminal commands can set `pairing.static_key` or read its value. `get_config` and `peers config list` report only whether it is set, and `set_config` and `peers config set` always fail for it. Edit the configuration file to set, replace or delete it; the Broker applies the change without a restart.
-- A permission error changes nothing: the configuration, the peers and the valid pairing keys stay as they were. When a terminal command lacks the required permission, the Broker's English error, which includes the path of the configuration file, is written to standard error, and the command exits with code 1.
+- A permission error changes nothing: the configuration, the peers and the valid pairing keys stay as they were. When a terminal command lacks the required permission, the Broker's error message, which includes the path of the configuration file, is written to standard error, and the command exits with code 1.

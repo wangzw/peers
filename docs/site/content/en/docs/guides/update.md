@@ -4,7 +4,7 @@ linkTitle: Update
 weight: 8
 ---
 
-`peers` checks for newer releases of itself, and you install them from a terminal or from a session when you choose to. The check is automatic; an installation asks for confirmation by default unless you pass `--yes`, and a session asks by default for your approval of the `update_broker` call.
+`peers` checks for newer releases of itself, and you install them from a terminal or from a session when you choose to. The check is automatic; `peers update` asks for confirmation unless you pass `--yes`, and a session asks for your approval of the `update_broker` call.
 
 ## Check for new releases
 
@@ -38,13 +38,13 @@ peers update
 
 It first refuses a binary that is not a release build. It then asks before changing anything; answering `y` or `yes` goes ahead, and any other answer cancels the update and leaves the binary and the service as they were. Only after you confirm does it select a Broker; what it then does depends on that Broker and on how it runs.
 
-Add `--yes` to skip the question. When standard input is not a terminal, as in a script or a scheduled job, the command requires `--yes` and otherwise refuses with `standard input is not a terminal; pass --yes to proceed without asking`. When the installed version is already the latest, the command prints `peers 0.5.0 is up to date` and exits without changing anything.
+Add `--yes` to skip the question. When standard input is not a terminal, as in a script or a scheduled job, the command requires `--yes` and otherwise fails with `standard input is not a terminal; pass --yes to proceed without asking`. When the installed version is already the latest, the command prints `peers 0.5.0 is up to date` and exits without changing anything.
 
 [Command line]({{< relref "/docs/reference/cli" >}}) gives the full description of the command.
 
 ### Update a user installation
 
-When this account's user Broker is running under the service manager, the command asks that Broker to update itself. The Broker downloads the archive for this platform and architecture, checks it against `checksums.txt`, runs the new binary to confirm that it reports the expected version, replaces its binary while keeping the original mode and owner, rewrites the user service definition in the new version's format (a systemd drop-in and the `EnvironmentVariables` in a macOS plist are kept as they are), and exits; the service manager starts the new version. If rewriting the service definition fails or times out, the Broker restores the previous binary and the service definition, does not restart, keeps running the old version, and the command reports the reason. The command returns only after the new Broker reports the new version, and the output looks like this:
+When this account's user Broker is running under the service manager, the command asks that Broker to update itself. The Broker downloads the archive for this platform and architecture and checks it against `checksums.txt`. It runs the new binary to confirm that it reports the expected version, then replaces its binary while keeping the original mode and owner. It rewrites the user service definition in the new version's format; a systemd drop-in and the `EnvironmentVariables` in a macOS plist are kept as they are. The Broker then exits, and the service manager starts the new version. If rewriting the service definition fails or times out, the Broker restores the previous binary and the service definition, does not restart, keeps running the old version, and the command reports the reason. The command returns only after the new Broker reports the new version, and the output looks like this:
 
 ```text
 peers <installed> is installed. Update to the latest release? [y/N] y
@@ -65,7 +65,7 @@ The command waits until the restarted Broker reports the new version. If it does
 
 A system update restarts only the system service. When other accounts run a user Broker from the same binary, each of them must restart its own Broker before it uses the new version.
 
-An update the Broker applies downloads through the Broker service process, so its proxy environment variables come from that process. A replacement the command makes itself reads them from the command's environment.
+When the Broker applies an update, the download runs in the Broker service process, so the proxy environment variables come from that process. A replacement the command makes itself reads them from the command's environment.
 
 A system Broker reads them from its service environment:
 
@@ -76,7 +76,7 @@ The user service works the same way: on Linux, edit the drop-in with `systemctl 
 
 ### Update with no running Broker
 
-When no Broker is running, the command replaces the binary itself, after checking that the directory holding the binary is writable. It does not start or restart any service, because the service may have been stopped on purpose. After you confirm and it finds a newer release, it prints the installed and available versions and the release page, replaces the binary, and ends with:
+When no Broker is running, the command replaces the binary itself, after checking that the directory holding the binary is writable. It does not start or restart any service, because the service may have been stopped on purpose. After you confirm and it finds a newer release, it prints the installed and available versions and the release page, replaces the binary and ends with:
 
 ```text
 The new binary takes effect the next time the Broker starts.
@@ -88,7 +88,7 @@ Start the Broker the way you started it before, for example with `peers service 
 
 A session can update the Broker with the `update_broker` tool, which takes no arguments. It asks the Broker registered for the session to upgrade itself and returns as soon as the Broker answers, with the version before and after and whether the Broker is about to restart. When the installed version is already the latest, it says so and changes nothing. A user or system Broker that does not run under the service manager cannot update itself, and the tool says to use the terminal command instead.
 
-The tool needs write permission on the Broker's configuration file, which is granted separately from read permission. It needs no terminal: Claude Code asks by default for confirmation before the call runs, and that confirmation is the last manual check before the Broker's binary is replaced. Do not add `update_broker` to auto-approved tools, so the confirmation is never skipped.
+The tool needs write permission on the Broker's configuration file, which is granted separately from read permission. It needs no terminal: Claude Code asks for confirmation by default before the call runs, and that confirmation is the last manual check before the Broker's binary is replaced. Do not add `update_broker` to auto-approved tools, so the confirmation is never skipped.
 
 After the Broker restarts, the connection recovers automatically. The MCP server in the session that made the call keeps the old version until the session is reopened. [MCP tools]({{< relref "/docs/reference/mcp-tools" >}}) lists the tool and its result fields.
 
@@ -100,11 +100,11 @@ When the Broker applies an update, it restarts and its connections recover autom
 
 | Installation | Command | What happens |
 |---|---|---|
-| User installation: on a host without the system service, answered n or pressed Enter at `Install for every account on this host? [y/N]`; ran without a terminal as a non-root account; ran with `--user`; or placed the binary in `~/.local/bin` yourself | `peers update` | With a service, the Broker replaces its binary and the service manager restarts it. Without one, the command replaces the binary and it takes effect at the next start. |
-| System installation: the install command with `--system` or answered y at the level question, or run as root, or a manual `sudo install` into `/usr/local/bin` | `peers update` for a member of the admin group with no user Broker running; otherwise `sudo peers update`, or join the group if the account is outside it | The Broker replaces its binary and the service manager restarts it. |
+| User installation: installed without the system service, by answering n or pressing Enter at `Install for every account on this host? [y/N]`, by running without a terminal as a non-root account, by running with `--user` or by placing the binary in `~/.local/bin` yourself | `peers update` | With a service, the Broker replaces its binary and the service manager restarts it. Without one, the command replaces the binary and it takes effect at the next start. |
+| System installation: installed with `--system`, by answering y at the level question, as root or by a manual `sudo install` into `/usr/local/bin` | `peers update` for a member of the admin group with no user Broker running; otherwise `sudo peers update`, or join the group if the account is outside it | The Broker replaces its binary and the service manager restarts it. |
 | No running Broker | `peers update` | The command replaces the binary, and nothing is started or restarted. |
 
-A binary built from source with the release version in `-ldflags` follows the row for the installation it belongs to. A binary built without `-ldflags` reports the version `dev`; it is not a release build, and the command refuses with `version "dev" is not a release build; only release builds can update themselves`. Install a release to update in place.
+A binary built from source with the release version in `-ldflags` follows the row for the installation it belongs to. A binary built without `-ldflags` reports the version `dev`; it is not a release build, and the command fails with `version "dev" is not a release build; only release builds can update themselves`. Install a release to update in place.
 
 If the binary is a symbolic link, the command resolves the link and replaces the file it points to.
 

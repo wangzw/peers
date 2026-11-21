@@ -35,7 +35,7 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### 消息
 
-`send_message` 返回 `result` 和 `to`。`result` 为 `delivered to the recipient's session (not necessarily read)`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。
+`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。
 
 ### topic
 

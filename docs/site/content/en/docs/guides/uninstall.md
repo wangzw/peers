@@ -22,7 +22,7 @@ The uninstall also removes the shell completion files and man pages that the ins
 
 ## Keep or delete the data
 
-The command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them unless you answer `y`. Without a terminal, add `--yes`: it skips the question and keeps the data, and together with `--purge` it deletes the data. Without `--yes` the command exits with code 1. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) describes `--purge` and the rest of the behaviour.
+The command asks `Also remove configuration, identity, audit and service logs? [y/N]` and keeps them unless you answer `y`. Without a terminal, add `--yes`: it skips the question and keeps the data, and together with `--purge` it deletes the data. Without `--yes` the command exits with code 1. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) describes `--purge` and the rest of the behavior.
 
 ## Remove the MCP registration of other accounts
 
@@ -30,4 +30,4 @@ The command removes the MCP registration of the account that ran `sudo`, or of t
 
 ## Remove only the service
 
-To stop and remove the service but keep the binary, run `peers service remove`, or `sudo peers service remove --system` for the system service. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) gives the exit codes and the rest of the behaviour.
+To stop and remove the service but keep the binary, run `peers service remove`, or `sudo peers service remove --system` for the system service. [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) gives the exit codes and the rest of the behavior.

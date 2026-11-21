@@ -16,7 +16,7 @@ curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh |
 
 [安装 peers]({{< relref "install.md" >}})介绍这个询问以及其他安装方式；手动命令见[把 Broker 安装为服务]({{< relref "run-as-service.md" >}})。
 
-系统级 Broker 取的是 root 的账户锁。如果 root 名下已有用户级 Broker 在运行，系统级安装会被拒绝，并提示先停掉它。
+系统级 Broker 取的是 root 的账户锁。如果 root 名下已有用户级 Broker 在运行，系统级安装会失败，并提示先停掉它。
 
 系统级 Broker 使用 `/etc/peers/config.yaml`、`/var/log/peers/audit.log` 和 `/var/lib/peers`。配置文件不存在时，安装会生成它，内容是一份列出全部键的模板，属主为 root，属组为默认的 `peers`，权限 `0660`；已存在的文件不改动。该组的成员在本账户没有运行自己的用户级 Broker 时，不用 `sudo` 就能管理 Broker；这个组及它的限制见[以配置文件权限管理 Broker]({{< relref "management-permissions.md" >}}#管理组)。
 
@@ -28,7 +28,7 @@ curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh |
 claude mcp add --scope user peer -- /usr/local/bin/peers mcp
 ```
 
-不要在这些账户上执行安装命令。主机上已有系统级服务时，安装命令会改问是否升级系统级安装，回答 n 不改动主机；只有带 `--user`，或者在没有终端时执行，才会装出用户级 Broker，装了以后本账户的会话改用它。已经有用户级安装的，用 [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) 卸掉；卸载会删掉本账户的 MCP 注册，之后要重新执行上面的注册命令。
+不要在这些账户上执行安装命令。主机上已有系统级服务时，安装命令会改问是否升级系统级安装。回答 n 不改动主机。只有带 `--user`，或者在没有终端时执行，才会装出用户级 Broker，装了以后本账户的会话改用它。已经有用户级安装的，用 [`peers uninstall`]({{< relref "/docs/reference/cli" >}}#peers-uninstall) 卸掉；卸载会删掉本账户的 MCP 注册，之后要重新执行上面的注册命令。
 
 会话通过本机 socket 访问系统级 Broker：Linux 上是 `/run/peers/broker.sock`，macOS 上是 `/var/run/peers/broker.sock`。两个设置决定哪些账户能连接：
 

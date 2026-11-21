@@ -4,7 +4,7 @@ linkTitle: Collaborate in a topic
 weight: 3
 ---
 
-A topic decides who can see whom. Two agents see each other only when they share at least one topic and either run on the same Broker or on two connected Brokers. Sessions working in the same project usually share a topic without doing anything.
+A topic decides who can see whom. Two agents see each other only when they share at least one topic and run either on the same Broker or on two connected Brokers. Sessions working in the same project usually share a topic without doing anything.
 
 ## Before you start
 
@@ -16,7 +16,7 @@ A topic decides who can see whom. Two agents see each other only when they share
 
 Start a session in the working copy on each host and enable the `peers` tools. Give the sessions distinct names; the session name becomes the agent name.
 
-With no topics declared in a project configuration file, both sessions join the default topic for the repository. The topic comes from the git `origin` address, normalized to the lower-case host name followed by the repository path: `git@github.com:org/repo.git`, `ssh://git@GitHub.com:22/org/repo.git` and `https://github.com/org/repo` all become `github.com/org/repo`.
+With no topics declared in a project configuration file, both sessions join the default topic for the repository. The topic comes from the git `origin` address, normalized to the lowercase host name followed by the repository path: `git@github.com:org/repo.git`, `ssh://git@GitHub.com:22/org/repo.git` and `https://github.com/org/repo` all become `github.com/org/repo`.
 
 In one session, say “List the agents.” (the model calls `list_agents`). Besides your own address, the result lists the other agent with its address and the topics you share. The address ends with the other Broker's alias, such as `frontend@hostB`. When the other side uses a user Broker, it looks like `frontend@hostB.alice`.
 
