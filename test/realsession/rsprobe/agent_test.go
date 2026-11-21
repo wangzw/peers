@@ -24,9 +24,6 @@ const (
 	// this test binary as its stub MCP server, so a subprocess cold start
 	// dominates the wait.
 	agentReadyTimeout = 10 * time.Second
-	// agentShutdownTimeout bounds a simulated Agent's shutdown after its
-	// context is cancelled.
-	agentShutdownTimeout = 3 * time.Second
 	// agentSendTimeout bounds the library client that writes one frame.
 	agentSendTimeout = 3 * time.Second
 )
@@ -154,7 +151,7 @@ func startTestAgent(t *testing.T) *testAgent {
 			select {
 			case agent.runErr = <-agent.done:
 				agent.finished = true
-			case <-time.After(agentShutdownTimeout):
+			case <-time.After(eventTimeout):
 				t.Error("agent run did not stop after its context was cancelled")
 			}
 		}

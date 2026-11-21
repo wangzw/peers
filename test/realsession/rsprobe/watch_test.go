@@ -12,8 +12,6 @@ import (
 )
 
 const (
-	// watchTestWait is the upper bound for one watcher test's event wait.
-	watchTestWait = 3 * time.Second
 	// matchEventGap separates the two poll events in the matchEvents test so
 	// one notify event can cover only the earlier of them.
 	matchEventGap = 10 * time.Second
@@ -58,10 +56,10 @@ func (l *watchLog) count(pred func(event) bool) int {
 	return n
 }
 
-// waitUntil waits for pred to hold, up to 3 seconds.
+// waitUntil waits for pred to hold, up to eventTimeout.
 func (l *watchLog) waitUntil(t *testing.T, what string, pred func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(watchTestWait)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		if pred() {
 			return

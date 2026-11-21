@@ -27,9 +27,6 @@ import (
 // not the socket write, dominates the wait.
 const frameChildTimeout = 10 * time.Second
 
-// frameReceiveTimeout bounds reading one line from a local unix listener.
-const frameReceiveTimeout = 3 * time.Second
-
 // decodeFrame decodes one newline-terminated verbatim frame.
 func decodeFrame(t *testing.T, raw []byte) verbatimFrame {
 	t.Helper()
@@ -204,7 +201,7 @@ func receiveLine(t *testing.T, lines <-chan string) string {
 	select {
 	case line := <-lines:
 		return line
-	case <-time.After(frameReceiveTimeout):
+	case <-time.After(eventTimeout):
 		t.Fatal("timed out waiting for a frame")
 		return ""
 	}

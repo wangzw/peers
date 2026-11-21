@@ -16,10 +16,6 @@ import (
 // value is the log path to pass to the subcommand.
 const sigstubHelperEnv = "RSPROBE_SIGSTUB_LOG"
 
-// sigstubKillTimeout bounds the wait for the helper to exit after SIGKILL.
-// SIGKILL terminates it at once, so the bound only catches a stuck wait.
-const sigstubKillTimeout = 3 * time.Second
-
 // TestSigstubHelper is the child half of TestSigstubLogsAndIgnoresSignals. The
 // parent re-executes the test binary with only this test selected, and the
 // helper serves "rsprobe sigstub". It never returns on its own.
@@ -63,7 +59,7 @@ func TestSigstubLogsAndIgnoresSignals(t *testing.T) {
 		_ = cmd.Process.Kill()
 		select {
 		case <-exited:
-		case <-time.After(sigstubKillTimeout):
+		case <-time.After(eventTimeout):
 			t.Errorf("sigstub did not exit after SIGKILL")
 		}
 	})
