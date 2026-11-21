@@ -12,15 +12,11 @@ Documentation: <https://zhanwei.wang/peers/> (English) and <https://zhanwei.wang
 curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh
 ```
 
-The command installs the binary, installs and starts the Broker as a service, and registers the MCP server for your account. It asks whether to install for every account on the host or for your account only. Pass `--system` or `--user` after `sh -s --` to skip the question:
+The command installs the binary, installs and starts the Broker as a service, registers the MCP server for your account, and asks whether to install for every account on the host or for your account only.
 
-```sh
-curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh -s -- --system
-```
+Restart any Claude Code session that is already running so it loads the peer MCP server.
 
-Restart any Claude Code session that is already running so it loads the peer MCP server, and check the registration with `claude mcp get peer`.
-
-[Install peers](https://zhanwei.wang/peers/docs/guides/install/) covers installing a specific version, installing from the release archive, the install script's options, manual installation and building from source.
+[Install peers](https://zhanwei.wang/peers/docs/guides/install/) covers the other ways to install and the install script's options.
 
 ## Try it
 
