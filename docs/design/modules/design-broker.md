@@ -411,6 +411,7 @@ stateDiagram-v2
 
 接受本机接口的连接时，读取一次进程凭据，得到调用方的账户，记为这条连接的调用方记录。用户级 Broker 在这一步拒绝账户与自己不同的连接。识别出的是进程的账户：同一账户下的任何进程都能以该账户的权限调用。
 
+每个账户同时最多保持 256 条本机连接，每条连接同时最多运行 64 个流。连接数达到上限时，新的连接在握手阶段失败并关闭；该账户的计数回落到上限以下后才会再次受理。每次进入超限状态时记一条 Warn `local_connection_limit_reached`（字段 uid、limit），同一次超限只记一条。用户级 Broker 只有本账户能连，这些值足够大，不影响正常使用。
 需要配置文件权限的调用到达时，判定“调用方账户对配置文件有没有读或写的权限”：
 
 - 用户级 Broker 不做判定。它的配置文件属于本账户，调用方就是本账户。
@@ -434,7 +435,7 @@ topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次
 
 ### 登记
 
-1. 读取 `Register` 上行首帧中的 socket 路径与配置目录。socket 路径须为绝对路径且不含 `..` 元素，按 `filepath.Clean` 规范化后作为 Agent 的身份；不满足时按找不到记录处理。这两个值用于在调用方账户的会话注册表中查找记录。
+1. 读取 `Register` 上行首帧中的 socket 路径与配置目录。socket 路径须为绝对路径且不含 `..` 元素，按 `filepath.Clean` 规范化后作为 Agent 的身份；不满足时按找不到记录处理。这两个值用于在调用方账户的会话注册表中查找记录。读到首帧、识别出调用方账户之后，先按账户计数，再取会话后端：每个账户同时最多 256 个 `Register` 流，超出时这条流以 `quota_exceeded` 结束，说明写明该账户已有 256 个打开的登记，并记一条 Warn `register_limit_reached`（字段 uid、limit），同一次超限只记一条。连接本身不关闭。
 2. socket 路径为空时，登记停在等待，立即在下行流上发出 `not_registered` 及原因 `socket_path_missing`，流保持打开；本进程的环境不变，这条登记不会自行完成。路径不为空时，经 `inbox` 的 `Lookup` 取 `messagingSocketPath` 与它相同的记录。系统级形态下这一步由调用方账户的辅助进程执行。
 3. 核对 socket 文件的属主是调用方账户：路径上必须是 socket 文件，其属主 uid 等于调用方 uid。不符时与找不到记录一样等待，10 秒后在下行流上报告 `socket_not_owned`，随注册表的变化继续尝试。这一步由 Broker 进程自己执行，不交给辅助进程。
 4. 以 `NormalizeName` 规范化记录中的会话名。结果为空、经 `CleanSignature` 清洗后为空或含有 `@` 或 `*` 时名字不可用，没有替代名（`REQ-agent-messaging-030`）。
@@ -701,6 +702,7 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 本机有成员的 topic 数或一个 topic 的本机成员数达上限，或系统级 Broker 下一个账户的 topic 数达 128 个上限 | `quota_exceeded` | 否 |
 | 同一账户的 topic 变更超过限速允许的频率 | `quota_exceeded` | 是，稍后重试 |
 | 登记下行流的积压超过上限 | `quota_exceeded` | 否 |
+| 本账户的并发登记流数达上限 | `quota_exceeded` | 否 |
 | 公开 topic 简介不合法 | `invalid_argument` | 否 |
 | 编码后的帧超过上限 | `too_large` | 否 |
 | 别名未知，名字或消歧标识不存在；目标是某个 Agent 的曾用名，说明中给出它现在的地址 | `not_found` | 否 |

@@ -57,7 +57,7 @@ func startDegradedService(
 	}
 	creds := newPeerCredCreds(readPeerCred, allow, func(c Caller) {
 		log.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
-	})
+	}, nil)
 
 	// The version interceptors must run before the degraded ones, so a
 	// connection already refused by Hello sees version_mismatch rather than

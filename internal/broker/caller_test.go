@@ -162,7 +162,7 @@ func callHello(t *testing.T, cc *grpc.ClientConn) error {
 
 func TestCallerFromPeerCred(t *testing.T) {
 	srv := newCredTestServer()
-	b := startCredBroker(t, newPeerCredCreds(ReadPeerCred, func(Caller) bool { return true }, nil), srv)
+	b := startCredBroker(t, newPeerCredCreds(ReadPeerCred, func(Caller) bool { return true }, nil, nil), srv)
 
 	if err := callHello(t, newCredClient(t, b.path)); err != nil {
 		t.Fatalf("Hello: %v", err)
@@ -198,7 +198,7 @@ func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 		case rejected <- c:
 		default:
 		}
-	})
+	}, nil)
 	srv := newCredTestServer()
 	b := startCredBroker(t, creds, srv)
 
@@ -224,7 +224,7 @@ func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 func TestReadPeerCredErrorClosesConnection(t *testing.T) {
 	readErr := errors.New("cannot read peer credentials")
 	srv := newCredTestServer()
-	creds := newPeerCredCreds(func(net.Conn) (Caller, error) { return Caller{}, readErr }, func(Caller) bool { return true }, nil)
+	creds := newPeerCredCreds(func(net.Conn) (Caller, error) { return Caller{}, readErr }, func(Caller) bool { return true }, nil, nil)
 	b := startCredBroker(t, creds, srv)
 
 	err := callHello(t, newCredClient(t, b.path))
@@ -248,7 +248,7 @@ func TestCallerReadOncePerConnection(t *testing.T) {
 		return Caller{UID: 7, PID: 9, Username: "tester"}, nil
 	}
 	srv := newCredTestServer()
-	b := startCredBroker(t, newPeerCredCreds(read, func(Caller) bool { return true }, nil), srv)
+	b := startCredBroker(t, newPeerCredCreds(read, func(Caller) bool { return true }, nil, nil), srv)
 	cc := newCredClient(t, b.path)
 
 	for i := 0; i < 5; i++ {
@@ -263,7 +263,7 @@ func TestCallerReadOncePerConnection(t *testing.T) {
 
 func TestAuthInfoSharedPerConnection(t *testing.T) {
 	srv := newCredTestServer()
-	b := startCredBroker(t, newPeerCredCreds(ReadPeerCred, func(Caller) bool { return true }, nil), srv)
+	b := startCredBroker(t, newPeerCredCreds(ReadPeerCred, func(Caller) bool { return true }, nil, nil), srv)
 
 	nextAuth := func() *callerAuthInfo {
 		t.Helper()

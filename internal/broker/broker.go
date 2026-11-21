@@ -55,6 +55,11 @@ type Broker struct {
 	// while the account is one topic short of its limit.
 	accountTopicMu sync.Mutex
 
+	// conns and registers bound what one account may hold on the local
+	// interface. conns is the same value the peer credentials count with.
+	conns     *accountLimit
+	registers *accountLimit
+
 	// update state is the in-memory result of the periodic release check. It
 	// is never persisted.
 	updateMu         sync.Mutex
@@ -116,7 +121,9 @@ func New(deps Deps) (*Broker, error) {
 	logReject := func(c Caller) {
 		deps.Logger.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
 	}
-	peerCreds := newPeerCredCreds(deps.ReadPeerCred, allow, logReject)
+	conns := newAccountLimit(localConnLimit, EvLocalConnectionLimitReached, deps.Logger)
+	registers := newAccountLimit(localRegisterLimit, EvRegisterLimitReached, deps.Logger)
+	peerCreds := newPeerCredCreds(deps.ReadPeerCred, allow, logReject, conns)
 
 	// The peer credentials are the server's credentials. A caller-supplied
 	// credentials option would replace them because the last option wins, so it
@@ -127,6 +134,9 @@ func New(deps Deps) (*Broker, error) {
 
 	opts := []grpc.ServerOption{
 		grpc.Creds(peerCreds),
+		// Bound the streams one connection may run at once. A client that
+		// ignores the advertised limit is refused by the HTTP/2 server.
+		grpc.MaxConcurrentStreams(uint32(localStreamLimit)),
 		// Stop must wait for method handlers: the Register handler removes its
 		// agent and releases its watch after the stream ends, and shutdown
 		// closes the configuration and the account lock right after Stop.
@@ -137,15 +147,17 @@ func New(deps Deps) (*Broker, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b := &Broker{
-		deps:    deps,
-		log:     deps.Logger,
-		grpc:    grpc.NewServer(opts...),
-		ctx:     ctx,
-		cancel:  cancel,
-		agents:  make(map[AgentID]*agent),
-		waiting: make(map[*regConn]struct{}),
-		watches: make(map[watchKey]*dirWatch),
-		events:  newRegistryQueue(),
+		deps:      deps,
+		log:       deps.Logger,
+		grpc:      grpc.NewServer(opts...),
+		ctx:       ctx,
+		cancel:    cancel,
+		agents:    make(map[AgentID]*agent),
+		waiting:   make(map[*regConn]struct{}),
+		watches:   make(map[watchKey]*dirWatch),
+		events:    newRegistryQueue(),
+		conns:     conns,
+		registers: registers,
 	}
 	b.refreshOne = b.refreshAgent
 	b.events.start(ctx, b.handleRegistryEvent)

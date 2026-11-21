@@ -55,6 +55,12 @@ const (
 	EvPeerDeliveryErrorUnrecognized = "peer_delivery_error_unrecognized"
 )
 
+// Event names of the local interface limits.
+const (
+	EvLocalConnectionLimitReached = "local_connection_limit_reached"
+	EvRegisterLimitReached        = "register_limit_reached"
+)
+
 // NewLogger returns a logger that writes one JSON object per line. The message
 // key becomes the event field, the time is rendered in UTC with nanosecond
 // precision, and the level is read from level on every record so a later Set

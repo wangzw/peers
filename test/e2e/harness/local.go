@@ -36,6 +36,7 @@ type localNode struct {
 	mu            sync.Mutex
 	sessions      []*Session
 	oracles       []*OracleClient
+	oracleClient  *OracleClient
 	broker        *node.BrokerProc
 	brokerLogPath string
 	brokers       int
@@ -719,15 +720,23 @@ func (l *localNode) brokerLog(tb testing.TB) []byte {
 	return data
 }
 
+// oracle returns the node's one Oracle client, dialing on the first call. The
+// Broker caps how many local connections one account may hold, so a client per
+// call would let a polling test exhaust that limit although it uses one
+// connection at a time.
 func (l *localNode) oracle() *OracleClient {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.oracleClient != nil {
+		return l.oracleClient
+	}
 	oracle, err := node.DialOracle(l.brokerSocket())
 	if err != nil {
 		l.t.Fatalf("harness: node %s: connecting to the local socket: %v", l.name, err)
 		return nil
 	}
 	o := &OracleClient{oracle: oracle}
-	l.mu.Lock()
 	l.oracles = append(l.oracles, o)
-	l.mu.Unlock()
+	l.oracleClient = o
 	return o
 }

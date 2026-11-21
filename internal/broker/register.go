@@ -46,6 +46,17 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
 			"no caller identified on this connection"))
 	}
+	// Count the stream only after the first frame identified the caller, and
+	// before the session backend is acquired, so an account past its limit
+	// costs no backend work. The slot is held for the stream's lifetime.
+	if b.registers != nil {
+		if !b.registers.acquire(caller.UID) {
+			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+				"cannot register: account %s already has %d open registrations",
+				callerAccount(caller), b.registers.limit))
+		}
+		defer b.registers.release(caller.UID)
+	}
 	backend, release, err := b.deps.Sessions.Acquire(ctx, caller.UID)
 	if err != nil {
 		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,

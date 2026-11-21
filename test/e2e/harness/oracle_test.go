@@ -3,7 +3,9 @@ package harness
 import (
 	"context"
 	"net"
+	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -78,6 +80,72 @@ func newFakeOracleClient(t *testing.T, srv localpb.LocalServer) *OracleClient {
 	}
 	t.Cleanup(func() { _ = oracle.Close() })
 	return &OracleClient{oracle: oracle}
+}
+
+// countingListener counts the connections a gRPC server accepts.
+type countingListener struct {
+	net.Listener
+
+	mu    sync.Mutex
+	conns int
+}
+
+func (l *countingListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.mu.Lock()
+		l.conns++
+		l.mu.Unlock()
+	}
+	return conn, err
+}
+
+func (l *countingListener) count() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.conns
+}
+
+// TestLocalOracleReusesOneConnection checks that a local node's Oracle does not
+// open a new connection on every call. The Broker caps the connections one
+// account may hold, so a polling test that asked for a new Oracle each time
+// would exhaust the limit and fail with a reset connection.
+func TestLocalOracleReusesOneConnection(t *testing.T) {
+	root := newSocketTempDir(t, "broker.sock")
+	socket := filepath.Join(root, strconv.Itoa(os.Geteuid()), "broker.sock")
+	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
+		t.Fatalf("creating the socket directory: %v", err)
+	}
+
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatalf("listening on %s: %v", socket, err)
+	}
+	counted := &countingListener{Listener: listener}
+	server := grpc.NewServer()
+	localpb.RegisterLocalServer(server, &fakeLocalServer{})
+	go func() { _ = server.Serve(counted) }()
+	t.Cleanup(server.Stop)
+
+	local := &localNode{t: t, name: "reuse", root: root}
+	t.Cleanup(func() {
+		local.mu.Lock()
+		oracles := append([]*OracleClient(nil), local.oracles...)
+		local.mu.Unlock()
+		for _, o := range oracles {
+			o.close()
+		}
+	})
+	n := &Node{impl: local}
+
+	for i := 0; i < 3; i++ {
+		if _, detail := n.Oracle().GetConfig(t, ""); detail != nil {
+			t.Fatalf("call %d: GetConfig returned error detail %v", i+1, detail)
+		}
+	}
+	if got := counted.count(); got != 1 {
+		t.Fatalf("three Oracle calls opened %d connections, want 1", got)
+	}
 }
 
 func TestOracleGetConfigAndAudit(t *testing.T) {
