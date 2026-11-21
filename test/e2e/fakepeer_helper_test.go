@@ -271,6 +271,24 @@ func (f *fakePeer) SendRoster(t *testing.T, digest string, members ...fakePeerWi
 	return f.waitEvent(t, "roster_sent", fakePeerCommandBound)
 }
 
+// SendRosterDeltaBatch sends one RosterDelta under the digest the fake peer
+// itself uses for topic. It carries count generated added members whose name
+// is namePrefix followed by the member's six-hex Ref, the first Ref being
+// refBase, then extra members. SendTopicDigests must have named topic first, or
+// the Broker ignores the frame as outside the peer's latest digest set.
+func (f *fakePeer) SendRosterDeltaBatch(t *testing.T, topic string, count, refBase int, namePrefix string, extra ...fakePeerWireMember) *fakePeerEvent {
+	t.Helper()
+	f.send(t, map[string]any{
+		"cmd":         "roster_delta",
+		"topics":      []string{topic},
+		"count":       count,
+		"ref_base":    refBase,
+		"name_prefix": namePrefix,
+		"extra":       extra,
+	})
+	return f.waitEvent(t, "roster_delta_sent", fakePeerCommandBound)
+}
+
 // WaitTopicRosterFence waits until a Roster under fence arrives and requires
 // every Roster received before it to be under allowed. The fence digest is one
 // the echoed set never carried, so the fence Roster can only come from the

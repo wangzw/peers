@@ -141,6 +141,15 @@ type rosterSentEvent struct {
 	Count  int    `json:"count"`
 }
 
+// rosterDeltaSentEvent reports a RosterDelta the fake peer sent. Count is the
+// number of added entries, generated plus extra.
+type rosterDeltaSentEvent struct {
+	Event  string `json:"event"`
+	Peer   string `json:"peer"`
+	Digest string `json:"digest"`
+	Count  int    `json:"count"`
+}
+
 // topicDigestsEvent reports a TopicDigests the fake peer received.
 type topicDigestsEvent struct {
 	Event   string   `json:"event"`
@@ -338,6 +347,49 @@ func (t *topicFrames) sendRoster(l *link.Link, digest string, members []wireMemb
 	e.emit(rosterSentEvent{Event: "roster_sent", Peer: peer.String(), Digest: digest, Count: len(members)})
 }
 
+// sendRosterDelta sends a RosterDelta under the digest the fake peer itself
+// uses for one topic. That digest binds the fake peer's fingerprint, which is
+// the direction the Broker matches incoming frames against, so the test must
+// first send its TopicDigests for the topic; otherwise the Broker ignores the
+// frame as outside the peer's latest set. The delta holds count generated
+// added members named namePrefix plus their six-hex Ref, the first Ref being
+// refBase, followed by extra members.
+func (t *topicFrames) sendRosterDelta(l *link.Link, self pairing.Fingerprint, cmd command, e *emitter) {
+	if len(cmd.Topics) != 1 {
+		e.emit(errorEvent{Event: "error", Message: "roster_delta: exactly one topic name is required"})
+		return
+	}
+	if cmd.Count < 0 {
+		e.emit(errorEvent{Event: "error", Message: "roster_delta: count must not be negative"})
+		return
+	}
+	peer, salt, ok := t.peer()
+	if !ok {
+		e.emit(errorEvent{Event: "error", Message: "roster_delta: no link with a salt"})
+		return
+	}
+	d := topicDigest(salt, self, cmd.Topics[0])
+	added := make([]*topicpb.Member, 0, cmd.Count+len(cmd.Extra))
+	for i := 0; i < cmd.Count; i++ {
+		ref := fmt.Sprintf("%06x", cmd.RefBase+i)
+		added = append(added, &topicpb.Member{Name: cmd.NamePrefix + ref, Ref: ref})
+	}
+	for _, m := range cmd.Extra {
+		added = append(added, &topicpb.Member{Name: m.Name, Ref: m.Ref, Status: statusFromName(m.Status)})
+	}
+	msg := &topicpb.RosterDelta{Digest: d[:], Added: added}
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		e.emit(errorEvent{Event: "error", Message: "roster_delta: " + err.Error()})
+		return
+	}
+	if err := l.Send(peer, link.Frame{Kind: topicpb.KindRosterDelta, Payload: payload}); err != nil {
+		e.emit(errorEvent{Event: "error", Message: "roster_delta: " + err.Error()})
+		return
+	}
+	e.emit(rosterDeltaSentEvent{Event: "roster_delta_sent", Peer: peer.String(), Digest: hex.EncodeToString(d[:]), Count: len(added)})
+}
+
 // hexDigests renders digests as lowercase hex.
 func hexDigests(ds [][32]byte) []string {
 	out := make([]string, len(ds))
@@ -366,13 +418,17 @@ func statusFromName(s string) topicpb.AgentStatus {
 
 // command is one stdin line.
 type command struct {
-	Cmd     string       `json:"cmd"`
-	Address string       `json:"address"`
-	Key     string       `json:"key"`
-	Records []wireRecord `json:"records"`
-	Topics  []string     `json:"topics"`
-	Digest  string       `json:"digest"`
-	Members []wireMember `json:"members"`
+	Cmd        string       `json:"cmd"`
+	Address    string       `json:"address"`
+	Key        string       `json:"key"`
+	Records    []wireRecord `json:"records"`
+	Topics     []string     `json:"topics"`
+	Digest     string       `json:"digest"`
+	Members    []wireMember `json:"members"`
+	Count      int          `json:"count"`
+	NamePrefix string       `json:"name_prefix"`
+	RefBase    int          `json:"ref_base"`
+	Extra      []wireMember `json:"extra"`
 }
 
 type wireRecord struct {
@@ -561,6 +617,8 @@ func handleCommand(line []byte, p *pairing.Pairing, l *link.Link, set *recordSet
 		topics.sendDigests(l, p.Fingerprint(), cmd.Topics, e)
 	case "roster":
 		topics.sendRoster(l, cmd.Digest, cmd.Members, e)
+	case "roster_delta":
+		topics.sendRosterDelta(l, p.Fingerprint(), cmd, e)
 	default:
 		e.emit(errorEvent{Event: "error", Message: "unknown command"})
 	}
