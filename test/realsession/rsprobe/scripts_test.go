@@ -168,8 +168,13 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 			scanRun := asString(t, scan["run"], "scan run")
 			for _, want := range []string{
 				`-z "$CLAUDE_CODE_OAUTH_TOKEN"`,
-				`grep -rqF -- "$CLAUDE_CODE_OAUTH_TOKEN" "$R/out"`,
+				`"$RUNNER_TEMP/build/rsprobe" scan-secret --dir "$R/out" --env CLAUDE_CODE_OAUTH_TOKEN`,
 				`rm -rf "$R/out"`,
+				// A scan that could not run (exit 2, for argument, environment
+				// or unreadable-entry problems) fails the step like a hit, so
+				// nothing is uploaded unscanned.
+				`if [ "$status" -ne 0 ]; then`,
+				`the evidence scan failed`,
 			} {
 				if !strings.Contains(scanRun, want) {
 					t.Errorf("%s: the scan step does not contain %q", tc.job, want)
@@ -195,6 +200,9 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 			}
 			if got := asString(t, with["if-no-files-found"], "upload-artifact.if-no-files-found"); got != "error" {
 				t.Errorf("%s: upload-artifact if-no-files-found = %q, want error", tc.job, got)
+			}
+			if got, ok := with["retention-days"].(int); !ok || got != 7 {
+				t.Errorf("%s: upload-artifact retention-days = %v, want 7", tc.job, with["retention-days"])
 			}
 
 			// Each job strips its own branch prefix before the shared case

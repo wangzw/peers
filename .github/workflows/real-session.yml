@@ -102,14 +102,14 @@ jobs:
             exit 1
           fi
           status=0
-          grep -rqF -- "$CLAUDE_CODE_OAUTH_TOKEN" "$R/out" || status=$?
-          if [ "$status" -eq 0 ]; then
+          "$RUNNER_TEMP/build/rsprobe" scan-secret --dir "$R/out" --env CLAUDE_CODE_OAUTH_TOKEN || status=$?
+          if [ "$status" -eq 1 ]; then
             rm -rf "$R/out"
             echo "the evidence contains the token; removed it and skipped the upload" >&2
             exit 1
           fi
-          if [ "$status" -ne 1 ]; then
-            echo "cannot scan the evidence: grep exited with status $status" >&2
+          if [ "$status" -ne 0 ]; then
+            echo "the evidence scan failed with status $status; skipped the upload" >&2
             exit 1
           fi
       - name: Upload
@@ -119,7 +119,7 @@ jobs:
           name: probe-${{ env.PROBE }}
           path: /tmp/peers-rs/out/${{ env.PROBE }}/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
 
   # The macOS job runs the probes that need no Linux-only tooling: it installs
   # tmux and jq through Homebrew, copies the same pinned Claude Code build and
@@ -211,14 +211,14 @@ jobs:
             exit 1
           fi
           status=0
-          grep -rqF -- "$CLAUDE_CODE_OAUTH_TOKEN" "$R/out" || status=$?
-          if [ "$status" -eq 0 ]; then
+          "$RUNNER_TEMP/build/rsprobe" scan-secret --dir "$R/out" --env CLAUDE_CODE_OAUTH_TOKEN || status=$?
+          if [ "$status" -eq 1 ]; then
             rm -rf "$R/out"
             echo "the evidence contains the token; removed it and skipped the upload" >&2
             exit 1
           fi
-          if [ "$status" -ne 1 ]; then
-            echo "cannot scan the evidence: grep exited with status $status" >&2
+          if [ "$status" -ne 0 ]; then
+            echo "the evidence scan failed with status $status; skipped the upload" >&2
             exit 1
           fi
       - name: Upload
@@ -228,4 +228,4 @@ jobs:
           name: probe-macos-${{ env.PROBE }}
           path: /private/tmp/peers-rs/out/${{ env.PROBE }}/
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
