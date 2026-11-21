@@ -32,6 +32,36 @@ func TestAccountLockSecondAcquireFails(t *testing.T) {
 	second.Release()
 }
 
+// TestAccountLockHeldByOtherIgnoresForeignOwner covers an attacker planting a
+// lock file in a runtime directory this account will use. The owner check must
+// keep a lock file owned by another account from blocking the Broker even when
+// that lock is actually held.
+func TestAccountLockHeldByOtherIgnoresForeignOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "broker.lock")
+	held, err := AcquireAccountLock(path)
+	if err != nil {
+		t.Fatalf("AcquireAccountLock: %v", err)
+	}
+	defer held.Release()
+
+	if !accountLockHeldByOther(path) {
+		t.Fatal("accountLockHeldByOther = false for a lock this account holds")
+	}
+
+	oldOwner := lockOwnerUID
+	lockOwnerUID = func(info os.FileInfo) (int, bool) {
+		if _, ok := oldOwner(info); !ok {
+			return 0, false
+		}
+		return os.Geteuid() + 1, true
+	}
+	t.Cleanup(func() { lockOwnerUID = oldOwner })
+
+	if accountLockHeldByOther(path) {
+		t.Fatal("accountLockHeldByOther = true for a lock file owned by another account")
+	}
+}
+
 func TestAccountLockReleaseKeepsFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	lock, err := AcquireAccountLock(path)

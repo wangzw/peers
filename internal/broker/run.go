@@ -136,6 +136,19 @@ type liveBroker struct {
 	degraded *localpb.DegradedState // nil when the listen address is bound
 }
 
+// otherAccountLockPaths returns the candidate account lock paths other than
+// own. The Broker holds own, so checking it again would report itself.
+func otherAccountLockPaths(candidates []string, own string) []string {
+	own = filepath.Clean(own)
+	var others []string
+	for _, path := range candidates {
+		if filepath.Clean(path) != own {
+			others = append(others, path)
+		}
+	}
+	return others
+}
+
 // Run starts a Broker and blocks until ctx is cancelled or a periodic check
 // fails. The startup sequence is Load, the assemblers, New, the component Start
 // methods, binding the link listener, binding the local socket, writing "ok",
@@ -225,6 +238,17 @@ func Run(ctx context.Context, opts RunOptions) error {
 		writeFailure(err)
 		return err
 	}
+	// The account's Broker may be running from the other runtime directory: the
+	// occupant of the preferred one can remove it at any time, so a process that
+	// resolves to the freed preferred path must still see the fallback Broker.
+	if err := checkAccountLockAvailable(otherAccountLockPaths(cfg.AccountLockCandidates(), lockPath)); err != nil {
+		lock.Release()
+		writeFailure(err)
+		return err
+	}
+
+	// A degraded run retries Load, so the fallback notice is written once.
+	fallbackLogged := false
 
 	// startOnce runs the post-lock startup sequence. It undoes everything it
 	// acquired before returning a failure, except the account lock, which the
@@ -305,6 +329,14 @@ func Run(ctx context.Context, opts RunOptions) error {
 		}
 		loaded = true
 		paths = cfg.Paths()
+		if fb := paths.RuntimeDirFallback; fb != nil && !fallbackLogged {
+			fallbackLogged = true
+			deps.Logger.Warn(EvRuntimeDirFallback,
+				"taken", fb.TakenPath,
+				"owner_uid", fb.OwnerUID,
+				"path", paths.RuntimeDir,
+			)
+		}
 		if opts.System {
 			if v, err := cfg.Get("broker.local_socket_group"); err == nil {
 				group = v.String

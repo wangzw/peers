@@ -20,10 +20,13 @@ func init() {
 	if !filepath.IsAbs(root) {
 		panic("PEERS_TEST_RUNTIME_ROOT must be absolute")
 	}
-	runtimeDir = func(euid int) string {
+	preferredRuntimeDir = func(euid int) (string, error) {
 		if euid == 0 {
-			return filepath.Join(root, "root")
+			return filepath.Join(root, "root"), nil
 		}
-		return filepath.Join(root, strconv.Itoa(euid))
+		return filepath.Join(root, strconv.Itoa(euid)), nil
+	}
+	fallbackRuntimeBase = func(euid int) (string, error) {
+		return filepath.Join(root, "fallback", strconv.Itoa(euid)), nil
 	}
 }

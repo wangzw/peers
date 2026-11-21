@@ -135,9 +135,9 @@ func Run(ctx context.Context, opts Options) error {
 	if after == nil {
 		after = time.After
 	}
-	userSocket := opts.userSocket
-	if userSocket == "" {
-		userSocket = userSocketPath(os.Geteuid())
+	userSockets := userSocketCandidates(os.Geteuid())
+	if opts.userSocket != "" {
+		userSockets = []string{opts.userSocket}
 	}
 	systemSocket := opts.systemSocket
 	if systemSocket == "" {
@@ -150,10 +150,14 @@ func Run(ctx context.Context, opts Options) error {
 
 	sel := &selector{
 		getenv:       getenv,
-		userSocket:   userSocket,
+		userSocket:   userSockets[0],
 		systemSocket: systemSocket,
 		probe:        inspectSocket,
 		after:        after,
+		lockHeld:     accountLockHeld,
+	}
+	if len(userSockets) > 1 {
+		sel.altUserSocket = userSockets[1]
 	}
 
 	loopCtx, stopLoop := context.WithCancel(ctx)

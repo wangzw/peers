@@ -25,6 +25,7 @@ const (
 	EvRuntimeDirTouchRecovered  = "runtime_dir_touch_recovered"
 	EvLocalSocketTouchFailed    = "local_socket_touch_failed"
 	EvLocalSocketTouchRecovered = "local_socket_touch_recovered"
+	EvRuntimeDirFallback        = "runtime_dir_fallback"
 	EvLocalSocketRebound        = "local_socket_rebound"
 	EvLocalSocketRebindFailed   = "local_socket_rebind_failed"
 	EvConnectionRejected        = "local_connection_rejected"

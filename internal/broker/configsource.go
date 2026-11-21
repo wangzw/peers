@@ -15,6 +15,9 @@ type ConfigSource interface {
 	CheckRuntimeDir() error
 	// AccountLock returns the path of the account lock file.
 	AccountLock() string
+	// AccountLockCandidates returns the account lock path at every runtime
+	// directory this account's Broker may use.
+	AccountLockCandidates() []string
 	// Load loads the configuration for the given mode.
 	Load(mode config.Mode, listenOverride string) error
 	// Close releases the configuration singleton. It is idempotent.
@@ -64,6 +67,8 @@ func PackageConfig() ConfigSource { return packageConfig{} }
 func (packageConfig) CheckRuntimeDir() error { return config.CheckRuntimeDir() }
 
 func (packageConfig) AccountLock() string { return config.AccountLock() }
+
+func (packageConfig) AccountLockCandidates() []string { return config.AccountLockCandidates() }
 
 func (packageConfig) Load(mode config.Mode, listenOverride string) error {
 	return config.Load(mode, listenOverride)

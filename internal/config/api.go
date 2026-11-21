@@ -138,9 +138,24 @@ type Event struct {
 // PathSet is the set of files this package uses.
 type PathSet struct {
 	RuntimeDir string
-	ConfigFile string
-	DataDir    string
-	AuditLog   string
+	// RuntimeDirFallback is set when RuntimeDir is the fallback location
+	// because another account had taken the preferred runtime directory. It
+	// names the preferred directory and the account that owns it, for the
+	// startup log.
+	RuntimeDirFallback *RuntimeDirFallback
+	ConfigFile         string
+	DataDir            string
+	AuditLog           string
+}
+
+// RuntimeDirFallback describes the preferred runtime directory that another
+// account had taken when the fallback location was chosen.
+type RuntimeDirFallback struct {
+	// TakenPath is the preferred runtime directory that could not be used.
+	TakenPath string
+	// OwnerUID is the account that owns TakenPath, or -1 when it is a symbolic
+	// link or not a directory and its owner is not inspected.
+	OwnerUID int
 }
 
 var (

@@ -62,6 +62,58 @@ func AcquireAccountLock(path string) (*AccountLock, error) {
 	}, nil
 }
 
+// checkAccountLockAvailable reports ErrAlreadyRunning when another process
+// holds the lock at any of paths. The Broker calls it with the account lock
+// paths it did not take, so an instance running from the other runtime
+// directory of the same account still keeps a second one from starting. A path
+// that does not exist or that this account cannot open holds no lock of this
+// account.
+func checkAccountLockAvailable(paths []string) error {
+	for _, path := range paths {
+		if accountLockHeldByOther(path) {
+			return fmt.Errorf("%w: account lock %s is held by another process", ErrAlreadyRunning, path)
+		}
+	}
+	return nil
+}
+
+// lockOwnerUID returns the owner uid of an account lock file. Tests replace it
+// to simulate a lock file owned by another account without needing root;
+// production reads the uid from the stat data.
+var lockOwnerUID = func(info os.FileInfo) (int, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return 0, false
+	}
+	return int(st.Uid), true
+}
+
+// accountLockHeldByOther reports whether path names an account lock another
+// process of this account holds. The probe opens the existing file without
+// creating it and releases the lock at once when it can take it. A file owned
+// by another account is not this account's lock: an occupant of the preferred
+// directory must not be able to block the Broker by planting one.
+func accountLockHeldByOther(path string) bool {
+	f, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	owner, ok := lockOwnerUID(fi)
+	if !ok || owner != os.Geteuid() {
+		return false
+	}
+	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return errors.Is(err, unix.EWOULDBLOCK)
+	}
+	_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+	return false
+}
+
 // StillHeld reports whether the path still names the locked file. A missing
 // path, a non-regular file, or a different file at the path all mean the lock
 // is no longer trustworthy and the Broker must exit.

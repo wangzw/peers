@@ -26,6 +26,9 @@ func init() {
 			panic("PEERS_TEST_RUNTIME_ROOT must be absolute")
 		}
 		runtimeRoot = func(euid int) string { return testRuntimeRoot(root, euid) }
+		runtimeFallbackBase = func(euid int) (string, error) {
+			return filepath.Join(root, "fallback", strconv.Itoa(euid)), nil
+		}
 	}
 	if home := os.Getenv("PEERS_TEST_HOME"); home != "" {
 		if !filepath.IsAbs(home) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"google.golang.org/grpc"
@@ -50,11 +51,15 @@ var systemRetryWaits = []time.Duration{
 // selector applies the Broker selection order. The fields are seams for tests
 // and for FindBroker, which supplies the production values.
 type selector struct {
-	getenv       func(string) string
-	userSocket   string
-	systemSocket string
-	probe        func(ctx context.Context, path string) probeInfo
-	after        func(time.Duration) <-chan time.Time
+	getenv        func(string) string
+	userSocket    string
+	altUserSocket string
+	systemSocket  string
+	probe         func(ctx context.Context, path string) probeInfo
+	after         func(time.Duration) <-chan time.Time
+	// lockHeld reports whether a runtime directory's account lock is held by a
+	// running Broker. It is a seam for tests; nil means accountLockHeld.
+	lockHeld func(runtimeDir string) bool
 }
 
 // Find returns the first target of the selection order that holds. It never
@@ -78,14 +83,11 @@ func (s *selector) find(ctx context.Context) (target, bool, error) {
 		return t, found, err
 	}
 
-	switch r := s.probePath(ctx, s.userSocket, kindUser); r.Outcome {
-	case probeOK:
-		return target{Path: s.userSocket, Kind: kindUser}, true, nil
-	case probeWrongPeer:
-		// The socket at the user path is served by someone else. Falling
-		// through would either use that process or launch a Broker that cannot
-		// bind the path; report the socket as unusable instead.
-		return target{}, false, peerMismatchError(s.userSocket, kindUser, r.PeerUID)
+	// The user step may find the Broker at either runtime directory. A socket
+	// served by another account is unusable, so it is neither selected nor
+	// allowed to fall through to the system step.
+	if t, found, err := s.findUserSocket(ctx); err != nil || found {
+		return t, found, err
 	}
 
 	// For root the user and system sockets share one path, so the
@@ -102,6 +104,74 @@ func (s *selector) find(ctx context.Context) (target, bool, error) {
 	return target{}, false, nil
 }
 
+// userSocketPaths returns every user socket the selection probes: the location
+// the rule selects first, then the other candidate when it differs.
+func (s *selector) userSocketPaths() []string {
+	paths := []string{s.userSocket}
+	if s.altUserSocket != "" && s.altUserSocket != s.userSocket {
+		paths = append(paths, s.altUserSocket)
+	}
+	return paths
+}
+
+// findUserSocket probes every candidate user socket and returns the one
+// selection uses. Only a socket that passes the peer check is usable. When more
+// than one passes, the account lock says which one is the running Broker;
+// otherwise the candidate the location rule named first is kept. A socket
+// served by another account is reported when no candidate is usable, matching
+// the error for a single taken path.
+func (s *selector) findUserSocket(ctx context.Context) (target, bool, error) {
+	var usable []string
+	var wrongPath string
+	var wrongUID uint32
+	for _, path := range s.userSocketPaths() {
+		r := s.probePath(ctx, path, kindUser)
+		switch r.Outcome {
+		case probeOK:
+			usable = append(usable, path)
+		case probeWrongPeer:
+			if wrongPath == "" {
+				wrongPath, wrongUID = path, r.PeerUID
+			}
+		}
+	}
+	if len(usable) == 0 {
+		if wrongPath != "" {
+			return target{}, false, peerMismatchError(wrongPath, kindUser, wrongUID)
+		}
+		return target{}, false, nil
+	}
+	path := usable[0]
+	if len(usable) > 1 {
+		path = s.liveUserSocket(usable)
+	}
+	return target{Path: path, Kind: kindUser}, true, nil
+}
+
+// liveUserSocket picks the socket whose runtime directory holds the account
+// lock, when exactly one does. Two held locks should not happen, and no held
+// lock leaves the first usable socket, which is the one the location rule
+// selected.
+func (s *selector) liveUserSocket(paths []string) string {
+	held := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if s.userLockHeld(filepath.Dir(path)) {
+			held = append(held, path)
+		}
+	}
+	if len(held) == 1 {
+		return held[0]
+	}
+	return paths[0]
+}
+
+func (s *selector) userLockHeld(runtimeDir string) bool {
+	if s.lockHeld != nil {
+		return s.lockHeld(runtimeDir)
+	}
+	return accountLockHeld(runtimeDir)
+}
+
 // findAtLevel runs the selection order narrowed to one level. A test build may
 // still name a socket with its hook; otherwise only that level's socket is
 // probed, so --system and --user cannot fall through to each other. Commands
@@ -112,13 +182,7 @@ func (s *selector) findAtLevel(ctx context.Context, system bool) (target, bool, 
 		return t, found, err
 	}
 	if !system {
-		switch r := s.probePath(ctx, s.userSocket, kindUser); r.Outcome {
-		case probeOK:
-			return target{Path: s.userSocket, Kind: kindUser}, true, nil
-		case probeWrongPeer:
-			return target{}, false, peerMismatchError(s.userSocket, kindUser, r.PeerUID)
-		}
-		return target{}, false, nil
+		return s.findUserSocket(ctx)
 	}
 
 	// For root the user and system sockets share one path, so the
@@ -248,13 +312,19 @@ func (s *selector) afterFunc() func(time.Duration) <-chan time.Time {
 // productionSelector builds the selector with the paths and probes of the
 // running process.
 func productionSelector() *selector {
-	return &selector{
+	sockets := userSocketCandidates(os.Geteuid())
+	s := &selector{
 		getenv:       os.Getenv,
-		userSocket:   userSocketPath(os.Geteuid()),
+		userSocket:   sockets[0],
 		systemSocket: systemSocketPath(),
 		probe:        inspectSocket,
 		after:        time.After,
+		lockHeld:     accountLockHeld,
 	}
+	if len(sockets) > 1 {
+		s.altUserSocket = sockets[1]
+	}
+	return s
 }
 
 // FindBroker applies the Broker selection order and returns the socket path of

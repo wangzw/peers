@@ -430,8 +430,16 @@ func unitPath(opts Options) (string, error) {
 	}
 }
 
+// runtimeDirFor names the runtime directory of one account. Production uses
+// config.RuntimeDir, so the service follows the same rule as the Broker and the
+// MCP server, including the fallback location. Tests replace it to pin that
+// localSocketPath follows the resolved directory rather than a fixed path.
+var runtimeDirFor = config.RuntimeDir
+
 // localSocketPath returns the local socket a running Broker of this deployment
-// level binds. It matches the runtime directory config picks for the level.
+// level binds. It matches the runtime directory config picks for the level,
+// including the fallback location when another account has taken the preferred
+// directory. The runtime directory is keyed by the effective account.
 func localSocketPath(opts Options) string {
 	if opts.System {
 		if opts.GOOS == "darwin" {
@@ -439,7 +447,7 @@ func localSocketPath(opts Options) string {
 		}
 		return "/run/peers/broker.sock"
 	}
-	return fmt.Sprintf("/tmp/peers-%d/broker.sock", opts.UID)
+	return filepath.Join(runtimeDirFor(opts.EUID), "broker.sock")
 }
 
 // checkExistingBroker refuses the installation when a Broker outside the

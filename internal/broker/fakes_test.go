@@ -153,9 +153,11 @@ type setCall struct {
 // fakeConfig implements ConfigSource without touching the process-wide config
 // singleton. Only the keys the broker reads start with values.
 type fakeConfig struct {
-	mu       sync.Mutex
-	runtime  string
-	lockPath string
+	mu              sync.Mutex
+	runtime         string
+	runtimeFallback *config.RuntimeDirFallback
+	lockPath        string
+	lockCandidates  []string
 
 	values      map[string]config.Value
 	secretKeys  map[string]bool
@@ -237,6 +239,15 @@ func (f *fakeConfig) CheckRuntimeDir() error { return nil }
 
 func (f *fakeConfig) AccountLock() string { return f.lockPath }
 
+// AccountLockCandidates returns the configured candidate paths, or the single
+// lock path when a test does not name any.
+func (f *fakeConfig) AccountLockCandidates() []string {
+	if len(f.lockCandidates) > 0 {
+		return f.lockCandidates
+	}
+	return []string{f.lockPath}
+}
+
 func (f *fakeConfig) Load(mode config.Mode, listenOverride string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -253,7 +264,11 @@ func (f *fakeConfig) Close() {
 func (f *fakeConfig) Paths() config.PathSet {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return config.PathSet{RuntimeDir: f.runtime, ConfigFile: f.configFile}
+	return config.PathSet{
+		RuntimeDir:         f.runtime,
+		RuntimeDirFallback: f.runtimeFallback,
+		ConfigFile:         f.configFile,
+	}
 }
 
 func (f *fakeConfig) Get(key string) (config.Value, error) {
