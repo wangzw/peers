@@ -12,8 +12,12 @@ import (
 // every session drop other peers' messages, and its remote Agent names do not
 // split its budget because the peer reports those names itself.
 const (
-	inboundLimitBurst    = 10
-	inboundLimitInterval = 10 * time.Second
+	inboundLimitBurst = 10
+
+	// defaultInboundLimitInterval is the release refill interval. A build
+	// carrying the peers_testenv tag may lengthen it through
+	// inboundLimitInterval.
+	defaultInboundLimitInterval = 10 * time.Second
 )
 
 // inboundLimitKey identifies one peer-to-target quota.
@@ -66,8 +70,9 @@ func (l *inboundLimiter) take(peer peerID, target string) (ok bool, retryAfter t
 	if !held {
 		b = inboundLimitBucket{tokens: inboundLimitBurst, last: now}
 	}
+	interval := inboundLimitInterval()
 	if elapsed := now.Sub(b.last); elapsed > 0 {
-		b.tokens += elapsed.Seconds() / inboundLimitInterval.Seconds()
+		b.tokens += elapsed.Seconds() / interval.Seconds()
 		if b.tokens > inboundLimitBurst {
 			b.tokens = inboundLimitBurst
 		}
@@ -75,7 +80,7 @@ func (l *inboundLimiter) take(peer peerID, target string) (ok bool, retryAfter t
 	}
 	if b.tokens < 1 {
 		l.storeLocked(key, b)
-		wait := (1 - b.tokens) * float64(inboundLimitInterval)
+		wait := (1 - b.tokens) * float64(interval)
 		return false, time.Duration(wait)
 	}
 	b.tokens--

@@ -1129,7 +1129,7 @@ func TestReceivePerSourceQuota(t *testing.T) {
 	for i := 0; i < perSource; i++ {
 		frame := f.requestFrameWithID(senderA, target, "hello", time.Second, receiveMsgIDN(i))
 		wantDelivered(t, f.handle(frame))
-		clock.Advance(inboundLimitInterval)
+		clock.Advance(defaultInboundLimitInterval)
 	}
 
 	over := f.requestFrameWithID(senderA, target, "hello", time.Second, receiveMsgIDN(perSource))

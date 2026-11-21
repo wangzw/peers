@@ -352,6 +352,121 @@ func TestRemoteSendFaults(t *testing.T) {
 			t.Fatalf("the boundary message put %d bytes on the link, want at least the %d-byte body", grew, atLimit)
 		}
 	})
+
+	t.Run("REQ-agent-messaging-046 inbound quota per peer", func(t *testing.T) {
+		// A dedicated target and a local sender keep this case's quota bucket
+		// apart from a1, which the cases above share: the bucket is keyed by
+		// (source peer, target Agent), and q1 has its own from the start.
+		q1 := srSession(t, aNode, "q1")
+		defer q1.End(t)
+		local := srSession(t, aNode, "a2")
+		defer local.End(t)
+
+		// b1 must see q1 before it can address it, and a2 must see q1 before it
+		// can send locally. The local address is the one q1 lists for itself:
+		// every address carries an alias.
+		srWaitSessionVisible(t, b1, "q1")
+		srWaitSessionVisible(t, local, "q1")
+		q1Out, state := srListAgents(t, q1)
+		if state != "" {
+			t.Fatalf("listing q1: %s", state)
+		}
+
+		// The burst is exactly the bucket's capacity, so the next message has no
+		// token and must be refused. The sends are sequential and finish well
+		// inside the ten seconds one refilled token takes.
+		const burst = 10
+		for i := 0; i < burst; i++ {
+			r := b1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": srMark("quota-")})
+			r.MustOK(t)
+		}
+		r := b1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": srMark("quota-over-")})
+		r.MustCode(t, "quota_exceeded")
+		if !r.HasPrefix("Not sent") {
+			t.Fatalf("the quota error is %q, want it to start with Not sent", r.Text)
+		}
+		if got := len(q1.Fake().Frames()); got != burst {
+			t.Fatalf("q1 received %d frames, want %d after the eleventh was refused", got, burst)
+		}
+
+		// The target still takes a message from another source: a2 sends to q1
+		// on the same host, the local path that does not pass the inbound quota.
+		fromLocal := srMark("quota-local-")
+		r = local.Call(t, "send_message", map[string]any{"to": q1Out.Self, "message": fromLocal})
+		r.MustOK(t)
+		harness.Eventually(t, srWaitBound, "the local sender reaches q1", func() (bool, string) {
+			if srCountMark(q1.Fake().Frames(), fromLocal) != 1 {
+				return false, "q1 has not received the local message"
+			}
+			return true, ""
+		})
+	})
+}
+
+// TestRemoteSendInboundQuota proves that the inbound quota is per source peer:
+// one peer spending its whole burst on a session must not stop a third host,
+// paired with the same target, from reaching that session. REQ-agent-messaging-046.
+func TestRemoteSendInboundQuota(t *testing.T) {
+	c := harness.Up(t, harness.TopoFlat(3))
+	aNode, bNode, cNode := c.Node("hostA"), c.Node("hostB"), c.Node("hostC")
+	srStartBroker(t, aNode, srConfig())
+	srStartBroker(t, bNode, srConfig())
+	srStartBroker(t, cNode, srConfig())
+
+	opA, opB, opC := srOperator(t, aNode), srOperator(t, bNode), srOperator(t, cNode)
+	defer opA.End(t)
+	defer opB.End(t)
+	defer opC.End(t)
+
+	// Both other hosts pair with the target's host, each through its own key.
+	aAddr := net.JoinHostPort(c.Addr("hostA", "net"), "17443")
+	for _, pair := range []struct {
+		op    *harness.Session
+		node  *harness.Node
+		alias string
+	}{
+		{opB, bNode, "hostB.peer"},
+		{opC, cNode, "hostC.peer"},
+	} {
+		key := srCreateKey(t, opA)
+		srConnect(t, pair.op, aAddr, key.Key).MustOK(t)
+		srWaitConnected(t, pair.node, "hostA.peer", srRelinkBound)
+		srWaitConnected(t, aNode, pair.alias, srRelinkBound)
+	}
+
+	q1 := srSession(t, aNode, "q1")
+	b1 := srSession(t, bNode, "b1")
+	c1 := srSession(t, cNode, "c1")
+	defer q1.End(t)
+	defer b1.End(t)
+	defer c1.End(t)
+
+	t.Run("REQ-agent-messaging-046 another peer still reaches the session", func(t *testing.T) {
+		srWaitSessionVisible(t, b1, "q1")
+		srWaitSessionVisible(t, c1, "q1")
+
+		// b1 spends the whole burst on q1; its next message has no token.
+		const burst = 10
+		for i := 0; i < burst; i++ {
+			b1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": srMark("cross-a-")}).MustOK(t)
+		}
+		r := b1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": srMark("cross-over-")})
+		r.MustCode(t, "quota_exceeded")
+		if got := len(q1.Fake().Frames()); got != burst {
+			t.Fatalf("q1 received %d frames, want %d after the eleventh was refused", got, burst)
+		}
+
+		// c1 is a different source peer, so its own bucket is full and the
+		// delivery must reach the same session while b1 is still limited.
+		fromOther := srMark("cross-b-")
+		c1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": fromOther}).MustOK(t)
+		harness.Eventually(t, srWaitBound, "the other peer reaches q1", func() (bool, string) {
+			if srCountMark(q1.Fake().Frames(), fromOther) != 1 {
+				return false, "q1 has not received the other peer's message"
+			}
+			return true, ""
+		})
+	})
 }
 
 // srConfig merges the shortened timers with the given fragments.

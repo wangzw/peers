@@ -2,6 +2,16 @@ package node
 
 import "sort"
 
+// The end-to-end suite sends a filled burst back to back and asserts that the
+// next message is refused. A token refilled in the middle of that would turn
+// the assertion into a flake, so every Broker the suite starts gets a refill
+// interval far beyond a run. Only a build carrying the peers_testenv tag reads
+// the variable; a release build ignores it.
+const (
+	testInboundLimitIntervalEnv = "PEERS_TEST_INBOUND_LIMIT_INTERVAL"
+	testInboundLimitInterval    = "1h"
+)
+
 // BaseEnv is the complete environment of every child process. Nothing is
 // inherited from os.Environ: a test run from inside a Claude Code session would
 // otherwise pass that session's variables, for example
@@ -20,9 +30,10 @@ type BaseEnv struct {
 // drop one of the defaults or an extra.
 func (e BaseEnv) Build(more map[string]string) []string {
 	values := map[string]string{
-		"HOME": e.Home,
-		"PATH": e.Path,
-		"LANG": "C.UTF-8",
+		"HOME":                      e.Home,
+		"PATH":                      e.Path,
+		"LANG":                      "C.UTF-8",
+		testInboundLimitIntervalEnv: testInboundLimitInterval,
 	}
 	for name, value := range e.Extra {
 		setEnv(values, name, value)

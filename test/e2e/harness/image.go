@@ -35,8 +35,9 @@ var (
 // PEERS_TEST_SOCKET, and the e2e-node build. The test build carries hooks,
 // and each one acts only when its variable is set: PEERS_TEST_SOCKET names
 // the Broker socket, PEERS_TEST_UPDATE_API points the updater at a fake
-// API, and PEERS_TEST_RUNTIME_ROOT and PEERS_TEST_HOME relocate the
-// runtime directory and the home directory. With none of them set, the test
+// API, PEERS_TEST_RUNTIME_ROOT and PEERS_TEST_HOME relocate the runtime
+// directory and the home directory, and PEERS_TEST_INBOUND_LIMIT_INTERVAL
+// lengthens the inbound quota refill interval. With none of them set, the test
 // build behaves like the release build. The system Broker and service
 // installation unit derives its image from it.
 func Image(tb testing.TB) string {

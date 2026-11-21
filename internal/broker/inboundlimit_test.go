@@ -262,7 +262,7 @@ func TestInboundLimiterKeepsOneBucketPerPair(t *testing.T) {
 	if ok, _ := l.take(peer, "a"); !ok {
 		t.Fatal("the first take failed, want a full bucket")
 	}
-	clock.Advance(inboundLimitInterval * inboundLimitBurst)
+	clock.Advance(defaultInboundLimitInterval * inboundLimitBurst)
 	if ok, _ := l.take(peer, "a"); !ok {
 		t.Fatal("the take after a full refill failed")
 	}
