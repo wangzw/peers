@@ -172,7 +172,7 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 		// Whether or not the restore worked, remember the hash of the bytes now
 		// on disk so this process does not adopt the empty or damaged file as
 		// an external change.
-		if current, hashErr := os.ReadFile(c.paths.ConfigFile); hashErr == nil {
+		if current, hashErr := readConfigFileLimited(c.paths.ConfigFile); hashErr == nil {
 			c.lastFileHash = sha256.Sum256(current)
 		} else if errors.Is(hashErr, os.ErrNotExist) {
 			c.lastFileHash = sha256.Sum256(nil)

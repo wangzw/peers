@@ -13,6 +13,7 @@ var templateSections = []string{"broker", "pairing", "topics", "directory", "sen
 const systemTemplateHeader = `# peers system Broker configuration.
 #
 # Every key is optional; a key that is absent takes its default value.
+# YAML anchors, aliases and merge keys are not supported.
 # Granting a group read access to this file lets its accounts read the
 # configuration, the full status and the audit log; granting write access
 # lets them change the configuration and manage pairing.
@@ -21,6 +22,7 @@ const systemTemplateHeader = `# peers system Broker configuration.
 const userTemplateHeader = `# peers user Broker configuration.
 #
 # Every key is optional; a key that is absent takes its default value.
+# YAML anchors, aliases and merge keys are not supported.
 # This file belongs to this account only: only this account runs the Broker
 # and reads or writes the file.
 `

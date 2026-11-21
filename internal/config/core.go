@@ -132,7 +132,7 @@ func newCore() *core {
 		euid:               os.Geteuid,
 		routesSrc:          platformAddressSource{},
 		writeFile:          writeConfigFile,
-		readFile:           os.ReadFile,
+		readFile:           readConfigFileLimited,
 		statFile:           os.Stat,
 		logger:             defaultLogger(),
 		configFileRootOnly: configFileRootOnlyWritable,

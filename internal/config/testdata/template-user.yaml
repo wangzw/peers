@@ -1,6 +1,7 @@
 # peers user Broker configuration.
 #
 # Every key is optional; a key that is absent takes its default value.
+# YAML anchors, aliases and merge keys are not supported.
 # This file belongs to this account only: only this account runs the Broker
 # and reads or writes the file.
 broker:

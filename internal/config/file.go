@@ -55,8 +55,34 @@ func emptyDocument() configDocument {
 	}
 }
 
+// maxConfigFileBytes is the largest configuration file, in bytes, that this
+// package reads. A configuration file can be written by a member of the admin
+// group for a system Broker, so the limit keeps an oversized file from
+// consuming arbitrary memory. The generated templates and the documented
+// examples are far smaller.
+const maxConfigFileBytes = 1 << 20
+
+// readConfigFileLimited reads path but never more than maxConfigFileBytes+1
+// bytes. A file one byte above the limit is refused, so its remaining bytes are
+// neither read nor parsed.
+func readConfigFileLimited(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxConfigFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxConfigFileBytes {
+		return nil, errors.New("the file is larger than 1 MiB")
+	}
+	return data, nil
+}
+
 func readConfigFile(path string) (configDocument, error) {
-	return readConfigFileFrom(path, os.ReadFile)
+	return readConfigFileFrom(path, readConfigFileLimited)
 }
 
 // readConfigFileFrom reads the file through readFile exactly once, and records
@@ -72,6 +98,12 @@ func readConfigFileFrom(path string, readFile func(string) ([]byte, error)) (con
 			return doc, nil
 		}
 		return configDocument{}, fmt.Errorf("cannot read %s: %w", path, err)
+	}
+	// The default reader applies this limit itself; the check also covers a
+	// reader supplied through the seam, so no path can hand an oversized file
+	// to the parser.
+	if len(data) > maxConfigFileBytes {
+		return configDocument{}, fmt.Errorf("cannot read %s: the file is larger than 1 MiB", path)
 	}
 	hash := sha256.Sum256(data)
 	doc, err := parseConfigFile(data)
@@ -113,18 +145,21 @@ func parseConfigFile(data []byte) (configDocument, error) {
 		}
 		root = root.Content[0]
 	}
-	root = resolveAliasNode(root)
 	if root == nil || root.Kind == 0 {
 		doc.empty = true
 		doc.headComment = leadingComment(data)
 		doc.raw = append([]byte(nil), data...)
 		return doc, nil
 	}
-	if root.Kind != yaml.MappingNode {
-		return configDocument{}, fmt.Errorf("config file parse error: top level must be a mapping at line %d, column %d", root.Line, root.Column)
-	}
+	// checkStructure runs before the top-level kind check so a document whose
+	// first node is an alias is refused as an anchor or alias, not as a
+	// non-mapping. It walks the node tree only, so it never follows an alias
+	// pointer and cannot cycle or expand an alias exponentially.
 	if err := checkStructure(root); err != nil {
 		return configDocument{}, err
+	}
+	if root.Kind != yaml.MappingNode {
+		return configDocument{}, fmt.Errorf("config file parse error: top level must be a mapping at line %d, column %d", root.Line, root.Column)
 	}
 	for _, section := range knownSections() {
 		n, ok := findSection(root, section)
@@ -168,17 +203,45 @@ func leadingComment(data []byte) string {
 	return string(data)
 }
 
+// maxConfigNesting is the deepest mapping and sequence nesting a configuration
+// file may use. A file one level deeper is refused, so an extremely deep
+// document cannot exhaust the stack. The templates and normal configurations
+// are far shallower.
+const maxConfigNesting = 32
+
 func checkStructure(n *yaml.Node) error {
-	n = resolveAliasNode(n)
+	return checkNodeStructure(n, 1)
+}
+
+// checkNodeStructure walks the node tree, rejecting anchors, aliases and
+// excessive nesting. It never follows an Alias pointer, so a self-referential
+// or exponentially expanding alias cannot run away: the first alias or anchored
+// node ends the walk with a parse error.
+func checkNodeStructure(n *yaml.Node, depth int) error {
 	if n == nil {
-		return errors.New("config file parse error: unresolved alias")
+		return errors.New("config file parse error: empty node")
+	}
+	if n.Kind == yaml.AliasNode || n.Anchor != "" {
+		return fmt.Errorf("config file parse error: anchors and aliases are not supported at line %d, column %d", n.Line, n.Column)
+	}
+	switch n.Kind {
+	case yaml.MappingNode, yaml.SequenceNode:
+		if depth > maxConfigNesting {
+			return fmt.Errorf("config file parse error: nesting is deeper than %d levels at line %d, column %d", maxConfigNesting, n.Line, n.Column)
+		}
 	}
 	switch n.Kind {
 	case yaml.MappingNode:
 		seen := make(map[string]bool, len(n.Content)/2)
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			k := resolveAliasNode(n.Content[i])
-			if k == nil || k.Kind != yaml.ScalarNode {
+			k := n.Content[i]
+			if k == nil {
+				return errors.New("config file parse error: empty node")
+			}
+			if k.Kind == yaml.AliasNode || k.Anchor != "" {
+				return fmt.Errorf("config file parse error: anchors and aliases are not supported at line %d, column %d", k.Line, k.Column)
+			}
+			if k.Kind != yaml.ScalarNode {
 				return fmt.Errorf("config file parse error: mapping key at line %d, column %d is not a scalar", n.Line, n.Column)
 			}
 			if k.Value == "<<" {
@@ -188,13 +251,13 @@ func checkStructure(n *yaml.Node) error {
 				return fmt.Errorf("config file parse error: duplicate key %q at line %d, column %d", k.Value, k.Line, k.Column)
 			}
 			seen[k.Value] = true
-			if err := checkStructure(n.Content[i+1]); err != nil {
+			if err := checkNodeStructure(n.Content[i+1], depth+1); err != nil {
 				return err
 			}
 		}
 	case yaml.SequenceNode:
 		for _, item := range n.Content {
-			if err := checkStructure(item); err != nil {
+			if err := checkNodeStructure(item, depth+1); err != nil {
 				return err
 			}
 		}
