@@ -170,9 +170,18 @@ peers service install [flags]
 
 - `--system` 与 `--user` 选择级别，二者互斥。都不给时，root 安装系统级，其他账户安装用户级。
 - 用户级服务在账户登录时启动 Broker。不能以 root 运行。在 macOS 上只能在图形登录会话里运行。`~/.peers/config.yaml` 不存在时，生成这个文件，属主为执行安装的账户，权限 `0600`；已存在的文件不改动。
-- 系统级服务在开机时启动 Broker。必须以 root 运行。组 `peers` 不存在时，命令新建它；已存在时直接使用，不改动成员。`/etc/peers/config.yaml` 不存在时，生成这个文件，属主为 `root`，组为 `peers`，权限 `0660`；已存在的文件不改动。`--admin-group <name>` 只在系统级安装时有效；安装落到用户级时，无论是因为给了 `--user` 还是因为执行安装的不是 root，都属于用法错误，以退出码 2 结束。它用于改用另一个组；组名只能以小写字母或下划线开头，其后只能是小写字母、数字、下划线或连字符。
+- 系统级服务在开机时启动 Broker。必须以 root 运行。组 `peers` 不存在时，命令新建它；已存在时直接使用，不改动成员。`/etc/peers/config.yaml` 不存在时，生成这个文件，属主为 `root`，组为 `peers`，权限 `0660`；已存在的文件不改动。`--admin-group <name>` 只在系统级安装时有效；安装落到用户级时，无论是因为给了 `--user` 还是因为执行安装的不是 root，都属于用法错误，以退出码 2 结束。它用于改用另一个组；组名只能以小写字母或下划线开头，其后只能是小写字母、数字、下划线或连字符。已有同名组且组内已有成员时，如果本次安装要新生成配置文件、`--admin-group` 又没有指定这个组、此前也没有安装记录过这个组，安装会拒绝，报错为 `peers service install: cannot use the existing group "<group>" as the administration group: its members <a, b and c> would be able to manage the system Broker; pass --admin-group <group> to accept them, or pass --admin-group with another name`，只有一个成员时写成 `member <a>`；安装不写任何文件，以退出码 1 结束。用 `--admin-group` 指定这个组，表示接受这些成员；组 id 为 0 的组一律拒绝。用 `--admin-group` 指定了组，或配置文件已存在时，安装不读成员名单；先前安装记录在 `/var/lib/peers/admin-group` 里的组不会被拒绝，但成员仍会读取并列入汇总。
 
-生成的文件是一份列出全部键的模板：有固定默认值的键写出取值，其余键写成注释并附示例值或空占位。安装汇总的 `config:` 一行以 `(generated)` 结尾表示本次写入，以 `(kept)` 结尾表示文件已存在；系统级安装保留已有文件时，还会输出 `To delegate administration, run: chgrp <group> <path> && chmod 0660 <path>`。执行这条命令就把已有安装的配置文件交给该组，组成员随后不用 `sudo` 就能管理 Broker；管理组见[以配置文件权限管理 Broker]({{< relref "/docs/guides/management-permissions" >}})。`broker.listen` 使用小于 1024 的端口时，不要把文件交给这个组；规则与修复方法见[配置键]({{< relref "docs/reference/configuration" >}}#类型与约束)。
+生成的文件是一份列出全部键的模板：有固定默认值的键写出取值，其余键写成注释并附示例值或空占位。安装汇总的 `config:` 一行以 `(generated)` 结尾表示本次写入，以 `(kept)` 结尾表示文件已存在；系统级安装保留已有文件时，还会输出 `To delegate administration, run: chgrp <group> <path> && chmod 0660 <path>`。执行这条命令就把已有安装的配置文件交给该组，组成员随后不用 `sudo` 就能管理 Broker；管理组见[以配置文件权限管理 Broker]({{< relref "/docs/guides/management-permissions" >}})。系统级安装的汇总还有一行 `admin group:`，给出组名和本次安装得到它的方式：
+
+```
+  admin group: peers (created)
+  admin group: peers (existing, members: alice, bob)
+  admin group: peers (existing, no members listed)
+  admin group: peers (existing)
+```
+
+`(created)` 表示本次安装创建了这个组。`(existing, members: <a, b>)` 表示复用了已有的组并读到这些成员，`(existing, no members listed)` 表示组内没有成员。只有 `(existing)` 时，安装没有读成员名单：`--admin-group` 指定了组，或保留了已有的配置文件。`broker.listen` 使用小于 1024 的端口时，不要把文件交给这个组；规则与修复方法见[配置键]({{< relref "docs/reference/configuration" >}}#类型与约束)。
 
 如果这一级别已有 Broker 正在应答，而且不是这个服务启动的，安装会失败，并提示先停掉那个 Broker。
 
@@ -365,7 +374,7 @@ peers uninstall [flags]
 - `--yes`（`-y`）跳过询问。除同时给出 `--purge` 外，配置、身份、审计与服务日志都保留。
 - `--purge` 跳过删除数据的询问，一并删除这些数据。
 - 没有终端时，无论是否给出 `--purge`，命令都需要 `--yes` 才能继续；否则在删除任何内容之前失败，以退出码 1 结束。
-- 系统级安装中，回答 `y` 或给出 `--purge` 时，只有管理组是安装时创建的才会删除它；其余情况，或该组仍在使用时，管理组保留，命令打印手动删除的方法。
+- 系统级安装中，回答 `y` 或给出 `--purge` 时，只有管理组是安装时创建的才会删除它；其余情况，或该组仍在使用时，管理组保留，命令打印手动删除的方法。`--purge` 还会删除 `/var/lib/peers/admin-group`，即这个组的记录，所以保留下来的组只要有成员，之后不带 `--admin-group` 做系统级安装就可能被拒。
 - 其他账户的 MCP 注册会保留，各自由相应账户用 `claude mcp remove -s user peer` 删除。系统级安装删除执行 `sudo` 的账户的注册；以 root 直接运行时只打印命令。
 
 删除系统级二进制之前，命令会列出用户级 Broker 正在运行的其他账户，然后照常删除。它只检查 `/tmp/peers-*` 下的 Broker，使用后备运行时目录的账户不在列表里。

@@ -33,6 +33,7 @@ Broker 每分钟把账户锁、运行时目录与本机 socket 的时间戳设�
 | `/var/lib/peers/identity.crt` | 与私钥配对的自签名证书，权限 `0600`。 |
 | `/var/lib/peers/peers.json` | 已配对的对端，权限 `0600`。 |
 | `/var/lib/peers/directory.json` | 本 Broker 已知的名片与公开 topic 声明。 |
+| `/var/lib/peers/admin-group` | 本次安装创建的管理组名（创建过时才有），权限 `0600`。 |
 | `/var/log/peers/audit.log` | 审计日志，权限 `0600`。 |
 | `/run/peers/broker.sock` | 本机 socket，Linux。 |
 | `/var/run/peers/broker.sock` | 本机 socket，macOS。 |
@@ -65,6 +66,22 @@ Broker 每分钟把账户锁、运行时目录与本机 socket 的时间戳设�
 | 系统级 | `/usr/local/share/man/man1/peers.1` 与 `peers-*.1` | `peers` 的 man 页，帮助里列出的每个命令另有一页。 |
 
 用户级安装不装 zsh 补全；`install.sh` 会打印手动启用它的命令。
+
+系统级安装写入 shell 补全与 man 页之前，会从 `/usr/local` 起逐级检查目标目录。某一级是符号链接，属主不是 root 也不是执行 `sudo` 的账户，或组与其他账户可写时，安装跳过这个文件：打印一条警告，并给出手动安装该文件的命令，其余安装照常完成。跳过补全时的警告为
+
+```
+install.sh: warning: skipped the <shell> completion: <reason>; install it with: <prefix>/peers completion <shell> > <path>
+```
+
+跳过 man 页时的警告为
+
+```
+install.sh: warning: skipped the man page <page>: <reason>; install it with: install -m 0644 <src> <dir>/
+```
+
+用户级安装写入自己的目录，不做这项检查。
+
+二进制所在的目录另行检查：从二进制所在目录一直到 `/`，每一级都必须属主为 root、组与其他人都不可写，并且其他账户可以进入；任何一级不合格，安装都会失败，以退出码 1 结束，例如输出 `install.sh: system install: <dir> is not owned by root; pass --prefix with a root-owned directory such as /usr/local/bin`。
 
 ## 日志
 

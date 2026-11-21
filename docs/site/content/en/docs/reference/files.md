@@ -33,6 +33,7 @@ Every minute, the Broker sets the account lock, the runtime directory and the lo
 | `/var/lib/peers/identity.crt` | The matching self-signed certificate, mode `0600`. |
 | `/var/lib/peers/peers.json` | Paired peers, mode `0600`. |
 | `/var/lib/peers/directory.json` | Broker cards and public-topic declarations this Broker knows. |
+| `/var/lib/peers/admin-group` | The name of the admin group this installation created, if it created one, mode `0600`. |
 | `/var/log/peers/audit.log` | Audit log, mode `0600`. |
 | `/run/peers/broker.sock` | Local socket, on Linux. |
 | `/var/run/peers/broker.sock` | Local socket, on macOS. |
@@ -65,6 +66,22 @@ The install script writes the shell completions, and the system installation als
 | System | `/usr/local/share/man/man1/peers.1` and `peers-*.1` | The man page for `peers`, plus one page for each command in the help. |
 
 The user installation does not install a zsh completion; `install.sh` prints the command that enables one by hand.
+
+The system installation checks the directories it writes the shell completions and man pages into before writing them. Starting from `/usr/local`, a component that is a symbolic link, is not owned by root or the account that ran `sudo` or is writable by group or others makes the install skip that file: it prints a warning with the command to install the file by hand, and the rest of the installation still completes. A completion is skipped with
+
+```
+install.sh: warning: skipped the <shell> completion: <reason>; install it with: <prefix>/peers completion <shell> > <path>
+```
+
+and a man page with
+
+```
+install.sh: warning: skipped the man page <page>: <reason>; install it with: install -m 0644 <src> <dir>/
+```
+
+A user installation writes into its own directories without this check.
+
+The binary's own directory is checked separately. Every directory from the binary's directory up to `/` must be owned by root, not writable by group or others and searchable by others; a directory that fails stops the install with exit code 1, for example with `install.sh: system install: <dir> is not owned by root; pass --prefix with a root-owned directory such as /usr/local/bin`.
 
 ## Logs
 

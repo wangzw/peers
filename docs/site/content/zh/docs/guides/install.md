@@ -115,9 +115,25 @@ macOS 上，脚本自己清除二进制上的隔离属性，所以用浏览器�
 
 系统级安装还会把 man 页写入 `/usr/local/share/man/man1`，可以用 `man peers` 查看。man 页位于发布包的 `man/` 目录。
 
+系统级安装写入 shell 补全与 man 页之前，会从 `/usr/local` 起逐级检查目标目录。某一级是符号链接，属主不是 root 也不是执行 `sudo` 的账户，或组与其他账户可写时，安装跳过这个文件：打印一条警告，并给出手动安装该文件的命令，其余安装照常完成。跳过补全时的警告为
+
+```
+install.sh: warning: skipped the <shell> completion: <reason>; install it with: <prefix>/peers completion <shell> > <path>
+```
+
+跳过 man 页时的警告为
+
+```
+install.sh: warning: skipped the man page <page>: <reason>; install it with: install -m 0644 <src> <dir>/
+```
+
+用户级安装写入自己的目录，不做这项检查。
+
+二进制所在的目录另行检查：从二进制所在目录一直到 `/`，每一级都必须属主为 root、组与其他人都不可写，并且其他账户可以进入；任何一级不合格，安装都会失败，以退出码 1 结束，例如输出 `install.sh: system install: <dir> is not owned by root; pass --prefix with a root-owned directory such as /usr/local/bin`。
+
 ## 安装输出
 
-安装成功的汇总以 `peers <version> installed (<level> service, starts at <login|boot>)` 开头。脚本替换已安装的版本时，会在汇总之前先输出一行：新版本更晚时输出 `Upgraded from <old>.`，更早时输出 `Downgraded from <old>.`，相同时输出 `Reinstalled peers <version>.`，两个版本无法比较先后时输出 `Replaced peers <old>.`。带 `--no-service` 时，汇总以 `peers <version> installed (no service)` 开头。汇总给出级别、二进制路径、版本、配置文件路径、运行日志位置、审计日志路径，以及启动、停止、重启与卸载 Broker 的命令。系统级安装的启动、停止、重启命令带 `sudo`。[文件与路径]({{< relref "/docs/reference/files" >}})列出配置、运行日志、审计日志与运行时目录的路径。
+安装成功的汇总以 `peers <version> installed (<level> service, starts at <login|boot>)` 开头。脚本替换已安装的版本时，会在汇总之前先输出一行：新版本更晚时输出 `Upgraded from <old>.`，更早时输出 `Downgraded from <old>.`，相同时输出 `Reinstalled peers <version>.`，两个版本无法比较先后时输出 `Replaced peers <old>.`。带 `--no-service` 时，汇总以 `peers <version> installed (no service)` 开头。汇总给出级别、二进制路径、版本、配置文件路径、运行日志位置、审计日志路径，以及启动、停止、重启与卸载 Broker 的命令。系统级安装的汇总还有一行 `admin group:`，给出管理组和本次安装得到它的方式：`(created)`、`(existing, members: <a, b>)`、`(existing, no members listed)`，安装没有读成员名单时为 `(existing)`。系统级安装的启动、停止、重启命令带 `sudo`。[文件与路径]({{< relref "/docs/reference/files" >}})列出配置、运行日志、审计日志与运行时目录的路径。
 
 安装失败时，输出写明原因：地址已被占用时给出地址、配置文件与 `broker.listen`；服务管理器报错时给出执行的命令与它的输出；权限不足时给出路径和缺少的权限；Broker 在启动阶段退出时给出运行日志里的原因。只有服务在运行、Broker 进入降级运行时，安装才保留服务、给出修复命令，并以退出码 3 结束；安装失败时写入或启用的服务，不会在开机或登录时自动启动。细节见 [peers service install]({{< relref "/docs/reference/cli" >}}#peers-service-install) 与 [FAQ 的端口一问]({{< relref "/docs/faq" >}}#端口被占用时会怎样)。
 

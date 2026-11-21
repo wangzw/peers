@@ -115,9 +115,25 @@ To generate a completion script yourself, run `peers completion <shell>` and wri
 
 The system installation also writes the man pages into `/usr/local/share/man/man1`, so `man peers` works. The pages are in the archive's `man/` directory.
 
+The system installation checks the directories it writes the shell completions and man pages into before writing them. Starting from `/usr/local`, a component that is a symbolic link, is not owned by root or the account that ran `sudo` or is writable by group or others makes the install skip that file: it prints a warning with the command to install the file by hand, and the rest of the installation still completes. A completion is skipped with
+
+```
+install.sh: warning: skipped the <shell> completion: <reason>; install it with: <prefix>/peers completion <shell> > <path>
+```
+
+and a man page with
+
+```
+install.sh: warning: skipped the man page <page>: <reason>; install it with: install -m 0644 <src> <dir>/
+```
+
+A user installation writes into its own directories without this check.
+
+The binary's own directory is checked separately. Every directory from the binary's directory up to `/` must be owned by root, not writable by group or others and searchable by others; a directory that fails stops the install with exit code 1, for example with `install.sh: system install: <dir> is not owned by root; pass --prefix with a root-owned directory such as /usr/local/bin`.
+
 ## Installation output
 
-A successful installation's summary begins with `peers <version> installed (<level> service, starts at <login|boot>)`. When the script replaces an installed version, it prints one line before the summary: `Upgraded from <old>.` when the new version is later, `Downgraded from <old>.` when it is earlier, `Reinstalled peers <version>.` when it is the same, and `Replaced peers <old>.` when the two versions cannot be ordered. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path and the commands to start, stop, restart and uninstall the Broker. The start, stop and restart commands use `sudo` for the system installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
+A successful installation's summary begins with `peers <version> installed (<level> service, starts at <login|boot>)`. When the script replaces an installed version, it prints one line before the summary: `Upgraded from <old>.` when the new version is later, `Downgraded from <old>.` when it is earlier, `Reinstalled peers <version>.` when it is the same, and `Replaced peers <old>.` when the two versions cannot be ordered. With `--no-service`, the summary begins with `peers <version> installed (no service)`. The summary reports the level, the binary path, the version, the configuration file path, the location of the run log, the audit log path and the commands to start, stop, restart and uninstall the Broker. A system installation's summary also has an `admin group:` line naming the admin group and how the install obtained it: `(created)`, `(existing, members: <a, b>)`, `(existing, no members listed)` or `(existing)` when the install did not read the members. The start, stop and restart commands use `sudo` for the system installation. [Files and paths]({{< relref "/docs/reference/files" >}}) lists the configuration, run log, audit log and runtime paths.
 
 A failed installation names the cause: an address that is already in use is reported with the address, the configuration file and `broker.listen`; a service manager error gives the command and its output; missing permissions give the path and the missing permission; and a Broker that exits during startup gives the reason from its run log. Only when the service is running and the Broker has entered a degraded run does the install keep the service, give a fix command and exit with code 3; a service that a failed install wrote or enabled does not start at boot or login. [peers service install]({{< relref "/docs/reference/cli" >}}#peers-service-install) and [the port question in the FAQ]({{< relref "/docs/faq" >}}#what-happens-if-the-port-is-already-in-use) give the details.
 

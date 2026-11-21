@@ -32,6 +32,14 @@ weight: 7
 
 `peers service install --system` 默认会创建 `peers` 组（不存在时），已存在的组直接使用，不改成员。用 `--admin-group <name>` 可以改用别的组名：组名只能以小写字母或下划线开头，其后只能是小写字母、数字、下划线或连字符。系统级安装新建的配置文件属于该组，权限为 `0660`，所以组成员不用 `sudo` 就能管理 Broker。这个组的可信程度等同于“能手工编辑配置文件”，它不等于 root。
 
+已有同名组且组内已有成员时，如果本次安装要新生成配置文件、管理员又没有用 `--admin-group` 指定这个组、此前也没有安装记录过这个组，安装会拒绝：否则这些成员会在管理员不知情的情况下获得系统级 Broker 的管理权。安装不写任何文件，以退出码 1 结束，报错为
+
+```
+peers service install: cannot use the existing group "<group>" as the administration group: its members <a, b and c> would be able to manage the system Broker; pass --admin-group <group> to accept them, or pass --admin-group with another name
+```
+
+只有一个成员时写成 `member <a>`。用 `--admin-group` 指定这个组，表示接受这些成员。成员名单包括附加成员和主组为该组的账户，macOS 上还包括嵌套组里的账户；名单读不出来时，安装同样拒绝，报错为 `cannot read the members of group "<group>": …`。组 id 为 0 的组一律拒绝，指定与否都一样，因为组内每个账户都会拿到配置文件的权限。用 `--admin-group` 指定了组，或配置文件已存在时，安装不读成员名单，所以账户数据库损坏也不会挡住这样的重装。先前安装记录在 `/var/lib/peers/admin-group` 里的组不会被拒绝，但成员仍会读取并列入汇总。安装脚本在 `--system` 下被拒时，打印 `install.sh: cannot install the system service`，以退出码 1 结束。
+
 安装脚本会询问是否把执行安装的账户加入该组，默认不加入。`--join-admin-group` 不询问直接加入，`--no-admin-group` 既不询问也不加入。没有终端时，脚本不加入任何账户，并打印加入组的命令。Broker 每次判定权限都从账户数据库读取账户的组，所以经 Broker 做的管理操作，加入组后下一次调用就生效。要让本账户自己的进程带上新的成员关系，例如直接编辑配置文件，先重新登录或执行 `newgrp peers`。要把别的账户加入组，Linux 上执行 `sudo usermod -aG peers <account>`，macOS 上执行 `sudo dseditgroup -o edit -a <account> -t user peers`；设置过 `--admin-group` 时，把命令里的 `peers` 换成那个组名。
 
 已有安装时，以 root 运行安装输出给出的这条命令：
