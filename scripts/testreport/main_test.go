@@ -217,6 +217,58 @@ func TestReportCountsEachDependentPackageWhoseBuildFailed(t *testing.T) {
 	}
 }
 
+// A cached package is a pass event with Elapsed 0 and the package-level line
+// "ok  <import path>\t(cached)"; go test replays the recorded test events, so a
+// gate that accepts it reports a pass the package never produced in this run.
+func TestReportRejectsCachedResults(t *testing.T) {
+	input := raw(
+		`{"Action":"pass","Package":"p","Test":"TestPass","Elapsed":0.31}`,
+		`{"Action":"output","Package":"p","Output":"ok  \tp\t(cached)\n"}`,
+		`{"Action":"pass","Package":"p","Elapsed":0}`,
+	)
+
+	out := run(t, input)
+	if !strings.Contains(out, "test: cached p: go test did not run this package") {
+		t.Errorf("report does not name the cached package:\n%s", out)
+	}
+	if !strings.Contains(out, "1 package came from the test cache") {
+		t.Errorf("report does not say a cached result is unacceptable:\n%s", out)
+	}
+}
+
+func TestCachedResultsMakeTheReportExitNonzero(t *testing.T) {
+	input := raw(
+		`{"Action":"output","Package":"p","Output":"ok  \tp\t(cached)\n"}`,
+		`{"Action":"output","Package":"q","Output":"ok  \tq\t0.21s\n"}`,
+		`{"Action":"pass","Package":"q","Elapsed":0.21}`,
+	)
+	var out bytes.Buffer
+	r := newReporter(&out, "test", false)
+	if err := r.read(strings.NewReader(input)); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	r.summary()
+	if got := r.exitCode(); got != 1 {
+		t.Errorf("exitCode() = %d, want 1 for a run with a cached package", got)
+	}
+}
+
+func TestRealResultsLeaveTheExitCodeZero(t *testing.T) {
+	var out bytes.Buffer
+	r := newReporter(&out, "test", false)
+	if err := r.read(strings.NewReader(stream(t,
+		event{Action: "pass", Package: "p", Test: "TestPass", Elapsed: 0.5},
+		event{Action: "output", Package: "p", Output: "ok  \tp\t0.51s\n"},
+		event{Action: "pass", Package: "p", Elapsed: 0.51},
+	))); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	r.summary()
+	if got := r.exitCode(); got != 0 {
+		t.Errorf("exitCode() = %d, want 0 for a run that executed the package", got)
+	}
+}
+
 func TestReportIgnoresATruncatedFinalLine(t *testing.T) {
 	input := stream(t,
 		event{Action: "run", Package: "p", Test: "TestSkip"},

@@ -125,7 +125,7 @@ test:
 	go vet ./...
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
 	go build -o "$$tmp/testreport" ./scripts/testreport || exit $$?; \
-	bash -o pipefail -c 'go test -race -json -p $(JOBS) -parallel $(JOBS) ./... | '"$$tmp"'/testreport -label test -'
+	bash -o pipefail -c 'go test -race -count=1 -json -p $(JOBS) -parallel $(JOBS) ./... | '"$$tmp"'/testreport -label test -'
 	@root="$$(mktemp -d)"; home="$$(mktemp -d)"; scratch="$$(mktemp -d)"; \
 	cleanup() { status=$$1; rm -rf "$$root" "$$home" "$$scratch"; exit $$status; }; \
 	go list -e -f '{{.ImportPath}}|{{join .GoFiles " "}}|{{join .TestGoFiles " "}}' ./... > "$$scratch/plain" || cleanup $$?; \
@@ -206,7 +206,7 @@ e2e:
 	runarg=""; \
 	if [ -n '$(E2E_RUN)' ]; then runarg="-run '$(E2E_RUN)'"; fi; \
 	if go build -o "$$tmp/testreport" ./scripts/testreport; then \
-		bash -o pipefail -c 'go test -tags e2e -timeout $(E2E_TIMEOUT) -json -p $(JOBS) -parallel $(JOBS) '"$$runarg"' $(E2E_PKGS) | '"$$tmp"'/testreport -label e2e -progress -' || status=$$?; \
+		bash -o pipefail -c 'go test -tags e2e -count=1 -timeout $(E2E_TIMEOUT) -json -p $(JOBS) -parallel $(JOBS) '"$$runarg"' $(E2E_PKGS) | '"$$tmp"'/testreport -label e2e -progress -' || status=$$?; \
 	else \
 		status=$$?; \
 	fi; \
@@ -226,7 +226,7 @@ e2e-darwin:
 		echo "e2e-darwin: requires macOS (go env GOOS is $$(go env GOOS))" >&2; \
 		exit 1; \
 	fi
-	go test -v -tags e2e_darwin -timeout $(E2E_TIMEOUT) -p 1 -parallel 1 ./test/e2e/darwinservice
+	go test -v -tags e2e_darwin -count=1 -timeout $(E2E_TIMEOUT) -p 1 -parallel 1 ./test/e2e/darwinservice
 
 # Document standards plus a render of every Mermaid diagram in the docs that
 # differ from origin/main. scripts/docs-check.sh owns the details, including

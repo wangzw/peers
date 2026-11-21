@@ -4,8 +4,14 @@
 // about tests that skipped themselves. This command prints each package as it
 // finishes, each skipped test with the reason it logged, and the output of a
 // failed test or build. -progress also prints each test when it starts, which
-// is what makes an interrupted end-to-end run say where it was. The command
-// never changes a result: the gate keeps go test's exit status.
+// is what makes an interrupted end-to-end run say where it was.
+//
+// The command keeps go test's exit status in every case but one: a package
+// whose result came from the Go test cache makes it exit nonzero. A cached
+// result is a recorded pass, not a run this gate produced, and a test whose
+// inputs the cache does not track, such as a binary built in a subprocess, can
+// hide a product change. Gates therefore run go test with -count=1, and this
+// check catches a target that forgets it.
 package main
 
 import (
@@ -55,6 +61,7 @@ type reporter struct {
 	noTestPackages int
 
 	failedPackages map[string]bool
+	cachedPackages map[string]bool
 	printedBuilds  map[string]bool
 	testOutput     map[testKey][]string
 	pkgOutput      map[string][]string
@@ -68,6 +75,7 @@ func newReporter(out io.Writer, label string, progress bool) *reporter {
 		label:          label,
 		progress:       progress,
 		failedPackages: make(map[string]bool),
+		cachedPackages: make(map[string]bool),
 		printedBuilds:  make(map[string]bool),
 		testOutput:     make(map[testKey][]string),
 		pkgOutput:      make(map[string][]string),
@@ -118,6 +126,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "testreport: reading %s: %v\n", source, err)
 		os.Exit(2)
 	}
+	if code := r.exitCode(); code != 0 {
+		os.Exit(code)
+	}
 }
 
 // read consumes one JSON event per line until the stream ends. ReadString has
@@ -167,6 +178,10 @@ func (r *reporter) handle(e event) {
 			r.testOutput[k] = append(r.testOutput[k], e.Output)
 		case e.Package != "":
 			r.pkgOutput[e.Package] = append(r.pkgOutput[e.Package], e.Output)
+			if isCachedResult(e.Output) {
+				r.cachedPackages[e.Package] = true
+				r.printf("cached %s: go test did not run this package\n", e.Package)
+			}
 		}
 
 	case "run":
@@ -179,7 +194,11 @@ func (r *reporter) handle(e event) {
 			r.passed++
 			r.recordElapsed(e)
 		} else if e.Package != "" {
-			r.printf("%s passed (%.2fs)\n", e.Package, e.Elapsed)
+			if r.cachedPackages[e.Package] {
+				r.printf("%s cached (%.2fs)\n", e.Package, e.Elapsed)
+			} else {
+				r.printf("%s passed (%.2fs)\n", e.Package, e.Elapsed)
+			}
 		}
 
 	case "skip":
@@ -260,6 +279,44 @@ func (r *reporter) summary() {
 	}
 	r.printf("%s\n", summary)
 	r.printSlowestTests()
+	r.printCached()
+}
+
+// printCached names every package whose result came from the test cache. The
+// packages are printed in name order so the report is comparable between runs.
+func (r *reporter) printCached() {
+	if len(r.cachedPackages) == 0 {
+		return
+	}
+	pkgs := make([]string, 0, len(r.cachedPackages))
+	for pkg := range r.cachedPackages {
+		pkgs = append(pkgs, pkg)
+	}
+	slices.Sort(pkgs)
+	noun := "packages"
+	if len(pkgs) == 1 {
+		noun = "package"
+	}
+	r.printf("%d %s came from the test cache: %s\n", len(pkgs), noun, strings.Join(pkgs, ", "))
+}
+
+// exitCode is nonzero when a cached result was seen. The caller exits with it
+// so a pipeline that keeps go test's status still fails the gate.
+func (r *reporter) exitCode() int {
+	if len(r.cachedPackages) > 0 {
+		return 1
+	}
+	return 0
+}
+
+// isCachedResult reports whether a package-level output line is the "ok
+// <import path>\t(cached)" line go test writes for a cached result. Output a
+// test prints is a test event and never reaches this check, but a TestMain's
+// output before and after m.Run is package-level output and does, so a
+// TestMain that prints this exact line still matches. The tab keeps a package
+// name that ends in "(cached)" from matching.
+func isCachedResult(output string) bool {
+	return strings.Contains(output, "\t(cached)")
 }
 
 // recordElapsed remembers a test's duration so the report can rank it.
