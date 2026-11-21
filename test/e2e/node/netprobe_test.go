@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// eventTimeout is the package-wide fallback for a wait on a state the test
+// itself caused, with no product timer behind it. It only decides how long a
+// wait that will never complete takes to fail: the success path observes the
+// state itself and never spends this time, so a larger value costs nothing.
+// Thirty seconds is far above the worst normal latency under load. It matches
+// harness.EventTimeout, which this package cannot import because the harness
+// imports node.
+const eventTimeout = 30 * time.Second
+
 func TestHoldPortAndReachable(t *testing.T) {
 	listener, err := HoldPort("127.0.0.1:0")
 	if err != nil {
@@ -38,7 +47,7 @@ func TestHoldPortAndReachable(t *testing.T) {
 	// cannot tell a listener that failed to close from a busy host. The
 	// deadline makes a Close that does nothing fail the test rather than
 	// block in Accept.
-	if err := tcp.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err := tcp.SetDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("node: setting the accept deadline: %v", err)
 	}
 	if err := listener.Close(); err != nil {

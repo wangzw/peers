@@ -22,15 +22,16 @@ import (
 const (
 	// ctcWaitBound bounds a wait that no product timer governs. It also covers
 	// noticing a cut, which REJECT plus ss -K makes immediate.
-	ctcWaitBound = 3 * time.Second
+	ctcWaitBound = harness.EventTimeout
 
 	// ctcReloadBound is the configuration file watcher's debounce (100ms) plus
-	// the three-second allowance.
-	ctcReloadBound = 100*time.Millisecond + 3*time.Second
+	// the harness.EventTimeout margin.
+	ctcReloadBound = 100*time.Millisecond + harness.EventTimeout
 
-	// ctcReconnectBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s,
-	// the timers that govern a link coming back under FastTimers.
-	ctcReconnectBound = 400*time.Millisecond + 500*time.Millisecond + 3*time.Second
+	// ctcReconnectBound is reconnect_max + dial_timeout plus the
+	// harness.EventTimeout margin, the timers that govern a link coming
+	// back under FastTimers.
+	ctcReconnectBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 )
 
 // ctcStaticKeyOne, ctcStaticKeyTwo and ctcStaticKeyThree are legal static

@@ -25,11 +25,11 @@ import (
 )
 
 const (
-	// secWaitBound is the bound of a wait that no product timer governs.
-	secWaitBound = 3 * time.Second
-	// secRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s, the
-	// bound the plan fixes for reconnecting under FastTimers.
-	secRelinkBound = 3900 * time.Millisecond
+	// secWaitBound bounds a wait that no product timer governs.
+	secWaitBound = harness.EventTimeout
+	// secRelinkBound is reconnect_max + dial_timeout plus the shared fallback:
+	// the timers that govern a link coming back under FastTimers.
+	secRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 	// secBrokerPort is the default Broker port these scenarios use.
 	secBrokerPort = "17443"
 	// secLeakWindow is a deliberate observation window for the negative
@@ -40,12 +40,12 @@ const (
 	secLeakWindow = 1500 * time.Millisecond
 	// secRelayStartBound bounds starting the relay through the node control
 	// protocol. The request only binds a listener and dials on demand, so no
-	// product timer governs it and the project-wide test wait applies.
-	secRelayStartBound = 3 * time.Second
+	// product timer governs it and the shared fallback applies.
+	secRelayStartBound = harness.EventTimeout
 	// secCaptureWriteBound bounds the wait for tcpdump to write the bytes the
 	// test has already sent. tcpdump flushes on packet activity and no product
-	// timer governs it, so it uses the project-wide three-second bound.
-	secCaptureWriteBound = 3 * time.Second
+	// timer governs it, so it uses the shared fallback.
+	secCaptureWriteBound = harness.EventTimeout
 )
 
 // secFingerprintPattern matches a stored peer fingerprint of the form the peer

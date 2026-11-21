@@ -258,7 +258,7 @@ func accountsRunAsOther(t *testing.T, c *harness.Cluster, nodeName, tag string, 
 func accountsOneshotRejected(t *testing.T, c *harness.Cluster, nodeName, socket, name string) node.ToolResult {
 	t.Helper()
 	var result node.ToolResult
-	harness.Eventually(t, 3*time.Second, "oneshot-session reports the credential rejection", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "oneshot-session reports the credential rejection", func() (bool, string) {
 		// --env, not the process environment, carries the variables to the MCP
 		// server process: oneshot-session builds that environment itself.
 		out := accountsRunAsOther(t, c, nodeName, "oneshot", nil,

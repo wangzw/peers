@@ -21,13 +21,12 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// pkWaitBound is the project-wide bound for a wait that no product timer
-// governs. The plan's sum-of-timers rule therefore reduces to three seconds.
-const pkWaitBound = 3 * time.Second
+// pkWaitBound bounds a wait that no product timer governs.
+const pkWaitBound = harness.EventTimeout
 
-// pkRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s, the
-// bound the plan fixes for reconnecting under FastTimers.
-const pkRelinkBound = 3900 * time.Millisecond
+// pkRelinkBound is reconnect_max + dial_timeout plus the shared fallback: the
+// timers that govern a link coming back under FastTimers.
+const pkRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 // pkStatic16 and pkStaticB are 16-character static keys, the shortest legal
 // length. pkStatic128 is the longest legal length; pkStaticRuntimeBad is one

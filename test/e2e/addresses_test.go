@@ -16,21 +16,26 @@ import (
 )
 
 const (
-	// adWaitBound is the bound of a wait that no product timer governs.
-	adWaitBound = 3 * time.Second
-	// adRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s, the
-	// bound the plan fixes for reconnecting under FastTimers.
-	adRelinkBound = 3900 * time.Millisecond
-	// adAddressBound is broker.address_check_interval (500ms) plus the usual
-	// three seconds: the time an address-list change may take to reach a peer.
-	adAddressBound = 500*time.Millisecond + 3*time.Second
+	// adWaitBound bounds a wait that no product timer governs.
+	adWaitBound = harness.EventTimeout
+	// adRelinkBound is reconnect_max + dial_timeout plus the shared fallback:
+	// the timers that govern a link coming back under FastTimers.
+	adRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
+	// adAddressBound is broker.address_check_interval plus the shared fallback:
+	// the time an address-list change may take to reach a peer.
+	adAddressBound = 500*time.Millisecond + harness.EventTimeout
+	// adShortDialTimeout is the dial_timeout the unreachable-connect case sets
+	// explicitly. That case asserts peer_unreachable on a dead address, so the
+	// dial must give up on this short product timer rather than the FastTimers
+	// success value.
+	adShortDialTimeout = 500 * time.Millisecond
 	// adPort is the default Broker port.
 	adPort = "17443"
 	// adInvalidConfigBound bounds the wait for a Broker that must reject its
 	// configuration. The product validates the file before its ten-second
-	// readiness wait, so the process exits at once and the project-wide test
-	// wait covers it.
-	adInvalidConfigBound = 3 * time.Second
+	// readiness wait, so the process exits at once and the shared fallback
+	// covers it.
+	adInvalidConfigBound = harness.EventTimeout
 )
 
 // TestAdvertisedAddresses covers the dual-stack default listener, the
@@ -330,7 +335,7 @@ func TestAdvertisedAddresses(t *testing.T) {
 		c := harness.Up(t, harness.TopoFlat(2))
 		aNode, bNode := c.Node("hostA"), c.Node("hostB")
 		adStartBroker(t, aNode, adConfig("broker:\n  listen: \"\"\n"))
-		adStartBroker(t, bNode, adConfig())
+		adStartBroker(t, bNode, adConfig("link:\n  dial_timeout: "+adShortDialTimeout.String()+"\n"))
 		opA := adOperator(t, aNode)
 		defer opA.End(t)
 		opB := adOperator(t, bNode)

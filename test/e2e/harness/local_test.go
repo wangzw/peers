@@ -110,7 +110,7 @@ func TestLocalHostCleanupKillsDetached(t *testing.T) {
 		t.Fatalf("reading the detached process ID from %q: %v", out, err)
 	}
 
-	Eventually(t, 5*time.Second, "the detached process starts", func() (bool, string) {
+	Eventually(t, EventTimeout, "the detached process starts", func() (bool, string) {
 		pids := pidsWithRuntimeRoot(t, local.root)
 		if containsPID(pids, pid) {
 			return true, fmt.Sprintf("pid %d is running", pid)
@@ -120,7 +120,7 @@ func TestLocalHostCleanupKillsDetached(t *testing.T) {
 
 	local.cleanup()
 
-	Eventually(t, 5*time.Second, "cleanup kills the detached process", func() (bool, string) {
+	Eventually(t, EventTimeout, "cleanup kills the detached process", func() (bool, string) {
 		pids := pidsWithRuntimeRoot(t, local.root)
 		if containsPID(pids, pid) {
 			return false, fmt.Sprintf("pid %d still running", pid)

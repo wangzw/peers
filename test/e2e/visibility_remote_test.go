@@ -26,18 +26,43 @@ const (
 	vrTopic = "t"
 
 	// vrWaitBound bounds a wait that no product timer governs.
-	vrWaitBound = 3 * time.Second
+	vrWaitBound = harness.EventTimeout
 
-	// vrRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s.
-	vrRelinkBound = 3900 * time.Millisecond
+	// vrRelinkBound is reconnect_max + dial_timeout plus the shared fallback:
+	// the timers that govern a link coming back under FastTimers.
+	vrRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
-	// vrRestoreBound is the relink bound plus three seconds for the topic
-	// registries to exchange the member lists again after the link is back.
-	vrRestoreBound = vrRelinkBound + 3*time.Second
+	// vrRestoreBound is the wait bound for the link and roster to come back
+	// after the network is restored: the relink timers plus one shared
+	// fallback. It is a wait bound only. The measured span is asserted against
+	// vrRestoreAssertBound, so the fallback never enters an assertion.
+	vrRestoreBound = vrRelinkBound
 
-	// vrRemovalBound is the five seconds REQ-agent-messaging-012 allows for an
+	// vrObserveMargin is the test-side observation overhead a measured span can
+	// include, not a second product allowance. Eventually re-checks every
+	// harness.PollInterval, and each check answers with list_agents calls over
+	// the MCP stdio transport (the removal and restore checks each make two,
+	// one per host), so the measured span can exceed the product's own deadline
+	// by the polling granularity plus those round trips. Four intervals cover
+	// one interval of granularity, two round trips and one interval of
+	// scheduler slack. 200ms is 4% of the 5s removal requirement, so it cannot
+	// hide a real violation.
+	vrObserveMargin = 4 * harness.PollInterval
+
+	// vrRemovalRequirement is REQ-agent-messaging-012's five seconds for an
 	// ended session to leave both lists.
-	vrRemovalBound = 5 * time.Second
+	vrRemovalRequirement = 5 * time.Second
+
+	// vrRemovalAssertBound is the removal requirement plus the observation
+	// overhead. The wait that precedes the assertion uses vrWaitBound, the
+	// shared fallback; the fallback never enters this bound.
+	vrRemovalAssertBound = vrRemovalRequirement + vrObserveMargin
+
+	// vrRestoreAssertBound is the product timers that govern a link coming back
+	// under FastTimers, reconnect_max plus dial_timeout, plus the observation
+	// overhead. The wait that precedes it uses vrRestoreBound, those timers
+	// plus one shared fallback.
+	vrRestoreAssertBound = harness.FastReconnectMax + harness.FastDialTimeout + vrObserveMargin
 
 	// vrQuietWindow is the observation window for a negative visibility check.
 	// The directory is already synchronised and the sessions are not changing,
@@ -165,10 +190,21 @@ func TestRemoteVisibility(t *testing.T) {
 			return true, ""
 		})
 
+		// The restore wait uses the relink timers plus one shared fallback so a
+		// roster that never comes back fails instead of hanging. The measured
+		// span is asserted separately against the relink timers, so the
+		// fallback never enters the assertion. Restore is synchronous and
+		// returns once the network rules are gone, which is when the product
+		// can start reconnecting, so the span starts just after it.
 		c.Restore(t)
+		restoreStart := time.Now()
 		harness.Eventually(t, vrRestoreBound, "the restored link makes the pair visible again", func() (bool, string) {
 			return vrSees(t, a2, "b2") && vrSees(t, b2, "a2"), "the pair is not visible"
 		})
+		if elapsed := time.Since(restoreStart); elapsed > vrRestoreAssertBound {
+			t.Fatalf("the restored link made the pair visible after %s, want at most %s (link.reconnect_max %s + link.dial_timeout %s + observation margin %s; the wait fallback is %s)",
+				elapsed, vrRestoreAssertBound, harness.FastReconnectMax, harness.FastDialTimeout, vrObserveMargin, vrRestoreBound)
+		}
 		vrWaitConnected(t, bNode, "hostA.peer", vrRelinkBound)
 		vrWaitConnected(t, aNode, "hostB.peer", vrRelinkBound)
 	})
@@ -461,8 +497,15 @@ func TestRemoteVisibility(t *testing.T) {
 			return vrSees(t, a1, "b3"), "a1 does not list b3"
 		})
 
+		// The requirement's clock starts when the session ends, so the span is
+		// measured from just before End; End's own signal escalation runs
+		// inside it, which can only lengthen the measured span. The wait uses
+		// the shared fallback so a removal that never happens fails instead of
+		// hanging; the five seconds are enforced by the assertion below, not by
+		// the wait's bound.
+		start := time.Now()
 		gone.End(t)
-		harness.Eventually(t, vrRemovalBound, "the ended session leaves both lists", func() (bool, string) {
+		harness.Eventually(t, vrWaitBound, "the ended session leaves both lists", func() (bool, string) {
 			if vrSees(t, a1, "b3") {
 				return false, "a1 still lists b3"
 			}
@@ -471,6 +514,10 @@ func TestRemoteVisibility(t *testing.T) {
 			}
 			return true, ""
 		})
+		if elapsed := time.Since(start); elapsed > vrRemovalAssertBound {
+			t.Fatalf("the ended session left both lists after %s, want at most %s (requirement %s + observation margin %s; the wait fallback is %s)",
+				elapsed, vrRemovalAssertBound, vrRemovalRequirement, vrObserveMargin, vrWaitBound)
+		}
 	})
 
 	t.Run("REQ-topics-008 and 019 negative", func(t *testing.T) {

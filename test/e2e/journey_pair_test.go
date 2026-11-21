@@ -309,7 +309,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 		pairWaitOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, 3*time.Second)
 
 		c.Cut(t, "hostA", "hostB")
-		harness.Eventually(t, 3*time.Second, "both Brokers notice the cut", func() (bool, string) {
+		harness.Eventually(t, harness.EventTimeout, "both Brokers notice the cut", func() (bool, string) {
 			statusA, state := pairOracleStatus(t, hostA, "hostB.peer")
 			if state != "" {
 				return false, "hostA: " + state

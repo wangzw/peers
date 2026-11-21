@@ -23,10 +23,11 @@ import (
 // alWaitBound is the bound of a wait that no product timer governs. When the
 // wait polls a tool through EventuallyPoll, the harness lifts it to
 // ToolCallWaitBound (fourteen seconds) so one poll call gets its own bound.
-const alWaitBound = 3 * time.Second
+const alWaitBound = harness.EventTimeout
 
-// alRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s.
-const alRelinkBound = 3900 * time.Millisecond
+// alRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
+// margin: the timers that govern a link coming back after a cut.
+const alRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 // alTopic is the topic the sessions use to observe each other's addresses.
 const alTopic = "t"

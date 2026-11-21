@@ -19,6 +19,7 @@ import (
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakesession"
+	"github.com/wangzw/peers/test/e2e/harness"
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
@@ -388,7 +389,7 @@ func startRoleAsUser(t *testing.T, user, role string) *roleRun {
 		_ = r.cmd.Process.Signal(os.Interrupt)
 		select {
 		case <-r.done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(harness.EventTimeout):
 			_ = r.cmd.Process.Kill()
 			<-r.done
 		}

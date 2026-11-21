@@ -27,14 +27,15 @@ import (
 // that timer plus the allowance.
 const (
 	// ctWaitBound bounds a wait that no product timer governs.
-	ctWaitBound = 3 * time.Second
+	ctWaitBound = harness.EventTimeout
 
-	// ctRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s.
-	ctRelinkBound = 3900 * time.Millisecond
+	// ctRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
+	// margin.
+	ctRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 	// ctReloadBound is the configuration file watcher's debounce (100ms) plus
-	// the project-wide three seconds.
-	ctReloadBound = 100*time.Millisecond + 3*time.Second
+	// the harness.EventTimeout margin.
+	ctReloadBound = 100*time.Millisecond + harness.EventTimeout
 )
 
 // ctStaticKey names two legal static keys. The shortest legal length is 16

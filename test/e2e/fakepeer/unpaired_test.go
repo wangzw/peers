@@ -21,8 +21,11 @@ import (
 	"github.com/wangzw/peers/test/e2e/fakepeer/fakerec"
 )
 
-// stubWait bounds every wait in these tests.
-const stubWait = 3 * time.Second
+// stubWait bounds every wait in these tests. The events it waits for cross a
+// local gRPC stream and a pipe, and no product timer governs them, so it uses
+// the same five-second fallback as harness.EventTimeout. This is a standalone
+// main package and does not import the harness.
+const stubWait = 5 * time.Second
 
 // stubLinkServer records the frames of one stream. After stopAfter frames it
 // optionally sends a Reject and ends the stream with endErr.

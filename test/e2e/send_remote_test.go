@@ -27,9 +27,35 @@ const (
 	// srTopic is the topic the two sessions share.
 	srTopic = "t"
 
-	// srSendBudget is send.request_timeout (2s) plus the 500ms allowance the
-	// plan puts on one send in these scenarios.
-	srSendBudget = 2500 * time.Millisecond
+	// srShortRequestTimeout is the short send.request_timeout the timeout
+	// cases configure themselves. The delivery-unknown and unreachable results
+	// are asserted on the sender's own budget, not on the FastTimers success
+	// value (harness.FastRequestTimeout, 30s), so those cases set this value
+	// and their wait derives from it. 2s is clearly below the 20s default, so
+	// the configured value is distinguishable from production.
+	srShortRequestTimeout = 2 * time.Second
+
+	// srSendBudget is the hang fallback for a wait or call whose result the
+	// short product timer governs: srShortRequestTimeout plus the shared
+	// fallback. It only decides how long a send that never returns takes to
+	// fail; the requirement is asserted against srSendAssertBound, so the
+	// fallback never enters an assertion.
+	srSendBudget = srShortRequestTimeout + harness.EventTimeout
+
+	// srSendMargin is the measurement overhead allowed on top of the send time
+	// limit, not a second product allowance. The measured span starts before
+	// the MCP call is framed and ends after its response is decoded, so it
+	// includes the MCP stdio round trip between the test and the MCP server
+	// process and the scheduling between that process and the Broker, none of
+	// which the product's request_timeout counts. 500ms is the plan's per-send
+	// allowance and 25% of the 2s configured limit; a real violation adds
+	// seconds, not hundreds of milliseconds.
+	srSendMargin = 500 * time.Millisecond
+
+	// srSendAssertBound is REQ-agent-messaging-017/018's promise: one send
+	// returns within its configured request_timeout plus the measurement
+	// margin.
+	srSendAssertBound = srShortRequestTimeout + srSendMargin
 
 	// srReplyTimeout is the send budget of the reply-loss case, not the
 	// shortened FastTimers value: the fault injection that loses the reply
@@ -44,11 +70,12 @@ const (
 	// on one send.
 	srReplyBudget = srReplyTimeout + 500*time.Millisecond
 
-	// srRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s.
-	srRelinkBound = 3900 * time.Millisecond
+	// srRelinkBound is reconnect_max + dial_timeout plus the
+	// harness.EventTimeout margin.
+	srRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 	// srWaitBound bounds a wait that no product timer governs.
-	srWaitBound = 3 * time.Second
+	srWaitBound = harness.EventTimeout
 
 	// srQuietWindow is send.request_timeout: after the link is back, a message
 	// that was not delivered must not surface within the sender's own budget.
@@ -105,32 +132,34 @@ func TestRemoteSendFaults(t *testing.T) {
 	var failedFromA, failedFromB string
 
 	t.Run("REQ-agent-messaging-017 unreachable within budget", func(t *testing.T) {
+		// This case asserts the result arrives inside the sender's own budget,
+		// so both Brokers use the short product timer rather than the
+		// FastTimers success value.
+		srUseShortRequestTimeout(t, opA, opB)
 		srCutAndWaitDown(t, c, aNode, bNode)
 
 		// The dialer side stops after its retries are spent; the acceptor side
 		// waits out the rest of the budget. Both must answer inside the budget.
 		failedFromB = srMark("unreachable-b-")
-		start := time.Now()
-		r := b1.Call(t, "send_message", map[string]any{"to": "a1@hostA.peer", "message": failedFromB})
-		elapsed := time.Since(start)
+		r, elapsed := srSendWithin(t, b1, "a1@hostA.peer", failedFromB)
 		r.MustCode(t, "peer_unreachable")
 		if !r.HasPrefix("Not sent") {
 			t.Fatalf("the dialer's error is %q, want it to start with Not sent", r.Text)
 		}
-		if elapsed > srSendBudget {
-			t.Fatalf("the dialer's send returned after %s, want at most %s", elapsed, srSendBudget)
+		if elapsed > srSendAssertBound {
+			t.Fatalf("the send returned after %s, want at most %s (configured send.request_timeout %s + measurement margin %s; the wait fallback is %s)",
+				elapsed, srSendAssertBound, srShortRequestTimeout, srSendMargin, srSendBudget)
 		}
 
 		failedFromA = srMark("unreachable-a-")
-		start = time.Now()
-		r = a1.Call(t, "send_message", map[string]any{"to": "b1@hostB.peer", "message": failedFromA})
-		elapsed = time.Since(start)
+		r, elapsed = srSendWithin(t, a1, "b1@hostB.peer", failedFromA)
 		r.MustCode(t, "peer_unreachable")
 		if !r.HasPrefix("Not sent") {
 			t.Fatalf("the acceptor's error is %q, want it to start with Not sent", r.Text)
 		}
-		if elapsed > srSendBudget {
-			t.Fatalf("the acceptor's send returned after %s, want at most %s", elapsed, srSendBudget)
+		if elapsed > srSendAssertBound {
+			t.Fatalf("the acceptor's send returned after %s, want at most %s (configured send.request_timeout %s + measurement margin %s; the wait fallback is %s)",
+				elapsed, srSendAssertBound, srShortRequestTimeout, srSendMargin, srSendBudget)
 		}
 	})
 
@@ -174,6 +203,9 @@ func TestRemoteSendFaults(t *testing.T) {
 	})
 
 	t.Run("REQ-agent-messaging-027 delivery unknown", func(t *testing.T) {
+		// The delivery-unknown result is asserted on the sender's budget, so
+		// both Brokers use the short product timer.
+		srUseShortRequestTimeout(t, opA, opB)
 		// HoldOpen makes the receiver's Broker block while writing, so the frame
 		// being recorded proves the request is in flight. Cutting the link then
 		// loses the reply while the write itself succeeds.
@@ -182,11 +214,11 @@ func TestRemoteSendFaults(t *testing.T) {
 		marker := srMark("unknown-")
 		ch := srSendAsync(t, b1, "a1@hostA.peer", marker)
 		// The frame proves the delivery request reached the receiver's inbox
-		// before the link is cut. The sender's send.request_timeout (2s here)
-		// is the product timer that governs it: a frame recorded after that
-		// budget belongs to a request the sender had already given up on, and
-		// the cut could no longer prove a lost reply. srSendBudget is that
-		// timer plus the plan's 500ms allowance.
+		// before the link is cut. The sender's short send.request_timeout is the
+		// product timer that governs it: a frame recorded after that budget
+		// belongs to a request the sender had already given up on, and the cut
+		// could no longer prove a lost reply. srSendBudget is that timer plus
+		// the shared fallback.
 		frame := a1.WaitFrame(t, srSendBudget)
 		if !strings.Contains(frame.Content, marker) {
 			t.Fatalf("the in-flight frame carries %q, want the marker %q", frame.Content, marker)
@@ -215,9 +247,9 @@ func TestRemoteSendFaults(t *testing.T) {
 	t.Run("REQ-agent-messaging-020 reply lost, one copy", func(t *testing.T) {
 		// The receiver bounds its inbox write by the smaller of the sender's
 		// remaining budget and its own send.request_timeout (design-broker.md),
-		// so both Brokers get the case's ten-second value. Raising only the
-		// sender's value leaves the write on the two-second FastTimers deadline,
-		// and the fault injection below runs inside that deadline.
+		// so both Brokers get the case's ten-second value. The fault injection
+		// below runs inside that deadline; the FastTimers success value is 30s
+		// and would otherwise be the write's own bound.
 		oldA := srSetSendTimeout(t, opA, srReplyTimeout.String())
 		oldB := srSetSendTimeout(t, opB, srReplyTimeout.String())
 		t.Cleanup(func() {
@@ -264,6 +296,9 @@ func TestRemoteSendFaults(t *testing.T) {
 	})
 
 	t.Run("REQ-agent-messaging-018 inbox unwritable across hosts", func(t *testing.T) {
+		// The case asserts the send time limit, so both Brokers use the short
+		// product timer rather than the FastTimers success value.
+		srUseShortRequestTimeout(t, opA, opB)
 		// The receiving Broker still holds the Agent's record; only its inbox
 		// socket is gone, so the failure has to come from over the link.
 		gone := srSession(t, bNode, "gone")
@@ -271,15 +306,14 @@ func TestRemoteSendFaults(t *testing.T) {
 		srWaitSessionVisible(t, a1, "gone")
 
 		gone.Fake().RemoveSocket()
-		start := time.Now()
-		r := a1.Call(t, "send_message", map[string]any{"to": "gone@hostB.peer", "message": srMark("gone-")})
-		elapsed := time.Since(start)
+		r, elapsed := srSendWithin(t, a1, "gone@hostB.peer", srMark("gone-"))
 		r.MustCode(t, "inbox_unwritable")
 		if !r.HasPrefix("Not sent") {
 			t.Fatalf("the inbox_unwritable error is %q, want it to start with Not sent", r.Text)
 		}
-		if elapsed > srSendBudget {
-			t.Fatalf("the send returned after %s, want at most %s", elapsed, srSendBudget)
+		if elapsed > srSendAssertBound {
+			t.Fatalf("the send returned after %s, want at most %s (configured send.request_timeout %s + measurement margin %s; the wait fallback is %s)",
+				elapsed, srSendAssertBound, srShortRequestTimeout, srSendMargin, srSendBudget)
 		}
 	})
 
@@ -486,6 +520,23 @@ func srSetSendTimeout(t *testing.T, op *harness.Session, value string) string {
 		t.Fatalf("decoding set_config send.request_timeout: %v", err)
 	}
 	return out.Old
+}
+
+// srUseShortRequestTimeout configures the short send.request_timeout on the
+// given Brokers for the calling subtest and restores the previous values when
+// the subtest ends. Only the cases that assert a delivery-unknown or
+// unreachable result use it; the FastTimers success value stays long.
+func srUseShortRequestTimeout(t *testing.T, brokers ...*harness.Session) {
+	t.Helper()
+	old := make([]string, len(brokers))
+	for i, op := range brokers {
+		old[i] = srSetSendTimeout(t, op, srShortRequestTimeout.String())
+	}
+	t.Cleanup(func() {
+		for i, op := range brokers {
+			srSetSendTimeout(t, op, old[i])
+		}
+	})
 }
 
 // srStartBroker starts a Broker and fails when it does not come up.
@@ -723,6 +774,21 @@ func srCountMark(frames []fakesession.Frame, marker string) int {
 		}
 	}
 	return n
+}
+
+// srSendWithin sends one message with the whole call bounded by srSendBudget,
+// the hang fallback, and reports how long the call took. The bound keeps a
+// reply that never comes from hanging the test; the requirement is asserted
+// separately against srSendAssertBound, so the fallback never enters it.
+func srSendWithin(t *testing.T, s *harness.Session, to, message string) (harness.Result, time.Duration) {
+	t.Helper()
+	start := time.Now()
+	r, err := s.CallErrWithin(srSendBudget, "send_message", map[string]any{"to": to, "message": message})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("send_message to %s: %v", to, err)
+	}
+	return r, elapsed
 }
 
 // srAsyncResult carries one asynchronous tool result.

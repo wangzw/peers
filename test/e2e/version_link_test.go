@@ -16,8 +16,10 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// vlRelinkBound is reconnect_max (400ms) plus the three-second test allowance.
-const vlRelinkBound = 3400 * time.Millisecond
+// vlRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
+// margin: the timers that govern a link coming back after the version guard
+// clears.
+const vlRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 // vlVersionDetail is the status_detail an acceptor one link protocol version
 // ahead of the dialer reports. It is derived from the constant so a future
@@ -83,7 +85,7 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 		t.Fatalf("decoding create_pairing_key: %v", err)
 	}
 	sa.Call(t, "connect_broker", map[string]any{"address": addrB, "key": key.Key}).MustOK(t)
-	harness.Eventually(t, 3*time.Second, "A reports B connected", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "A reports B connected", func() (bool, string) {
 		peer, state := vlPeer(t, a)
 		if peer == nil {
 			return false, state

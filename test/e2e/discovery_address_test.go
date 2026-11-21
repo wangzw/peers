@@ -23,8 +23,9 @@ const (
 	// one propagation hop costs at most one interval.
 	dadReconcileInterval = time.Second
 
-	// dadPropagationBound bounds a card crossing two hops.
-	dadPropagationBound = 2*dadReconcileInterval + 3*time.Second
+	// dadPropagationBound bounds a card crossing two hops: twice the
+	// reconciliation interval plus the tree's EventTimeout margin.
+	dadPropagationBound = 2*dadReconcileInterval + harness.EventTimeout
 
 	// dadReconnectMax is link.reconnect_max under harness.FastTimers.
 	dadReconnectMax = 400 * time.Millisecond
@@ -40,10 +41,10 @@ const (
 
 	// dadAddressChangeBound is the bound for a changed interface address: one
 	// address check, the dialer's keepalive probe and timeout, one reconnect,
-	// two propagation hops and the project-wide three seconds.
+	// two propagation hops and the tree's EventTimeout margin.
 	dadAddressChangeBound = dadReconcileInterval + dadKeepaliveInterval +
 		dadKeepaliveTimeout + dadReconnectMax + 2*dadReconcileInterval +
-		3*time.Second
+		harness.EventTimeout
 )
 
 // TestCardFollowsAddressChange covers REQ-broker-discovery-016: when a public

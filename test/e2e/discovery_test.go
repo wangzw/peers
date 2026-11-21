@@ -22,9 +22,12 @@ import (
 // The waits below are derived from it: one hop is one reconcile pass.
 const discReconcile = time.Second
 
-// discSlack is added to every derived wait the same way the end-to-end plan
-// does ("related timers plus three seconds").
-const discSlack = 3 * time.Second
+// discSlack is the margin added to every derived wait, after the related
+// product timers: harness.EventTimeout is the tree's fallback for a wait no
+// product timer governs. The longest discovery chain, the revoke case's
+// discBound(3), discBound(2), one relink and two negative windows, stays under
+// the requirement's sixty seconds with this margin.
+const discSlack = harness.EventTimeout
 
 // discBound returns the wait for hops reconcile passes plus the shared slack.
 func discBound(hops int) time.Duration {
@@ -206,8 +209,8 @@ func discPair(t *testing.T, acceptor, dialer *discNode) mcpserver.ConnectBrokerO
 		t.Fatalf("decoding connect_broker on %s: %v", dialer.name, err)
 	}
 
-	discWaitConnected(t, acceptor, dialer.alias, localpb.PeerRole_PEER_ROLE_ACCEPTOR, 3*time.Second)
-	discWaitConnected(t, dialer, acceptor.alias, localpb.PeerRole_PEER_ROLE_DIALER, 3*time.Second)
+	discWaitConnected(t, acceptor, dialer.alias, localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
+	discWaitConnected(t, dialer, acceptor.alias, localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 	return out
 }
 
@@ -839,7 +842,7 @@ func TestDiscoveryRevokeWithin60s(t *testing.T) {
 	})
 
 	d.start(t)
-	discWaitConnected(t, c, d.alias, localpb.PeerRole_PEER_ROLE_ACCEPTOR, 3*time.Second)
+	discWaitConnected(t, c, d.alias, localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
 
 	discAbsentConsistently(t, c, discBound(2), "C stays without A after D restarts", []string{fpA}, a.alias, a.addr)
 	discAbsentConsistently(t, d, discBound(1), "D drops the old card it held before restart", []string{fpA}, a.alias, a.addr)

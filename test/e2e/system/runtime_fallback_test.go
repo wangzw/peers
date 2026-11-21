@@ -158,7 +158,7 @@ func startRuntimeFallbackBroker(t *testing.T, stderr *lockedBuffer, socket strin
 		select {
 		case <-done:
 			return
-		case <-time.After(5 * time.Second):
+		case <-time.After(harness.EventTimeout):
 		}
 		_ = cmd.Process.Kill()
 		select {

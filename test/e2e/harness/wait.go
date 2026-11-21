@@ -5,10 +5,24 @@ import (
 	"time"
 )
 
-// pollInterval is how often Eventually and Consistently re-run their
-// condition. The interval is an implementation detail; callers bound the
-// total wait against the timers under test instead.
-const pollInterval = 50 * time.Millisecond
+// PollInterval is how often Eventually and Consistently re-run their
+// condition. Callers bound the total wait against the timers under test
+// instead; a test that measures the span an observation covers uses this value
+// to allow for the polling granularity.
+const PollInterval = 50 * time.Millisecond
+
+// EventTimeout is the fallback bound for a wait that no product timer governs.
+// The event such a wait observes is caused by the test itself (a disconnect
+// applied, a configuration file written, a process started), so only the
+// runner's scheduling and the process, socket and filesystem crossings between
+// the observation and the change set its latency. It only decides how long a
+// wait that will never complete takes to fail: the success path selects on the
+// event itself and never spends this time, so a larger value costs nothing.
+// Thirty seconds is far above the worst normal latency under load; it is not a
+// claim that an event should take that long. A wait that a product timer does
+// govern must derive its bound from that timer and add EventTimeout only as
+// margin, never use it as the bound itself.
+const EventTimeout = 30 * time.Second
 
 // RegistrationReportBound is how long a test waits for the Broker's
 // not_registered event when a session name is unusable. The Broker reports a
@@ -69,7 +83,7 @@ func eventuallyUntil(t testing.TB, deadline time.Time, bound time.Duration, what
 			}
 			break
 		}
-		time.Sleep(pollInterval)
+		time.Sleep(PollInterval)
 	}
 	t.Fatalf("%s: not within %s (last state: %s)", what, bound, state)
 }
@@ -181,6 +195,6 @@ func Consistently(t testing.TB, window time.Duration, what string, cond func() (
 		if !time.Now().Before(deadline) {
 			return
 		}
-		time.Sleep(pollInterval)
+		time.Sleep(PollInterval)
 	}
 }

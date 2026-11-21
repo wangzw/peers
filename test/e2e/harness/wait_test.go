@@ -294,8 +294,20 @@ func TestConfigYAMLMerge(t *testing.T) {
 	if cfg.Link.ReconnectMax != "400ms" {
 		t.Fatalf("link.reconnect_max = %q, want %q", cfg.Link.ReconnectMax, "400ms")
 	}
-	if cfg.Link.DialTimeout != "500ms" {
-		t.Fatalf("link.dial_timeout = %q, want %q", cfg.Link.DialTimeout, "500ms")
+	if cfg.Link.DialTimeout != FastDialTimeout.String() {
+		t.Fatalf("link.dial_timeout = %q, want %q", cfg.Link.DialTimeout, FastDialTimeout)
+	}
+
+	var profile struct {
+		Send struct {
+			RequestTimeout string `yaml:"request_timeout"`
+		} `yaml:"send"`
+	}
+	if err := yaml.Unmarshal([]byte(ConfigYAML(FastTimers)), &profile); err != nil {
+		t.Fatalf("FastTimers is not valid YAML: %v\n%s", err, FastTimers)
+	}
+	if profile.Send.RequestTimeout != FastRequestTimeout.String() {
+		t.Fatalf("FastTimers send.request_timeout = %q, want %q", profile.Send.RequestTimeout, FastRequestTimeout)
 	}
 	if cfg.Send.LinkBackoff != "100ms" {
 		t.Fatalf("send.link_backoff = %q, want %q", cfg.Send.LinkBackoff, "100ms")

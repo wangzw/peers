@@ -4,24 +4,52 @@ import (
 	"bytes"
 	"fmt"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
-// FastTimers shortens the link and send timers for scenarios that do not need
-// the production defaults. The values are the ones decided in the end-to-end
-// plan: the reconnect backoff and the dial timeout shrink, the send budget
-// shrinks to 2s, and the advertised-address check runs every 500ms.
-const FastTimers = `link:
+// The product timers FastTimers configures are exported so a test that derives
+// a wait bound from one of them tracks the profile instead of repeating a
+// literal that can drift away from it.
+const (
+	// FastReconnectMax is link.reconnect_max in FastTimers: the longest the
+	// reconnect backoff waits between attempts.
+	FastReconnectMax = 400 * time.Millisecond
+
+	// FastDialTimeout is link.dial_timeout in FastTimers. It is the production
+	// default (internal/link/settings.go), so a successful dial keeps the
+	// headroom a production Broker has; a 500ms test value could be crossed by
+	// a healthy dial on a loaded runner and fail it before the product does.
+	FastDialTimeout = 5 * time.Second
+
+	// FastRequestTimeout is send.request_timeout in FastTimers. It is the
+	// sender's budget for one send: too short a value reports a send that would
+	// have completed as delivery_unknown under load, so it is sized far above
+	// the worst normal send latency (the production default is 20s). A case
+	// that asserts the delivery-unknown or unreachable result configures a
+	// short request_timeout of its own and derives its wait from that value.
+	FastRequestTimeout = 30 * time.Second
+)
+
+// FastTimers shortens the timers a scenario does not need at production
+// length. The reconnect backoff, the send link backoff and the advertised
+// address check stay short so the fault cases run quickly. The two product
+// timers that decide whether a send or a dial succeeds are not shortened:
+// request_timeout and dial_timeout keep values with generous headroom under
+// load, and only a case that asserts a timeout overrides them with a short
+// value of its own. A test with no product timer to assert waits with
+// EventTimeout instead of borrowing these values.
+var FastTimers = fmt.Sprintf(`link:
   reconnect_min: 100ms
-  reconnect_max: 400ms
-  dial_timeout: 500ms
+  reconnect_max: %s
+  dial_timeout: %s
 send:
   link_backoff: 100ms
-  request_timeout: 2s
+  request_timeout: %s
 broker:
   address_check_interval: 500ms
-`
+`, FastReconnectMax, FastDialTimeout, FastRequestTimeout)
 
 // ConfigYAML merges YAML fragments by key, with later fragments overriding
 // earlier leaves, and returns the result in a deterministic key order. Empty

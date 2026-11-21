@@ -9,12 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangzw/peers/test/e2e/harness"
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
 // inboxWriteBound bounds the wait for the account helper's connection to the
-// inbox socket and for the credential read on it.
-const inboxWriteBound = 3 * time.Second
+// inbox socket and for the credential read on it. No product timer governs
+// either event, so it uses the tree's fallback.
+const inboxWriteBound = harness.EventTimeout
 
 // TestREQBrokerConfig018_WriteRunsAsTargetAccount checks that the system
 // Broker reaches another account's inbox through a process running as that

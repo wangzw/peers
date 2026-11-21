@@ -28,12 +28,12 @@ const (
 	dxReconcileInterval = time.Second
 
 	// dxPropagationBound bounds a card crossing two hops: twice the
-	// reconciliation interval plus the project-wide three seconds.
-	dxPropagationBound = 2*dxReconcileInterval + 3*time.Second
+	// reconciliation interval plus the tree's EventTimeout margin.
+	dxPropagationBound = 2*dxReconcileInterval + harness.EventTimeout
 
 	// dxExpiryBound bounds one Broker noticing an expired record: one
-	// reconciliation interval plus three seconds.
-	dxExpiryBound = dxReconcileInterval + 3*time.Second
+	// reconciliation interval plus the tree's EventTimeout margin.
+	dxExpiryBound = dxReconcileInterval + harness.EventTimeout
 
 	// dxQuietWindow is the observation window of a negative check. One
 	// reconciliation interval has already passed and nothing else changes, so

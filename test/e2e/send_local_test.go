@@ -20,14 +20,40 @@ import (
 
 const (
 	// slWaitBound bounds a wait that no product timer governs.
-	slWaitBound = 3 * time.Second
+	slWaitBound = harness.EventTimeout
 
-	// slSendBudget is send.request_timeout (2s) plus the 500ms allowance the
-	// plan puts on one send.
-	slSendBudget = 2500 * time.Millisecond
+	// slRequestTimeout is send.request_timeout for the local Broker. A local
+	// send crosses no link, but the same timer decides whether a held inbox
+	// write that does complete is reported as delivery_unknown, so it is sized
+	// far above the worst normal latency rather than shortened.
+	slRequestTimeout = 30 * time.Second
 
-	// slQuietWindow is send.request_timeout: after a successful send the
-	// sender must stay silent for its whole budget.
+	// slShortRequestTimeout is the send.request_timeout the 018 case configures
+	// on the running Broker for the duration of its subtest, matching
+	// send_remote's short value. 2s is clearly below the 20s default, so the
+	// configured value is distinguishable from production.
+	slShortRequestTimeout = 2 * time.Second
+
+	// slSendMargin is the measurement overhead allowed on top of the send time
+	// limit, not a second product allowance. See srSendMargin: the measured
+	// span includes the MCP stdio round trip and the scheduling between the
+	// test, the MCP server process and the Broker, which the product's
+	// request_timeout does not count. 500ms is the plan's per-send allowance.
+	slSendMargin = 500 * time.Millisecond
+
+	// slSendAssertBound is REQ-agent-messaging-018's promise: one send returns
+	// within its configured request_timeout plus the measurement margin.
+	slSendAssertBound = slShortRequestTimeout + slSendMargin
+
+	// slSendWaitBound is the hang fallback for the 018 send: the short product
+	// timer plus the shared fallback. The fallback never enters
+	// slSendAssertBound.
+	slSendWaitBound = slShortRequestTimeout + slWaitBound
+
+	// slQuietWindow is the observation window of a negative check: after a
+	// successful send the sender must receive no notification. Two seconds is
+	// long enough for a wrong delivery to surface; a short negative window can
+	// only miss a violation, never fail a correct send.
 	slQuietWindow = 2 * time.Second
 
 	// slNegativeWindow is a negative observation that no product timer
@@ -262,7 +288,7 @@ func TestLocalSend(t *testing.T) {
 		// Releasing the connection completes the write, and only then may the
 		// send return success.
 		q.Fake().Release()
-		slAwait(t, ch, slSendBudget, "the send after the inbox released the write").MustOK(t)
+		slAwait(t, ch, harness.EventTimeout, "the send after the inbox released the write").MustOK(t)
 	})
 
 	t.Run("REQ-agent-messaging-016 no follow-up", func(t *testing.T) {
@@ -296,18 +322,22 @@ func TestLocalSend(t *testing.T) {
 		qOut := slWaitRegistered(t, q, "q")
 		slWaitVisible(t, p, "q")
 
+		// The case asserts the send time limit, so it configures the short
+		// request_timeout on the running Broker and restores it before the
+		// session ends; the success cases keep the 30s value.
+		restore := slUseShortRequestTimeout(t, p)
+		defer restore()
 		// The record stays and keeps q listed, but its inbox socket is gone.
 		q.Fake().RemoveSocket()
 
-		start := time.Now()
-		r := p.Call(t, "send_message", map[string]any{"to": qOut.Self, "message": "to a closed inbox"})
-		elapsed := time.Since(start)
+		r, elapsed := slSendWithin(t, p, qOut.Self, "to a closed inbox")
 		r.MustCode(t, "inbox_unwritable")
 		if !r.HasPrefix("Not sent") {
 			t.Fatalf("the inbox_unwritable error is %q, want it to start with Not sent", r.Text)
 		}
-		if elapsed > slSendBudget {
-			t.Fatalf("the send returned after %s, want at most %s", elapsed, slSendBudget)
+		if elapsed > slSendAssertBound {
+			t.Fatalf("the send returned after %s, want at most %s (configured send.request_timeout %s + measurement margin %s; the wait fallback is %s)",
+				elapsed, slSendAssertBound, slShortRequestTimeout, slSendMargin, slSendWaitBound)
 		}
 	})
 
@@ -432,12 +462,47 @@ func TestLocalSend(t *testing.T) {
 }
 
 // slConfig builds the Broker configuration with the local listener and the
-// two-second send budget the plan uses.
+// send budget a successful local send relies on.
 func slConfig(listen string) string {
 	return harness.ConfigYAML(
 		"broker:\n  listen: "+listen,
-		"send:\n  request_timeout: 2s",
+		"send:\n  request_timeout: "+slRequestTimeout.String(),
 	)
+}
+
+// slUseShortRequestTimeout sets send.request_timeout on the running Broker to
+// slShortRequestTimeout and returns a function that restores the previous
+// value. The caller defers the restore inside the subtest: defers run in LIFO
+// order, so the restore runs before the subtest's deferred End stops the
+// session's MCP process. Only the case that asserts the send time limit uses
+// it; the success cases keep slRequestTimeout.
+func slUseShortRequestTimeout(t *testing.T, s *harness.Session) func() {
+	t.Helper()
+	r := s.Call(t, "set_config", map[string]any{"key": "send.request_timeout", "value": slShortRequestTimeout.String()})
+	r.MustOK(t)
+	out, err := harness.Decode[mcpserver.SetConfigOut](string(r.Structured))
+	if err != nil {
+		t.Fatalf("decoding set_config send.request_timeout: %v", err)
+	}
+	return func() {
+		r := s.Call(t, "set_config", map[string]any{"key": "send.request_timeout", "value": out.Old})
+		r.MustOK(t)
+	}
+}
+
+// slSendWithin sends one message with the whole call bounded by slSendWaitBound,
+// the hang fallback, and reports how long the call took. The bound keeps a
+// reply that never comes from hanging the test; the requirement is asserted
+// separately against slSendAssertBound, so the fallback never enters it.
+func slSendWithin(t *testing.T, s *harness.Session, to, message string) (harness.Result, time.Duration) {
+	t.Helper()
+	start := time.Now()
+	r, err := s.CallErrWithin(slSendWaitBound, "send_message", map[string]any{"to": to, "message": message})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("send_message to %s: %v", to, err)
+	}
+	return r, elapsed
 }
 
 // slStartBroker starts the node's Broker and fails when it does not come up.

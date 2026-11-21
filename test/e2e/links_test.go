@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	// lkRelinkBound is reconnect_max (400ms) + dial_timeout (500ms) + 3s.
-	lkRelinkBound = 3900 * time.Millisecond
+	// lkRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
+	// margin: the timers that govern a link coming back after a cut.
+	lkRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 	// lkWaitBound is the bound of a wait that no product timer governs.
-	lkWaitBound = 3 * time.Second
+	lkWaitBound = harness.EventTimeout
 	// lkNoRedialWindow is five reconnect intervals (5 * 400ms). A Broker that
 	// keeps redialing makes at least four attempts inside it, while a stopped
 	// one makes none; the window is a deliberate observation, not a sleep.
@@ -245,11 +246,11 @@ func TestLinks(t *testing.T) {
 		r := opA.Call(t, "disconnect_broker", map[string]any{"broker": "hostB.peer"})
 		r.MustOK(t)
 
-		harness.Eventually(t, 3*time.Second, "B no longer sees A as connected", func() (bool, string) {
+		harness.Eventually(t, harness.EventTimeout, "B no longer sees A as connected", func() (bool, string) {
 			got := lkStatus(t, bNode, "hostA.peer")
 			return got != localpb.BrokerStatus_BROKER_STATUS_CONNECTED, fmt.Sprintf("B sees A as %s", got)
 		})
-		harness.Eventually(t, 3*time.Second, "A's connection on 17443 is gone", func() (bool, string) {
+		harness.Eventually(t, harness.EventTimeout, "A's connection on 17443 is gone", func() (bool, string) {
 			if got := establishedOn(t, c, "hostA", 17443); got != 0 {
 				return false, fmt.Sprintf("A still has %d established connections on 17443", got)
 			}

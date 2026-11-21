@@ -209,7 +209,7 @@ func TestREQBrokerConfig021_WriteNeedsConfigWritePermission(t *testing.T) {
 	}
 
 	var audit string
-	harness.Eventually(t, 3*time.Second, "the system Broker's audit log to record the pairing", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "the system Broker's audit log to record the pairing", func() (bool, string) {
 		res := syscontainer.RunAs(t, "root", nil, "service", "audit")
 		if res.ExitCode != 0 {
 			return false, res.Stderr
@@ -387,7 +387,7 @@ func TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents(t *testing
 
 	// root may read the configuration file, so its status lists both agents
 	// with their topics and the paired peer, connected.
-	harness.Eventually(t, 3*time.Second, "the root status to list both agents, their topics and the connected peer", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "the root status to list both agents, their topics and the connected peer", func() (bool, string) {
 		res := syscontainer.RunAs(t, "root", nil, "service", "status")
 		line, found := permStatusPeerLine(res.Stdout, connected.Alias)
 		ok := res.ExitCode == 0 &&
@@ -408,7 +408,7 @@ func TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents(t *testing
 
 	// other may not read the configuration file, so its status keeps only its
 	// own agent and topic. The peer and its connection state stay visible.
-	harness.Eventually(t, 3*time.Second, "other's status to show its own agent, its topic and the disconnected peer", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "other's status to show its own agent, its topic and the disconnected peer", func() (bool, string) {
 		res := syscontainer.RunAs(t, "other", nil, "service", "status", "--system")
 		if res.ExitCode != 0 {
 			return false, res.Stderr
@@ -447,7 +447,7 @@ func TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents(t *testing
 	// other's status must now list both agents with their topics and the paired
 	// peer, still not connected.
 	permGrantAdmins(t, "0640")
-	harness.Eventually(t, 3*time.Second, "other's status to list both agents, their topics and the disconnected peer", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "other's status to list both agents, their topics and the disconnected peer", func() (bool, string) {
 		res := syscontainer.RunAs(t, "other", nil, "service", "status", "--system")
 		if res.ExitCode != 0 {
 			return false, res.Stderr
@@ -498,7 +498,7 @@ func TestREQBrokerConfig009_AuditNeedsReadPermissionOnSystemBroker(t *testing.T)
 	// going through the audit subcommand, so the comparison below is against
 	// the Broker's log itself.
 	var events []*localpb.AuditEvent
-	harness.Eventually(t, 3*time.Second, "the system Broker's audit log to record the three event kinds", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "the system Broker's audit log to record the three event kinds", func() (bool, string) {
 		events = permAuditRecords(t)
 		seen := make(map[localpb.AuditEventKind]bool, len(events))
 		for _, event := range events {
