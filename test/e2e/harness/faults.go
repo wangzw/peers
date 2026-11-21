@@ -419,6 +419,35 @@ func (c *Cluster) ConnAlive(t testing.TB, node, id string) bool {
 	return res.Alive
 }
 
+// StartFlood starts a flood of bare TCP connections from node to req.Addr. The
+// node holds Sources times PerSource connections at once and redials them as
+// the listener closes them.
+func (c *Cluster) StartFlood(t testing.TB, node string, req ctl.FloodStartRequest) {
+	t.Helper()
+	if err := c.control(node).FloodStart(context.Background(), req); err != nil {
+		t.Fatalf("harness: node %s: starting a flood to %s: %v", node, req.Addr, err)
+	}
+}
+
+// FloodStats reports the counters of the flood running on node.
+func (c *Cluster) FloodStats(t testing.TB, node string) ctl.FloodStatsResult {
+	t.Helper()
+	res, err := c.control(node).FloodStats(context.Background(), struct{}{})
+	if err != nil {
+		t.Fatalf("harness: node %s: reading flood stats: %v", node, err)
+		return ctl.FloodStatsResult{}
+	}
+	return res
+}
+
+// StopFlood stops the flood running on node.
+func (c *Cluster) StopFlood(t testing.TB, node string) {
+	t.Helper()
+	if err := c.control(node).FloodStop(context.Background(), struct{}{}); err != nil {
+		t.Fatalf("harness: node %s: stopping the flood: %v", node, err)
+	}
+}
+
 // SetDefaultRoute replaces node's IPv4 default route. An empty gateway routes
 // over the node's first interface; otherwise the gateway is used.
 func (c *Cluster) SetDefaultRoute(t testing.TB, node, gateway string) {

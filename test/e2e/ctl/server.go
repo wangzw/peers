@@ -369,6 +369,44 @@ func (h *handler) handle(path string, body []byte) (any, error) {
 		}
 		return ConnAliveResult{Alive: alive}, nil
 
+	case "/v1/flood/start":
+		req, err := decode[FloodStartRequest](body)
+		if err != nil {
+			return nil, err
+		}
+		if err := h.agent.FloodStart(node.FloodSpec{
+			Addr:      req.Addr,
+			Sources:   req.Sources,
+			PerSource: req.PerSource,
+		}); err != nil {
+			return nil, err
+		}
+		return struct{}{}, nil
+
+	case "/v1/flood/stats":
+		if _, err := decode[struct{}](body); err != nil {
+			return nil, err
+		}
+		stats, err := h.agent.FloodStats()
+		if err != nil {
+			return nil, err
+		}
+		return FloodStatsResult{
+			Dialed:  stats.Dialed,
+			Open:    stats.Open,
+			MaxOpen: stats.MaxOpen,
+			Closed:  stats.Closed,
+		}, nil
+
+	case "/v1/flood/stop":
+		if _, err := decode[struct{}](body); err != nil {
+			return nil, err
+		}
+		if err := h.agent.FloodStop(); err != nil {
+			return nil, err
+		}
+		return struct{}{}, nil
+
 	case "/v1/probe/hello":
 		req, err := decode[ProbeHelloRequest](body)
 		if err != nil {

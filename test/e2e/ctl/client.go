@@ -224,6 +224,23 @@ func (c *Client) ConnAlive(ctx context.Context, req ConnAliveRequest) (ConnAlive
 	return out, err
 }
 
+// FloodStart starts a flood of bare TCP connections from the node.
+func (c *Client) FloodStart(ctx context.Context, req FloodStartRequest) error {
+	return c.do(ctx, "/v1/flood/start", req, nil)
+}
+
+// FloodStats reports the counters of the running flood.
+func (c *Client) FloodStats(ctx context.Context, req struct{}) (FloodStatsResult, error) {
+	var out FloodStatsResult
+	err := c.do(ctx, "/v1/flood/stats", req, &out)
+	return out, err
+}
+
+// FloodStop stops the running flood.
+func (c *Client) FloodStop(ctx context.Context, req struct{}) error {
+	return c.do(ctx, "/v1/flood/stop", req, nil)
+}
+
 // ProbeHello sends a Hello to a Broker without a pairing key.
 func (c *Client) ProbeHello(ctx context.Context, req ProbeHelloRequest) (ProbeHelloResult, error) {
 	var out ProbeHelloResult

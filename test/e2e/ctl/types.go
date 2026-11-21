@@ -309,6 +309,22 @@ type ConnAliveResult struct {
 	Alive bool `json:"alive"`
 }
 
+// FloodStartRequest starts a flood of bare TCP connections from a node. Each
+// of Sources distinct loopback source addresses holds PerSource connections.
+type FloodStartRequest struct {
+	Addr      string `json:"addr"`
+	Sources   int    `json:"sources"`
+	PerSource int    `json:"per_source"`
+}
+
+// FloodStatsResult reports one reading of a running flood.
+type FloodStatsResult struct {
+	Dialed  int64 `json:"dialed"`
+	Open    int64 `json:"open"`
+	MaxOpen int64 `json:"max_open"`
+	Closed  int64 `json:"closed"`
+}
+
 // ProbeHelloRequest sends a Hello to a Broker without a pairing key.
 type ProbeHelloRequest struct {
 	Addr      string `json:"addr"`

@@ -402,6 +402,98 @@ func TestLinksRestartWithTwoPeers(t *testing.T) {
 	})
 }
 
+// lkUnauthPerSource and lkUnauthGlobal repeat the unauthenticated connection
+// limits internal/link keeps unexported. They must match
+// maxUnauthenticatedPerSource and maxUnauthenticated in internal/link/new.go.
+const (
+	lkUnauthPerSource = 8
+	lkUnauthGlobal    = 64
+)
+
+// lkFloodSources is the number of distinct sources the flood uses: two times
+// the global limit divided by the per-source limit, plus one, so the sources
+// together hold 136 connections, more than twice the global limit, while no
+// source exceeds the per-source limit. The first eviction that happens is
+// therefore always a global one.
+const lkFloodSources = 2*lkUnauthGlobal/lkUnauthPerSource + 1
+
+// lkFloodPerSource is how many connections each source holds. Staying exactly
+// at the per-source limit keeps source_limit evictions out of the test, so a
+// global_limit record proves the global limit closed connections.
+const lkFloodPerSource = lkUnauthPerSource
+
+// TestLinksSourceFlood proves REQ-broker-pairing-039 on the real network
+// stack: while B's listener holds more unauthenticated connections than its
+// global limit, A rebuilds its link to B within the same bound
+// REQ-broker-pairing-018 uses, and hostC pairs with B using a one-time key.
+//
+// The flood runs inside hostB, and each of its workers binds to its own
+// loopback address, so B sees every source as a distinct /32. That reaches the
+// global limit from many sources without adding containers or addresses to the
+// topology, and keeps the flooding sources distinct from hostA's and hostC's.
+func TestLinksSourceFlood(t *testing.T) {
+	c := harness.Up(t, harness.TopoFlat(3))
+	aNode, bNode, cNode := c.Node("hostA"), c.Node("hostB"), c.Node("hostC")
+	lkStartBroker(t, aNode, lkConfig())
+	// B logs at debug level so the test can read the eviction records.
+	lkStartBroker(t, bNode, lkConfig("log:\n  level: debug\n"))
+	lkStartBroker(t, cNode, lkConfig())
+	opA, opB, opC := lkOperator(t, aNode), lkOperator(t, bNode), lkOperator(t, cNode)
+	defer opA.End(t)
+	defer opB.End(t)
+	defer opC.End(t)
+
+	addrB := lkAddr(c, "hostB", "net")
+
+	// A is the dialer and B the acceptor, so B generates the key A uses.
+	keyA := lkCreateKey(t, opB)
+	lkConnect(t, opA, addrB, keyA.Key).MustOK(t)
+	lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
+	lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
+
+	// B generates the key the third source pairs with before the flood starts,
+	// so what the flood must not block is the pairing call itself.
+	keyC := lkCreateKey(t, opB)
+
+	t.Run("REQ-broker-pairing-039 source flood keeps links and pairing", func(t *testing.T) {
+		c.StartFlood(t, "hostB", ctl.FloodStartRequest{
+			Addr:      net.JoinHostPort("127.0.0.1", "17443"),
+			Sources:   lkFloodSources,
+			PerSource: lkFloodPerSource,
+		})
+		defer c.StopFlood(t, "hostB")
+
+		// The flood must actually overflow the global limit, not merely reach
+		// the per-source one. With every source held at exactly the per-source
+		// limit, a global_limit record is the Broker's own proof that it closed
+		// connections to enforce the global limit.
+		harness.Eventually(t, lkWaitBound, "the flood overflows B's global unauthenticated limit", func() (bool, string) {
+			if strings.Contains(string(bNode.BrokerLog(t)), `"cause":"global_limit"`) {
+				return true, ""
+			}
+			st := c.FloodStats(t, "hostB")
+			return false, fmt.Sprintf("no global_limit eviction yet: dialed=%d open=%d max_open=%d closed=%d",
+				st.Dialed, st.Open, st.MaxOpen, st.Closed)
+		})
+
+		// A rebuilds its link while the flood keeps the global limit full.
+		lkCutAndWaitDown(t, c, aNode, bNode)
+		c.Restore(t)
+		start := time.Now()
+		lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
+		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
+		if elapsed := time.Since(start); elapsed > lkRelinkBound {
+			t.Fatalf("the link took %s to rebuild under the flood, want at most %s", elapsed, lkRelinkBound)
+		}
+
+		// A third source pairs during the same flood. It must succeed even
+		// though the flooding sources have the stranger pool churning.
+		lkConnect(t, opC, addrB, keyC.Key).MustOK(t)
+		lkWaitConnected(t, cNode, "hostB.peer", lkWaitBound)
+		lkWaitConnected(t, bNode, "hostC.peer", lkWaitBound)
+	})
+}
+
 // lkConfig merges the shortened timers with the given fragments.
 func lkConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)

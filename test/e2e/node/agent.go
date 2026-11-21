@@ -173,6 +173,7 @@ type Agent struct {
 	portSeq     int
 	conns       map[string]net.Conn
 	connSeq     int
+	flood       *floodRun
 	relay       *Relay
 	shutdown    chan struct{}
 	shutdownOne sync.Once
@@ -225,6 +226,8 @@ func (a *Agent) Close() error {
 		a.broker = nil
 		relay := a.relay
 		a.relay = nil
+		flood := a.flood
+		a.flood = nil
 		ports := a.ports
 		a.ports = nil
 		conns := a.conns
@@ -245,6 +248,9 @@ func (a *Agent) Close() error {
 		}
 		if relay != nil {
 			_ = relay.Close()
+		}
+		if flood != nil {
+			flood.stop()
 		}
 		for _, listener := range ports {
 			_ = listener.Close()
