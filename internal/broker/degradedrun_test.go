@@ -670,7 +670,7 @@ func TestRunRecoveryFailureNamesTheNewAddress(t *testing.T) {
 	// Read the retry's report directly instead of polling: the immediate
 	// failure must name the new address and the listener still holding the old
 	// one.
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(eventTimeout)
 	for {
 		select {
 		case got := <-failures:

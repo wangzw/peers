@@ -17,10 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// scenarioWait bounds every wait in these tests. A scenario waits for a frame
-// or a link event; it never sleeps in place of a condition (plan.md section 11).
-const scenarioWait = 3 * time.Second
-
 // scenarioMember is one Agent a scenario Broker advertises to its peers,
 // together with the topics it shares. It stands in for one roster entry a topic
 // exchange would deliver.
@@ -250,9 +246,9 @@ func TestScenarioCrossHostSignature(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", "hello"); err != nil {
 		t.Fatalf("Send = %v, want nil", err)
 	}
-	frame, ok := frontend.WaitFrame(scenarioWait)
+	frame, ok := frontend.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no frame within %s", scenarioWait)
+		t.Fatalf("no frame within %s", eventTimeout)
 	}
 	if frame.FromName != "api-worker@hostA" {
 		t.Fatalf("FromName = %q, want %q", frame.FromName, "api-worker@hostA")
@@ -266,9 +262,9 @@ func TestScenarioCrossHostSignature(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", "again"); err != nil {
 		t.Fatalf("second Send = %v, want nil", err)
 	}
-	frame, ok = frontend.WaitFrame(scenarioWait)
+	frame, ok = frontend.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no second frame within %s", scenarioWait)
+		t.Fatalf("no second frame within %s", eventTimeout)
 	}
 	if frame.FromName != "api-worker@lab-a" {
 		t.Fatalf("FromName = %q, want %q after the receiver changed its alias", frame.FromName, "api-worker@lab-a")
@@ -290,9 +286,9 @@ func TestScenarioReplyBySignature(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", "hello"); err != nil {
 		t.Fatalf("Send = %v, want nil", err)
 	}
-	frame, ok := replierSession.WaitFrame(scenarioWait)
+	frame, ok := replierSession.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no frame within %s", scenarioWait)
+		t.Fatalf("no frame within %s", eventTimeout)
 	}
 	if frame.FromName != "api-worker@hostA" {
 		t.Fatalf("FromName = %q, want %q", frame.FromName, "api-worker@hostA")
@@ -301,9 +297,9 @@ func TestScenarioReplyBySignature(t *testing.T) {
 	if err := b.send(replier, frame.FromName, "reply"); err != nil {
 		t.Fatalf("reply Send = %v, want nil", err)
 	}
-	back, ok := senderSession.WaitFrame(scenarioWait)
+	back, ok := senderSession.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no reply within %s", scenarioWait)
+		t.Fatalf("no reply within %s", eventTimeout)
 	}
 	if back.FromName != "frontend@hostB" {
 		t.Fatalf("reply FromName = %q, want %q", back.FromName, "frontend@hostB")
@@ -329,9 +325,9 @@ func TestScenarioCleanedNameReply(t *testing.T) {
 	if err := a.send(cleaned, "frontend@hostB", "hello"); err != nil {
 		t.Fatalf("Send = %v, want nil", err)
 	}
-	frame, ok := replierSession.WaitFrame(scenarioWait)
+	frame, ok := replierSession.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no frame within %s", scenarioWait)
+		t.Fatalf("no frame within %s", eventTimeout)
 	}
 	if !strings.HasPrefix(frame.FromName, "ab [") || !strings.HasSuffix(frame.FromName, "]@hostA") {
 		t.Fatalf("FromName = %q, want a cleaned name with a ref and the receiver's alias", frame.FromName)
@@ -340,9 +336,9 @@ func TestScenarioCleanedNameReply(t *testing.T) {
 	if err := b.send(replier, frame.FromName, "reply"); err != nil {
 		t.Fatalf("reply Send = %v, want nil", err)
 	}
-	back, ok := cleanedSession.WaitFrame(scenarioWait)
+	back, ok := cleanedSession.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("the cleaned-name Agent received no reply within %s", scenarioWait)
+		t.Fatalf("the cleaned-name Agent received no reply within %s", eventTimeout)
 	}
 	if back.FromName != "frontend@hostB" {
 		t.Fatalf("reply FromName = %q, want %q", back.FromName, "frontend@hostB")
@@ -369,9 +365,9 @@ func TestScenarioLongNameReply(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", "hello"); err != nil {
 		t.Fatalf("Send = %v, want nil", err)
 	}
-	frame, ok := replierSession.WaitFrame(scenarioWait)
+	frame, ok := replierSession.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no frame within %s", scenarioWait)
+		t.Fatalf("no frame within %s", eventTimeout)
 	}
 	if utf8.RuneCountInString(frame.FromName) > MaxAddressRunes {
 		t.Fatalf("FromName is %d runes, want at most %d", utf8.RuneCountInString(frame.FromName), MaxAddressRunes)
@@ -387,9 +383,9 @@ func TestScenarioLongNameReply(t *testing.T) {
 	if err := b.send(replier, frame.FromName, "reply"); err != nil {
 		t.Fatalf("reply Send = %v, want nil", err)
 	}
-	back, ok := senderSession.WaitFrame(scenarioWait)
+	back, ok := senderSession.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("the long-named Agent received no reply within %s", scenarioWait)
+		t.Fatalf("the long-named Agent received no reply within %s", eventTimeout)
 	}
 	if back.FromName != "frontend@hostB" {
 		t.Fatalf("reply FromName = %q, want %q", back.FromName, "frontend@hostB")
@@ -542,9 +538,9 @@ func TestScenarioUnreachableNeverDelivered(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", "sentinel"); err != nil {
 		t.Fatalf("sentinel Send = %v, want nil", err)
 	}
-	frame, ok := frontend.WaitFrame(scenarioWait)
+	frame, ok := frontend.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no sentinel frame within %s", scenarioWait)
+		t.Fatalf("no sentinel frame within %s", eventTimeout)
 	}
 	if !strings.Contains(frame.Content, "sentinel") {
 		t.Fatalf("first frame = %q, want the sentinel", frame.Content)
@@ -667,9 +663,9 @@ func TestScenarioTooLargeNoRequest(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", atLimit); err != nil {
 		t.Fatalf("Send at the limit = %v, want nil", err)
 	}
-	frame, ok := frontend.WaitFrame(scenarioWait)
+	frame, ok := frontend.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no frame within %s", scenarioWait)
+		t.Fatalf("no frame within %s", eventTimeout)
 	}
 	if !strings.Contains(frame.Content, atLimit) {
 		t.Fatal("the delivered body differs from the one at the limit")
@@ -723,8 +719,8 @@ func TestScenarioConcurrentSendsSameSession(t *testing.T) {
 	}
 
 	for name, fake := range map[string]*fakesession.Fake{"first": first, "second": second} {
-		if _, ok := fake.WaitFrameN(perTarget, scenarioWait); !ok {
-			t.Fatalf("%s received fewer than %d frames within %s", name, perTarget, scenarioWait)
+		if _, ok := fake.WaitFrameN(perTarget, eventTimeout); !ok {
+			t.Fatalf("%s received fewer than %d frames within %s", name, perTarget, eventTimeout)
 		}
 		if got := len(fake.Frames()); got != perTarget {
 			t.Fatalf("%s received %d frames, want %d", name, got, perTarget)
@@ -835,13 +831,13 @@ func TestSendPeerNothingAfterReturn(t *testing.T) {
 	if err := a.send(sender, "frontend@hostB", "sentinel"); err != nil {
 		t.Fatalf("sentinel Send = %v, want nil", err)
 	}
-	firstFrame, ok := frontend.WaitFrame(scenarioWait)
+	firstFrame, ok := frontend.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no first frame within %s", scenarioWait)
+		t.Fatalf("no first frame within %s", eventTimeout)
 	}
-	sentinelFrame, ok := frontend.WaitFrame(scenarioWait)
+	sentinelFrame, ok := frontend.WaitFrame(eventTimeout)
 	if !ok {
-		t.Fatalf("no sentinel frame within %s", scenarioWait)
+		t.Fatalf("no sentinel frame within %s", eventTimeout)
 	}
 	if !strings.Contains(firstFrame.Content, "first") || !strings.Contains(sentinelFrame.Content, "sentinel") {
 		t.Fatalf("frames = %q, %q, want the abandoned message and the sentinel", firstFrame.Content, sentinelFrame.Content)

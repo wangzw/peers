@@ -44,7 +44,7 @@ func TestConfigDirWatchReportsChanges(t *testing.T) {
 	}
 	select {
 	case <-w.events:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the configuration write did not wake the retry")
 	}
 }
@@ -92,7 +92,7 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 		t.Helper()
 		select {
 		case <-w.events:
-		case <-time.After(configWatchLiveness):
+		case <-time.After(eventTimeout):
 			t.Fatal("a change did not wake the retry")
 		}
 	}
@@ -152,14 +152,10 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 	noWake()
 }
 
-// configWatchLiveness bounds how long a test waits for a wake that must
-// happen. It only limits how long a broken watcher takes to fail.
-const configWatchLiveness = 3 * time.Second
-
 // waitForTimers waits until the clock has registered want timers.
 func waitForTimers(t *testing.T, clock *fakeClock, want int) {
 	t.Helper()
-	deadline := time.Now().Add(configWatchLiveness)
+	deadline := time.Now().Add(eventTimeout)
 	for clock.createdTimers() < want {
 		if !time.Now().Before(deadline) {
 			t.Fatalf("timers registered = %d, want %d", clock.createdTimers(), want)

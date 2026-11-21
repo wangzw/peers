@@ -342,14 +342,14 @@ func inProcessHelperStart(t *testing.T, exits chan<- func()) func(context.Contex
 // account helper.
 func waitForAccountHelperRecord(t *testing.T, logs *syncBuffer) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if strings.Contains(logs.String(), "account_helper_") {
 			return
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	t.Fatalf("no account_helper_ record within 3s: %s", logs.String())
+	t.Fatalf("no account_helper_ record before the event timeout: %s", logs.String())
 }
 
 // TestSystemStopDoesNotLogHelperExitAsError runs the production assembler and
@@ -689,6 +689,12 @@ func sequencePeerCreds(uids ...uint32) func(net.Conn) (Caller, error) {
 	}
 }
 
+// configDirVerifyWaitBound is how long the test waits for the bounded
+// ownership check to return. The check returns only after the product's
+// configDirVerifyTimeout; the package fallback covers handing the result back
+// to the test goroutine on a loaded runner after that timer fires.
+const configDirVerifyWaitBound = configDirVerifyTimeout + eventTimeout
+
 // TestVerifyConfigDirBoundedTimesOut checks that a blocked ownership check is
 // abandoned after the named timeout and reported as a failed check.
 func TestVerifyConfigDirBoundedTimesOut(t *testing.T) {
@@ -713,13 +719,13 @@ func TestVerifyConfigDirBoundedTimesOut(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the ownership check did not reach stat")
 	}
 	var err error
 	select {
 	case err = <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(configDirVerifyWaitBound):
 		t.Fatal("the bounded ownership check did not return")
 	}
 	if err == nil {
@@ -760,7 +766,7 @@ func TestBlockedConfigDirCheckDoesNotHoldBrokerLock(t *testing.T) {
 	startRegistrationAt(t, tb.client, dir, filepath.Join(dir, "stuck.sock"))
 	select {
 	case <-statStarted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the stuck account's ownership check did not reach stat")
 	}
 
@@ -831,7 +837,7 @@ func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first ownership check did not reach stat")
 	}
 
@@ -863,7 +869,12 @@ func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 	if got := expiredChecks(); got != 0 {
 		t.Fatalf("registrations failed %d times before the budget expired, want 0", got)
 	}
-	deadline := time.Now().Add(2 * configDirVerifyTimeout)
+	// The registrations must each fail once their own product budget expires.
+	// The wait is that budget plus the package's shared fallback: the product
+	// timer decides when a registration gives up, and eventTimeout only keeps a
+	// check whose expiry is never reported from hanging the test. The earlier
+	// observation that none failed before half the budget is the lower bound.
+	deadline := time.Now().Add(configDirVerifyWaitBound)
 	for time.Now().Before(deadline) {
 		if expiredChecks() >= registrations {
 			break
@@ -906,7 +917,7 @@ func TestConcurrentConfigDirChecksAllTakeTheWatch(t *testing.T) {
 		startRegistrationAt(t, tb.client, dir, filepath.Join(dir, fmt.Sprintf("queued-%d.sock", i)))
 	}
 
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) && checks.Load() < registrations {
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -922,7 +933,7 @@ func TestConcurrentConfigDirChecksAllTakeTheWatch(t *testing.T) {
 		}
 		return 0
 	}
-	deadline = time.Now().Add(3 * time.Second)
+	deadline = time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) && watchRefs() < registrations {
 		time.Sleep(5 * time.Millisecond)
 	}

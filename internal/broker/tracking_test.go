@@ -208,7 +208,7 @@ func TestIDAndRefStableAcrossRenameAndClear(t *testing.T) {
 
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the status change did not reach the topic table")
 	}
 	call, ok := tb.topics.LastAgentChanged(id)
@@ -249,7 +249,7 @@ func TestStatusChangeReachesTopic(t *testing.T) {
 	fake.SetStatus("busy")
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the status change did not reach the topic table")
 	}
 	call, ok := tb.topics.LastAgentChanged(id)
@@ -265,7 +265,7 @@ func TestStatusChangeReachesTopic(t *testing.T) {
 	fake.SetStatus("weird")
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the second status change did not reach the topic table")
 	}
 	if call, _ := tb.topics.LastAgentChanged(id); call.Status != "" {
@@ -414,13 +414,13 @@ func TestPartialRecordKeepsAgent(t *testing.T) {
 	// event is handled while the record is still half-written.
 	select {
 	case <-blocked.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the partial record was not reread")
 	}
 	close(blocked.release)
 	select {
 	case <-blocked.done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the partial record reread did not finish")
 	}
 
@@ -431,7 +431,7 @@ func TestPartialRecordKeepsAgent(t *testing.T) {
 	fake.SetStatus("busy")
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the recovered record did not reach the topic table")
 	}
 	if call, _ := tb.topics.LastAgentChanged(id); call.Status != "busy" {

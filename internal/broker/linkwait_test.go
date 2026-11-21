@@ -13,10 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// linkWaitLiveness bounds how long a test waits for an event that must happen.
-// It only limits how long a broken implementation takes to fail.
-const linkWaitLiveness = 2 * time.Second
-
 // waitLink is a minimal deliveryLink for the waiter tests. Subscribe and
 // Established have real behaviour; the other three methods are no-ops.
 type waitLink struct {
@@ -299,7 +295,7 @@ func TestSendWaitsForUpWhenEstablishedIsStale(t *testing.T) {
 
 	select {
 	case <-l.firstFailure:
-	case <-time.After(linkWaitLiveness):
+	case <-time.After(eventTimeout):
 		t.Fatal("the send never reached the transport")
 	}
 
@@ -333,7 +329,7 @@ func TestSendWaitsForUpWhenEstablishedIsStale(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sendToPeer = %v, want nil after the link came up", err)
 		}
-	case <-time.After(linkWaitLiveness):
+	case <-time.After(eventTimeout):
 		t.Fatal("sendToPeer did not finish after the link came up")
 	}
 }
@@ -372,7 +368,7 @@ func TestLinkWaiterManyWaiters(t *testing.T) {
 // trusts the stale Established value does instead of waiting for an up event.
 func waitForWaitOrDone(t *testing.T, w *linkWaiter, p peerID, done <-chan error) {
 	t.Helper()
-	deadline := time.Now().Add(linkWaitLiveness)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		w.mu.Lock()
 		got := len(w.ch[p])
@@ -395,7 +391,7 @@ func waitForWaitOrDone(t *testing.T, w *linkWaiter, p peerID, done <-chan error)
 // waitForKicks waits until the link has been kicked n times.
 func waitForKicks(t *testing.T, l *staleLink, n int) {
 	t.Helper()
-	deadline := time.Now().Add(linkWaitLiveness)
+	deadline := time.Now().Add(eventTimeout)
 	for l.kickCount() < n {
 		if !time.Now().Before(deadline) {
 			t.Fatalf("kicks = %d, want %d", l.kickCount(), n)

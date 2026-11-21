@@ -113,14 +113,14 @@ func TestOneAccountEventsDoNotDelayAnother(t *testing.T) {
 	}
 	select {
 	case <-blocked.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the blocked account's first reread did not start")
 	}
 
 	tb.b.events.push(otherUID, "/dir-other", 0)
 	select {
 	case <-refreshed:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the other account's reread waited behind the blocked account's events")
 	}
 }
@@ -139,7 +139,7 @@ func TestRepeatedEventsForOneDirectoryCoalesce(t *testing.T) {
 	tb.b.events.push(uid, "/dir-repeated", 7)
 	select {
 	case <-backend.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first reread did not start")
 	}
 

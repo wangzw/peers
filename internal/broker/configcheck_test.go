@@ -31,7 +31,7 @@ func TestListenProbeCheckRejectsBusyPort(t *testing.T) {
 		}
 	}
 
-	if err := ln.(*net.TCPListener).SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := ln.(*net.TCPListener).SetDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("setting the accept deadline: %v", err)
 	}
 	accepted := make(chan error, 1)
