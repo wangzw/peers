@@ -45,21 +45,11 @@ func (d *Directory) SetPublic(public bool) error {
 		d.public = false
 		d.reissuePending = false
 		d.active = make(map[string]string)
-		for _, r := range d.st.ownRecords() {
-			if isExpired(r.expires, now) || r.isRevocation() {
-				continue
-			}
-			v, err := d.issueRevocationLocked(r.id, now)
-			if err != nil {
-				continue
-			}
-			vs = append(vs, v)
-		}
+		vs = d.revokeOwnLocked(now)
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast(vs, Fingerprint{})
+	d.commitOwn(vs)
 	return nil
 }
 
@@ -102,8 +92,7 @@ func (d *Directory) DeclarePublicTopic(name, description string) error {
 	d.active[name] = description
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast([]*directorypb.RecordVersion{v}, Fingerprint{})
+	d.commitOwn([]*directorypb.RecordVersion{v})
 	return nil
 }
 
@@ -130,8 +119,7 @@ func (d *Directory) RetirePublicTopic(name string) {
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast(vs, Fingerprint{})
+	d.commitOwn(vs)
 }
 
 // RetireInactiveTopics revokes every live public topic declaration of the local
@@ -147,7 +135,7 @@ func (d *Directory) RetireInactiveTopics() {
 	now := d.now()
 	var vs []*directorypb.RecordVersion
 	for _, r := range d.st.ownRecords() {
-		if isExpired(r.expires, now) || r.isRevocation() || r.body == nil {
+		if !liveRecord(r, now) {
 			continue
 		}
 		if r.body.GetTopicAnnouncement() == nil {
@@ -164,8 +152,7 @@ func (d *Directory) RetireInactiveTopics() {
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast(vs, Fingerprint{})
+	d.commitOwn(vs)
 }
 
 // Reissue signs and publishes a fresh card with the current alias and
@@ -189,8 +176,7 @@ func (d *Directory) Reissue() {
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast(vs, Fingerprint{})
+	d.commitOwn(vs)
 }
 
 // renewDue reissues the local card and every active public topic declaration
@@ -278,21 +264,11 @@ func (d *Directory) startupCheck(now time.Time) {
 			vs = append(vs, v)
 		}
 	} else {
-		for _, r := range d.st.ownRecords() {
-			if isExpired(r.expires, now) || r.isRevocation() {
-				continue
-			}
-			v, err := d.issueRevocationLocked(r.id, now)
-			if err != nil {
-				continue
-			}
-			vs = append(vs, v)
-		}
+		vs = d.revokeOwnLocked(now)
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast(vs, Fingerprint{})
+	d.commitOwn(vs)
 }
 
 // reconcileOwn corrects records published by the local Broker that came back
@@ -351,8 +327,7 @@ func (d *Directory) reconcileOwn(ids []recordID) {
 	}
 	d.mu.Unlock()
 
-	d.persistIfDirty()
-	d.broadcast(vs, Fingerprint{})
+	d.commitOwn(vs)
 }
 
 // validDescription reports whether s is acceptable as a public topic
@@ -371,6 +346,22 @@ func validDescription(s string) bool {
 		}
 	}
 	return true
+}
+
+// revokeOwnLocked revokes every live locally issued record and returns the
+// versions of the revocations. The caller must hold the write lock and
+// broadcast the returned versions itself.
+func (d *Directory) revokeOwnLocked(now time.Time) []*directorypb.RecordVersion {
+	var vs []*directorypb.RecordVersion
+	for _, r := range d.st.ownRecords() {
+		if isExpired(r.expires, now) || r.isRevocation() {
+			continue
+		}
+		if v, err := d.issueRevocationLocked(r.id, now); err == nil {
+			vs = append(vs, v)
+		}
+	}
+	return vs
 }
 
 // issueCardLocked signs a new card from the current alias and advertised
