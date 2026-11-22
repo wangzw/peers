@@ -1,65 +1,65 @@
 # directory
 
-`directory` 维护[名录](../../glossary.md)：本 Broker 所知道的名片和公开 topic 的声明。记录由发布者签名，经链路在 Broker 之间逐跳对账，最终到达连通网络内的每一个 Broker。名录只是线索，不构成信任依据，也不触发连接。可以把它看作一本大家互相抄写、但每一页都有原作者签名的通讯录。
+`directory` maintains the [directory](../../glossary.md): the cards this Broker knows and the declarations of public topics. A record is signed by its publisher, reconciled hop by hop between Brokers over links, and finally reaches every Broker in the connected network. The directory is only a clue; it is not a basis of trust and triggers no connection. It can be thought of as an address book that everyone copies from one another but on which every page is signed by its original author.
 
-首次阅读按顺序读核心概念、职责和核心算法与流程里的走查；其余各节供查阅。
+On a first read, read Core Concepts, Responsibilities, and the Worked Example under Core Algorithms and Flows in order; the other sections are for reference.
 
-## 核心概念
+## Core Concepts
 
-名录要解决的问题是：一条信息要传到与发布者没有链路的 Broker 那里，途中经手的 Broker 既不能改它，也不能在它过时之后继续传它。
+The problem the directory solves is this: a piece of information has to reach a Broker with no link to the publisher, and the Brokers that handle it along the way must be unable to change it or to keep passing it on after it is stale.
 
-每条记录本身带有判断真伪和新旧所需的内容（[ADR-signed-directory-reconciliation](../../adr/adr-signed-directory-reconciliation.md)）：发布者的公钥与签名用来验证内容未经改动，版本号用来在同一发布者的多条记录之间取最新，到期时间使无人续签的记录自行消失。
+Each record carries what is needed to judge its authenticity and freshness ([ADR-signed-directory-reconciliation](../../adr/adr-signed-directory-reconciliation.md)): the publisher's public key and signature verify that the content is unaltered, the version number picks the latest among one publisher's several records, and the expiry time makes a record with no one renewing it disappear on its own.
 
-传播的方式是对账：链路两端互相报出自己持有的每条记录的标识与版本，缺的和旧的向对方索取。对账在链路建立时做一次，之后有变化时推送，再以固定间隔重复，漏掉的推送由下一次对账补上。对账与下面的撤回记录都有公开文献可循（[REF-epidemic-algorithms](../../references.md)）。
+Propagation works by reconciliation: the two ends of a link tell each other the identifier and version of each record they hold, and ask the other for the missing and older ones. Reconciliation runs once when the link is established, then on each change as a push, and again at a fixed interval, with a missed push made up by the next reconciliation. Both reconciliation and the revocation records below have public literature to follow ([REF-epidemic-algorithms](../../references.md)).
 
-发布者撤回一条记录时不能只是不再续签，否则旧记录在到期之前还会从其他 Broker 传回来。撤回因此也是一条签名的记录，版本号比它撤回的记录更高，持有它的 Broker 据此拒绝旧版本，直到撤回记录自己到期。
+When a publisher withdraws a record it cannot simply stop renewing it, or the old record would travel back from other Brokers before it expires. A revocation is therefore also a signed record with a version higher than the record it revokes, and a Broker holding it refuses the older version until the revocation itself expires.
 
-签名只证明记录出自它所载的发布者，不证明发布者可信：任何对端都能造出许多签名有效的记录。名录因此按来源链路和发布者分别限量。
+A signature proves only that a record came from the publisher it names, not that the publisher is trustworthy: any peer can produce many validly signed records. The directory therefore sets quotas by source link and by publisher.
 
-## 职责
+## Responsibilities
 
-- Broker 设为公开时，以本 Broker 的身份签发名片，并按续签间隔重新签发以延长到期时间；Broker 默认不公开（[ADR-brokers-private-by-default](../../adr/adr-brokers-private-by-default.md)，`REQ-broker-discovery-001`、`REQ-broker-discovery-002`、`REQ-broker-discovery-007`、`REQ-broker-discovery-008`）。
-- Broker 由公开改为不公开时，为本机名片和本机签发的每条公开 topic 声明签发撤回记录；启动时发现配置为不公开而存有本机签发的有效记录的，同样签发撤回（`REQ-broker-discovery-009`、`REQ-topics-024`）。
-- 在本 Broker 为公开的前提下，签发公开 topic 的声明并续签，本 Broker 不公开时拒绝；本 Broker 上不再有以公开方式在该 topic 中的 Agent 时，为该声明签发撤回（`REQ-topics-010` 至 `REQ-topics-012`、`REQ-topics-023`、`REQ-topics-025`）。
-- 与每条链路的对端对账，验证收到的每条记录的签名、版本与到期时间，接受后继续推送给其他对端，使不公开的 Broker 同样能得知别处的名片（`REQ-broker-discovery-003`、`REQ-broker-discovery-005`、`REQ-broker-discovery-006`、`REQ-broker-discovery-010`、`REQ-broker-discovery-017`）。
-- 删除到期的记录，按总数、来源链路和发布者分别限量（`REQ-broker-discovery-011`、`REQ-broker-discovery-015`）。
-- 回答列出已知 Broker 和列出公开 topic 的查询，为每个 Broker 算出状态（`REQ-broker-discovery-012` 至 `REQ-broker-discovery-014`）。
-- 在接受一张名片时通知订阅者，使 [broker](design-broker.md) 能把对端的对外地址列表交给 `pairing` 记入候选地址。
-- 签发名片时载入 [config](design-config.md) 给出的本机对外地址列表；列表或别名变化时，本 Broker 公开的，立即签发新版本的名片（[ADR-advertised-address](../../adr/adr-advertised-address.md)，`REQ-broker-config-031`、`REQ-broker-discovery-016`）。
+- When the Broker is set public, issue a card under this Broker's identity and reissue it at the renewal interval to extend its expiry; a Broker is not public by default ([ADR-brokers-private-by-default](../../adr/adr-brokers-private-by-default.md), `REQ-broker-discovery-001`, `REQ-broker-discovery-002`, `REQ-broker-discovery-007`, `REQ-broker-discovery-008`).
+- When the Broker changes from public to not public, issue revocation records for the local card and for each public topic declaration this Broker issued; on startup, if the configuration is not public while there are valid records this Broker issued, likewise issue revocations (`REQ-broker-discovery-009`, `REQ-topics-024`).
+- Given that this Broker is public, issue and renew declarations of public topics, refusing when this Broker is not public; when no agent on this Broker is in that topic publicly any more, issue a revocation for that declaration (`REQ-topics-010` to `REQ-topics-012`, `REQ-topics-023`, `REQ-topics-025`).
+- Reconcile with each link's peer, verify every received record's signature, version and expiry, and after accepting it keep pushing it to other peers, so that a not-public Broker also learns cards from elsewhere (`REQ-broker-discovery-003`, `REQ-broker-discovery-005`, `REQ-broker-discovery-006`, `REQ-broker-discovery-010`, `REQ-broker-discovery-017`).
+- Delete expired records, setting quotas by total count, by source link and by publisher (`REQ-broker-discovery-011`, `REQ-broker-discovery-015`).
+- Answer the queries that list known Brokers and list public topics, computing a status for each Broker (`REQ-broker-discovery-012` to `REQ-broker-discovery-014`).
+- Notify subscribers when a card is accepted, so that [broker](design-broker.md) can hand the peer's advertised address list to `pairing` to record as candidate addresses.
+- Load the local advertised address list that [config](design-config.md) gives when issuing a card; when the list or the alias changes, if this Broker is public, immediately issue a new version of the card ([ADR-advertised-address](../../adr/adr-advertised-address.md), `REQ-broker-config-031`, `REQ-broker-discovery-016`).
 
-### 非职责
+### Non-Responsibilities
 
-- 不传播不公开 Broker 的任何信息。不公开的 Broker 不签发记录，其对端手里没有可传的内容（`REQ-broker-discovery-004`）。
-- 不传播 Agent 与成员名单，由 [topic](design-topic.md) 在链路两端之间处理。
-- 不依据名录发起连接或配对（`REQ-broker-pairing-014`）；配对由用户经 `broker` 发起，握手由 [pairing](design-pairing.md) 完成。
-- 不探测名片所载地址能否连通，不计算本机的对外地址列表。
-- 不判断何时声明公开 topic。加入时的公开声明由 `broker` 先转交本包，成功后再调用 `topic` 加入（`REQ-topics-023`）。
+- Does not propagate any information about a not-public Broker. A not-public Broker issues no records, and its peers have nothing to pass on (`REQ-broker-discovery-004`).
+- Does not propagate agents or rosters; [topic](design-topic.md) handles those between the two ends of a link.
+- Does not initiate a connection or pairing based on the directory (`REQ-broker-pairing-014`); pairing is initiated by the user through `broker`, and the handshake is done by [pairing](design-pairing.md).
+- Does not probe whether a card's addresses are reachable, and does not compute the local advertised address list.
+- Does not decide when to declare a public topic. A public declaration at join time is handed to this package by `broker` first, and only after success does it call `topic` to join (`REQ-topics-023`).
 
-## 外部接口契约
+## External Interface Contract
 
-除 `NewIdentity` 与 `NewLinkTransport` 两个包级构造函数外，下列函数是主类型 `*Directory` 的方法，签名稳定。`Fingerprint` 是 `pairing.Fingerprint` 的类型别名。
+Except for the two package-level constructors `NewIdentity` and `NewLinkTransport`, the functions below are methods of the main type `*Directory`, and the signatures are stable. `Fingerprint` is a type alias of `pairing.Fingerprint`.
 
 ```go
 type Deps struct {
-    Identity Identity          // 本机身份，必填
-    Peers    PeerTable         // 对端表，必填
-    Links    Links             // 链路，必填
-    Settings Settings          // 可空，空时读 config 包
-    Logger   *slog.Logger      // 可空，空时用 slog.Default()
-    Now      func() time.Time  // nil 时为 time.Now；只决定当前时刻
+    Identity Identity          // local identity, required
+    Peers    PeerTable         // peer table, required
+    Links    Links             // links, required
+    Settings Settings          // optional, reads the config package when empty
+    Logger   *slog.Logger      // optional, uses slog.Default() when empty
+    Now      func() time.Time  // time.Now when nil; decides only the current instant
 }
-func NewIdentity(p *pairing.Pairing) (Identity, error) // 取本机 32 字节裸公钥；没有身份时返回 ErrNoIdentity
-func NewLinkTransport(l *link.Link) Links              // 把 link.Link 适配成 Links
+func NewIdentity(p *pairing.Pairing) (Identity, error) // takes the local 32-byte raw public key; returns ErrNoIdentity when there is no identity
+func NewLinkTransport(l *link.Link) Links              // adapts link.Link into Links
 
-func Open(deps Deps) (*Directory, error) // 读 directory.json，清除到期记录；不注册帧处理、不签发、不起协程
-func (d *Directory) Start() error        // 注册帧处理与链路订阅，做启动核对，启动维护循环
-func (d *Directory) Close()              // 停止维护循环，等待在途的索取协程结束，落盘一次；可重复调用
+func Open(deps Deps) (*Directory, error) // reads directory.json and clears expired records; registers no frame handling, issues nothing, starts no goroutine
+func (d *Directory) Start() error        // registers frame handling and link subscription, does the startup check, starts the maintenance loop
+func (d *Directory) Close()              // stops the maintenance loop, waits for in-flight fetch goroutines to end, flushes once; callable repeatedly
 
-func (d *Directory) SetPublic(public bool) error // 发布或撤回本机名片及本机的公开 topic 声明
+func (d *Directory) SetPublic(public bool) error // publishes or withdraws the local card and this Broker's public topic declarations
 func (d *Directory) DeclarePublicTopic(name, description string) error
 func (d *Directory) RetirePublicTopic(name string)
-func (d *Directory) RetireInactiveTopics() // 为本机已不再活动、仍有效的公开 topic 声明签发撤回
-func (d *Directory) Reissue()              // 别名或对外地址列表变化时调用，本 Broker 公开时立即签发新名片
+func (d *Directory) RetireInactiveTopics() // issues revocations for this Broker's public topic declarations that are no longer active but still valid
+func (d *Directory) Reissue()              // called when the alias or advertised address list changes; issues a new card immediately when this Broker is public
 
 func (d *Directory) Brokers() []KnownBroker
 func (d *Directory) PublicTopics() []PublicTopic
@@ -67,231 +67,231 @@ func (d *Directory) CardsByAddress(address string) []Fingerprint
 func (d *Directory) OnCard(f func(fp Fingerprint, addresses []config.AdvertisedAddr))
 ```
 
-`Deps` 的四个协作接口各承担一项外部依赖：`Identity` 提供本机指纹、32 字节裸 Ed25519 公钥与签名；`PeerTable` 提供对端判定、对端列表与生效别名；`Links` 收发对账帧，订阅链路的建立与断开，并查询链路状态；`Settings` 提供是否公开、别名、对外地址列表、数据目录与各项限制。`NewIdentity` 从 `(*pairing.Pairing).PublicKey()` 取本机公钥，并核对它与 `Fingerprint()` 一致。`Start` 由 `broker` 的 directory 装配器在组件 `Start` 阶段调用，早于 `link` 开始监听与拨号；`Close` 在关机阶段调用，可重复调用。
+`Deps`'s four collaborating interfaces each carry one external dependency: `Identity` provides the local fingerprint, the 32-byte raw Ed25519 public key and signing; `PeerTable` provides peer determination, the peer list and effective aliases; `Links` sends and receives reconciliation frames, subscribes to link establishment and teardown, and queries link state; `Settings` provides whether public, the alias, the advertised address list, the data directory and the various limits. `NewIdentity` takes the local public key from `(*pairing.Pairing).PublicKey()` and checks that it matches `Fingerprint()`. `Start` is called by `broker`'s directory assembler during the components' `Start` phase, before `link` begins listening and dialing; `Close` is called during shutdown and is callable repeatedly.
 
-调用方观察到的错误：
+Errors a caller observes:
 
-| 返回 | 情形 | `broker` 映射 |
+| Return | Situation | `broker` mapping |
 |---|---|---|
-| `ErrNotPublic` | 不公开时调用 `DeclarePublicTopic` | `invalid_argument`，提示先把 Broker 设为公开 |
-| `ErrQuotaExceeded` | 本机有效且未撤回的公开 topic 声明数（同名的不计）已达 `directory.max_topics_per_publisher` | `quota_exceeded` |
-| `ErrInvalidTopic` | `DeclarePublicTopic` 的 `name` 为空 | `invalid_argument` |
-| `ErrInvalidDescription` | `DeclarePublicTopic` 的简介超过 256 字节、不是合法 UTF-8 或含控制字符 | `invalid_argument` |
-| `ErrClosed` | `Close` 之后调用 `Start`、`SetPublic`、`DeclarePublicTopic` | `internal` |
-| `ErrNoIdentity` | `NewIdentity` 拿不到本机公钥，或 `Open` 收到的身份指纹为零 | 启动失败，`broker` 退出 |
-| 其他（包装的文件错误） | `Open` 读取 `directory.json` 失败（例如权限不足） | `internal`，启动失败 |
+| `ErrNotPublic` | `DeclarePublicTopic` called while not public | `invalid_argument`, saying to set the Broker public first |
+| `ErrQuotaExceeded` | This Broker's valid, unrevoked public topic declarations (same-name ones not counted) have reached `directory.max_topics_per_publisher` | `quota_exceeded` |
+| `ErrInvalidTopic` | `DeclarePublicTopic`'s `name` is empty | `invalid_argument` |
+| `ErrInvalidDescription` | `DeclarePublicTopic`'s description exceeds 256 bytes, is not valid UTF-8 or contains control characters | `invalid_argument` |
+| `ErrClosed` | `Start`, `SetPublic` or `DeclarePublicTopic` called after `Close` | `internal` |
+| `ErrNoIdentity` | `NewIdentity` cannot get the local public key, or `Open` receives a zero identity fingerprint | Startup fails and `broker` exits |
+| Other (wrapped file errors) | `Open` fails to read `directory.json` (for example insufficient permission) | `internal`, startup fails |
 
-`directory.json` 无法解析或 `format` 不是 1 时不返回错误：记一条 error 日志，按空名录启动，下一次落盘覆盖该文件。
+When `directory.json` cannot be parsed or `format` is not 1, no error is returned: an error log is recorded, startup proceeds with an empty directory, and the next flush overwrites the file.
 
-简介的上述限制只约束本机声明，空简介合法；接收方不因此丢弃记录，但不合规定的声明不进入视图。
+The description limits above constrain only local declarations, and an empty description is legal; the receiver does not drop a record because of them, but a declaration that does not meet the rules does not enter the views.
 
-`OnCard` 可以注册多个回调，按注册顺序调用。回调在本包的锁之外、在处理该批记录的协程里执行，不同链路的批次可能并发调用，因此回调必须并发安全，且不得阻塞超过一次 `pairing` 写盘的时间。回调只在本包从链路接受一张非本机名片时调用，不在本机签发名片或加载文件时调用；交给回调的列表只含本版本认识的项，顺序同名片。
+`OnCard` may register several callbacks, called in registration order. Callbacks run outside this package's lock, in the goroutine that handles the batch of records, and batches from different links may call concurrently, so a callback must be concurrency-safe and must not block for longer than one `pairing` disk write. A callback is called only when this package accepts a non-local card from a link, not when this Broker issues a card or loads the file; the list handed to the callback contains only items this version recognizes, in card order.
 
-`CardsByAddress` 与当前有效、非撤回、非本机名片中本版本认识且写法合规定的地址项逐字比较，返回全部匹配的发布者指纹，去重后按指纹字节升序排列；没有匹配时返回 nil。地址的规范化由调用方在调用前完成。
+`CardsByAddress` compares the address verbatim against the address items that are currently valid, not revoked, not the local card, recognized by this version and legally spelled, and returns every matching publisher fingerprint, deduplicated and sorted ascending by fingerprint bytes; it returns nil when there is no match. Address normalization is done by the caller before the call.
 
-`PublicTopic` 给出名字、简介、简介的发布者、发布者的别名与该名字的有效声明数。简介按发布者分档选取：本机的声明优先，其次是对端（对端表中的 Broker）的声明，最后是其他发布者的声明；同一档内取版本号最高的声明，版本相同取指纹字节序较小的。`Publisher` 是所取声明的发布者指纹；`PublisherAlias` 对端取生效别名，其他发布者取有效名片所载的别名，都没有时为空；`Declarers` 是该名字的有效声明数，即通过接收校验、未到期且未撤回的声明条数，同一发布者的同名声明按标识只保留最高版本，只计一条。名字或简介不合规定的声明不进入结果，规则见“核心数据结构”。结果按名字升序排列。
+`PublicTopic` gives the name, the description, the description's publisher, the publisher's alias and the number of valid declarations of that name. The description is chosen by tier: this Broker's declarations first, then a peer's (a Broker in the peer table), finally another publisher's; within a tier the declaration with the highest version is taken, and on an equal version the smaller fingerprint bytes. `Publisher` is the fingerprint of the publisher of the chosen declaration; `PublisherAlias` is the effective alias for a peer, and for another publisher the alias on its valid card, empty when neither; `Declarers` is the number of valid declarations of that name, that is the declarations that passed receive validation, have not expired and are not revoked, with one publisher's same-name declarations counted as one keeping only the highest version by identifier. A declaration whose name or description does not meet the rules does not enter the result, per the rules in "Core Data Structures". The result is sorted ascending by name.
 
-`KnownBroker` 给出指纹、生效别名或名片所载的别名、对外地址列表（`[]config.AdvertisedAddr`）、是否对端、本方在这对对端中的角色、状态与链路所处的阶段。对外地址列表：本方是拨号方的对端取接受方告知的列表，接上当前有效名片中本版本认识的项，按地址去重，不含发起配对时拨通的地址；本方是接受方的对端和非对端取名片所载的列表中本版本认识的地址项；都没有时为空；同一主机上的多个 Broker 是各自独立的条目，靠列表中的端口和别名区分（`REQ-broker-discovery-012`）。对外地址不参与身份的判定，条目以指纹为准。结果按别名升序排列，别名相同按指纹字节升序；本机自身不出现在结果中。`Detail` 只用于非对端条目，对端的说明文字由 `broker` 在列出 Broker 时产生（`REQ-broker-pairing-035`）。状态取值是封闭集合（`REQ-broker-discovery-013`）：
+`KnownBroker` gives the fingerprint, the effective alias or the alias on the card, the advertised address list (`[]config.AdvertisedAddr`), whether it is a peer, this side's role in this peer pair, the status and the link's phase. Advertised address list: for a peer on which this side is the dialer, the list the acceptor told, merged with the items of the currently valid card that this version recognizes, deduplicated by address, excluding the address dialed when pairing was initiated; for a peer on which this side is the acceptor and for a non-peer, the recognized address items of the list the card carries; empty when neither; several Brokers on one host are independent entries, told apart by the port and alias in the list (`REQ-broker-discovery-012`). The advertised address takes no part in identity, and an entry is keyed by fingerprint. The result is sorted ascending by alias, then by fingerprint bytes ascending on an equal alias; this Broker itself does not appear in the result. `Detail` is used only for non-peer entries, and a peer's explanatory text is produced by `broker` when listing Brokers (`REQ-broker-pairing-035`). The status values are a closed set (`REQ-broker-discovery-013`):
 
-| 状态 | 条件 |
+| Status | Condition |
 |---|---|
-| 已连接 | 与它的链路处于已建立状态 |
-| 可连接 | 链路未建立，且知道它至少有一个本版本认识的对外地址项 |
-| 不可直达 | 链路未建立，且不知道它的任何本版本认识的对外地址项 |
+| connected | Its link is in the established state |
+| connectable | The link is not established, and at least one of its advertised address items recognized by this version is known |
+| not directly reachable | The link is not established, and none of its advertised address items recognized by this version is known |
 
-## 依赖
+## Dependencies
 
-`directory` 引用 `link`，用来收发对账帧、订阅链路的建立与断开并查询链路状态；引用 `pairing`，用来签名、验签和读取对端表；引用 `config`，用来读取是否公开、别名、本方的对外地址列表与各项限制。它不引用 `topic` 与 `broker`，符合模块依赖图的方向。
+`directory` references `link` to send and receive reconciliation frames, subscribe to link establishment and teardown and query link state; it references `pairing` to sign, verify signatures and read the peer table; and it references `config` to read whether public, the alias, this side's advertised address list and the various limits. It references neither `topic` nor `broker`, matching the module dependency graph's direction.
 
-## UML 图
+## UML Diagrams
 
-下图是记录的结构。名片、公开 topic 声明和撤回共用同一个信封。记录标识中的种类只有名片与公开 topic 声明，撤回不是第三种：撤回是原始字节载荷的一种，它的身份取它撤回的那条记录的种类与对象名，因此与它撤回的记录占用同一个位置，所撤回的种类也记在载荷里。载荷的种类不影响对账与验证。一条记录在链路上由两部分组成：发布者产生的原始字节，以及发布者对这段原始字节的签名；图中 `raw` 与 `signature` 之外的字段都编码在原始字节里，由收到记录的 Broker 在验签之后解析得到。
+The diagram below is the structure of a record. A card, a public topic declaration and a revocation share the same envelope. The kind in a record's identifier has only card and public topic declaration; a revocation is not a third kind: it is a payload of raw bytes whose identity takes the kind and object name of the record it revokes, so it occupies the same position as the record it revokes, and the revoked kind is also recorded in the payload. A payload's kind does not affect reconciliation or verification. On a link a record consists of two parts: the raw bytes the publisher produced, and the publisher's signature over those raw bytes; every field other than `raw` and `signature` in the diagram is encoded in the raw bytes and parsed by the receiving Broker after verification.
 
 ```mermaid
 classDiagram
     class Record {
-        +raw 发布者产生的原始字节
-        +signature 发布者对原始字节的签名
+        +raw the raw bytes produced by the publisher
+        +signature the publisher's signature over the raw bytes
     }
     class Raw {
-        +publisher 发布者指纹
-        +publicKey 发布者公钥
-        +kind 记录标识中的种类，名片或公开 topic 声明
-        +object 对象名
-        +version 版本号
-        +expires 到期时间
-        +payload 载荷
+        +publisher publisher fingerprint
+        +publicKey publisher public key
+        +kind the kind in the record identifier, card or public topic declaration
+        +object object name
+        +version version number
+        +expires expiry time
+        +payload payload
     }
     class Payload {
-        <<载荷>>
+        <<payload>>
     }
     class BrokerCard {
-        +alias 别名
-        +addresses 对外地址列表，每项带有种类，可为空
+        +alias alias
+        +addresses advertised address list, each item carrying a kind, may be empty
     }
     class TopicAnnouncement {
-        +name topic 名
-        +description 简介，可为空
+        +name topic name
+        +description description, may be empty
     }
     class Revocation {
-        +revokedKind 所撤回记录的种类
+        +revokedKind the kind of the revoked record
     }
-    Record *-- Raw : raw 字段
-    Raw *-- Payload : payload 字段
+    Record *-- Raw : raw field
+    Raw *-- Payload : payload field
     Payload <|-- BrokerCard
     Payload <|-- TopicAnnouncement
     Payload <|-- Revocation
 ```
 
-上图与 `directorypb` 中的消息定义一致，图中的 `Raw` 即 `RecordBody`。`raw` 是 `RecordBody` 的序列化结果；`RecordBody` 给出发布者指纹、发布者公钥、记录标识中的种类、对象名、版本号、到期时间，以及恰好一个载荷：名片、公开 topic 声明或撤回。名片载荷是 `BrokerCard`，给出别名与对外地址列表，列表中的每一项是带种类的 `AdvertisedAddress`；公开 topic 声明载荷是 `TopicAnnouncement`，给出 topic 名与简介；撤回载荷是 `Revocation`，给出所撤回记录的种类。
+The diagram matches the message definitions in `directorypb`, and `Raw` in the diagram is `RecordBody`. `raw` is the serialization of `RecordBody`; `RecordBody` gives the publisher fingerprint, the publisher public key, the kind in the record identifier, the object name, the version number, the expiry time and exactly one payload: a card, a public topic declaration or a revocation. The card payload is `BrokerCard`, giving the alias and the advertised address list, each item of which is an `AdvertisedAddress` carrying a kind; the public topic declaration payload is `TopicAnnouncement`, giving the topic name and description; the revocation payload is `Revocation`, giving the kind of the revoked record.
 
-## 核心数据结构
+## Core Data Structures
 
-记录的身份由发布者指纹、记录标识中的种类和对象名共同确定。对象名说明记录描述的是哪个对象：名片的对象名为空，公开 topic 声明的对象名是 topic 名，撤回记录的身份取它撤回的那条记录的种类与对象名，因此与它撤回的记录占用同一个位置；它所撤回的种类记在载荷里。同一标识只保留版本号最高的一条。
+A record's identity is determined jointly by the publisher fingerprint, the kind in the record identifier and the object name. The object name says which object the record describes: a card's object name is empty, a public topic declaration's object name is the topic name, and a revocation's identity takes the kind and object name of the record it revokes, so it occupies the same position as the record it revokes; the kind it revokes is recorded in the payload. Only the record with the highest version is kept for one identifier.
 
-| 字段 | 规则 |
+| Field | Rule |
 |---|---|
-| `publisher` 与 `publicKey` | `publicKey` 是 32 字节裸 Ed25519 公钥，`publisher` 等于它的指纹 |
-| `version` | 取“当前时间的毫秒数”与“本机已签发的最高版本加一”中较大的一个 |
-| `expires` | 签发时刻加 7 天，撤回记录同样如此 |
-| `signature` | 发布者用私钥对原始字节的签名；原始字节由发布者产生，编码了其余全部字段 |
+| `publisher` and `publicKey` | `publicKey` is the 32-byte raw Ed25519 public key, and `publisher` equals its fingerprint |
+| `version` | The larger of "the current time in milliseconds" and "the highest version this Broker has issued plus one" |
+| `expires` | The issue instant plus 7 days, the same for a revocation record |
+| `signature` | The publisher's signature over the raw bytes with its private key; the raw bytes are produced by the publisher and encode every other field |
 
-收到记录的 Broker 先从 `RecordBody` 中取出发布者公钥，以它对收到的原始字节验签，通过后才解析其余字段；保存记录和继续传播给其他对端时，原样使用收到的原始字节与签名，不重新编码。记录的具体编码方式因此属于实现：不同版本的 Broker 对同一条记录不需要产生相同的字节，记录中出现本版本不认识的字段时，记录仍然可以被验证和传播。签发时以确定性编码序列化 `RecordBody`，同一载荷产生同样的原始字节。
+A receiving Broker first takes the publisher public key from `RecordBody`, verifies the received raw bytes against it, and parses the other fields only after it passes; when saving the record and continuing to propagate it to other peers, it uses the received raw bytes and signature as-is and does not re-encode. A record's concrete encoding therefore belongs to the implementation: different Broker versions need not produce the same bytes for one record, and a record carrying a field this version does not recognize can still be verified and propagated. When issuing, `RecordBody` is serialized with deterministic encoding, so the same payload produces the same raw bytes.
 
-名片的 `addresses` 是签发时 `config` 给出的本机对外地址列表，每项是 `config.AdvertisedAddr`，至多 8 项，本机不监听时为空；列表在发布者的签名之内，途中经手的 Broker 不能改动它（[ADR-advertised-address](../../adr/adr-advertised-address.md)）。列表中的每一项带有种类，本版本产生的只有直连（`direct`），见 [config](design-config.md) 的“对外地址”。本包使用名片中的地址时只取本版本认识且写法合规定的项。种类为 `direct` 的地址项须能由 `net.SplitHostPort` 拆出主机与端口：主机 1 至 253 字节、不含控制字符与空白，端口为 1 至 65535 的十进制数。`OnCard` 交给订阅者的列表、`CardsByAddress` 的比对、`KnownBroker` 的对外地址列表与状态的判定，都跳过种类不认识或写法不合规定的项，每张名片至多取 8 项；这些项仍留在原始字节中，随名片原样保存与传播，名片其余的地址照常可用。
+A card's `addresses` is the local advertised address list `config` gives at issue time, each item a `config.AdvertisedAddr`, at most 8 items, empty when this Broker does not listen; the list is inside the publisher's signature and a Broker handling it along the way cannot change it ([ADR-advertised-address](../../adr/adr-advertised-address.md)). Each item of the list carries a kind, and this version produces only direct (`direct`), see "Advertised address" in [config](design-config.md). When using an address from a card, this package takes only items this version recognizes and that are legally spelled. A `direct` address item must be splittable by `net.SplitHostPort` into a host and a port: the host 1 to 253 bytes, containing no control characters or whitespace, and the port a decimal number from 1 to 65535. The list `OnCard` hands subscribers, `CardsByAddress`'s comparison, and `KnownBroker`'s advertised address list and status decision all skip items of an unrecognized kind or illegal spelling, taking at most 8 items from each card; those items remain in the raw bytes and are kept and propagated as-is with the card, and the card's other addresses work as usual.
 
-记录的种类与载荷必须一致：载荷为 `BrokerCard` 时种类为 `RECORD_KIND_BROKER_CARD`、对象名为空且别名符合接受条件中的规则；载荷为 `TopicAnnouncement` 时种类为 `RECORD_KIND_TOPIC_ANNOUNCEMENT`、对象名等于 topic 名且非空；载荷为 `Revocation` 时所撤回的种类等于记录的种类。种类为 `RECORD_KIND_UNSPECIFIED` 的记录丢弃。载荷为空或种类是本版本不认识的取值时，记录照常验签，按版本与限量接受并传播，但不进入任何视图。
+A record's kind and payload must agree: when the payload is `BrokerCard` the kind is `RECORD_KIND_BROKER_CARD`, the object name is empty and the alias meets the rules in the acceptance conditions; when the payload is `TopicAnnouncement` the kind is `RECORD_KIND_TOPIC_ANNOUNCEMENT` and the object name equals the topic name and is non-empty; when the payload is `Revocation` the revoked kind equals the record's kind. A record whose kind is `RECORD_KIND_UNSPECIFIED` is dropped. When the payload is empty or the kind is a value this version does not recognize, the record is verified as usual, accepted and propagated by version and quota, but enters no view.
 
-公开 topic 声明的名字须为 1 至 256 字节、合法 UTF-8、不含控制字符，与 [topic](design-topic.md) 的 `ValidateName` 同一规则；本包不引用 `topic`，因此另写一份并在两处同步。简介须为空，或不超过 256 字节、合法 UTF-8、不含控制字符。名字或简介不合规定的声明照常验签、按版本与限量接受并原样转发，但不进入 `PublicTopics`，与载荷为空或种类不认识的处理相同。
+A public topic declaration's name must be 1 to 256 bytes, valid UTF-8, containing no control characters, the same rule as [topic](design-topic.md)'s `ValidateName`; because this package does not reference `topic`, it writes another copy and keeps the two in sync. The description must be empty, or at most 256 bytes, valid UTF-8, containing no control characters. A declaration whose name or description does not meet the rules is verified as usual, accepted and forwarded as-is by version and quota, but does not enter `PublicTopics`, handled the same as an empty payload or an unrecognized kind.
 
-单条记录的原始字节不超过 64 KiB（65536 字节）。接收与本机签发都核对这一上限：接收时超出的记录按格式错误丢弃，记一条带 `reason=record_too_large` 的 warn 日志；本机签发时超出的返回错误，不产生记录。
+A single record's raw bytes do not exceed 64 KiB (65536 bytes). Both receiving and local issuing check this cap: a record exceeding it on the receive side is dropped as a format error, with a warn log carrying `reason=record_too_large`; exceeding it on local issue returns an error and produces no record.
 
-名录保存在数据目录内的 `directory.json`，数据目录的位置由 `config` 按部署形态给出。文件格式为 `{"format":1,"highest_issued":<uint64>,"records":[{"raw":<base64>,"signature":<base64>,"source":"<64 位十六进制或空>"}]}`：`raw` 与 `signature` 是原始字节及其签名，`source` 是接受该记录的链路对端指纹，本机签发的为空串；`highest_issued` 是本机已签发的最高版本。文件权限 0600。文件不存在时按空名录启动；读取失败（例如权限不足）时 `Open` 返回错误，启动失败；无法解析或 `format` 不是 1 时记一条 error 日志并按空名录启动，下一次落盘覆盖该文件，名录由对账补回，已签发的最高版本由抬高机制恢复。Broker 重启时加载文件并立即清除已到期的记录；单条记录验签失败或已到期时丢弃并记一条 warn 日志。加载不执行数量限制，上限可能在两次运行之间被调低。`highest_issued` 取文件中的值与本机记录的最高版本中较大的一个。有效期 7 天与续签间隔 1 天不可配置。
+The directory is kept in `directory.json` in the data directory, whose location `config` gives by deployment form. The file format is `{"format":1,"highest_issued":<uint64>,"records":[{"raw":<base64>,"signature":<base64>,"source":"<64 hex digits or empty>"}]}`: `raw` and `signature` are the raw bytes and their signature, `source` is the fingerprint of the link peer that accepted the record, an empty string for a record this Broker issued; `highest_issued` is the highest version this Broker has issued. The file permission is 0600. When the file is absent, startup proceeds with an empty directory; when reading fails (for example insufficient permission), `Open` returns an error and startup fails; when it cannot be parsed or `format` is not 1, an error log is recorded and startup proceeds with an empty directory, the next flush overwrites the file, the directory is filled back by reconciliation, and the highest issued version is restored by the raise mechanism. On restart the Broker loads the file and immediately clears expired records; a record whose signature fails or that has expired is dropped with a warn log. Loading applies no count limits, since a cap may have been lowered between two runs. `highest_issued` is the larger of the value in the file and the highest version of the local records. The 7-day validity and the 1-day renewal interval are not configurable.
 
-多个 Broker 可以各自声明同名的公开 topic，每个声明是独立的记录。列出公开 topic 时按名字合并，每个名字一项。简介按发布者分档取：本机的声明优先，其次是对端（对端表中的 Broker）的声明，最后是其他发布者的声明；同一档内取版本号最高的声明，版本相同取指纹字节序较小的。这样远处的发布者不能靠把版本号设成最大值替换本机或对端声明的简介。结果同时给出简介的发布者与该名字的有效声明数。
+Several Brokers can each declare a public topic of the same name, and each declaration is an independent record. When listing public topics they are merged by name, one entry per name. The description is chosen by tier: this Broker's declarations first, then a peer's (a Broker in the peer table), finally another publisher's; within a tier the declaration with the highest version is taken, and on an equal version the smaller fingerprint bytes. In this way a distant publisher cannot replace the local or a peer's declaration's description by setting the version to its maximum. The result gives both the description's publisher and the number of valid declarations of that name.
 
-默认限量 `directory.max_records` 为 1000，公开 topic 声明与名片各占一条记录，两者合计不超过 1000 条。名字与简介各至多 256 字节，因此 1000 条声明的 `list_topics` 应答不到 1 MiB；一张名片至多 8 个地址、每个主机至多 253 字节，因此 1000 张名片的 `list_brokers` 应答不到 3 MiB。名录中每张名片都可能在同一地址上产生一条指纹警告，但同一张名片只算一条且总数至多 8 条，每条不到 200 字节，`Connect` 的应答因此不会因名录内容而无限增长。指纹警告检查的地址是配对得到的候选地址与上一次连通的地址。`directory.max_records` 只要求为正数，管理员把它调到约万条以上时，这两个应答仍可能超过 MCP 服务进程 4 MiB 的接收上限；本版本不为它们分页或截断，这是已知的代价。
+The default cap `directory.max_records` is 1000, a public topic declaration and a card each taking one record, their total not exceeding 1000. The name and description are each at most 256 bytes, so 1000 declarations' `list_topics` reply is under 1 MiB; a card has at most 8 addresses, each host at most 253 bytes, so 1000 cards' `list_brokers` reply is under 3 MiB. Each card in the directory may produce a fingerprint warning at the same address, but one card counts once and the total is at most 8, each under 200 bytes, so `Connect`'s reply does not grow without bound with the directory's content. The addresses a fingerprint warning checks are the candidate addresses obtained from pairing and the last connected address. `directory.max_records` must only be positive; when an administrator raises it to about ten thousand or more, these two replies may still exceed the 4 MiB receive cap of the MCP server process; this version neither paginates nor truncates them, a known cost.
 
-对账用的帧：
+The reconciliation frames:
 
-| 帧 | 类别 | 内容 |
+| Frame | Class | Content |
 |---|---|---|
-| `RecordList` | 状态帧 | 发送方持有的每条记录的标识与版本号 |
-| `RecordRequest` | 请求帧 | 要向对方索取的记录的标识 |
-| `Records` | 应答帧与状态帧，可分多帧 | `RecordRequest` 的应答，以及一次应答放不下的后续批次，若干条完整的记录 |
+| `RecordList` | state frame | The identifier and version number of each record the sender holds |
+| `RecordRequest` | request frame | The identifiers of the records to request from the other side |
+| `Records` | reply frame and state frame, may span several frames | The reply to `RecordRequest`, and the subsequent batches that one reply cannot hold, several complete records |
 
-`RecordRequest` 是请求帧，`RecordList` 是状态帧。`Records` 既作 `RecordRequest` 的应答帧，也作承载后续批次的状态帧：应答的记录总长超过 1 MiB 时拆成多帧，第一批作为请求的应答返回，其余批次以 `Records` 状态帧经链路发送，接收方对两者的接受规则相同。标识在应答内先去重；每帧不超过 1 MiB；所有被索取的记录都送达，不截断。
+`RecordRequest` is a request frame and `RecordList` is a state frame. `Records` serves both as the reply frame to `RecordRequest` and as the state frame carrying subsequent batches: when the total length of the records to reply exceeds 1 MiB it is split into several frames, the first batch returned as the reply to the request and the rest sent as `Records` state frames over the link, with the receiver applying the same acceptance rules to both. Identifiers are deduplicated within a reply first; each frame does not exceed 1 MiB; every requested record is delivered, not truncated.
 
-## 核心算法与流程
+## Core Algorithms and Flows
 
-### 走查
+### Worked Example
 
-A 与 B 之间、B 与 C 之间各有一条链路，A 与 C 之间没有。A 已配置别名 `hostA`，监听地址保持默认配置，对外地址列表是默认路由所在接口的地址 `198.51.100.4:17443`。A 由不公开改为公开，之后又改回不公开。
+There is a link between A and B and one between B and C, and none between A and C. A has the alias `hostA` configured, keeps the default listen address configuration, and its advertised address list is the default-route interface address `198.51.100.4:17443`. A changes from not public to public, and then back to not public.
 
-| 步骤 | 事件 | A 的名录 | B 的名录 | C 的名录 |
+| Step | Event | A's directory | B's directory | C's directory |
 |---|---|---|---|---|
-| 1 | A 调用 `SetPublic(true)`，签发名片，对外地址列表 `198.51.100.4:17443`，版本 `v1` | A 名片 `v1` | 空 | 空 |
-| 2 | A 向 B 发增量 `RecordList`，B 索取后收到记录，对原始字节验签通过，其余检查也通过 | A 名片 `v1` | A 名片 `v1` | 空 |
-| 3 | B 向来源之外的对端 C 发增量 `RecordList`，C 索取后收到原始字节与签名并验签通过 | A 名片 `v1` | A 名片 `v1` | A 名片 `v1` |
-| 4 | C 没有其他对端，传播停止 | 不变 | 不变 | 不变 |
-| 5 | 一天后 A 续签，版本 `v2`，同样逐跳到达 C | A 名片 `v2` | A 名片 `v2` | A 名片 `v2` |
-| 6 | A 调用 `SetPublic(false)`，签发撤回，版本 `v3`，到期时间为此刻加 7 天 | A 撤回 `v3` | A 撤回 `v3` | A 撤回 `v3` |
-| 7 | 一台仍持有 `v2` 的 Broker D 与 C 建立链路并对账 | 不变 | 不变 | C 不向 D 索取 `v2`，并以增量 `RecordList` 告知 `v3`，D 随后索取。C 建立链路时发出的全量清单里已经带了 `v3`，D 是据此去索取的；增量回告只是另一条途径 |
-| 8 | 撤回 `v3` 到期 | 空 | 空 | 空 |
+| 1 | A calls `SetPublic(true)`, issuing a card with advertised address list `198.51.100.4:17443`, version `v1` | A card `v1` | empty | empty |
+| 2 | A sends B an incremental `RecordList`, B requests and receives the record, verifies the raw bytes and passes the other checks too | A card `v1` | A card `v1` | empty |
+| 3 | B sends an incremental `RecordList` to peer C other than the source, C requests and receives the raw bytes and signature and verifies them | A card `v1` | A card `v1` | A card `v1` |
+| 4 | C has no other peer, and propagation stops | unchanged | unchanged | unchanged |
+| 5 | A day later A renews, version `v2`, reaching C hop by hop the same way | A card `v2` | A card `v2` | A card `v2` |
+| 6 | A calls `SetPublic(false)`, issuing a revocation, version `v3`, expiry this instant plus 7 days | A revocation `v3` | A revocation `v3` | A revocation `v3` |
+| 7 | A Broker D still holding `v2` establishes a link with C and reconciles | unchanged | unchanged | C does not request `v2` from D, and tells `v3` by an incremental `RecordList`, which D then requests. C's full list sent when establishing the link already carried `v3`, and D requested based on that; the incremental report is only another path |
+| 8 | Revocation `v3` expires | empty | empty | empty |
 
-C 接受 `v1` 之后，列出已知 Broker 的结果包含 `hostA`，状态为可连接；接受 `v3` 之后不再包含。撤回 `v3` 到期时，各处的 `v2` 早已到期，因为 `v2` 的到期时间早于 `v3` 的。
+After C accepts `v1`, the result of listing known Brokers contains `hostA` with status connectable; after accepting `v3` it no longer contains it. When revocation `v3` expires, `v2` everywhere has long expired, because `v2`'s expiry is earlier than `v3`'s.
 
-### 对账
+### Reconciliation
 
-链路建立时与每隔 `directory.reconcile_interval`，双方各发出一帧全量 `RecordList`。收到对方的清单后，对每个标识比较版本：对方的更高或本方没有，列入索取清单；本方更高的，以一帧只含这些标识与本方版本的增量 `RecordList` 回告对方，不直接发 `Records`。版本必须严格更高这一条件使往返终止。本方持有、但从链路接受的现有版本未满 60 秒的标识不立即索取，而是记为待补取，在该版本接受满 60 秒时补取一次并接受。每个标识至多一条待补记录，重复出现只保留最早的到期时刻；待补集合至多 `directory.max_records` 个标识，满了不再记入，留给下一次定期对账；链路断开或解除配对时随该对端的对账状态一起清空。
+When a link is established and every `directory.reconcile_interval`, each side sends a full `RecordList` frame. After receiving the other's list, it compares versions for each identifier: if the other's is higher or this side has none, it goes on the request list; if this side's is higher, it reports back with an incremental `RecordList` frame containing only those identifiers and this side's versions, not sending `Records` directly. The condition that a version must be strictly higher makes the round trip terminate. An identifier this side holds whose existing version accepted from a link is less than 60 seconds old is not requested immediately, but is recorded as pending refetch, to be fetched once and accepted when that version has been accepted for 60 seconds. Each identifier has at most one pending-refetch record, repeated appearances keeping only the earliest deadline; the pending set has at most `directory.max_records` identifiers, and when full the rest are not recorded, left to the next periodic reconciliation; it is cleared together with that peer's reconciliation state when the link goes down or the pairing is removed.
 
-待补取使撤回不必等到下一次定期对账。现有版本在撤回签发之前已被接受，它接受满 60 秒的时刻因此不晚于撤回签发后 60 秒；窗口一到就补取，撤回在本 Broker 上于签发后 60 秒内生效。撤回逐跳传播，每一跳的等待都不超过一个替换间隔，第二跳及更远还要再加上前面各跳的传播延迟，因此撤回不是在签发后 60 秒内全网同时生效，离发布者越远生效越晚；定期的清单交换照常进行。持续推新版本的发布者仍然每个标识每 60 秒至多替换一次：窗口内的其余版本只会更新待补记录，不会产生额外索取。
+Pending refetch frees a revocation from waiting for the next periodic reconciliation. The existing version was accepted before the revocation was issued, so the instant it has been accepted for 60 seconds is no later than 60 seconds after the revocation was issued; the refetch happens when the window arrives, and the revocation takes effect on this Broker within 60 seconds of being issued. A revocation propagates hop by hop, each hop waiting at most one replacement interval, and the second hop and farther also add the propagation delay of the earlier hops, so a revocation does not take effect simultaneously network-wide within 60 seconds of being issued, but later the farther from the publisher; the periodic list exchange proceeds as usual. A publisher continuously pushing new versions still replaces an identifier at most once per 60 seconds: the other versions within the window only update the pending-refetch record and produce no extra requests.
 
-替换间隔在发布构建中恒为 60 秒，不读取任何环境变量。带 `peers_testenv` 构建标签的测试构建读取 `PEERS_TEST_DIRECTORY_REPLACE_INTERVAL`（Go duration），未设置、无法解析或非正数时仍取 60 秒；端到端测试用它把窗口缩短到 1 秒，以在既有的等待内覆盖逐跳撤回与地址变更，发布构建忽略该变量，构建钩子检查二进制中不含这个变量名。
+The replacement interval is a constant 60 seconds in release builds and reads no environment variable. The test build with the `peers_testenv` build tag reads `PEERS_TEST_DIRECTORY_REPLACE_INTERVAL` (a Go duration), still 60 seconds when unset, unparsable or non-positive; end-to-end tests use it to shorten the window to 1 second, covering hop-by-hop revocation and address change within the existing waits, and release builds ignore the variable, with the build hook checking that the binary does not contain this variable name.
 
-接受新记录或签发本机记录后，本包向来源以外的每个已建立链路的对端发一帧只含这些标识与版本的增量 `RecordList`，对方按同样规则索取。`Records` 既作 `RecordRequest` 的应答，也作承载一次应答放不下的后续批次的状态帧；应答按标识去重并按 1 MiB 的字节预算拆成多帧，超出预算的余下部分以 `Records` 状态帧继续发送，不截断，两种到达方式按同一规则接受。本方向只接受向该对端索取过的标识：一个标识自发出请求起 60 秒内（`requestTimeout` 的两倍）可以经该对端的 `Records` 应答或 `Records` 状态帧被接受，每个标识只接受一次；不在其中的记录整条丢弃，同一帧中这类丢弃合并为一条 warn 运行日志，事件名 `directory_unrequested_records`，字段 `peer` 与 `count`。
+After accepting a new record or issuing a local record, this package sends each established link peer other than the source an incremental `RecordList` frame containing only those identifiers and versions, and the other side requests them by the same rule. `Records` serves both as the reply to `RecordRequest` and as the state frame carrying the subsequent batches that one reply cannot hold; the reply is deduplicated by identifier and split into several frames by a 1 MiB byte budget, the part beyond the budget continuing to be sent as `Records` state frames, not truncated, and both ways of arrival accepted by the same rule. This direction accepts only identifiers it has requested from that peer: an identifier can be accepted through that peer's `Records` reply or `Records` state frame within 60 seconds of sending the request (twice `requestTimeout`), and each identifier is accepted once; a record not among them is dropped whole, and these drops within one frame are merged into one warn run log, event name `directory_unrequested_records`, with fields `peer` and `count`.
 
-每个对端同一时刻至多有一个在途索取。需要索取的标识进入该对端的待索取集合，已在途或已在集合中的不重复加入；集合至多 `directory.max_records` 个标识，满了的丢弃，由下一次对账补上。一次索取至多包含 256 个标识，同时不超过 `directory.max_records`，余下的留在集合中，在途索取结束后立即发起下一次。本方向已索取而尚未接受的标识一旦达到 `directory.max_records` 个就暂停索取新批次，数量最多再超出一批（至多 256 个），等有记录到达或窗口过期后再继续，因此对端持续发新的 `RecordList` 并回空应答也不能让已索取集合无限增长。每轮只清理已经过期的窗口和标识已全部到达的窗口，不遍历整个已索取集合；后一种窗口立即丢弃，窗口数因此受在途标识数约束，而不是受对端的应答速度约束。标识的对象名至多 4096 字节，超过的 `RecordList` 项与 `Records` 记录按格式错误丢弃，不进入待索取或已索取集合。每个请求的期限为 30 秒。索取由单独的协程完成，不阻塞该链路的状态帧；失败（超时、链路断开或应答不符合预期）只记 debug 级日志，不重试，由下一次对账补上。链路断开时清空该对端的待索取集合与已索取标识。一次对账传输的清单大小与名录的记录数成正比，记录数受上限约束；应答的帧大小受 1 MiB 预算约束，与记录数无关。
+Each peer has at most one in-flight fetch at a time. An identifier to request goes into that peer's to-request set, not added again if already in flight or already in the set; the set has at most `directory.max_records` identifiers, and when full the rest are dropped, made up by the next reconciliation. One fetch contains at most 256 identifiers and at the same time not more than `directory.max_records`, the rest staying in the set, and a new fetch starts immediately after the in-flight fetch ends. Once the identifiers requested in this direction but not yet accepted reach `directory.max_records`, requesting new batches pauses, with the count able to exceed by at most one batch (at most 256), and continues after a record arrives or a window expires, so that a peer continuously sending new `RecordList`s and replying empty cannot grow the requested set without bound. Each round cleans only expired windows and windows all of whose identifiers have arrived, not walking the whole requested set; a window of the latter kind is dropped immediately, so the number of windows is bounded by the number of in-flight identifiers rather than by the peer's reply speed. An identifier's object name is at most 4096 bytes, and an over-long `RecordList` item or `Records` record is dropped as a format error and enters neither the to-request nor the requested set. Each request has a 30-second deadline. The fetch is done by a separate goroutine and does not block the link's state frames; a failure (timeout, link teardown or unexpected reply) is recorded only at debug level, not retried, and made up by the next reconciliation. When the link goes down, that peer's to-request set and requested identifiers are cleared. The size of the list transmitted in one reconciliation is proportional to the directory's record count, which is bounded by the cap; a reply's frame size is bounded by the 1 MiB budget, independent of the record count.
 
-对方的清单中出现发布者为本机、版本高于本机已签发最高版本的标识时，本机先索取该记录，只有以本机公钥验签通过后才把已签发的最高版本抬到那个版本，使此后签发的记录不被各处当作旧版本拒绝；签发新记录时版本号用饱和加法，不因溢出回绕到 0。这种情形出现在时钟回拨或数据目录从较早的备份恢复之后。
+When the other's list contains an identifier whose publisher is this Broker and whose version is higher than the highest version this Broker has issued, this Broker first requests that record, and only after it verifies against the local public key does it raise the highest issued version to that version, so that records issued afterwards are not rejected everywhere as old versions; when issuing a new record the version uses saturating addition and does not wrap to 0 on overflow. This situation arises after a clock step backwards or a data directory restored from an earlier backup.
 
-### 接受一条记录
+### Accepting a Record
 
-下列条件全部满足才接受，任何一个不满足即丢弃：
+A record is accepted only when all of the following hold; failing any one, it is dropped:
 
-- 来源是已建立的链路。
-- 以原始字节中的发布者公钥对收到的原始字节验签通过，`publisher` 等于 `publicKey` 的指纹。
-- 尚未到期，且到期时间不晚于当前时间加 7 天再加 1 小时的时钟偏差容限。
-- 名片所载的别名符合别名的规则：1 至 24 个字符，取自字母、数字、`.`、`-`、`_`（`REQ-broker-pairing-037`）。
-- 本方没有同一标识的记录，或本方的版本号更低。
-- 同一标识的替换，从链路来的，只有在本方接受现有版本满 60 秒之后才接受；不满的丢弃、不转发，计入同一批的限量丢弃日志，`limit` 取 `replace_interval`，同时把该标识记为待补取，窗口到期时补取一次并接受。`handleRecordList` 因同一原因不能索取的更高版本同样记为待补取。接受时刻只记在内存中，从文件加载的记录视为可以立即替换。每个标识的最后接受时刻保留一个替换间隔，即使记录已过期并被删除也仍然适用，因此短命记录不能靠先过期来绕过间隔；保留的时刻至多 `directory.max_records` 条，更早的先丢弃。发布者是本机的记录不受这条限制，以本机公钥验签通过的回传记录照现有规则抬高版本。
-- 接受后不超出数量限制。同一标识的替换不增加记录数，不受数量限制。新标识的记录要同时满足：总数不超过 `directory.max_records`，经该链路接受的记录数不超过 `directory.max_records_per_link`，该发布者的公开 topic 声明与未知种类记录合计不超过 `directory.max_topics_per_publisher`，名片与撤回不计。本版本不认识的种类计入，使发布者不能借其他种类绕过这项上限。本机签发的记录不受这些限制，但计入总数。
+- The source is an established link.
+- The received raw bytes verify against the publisher public key in the raw bytes, and `publisher` equals the fingerprint of `publicKey`.
+- It has not expired, and its expiry is not later than the current time plus 7 days plus a 1-hour clock-skew tolerance.
+- The alias a card carries meets the alias rules: 1 to 24 characters drawn from letters, digits, `.`, `-`, `_` (`REQ-broker-pairing-037`).
+- This side has no record of the same identifier, or this side's version number is lower.
+- A replacement of the same identifier, coming from a link, is accepted only after this side has accepted the existing version for 60 seconds; a replacement within that period is dropped and not forwarded, counted in the same batch's quota-drop log with `limit` set to `replace_interval`, and the identifier is also recorded as pending refetch, to be fetched once and accepted when the window expires. `handleRecordList`'s higher versions that cannot be requested for the same reason are likewise recorded as pending refetch. The acceptance instant is kept only in memory, and a record loaded from the file is treated as immediately replaceable. Each identifier's last acceptance instant is kept for one replacement interval, still applying even after the record has expired and been deleted, so a short-lived record cannot bypass the interval by expiring first; the kept instants number at most `directory.max_records`, dropping the earlier ones first. A record whose publisher is this Broker is not subject to this rule, and a returned record that verifies against the local public key raises the version by the existing rule.
+- After acceptance the count limits are not exceeded. A replacement of the same identifier does not increase the record count and is not subject to the count limits. A record with a new identifier must satisfy all of: the total not exceeding `directory.max_records`, the records accepted over this link not exceeding `directory.max_records_per_link`, and that publisher's public topic declarations plus unknown-kind records together not exceeding `directory.max_topics_per_publisher`, cards and revocations not counted. Kinds this version does not recognize are counted, so a publisher cannot use other kinds to bypass this cap. A record this Broker issues is not subject to these limits but counts toward the total.
 
-来源不是已建立链路的 `RecordList` 与 `Records` 整帧忽略；来源不是已建立链路的 `RecordRequest` 回以空的 `Records`。
+A `RecordList` or `Records` frame whose source is not an established link is ignored whole; a `RecordRequest` whose source is not an established link is answered with an empty `Records`.
 
-名片的对外地址列表中各项的种类不在上述条件之内：名片含有本版本不认识的种类的地址项时，只要上述条件满足即照常接受，其余的地址项照常可用（`REQ-broker-discovery-017`）。
+A card's advertised address list items' kinds are not among the conditions above: when a card contains address items of a kind this version does not recognize, it is accepted as usual as long as the conditions above hold, and its other address items work as usual (`REQ-broker-discovery-017`).
 
-接受后连同收到的原始字节与签名写入名录，并向来源以外的每个已建立链路的对端发一帧增量 `RecordList` 告知该标识与版本；记录本身仍以收到的原始字节与签名传播。版本号必须更高这一条件使一条记录在每个 Broker 上至多接受一次，传播在连通网络内必然终止，链路构成环时也是如此。
+After acceptance the record is written to the directory along with the received raw bytes and signature, and an incremental `RecordList` frame telling the identifier and version is sent to each established link peer other than the source; the record itself is still propagated with the received raw bytes and signature. The condition that a version must be higher lets one record be accepted at most once per Broker, so propagation necessarily terminates within the connected network, even when the links form a cycle.
 
-### 签发与续签
+### Issuing and Renewing
 
-本机有效的名片在签发满 1 天时重新签发；本机的公开 topic 声明只在本 Broker 上仍有以公开方式在该 topic 中的 Agent 时，才在签发满 1 天时重新签发。版本号与到期时间按核心数据结构中的规则重新计算。
+A valid local card is reissued once it has been issued for 1 day; a local public topic declaration is reissued once it has been issued for 1 day only when an agent on this Broker is still in that topic publicly. The version number and expiry are recomputed by the rules in Core Data Structures.
 
-本机声明且尚未撤回的公开 topic 名与简介保存在内存中的活动集合里。`DeclarePublicTopic` 加入或更新活动集合，`RetirePublicTopic` 与 `SetPublic(false)` 移出。续签只针对公开时的名片与活动集合中的声明。重复声明同名的 topic 总是签发新版本，简介取本次给出的值，该名字不重复计入上限。
+The names and descriptions of this Broker's public topic declarations not yet revoked are kept in the in-memory active set. `DeclarePublicTopic` adds to or updates the active set, and `RetirePublicTopic` and `SetPublic(false)` remove from it. Renewal applies only to the card while public and to the declarations in the active set. Declaring the same topic name again always issues a new version with the description given this time, and the name is not counted against the cap twice.
 
-Broker 离线期间不续签，离线超过 7 天后其记录在各处到期；重新上线并仍为公开时立即签发新版本。重启后从文件加载的本机声明不在活动集合中，不续签；`broker` 在启动 2 分钟后调用一次 `RetireInactiveTopics`，为这些声明签发撤回。
+A Broker does not renew while offline, and after being offline more than 7 days its records expire everywhere; when it comes back online and is still public it issues a new version immediately. After a restart, local declarations loaded from the file are not in the active set and are not renewed; `broker` calls `RetireInactiveTopics` once 2 minutes after startup, issuing revocations for these declarations.
 
-别名或对外地址列表变化时，`broker` 调用 `Reissue`，本机立即签发新版本的名片，不等续签间隔（`REQ-broker-discovery-016`）。对外地址列表的变化来自 `broker.listen`、`broker.advertise`、`broker.advertise_extra` 的修改，或 `config` 定期重新枚举本机地址时发现的变化；监听端口的变更改变列表中的端口，默认别名不随监听端口变化。
+When the alias or the advertised address list changes, `broker` calls `Reissue` and this Broker immediately issues a new version of the card without waiting for the renewal interval (`REQ-broker-discovery-016`). The advertised address list changes come from modifying `broker.listen`, `broker.advertise` or `broker.advertise_extra`, or from a change `config` finds re-enumerating the local addresses periodically; a change of listen port changes the port in the list, and the default alias does not change with the listen port.
 
-发布者为本机的记录从网络回来时，本机先抬高已签发的最高版本，再按当前状态纠正。
+When a record whose publisher is this Broker comes back from the network, this Broker first raises the highest issued version, then corrects by the current state.
 
-| 回来的记录 | 当前状态 | 动作 |
+| Returned record | Current state | Action |
 |---|---|---|
-| 名片 | 公开 | 立即签发新名片 |
-| 名片 | 不公开 | 签发撤回 |
-| 公开 topic 声明 | 公开且该名字在活动集合中 | 以活动集合中的简介签发新声明 |
-| 公开 topic 声明 | 其他 | 签发撤回 |
-| 撤回 | 名片位置、公开 | 签发新名片 |
-| 撤回 | 声明位置、公开且在活动集合中 | 签发新声明 |
-| 撤回 | 其他 | 不动作 |
+| Card | Public | Issue a new card immediately |
+| Card | Not public | Issue a revocation |
+| Public topic declaration | Public and the name is in the active set | Issue a new declaration with the description from the active set |
+| Public topic declaration | Other | Issue a revocation |
+| Revocation | Card position, public | Issue a new card |
+| Revocation | Declaration position, public and in the active set | Issue a new declaration |
+| Revocation | Other | Do nothing |
 
-维护循环每分钟执行一次，下一次对账更早时提前执行，做到期清理、续签判定、落盘重试与定期对账。视图与对账清单在读取时另行过滤已到期的记录，到期判定不依赖清理时刻。
+The maintenance loop runs once a minute, earlier when the next reconciliation is sooner, and does expiry cleanup, the renewal decision, flush retry and periodic reconciliation. The views and the reconciliation list additionally filter out expired records when read, so the expiry decision does not depend on the cleanup instant.
 
-### 启动时的核对
+### Startup Check
 
-加载名录后比较配置与本机签发的记录。配置为公开时立即签发一张新名片，与重新上线时的处理一致。配置为不公开而名录中有本机签发、尚未到期且不是撤回的记录的，为每一条签发撤回。这使用户在 Broker 停止期间把它改为不公开的操作在启动后生效。
+After loading the directory, compare the configuration with the records this Broker issued. When configured public, issue a new card immediately, matching the handling on coming back online. When configured not public while the directory has records this Broker issued that have not expired and are not revocations, issue a revocation for each. This makes a user's change to not public while the Broker is stopped take effect after startup.
 
-## 错误与失败语义
+## Error and Failure Semantics
 
-| 情形 | 行为 |
+| Situation | Behaviour |
 |---|---|
-| 签名无效，发布者与公钥不符 | 丢弃，运行日志记录来源对端 |
-| 原始字节超过 64 KiB | 丢弃，接收侧记一条带 `reason` 的 warn 日志；本机签发返回错误，不产生记录 |
-| 已到期或到期时间过远 | 丢弃 |
-| 版本不高于已有记录 | 丢弃，不记录日志；对账中属于正常情况 |
-| 替换过快 | 丢弃，不转发，记为待补取，现有版本接受满 60 秒时补取一次；同一批 `Records` 中因替换间隔丢弃的记录并入限量丢弃日志，`limit` 取 `replace_interval` |
-| 未索取的记录 | 丢弃整条，同一帧中这类丢弃合并为一条 warn 日志，事件名 `directory_unrequested_records`，带 `peer` 与 `count` |
-| 超出任一数量限制 | 丢弃新标识的记录；同一批 `Records` 中因限量或替换间隔丢弃的记录按来源链路合并为一条 warn 日志，带丢弃条数与触发的是哪一项上限，`limit` 取 `max_records`、`max_records_per_link`、`max_topics_per_publisher` 或 `replace_interval`；已有标识的更新照常接受 |
-| 对账进行中链路断开 | 放弃本次对账，链路重建时重新开始 |
-| 本 Broker 不公开时调用 `DeclarePublicTopic` | 返回 `invalid_argument`，提示先把 Broker 设为公开 |
-| 本机声明的公开 topic 数已达上限 | 返回 `quota_exceeded` |
+| Invalid signature, publisher not matching the public key | Dropped, the run log records the source peer |
+| Raw bytes exceed 64 KiB | Dropped, the receive side records a warn log with `reason`; local issuing returns an error and produces no record |
+| Expired or expiry too far in the future | Dropped |
+| Version not higher than the existing record | Dropped, no log recorded; normal in reconciliation |
+| Replacement too fast | Dropped, not forwarded, recorded as pending refetch and fetched once when the existing version has been accepted for 60 seconds; records dropped in the same batch of `Records` for the replacement interval are merged into the quota-drop log with `limit` set to `replace_interval` |
+| Unrequested record | Dropped whole, these drops within one frame merged into one warn log, event name `directory_unrequested_records`, with `peer` and `count` |
+| Exceeding any count limit | A record with a new identifier is dropped; records dropped in the same batch of `Records` for a quota or the replacement interval are merged by source link into one warn log, with the drop count and which cap triggered it, `limit` being `max_records`, `max_records_per_link`, `max_topics_per_publisher` or `replace_interval`; an update of an existing identifier is accepted as usual |
+| The link goes down during reconciliation | Abandon this reconciliation, restarting when the link is re-established |
+| `DeclarePublicTopic` called while this Broker is not public | Return `invalid_argument`, saying to set the Broker public first |
+| This Broker's declared public topic count has reached the cap | Return `quota_exceeded` |
 
-接受记录是幂等的。各 Broker 的时钟不一致时，到期判断以各自的时钟为准，同一条记录在不同 Broker 上消失的时刻相差不超过它们的时钟偏差。
+Accepting a record is idempotent. When Brokers' clocks disagree, the expiry decision follows each one's own clock, and the instant at which one record disappears on different Brokers differs by no more than their clock skew.
 
-## 并发与事务边界
+## Concurrency and Transaction Boundaries
 
-名录由一把读写锁保护。签发与接受的检查、写入在写锁内成批完成；广播与回调在锁外执行。向其他对端的推送在锁内收集清单，锁外调用 `Links.Send`，以缩短持锁时间。对账帧由 `link` 按到达顺序串行交给本包，索取由单独的协程完成；待补取的等待每个对端至多一个协程，`Close` 与索取协程一并等待它们结束。名录文件的写入在锁外由单独的互斥锁串行，先写临时文件再原子替换；写入失败不影响内存中的名录，下次变更或维护时重试。从链路接受的记录只置脏标记，由维护循环落盘，每分钟至多一次；落盘按独立的 60 秒节拍安排，不随 `directory.reconcile_interval` 缩短或拉长，`directory.reconcile_interval` 小于 60 秒时也不会把两次落盘的间隔拉长到两个对账间隔。本机签发、撤回与 `Close` 立即落盘。崩溃时至多丢失一分钟内从链路接受的记录，由对账补回。
+The directory is protected by one read-write lock. The checks and writes of issuing and accepting are done in a batch under the write lock; broadcasting and callbacks run outside the lock. Pushing to other peers collects the list under the lock and calls `Links.Send` outside it, to shorten the hold time. Reconciliation frames are handed to this package by `link` serially in arrival order, and fetches are done by a separate goroutine; the pending refetch has at most one goroutine per peer, and `Close` waits for them alongside the fetch goroutines. Writing the directory file is serialized outside the lock by a separate mutex, writing a temporary file then atomically replacing; a write failure does not affect the directory in memory, and the next change or maintenance retries. A record accepted from a link only sets a dirty flag, flushed by the maintenance loop at most once a minute; the flush is scheduled on an independent 60-second cadence, not shortened or lengthened by `directory.reconcile_interval`, and a `directory.reconcile_interval` under 60 seconds does not lengthen the gap between two flushes to two reconciliation intervals. Local issuing, revocation and `Close` flush immediately. On a crash, at most the records accepted from links within the last minute are lost, made up by reconciliation.
 
-## 实现状态
+## Implementation Status
 
-| 能力 | 状态 | 代码 |
+| Capability | Status | Code |
 |---|---|---|
-| 名片的签发、续签与撤回 | 已实现 | `internal/directory/publish.go`（`SetPublic`、`renewDue`、`issueRevocationLocked`） |
-| 对外地址列表变化时名片的重新签发 | 已实现 | `internal/directory/publish.go`（`Reissue`） |
-| 公开 topic 声明的签发与续签 | 已实现 | `internal/directory/publish.go`（`DeclarePublicTopic`、`RetirePublicTopic`、`RetireInactiveTopics`） |
-| 对账 | 已实现 | `internal/directory/reconcile.go`（`handleRecordList`、`handleRecordRequest`、`handleRecordsState`、`splitRecords`、`reconcileAll`）、`internal/directory/fetch.go`（`scheduleFetch`、`fetchLoop`、`acceptRecords`、`noteRefetch`、`refetchLoop`） |
-| 记录的验证与逐跳推送 | 已实现 | `internal/directory/record.go`（`parseRecord`、`signRecord`）、`internal/directory/reconcile.go`（`acceptBatch`） |
-| 到期清理与数量限制 | 已实现 | `internal/directory/store.go`（`accept`、`purgeExpired`、`load`） |
-| 版本号的持久化与抬高 | 已实现 | `internal/directory/version.go`（`nextVersion`）、`internal/directory/persist.go` |
-| 启动时的核对 | 已实现 | `internal/directory/publish.go`（`startupCheck`）、`internal/directory/start.go`（`Start`） |
-| 已知 Broker 的状态计算 | 已实现 | `internal/directory/views.go`（`Brokers`） |
+| Issuing, renewing and revoking a card | Implemented | `internal/directory/publish.go` (`SetPublic`, `renewDue`, `issueRevocationLocked`) |
+| Reissuing a card when the advertised address list changes | Implemented | `internal/directory/publish.go` (`Reissue`) |
+| Issuing and renewing public topic declarations | Implemented | `internal/directory/publish.go` (`DeclarePublicTopic`, `RetirePublicTopic`, `RetireInactiveTopics`) |
+| Reconciliation | Implemented | `internal/directory/reconcile.go` (`handleRecordList`, `handleRecordRequest`, `handleRecordsState`, `splitRecords`, `reconcileAll`), `internal/directory/fetch.go` (`scheduleFetch`, `fetchLoop`, `acceptRecords`, `noteRefetch`, `refetchLoop`) |
+| Record verification and hop-by-hop push | Implemented | `internal/directory/record.go` (`parseRecord`, `signRecord`), `internal/directory/reconcile.go` (`acceptBatch`) |
+| Expiry cleanup and count limits | Implemented | `internal/directory/store.go` (`accept`, `purgeExpired`, `load`) |
+| Version persistence and raising | Implemented | `internal/directory/version.go` (`nextVersion`), `internal/directory/persist.go` |
+| Startup check | Implemented | `internal/directory/publish.go` (`startupCheck`), `internal/directory/start.go` (`Start`) |
+| Computing the status of a known Broker | Implemented | `internal/directory/views.go` (`Brokers`) |
