@@ -1,45 +1,45 @@
-# 项目名称统一为 peers
+# Rename the project to peers
 
-## 背景
+## Context
 
-本项目上游的仓库已改为 `wangzw/peers`，官网已改为 <https://zhanwei.wang/peers/>。用户要求项目名在这一版统一改为 peers，原话是：“项目改名为 peers，上游已经改好了”“你需要改掉对应的 agent-peer字眼，从命令行名字，配置文件到文档，通知site 一起改。”名称因此是外部约束：命令行、安装路径、配置文件、服务定义与文档如果继续使用旧名，就会与发布渠道和官网不一致。
+The repository upstream of this project has changed to `wangzw/peers`, and the website has changed to <https://zhanwei.wang/peers/>. The user required the project name to be unified to peers in this version, in these words: "Rename the project to peers; the upstream is already done" and "You need to change the corresponding agent-peer wording, from the command-line name and the configuration file to the docs, and tell the site to change along." The name is therefore an external constraint: if the command line, installation paths, configuration files, service definitions and documentation keep the old name, they will disagree with the release channel and the website.
 
-用户同时裁定“不考虑兼容”。0.3.0 与本版本之间的安装布局、配置文件与协议常量互不通用；继续兼容会把旧名留在路径、协议和代码里，与名称统一的约束冲突。
+The user also ruled out compatibility. The installation layout, configuration files and protocol constants are not interchangeable between 0.3.0 and this version; keeping compatibility would leave the old name in paths, the protocol and the code, conflicting with the constraint of a unified name.
 
-## 考虑过的选项
+## Options Considered
 
-### 保留 agent-peer，不改名
+### Keep agent-peer and do not rename
 
-**否决**：与上游仓库、官网和发布产物的名称不一致，用户明确要求改名。
+**Rejected**: it disagrees with the names of the upstream repository, the website and the release artifacts, and the user explicitly required the rename.
 
-### 改名并保留与 0.3.0 的兼容
+### Rename and keep compatibility with 0.3.0
 
-安装时迁移旧路径、旧服务和旧管理组，读取旧的项目配置文件名，并保留旧的协议常量与配对标签。
+Migrate the old paths, old services and old admin group during installation, read the old project configuration file name, and keep the old protocol constants and pairing labels.
 
-**否决**：用户裁定“不考虑兼容”，不考虑从旧版本升级。兼容层会让旧名留在路径、协议和代码里，并需要维护两套安装路径。
+**Rejected**: the user ruled out compatibility and ruled out upgrading from an old version. A compatibility layer would leave the old name in paths, the protocol and the code, and would require maintaining two sets of installation paths.
 
-### 改名且不兼容
+### Rename without compatibility
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-项目名称统一为 peers。二进制、发布包及其包内条目、Go module 路径、安装路径、用户级与系统级的数据目录、配置目录与日志目录、运行时目录、服务单元名与 launchd label、管理组默认名、项目配置文件名、环境变量、构建标签、配对协议的 HMAC 域分隔标签、证书 CN 与自更新查询的仓库都改用 peers 下的对应名称。
+The project name is unified to peers. The binary, the release packages and the entries inside them, the Go module path, the installation paths, the system and user data directories, the configuration and log directories, the runtime directory, the service unit name and launchd label, the default admin group name, the project configuration file name, the environment variables, the build tags, the HMAC domain separation label of the pairing protocol, the certificate CN, and the repository queried for self-updates all use the corresponding names under peers.
 
-本版本与 agent-peer 0.3.0 不兼容，不提供迁移路径：旧版本的安装、配置与配对状态都不被读取，旧路径、旧服务与旧管理组不被迁移，旧的协议常量与配对标签不被保留。
+This version is incompatible with agent-peer 0.3.0 and provides no migration path: the old version's installation, configuration and pairing state are not read, the old paths, old services and old admin group are not migrated, and the old protocol constants and pairing labels are not kept.
 
-MCP 服务名 `peer` 与工具名不变，只改使用说明与工具描述中的产品名。
+The MCP server name `peer` and the tool names are unchanged; only the product name in the usage instructions and tool descriptions changes.
 
-## 后果
+## Consequences
 
-项目的全部对外名称与上游仓库、官网一致，发布包、安装路径与文档不再出现两个名字。
+All of the project's external names match the upstream repository and the website, and release packages, installation paths and documentation no longer show two names.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 本版本与 agent-peer 0.3.0 不兼容：0.3.0 的实例与本版本无法配对。
-- 旧版本的安装、配置、身份、审计与服务日志都不被读取，也不迁移；旧的服务单元、launchd 作业与管理组不会被本版本删除。
-- 文档、官网与发布产物中的旧名要一起改，任何一处遗漏都会让用户看到两个名字。
+- This version is incompatible with agent-peer 0.3.0: a 0.3.0 instance cannot pair with this version.
+- The old version's installation, configuration, identity, audit and service logs are not read or migrated; the old service unit, launchd job and admin group are not removed by this version.
+- The old name in the documentation, the website and the release artifacts must change together, and any omission leaves the user seeing two names.
 
-## 失效条件
+## Invalidation Conditions
 
-上游仓库或官网再次改名时，本决策的名称前提不再成立，需要重新命名。项目需要与某个旧版本重新互通时，不兼容的结论需要重新评估。
+If the upstream repository or the website is renamed again, the name premise of this decision no longer holds and a rename is needed. If the project must interoperate with an old version again, the incompatibility conclusion needs to be re-evaluated.
