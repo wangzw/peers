@@ -88,6 +88,8 @@ Start the Broker the way you started it before, for example with `peers service 
 
 A session can update the Broker with the `update_broker` tool, which takes no arguments. It asks the Broker registered for the session to upgrade itself and returns as soon as the Broker answers, with the version before and after and whether the Broker is about to restart. When the installed version is already the latest, it says so and changes nothing. A user or system Broker that does not run under the service manager cannot update itself, and the tool says to use the terminal command instead.
 
+The tool waits at most 4 minutes. If the Broker does not finish in time, the returned message names the two possible outcomes, that the upgrade was abandoned and the running version is unchanged (a replacement that had started is rolled back), or that it completed and the Broker is restarting with the new version, and tells you to check the result with `peers --version`, `peers service status` or `peers update` in a terminal.
+
 The tool needs write permission on the Broker's configuration file, which is granted separately from read permission. It needs no terminal: Claude Code asks for confirmation by default before the call runs, and that confirmation is the last manual check before the Broker's binary is replaced. Do not add `update_broker` to auto-approved tools, so the confirmation is never skipped.
 
 After the Broker restarts, the connection recovers automatically. The MCP server in the session that made the call keeps the old version until the session is reopened. [MCP tools]({{< relref "/docs/reference/mcp-tools" >}}) lists the tool and its result fields.

@@ -58,15 +58,15 @@ pairing:
 | `directory.max_topics_per_publisher` | 整数 | `16` | 同一发布者的公开 topic 声明与未知种类记录合计上限。名片与撤销不计。 | 可以 |
 | `send.link_retries` | 整数 | `5` | 链路未建立时的重试次数。 | 可以 |
 | `send.link_backoff` | 时长 | `500ms` | 首次重试前的等待；之后每次翻倍，单次不超过 8 秒。 | 可以 |
-| `send.request_timeout` | 时长 | `20s` | 一次发送的总时限，包含重试与等待。 | 可以 |
+| `send.request_timeout` | 时长 | `20s` | 一次发送的总时限，包含重试与等待。`send_message` 调用最多等 30 秒；把这项调到 30 秒以上时，先结束的是工具自身的截止时间，这个截止时间同样作用于 Broker，工具放弃时 Broker 随之中止这次发送。调用返回 `Delivery unknown`，超时前已发出的消息可能已经送达，重发可能让对方收到两份。 | 可以 |
 | `send.inbox_retries` | 整数 | `2` | inbox 确定未写入时的重试次数。 | 可以 |
 | `send.inbox_backoff` | 时长 | `200ms` | inbox 写入重试之间的等待。 | 可以 |
 | `send.inbox_timeout` | 时长 | `5s` | 单次 inbox 写入的期限。 | 可以 |
 | `send.dedupe_window` | 时长 | `5m` | 去重表条目的保留时间。 | 可以 |
-| `link.dial_timeout` | 时长 | `5s` | 拨号时对每个地址的连接期限。 | 可以 |
+| `link.dial_timeout` | 时长 | `5s` | 拨号时对每个地址的连接期限。`connect_broker` 调用最多等 30 秒；把这项调到足以让一次配对超过 30 秒时，先结束的是工具自身的截止时间，这个截止时间同样作用于 Broker，工具放弃时 Broker 随之中止这次配对。调用返回 `Not connected`，进行中的配对可能已经完成，可用 `list_brokers` 核实。 | 可以 |
 | `link.reconnect_min` | 时长 | `1s` | 重建链路的初始退避间隔。 | 可以 |
 | `link.reconnect_max` | 时长 | `1m` | 重建链路的最大退避间隔。 | 可以 |
-| `link.keepalive_interval` | 时长 | `15s` | 保活探测的间隔。gRPC 会把小于 10 秒的间隔提高到 10 秒。 | 可以 |
+| `link.keepalive_interval` | 时长 | `15s` | 保活探测的间隔。小于 10 秒的间隔会提高到 10 秒。 | 可以 |
 | `link.keepalive_timeout` | 时长 | `10s` | 保活探测的应答期限。 | 可以 |
 | `log.level` | 字符串 | `info` | 运行日志级别：`debug`、`info`、`warn` 或 `error`。 | 可以 |
 | `update.check` | 布尔 | `true` | Broker 是否周期检查 GitHub 上是否有更新的正式发布版本。为 `false` 时不发出检查请求。 | 可以 |

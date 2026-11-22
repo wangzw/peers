@@ -58,15 +58,15 @@ pairing:
 | `directory.max_topics_per_publisher` | integer | `16` | Maximum number of public-topic declarations and records of unknown kind from one publisher. Broker cards and revocations do not count. | Yes |
 | `send.link_retries` | integer | `5` | Retries when a link is not established. | Yes |
 | `send.link_backoff` | duration | `500ms` | Wait before the first retry; it doubles each time, up to 8 seconds per wait. | Yes |
-| `send.request_timeout` | duration | `20s` | Total time budget for one send, including retries and waits. | Yes |
+| `send.request_timeout` | duration | `20s` | Total time budget for one send, including retries and waits. A `send_message` call waits at most 30 seconds regardless; when the key is set above that, the tool's own deadline ends the call first and also applies to the Broker, so the Broker stops the send when the tool gives up. The call returns `Delivery unknown`, and a message already sent may have been delivered, so a resend may deliver a second copy. | Yes |
 | `send.inbox_retries` | integer | `2` | Retries when the inbox write definitely did not happen. | Yes |
 | `send.inbox_backoff` | duration | `200ms` | Wait between inbox write retries. | Yes |
 | `send.inbox_timeout` | duration | `5s` | Deadline for one inbox write. | Yes |
 | `send.dedupe_window` | duration | `5m` | How long entries stay in the duplicate-message table. | Yes |
-| `link.dial_timeout` | duration | `5s` | Connection deadline for each address while dialing. | Yes |
+| `link.dial_timeout` | duration | `5s` | Connection deadline for each address while dialing. A `connect_broker` call waits at most 30 seconds regardless; when the key is set long enough to push a pairing past that, the tool's own deadline ends the call first and also applies to the Broker, so the Broker stops the pairing when the tool gives up. The call returns `Not connected`, and a pairing already under way may have completed, so check with `list_brokers`. | Yes |
 | `link.reconnect_min` | duration | `1s` | Initial backoff when re-establishing a link. | Yes |
 | `link.reconnect_max` | duration | `1m` | Maximum backoff when re-establishing a link. | Yes |
-| `link.keepalive_interval` | duration | `15s` | Keepalive probe interval. gRPC raises an interval below 10 seconds to 10 seconds. | Yes |
+| `link.keepalive_interval` | duration | `15s` | Keepalive probe interval. An interval below 10 seconds is raised to 10 seconds. | Yes |
 | `link.keepalive_timeout` | duration | `10s` | Deadline for a keepalive reply. | Yes |
 | `log.level` | string | `info` | Run log level: `debug`, `info`, `warn` or `error`. | Yes |
 | `update.check` | boolean | `true` | Whether the Broker periodically checks GitHub for a newer formal release. When false, the Broker sends no check requests. | Yes |

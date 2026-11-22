@@ -88,6 +88,8 @@ The new binary takes effect the next time the Broker starts.
 
 会话可以用 `update_broker` 工具更新 Broker，这个工具不带参数。它请会话已登记的 Broker 升级自己，在 Broker 应答后立即返回，给出升级前后的版本，以及 Broker 是否即将重启。已是最新版本时，它说明这一点，不做任何改动。用户级或系统级的 Broker 不在服务管理器下运行时，不能自己更新，工具会提示改用终端命令。
 
+工具最多等 4 分钟。到时 Broker 没有完成，它返回的说明给出两种可能结果：升级被放弃、运行中的版本不变（已经开始替换的会回滚），或者升级已完成、Broker 正带着新版本重启；说明还提示用 `peers --version`、`peers service status`，或在终端运行 `peers update` 来核实。
+
 这个工具需要对 Broker 配置文件的写权限，这一权限可以与读权限分开授予。它不需要终端：Claude Code 默认会在调用前请你确认，这次确认是 Broker 的二进制被替换之前最后一道人工检查。不要把 `update_broker` 加入自动批准，以免跳过这道确认。
 
 Broker 重启后，连接会自动恢复。发起调用的会话里，MCP 服务要重开会话才会用上新版本。工具与返回字段见 [MCP 工具]({{< relref "/docs/reference/mcp-tools" >}})。
