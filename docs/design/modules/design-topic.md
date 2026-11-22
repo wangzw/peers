@@ -1,62 +1,65 @@
 # topic
 
-`topic` 记录哪个 Agent 在哪个 [topic](../../glossary.md) 里，并据此判定两个 Agent 是否可见。本机的成员关系来自 Agent 的加入与退出，对端的成员关系经链路交换得到，交换时只涉及双方都有成员的 topic。可以把它看作一张本机成员名单，加上每条链路各一张的对端成员名单。
+`topic` records which agent is in which [topic](../../glossary.md) and decides from that whether two agents are visible to each other. The local memberships come from an agent's joining and leaving, and a peer's memberships are obtained by exchanging over a link, the exchange covering only the topics both sides have members in. It can be thought of as one local roster plus, for each link, one peer roster.
 
-## 核心概念
+## Core Concepts
 
-链路两端需要找出共同的 topic，又不能把自己独有的 topic 名字告诉对方。做法是各自对 topic 名、盐值和发送方指纹求摘要，只交换摘要（[ADR-salted-topic-digest](../../adr/adr-salted-topic-digest.md)）：同一个 topic 在两个方向上的摘要不同，本机发出时按本机指纹计算，比对收到的摘要时按对端指纹计算；摘要相同说明名字相同，摘要不同则对方无从得知名字，把收到的摘要集合原样回送也得不到交集。盐值由链路建立时双方各提供一半随机数拼成，每条链路、每次建立都不同；指纹是本机证书指纹，即对端在链路上看到的同一个值。
+The two ends of a link need to find the topics they share, yet must not tell each other the names of topics they alone have. The approach is for each to compute a digest over the topic name, the salt and the sender's fingerprint and exchange only digests ([ADR-salted-topic-digest](../../adr/adr-salted-topic-digest.md)): the same topic's digest differs in the two directions, computed with the local fingerprint when this side sends and with the peer's fingerprint when comparing a received digest; an equal digest means an equal name, while a different digest leaves the other side unable to learn the name, and sending the received digest set back verbatim yields no intersection. The salt is formed by each side contributing half a nonce when the link is established, different for each link and each establishment; the fingerprint is the local certificate's fingerprint, the very value the peer sees on the link.
 
-每一方发出的是按本机指纹计算的、本机当前有成员的 topic 的摘要集合；收到对端最近一次发来的集合后，用按对端指纹计算的本机同名 topic 摘要与之求交，得到共同的 topic。交集不由某一方算好后通知另一方，而是双方各算各的；任何一个集合变化，持有它的一方都重算，并把新进入交集的 topic 的成员名单发给对方。双方依据的是同样的一对集合，算出的交集最终相同。
+What each side sends is the digest set of the topics it currently has members in, computed with the local fingerprint; after receiving the peer's latest set, it intersects that with the digests of its own same-named topics computed with the peer's fingerprint, giving the shared topics. The intersection is not computed by one side and then announced to the other, but computed by each side itself; whenever a set changes, the side holding it recomputes and sends the newly intersecting topics' rosters to the other side. Both sides rely on the same pair of sets, so the intersections they compute end up the same.
 
-## 职责
+## Responsibilities
 
-- 记录本机每个 Agent 所在的 topic，处理加入与退出，在 Agent 注销时清除其全部成员关系（`REQ-topics-001` 至 `REQ-topics-004`、`REQ-topics-022`）。
-- 在每条链路上与对端交换加盐摘要，算出共同的 topic，只就这些 topic 发送本机的成员名单；两边对同一个名字按同一个发送方指纹与盐值算出的摘要相同，因而是同一个 topic（`REQ-topics-007`、`REQ-topics-009`、`REQ-topics-014`）。
-- 保存每条链路对端发来的成员名单，在链路断开时整体丢弃。
-- 判定两个 Agent 是否可见（[ADR-topic-scoped-visibility](../../adr/adr-topic-scoped-visibility.md)，`REQ-topics-005`、`REQ-topics-006`）。
-- 在本机成员关系或 Agent 的名字、曾用名、消歧标识、状态变化时，向相关链路推送变化（`REQ-agent-messaging-031`、`REQ-agent-messaging-032`）。
+- Record each local agent's topics, handle joining and leaving, and clear all of an agent's memberships when it unregisters (`REQ-topics-001` to `REQ-topics-004`, `REQ-topics-022`).
+- Exchange salted digests with the peer on each link, compute the shared topics, and send this side's rosters only for those topics; two sides computing the same digest for the same name by the same sender fingerprint and salt means the same topic (`REQ-topics-007`, `REQ-topics-009`, `REQ-topics-014`).
+- Store the roster each link's peer sends, discarding it whole when the link goes down.
+- Decide whether two agents are visible ([ADR-topic-scoped-visibility](../../adr/adr-topic-scoped-visibility.md), `REQ-topics-005`, `REQ-topics-006`).
+- On a change of local membership or of an agent's name, previous name, disambiguator or status, push the change to the relevant links (`REQ-agent-messaging-031`, `REQ-agent-messaging-032`).
 
-### 非职责
+### Non-Responsibilities
 
-- 不决定默认 topic，由 [mcpserver](design-mcpserver.md) 计算后经 `broker` 调用加入。
-- 不发布也不传播公开 topic 的声明，由 [directory](design-directory.md) 负责；加入时的公开声明由 [broker](design-broker.md) 先转交 `directory`，成功后再调用本包加入。本包中的 topic 都按不公开对待（`REQ-topics-008`）。
-- 不把成员名单发往产生它的链路之外，系统中没有这样的转发（[ADR-direct-links-only](../../adr/adr-direct-links-only.md)）。
-- 不读取配置，不拼 Agent 地址。别名与地址由 `broker` 处理。
+- Does not decide the default topic; [mcpserver](design-mcpserver.md) computes it and joins through a `broker` call.
+- Does not publish or propagate public topic declarations; [directory](design-directory.md) owns those. A public declaration at join time is handed by [broker](design-broker.md) to `directory` first, and only after success does it call this package to join. All topics in this package are treated as not public (`REQ-topics-008`).
+- Does not send a roster beyond the link that produced it; the system has no such forwarding ([ADR-direct-links-only](../../adr/adr-direct-links-only.md)).
+- Does not read the configuration and does not assemble agent addresses. Aliases and addresses are handled by `broker`.
 
-## 外部接口契约
+## External Interface Contract
 
-供 `broker` 调用，签名稳定。除 `New` 与 `ValidateName` 外，下列函数是主类型 `*Registry` 的方法，由 `New(t Transport, opts Options)` 创建。`Transport` 是本包对 `link` 的依赖面，只含 `SendLatest`、`SendLatestKey`、`HandleState`、`Subscribe`；broker 的 topic 装配器传入 link 实例，`New` 在 link 开始监听与拨号之前调用。`Options` 带日志记录器与 `Self`：日志记录器为 nil 时用 `slog.Default()`；`Self` 是本机证书指纹，即对端在链路上看到的同一个值，`New` 在它为零值时 panic。
+Called by `broker`; the signatures are stable. Except `New` and `ValidateName`, the functions below are methods of the main type `*Registry`, created by `New(t Transport, opts Options)`. `Transport` is this package's dependency surface on `link`, containing only `SendLatest`, `SendLatestKey`, `HandleState` and `Subscribe`; broker's topic assembler passes a link instance, and `New` is called before link begins listening and dialing. `Options` carries a logger and `Self`: the logger uses `slog.Default()` when nil; `Self` is the local certificate's fingerprint, the very value the peer sees on the link, and `New` panics when it is the zero value.
 
 ```go
-// MaxMemberNameBytes 是成员条目的名字或曾用名允许的最长字节数。它与 inbox.MaxNameBytes
-// 相同；topic 不能引用 inbox，由 internal/broker 的测试保证两者相等。
+// MaxMemberNameBytes is the longest byte count allowed for a member entry's name or
+// previous name. It equals inbox.MaxNameBytes; topic cannot reference inbox, so a test in
+// internal/broker guarantees the two are equal.
 const MaxMemberNameBytes = 128
 
 func New(t Transport, opts Options) *Registry
 func ValidateName(name string) error
 
-// Join 把 agent 加入 name。本机有成员的 topic 已达上限，或该 topic 的本机成员已达上限时
-// 返回 ErrTopicLimit。
+// Join adds agent to name. It returns ErrTopicLimit when the topics with local members
+// have reached the cap, or the topic's local members have reached the cap.
 func (r *Registry) Join(agent AgentID, name string) error
 func (r *Registry) Leave(agent AgentID, name string) error
 func (r *Registry) LeaveAll(agent AgentID)
 func (r *Registry) TopicsOf(agent AgentID) []string
 
-// AgentChanged 在本机 Agent 的名字、曾用名、消歧标识、状态、账户名或“必须带消歧标识”变化时由 broker 调用；
-// 曾用名为空表示没有，或已过保留期。
+// AgentChanged is called by broker when a local agent's name, previous name,
+// disambiguator, status, account name or "must carry the disambiguator" changes; an
+// empty previous name means none, or the retention period has passed.
 func (r *Registry) AgentChanged(agent AgentID, m Member)
 
-// Visible 判定本机 Agent 与另一个 Agent 是否可见，并返回共同的 topic。
-// other 可以是本机 Agent，也可以是某条链路上的远端 Agent。
+// Visible decides whether a local agent and another agent are visible, and returns the
+// shared topics. other may be a local agent or a remote agent on some link.
 func (r *Registry) Visible(local AgentID, other AgentRef) (shared []string, ok bool)
 
-// VisibleAgents 返回对 local 可见的全部 Agent 及各自的共同 topic。
+// VisibleAgents returns every agent visible to local and their shared topics.
 func (r *Registry) VisibleAgents(local AgentID) []VisibleAgent
 
-// RemoteMembers 返回 peer 发来的、处在当前交集内的成员条目，供解析地址与核对发送方。
+// RemoteMembers returns the member entries peer sent that are in the current
+// intersection, for resolving addresses and checking the sender.
 func (r *Registry) RemoteMembers(peer Fingerprint) []Member
 
-// Transport 是本包对 link 的依赖面；*link.Link 满足它。
+// Transport is this package's dependency surface on link; *link.Link satisfies it.
 type Transport interface {
 	SendLatest(peer link.Fingerprint, f link.Frame) error
 	SendLatestKey(peer link.Fingerprint, key string, f link.Frame) (replaced bool, err error)
@@ -65,164 +68,164 @@ type Transport interface {
 }
 ```
 
-`AgentID` 是 broker 内部的 Agent 标识，是 `"session:" + socket 路径` 的 SHA-256 小写十六进制。`AgentRef` 指明一个 Agent：`Peer` 为零值时是本机 Agent，由 `ID` 指明；`Peer` 非零时是这条链路上的远端 Agent，`Ref` 是它在对端成员名单里的消歧标识，`ID` 忽略。
+`AgentID` is broker's internal agent identifier, the lowercase hex SHA-256 of `"session:" + socket path`. `AgentRef` names an agent: when `Peer` is the zero value it is a local agent identified by `ID`; when `Peer` is non-zero it is a remote agent on this link, `Ref` being its disambiguator in the peer roster and `ID` ignored.
 
-`Member` 是一个成员条目，字段是名字、消歧标识、状态、曾用名、发布方账户名（`Account`，只用于显示）与 `RefRequired`（发布方要求以消歧标识称呼该成员，按名解析不得选中它）。`Status` 取 `idle`、`busy`、`waiting`、`shell` 之一，空串表示未知；`PrevName` 为空表示没有曾用名。
+`Member` is a member entry whose fields are the name, the disambiguator, the status, the previous name, the publisher account name (`Account`, for display only) and `RefRequired` (the publisher requires that this member be addressed by its disambiguator, so name resolution must not select it). `Status` is one of `idle`, `busy`, `waiting`, `shell`, an empty string meaning unknown; an empty `PrevName` means no previous name.
 
-`VisibleAgent` 是一个可见的 Agent 及其共同 topic。`Agent` 指本机 Agent 时 `Peer` 为零值、`ID` 已填，指远端 Agent 时 `Peer` 与 `Ref` 已填；`Member` 是该 Agent 当前的条目；`Shared` 是共同 topic 的名字，升序。
+`VisibleAgent` is a visible agent and its shared topics. When `Agent` names a local agent, `Peer` is the zero value and `ID` is filled; when it names a remote agent, `Peer` and `Ref` are filled; `Member` is the agent's current entry; `Shared` is the shared topics' names, ascending.
 
-`ValidateName` 校验 topic 名：合法返回 nil，否则返回 `ErrInvalidTopic`。`Join`、`Leave` 用它校验；broker 与公开 topic 的声明也用它。topic 名是长度不超过 256 字节的非空 UTF-8 字符串，不含控制字符，区分大小写。
+`ValidateName` validates a topic name: nil when legal, otherwise `ErrInvalidTopic`. `Join` and `Leave` use it; broker and public topic declarations use it too. A topic name is a non-empty UTF-8 string no longer than 256 bytes, containing no control characters, case-sensitive.
 
-`ErrInvalidTopic` 表示 topic 名不合法，`broker` 把它映射为 `invalid_argument`。`ErrUnknownAgent` 表示 `Join` 的 Agent 尚未经 `AgentChanged` 引入，或已由 `LeaveAll` 删除，这是 broker 的缺陷，映射为 `internal`。
+`ErrInvalidTopic` means the topic name is invalid, which `broker` maps to `invalid_argument`. `ErrUnknownAgent` means `Join`'s agent has not been introduced by `AgentChanged`, or has been deleted by `LeaveAll`, a broker defect mapped to `internal`.
 
-`ErrTopicLimit` 表示 `Join` 会使本机有成员的 topic 超过 512 个，或该 topic 的本机成员超过 4096 个；已在该 topic 中的 Agent 重复加入仍是幂等成功。512 的上限使本机发出的 `TopicDigests` 远小于对端接受的 4096 项，一次成员变化扇出到一条链路的帧数也有界；成员上限与接收侧的 `maxInboundMembers` 取同一常量。系统级 Broker 把这 512 个 topic 的预算按账户细分，每账户至多 128 个，见 [design-broker.md](design-broker.md)。`broker` 把 `ErrTopicLimit` 映射为 `quota_exceeded`。
+`ErrTopicLimit` means `Join` would make the topics with local members exceed 512, or the topic's local members exceed 4096; an agent already in the topic joining again is still an idempotent success. The cap of 512 makes the local `TopicDigests` far smaller than the 4096 items a peer accepts, and the frames one membership change fans out to one link are bounded; the member cap uses the same constant as the receive side's `maxInboundMembers`. A system Broker subdivides the budget of these 512 topics by account, at most 128 per account, see [design-broker.md](design-broker.md). `broker` maps `ErrTopicLimit` to `quota_exceeded`.
 
-`AgentChanged` 同时用于引入 Agent：broker 在 Agent 登记后、第一次 `Join` 之前调用一次。对没有引入过的 Agent，`Join` 返回 `ErrUnknownAgent`，`Leave` 返回成功，`LeaveAll` 无操作；`LeaveAll` 同时删除该 Agent 的信息。
+`AgentChanged` also introduces an agent: broker calls it once after an agent registers and before its first `Join`. For an agent not introduced, `Join` returns `ErrUnknownAgent`, `Leave` returns success, and `LeaveAll` does nothing; `LeaveAll` also deletes that agent's information.
 
-`Visible` 判定本机 Agent 与另一个 Agent 是否可见。`other` 是本机 Agent 时按成员名单的字面条件判定，允许 `other.ID` 等于 `local`，是否允许发给自己由 broker 决定。`VisibleAgents` 不含调用者自己，本机 Agent 按标识升序在前，远端 Agent 按对端指纹、再按消歧标识升序在后；同一个远端 Agent 出现在多个共同 topic 时合并为一项，`Shared` 给出全部共同 topic。
+`Visible` decides whether a local agent and another agent are visible. When `other` is a local agent it is decided by the literal roster conditions, and `other.ID` equal to `local` is allowed; whether sending to oneself is allowed is decided by broker. `VisibleAgents` excludes the caller itself, local agents first in ascending identifier order and then remote agents in ascending order of peer fingerprint and then disambiguator; the same remote agent appearing in several shared topics is merged into one entry, with `Shared` giving every shared topic.
 
-## 依赖
+## Dependencies
 
-`topic` 引用 `link`，用来收发自己的帧类型并订阅链路的建立与断开，不引用其他包，符合模块依赖图的方向。
+`topic` references `link` to send and receive its own frame types and to subscribe to link establishment and teardown, and references no other package, matching the module dependency graph's direction.
 
-## UML 图
+## UML Diagrams
 
-下图是链路建立后的交换顺序。成员名单在摘要比对之后才发送，每一方只发送自己算出的交集内的 topic 的成员。图的后半段是一方的成员关系变化后的情形：变化的一方重发摘要并重算，另一方收到后也重算，双方各自补发新进入交集的 topic 的成员名单。
+The diagram below is the exchange order after a link is established. A roster is sent only after the digest comparison, and each side sends the members of only the topics in the intersection it computed. The latter part of the diagram is the situation after one side's membership changes: the side that changed resends its digests and recomputes, the other side recomputes on receiving them, and each side sends the rosters of the newly intersecting topics.
 
 ```mermaid
 sequenceDiagram
-    participant A as Broker A 的 topic
-    participant B as Broker B 的 topic
-    Note over A,B: 链路已建立，盐值已由 link 给出
-    A->>B: TopicDigests（A 上有成员的每个 topic、按 A 指纹计算的摘要）
-    B->>A: TopicDigests（B 上有成员的每个 topic、按 B 指纹计算的摘要）
-    A->>A: 求交集
-    B->>B: 求交集
-    A->>B: Roster（交集内每个 topic 的摘要及其下 A 的成员）
-    B->>A: Roster（交集内每个 topic 的摘要及其下 B 的成员）
-    Note over A,B: 之后 B 上有 Agent 加入一个新的 topic
-    B->>A: TopicDigests（B 的新集合）
-    B->>B: 用新集合与 A 最近一次的集合重算交集
-    B->>A: Roster（新进入交集的 topic）
-    A->>A: 收到新集合，重算交集
-    A->>B: Roster（新进入交集的 topic）
+    participant A as Broker A's topic
+    participant B as Broker B's topic
+    Note over A,B: link established, salt already given by link
+    A->>B: TopicDigests (each topic A has members in, digest computed with A's fingerprint)
+    B->>A: TopicDigests (each topic B has members in, digest computed with B's fingerprint)
+    A->>A: compute the intersection
+    B->>B: compute the intersection
+    A->>B: Roster (each intersecting topic's digest and A's members under it)
+    B->>A: Roster (each intersecting topic's digest and B's members under it)
+    Note over A,B: later an agent on B joins a new topic
+    B->>A: TopicDigests (B's new set)
+    B->>B: recompute the intersection with B's new set and A's latest set
+    B->>A: Roster (the newly intersecting topics)
+    A->>A: recompute the intersection on the new set
+    A->>B: Roster (the newly intersecting topics)
 ```
 
-## 核心数据结构
+## Core Data Structures
 
-| 结构 | 键 | 值 | 存续 |
+| Structure | Key | Value | Lifetime |
 |---|---|---|---|
-| 本机成员名单 | topic 名 | 该 topic 下的本机 Agent 集合 | 随 Agent 存续 |
-| 链路摘要表，每条链路一张 | 本机 topic 名 | 发出用摘要（按本机指纹计算）与比对用摘要（按对端指纹计算） | 随链路存续 |
-| 对端摘要集合，每条链路一个 | — | 对端最近一次发来的全部摘要 | 随链路存续 |
-| 对端成员名单，每条链路一张 | 比对用摘要，消歧标识 | 对端在该 topic 下的成员条目 | 随链路存续 |
+| Local roster | topic name | The set of local agents in that topic | As long as the agent |
+| Link digest table, one per link | local topic name | The send digest (computed with the local fingerprint) and the compare digest (computed with the peer's fingerprint) | As long as the link |
+| Peer digest set, one per link | — | Every digest the peer most recently sent | As long as the link |
+| Peer roster, one per link | compare digest, disambiguator | The peer's member entries in that topic | As long as the link |
 
-成员条目的字段是名字、消歧标识、状态、曾用名、发布方账户名（`Account`）与 `RefRequired`，不含别名、工作目录或其他信息。`Account` 只用于显示；`RefRequired` 让发布方告诉对端这个成员只能用消歧标识称呼，即使它的名字在对端唯一。曾用名由 Agent 所在的 Broker 在保留期满后清除，清除也作为一次变化推送，其他 Broker 因此能对以曾用名为目标的发送给出同样的提示。对端成员名单在比对用摘要下按消歧标识保存条目，依据是同一 Broker 上各 Agent 的消歧标识两两不同，对端的一个条目由消歧标识唯一确定。只有摘要处在当前交集内时才保存对端成员名单；判定可见性和回答查询时也只使用这些条目。
+A member entry's fields are the name, the disambiguator, the status, the previous name, the publisher account name (`Account`) and `RefRequired`, without the alias, working directory or other information. `Account` is for display only; `RefRequired` lets the publisher tell the peer that this member can be addressed only by its disambiguator, even if its name is unique at the peer. A previous name is cleared by the Broker the agent is on after the retention period, and the clearing is pushed as a change, so other Brokers can give the same hint for a send targeting a previous name. The peer roster keeps entries under the compare digest by disambiguator, because the disambiguators of the agents on one Broker are all different, so one peer entry is uniquely determined by its disambiguator. The peer roster is stored only when the digest is in the current intersection; deciding visibility and answering queries use only these entries.
 
-链路上的帧：
+The link frames:
 
-| 帧 | 类别 | 内容 | 语义 |
+| Frame | Class | Content | Meaning |
 |---|---|---|---|
-| `TopicDigests` | 状态帧 | 摘要的完整集合，按发送方指纹计算 | 发送方当前有成员的全部 topic，覆盖此前发送的集合 |
-| `Roster` | 状态帧 | 发送方的发出用摘要，成员条目的完整列表 | 该 topic 下发送方的全部成员，覆盖此前的列表 |
-| `RosterDelta` | 状态帧 | 发送方的发出用摘要，新增、移除与变更的成员条目 | 增量 |
+| `TopicDigests` | state frame | The complete digest set, computed with the sender's fingerprint | Every topic the sender currently has members in, replacing the previously sent set |
+| `Roster` | state frame | The sender's send digest, the complete member entry list | All the sender's members in that topic, replacing the previous list |
+| `RosterDelta` | state frame | The sender's send digest, the added, removed and changed member entries | An increment |
 
-`RosterDelta` 的组成规则是：成员加入放进新增，退出放进移除；名字或消歧标识变化，以移除旧键、新增新条目表示，因为消歧标识会随本机 Agent 增减而变长变短；只有状态、曾用名、账户名或 `RefRequired` 变化时放进变更；名字、消歧标识、状态、曾用名、账户名与 `RefRequired` 都不变时不发帧。接收方按移除、新增、变更的顺序应用：移除要求名字与消歧标识都相符才删除，不相符的忽略；新增与变更都按消歧标识写入，已有则覆盖，没有则新增；消歧标识为空的条目跳过。
+`RosterDelta`'s composition rule is: a member joining goes into the additions and leaving into the removals; a name or disambiguator change is represented by removing the old key and adding the new entry, because a disambiguator lengthens and shortens with the local agents' additions and removals; only a change of status, previous name, account name or `RefRequired` goes into the changes; when nothing among the name, disambiguator, status, previous name, account name and `RefRequired` changes, no frame is sent. The receiver applies removals, additions and changes in that order: a removal deletes only when both the name and the disambiguator match, ignoring a mismatch; an addition and a change both write by disambiguator, overwriting an existing entry and adding when absent; an entry with an empty disambiguator is skipped.
 
-链路建立时总是发送一帧 `TopicDigests`，本机没有任何 topic 时也发送，内容为空集合，对端据此得到确定的初始集合。
+A `TopicDigests` frame is always sent when a link is established, even when this side has no topic at all, with an empty set, so the peer gets a definite initial set.
 
-摘要的计算是 `SHA-256(盐值 ‖ 发送方指纹 ‖ topic 名)`，`‖` 表示拼接。发送方指纹是本机证书指纹，即对端在链路上看到的同一个值；盐值固定 64 字节，指纹固定 32 字节，拼接没有歧义。本机发出的每一帧用本机指纹计算，收到对端摘要时用对端指纹计算本机同名的 topic。
+A digest is `SHA-256(salt ‖ sender fingerprint ‖ topic name)`, `‖` meaning concatenation. The sender fingerprint is the local certificate's fingerprint, the very value the peer sees on the link; the salt is fixed at 64 bytes and the fingerprint at 32 bytes, so the concatenation is unambiguous. Every frame this side sends is computed with the local fingerprint, and a received peer digest is compared with this side's same-named topic computed with the peer's fingerprint.
 
-## 核心算法与流程
+## Core Algorithms and Flows
 
-### 走查
+### Worked Example
 
-Broker A 上 `api-worker` 在 topic `github.com/org/repo` 与 `secret-x`，Broker B 上 `frontend` 在 `github.com/org/repo`。链路建立。
+On Broker A, `api-worker` is in topics `github.com/org/repo` and `secret-x`; on Broker B, `frontend` is in `github.com/org/repo`. A link is established.
 
-| 步骤 | 事件 | A 持有的 B 成员名单 | B 持有的 A 成员名单 |
+| Step | Event | B's roster held by A | A's roster held by B |
 |---|---|---|---|
-| 1 | A 发出自己的摘要集合，含 `github.com/org/repo` 与 `secret-x` 的摘要；B 发出的集合只含 `github.com/org/repo` 的摘要 | 空 | 空 |
-| 2 | 双方求交集，都得到 `github.com/org/repo`；B 无法从另一个摘要得知 `secret-x`，把收到的摘要集合原样回送也不会产生交集，因为两个方向的摘要不同 | 空 | 空 |
-| 3 | A 发 `Roster`：`api-worker`；B 发 `Roster`：`frontend` | `github.com/org/repo`：`frontend` | `github.com/org/repo`：`api-worker` |
-| 4 | `api-worker` 调用列出 Agent，看到 B 上的 `frontend` | 不变 | 不变 |
-| 5 | B 上新 Agent `db-worker` 加入 `secret-x`。B 重发摘要集合，并用它与 A 此前发来的集合重算，`secret-x` 进入交集，B 发 `Roster(secret-x)`：`db-worker` | 增加 `secret-x`：`db-worker` | 不变 |
-| 6 | A 收到 B 的新集合，重算，`secret-x` 进入交集，A 发 `Roster(secret-x)`：`api-worker` | 不变 | 增加 `secret-x`：`api-worker` |
-| 7 | 链路断开 | 清空 | 清空 |
+| 1 | A sends its own digest set, containing `github.com/org/repo` and `secret-x`'s digests; B's sent set contains only `github.com/org/repo`'s digest | empty | empty |
+| 2 | Both sides compute the intersection and both get `github.com/org/repo`; B cannot learn `secret-x` from the other digest, and sending back the received digest set verbatim produces no intersection, because the digests differ in the two directions | empty | empty |
+| 3 | A sends `Roster`: `api-worker`; B sends `Roster`: `frontend` | `github.com/org/repo`: `frontend` | `github.com/org/repo`: `api-worker` |
+| 4 | `api-worker` calls list agents and sees `frontend` on B | unchanged | unchanged |
+| 5 | On B a new agent `db-worker` joins `secret-x`. B resends its digest set and recomputes with it and A's previously sent set, `secret-x` enters the intersection, and B sends `Roster(secret-x)`: `db-worker` | adds `secret-x`: `db-worker` | unchanged |
+| 6 | A receives B's new set, recomputes, `secret-x` enters the intersection, and A sends `Roster(secret-x)`: `api-worker` | unchanged | adds `secret-x`: `api-worker` |
+| 7 | The link goes down | cleared | cleared |
 
-`db-worker` 加入之前，B 的任何输出中都没有 `secret-x` 这个名字。`db-worker` 加入时 A 并没有新的变化，A 的成员名单之所以能到达 B，是因为 A 在收到对端的新集合时重算了交集。
+Before `db-worker` joins, none of B's output contains the name `secret-x`. When `db-worker` joins, A has no new change; A's roster reaches B because A recomputed the intersection on receiving the peer's new set.
 
-### 交集的重算
+### Recomputing the Intersection
 
-下列任一事件发生时，本 Broker 对相关的链路重算交集：
+When any of the following events happens, this Broker recomputes the intersection for the relevant links:
 
-- 本机某个 topic 从无成员变为有成员，或从有成员变为无成员。此时先向每条已建立的链路重发 `TopicDigests`。
-- 收到对端的 `TopicDigests`。
+- Some local topic changes from no members to having members, or from having members to no members. It first resends `TopicDigests` on each established link.
+- The peer's `TopicDigests` is received.
 
-重算后，对新进入交集的 topic 发送 `Roster`；离开交集的 topic 不再用于判定，其条目随即从对端成员名单中删除，重新进入交集后须等对端发来新的 `Roster` 才再次可见。交集内的 topic 下成员增减，或成员条目的任何字段变化时发送 `RosterDelta`。
+After recomputing, it sends a `Roster` for each newly intersecting topic; a topic that leaves the intersection is no longer used for decisions, its entries are immediately deleted from the peer roster, and after re-entering the intersection it becomes visible again only when the peer sends a new `Roster`. When the members under an intersecting topic are added or removed, or any field of a member entry changes, it sends `RosterDelta`.
 
-一次事件产生的帧在同一次持锁内入队。对端按指纹字节升序处理；每个对端内依次是 `TopicDigests`、进入交集的各 topic 的 `Roster`、各 `RosterDelta`，`Roster` 与 `RosterDelta` 各自按摘要字节升序。`TopicDigests` 只在本机 topic 集合变化时发送，至多一帧。`RosterDelta` 只发给事件前后本机都有成员、且摘要在该链路交集内的 topic；topic 变空或由空变为非空，都只通过 `TopicDigests` 与 `Roster` 体现。
+The frames one event produces are enqueued within one lock hold. Peers are processed in ascending fingerprint bytes; within each peer come `TopicDigests`, then the `Roster` of each newly intersecting topic, then the `RosterDelta`s, with `Roster` and `RosterDelta` each in ascending digest bytes. `TopicDigests` is sent only when the local topic set changes, at most one frame. `RosterDelta` is sent only for a topic this side has members in before and after the event and whose digest is in that link's intersection; a topic becoming empty or non-empty is reflected only through `TopicDigests` and `Roster`.
 
-`TopicDigests` 一律经 `Transport.SendLatest` 发送：发送队列中已有一帧由它放入、尚未被写协程取走的 `TopicDigests` 时，就地替换为新的集合，不占新的位置；没有时按普通入队。`Roster` 与 `RosterDelta` 经 `Transport.SendLatestKey` 发送，键是该 topic 在本方向的摘要：同一摘要下至多有一帧尚未被写协程取走的帧，新的帧就地替换旧的，不占新的位置。就地替换会让较新的 `TopicDigests` 先于此前排队的成员名单发出，对端因此可能收到摘要已不在它最近一次集合中的名单帧；这是合法情形，接收方按“错误与失败语义”忽略。
+`TopicDigests` is always sent through `Transport.SendLatest`: when the send queue already holds a `TopicDigests` put in by it and not yet taken by the write goroutine, it is replaced in place with the new set without taking a new position; when not, it is enqueued normally. `Roster` and `RosterDelta` are sent through `Transport.SendLatestKey`, the key being that topic's digest in this direction: under the same digest at most one frame is not yet taken by the write goroutine, and a new frame replaces the old in place without taking a new position. An in-place replacement lets a newer `TopicDigests` go out before a previously queued roster, so the peer may receive a roster frame whose digest is no longer in its latest set; this is a legal situation, ignored by the receiver per "Error and Failure Semantics".
 
-同一摘要的帧被更新帧替换时，`Roster` 直接替换排在其前的 `Roster` 或 `RosterDelta`：`Roster` 覆盖该摘要的全部条目，替换是安全的。`RosterDelta` 不能直接替换排在其前的帧，否则会丢掉那帧携带的其他 Agent 的变化或一份尚未送达的完整快照，因此本包在发现同摘要已有待发帧时，改为发送按本机当前成员生成的全量 `Roster`，把未发出的增量折进完整快照。改写分两步：先以同一个键放入 `RosterDelta` 并替换队列中的旧帧；确有旧帧被替换时，再以同一个键放入全量 `Roster`，替换那帧 `RosterDelta`。两步之间，写协程可能已取走 `RosterDelta` 并发出；它替换的那帧从未发出，对端因此短暂收到一帧缺少上一帧的增量，该摘要下的状态可能不完整。紧随其后的全量 `Roster` 覆盖该摘要的全部条目，把它纠正。这是有意的最终一致。这样一条链路上待发的成员名单帧数不超过共同 topic 数，成片的变化不再把发送队列（上限 1024 帧）填满，链路也不会因队列满而断开。
+When a frame of the same digest is replaced by an update, a `Roster` replaces the `Roster` or `RosterDelta` before it directly: a `Roster` covers all the entries of that digest, so the replacement is safe. A `RosterDelta` cannot directly replace the frame before it, or it would lose the other agents' changes that frame carries or a full snapshot not yet delivered, so on finding a pending frame under the same digest this package instead sends a full `Roster` generated from the local current members, folding the unsent increments into the complete snapshot. The rewrite is in two steps: first put a `RosterDelta` under the same key, replacing the old frame in the queue; then, when an old frame was indeed replaced, put a full `Roster` under the same key, replacing that `RosterDelta`. Between the two steps the write goroutine may have taken the `RosterDelta` and sent it; the frame it replaced was never sent, so the peer briefly receives an increment missing the previous frame, and the state under that digest may be incomplete. The full `Roster` immediately after covers all the entries of that digest and corrects it. This is intended eventual consistency. In this way the number of pending roster frames on one link does not exceed the number of shared topics, a burst of changes no longer fills the send queue (capped at 1024 frames), and the link does not go down because the queue is full.
 
-链路上的这些帧由 `link` 按到达顺序串行交给本包处理。本包在持有的锁内取快照并交给 `link` 的发送队列，因此在同一条链路上，后取的 `Roster` 快照后发出，不会被更早取得的 `Roster` 覆盖；就地替换只改变同一摘要的待发帧，`TopicDigests` 与各摘要之间的相对顺序不变。
+These link frames are handed to this package by `link` serially in arrival order. This package takes the snapshot under its lock and hands it to `link`'s send queue, so on the same link a later-taken `Roster` snapshot is sent later and is not overwritten by an earlier-taken `Roster`; an in-place replacement changes only the pending frames of the same digest, and the relative order of `TopicDigests` and the digests is unchanged.
 
-### 可见性判定
+### Visibility Decision
 
-本机 Agent `x` 与另一个 Agent `y` 可见，当且仅当存在一个 topic，`x` 在本机成员名单的该 topic 下，且 `y` 也在该 topic 下：`y` 是本机 Agent 时查本机成员名单，`y` 是远端 Agent 时查其所在链路的对端成员名单中处在交集内的条目。判定的开销与 `x` 所在的 topic 数成正比。
+A local agent `x` and another agent `y` are visible if and only if there is a topic in which `x` is in the local roster and `y` is also in that topic: when `y` is a local agent, look in the local roster; when `y` is a remote agent, look in its link's peer roster for the entries in the intersection. The decision's cost is proportional to the number of topics `x` is in.
 
-## 错误与失败语义
+## Error and Failure Semantics
 
-加入一个已加入的 topic、退出一个未加入的 topic 都返回成功，结果是幂等的。topic 名不合法时返回 `ErrInvalidTopic`，由 broker 映射为 `invalid_argument`。
+Joining a topic already joined and leaving a topic not joined both return success, the result being idempotent. An invalid topic name returns `ErrInvalidTopic`, mapped by broker to `invalid_argument`.
 
-入站帧在下列情形下丢弃，并记录日志：
+An inbound frame is dropped in the following situations, and logged:
 
-- 该对端没有链路状态，即未收到建立通知或已经断开。
-- 帧的载荷无法解码。
-- `TopicDigests` 中有任何一项不是 32 字节，此时整帧丢弃，保留此前的对端集合。其中重复的摘要按集合去重。
-- `Roster` 或 `RosterDelta` 的摘要不是 32 字节：整帧丢弃，记 Warn。
-- `Roster` 或 `RosterDelta` 的摘要不在对端最近一次的摘要集合中，或在对端最近一次的摘要集合中但不在当前交集内：忽略，记 debug `topic.frame_ignored`，不保存其中的名单。合并发送使较新的 `TopicDigests` 先于旧的名单帧到达，第一种情形因此是合法到达顺序。
-- 成员条目不合规：消歧标识不是 6 至 12 位小写十六进制，或名字为空、超过 `MaxMemberNameBytes` 字节、含空白、`@`、`*` 或控制字符，或曾用名非空却超过 `MaxMemberNameBytes` 字节或含上述字符。不合规的条目整条丢弃，其余条目照常应用；每帧记一条 `topic.member_dropped`，带该帧丢弃的条数，日志不写成员名与曾用名。账户名不合规（非空却超过 `MaxMemberNameBytes` 字节或含有 `validMemberName` 不允许的字符）时只清空该条目的账户名，条目照常应用：账户名只用于展示，不能因此丢掉整条成员。
-- 单个 `TopicDigests` 帧的摘要超过 4096 项，或 `Roster`、`RosterDelta` 的任一成员列表超过 4096 条：整帧丢弃，不改变此前的状态，记 `topic.frame_dropped`，原因分别为 `too_many_digests` 与 `too_many_members`。
-- 应用一帧 `Roster` 或 `RosterDelta` 后，该摘要下的条目超过 4096 条：整帧丢弃，此前的状态不变，记 `topic.frame_dropped`，原因 `roster_full`。
-- 应用一帧 `Roster` 或 `RosterDelta` 后，该对端在全部共同摘要下的条目合计超过 16384 条：整帧丢弃，此前的状态不变，记 `topic.frame_dropped`，原因 `peer_roster_full`。
+- The peer has no link state, that is no establishment notification was received or it has already disconnected.
+- The frame's payload cannot be decoded.
+- Any item of `TopicDigests` is not 32 bytes, in which case the whole frame is dropped and the previous peer set kept; duplicate digests within it are deduplicated as a set.
+- A `Roster` or `RosterDelta`'s digest is not 32 bytes: the whole frame is dropped, recording Warn.
+- A `Roster` or `RosterDelta`'s digest is not in the peer's latest digest set, or is in the peer's latest digest set but not in the current intersection: ignored, recording debug `topic.frame_ignored`, storing none of its roster. Merged sends make a newer `TopicDigests` arrive before an old roster frame, so the first situation is a legal arrival order.
+- A member entry does not conform: its disambiguator is not 6 to 12 lowercase hex digits, or its name is empty, exceeds `MaxMemberNameBytes` bytes, or contains whitespace, `@`, `*` or control characters, or its previous name is non-empty but exceeds `MaxMemberNameBytes` bytes or contains the above characters. A non-conforming entry is dropped whole and the rest are applied as usual; one `topic.member_dropped` is recorded per frame, carrying the number dropped in that frame, and the log writes no member name or previous name. When the account name does not conform (non-empty but exceeding `MaxMemberNameBytes` bytes or containing a character `validMemberName` does not allow) only that entry's account name is cleared and the entry is applied as usual: the account name is for display only, and the whole member must not be dropped because of it.
+- A single `TopicDigests` frame has more than 4096 digests, or any of a `Roster` or `RosterDelta`'s member lists has more than 4096 entries: the whole frame is dropped, the previous state unchanged, recording `topic.frame_dropped` with reason `too_many_digests` or `too_many_members` respectively.
+- After applying a `Roster` or `RosterDelta` frame, the entries under that digest exceed 4096: the whole frame is dropped, the previous state unchanged, recording `topic.frame_dropped` with reason `roster_full`.
+- After applying a `Roster` or `RosterDelta` frame, the peer's entries under all shared digests together exceed 16384: the whole frame is dropped, the previous state unchanged, recording `topic.frame_dropped` with reason `peer_roster_full`.
 
-单条链路累计 16384 条的上限是失效关闭（fail-closed）的已知限制：某一帧一旦会把该对端推到上限之上而被丢弃，该帧里的成员在这条链路重建之前不会出现，取消订阅后重新进入交集也不会恢复；链路本身保持连接，该对端其余名单与投递不受影响，重建后从 `TopicDigests` 与新的 `Roster` 重新开始。
+The 16384-per-link cumulative cap is a known limitation of fail-closed: once a frame would push the peer above the cap and is dropped, the members in that frame do not appear before the link is rebuilt, and unsubscribing and re-entering the intersection does not restore them; the link itself stays connected, the peer's other rosters and delivery are unaffected, and after rebuilding it restarts from `TopicDigests` and a new `Roster`.
 
-先算出应用后的条数再决定是否修改，丢弃的帧不留下任何变化。`SendLatest` 或 `SendLatestKey` 失败时不改状态、不重试：`ErrFrameTooLarge` 记 Warn `topic.frame_too_large`，字段为对端指纹、kind 与帧大小；其余失败记 debug。链路随后会收到断开通知，重建后从 `TopicDigests` 全量重来。
+Whether to modify is decided after computing the resulting count, so a dropped frame leaves no change. When `SendLatest` or `SendLatestKey` fails, the state is not changed and it is not retried: `ErrFrameTooLarge` records Warn `topic.frame_too_large` with fields the peer fingerprint, the kind and the frame size; another failure records debug. The link then receives a teardown notification, and after rebuilding it starts over from `TopicDigests`.
 
-本包的日志只记对端指纹、kind、原因、摘要的前 8 字节与计数，不记任何 topic 名、成员名字、曾用名或消歧标识（`REQ-topics-009`、`REQ-topics-014`）。
+This package's log records only the peer fingerprint, the kind, the reason, the first 8 bytes of the digest and counts, no topic name, member name, previous name or disambiguator (`REQ-topics-009`, `REQ-topics-014`).
 
-链路断开时该链路的摘要表、对端摘要集合与对端成员名单全部丢弃，远端 Agent 随之不可见；链路重建后盐值不同，从 `TopicDigests` 重新开始。
+When a link goes down, that link's digest table, peer digest set and peer roster are all discarded, and the remote agents become invisible with it; after the link is rebuilt the salt differs, and it starts over from `TopicDigests`.
 
-## 并发与事务边界
+## Concurrency and Transaction Boundaries
 
-本包只有一把读写锁 `Registry.mu`，保护本机成员名单与全部链路状态表。
+This package has only one read-write lock, `Registry.mu`, protecting the local roster and all link state tables.
 
-- `Join`、`Leave`、`LeaveAll`、`AgentChanged`、链路的建立与断开回调、`TopicDigests`、`Roster`、`RosterDelta` 的处理函数，在整个函数体内持写锁。
-- `TopicsOf`、`Visible`、`VisibleAgents`、`RemoteMembers` 持读锁，返回新分配的副本，不暴露内部的 map 与切片。
-- 一次事件产生的全部帧在同一次持写锁期间调用 `Transport.SendLatest` 或 `Transport.SendLatestKey`，不先收集再解锁发送。
-- 持锁时除 `Transport.SendLatest`、`Transport.SendLatestKey` 与日志外不调用任何外部代码；本包不起协程，不用计时器，不用 channel。
-- `New` 内注册帧处理函数与订阅链路事件时不持锁。
-- 链路的断开通知与本包自身的操作并发时，谁先拿到锁谁先执行，两种顺序都正确：断开通知先执行，本包的操作看不到这条链路；本包的操作先执行，它发出的帧在 link 那里失败或随连接丢弃，重建后从 `TopicDigests` 全量重来。
+- `Join`, `Leave`, `LeaveAll`, `AgentChanged`, the link establishment and teardown callbacks, and the `TopicDigests`, `Roster` and `RosterDelta` handlers hold the write lock for the whole function body.
+- `TopicsOf`, `Visible`, `VisibleAgents` and `RemoteMembers` hold the read lock and return newly allocated copies, exposing neither the internal maps nor slices.
+- All the frames one event produces call `Transport.SendLatest` or `Transport.SendLatestKey` during the same write-lock hold, not collected first and sent after unlocking.
+- While holding the lock it calls no external code other than `Transport.SendLatest`, `Transport.SendLatestKey` and logging; this package starts no goroutine, uses no timer and uses no channel.
+- `New` does not hold the lock while registering frame handlers and subscribing to link events.
+- When a link's teardown notification races this package's own operation, whichever gets the lock first runs first, and both orders are correct: the teardown notification running first means this package's operation sees no such link; this package's operation running first means its frames fail at link or are dropped with the connection, and after rebuilding it starts over from `TopicDigests`.
 
-本包依赖 link 的下列性质：`SendLatest` 与 `SendLatestKey` 不阻塞，不等网络，也不同步回调本包；`SendLatest` 与 `SendLatestKey` 的就地替换与写协程取走该帧互斥，取走之后的替换按新帧入队；link 调用本包的回调与状态帧处理函数时不持有 `SendLatest` 与 `SendLatestKey` 需要的锁；同一对端的建立通知、断开通知与该对端的状态帧串行处理，断开通知送达之后不再交付旧连接的帧。这些性质见 [design-link.md](design-link.md) 的并发与事务边界一节。
+This package relies on the following properties of link: `SendLatest` and `SendLatestKey` do not block, do not wait for the network, and do not synchronously call back into this package; `SendLatest`'s and `SendLatestKey`'s in-place replacement and the write goroutine taking the frame exclude each other, and a replacement after it is taken is enqueued as a new frame; when link calls this package's callbacks and state-frame handlers it does not hold the locks `SendLatest` and `SendLatestKey` need; the same peer's establishment notification, teardown notification and state frames are processed serially, and after the teardown notification is delivered no more frames from the old connection are delivered. These properties are in the Concurrency and Transaction Boundaries section of [design-link.md](design-link.md).
 
-`TopicDigests` 与 `Roster` 的覆盖语义加上帧的有序处理，使任意时刻的并发变化最终收敛到双方的当前状态。
+`TopicDigests`'s and `Roster`'s overwrite semantics plus ordered frame handling make concurrent changes at any instant finally converge to both sides' current state.
 
-## 扩展点
+## Extension Points
 
-对端成员名单的来源是一个扩展点，为与使用其他协议的 Agent 互通而预留。现有的来源只有一种：链路上以 `TopicDigests`、`Roster` 与 `RosterDelta` 交换的成员名单。可见性判定只依赖对端成员名单的内容，不依赖它的来源。
+The source of the peer roster is an extension point, reserved for interoperation with agents using another protocol. The current source is only one: the roster exchanged on a link with `TopicDigests`, `Roster` and `RosterDelta`. The visibility decision depends only on the peer roster's content, not on its source.
 
-## 实现状态
+## Implementation Status
 
-| 能力 | 状态 | 代码 |
+| Capability | Status | Code |
 |---|---|---|
-| 加入、退出与注销清理 | 已实现 | `internal/topic/local.go`（`localTable`）、`internal/topic/publish.go`（`Registry.Join`、`Registry.Leave`、`Registry.LeaveAll`） |
-| 摘要交换与交集的重算 | 已实现 | `internal/topic/peer.go`（`peerState`、`recompute`）、`internal/topic/registry.go`（`Registry.onUp`、`Registry.handleDigests`） |
-| 成员名单的全量与增量同步 | 已实现 | `internal/topic/wire.go`（`memberToWire`、`rosterMsg`、`deltaMsg`）、`internal/topic/registry.go`（`Registry.handleRoster`、`Registry.handleDelta`）、`internal/topic/publish.go`（`Registry.AgentChanged`） |
-| 接收侧名单上限与名字长度 | 已实现 | `internal/topic/registry.go`（`maxInboundMembers`、`maxPeerMembers`、`Registry.handleRoster`、`Registry.handleDelta`）、`internal/topic/wire.go`（`MaxMemberNameBytes`、`validMemberEntry`） |
-| 本机 topic 数与成员数上限 | 已实现 | `internal/topic/local.go`（`maxLocalTopics`、`maxLocalTopicMembers`、`localTable.join`）、`internal/topic/api.go`（`ErrTopicLimit`） |
-| 摘要与成员名单的合并发送、发送失败日志 | 已实现 | `internal/topic/state.go`（`sendLatestLocked`、`sendRosterLocked`、`sendDeltaLocked`、`deliverLatestKeyLocked`、`logSendError`）、`internal/topic/publish.go`（`Registry.Join`、`Registry.Leave`、`Registry.LeaveAll`、`Registry.AgentChanged`）、`internal/topic/registry.go`（`Registry.handleDigests`） |
-| 可见性判定 | 已实现 | `internal/topic/query.go`（`visible`、`visibleAgents`、`remoteMembers`） |
+| Joining, leaving and unregistration cleanup | Implemented | `internal/topic/local.go` (`localTable`), `internal/topic/publish.go` (`Registry.Join`, `Registry.Leave`, `Registry.LeaveAll`) |
+| Digest exchange and intersection recomputation | Implemented | `internal/topic/peer.go` (`peerState`, `recompute`), `internal/topic/registry.go` (`Registry.onUp`, `Registry.handleDigests`) |
+| Full and incremental roster synchronization | Implemented | `internal/topic/wire.go` (`memberToWire`, `rosterMsg`, `deltaMsg`), `internal/topic/registry.go` (`Registry.handleRoster`, `Registry.handleDelta`), `internal/topic/publish.go` (`Registry.AgentChanged`) |
+| Receive-side roster caps and name length | Implemented | `internal/topic/registry.go` (`maxInboundMembers`, `maxPeerMembers`, `Registry.handleRoster`, `Registry.handleDelta`), `internal/topic/wire.go` (`MaxMemberNameBytes`, `validMemberEntry`) |
+| Local topic count and member count caps | Implemented | `internal/topic/local.go` (`maxLocalTopics`, `maxLocalTopicMembers`, `localTable.join`), `internal/topic/api.go` (`ErrTopicLimit`) |
+| Merged sending of digests and rosters, and send-failure logging | Implemented | `internal/topic/state.go` (`sendLatestLocked`, `sendRosterLocked`, `sendDeltaLocked`, `deliverLatestKeyLocked`, `logSendError`), `internal/topic/publish.go` (`Registry.Join`, `Registry.Leave`, `Registry.LeaveAll`, `Registry.AgentChanged`), `internal/topic/registry.go` (`Registry.handleDigests`) |
+| Visibility decision | Implemented | `internal/topic/query.go` (`visible`, `visibleAgents`, `remoteMembers`) |
