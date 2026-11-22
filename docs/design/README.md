@@ -1,17 +1,17 @@
-# peers 设计文档
+# peers design documentation
 
-peers 让不同主机上的 Claude Code 会话互相发现并发送文本消息。
+peers lets Claude Code sessions on different hosts discover each other and send text messages.
 
-## 索引
+## Index
 
-- [架构](architecture.md)：系统整体结构、跨切面设计与架构不变量
-- [架构决策记录](../adr/README.md)：现行的架构决策及各自考虑过的选项与代价
-- [术语表](../glossary.md)：项目约定的术语，各类文档共用
-- [引用](../references.md)：文档引用的公开外部来源
+- [Architecture](architecture.md): the overall system structure, cross-cutting design and architecture invariants
+- [Architecture decision records](../adr/README.md): the architecture decisions in force, with the options and costs weighed for each
+- [Glossary](../glossary.md): project-agreed terms, shared by every document type
+- [References](../references.md): public external sources cited by the documentation
 
-### 模块
+### Modules
 
-| 模块 | 文档 |
+| Module | Document |
 |---|---|
 | `broker` | [broker](modules/design-broker.md) |
 | `mcpserver` | [mcpserver](modules/design-mcpserver.md) |
