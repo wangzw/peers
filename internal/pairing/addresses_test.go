@@ -11,6 +11,32 @@ func direct(addr string) config.AdvertisedAddr {
 	return config.AdvertisedAddr{Kind: config.AdvertisedKindDirect, Addr: addr}
 }
 
+// TestValidDialPortBounds pins the accepted port range and the per-byte digit
+// check of validDialPort. The largest port is accepted and one past it is not.
+// A sign is not a digit, so "+1" is rejected. Leading zeros stay decimal: every
+// byte is a digit and Atoi reads "080" as 80, so it is accepted, which is the
+// same rule connect_broker applies to its address.
+func TestValidDialPortBounds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		port string
+		want bool
+	}{
+		{"1", true},
+		{"65535", true},
+		{"65536", false},
+		{"0", false},
+		{"080", true},
+		{"+1", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := validDialPort(tc.port); got != tc.want {
+			t.Errorf("validDialPort(%q) = %v, want %v", tc.port, got, tc.want)
+		}
+	}
+}
+
 func TestCandidateMergeOrderAndDedup(t *testing.T) {
 	t.Parallel()
 	e := &peerEntry{
