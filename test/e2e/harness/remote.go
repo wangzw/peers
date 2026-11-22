@@ -325,6 +325,28 @@ func (s *remoteSession) callErrWithin(bound time.Duration, tool string, args map
 // the harness does not carry the path of its standard error back here.
 func (s *remoteSession) mcpLogTail(int) (string, bool) { return "", false }
 
+// logBrokerStack asks the node agent to send SIGQUIT to the Broker inside the
+// container, then reads the Broker log the runtime writes its stack to. The
+// signal is delivered inside the container by the agent, which calls
+// procsig.SendSignal there; a test process on the host cannot signal a pid in
+// the container's namespace.
+func (s *remoteSession) logBrokerStack(tb testing.TB) string {
+	tb.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := s.client.SignalBroker(ctx, ctl.BrokerSignalRequest{Signal: strconv.Itoa(int(syscall.SIGQUIT))}); err != nil {
+		return fmt.Sprintf("signalling the Broker in the container: %v", err)
+	}
+	// The dump is written before the process exits; wait for the exit so the
+	// log is complete.
+	_, _ = s.client.WaitBroker(ctx, ctl.BrokerWaitRequest{BoundMS: 3000})
+	res, err := s.client.BrokerLog(ctx, ctl.BrokerLogRequest{})
+	if err != nil {
+		return fmt.Sprintf("reading the Broker log in the container: %v", err)
+	}
+	return quitDump(res.Data)
+}
+
 func (s *remoteSession) tools(tb testing.TB) []node.ToolInfo {
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)

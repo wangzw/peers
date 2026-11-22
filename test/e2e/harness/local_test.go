@@ -88,6 +88,34 @@ func pidsWithRuntimeRoot(t *testing.T, root string) []int {
 	return pids
 }
 
+// childBrokerPids returns the pids of this process's direct children whose
+// command line runs the test Broker. It reads them from ps, which reports the
+// same columns on Linux and macOS, so the check needs no /proc.
+func childBrokerPids(t *testing.T) []int {
+	t.Helper()
+	out, err := exec.Command("ps", "-ww", "-A", "-o", "pid=,ppid=,command=").Output()
+	if err != nil {
+		t.Fatalf("listing processes with ps: %v", err)
+	}
+	self := os.Getpid()
+	var pids []int
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, pidErr := strconv.Atoi(fields[0])
+		ppid, ppidErr := strconv.Atoi(fields[1])
+		if pidErr != nil || ppidErr != nil || ppid != self {
+			continue
+		}
+		if strings.Contains(strings.Join(fields[2:], " "), "service run --user") {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
 func TestLocalHostCleanupKillsDetached(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("looking up processes by environment scans /proc")
@@ -469,6 +497,28 @@ func TestStartBrokerReportsActualAddrAfterRetry(t *testing.T) {
 		t.Fatalf("dialing the reported address %s: %v", actual, err)
 	}
 	_ = conn.Close()
+}
+
+// TestLocalHostCleanupStopsBroker checks the rule the retry test depends on: a
+// running Broker is gone once its node is cleaned up. On a build whose handle
+// cannot signal a child it has not waited for, cleanup fails to stop the
+// Broker, which survives as an orphan that holds its port and account lock for
+// the rest of the run. The check reads the surviving children from ps rather
+// than trusting the pid alone, so it reports the process by what it runs.
+func TestLocalHostCleanupStopsBroker(t *testing.T) {
+	host := NewLocalHost(t, LocalOptions{Name: "cleanup-broker"})
+	local := host.impl.(*localNode)
+	addr := host.FreeAddr(t)
+	start := host.StartBroker(t, BrokerSpec{Args: []string{"--listen", addr}})
+	if !start.Running {
+		t.Fatalf("the Broker did not start: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
+	}
+
+	local.cleanup()
+
+	if pids := childBrokerPids(t); len(pids) > 0 {
+		t.Fatalf("cleanup left Broker children of this process running: %v", pids)
+	}
 }
 
 // TestExportedTypeShapes pins the names and signatures downstream work items

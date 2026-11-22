@@ -49,17 +49,17 @@ func TestLocalRegistration(t *testing.T) {
 		ghost := host.StartSession(t, harness.SessionSpec{Name: "ghost", Workdir: workspace})
 		defer ghost.End(t)
 
-		harness.Consistently(t, 1*time.Second, "a session with no MCP server process stays out of the list", func() (bool, string) {
-			out, state := registrationListAgents(t, api, nil)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "a session with no MCP server process stays out of the list", nil, func(deadline time.Time) harness.Observation {
+			out, state := registrationListAgentsInWait(t, api, deadline, nil)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			for _, agent := range out.Agents {
 				if strings.Contains(agent.Address, "ghost") {
-					return false, fmt.Sprintf("ghost appears as %q", agent.Address)
+					return harness.Observed(false, fmt.Sprintf("ghost appears as %q", agent.Address))
 				}
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 
 		r := api.Call(t, "send_message", map[string]any{
@@ -325,21 +325,24 @@ func TestLocalRegistration(t *testing.T) {
 
 		// The extra process registers through the same inbox socket, so it
 		// shares the main session's agent ID and must not add a second entry.
-		harness.Consistently(t, 1*time.Second, "the extra MCP process does not become a second agent", func() (bool, string) {
-			out, state := registrationListAgents(t, observer, nil)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "the extra MCP process does not become a second agent", nil, func(deadline time.Time) harness.Observation {
+			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			entries := 0
 			for _, agent := range out.Agents {
 				if name := registrationAddressName(agent.Address); name == "main" {
 					entries++
 					if agent.Address != mainAddr {
-						return false, fmt.Sprintf("address is %q, want %q", agent.Address, mainAddr)
+						return harness.Observed(false, fmt.Sprintf("address is %q, want %q", agent.Address, mainAddr))
 					}
 				}
 			}
-			return entries == 1, fmt.Sprintf("found %d entries for main, want one", entries)
+			if entries != 1 {
+				return harness.Observed(false, fmt.Sprintf("found %d entries for main, want one", entries))
+			}
+			return harness.Observed(true, "")
 		})
 
 		// The harness has no tool channel to the extra process itself; the
@@ -436,17 +439,17 @@ func registrationRejected(t *testing.T, s, observer *harness.Session, name, deta
 		}
 		return true, ""
 	})
-	harness.Consistently(t, 500*time.Millisecond, fmt.Sprintf("no agent is listed for the unusable name %q", name), func() (bool, string) {
-		out, state := registrationListAgents(t, observer, nil)
+	harness.ConsistentlyPoll(t, 500*time.Millisecond, harness.ToolCallPollBound, fmt.Sprintf("no agent is listed for the unusable name %q", name), nil, func(deadline time.Time) harness.Observation {
+		out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 		if state != "" {
-			return false, state
+			return harness.Unobservable(state)
 		}
 		for _, agent := range out.Agents {
 			if listed(agent.Address) {
-				return false, fmt.Sprintf("an agent with address %q was listed", agent.Address)
+				return harness.Observed(false, fmt.Sprintf("an agent with address %q was listed", agent.Address))
 			}
 		}
-		return true, ""
+		return harness.Observed(true, "")
 	})
 }
 

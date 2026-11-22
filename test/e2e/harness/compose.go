@@ -423,7 +423,7 @@ func (c *Cluster) collectArtifacts() {
 		for _, node := range c.order {
 			for _, name := range c.nodeLogNames(node) {
 				if data, err := os.ReadFile(filepath.Join(c.ctlDirs[node], name)); err == nil {
-					c.t.Logf("harness: node %s, %s (tail):\n%s", node, name, tail(string(data), 50))
+					c.t.Logf("harness: node %s, %s (tail):\n%s", node, name, tail(string(redactSecrets(data)), 50))
 				}
 			}
 		}
@@ -444,9 +444,7 @@ func (c *Cluster) collectArtifacts() {
 			if err != nil {
 				continue
 			}
-			if err := os.WriteFile(filepath.Join(dir, node+"-"+name), data, 0o644); err != nil {
-				c.t.Errorf("harness: writing artifact for %s: %v", source, err)
-			}
+			writeArtifact(c.t, dir, node+"-"+name, data)
 		}
 		for _, command := range [][]string{
 			{"ip", "addr"},
@@ -455,15 +453,11 @@ func (c *Cluster) collectArtifacts() {
 		} {
 			out, _ := c.RootOK(c.t, node, command...)
 			name := node + "-" + strings.Join(command, "-") + ".txt"
-			if err := os.WriteFile(filepath.Join(dir, name), []byte(out), 0o644); err != nil {
-				c.t.Errorf("harness: writing artifact %s: %v", name, err)
-			}
+			writeArtifact(c.t, dir, name, []byte(out))
 		}
 	}
 	out, _ := c.composeCommand("logs", "--no-color").CombinedOutput()
-	if err := os.WriteFile(filepath.Join(dir, "compose.log"), out, 0o644); err != nil {
-		c.t.Errorf("harness: writing compose log: %v", err)
-	}
+	writeArtifact(c.t, dir, "compose.log", out)
 }
 
 // nodeLogNames lists the files a node agent and its Brokers write under /ctl.

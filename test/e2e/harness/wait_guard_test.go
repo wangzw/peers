@@ -28,14 +28,14 @@ const eventuallyCallExempt = "eventually-call-allow:"
 // waits.
 const minWaitCallChecks = 100
 
-// TestEventuallyCallbacksUsePollBoundedCalls rejects a tool call made inside an
-// Eventually, EventuallyPoll or WaitFor callback when the call bypasses the
-// wait's bounds. Session.Call bounds one tool call at sessionCallBound, sixty
-// seconds, and fails the test on a transport error, so a callback that uses it
-// turns one stalled MCP call into a failed wait instead of retrying it. A
-// callback makes poll-bounded calls with Session.PollCall or
-// Session.PollCallWithin, which the deadline EventuallyPoll passes in bounds
-// and clamps to the time the wait has left.
+// TestEventuallyCallbacksUsePollBoundedCalls rejects a tool call made inside
+// an Eventually, EventuallyPoll, ConsistentlyPoll or WaitFor callback when the
+// call bypasses the wait's bounds. Session.Call bounds one tool call at
+// sessionCallBound, sixty seconds, and fails the test on a transport error, so
+// a callback that uses it turns one stalled MCP call into a failed wait
+// instead of retrying it. A callback makes poll-bounded calls with
+// Session.PollCall or Session.PollCallWithin, which the deadline the wait
+// passes in bounds and clamps to the time the wait has left.
 //
 // The callback's direct calls are checked, and so is one level of indirection:
 // a call to a function in the same directory whose own body makes a direct
@@ -62,8 +62,11 @@ const minWaitCallChecks = 100
 //     per-directory wrapper index;
 //   - a wrapper that stores its callback in a closure variable before passing
 //     it to the wait is not followed through both levels;
-//   - Consistently is not a wait: it observes a window instead of retrying,
-//     and accounts_test.go makes a tool call in one of its conditions;
+//   - Consistently is checked separately: it observes a window without
+//     retrying, so its callback may not make an unbounded .Call or .CallErr,
+//     directly or through one level of a same-directory helper; a callback
+//     that needs a tool call uses ConsistentlyPoll and Session.PollCall, which
+//     the wait check covers;
 //   - closureLiterals and local wrapper names are matched by name within the
 //     file or function and do not resolve lexical scope.
 //
@@ -145,6 +148,10 @@ func TestEventuallyCallbacksUsePollBoundedCalls(t *testing.T) {
 		found, checks := waitCallbackViolations(fset, src.file, indexes[dir])
 		violations = append(violations, found...)
 		checked += checks
+		// Consistently is not retried and passes no deadline, so its callback
+		// gets its own check: a tool call there must use ConsistentlyPoll with
+		// Session.PollCall, not the unbounded Session.Call.
+		violations = append(violations, consistentlyCallbackViolations(fset, src.file, indexes[dir], exemptLines(fset, src.file))...)
 	}
 	if checked < minWaitCallChecks {
 		t.Fatalf("checked only %d wait and wrapper call sites, want at least %d; the walk is not seeing test/e2e", checked, minWaitCallChecks)
@@ -825,8 +832,8 @@ func lastArg(call *ast.CallExpr) ast.Expr {
 	return call.Args[len(call.Args)-1]
 }
 
-// waitCallName reports whether call invokes Eventually, EventuallyPoll or
-// WaitFor, and returns the name for the message.
+// waitCallName reports whether call invokes Eventually, EventuallyPoll,
+// WaitFor or ConsistentlyPoll, and returns the name for the message.
 func waitCallName(call *ast.CallExpr) (string, bool) {
 	var name string
 	switch fun := callFun(call.Fun).(type) {
@@ -838,10 +845,109 @@ func waitCallName(call *ast.CallExpr) (string, bool) {
 		return "", false
 	}
 	switch name {
-	case "Eventually", "EventuallyPoll", "WaitFor":
+	case "Eventually", "EventuallyPoll", "WaitFor", "ConsistentlyPoll":
 		return name, true
 	}
 	return "", false
+}
+
+// consistentlyCallName reports whether call invokes the window-only
+// Consistently, whose callback has no deadline and therefore cannot make a
+// poll-bounded call. Its callback is checked separately.
+func consistentlyCallName(call *ast.CallExpr) bool {
+	name, ok := callName(call)
+	return ok && name == "Consistently"
+}
+
+// consistentlyCallbackViolations reports every unbounded tool call in the
+// callback of a Consistently call in file, directly or through one level of a
+// same-directory helper. Consistently observes a window instead of retrying, so
+// it passes no deadline; a callback that needs a tool call uses
+// ConsistentlyPoll and Session.PollCall, which that guard checks. A callback
+// that genuinely needs the sixty-second bound exempts the call with the same
+// marker. A callback held in a variable is followed to its literal.
+//
+// index supplies the same direct-call and wrapper knowledge the wait guard
+// uses. Without it, a callback that calls a helper such as discListTopics is
+// invisible even though the helper's body calls Session.Call.
+func consistentlyCallbackViolations(fset *token.FileSet, file *ast.File, index *guardIndex, exempt map[int]bool) []string {
+	closures := closureLiterals(file)
+	var violations []string
+	exemptAt := func(pos token.Pos) bool {
+		line := fset.Position(pos).Line
+		return exempt[line] || exempt[line-1]
+	}
+	var inspect func(owner string, body *ast.BlockStmt, seen map[*ast.FuncLit]bool)
+	inspect = func(owner string, body *ast.BlockStmt, seen map[*ast.FuncLit]bool) {
+		ast.Inspect(body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if _, nested := waitCallName(call); nested || consistentlyCallName(call) {
+				// A nested wait or window reports its own callback.
+				return false
+			}
+			if exemptAt(call.Lparen) {
+				return true
+			}
+			switch fun := callFun(call.Fun).(type) {
+			case *ast.SelectorExpr:
+				if fun.Sel.Name == "Call" || fun.Sel.Name == "CallErr" {
+					violations = append(violations, fmt.Sprintf(
+						"%s: .%s inside the callback of %s, which passes no deadline; use harness.ConsistentlyPoll with Session.PollCall or PollCallWithin, or exempt the call with // %s <reason>",
+						fset.Position(fun.Sel.Pos()), fun.Sel.Name, owner, eventuallyCallExempt))
+					return true
+				}
+				if index != nil && index.globalDirectCalls[fun.Sel.Name] {
+					violations = append(violations, fmt.Sprintf(
+						"%s: %s is called inside the callback of %s and makes a bounded call in its body; use harness.ConsistentlyPoll and a deadline-taking variant, or exempt the call with // %s <reason>",
+						fset.Position(fun.Sel.Pos()), fun.Sel.Name, owner, eventuallyCallExempt))
+				}
+			case *ast.Ident:
+				if index != nil && index.directCalls[fun.Name] {
+					violations = append(violations, fmt.Sprintf(
+						"%s: %s is called inside the callback of %s and makes a bounded call in its body; use harness.ConsistentlyPoll and a deadline-taking variant, or exempt the call with // %s <reason>",
+						fset.Position(fun.Pos()), fun.Name, owner, eventuallyCallExempt))
+					return true
+				}
+				if lit := closures[fun.Name]; lit != nil && !seen[lit] {
+					seen[lit] = true
+					inspect(owner, lit.Body, seen)
+				}
+			}
+			return true
+		})
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || !consistentlyCallName(call) {
+			return true
+		}
+		arg := lastArg(call)
+		switch value := arg.(type) {
+		case *ast.FuncLit:
+			inspect("Consistently", value.Body, map[*ast.FuncLit]bool{})
+		case *ast.Ident:
+			if lit := closures[value.Name]; lit != nil {
+				inspect("Consistently", lit.Body, map[*ast.FuncLit]bool{lit: true})
+				return true
+			}
+			if !exemptAt(value.Pos()) {
+				violations = append(violations, fmt.Sprintf(
+					"%s: Consistently takes a named callback, so this guard cannot see whether it makes a tool call; pass a function literal or exempt the wait with // %s <reason>",
+					fset.Position(value.Pos()), eventuallyCallExempt))
+			}
+		default:
+			if arg != nil && !exemptAt(arg.Pos()) {
+				violations = append(violations, fmt.Sprintf(
+					"%s: Consistently takes a callback this guard cannot see through, so it cannot tell whether it makes a tool call; pass a function literal or exempt the wait with // %s <reason>",
+					fset.Position(arg.Pos()), eventuallyCallExempt))
+			}
+		}
+		return true
+	})
+	return violations
 }
 
 // exemptLines returns the lines carrying an exemption marker with a reason. A
@@ -1204,6 +1310,38 @@ func newGuardIndex(file *ast.File) *guardIndex {
 		index.globalDirectCalls[name] = true
 	}
 	return index
+}
+
+// TestWaitGuardSeesConsistentlyHelperCalls covers a Consistently callback that
+// delegates its tool call to a same-directory helper, as the discovery windows
+// did with discListTopics. The helper is one level from Session.Call, so the
+// direct-call index names it.
+func TestWaitGuardSeesConsistentlyHelperCalls(t *testing.T) {
+	const src = `package p
+
+type S struct{}
+
+func (s S) Call(t any, tool string, args any) any { return nil }
+
+func discListTopics(s S) (any, string) { return s.Call(nil, "list_topics", nil), "" }
+
+func f(s S) {
+	Consistently(nil, 0, "window", func() (bool, string) {
+		_, state := discListTopics(s)
+		return state == "", state
+	})
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "fixture.go", src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parsing the fixture: %v", err)
+	}
+	violations := consistentlyCallbackViolations(fset, file, newGuardIndex(file), exemptLines(fset, file))
+	joined := strings.Join(violations, "\n")
+	if !strings.Contains(joined, "discListTopics is called inside the callback of Consistently") {
+		t.Errorf("the guard did not report the helper call:\n%s", joined)
+	}
 }
 
 // TestExemptionCommentForms checks that the marker accepts the line and block

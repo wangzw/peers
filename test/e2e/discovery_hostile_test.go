@@ -314,17 +314,17 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 		watcher := discAgent(t, b, "mal-watcher", t.TempDir())
 		defer watcher.End(t)
 		harness.WaitRegistered(t, watcher, 3*time.Second)
-		harness.Consistently(t, discBound(2), "B never lists the malformed declarations", func() (bool, string) {
-			out, state := discListTopics(t, watcher)
+		harness.ConsistentlyPoll(t, discBound(2), harness.TopicCallPollBound, "B never lists the malformed declarations", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
+			out, state := discListTopicsPoll(t, deadline, watcher)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			for _, spec := range specs {
 				if _, ok := discPublicTopic(out, spec.Topic); ok {
-					return false, "the listing contains " + spec.Topic
+					return harness.Observed(false, "the listing contains "+spec.Topic)
 				}
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 	})
 

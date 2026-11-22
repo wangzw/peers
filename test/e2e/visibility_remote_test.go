@@ -215,14 +215,20 @@ func TestRemoteVisibility(t *testing.T) {
 		// full window without the entry is the intended observation.
 		lonely := vrStartSession(t, bNode, "lonely")
 		defer lonely.End(t)
-		harness.Consistently(t, vrQuietWindow, "the topicless session stays invisible", func() (bool, string) {
-			if vrSees(t, a1, "lonely") {
-				return false, "a1 lists lonely"
+		harness.ConsistentlyPoll(t, vrQuietWindow, harness.ToolCallPollBound, "the topicless session stays invisible", nil, func(deadline time.Time) harness.Observation {
+			for _, check := range []struct {
+				session *harness.Session
+				name    string
+			}{{a1, "lonely"}, {lonely, "a1"}} {
+				out, state := vrListAgentsPoll(t, deadline, check.session)
+				if state != "" {
+					return harness.Unobservable(state)
+				}
+				if _, ok := vrFindAgent(out, check.name); ok {
+					return harness.Observed(false, "lists "+check.name)
+				}
 			}
-			if vrSees(t, lonely, "a1") {
-				return false, "lonely lists a1"
-			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 
 		// A target that shares no topic with the caller is rejected with

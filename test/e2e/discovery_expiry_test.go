@@ -439,16 +439,16 @@ func TestPublicTopicExpiresWithDeclarer(t *testing.T) {
 	// Six days after issuance the declaration is still within its seven-day
 	// life and must stay visible.
 	dxSetClock(t, clockB, 144*time.Hour)
-	harness.Consistently(t, dxQuietWindow, "B still lists "+dxPublicTopic+" after 144h",
-		func() (bool, string) {
-			out, state := dxListTopics(t, b1)
+	harness.ConsistentlyPoll(t, dxQuietWindow, harness.TopicCallPollBound, "B still lists "+dxPublicTopic+" after 144h", b1.LogBrokerStack,
+		func(deadline time.Time) harness.Observation {
+			out, state := dxListTopicsPoll(t, deadline, b1)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			if !dxHasPublicTopic(out, dxPublicTopic) {
-				return false, fmt.Sprintf("public topics are %v", out.Public)
+				return harness.Observed(false, fmt.Sprintf("public topics are %v", out.Public))
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 
 	// Eight days after issuance the declaration has expired. A is dead, so
@@ -596,23 +596,9 @@ func dxWaitCard(t *testing.T, node *harness.Node, fp string, want []string, boun
 	})
 }
 
-// dxListTopics calls list_topics on session and returns the decoded result, or
-// a state string describing the failure.
-func dxListTopics(t *testing.T, session *harness.Session) (mcpserver.ListTopicsOut, string) {
-	t.Helper()
-	r := session.Call(t, "list_topics", map[string]any{})
-	if r.IsError {
-		return mcpserver.ListTopicsOut{}, r.Text
-	}
-	out, err := harness.Decode[mcpserver.ListTopicsOut](string(r.Structured))
-	if err != nil {
-		return mcpserver.ListTopicsOut{}, err.Error()
-	}
-	return out, ""
-}
-
-// dxListTopicsPoll is dxListTopics for a wait callback: the call is bounded by
-// the wait's deadline and a transport error is returned as state.
+// dxListTopicsPoll calls list_topics from a wait and returns the decoded
+// result: the call is bounded by the wait's deadline and a transport error is
+// returned as state.
 func dxListTopicsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListTopicsOut](t, deadline, session, "list_topics", map[string]any{})

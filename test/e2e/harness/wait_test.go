@@ -25,11 +25,18 @@ type recordTB struct {
 
 	mu     sync.Mutex
 	fatals []string
+	logs   []string
 }
 
 type fatalStop struct{}
 
 func (r *recordTB) Helper() {}
+
+func (r *recordTB) Logf(format string, args ...any) {
+	r.mu.Lock()
+	r.logs = append(r.logs, fmt.Sprintf(format, args...))
+	r.mu.Unlock()
+}
 
 func (r *recordTB) Fatalf(format string, args ...any) {
 	r.mu.Lock()
@@ -264,6 +271,108 @@ func TestConsistentlyFailsOnFirstViolation(t *testing.T) {
 	}
 }
 
+// blockingBackend answers every call only when its bound expires. It models a
+// Broker that stopped answering, which is what a sample cut off by its own call
+// bound observes.
+type blockingBackend struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (b *blockingBackend) callErrWithin(bound time.Duration, tool string, args map[string]any) (Result, error) {
+	b.mu.Lock()
+	b.calls++
+	b.mu.Unlock()
+	if bound > 0 {
+		time.Sleep(bound)
+	}
+	return Result{}, context.DeadlineExceeded
+}
+
+func (b *blockingBackend) callCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls
+}
+
+func (b *blockingBackend) mcpLogTail(int) (string, bool)      { return "", false }
+func (b *blockingBackend) logBrokerStack(testing.TB) string   { return "" }
+func (b *blockingBackend) tools(t testing.TB) []node.ToolInfo { return nil }
+func (b *blockingBackend) stopMCP(t testing.TB, sig syscall.Signal) int {
+	return 0
+}
+func (b *blockingBackend) restartMCP(t testing.TB)             {}
+func (b *blockingBackend) startExtraMCP(t testing.TB)          {}
+func (b *blockingBackend) inboxConnections(t testing.TB) int   { return 0 }
+func (b *blockingBackend) fake() FakeSession                   { return nil }
+func (b *blockingBackend) takeFakeErrors(t testing.TB) []error { return nil }
+func (b *blockingBackend) end() error                          { return nil }
+
+// TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound reproduces the defect
+// the discovery windows had: a sample calls a tool with a bound shorter than
+// the window's pollBound argument. The call is cut off by its own bound, not
+// by the window, so comparing the elapsed time with pollBound would miss it.
+// The sample must be reported as a stall, the window must fail at once as
+// "could not be observed", and the failure must name the stall count, the
+// first sample's duration and where the stack was logged.
+func TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound(t *testing.T) {
+	backend := &blockingBackend{}
+	session := &Session{name: "stalled", impl: backend}
+	tb := &recordTB{}
+	const (
+		window    = 3 * time.Second
+		callBound = 50 * time.Millisecond
+		// pollBound is deliberately longer than the sample's own call bound:
+		// this is the mismatch the old criterion compared against.
+		pollBound = time.Second
+	)
+
+	start := time.Now()
+	msg := captureFatal(t, tb, func() {
+		ConsistentlyPoll(tb, window, pollBound, "the stalled window", nil, func(deadline time.Time) Observation {
+			_, err := session.PollCallWithin(tb, deadline, callBound, "list_topics", nil)
+			return Unobservable(err.Error())
+		})
+	})
+	elapsed := time.Since(start)
+
+	if msg == "" {
+		t.Fatal("ConsistentlyPoll returned without reporting the stalled sample")
+	}
+	for _, want := range []string{"could not be observed", "1 sample stalled", "first stall", "no stall hook was given"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("failure %q does not contain %q", msg, want)
+		}
+	}
+	if elapsed > time.Second {
+		t.Fatalf("the window ran for %s after the stalled sample; it must fail at once", elapsed)
+	}
+	if calls := backend.callCount(); calls != 1 {
+		t.Fatalf("the window made %d calls, want one; it must stop at the first stall", calls)
+	}
+	if logged := strings.Join(tb.logs, "\n"); !strings.Contains(logged, "=== harness STALL: the stalled window") {
+		t.Errorf("the STALL marker was not logged:\n%s", logged)
+	}
+}
+
+// TestTopicTimeoutStateMarksTopicRPCError checks that the product's topic RPC
+// timeout text, which returns after about ten seconds and therefore below the
+// tool's poll bound, is reported as a stalled sample rather than a retryable
+// state.
+func TestTopicTimeoutStateMarksTopicRPCError(t *testing.T) {
+	const text = "list_topics failed: the Broker did not answer: context deadline exceeded (code: internal)"
+	state := TopicTimeoutState(text)
+	if state == "" {
+		t.Fatalf("TopicTimeoutState(%q) returned no state", text)
+	}
+	if obs := Unobservable(state); !obs.Stalled {
+		t.Fatalf("Unobservable(%q) did not mark the sample stalled: %+v", state, obs)
+	}
+	if other := TopicTimeoutState("list_agents failed: not_registered"); other != "" {
+		t.Fatalf("TopicTimeoutState marked an unrelated error: %q", other)
+	}
+}
+
 func TestConfigYAMLMerge(t *testing.T) {
 	merged := ConfigYAML(FastTimers, "send:\n  request_timeout: 10s\n")
 
@@ -349,6 +458,8 @@ func (b *startupBackend) callErrWithin(_ time.Duration, tool string, args map[st
 }
 
 func (b *startupBackend) mcpLogTail(int) (string, bool) { return "", false }
+
+func (b *startupBackend) logBrokerStack(testing.TB) string { return "" }
 
 func (b *startupBackend) tools(t testing.TB) []node.ToolInfo { return nil }
 

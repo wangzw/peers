@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -157,6 +158,148 @@ func TestStartBrokerReady(t *testing.T) {
 	}
 }
 
+// TestBrokerProcRefusesSignalAfterReap reproduces the pid-reuse window: after
+// the process has been waited for, its pid may name another process. The handle
+// must refuse the signal and leave its sent count unchanged.
+func TestBrokerProcRefusesSignalAfterReap(t *testing.T) {
+	dir := shortSocketDir(t)
+	socket := filepath.Join(dir, "broker.sock")
+	logPath := filepath.Join(t.TempDir(), "broker.log")
+
+	proc, result, err := StartBroker(context.Background(), BrokerSpec{
+		Path:    os.Args[0],
+		Env:     brokerTestEnv(t, map[string]string{"E2E_NODE_STUB": "broker-ok", "STUB_SOCKET": socket}),
+		LogPath: logPath,
+		Socket:  socket,
+	}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("StartBroker: %v", err)
+	}
+	if !result.Running {
+		t.Fatalf("Running = false, want true (exit code %d, stderr %q)", result.ExitCode, result.StderrLast)
+	}
+	if err := proc.SendSignal(syscall.SIGTERM); err != nil {
+		t.Fatalf("SendSignal(SIGTERM): %v", err)
+	}
+	if _, err := proc.Wait(5 * time.Second); err != nil {
+		t.Fatalf("Wait: %v", err)
+	}
+	before := proc.SignalsSent()
+
+	err = proc.SendSignal(syscall.SIGQUIT)
+	if !errors.Is(err, ErrBrokerReaped) {
+		t.Fatalf("SendSignal after reap = %v, want ErrBrokerReaped", err)
+	}
+	if got := proc.SignalsSent(); got != before {
+		t.Fatalf("SignalsSent = %d after a refused signal, want %d", got, before)
+	}
+	if err := proc.Signal(syscall.SIGKILL); !errors.Is(err, ErrBrokerReaped) {
+		t.Fatalf("Signal after reap = %v, want ErrBrokerReaped", err)
+	}
+}
+
+// TestBrokerProcSignalsRaceTheReap runs a SIGQUIT loop against the Broker while
+// another signal ends it and the handle reaps it. Under -race it checks the
+// lifecycle ordering: the signal loop must neither deadlock nor outlive the
+// reap, and once the handle is reaped every further signal is refused and not
+// counted. A signal handed to procsig after the reap would be a pid-reuse bug,
+// so the handle records every hand-off with its reaped mark at that moment and
+// the test asserts that none carries a true mark; deadlocking alone would not
+// catch the check being skipped.
+func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
+	const iterations = 40
+	for i := 0; i < iterations; i++ {
+		dir := shortSocketDir(t)
+		socket := filepath.Join(dir, "broker.sock")
+		logPath := filepath.Join(t.TempDir(), "broker.log")
+
+		proc, result, err := StartBroker(context.Background(), BrokerSpec{
+			Path:    os.Args[0],
+			Env:     brokerTestEnv(t, map[string]string{"E2E_NODE_STUB": "broker-ok", "STUB_SOCKET": socket}),
+			LogPath: logPath,
+			Socket:  socket,
+		}, 5*time.Second)
+		if err != nil {
+			t.Fatalf("iteration %d: StartBroker: %v", i, err)
+		}
+		if !result.Running {
+			t.Fatalf("iteration %d: Running = false (exit %d): %s", i, result.ExitCode, result.StderrLast)
+		}
+		proc.TraceSends()
+
+		assertNoSendAfterReap := func() {
+			t.Helper()
+			for _, send := range proc.SignalSends() {
+				if send.Reaped {
+					t.Fatalf("iteration %d: %v was handed to procsig after the Broker was reaped", i, send.Sig)
+				}
+			}
+		}
+
+		stop := make(chan struct{})
+		var (
+			sender  sync.WaitGroup
+			sendErr error
+		)
+		sender.Add(1)
+		go func() {
+			defer sender.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				if err := proc.SendSignal(syscall.SIGQUIT); err != nil {
+					if !errors.Is(err, ErrBrokerReaped) {
+						sendErr = err
+					}
+					return
+				}
+			}
+		}()
+
+		// End the Broker while the sender is signalling it. A refusal means the
+		// reap already won the race, which is the safe outcome.
+		stopErr := proc.SendSignal(syscall.SIGTERM)
+		if stopErr != nil && !errors.Is(stopErr, ErrBrokerReaped) {
+			close(stop)
+			sender.Wait()
+			t.Fatalf("iteration %d: SendSignal(SIGTERM): %v", i, stopErr)
+		}
+		_, waitErr := proc.Wait(5 * time.Second)
+		close(stop)
+
+		// A deadlocked sender would keep this wait from returning.
+		waited := make(chan struct{})
+		go func() { sender.Wait(); close(waited) }()
+		select {
+		case <-waited:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("iteration %d: the signal loop deadlocked with the reap", i)
+		}
+		assertNoSendAfterReap()
+		if sendErr != nil {
+			t.Fatalf("iteration %d: SendSignal(SIGQUIT): %v", i, sendErr)
+		}
+		if waitErr != nil {
+			t.Fatalf("iteration %d: Wait: %v", i, waitErr)
+		}
+
+		// Once reaped, every further signal is refused, not counted, and never
+		// handed to procsig.
+		before := proc.SignalsSent()
+		reapErr := proc.SendSignal(syscall.SIGTERM)
+		assertNoSendAfterReap()
+		if !errors.Is(reapErr, ErrBrokerReaped) {
+			t.Fatalf("iteration %d: SendSignal after reap = %v, want ErrBrokerReaped", i, reapErr)
+		}
+		if got := proc.SignalsSent(); got != before {
+			t.Fatalf("iteration %d: SignalsSent changed on a refused signal: %d -> %d", i, before, got)
+		}
+	}
+}
+
 func TestStartBrokerFailure(t *testing.T) {
 	dir := shortSocketDir(t)
 	socket := filepath.Join(dir, "broker.sock")
@@ -297,4 +440,64 @@ func TestAncestors(t *testing.T) {
 		}
 	}
 	t.Fatalf("Ancestors(%d) = %v, want it to contain the test process PID %d", child.Process.Pid, ancestors, self)
+}
+
+// TestInterpretWait4 pins how the non-Linux reaper reads a wait4(WNOHANG)
+// poll: a running child is not reaped, an interrupted poll is retried, and a
+// reaped child reports the exit code the status encodes, including -1 when a
+// signal ended it.
+func TestInterpretWait4(t *testing.T) {
+	const pid = 1234
+	tests := []struct {
+		name       string
+		wpid       int
+		err        error
+		status     syscall.WaitStatus
+		wantReaped bool
+		wantExit   int
+	}{
+		{name: "still running", wpid: 0, status: 0, wantReaped: false, wantExit: 0},
+		{name: "interrupted", wpid: 0, err: syscall.EINTR, status: 0, wantReaped: false, wantExit: 0},
+		{name: "reaped with a code", wpid: pid, status: syscall.WaitStatus(7 << 8), wantReaped: true, wantExit: 7},
+		{name: "reaped by a signal", wpid: pid, status: syscall.WaitStatus(syscall.SIGKILL), wantReaped: true, wantExit: -1},
+		{name: "no child", wpid: 0, err: syscall.ECHILD, status: 0, wantReaped: true, wantExit: -1},
+		{name: "unexpected error", wpid: 0, err: syscall.EINVAL, status: 0, wantReaped: true, wantExit: -1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			reaped, exit := interpretWait4(pid, tc.wpid, tc.err, tc.status)
+			if reaped != tc.wantReaped || exit != tc.wantExit {
+				t.Fatalf("interpretWait4 = (%v, %d), want (%v, %d)", reaped, exit, tc.wantReaped, tc.wantExit)
+			}
+		})
+	}
+}
+
+// TestInterpretWait4ReapsRealChild drives the poll the non-Linux reaper uses
+// against a real child: wait4(WNOHANG) is the only waiter, so it must reap the
+// child and report the exit code from the wait status. The handle itself uses
+// waitid on Linux, so this is the closest local check of the darwin path.
+func TestInterpretWait4ReapsRealChild(t *testing.T) {
+	child := exec.Command("sh", "-c", "exit 7")
+	if err := child.Start(); err != nil {
+		t.Fatalf("starting the child: %v", err)
+	}
+	// Do not call child.Wait: the poll below must be the only waiter, as on a
+	// platform without waitid(WNOWAIT).
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var status syscall.WaitStatus
+		wpid, err := syscall.Wait4(child.Process.Pid, &status, syscall.WNOHANG, nil)
+		reaped, exit := interpretWait4(child.Process.Pid, wpid, err, status)
+		if reaped {
+			if exit != 7 {
+				t.Fatalf("exit code = %d, want 7", exit)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child %d was not reaped within the deadline", child.Process.Pid)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

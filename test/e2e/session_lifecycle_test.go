@@ -179,22 +179,22 @@ func TestLocalSessionChanges(t *testing.T) {
 		clearer.Fake().SetSessionID("after-clear")
 		clearer.Fake().SetBusy(true)
 		lifecycleWaitStatus(t, observer, "clearer", "busy")
-		harness.Consistently(t, 1*time.Second, "clearing the conversation keeps the address and memberships", func() (bool, string) {
-			out, state := lifecycleListAgents(t, observer, nil)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "clearing the conversation keeps the address and memberships", nil, func(deadline time.Time) harness.Observation {
+			out, state := lifecycleListAgentsPoll(t, deadline, observer, nil)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			entry, ok := lifecycleFindAgent(out, "clearer")
 			if !ok {
-				return false, "clearer is no longer listed"
+				return harness.Observed(false, "clearer is no longer listed")
 			}
 			if entry.Address != address {
-				return false, fmt.Sprintf("address is %q, want %q", entry.Address, address)
+				return harness.Observed(false, fmt.Sprintf("address is %q, want %q", entry.Address, address))
 			}
 			if !lifecycleSameSet(entry.SharedTopics, want) {
-				return false, fmt.Sprintf("shared topics are %v, want %v", entry.SharedTopics, want)
+				return harness.Observed(false, fmt.Sprintf("shared topics are %v, want %v", entry.SharedTopics, want))
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 
 		r := observer.Call(t, "send_message", map[string]any{"to": address, "message": "after the clear"})
@@ -428,24 +428,9 @@ func lifecycleWaitRegistered(t *testing.T, s *harness.Session, name string) mcps
 	return out
 }
 
-// lifecycleListAgents calls list_agents and returns the decoded listing. A tool
-// error is reported as a state string so Eventually can retry and so a caller
-// can inspect it instead of failing inside the helper.
-func lifecycleListAgents(t *testing.T, s *harness.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
-	t.Helper()
-	r := s.Call(t, "list_agents", args)
-	if r.IsError {
-		return mcpserver.ListAgentsOut{}, r.Text
-	}
-	out, err := harness.Decode[mcpserver.ListAgentsOut](string(r.Structured))
-	if err != nil {
-		return mcpserver.ListAgentsOut{}, "decoding list_agents: " + err.Error()
-	}
-	return out, ""
-}
-
-// lifecycleListAgentsPoll is lifecycleListAgents for a wait callback: the call
-// is bounded by the wait's deadline and a transport error is returned as state.
+// lifecycleListAgentsPoll calls list_agents from a wait and returns the
+// decoded listing: the call is bounded by the wait's deadline and a transport
+// error is returned as state.
 func lifecycleListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", args)

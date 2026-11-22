@@ -134,15 +134,15 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 
 		// The negative check is a short observation: the directory is already
 		// synchronised, so one second without an entry is the intended result.
-		harness.Consistently(t, 1*time.Second, "api-worker does not see frontend2 before it joins", func() (bool, string) {
-			out, state := collabListAgents(t, api)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "api-worker does not see frontend2 before it joins", nil, func(deadline time.Time) harness.Observation {
+			out, state := collabListAgentsPoll(t, deadline, api)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			if _, ok := collabFindAgent(out, "frontend2"); ok {
-				return false, "frontend2 is listed"
+				return harness.Observed(false, "frontend2 is listed")
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 
 		collabJoin(t, frontend2, collabTopic)
@@ -239,22 +239,9 @@ func collabWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	})
 }
 
-// collabListAgents calls list_agents and returns the decoded answer.
-func collabListAgents(t *testing.T, session *harness.Session) (mcpserver.ListAgentsOut, string) {
-	t.Helper()
-	r := session.Call(t, "list_agents", nil)
-	if r.IsError {
-		return mcpserver.ListAgentsOut{}, r.Text
-	}
-	out, err := harness.Decode[mcpserver.ListAgentsOut](string(r.Structured))
-	if err != nil {
-		return mcpserver.ListAgentsOut{}, "decoding list_agents: " + err.Error()
-	}
-	return out, ""
-}
-
-// collabListAgentsPoll is collabListAgents for a wait callback: the call is
-// bounded by the wait's deadline and a transport error is returned as state.
+// collabListAgentsPoll calls list_agents from a wait and returns the decoded
+// answer: the call is bounded by the wait's deadline and a transport error is
+// returned as state.
 func collabListAgentsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", nil)

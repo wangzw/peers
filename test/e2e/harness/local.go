@@ -270,7 +270,7 @@ func (l *localNode) startSession(tb testing.TB, spec SessionSpec) *Session {
 
 	s := &Session{
 		name: spec.Name,
-		impl: &localSession{name: spec.Name, session: session},
+		impl: &localSession{name: spec.Name, session: session, node: l},
 	}
 	l.mu.Lock()
 	l.sessions = append(l.sessions, s)
@@ -305,7 +305,7 @@ func (l *localNode) tryStartSession(spec SessionSpec) (*Session, error) {
 
 	s := &Session{
 		name: spec.Name,
-		impl: &localSession{name: spec.Name, session: session, deferred: tb},
+		impl: &localSession{name: spec.Name, session: session, node: l, deferred: tb},
 	}
 	l.mu.Lock()
 	l.sessions = append(l.sessions, s)
@@ -355,6 +355,9 @@ func (d *deferredTB) TakeErrors() []string {
 type localSession struct {
 	name    string
 	session *node.Session
+	// node is the local node that owns the session's Broker. It is what
+	// logBrokerStack signals.
+	node *localNode
 	// deferred carries the failures fakesession reports when the session was
 	// started through TryStartSession. A session started on the test goroutine
 	// reports them through the real testing.T immediately.
@@ -376,6 +379,16 @@ func (s *localSession) callErrWithin(bound time.Duration, tool string, args map[
 }
 
 func (s *localSession) mcpLogTail(lines int) (string, bool) { return s.session.MCPLogTail(lines) }
+
+// logBrokerStack sends SIGQUIT to the node's Broker and returns the stack the
+// Go runtime writes to the Broker log.
+func (s *localSession) logBrokerStack(t testing.TB) string {
+	t.Helper()
+	if s.node == nil {
+		return "no node is attached to session " + s.name
+	}
+	return s.node.brokerStack(t)
+}
 
 func (s *localSession) tools(t testing.TB) []node.ToolInfo {
 	t.Helper()
@@ -501,6 +514,12 @@ func (l *localNode) cleanup() {
 		}
 
 		l.killProcesses()
+
+		// Collect the logs before the runtime root and the home directories
+		// are removed. Only a failed test needs them.
+		if l.t.Failed() {
+			l.collectArtifacts()
+		}
 
 		// The ports are free once the processes are gone, so another suite may
 		// take them.

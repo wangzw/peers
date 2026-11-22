@@ -141,24 +141,26 @@ func TestOtherAccountRejected(t *testing.T) {
 		// window is one second, twenty polls, which leaves room for a
 		// registration that was still in flight after the command stopped the
 		// MCP server process.
-		harness.Consistently(t, 1*time.Second, "the intruder stays off the peer Broker", func() (bool, string) {
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "the intruder stays off the peer Broker", nil, func(deadline time.Time) harness.Observation {
 			status, detail := host.Oracle().Status(t)
 			if detail != nil {
-				return false, detail.GetMessage()
+				return harness.Observed(false, detail.GetMessage())
 			}
 			for _, agent := range status.Agents {
 				if strings.Contains(agent.GetAddress(), "intruder") {
-					return false, "the Broker lists " + agent.GetAddress()
+					return harness.Observed(false, "the Broker lists "+agent.GetAddress())
 				}
 			}
-			if out, state := accountsListAgents(t, owner); state == "" {
-				for _, agent := range out.Agents {
-					if strings.Contains(agent.Address, "intruder") {
-						return false, "the owner's list contains " + agent.Address
-					}
+			out, state := accountsListAgentsPoll(t, deadline, owner)
+			if state != "" {
+				return harness.Unobservable(state)
+			}
+			for _, agent := range out.Agents {
+				if strings.Contains(agent.Address, "intruder") {
+					return harness.Observed(false, "the owner's list contains "+agent.Address)
 				}
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 	})
 
@@ -318,22 +320,7 @@ func accountsUID(t *testing.T, host *harness.Node, argv ...string) int {
 	return uid
 }
 
-// accountsListAgents calls list_agents and returns the decoded listing. A tool
-// error becomes the state string so Eventually can retry it.
-func accountsListAgents(t *testing.T, s *harness.Session) (mcpserver.ListAgentsOut, string) {
-	t.Helper()
-	r := s.Call(t, "list_agents", nil)
-	if r.IsError {
-		return mcpserver.ListAgentsOut{}, r.Text
-	}
-	out, err := harness.Decode[mcpserver.ListAgentsOut](string(r.Structured))
-	if err != nil {
-		return mcpserver.ListAgentsOut{}, "decoding list_agents: " + err.Error()
-	}
-	return out, ""
-}
-
-// accountsListAgentsPoll is accountsListAgents for a wait callback: the call is
+// accountsListAgentsPoll calls list_agents from a wait callback: the call is
 // bounded by the wait's deadline and a transport error is returned as state.
 func accountsListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()

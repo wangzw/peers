@@ -307,22 +307,27 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 		secJoin(t, worker, secretTopic)
 
 		// Negative observations run over a window rather than a single sample:
-		// a periodic sync can leak on any later round.
-		harness.Consistently(t, secLeakWindow, "hostB never learns the private topic name or member", func() (bool, string) {
+		// a periodic sync can leak on any later round. The reads are poll
+		// calls: a transport failure is an inconclusive sample and is retried,
+		// and only an answer can show a leak.
+		harness.ConsistentlyPoll(t, secLeakWindow, harness.ToolCallPollBound, "hostB never learns the private topic name or member", nil, func(deadline time.Time) harness.Observation {
 			for name, session := range map[string]*harness.Session{"operator": opB, "session": observer} {
 				for _, tool := range secReadOnlyTools(name) {
-					r := session.Call(t, tool, nil)
+					r, err := session.PollCall(t, deadline, tool, nil)
+					if err != nil {
+						return harness.Unobservable(name + ": " + tool + ": " + err.Error())
+					}
 					if r.IsError {
-						return false, name + ": " + tool + ": " + r.Text
+						return harness.Observed(false, name+": "+tool+": "+r.Text)
 					}
 					for _, marker := range []string{secretTopic, workerName} {
 						if strings.Contains(r.Text, marker) || strings.Contains(string(r.Structured), marker) {
-							return false, fmt.Sprintf("%s: %s leaks %q", name, tool, marker)
+							return harness.Observed(false, fmt.Sprintf("%s: %s leaks %q", name, tool, marker))
 						}
 					}
 				}
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 
 		// A roster or roster_delta frame from A that B had to ignore or drop is

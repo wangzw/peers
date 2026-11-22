@@ -2,7 +2,9 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"syscall"
 	"testing"
@@ -11,6 +13,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 	"github.com/wangzw/peers/test/e2e/node"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -31,6 +35,10 @@ const sessionStartBound = 30 * time.Second
 // socket served in-process by the Broker, so it answers at once; no product
 // timer longer than the project-wide three-second bound governs it.
 const oracleBound = 3 * time.Second
+
+// OracleCallBound exposes oracleBound to a consistency window in test/e2e,
+// which names the bound each sample's Oracle call may take.
+const OracleCallBound = oracleBound
 
 // sessionCallBound bounds one MCP tool call. It is larger than the default
 // send budget of 20 seconds so a send that is waiting for its own deadline
@@ -53,18 +61,30 @@ const sessionCallBound = 60 * time.Second
 // sixty-second hang.
 const ToolCallPollBound = 7 * time.Second
 
+// topicRPCTimeoutMirror mirrors internal/mcpserver/topics.go's unexported
+// topicRPCTimeout, which bounds every Broker call one topic tool makes,
+// list_topics included. The e2e package cannot read the unexported constant,
+// so the value is repeated here and must be kept in step with it.
+const topicRPCTimeoutMirror = 10 * time.Second
+
+// updateHintTimeoutMirror mirrors internal/mcpserver/updatehint.go's
+// updateStatusTimeout, the Broker query the update hint runs inside the same
+// tools/call after the handler returns.
+const updateHintTimeoutMirror = 3 * time.Second
+
 // TopicCallPollBound bounds one topic tool call made from inside a test wait.
-// join_topic and leave_topic bound their Broker RPC at topicRPCTimeout, ten
-// seconds (internal/mcpserver/topics.go:16), and the update hint adds its
-// three-second query inside the same tools/call. Ten plus three plus a second
-// of margin is fourteen seconds.
-const TopicCallPollBound = 14 * time.Second
+// The handler may spend topicRPCTimeout before the update hint runs, and the
+// hint adds updateHintTimeoutMirror inside the same tools/call. The extra
+// second covers one MCP round trip and the poll interval (PollInterval,
+// 50ms), so a call that answers close to its bound is not cut off by
+// scheduling noise.
+const TopicCallPollBound = topicRPCTimeoutMirror + updateHintTimeoutMirror + time.Second
 
 // ToolCallWaitBound is the shortest total bound an Eventually that makes a
 // poll-bounded call should use: two poll bounds, so one stalled call leaves a
-// second poll to observe the state the first could not. A shorter wait may
-// still make the call (PollCall clamps it to the time the wait has left), but
-// one stall then consumes the whole wait instead of being retried.
+// second poll to observe the state the first could not. A shorter wait still
+// makes the call at its full poll bound, so a stalled call can outlast the wait
+// by up to one poll bound and then ends it instead of being retried.
 const ToolCallWaitBound = 2 * ToolCallPollBound
 
 // TopicCallWaitBound is ToolCallWaitBound for a wait that polls a topic tool:
@@ -181,6 +201,39 @@ func (o *OracleClient) ListTopics(t testing.TB, agentID string) (*localpb.ListTo
 		return nil, nil
 	}
 	return resp, nil
+}
+
+// ListBrokersWithin is ListBrokers for a consistency window. The call is
+// bounded by oracleBound or by the time left to deadline when that is shorter.
+// A transport error is returned as err so the window can retry it as an
+// inconclusive sample, but a call that spends the full oracleBound without an
+// answer fails the test: the local socket answers at once, so that is
+// infrastructure trouble rather than a state the window can wait out.
+func (o *OracleClient) ListBrokersWithin(t testing.TB, deadline time.Time) (*localpb.ListBrokersResponse, *localpb.ErrorDetail, error) {
+	t.Helper()
+	if o.remote != nil {
+		resp, detail := o.remote.listBrokers(t)
+		return resp, detail, nil
+	}
+	bound := oracleBound
+	if left := time.Until(deadline); left < bound {
+		if left <= 0 {
+			return nil, nil, fmt.Errorf("harness: Local.ListBrokers: no time left in the wait")
+		}
+		bound = left
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	start := time.Now()
+	resp, err := o.oracle.ListBrokers(ctx)
+	if err != nil {
+		if elapsed := time.Since(start); elapsed >= oracleBound {
+			t.Fatalf("harness: calling Local.ListBrokers did not answer within %s (took %s): %v", oracleBound, elapsed, err)
+			return nil, nil, nil
+		}
+		return nil, nil, err
+	}
+	return resp, nil, nil
 }
 
 // Status returns the Broker's status.
@@ -396,6 +449,7 @@ func (n *Node) Workspace(t testing.TB, kind, origin, projectYAML string) string 
 type sessionBackend interface {
 	callErrWithin(bound time.Duration, tool string, args map[string]any) (Result, error)
 	mcpLogTail(lines int) (string, bool)
+	logBrokerStack(t testing.TB) string
 	tools(t testing.TB) []node.ToolInfo
 	stopMCP(t testing.TB, sig syscall.Signal) int
 	restartMCP(t testing.TB)
@@ -421,11 +475,16 @@ type Session struct {
 
 // Call invokes a tool on the session's current MCP server process. A call that
 // fails at the transport or protocol level fails the test with the backend's
-// error as it is: callErrWithin already names the session and the tool.
+// error as it is: callErrWithin already names the session and the tool. Before
+// failing, it logs the MCP server's standard error tail and the stack of the
+// node's Broker, because a transport failure on a fatal path is the evidence
+// the next reader needs and the process will not be reused.
 func (s *Session) Call(t testing.TB, tool string, args map[string]any) Result {
 	t.Helper()
 	result, err := s.impl.callErrWithin(sessionCallBound, tool, args)
 	if err != nil {
+		s.logMCPTailOnce(t)
+		s.LogBrokerStack(t)
 		t.Fatalf("%v", err)
 		return Result{}
 	}
@@ -442,17 +501,19 @@ func (s *Session) CallErr(tool string, args map[string]any) (Result, error) {
 
 // CallErrWithin is CallErr bounded by bound instead of sessionCallBound. A
 // bound of zero or less means no bound beyond the call's own. A call made from
-// inside a wait uses PollCall instead, which also clamps the bound to the time
-// the wait has left.
+// inside a wait uses PollCall instead, which marks a call that reaches its bound
+// as a stall.
 func (s *Session) CallErrWithin(bound time.Duration, tool string, args map[string]any) (Result, error) {
 	return s.impl.callErrWithin(bound, tool, args)
 }
 
 // PollCall invokes a tool from inside a wait. The call is bounded by
-// ToolCallPollBound and, when the wait has less time left, by the time left to
-// deadline, so a stalled call never outlives the wait that made it. A transport
-// or protocol failure is returned as an error instead of failing the test, so
-// the wait can poll again.
+// ToolCallPollBound, and a call that reaches that bound is marked as a stall
+// rather than reported as an unobservable sample. The bound does not shrink
+// when the wait has less time left, so a slow call near the end of a window is
+// not cut short by the window; a stalled call can therefore outlast its window
+// by up to one poll bound. A transport or protocol failure is returned as an
+// error instead of failing the test, so the wait can poll again.
 //
 // Every failure is logged with the session, the tool and how long the call
 // took. A wait that recovers on its next poll would otherwise pass silently;
@@ -466,23 +527,51 @@ func (s *Session) PollCall(t testing.TB, deadline time.Time, tool string, args m
 
 // PollCallWithin is PollCall with a bound chosen by the caller instead of
 // ToolCallPollBound. A topic tool uses TopicCallPollBound: its handler may spend
-// topicRPCTimeout before the update hint runs. The bound is still clamped to the
-// time left to deadline.
+// topicRPCTimeout before the update hint runs. Every call runs its own pollBound
+// in full; the bound is not shortened when the wait has less time left, because
+// a call cut short by the window would report a healthy Broker as unobservable
+// on a loaded runner. The window therefore overruns by at most one pollBound
+// when a call stalls, and a timed-out call is always marked as a stall.
 func (s *Session) PollCallWithin(t testing.TB, deadline time.Time, pollBound time.Duration, tool string, args map[string]any) (Result, error) {
 	t.Helper()
-	bound := pollBound
-	if left := time.Until(deadline); left < bound {
-		if left <= 0 {
-			return Result{}, fmt.Errorf("harness: session %s: calling %s: no time left in the wait", s.name, tool)
-		}
-		bound = left
+	if !time.Now().Before(deadline) {
+		return Result{}, fmt.Errorf("harness: session %s: calling %s: no time left in the wait", s.name, tool)
 	}
 	start := time.Now()
-	result, err := s.impl.callErrWithin(bound, tool, args)
+	result, err := s.impl.callErrWithin(pollBound, tool, args)
 	if err == nil {
 		return result, nil
 	}
 	t.Logf("harness: session %s: %s failed after %s: %v", s.name, tool, time.Since(start), err)
+	s.logMCPTailOnce(t)
+	if pollBound > 0 && isCallTimeout(err) {
+		// The call reached its own bound, so the sample tells the wait that
+		// the Broker stopped answering. The marker lets Unobservable report it
+		// as a stall without a second error type.
+		return result, fmt.Errorf("%sthe call reached its %s poll bound: %w", stallStatePrefix, pollBound, err)
+	}
+	return result, err
+}
+
+// isCallTimeout reports whether err is a call that ran out of time rather than
+// one that failed for another reason. A context deadline surfaces either
+// directly or through a gRPC status, and some transports render only the text.
+func isCallTimeout(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if status.Code(err) == codes.DeadlineExceeded {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "deadline exceeded") || strings.Contains(text, "i/o timeout")
+}
+
+// logMCPTailOnce logs the MCP server's standard error tail the first time a
+// session records a failure. Later failures add only their own line, so a
+// flapping wait does not copy the same tail over and over.
+func (s *Session) logMCPTailOnce(t testing.TB) {
+	t.Helper()
 	s.pollLogOnce.Do(func() {
 		tail, ok := s.impl.mcpLogTail(20)
 		switch {
@@ -494,7 +583,21 @@ func (s *Session) PollCallWithin(t testing.TB, deadline time.Time, pollBound tim
 			t.Logf("harness: session %s: MCP server log tail:\n%s", s.name, tail)
 		}
 	})
-	return result, err
+}
+
+// LogBrokerStack logs the stack of the node's Broker. It sends SIGQUIT through
+// the backend's Broker handle: on a local node the handle signals the Broker
+// above init, and in a container the node agent signals its own Broker handle
+// inside the container's pid namespace. The handle refuses a process it has
+// already waited for, so a reused pid never receives the signal. SIGQUIT makes
+// a Go program write every goroutine's stack and exit, so this is evidence
+// collection for a failing or stalled run only. It returns where the stack was
+// logged, so a consistency window's failure can point the reader at it.
+func (s *Session) LogBrokerStack(t testing.TB) string {
+	t.Helper()
+	stack := s.impl.logBrokerStack(t)
+	t.Logf("harness: session %s: Broker stack after SIGQUIT:\n%s", s.name, stack)
+	return fmt.Sprintf("the Broker stack of session %s, logged above", s.name)
 }
 
 // Tools lists the tools of the session's current MCP server process, with the

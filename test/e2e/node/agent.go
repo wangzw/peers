@@ -622,7 +622,12 @@ func (a *Agent) startBroker(spec AgentBrokerSpec) StartResult {
 	return result
 }
 
-// SignalBroker sends sig to the current Broker.
+// SignalBroker sends sig to the current Broker through its process handle. The
+// handle holds its own lifecycle lock across the reaped check and the send, so
+// a Broker this agent already waited for is never signalled through a pid that
+// may name another process. The agent runs in the same container as the
+// Broker, so the handle's pid is reachable; a test process on the host cannot
+// signal a pid that does not name a process above its own pid namespace.
 func (a *Agent) SignalBroker(sig syscall.Signal) error {
 	return Guard(func() {
 		a.mu.Lock()
@@ -631,7 +636,7 @@ func (a *Agent) SignalBroker(sig syscall.Signal) error {
 		if broker == nil {
 			a.tb.Fatalf("node: no Broker has been started")
 		}
-		if err := broker.Signal(sig); err != nil {
+		if err := broker.SendSignal(sig); err != nil {
 			a.tb.Fatalf("%v", err)
 		}
 	})

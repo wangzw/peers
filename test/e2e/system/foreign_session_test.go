@@ -174,15 +174,15 @@ func foreignSessionRejected(t *testing.T, readableRecord bool) {
 		return true, ""
 	})
 
-	harness.Consistently(t, time.Second, "peer sees no agent from the other account", func() (bool, string) {
-		out, state := e2eSysListAgents(t, a, nil)
+	harness.ConsistentlyPoll(t, time.Second, harness.ToolCallPollBound, "peer sees no agent from the other account", nil, func(deadline time.Time) harness.Observation {
+		out, state := e2eSysListAgentsPoll(t, deadline, a, nil)
 		if state != "" {
-			return false, state
+			return harness.Unobservable(state)
 		}
 		if len(out.Agents) != 0 {
-			return false, fmt.Sprintf("peer sees %d agents", len(out.Agents))
+			return harness.Observed(false, fmt.Sprintf("peer sees %d agents", len(out.Agents)))
 		}
-		return true, ""
+		return harness.Observed(true, "")
 	})
 }
 

@@ -295,31 +295,36 @@ func discWaitBroker(t *testing.T, d *discNode, fpHex string, bound time.Duration
 }
 
 // discAbsentConsistently asserts over the whole window that d lists none of
-// the fingerprints, the alias and the address.
+// the fingerprints, the alias and the address. The Oracle read is a poll call:
+// a transport error is an inconclusive sample and is retried, and a call that
+// spends the whole oracle bound does not answer is a hard failure.
 func discAbsentConsistently(t *testing.T, d *discNode, window time.Duration, what string, fingerprints []string, alias, addr string) {
 	t.Helper()
-	harness.Consistently(t, window, what, func() (bool, string) {
-		brokers, state := discList(t, d)
-		if state != "" {
-			return false, state
+	harness.ConsistentlyPoll(t, window, harness.OracleCallBound, what, nil, func(deadline time.Time) harness.Observation {
+		brokers, detail, err := d.Oracle().ListBrokersWithin(t, deadline)
+		if err != nil {
+			return harness.Unobservable(err.Error())
 		}
-		for _, b := range brokers {
+		if detail != nil {
+			return harness.Observed(false, detail.GetMessage())
+		}
+		for _, b := range brokers.GetBrokers() {
 			if hex.EncodeToString(b.GetFingerprint()) == "" {
 				continue
 			}
 			for _, fp := range fingerprints {
 				if hex.EncodeToString(b.GetFingerprint()) == fp {
-					return false, "fingerprint " + fp + " is listed"
+					return harness.Observed(false, "fingerprint "+fp+" is listed")
 				}
 			}
 			if alias != "" && b.GetAlias() == alias {
-				return false, "alias " + alias + " is listed"
+				return harness.Observed(false, "alias "+alias+" is listed")
 			}
 			if addr != "" && discHasAddress(b, addr) {
-				return false, "address " + addr + " is listed"
+				return harness.Observed(false, "address "+addr+" is listed")
 			}
 		}
-		return true, ""
+		return harness.Observed(true, "")
 	})
 }
 
@@ -470,17 +475,17 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 
 	window := discBound(2)
 	discAbsentConsistently(t, c, window, "C never learns A from a private Broker", []string{fpA}, a.alias, a.addr)
-	harness.Consistently(t, window, "C never sees A's private topics", func() (bool, string) {
-		out, state := discListTopics(t, watcher)
+	harness.ConsistentlyPoll(t, window, harness.TopicCallPollBound, "C never sees A's private topics", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
+		out, state := discListTopicsPoll(t, deadline, watcher)
 		if state != "" {
-			return false, state
+			return harness.Unobservable(state)
 		}
 		for _, topic := range privateTopics {
 			if _, ok := discPublicTopic(out, topic); ok {
-				return false, "public topics contain " + topic
+				return harness.Observed(false, "public topics contain "+topic)
 			}
 		}
-		return true, ""
+		return harness.Observed(true, "")
 	})
 
 	// The text surfaces a client sees must not carry A's fingerprint, alias or
@@ -548,17 +553,17 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 		}
 		return true, ""
 	})
-	harness.Consistently(t, window, "C never sees A's undeclared topics", func() (bool, string) {
-		out, state := discListTopics(t, watcher)
+	harness.ConsistentlyPoll(t, window, harness.TopicCallPollBound, "C never sees A's undeclared topics", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
+		out, state := discListTopicsPoll(t, deadline, watcher)
 		if state != "" {
-			return false, state
+			return harness.Unobservable(state)
 		}
 		for _, topic := range privateTopics {
 			if _, ok := discPublicTopic(out, topic); ok {
-				return false, "public topics contain " + topic
+				return harness.Observed(false, "public topics contain "+topic)
 			}
 		}
-		return true, ""
+		return harness.Observed(true, "")
 	})
 }
 
@@ -952,15 +957,15 @@ func TestPublicTopicRejectedOnPrivateBroker(t *testing.T) {
 	watcher := discAgent(t, b, "watcher", t.TempDir())
 	defer watcher.End(t)
 	harness.WaitRegistered(t, watcher, 3*time.Second)
-	harness.Consistently(t, discBound(1), "B never sees the rejected declaration", func() (bool, string) {
-		topics, state := discListTopics(t, watcher)
+	harness.ConsistentlyPoll(t, discBound(1), harness.TopicCallPollBound, "B never sees the rejected declaration", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
+		topics, state := discListTopicsPoll(t, deadline, watcher)
 		if state != "" {
-			return false, state
+			return harness.Unobservable(state)
 		}
 		if _, ok := discPublicTopic(topics, "infra-help"); ok {
-			return false, "infra-help is public on B"
+			return harness.Observed(false, "infra-help is public on B")
 		}
-		return true, ""
+		return harness.Observed(true, "")
 	})
 }
 

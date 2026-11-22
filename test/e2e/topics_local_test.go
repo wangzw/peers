@@ -108,15 +108,15 @@ func TestLocalTopics(t *testing.T) {
 		watcher := topicsSession(t, host, "watcher", topicsPlain(t))
 		defer watcher.End(t)
 		topicsJoin(t, watcher, "watch")
-		harness.Consistently(t, 1*time.Second, "an agent in no topic appears in no list", func() (bool, string) {
-			out, state := topicsListAgents(t, watcher, nil)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "an agent in no topic appears in no list", nil, func(deadline time.Time) harness.Observation {
+			out, state := topicsListAgentsPoll(t, deadline, watcher, nil)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			if _, ok := topicsFindAgent(out, "lonely"); ok {
-				return false, "lonely is listed by watcher"
+				return harness.Observed(false, "lonely is listed by watcher")
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 	})
 
@@ -171,15 +171,15 @@ func TestLocalTopics(t *testing.T) {
 		watcher := topicsSession(t, host, "watcher", topicsOrigin(t, "https://github.com/org/repo"))
 		defer watcher.End(t)
 		topicsWaitJoinedSet(t, watcher, "github.com/org/repo")
-		harness.Consistently(t, 1*time.Second, "an agent with no topic appears in no list", func() (bool, string) {
-			out, state := topicsListAgents(t, watcher, nil)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "an agent with no topic appears in no list", nil, func(deadline time.Time) harness.Observation {
+			out, state := topicsListAgentsPoll(t, deadline, watcher, nil)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
 			if _, ok := topicsFindAgent(out, "loner"); ok {
-				return false, "loner is listed by watcher"
+				return harness.Observed(false, "loner is listed by watcher")
 			}
-			return true, ""
+			return harness.Observed(true, "")
 		})
 	})
 
@@ -192,12 +192,15 @@ func TestLocalTopics(t *testing.T) {
 		topicsWaitRegistered(t, s)
 		// The session is registered; stay long enough for a wrong auto-join to
 		// show up.
-		harness.Consistently(t, 1*time.Second, "Broker configuration turns automatic joining off", func() (bool, string) {
-			out, state := topicsList(t, s)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "Broker configuration turns automatic joining off", nil, func(deadline time.Time) harness.Observation {
+			out, state := topicsListPoll(t, deadline, s)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
-			return len(out.Joined) == 0, fmt.Sprintf("joined topics are %v", out.Joined)
+			if len(out.Joined) != 0 {
+				return harness.Observed(false, fmt.Sprintf("joined topics are %v", out.Joined))
+			}
+			return harness.Observed(true, "")
 		})
 	})
 
@@ -207,12 +210,15 @@ func TestLocalTopics(t *testing.T) {
 		off := topicsSession(t, host, "off", topicsProject(t, "auto_join: false\n", "https://github.com/org/repo"))
 		defer off.End(t)
 		topicsWaitRegistered(t, off)
-		harness.Consistently(t, 1*time.Second, "project configuration turns automatic joining off", func() (bool, string) {
-			out, state := topicsList(t, off)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "project configuration turns automatic joining off", nil, func(deadline time.Time) harness.Observation {
+			out, state := topicsListPoll(t, deadline, off)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
-			return len(out.Joined) == 0, fmt.Sprintf("joined topics are %v", out.Joined)
+			if len(out.Joined) != 0 {
+				return harness.Observed(false, fmt.Sprintf("joined topics are %v", out.Joined))
+			}
+			return harness.Observed(true, "")
 		})
 
 		on := topicsSession(t, host, "on", topicsOrigin(t, "https://github.com/org/repo"))
@@ -282,12 +288,15 @@ func TestLocalTopics(t *testing.T) {
 		s := topicsSession(t, host, "nameless-no-autojoin", topicsOrigin(t, "https://github.com/org/repo"))
 		defer s.End(t)
 		topicsWaitRegistered(t, s)
-		harness.Consistently(t, 1*time.Second, "automatic joining stays off before the nameless call", func() (bool, string) {
-			out, state := topicsList(t, s)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "automatic joining stays off before the nameless call", nil, func(deadline time.Time) harness.Observation {
+			out, state := topicsListPoll(t, deadline, s)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
-			return len(out.Joined) == 0, fmt.Sprintf("joined topics are %v", out.Joined)
+			if len(out.Joined) != 0 {
+				return harness.Observed(false, fmt.Sprintf("joined topics are %v", out.Joined))
+			}
+			return harness.Observed(true, "")
 		})
 		// The nameless call is an explicit request, so it ignores the switch.
 		topicsJoinDefault(t, s)
@@ -318,12 +327,15 @@ func TestLocalTopics(t *testing.T) {
 		// before it decides about the default topic. Holding the exact set for
 		// a second keeps a default topic joined late in the restore from
 		// passing unseen between two samples of the wait above.
-		harness.Consistently(t, 1*time.Second, "the default topic stays out once the sentinel is restored", func() (bool, string) {
-			out, state := topicsList(t, s)
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "the default topic stays out once the sentinel is restored", nil, func(deadline time.Time) harness.Observation {
+			out, state := topicsListPoll(t, deadline, s)
 			if state != "" {
-				return false, state
+				return harness.Unobservable(state)
 			}
-			return topicsSameSet(out.Joined, []string{"sentinel"}), fmt.Sprintf("joined topics are %v", out.Joined)
+			if !topicsSameSet(out.Joined, []string{"sentinel"}) {
+				return harness.Observed(false, fmt.Sprintf("joined topics are %v", out.Joined))
+			}
+			return harness.Observed(true, "")
 		})
 
 		// A new session in the same workspace still joins the default topic.
@@ -472,12 +484,13 @@ func topicsListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session, 
 // brokerTopicTool reports whether tool is a topic tool that reaches the
 // Broker, whose handler may spend topicRPCTimeout before the update hint runs.
 // A wait polling it uses harness.TopicCallPollBound and, when the caller's
-// bound is shorter, harness.TopicCallWaitBound. list_topics is not one of them:
-// its handler makes no topic RPC and stays within the generic call bound, so it
-// polls like any other read-only tool.
+// bound is shorter, harness.TopicCallWaitBound. list_topics makes one ListTopics
+// RPC bounded by topicRPCTimeout, so it belongs here too: polling it with the
+// generic bound would cut the call before the product's own timeout and hide a
+// Broker that stopped answering.
 func brokerTopicTool(tool string) bool {
 	switch tool {
-	case "join_topic", "leave_topic":
+	case "join_topic", "leave_topic", "list_topics":
 		return true
 	}
 	return false

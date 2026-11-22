@@ -3,7 +3,6 @@
 package e2e
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -179,23 +178,9 @@ func e2eSysWaitVisible(t *testing.T, observer *syscontainer.Session, topic, addr
 	})
 }
 
-// e2eSysListAgents calls list_agents and decodes the JSON text result. A tool
-// error is returned as state so callers can retry.
-func e2eSysListAgents(t *testing.T, session *syscontainer.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
-	t.Helper()
-	text, isError := session.Call(t, "list_agents", args)
-	if isError {
-		return mcpserver.ListAgentsOut{}, text
-	}
-	var out mcpserver.ListAgentsOut
-	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		return mcpserver.ListAgentsOut{}, "decoding list_agents: " + err.Error()
-	}
-	return out, ""
-}
-
-// e2eSysListAgentsPoll is e2eSysListAgents for a wait callback: the call is
-// bounded by the wait's deadline and a transport error is returned as state.
+// e2eSysListAgentsPoll calls list_agents from a wait and decodes the JSON text
+// result: the call is bounded by the wait's deadline and a transport error is
+// returned as state.
 func e2eSysListAgentsPoll(t *testing.T, deadline time.Time, session *syscontainer.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return sysPollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", args)
