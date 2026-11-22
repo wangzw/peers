@@ -375,21 +375,24 @@ func TestREQAgentMessaging029_EmptySignatureRejected(t *testing.T) {
 // TestDeliver_ContextDeadlineBeatsTimeout pins that the caller's context
 // deadline ends the wait for the receiver before the separate write timeout
 // does. The receiver holds the connection open, so only those two deadlines can
-// end the call.
+// end the call. The write timeout is set far beyond the package fallback: a
+// delivery that ignored the context deadline could only return at that timeout,
+// which the fallback reports as a failure. That decides the assertion by which
+// event ends the call, not by a bound on how fast a goroutine is scheduled.
 func TestDeliver_ContextDeadlineBeatsTimeout(t *testing.T) {
-	const contextDeadline = 50 * time.Millisecond
+	const contextDeadline = 500 * time.Millisecond
+	const writeTimeout = time.Hour
 	fake := bHoldingFake(t, fakesession.Options{Name: "worker"})
 
 	ctx, cancel := context.WithTimeout(context.Background(), contextDeadline)
 	defer cancel()
 
 	done := make(chan error, 1)
-	start := time.Now()
 	go func() {
-		done <- Deliver(ctx, Session{SocketPath: fake.SocketPath()}, "sender", "hello", "msg-ctx", bDeliverTimeout)
+		done <- Deliver(ctx, Session{SocketPath: fake.SocketPath()}, "sender", "hello", "msg-ctx", writeTimeout)
 	}()
 
-	if _, ok := fake.WaitFrame(bDeliverTimeout); !ok {
+	if _, ok := fake.WaitFrame(aWaitTimeout); !ok {
 		t.Fatal("receiver did not read the frame")
 	}
 	select {
@@ -397,15 +400,9 @@ func TestDeliver_ContextDeadlineBeatsTimeout(t *testing.T) {
 		if !errors.Is(err, ErrUncertain) {
 			t.Fatalf("Deliver returned %v, want ErrUncertain", err)
 		}
-		// bDeliverTimeout is the 10 s product write timeout. Returning within a
-		// second proves the context deadline, not the timeout, ended the call;
-		// this is an upper bound on an event, not a wait.
-		if elapsed := time.Since(start); elapsed >= time.Second {
-			t.Fatalf("Deliver returned after %s, want the %s context deadline to end it well before the %s timeout",
-				elapsed, contextDeadline, bDeliverTimeout)
-		}
-	case <-time.After(max(contextDeadline, bDeliverTimeout) + aWaitTimeout):
-		t.Fatal("Deliver did not return when the context expired")
+	case <-time.After(aWaitTimeout):
+		t.Fatalf("Deliver did not return within %s of the %s context deadline; the wait fell back to the %s write timeout",
+			aWaitTimeout, contextDeadline, writeTimeout)
 	}
 }
 
