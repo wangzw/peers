@@ -376,6 +376,30 @@ func TestRegisterWaitsForInFlightSend(t *testing.T) {
 	}
 
 	conn.End()
+	// Supplement: the handler's cleanup deletes the stream from s.streams before
+	// it blocks on conn.sendMu, which the in-flight Send holds until
+	// sendRelease. Wait for that deletion, then check Done directly: Done can be
+	// closed only after the Send finishes.
+	deadline := time.Now().Add(eventTimeout)
+	for {
+		s.mu.Lock()
+		left := len(s.streams)
+		s.mu.Unlock()
+		if left == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the Register handler did not reach its cleanup")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	select {
+	case <-conn.Done():
+		t.Fatal("the Register stream closed Done while a Send was still in flight")
+	default:
+	}
+	// Negative window: a handler that returned while the Send was still in
+	// flight shows up here.
 	select {
 	case <-handlerDone:
 		t.Fatal("the Register handler returned while a Send was still in flight")

@@ -11,7 +11,7 @@ func TestWaitFrameN(t *testing.T) {
 	sendFrameLine(t, f, userFrameLine(t, "second", "sender", "two"))
 	sendFrameLine(t, f, userFrameLine(t, "third", "sender", "three"))
 
-	second, ok := f.WaitFrameN(2, waitTimeout)
+	second, ok := f.WaitFrameN(2, eventTimeout)
 	if !ok {
 		t.Fatal("second frame not received")
 	}
@@ -19,7 +19,7 @@ func TestWaitFrameN(t *testing.T) {
 		t.Fatalf("WaitFrameN(2) msg id = %q, want second", second.MsgID)
 	}
 
-	third, ok := f.WaitFrame(waitTimeout)
+	third, ok := f.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("third frame not received")
 	}
@@ -29,7 +29,7 @@ func TestWaitFrameN(t *testing.T) {
 
 	// Absolute access to an earlier frame still works and does not move the
 	// cursor backwards.
-	first, ok := f.WaitFrameN(1, waitTimeout)
+	first, ok := f.WaitFrameN(1, eventTimeout)
 	if !ok {
 		t.Fatal("first frame not received")
 	}

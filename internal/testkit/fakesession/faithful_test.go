@@ -49,10 +49,10 @@ func sendFrameLine(t *testing.T, f *Fake, line string) {
 // that never closes the connection fails the wait.
 func assertConnectionClosed(t *testing.T, conn *fakeConn) {
 	t.Helper()
-	if !conn.fake.waitClosedSince(conn.priorClose, closeWaitTimeout) {
+	if !conn.fake.waitClosedSince(conn.priorClose, eventTimeout) {
 		t.Fatal("the fake did not close the connection")
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(closeWaitTimeout)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("setting read deadline: %v", err)
 	}
 	if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
@@ -180,14 +180,14 @@ func TestWaitFrameReturnsFramesInOrder(t *testing.T) {
 	sendFrameLine(t, f, userFrameLine(t, "first", "sender", "one"))
 	sendFrameLine(t, f, userFrameLine(t, "second", "sender", "two"))
 
-	first, ok := f.WaitFrame(waitTimeout)
+	first, ok := f.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("first frame not received")
 	}
 	if first.MsgID != "first" {
 		t.Fatalf("first frame msg id = %q, want first", first.MsgID)
 	}
-	second, ok := f.WaitFrame(waitTimeout)
+	second, ok := f.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("second frame not received")
 	}

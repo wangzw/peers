@@ -22,7 +22,7 @@ func TestFakeClockFiresInDeadlineOrder(t *testing.T) {
 			if got != expected {
 				t.Fatalf("timer fired out of order: got %q, want %q", got, expected)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("timed out waiting for timer %q", expected)
 		}
 	}
@@ -45,7 +45,7 @@ func TestFakeClockStop(t *testing.T) {
 	clock.Advance(2 * time.Second)
 	select {
 	case <-barrier:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("barrier timer did not fire")
 	}
 	if n := fired.Load(); n != 0 {
@@ -57,7 +57,7 @@ func TestFakeClockStop(t *testing.T) {
 	clock.Advance(time.Second)
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("timer did not fire")
 	}
 	if firedStop() {

@@ -8,16 +8,6 @@ import (
 	"time"
 )
 
-// eventTimeout is the package-wide fallback for the wait on the proxy
-// forwarding a paused byte after Resume. The byte crosses two real TCP
-// connections (client to proxy, proxy to the echo server) and the echo server
-// has to read and write it back. It only decides how long a wait that will
-// never complete takes to fail: the success path selects on the forwarded byte
-// and never spends this time, so a larger value costs nothing. Thirty seconds
-// is far above the worst normal latency under load; it is not a claim that an
-// event should take that long.
-const eventTimeout = 30 * time.Second
-
 // startEchoServer starts a TCP server that echoes every byte back to the
 // sender, and returns its address.
 func startEchoServer(t *testing.T) string {

@@ -14,12 +14,20 @@ import (
 	"time"
 )
 
-const waitTimeout = 200 * time.Millisecond
+// eventTimeout is the package-wide fallback for a wait on an event the fake
+// produces, such as a frame the fake recorded or a connection it dropped. It
+// only decides how long a wait that will never complete takes to fail: the
+// success path selects on the event itself and never spends this time, so a
+// larger value costs nothing. Thirty seconds is far above the worst normal
+// latency under a loaded runner; it is not a claim that an event should take
+// that long.
+const eventTimeout = 30 * time.Second
 
-// closeWaitTimeout bounds how long a test waits for the fake to close a
-// connection. Success is signalled by the handler and returns immediately, so
-// this is a hang guard for a fake that never closes, not a latency assertion.
-const closeWaitTimeout = 5 * time.Second
+// waitTimeout is the short window for an absence assertion: the test waits this
+// long for a frame or connection state that must not appear. A positive wait on
+// an event uses eventTimeout instead, because a real event can be delayed by
+// scheduling and verification cost under load.
+const waitTimeout = 200 * time.Millisecond
 
 func TestRecordFields(t *testing.T) {
 	f := New(t, Options{
@@ -217,7 +225,7 @@ func TestCloseAfterReadRecordsFrame(t *testing.T) {
 	writeAll(t, conn, authLine+"\n"+message+"\n")
 	closeWrite(t, conn)
 
-	frame, ok := f.WaitFrame(waitTimeout)
+	frame, ok := f.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("no frame received")
 	}
@@ -268,7 +276,7 @@ func TestFrameWithoutAuth(t *testing.T) {
 
 	writeAll(t, conn, message+"\n")
 
-	frame, ok := f.WaitFrame(waitTimeout)
+	frame, ok := f.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("no frame received")
 	}
@@ -292,7 +300,7 @@ func TestFrameTopLevelFields(t *testing.T) {
 
 	writeAll(t, conn, line+"\n")
 
-	frame, ok := f.WaitFrame(waitTimeout)
+	frame, ok := f.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("no frame received")
 	}
@@ -329,7 +337,7 @@ func TestHoldOpenRelease(t *testing.T) {
 	conn := dialFake(t, f)
 	writeAll(t, conn, userFrameLine(t, "msg-3", "api-worker", "hello")+"\n")
 
-	if _, ok := f.WaitFrame(waitTimeout); !ok {
+	if _, ok := f.WaitFrame(eventTimeout); !ok {
 		t.Fatal("no frame received")
 	}
 
@@ -359,7 +367,7 @@ func TestWaitNoConnections(t *testing.T) {
 	conn := dialFake(t, f)
 	writeAll(t, conn, userFrameLine(t, "msg-5", "api-worker", "hello")+"\n")
 
-	if _, ok := f.WaitFrame(waitTimeout); !ok {
+	if _, ok := f.WaitFrame(eventTimeout); !ok {
 		t.Fatal("no frame received")
 	}
 	if f.WaitNoConnections(20 * time.Millisecond) {
@@ -370,7 +378,7 @@ func TestWaitNoConnections(t *testing.T) {
 	closeWrite(t, conn)
 	// The wait is event-driven and returns as soon as the handler drops the
 	// connection; the allowance only covers a loaded test machine.
-	if !f.WaitNoConnections(3 * time.Second) {
+	if !f.WaitNoConnections(eventTimeout) {
 		t.Fatal("WaitNoConnections did not report the released connection closing")
 	}
 }
@@ -380,7 +388,7 @@ func TestCloseReleasesHeldConnection(t *testing.T) {
 	conn := dialFake(t, f)
 	writeAll(t, conn, userFrameLine(t, "msg-4", "api-worker", "hello")+"\n")
 
-	if _, ok := f.WaitFrame(waitTimeout); !ok {
+	if _, ok := f.WaitFrame(eventTimeout); !ok {
 		t.Fatal("no frame received")
 	}
 
@@ -485,7 +493,7 @@ func TestBusyDelay(t *testing.T) {
 	if _, ok := f.WaitFrame(40 * time.Millisecond); ok {
 		t.Fatal("frame arrived before the busy delay elapsed")
 	}
-	if _, ok := f.WaitFrame(waitTimeout); !ok {
+	if _, ok := f.WaitFrame(eventTimeout); !ok {
 		t.Fatal("frame did not arrive after the busy delay")
 	}
 }
@@ -557,16 +565,25 @@ func TestExtraOverridesFields(t *testing.T) {
 func TestFrameLineTooLong(t *testing.T) {
 	f := New(t, Options{PID: 7500})
 	conn := dialFake(t, f)
-	if err := conn.SetWriteDeadline(time.Now().Add(waitTimeout)); err != nil {
+	// The write deadline only guards against a hang: a load-related stall must not
+	// turn into a short timeout, and a real timeout means the write never
+	// finished, so it fails rather than pass.
+	if err := conn.SetWriteDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("setting write deadline: %v", err)
 	}
 
 	line := bytes.Repeat([]byte("a"), maxFrameLineBytes+2)
-	if _, err := conn.Write(line); err != nil {
+	_, err := conn.Write(line)
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		t.Fatal("writing the oversized line timed out before it finished")
+	}
+	if err != nil {
 		// Closing the connection once the oversized line is seen can make the
 		// write fail; either outcome must leave no frame.
 		t.Logf("writing oversized line returned %v", err)
 	}
+	// Negative window: an oversized frame that was recorded still shows up here.
 	if _, ok := f.WaitFrame(waitTimeout); ok {
 		t.Fatal("an oversized frame was recorded")
 	}

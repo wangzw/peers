@@ -7,6 +7,15 @@ import (
 	"time"
 )
 
+// eventTimeout is the package-wide fallback for every real-time wait in this
+// package's tests, including FakeClock.waitUntil and the proxy forwarding
+// checks. It only decides how long a wait that will never complete takes to
+// fail: the success path selects on the event itself and never spends this
+// time, so a larger value costs nothing. Thirty seconds is far above the worst
+// normal latency under a loaded runner; it is not a claim that an event should
+// take that long.
+const eventTimeout = 30 * time.Second
+
 // FakeClock is a manually advanced time source. Tests call Advance to make
 // timers fire, so they never have to sleep to reach a deadline.
 type FakeClock struct {
@@ -172,12 +181,12 @@ func (c *FakeClock) notifyLocked() {
 }
 
 // waitUntil evaluates cond every time the channel returned by changed fires,
-// and fails the test when cond is still false three seconds later. cond and
+// and fails the test when cond is still false after eventTimeout. cond and
 // changed must not be called with any lock held by the caller; each fakes type
 // evaluates cond without its own lock so cond may call the fake's methods.
 func waitUntil(t testing.TB, what string, changed func() <-chan struct{}, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		ch := changed()
 		if cond() {

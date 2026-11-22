@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/pairing"
@@ -160,7 +159,7 @@ func TestFakePairAcceptAndRunInterlock(t *testing.T) {
 		closed:      make(chan struct{}),
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	errs := make(chan error, 2)
