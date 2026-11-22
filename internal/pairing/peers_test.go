@@ -243,6 +243,79 @@ func TestREQBrokerPairing016_IsPeerAfterReopenWithoutKey(t *testing.T) {
 	}
 }
 
+// TestLoadChecksLocalAlias checks that a stored local_alias is held to the
+// validAlias rule the write path already enforces: a malformed value rejects
+// the file as ErrStore through the same record error an invalid retired alias
+// uses, and a valid value loads unchanged. A value equal to the Broker's own
+// alias is deliberately not rejected here: the alias-conflict validator only
+// runs while the Broker is up, so a hand-edited file or a changed host-derived
+// alias could hold it at startup, and rejecting it would make every peer
+// unavailable. Such a value loads and is not resolved as the Broker itself;
+// the running conflict handling takes it from there.
+func TestLoadChecksLocalAlias(t *testing.T) {
+	t.Parallel()
+	fp, pub := peerTestKey(t)
+	base := peerRecord{
+		Fingerprint: fingerprintHex(fp),
+		PublicKey:   base64Std(pub),
+		Alias:       "hostB",
+		Role:        "acceptor",
+		PairedAt:    time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano),
+	}
+	cases := []struct {
+		name       string
+		localAlias string
+		wantErr    string
+	}{
+		{"invalid alias", "bad alias", `local alias "bad alias" is not a valid alias`},
+		// The Broker's own alias must still load: rejecting it would break
+		// startup for a value the loader cannot avoid.
+		{"the Broker's own alias", "hostA", ""},
+		{"valid alias", "hostB-0123", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := newHSSettings(t)
+			s.alias = "hostA"
+			record := base
+			record.LocalAlias = tc.localAlias
+			data, err := json.Marshal(peersFile{Version: peersFileVersion, Peers: []peerRecord{record}})
+			if err != nil {
+				t.Fatalf("marshal fixture: %v", err)
+			}
+			path := filepath.Join(s.dataDir, peersFileName)
+			if err := os.WriteFile(path, data, peersFileMode); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+
+			p, err := newPairing(s, &hsTransport{}, newHSClock(), realFileOps{}, rand.Read)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("open with local alias %q: %v", tc.localAlias, err)
+				}
+				if p == nil {
+					t.Fatalf("open with local alias %q returned a nil Pairing", tc.localAlias)
+				}
+				if got := p.EffectiveAlias(fp); got != tc.localAlias {
+					t.Fatalf("effective alias = %q, want %q", got, tc.localAlias)
+				}
+				return
+			}
+			if !errors.Is(err, ErrStore) {
+				t.Fatalf("open with a local alias that is %s = %v (pairing %v), want ErrStore", tc.name, err, p)
+			}
+			want := fmt.Sprintf("%s: %s record 0: %s", ErrStore, path, tc.wantErr)
+			if got := err.Error(); got != want {
+				t.Fatalf("open error = %q, want %q", got, want)
+			}
+			if p != nil {
+				t.Fatalf("open with a local alias that is %s returned %+v, want nil", tc.name, p)
+			}
+		})
+	}
+}
+
 // TestREQBrokerPairing021_UnpairRemovesAndDrops checks removal persistence and
 // that the link is dropped exactly once.
 func TestREQBrokerPairing021_UnpairRemovesAndDrops(t *testing.T) {

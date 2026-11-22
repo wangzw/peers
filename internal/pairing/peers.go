@@ -1081,6 +1081,11 @@ func (r *peerRecord) toEntry() (*peerEntry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("paired_at is not RFC 3339: %v", err)
 	}
+	// A local alias is written only after passing the same checks, but an
+	// externally edited file must not load one that the write path would refuse.
+	if r.LocalAlias != "" && !validAlias(r.LocalAlias) {
+		return nil, fmt.Errorf("local alias %q is not a valid alias", r.LocalAlias)
+	}
 	if len(r.RetiredAliases) > maxRetiredAliases {
 		return nil, fmt.Errorf("retired_aliases has %d entries, want at most %d", len(r.RetiredAliases), maxRetiredAliases)
 	}
