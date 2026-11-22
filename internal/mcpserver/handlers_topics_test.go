@@ -698,4 +698,44 @@ func TestListTopics(t *testing.T) {
 			t.Errorf("fake server received %d calls, want none: %v", len(calls), calls)
 		}
 	})
+
+	t.Run("a Broker that does not answer does not hold the call open", func(t *testing.T) {
+		// design-mcpserver: every Broker call one topic tool makes is bounded by
+		// topicRPCTimeout. list_topics must return a tool error instead of
+		// waiting for a Broker that never answers.
+		h, _, _ := newTopicsHandlers(t, fakelocal.Handlers{
+			ListTopics: func(ctx context.Context, _ *localpb.ListTopicsRequest) (*localpb.ListTopicsResponse, error) {
+				<-ctx.Done()
+				return nil, fakelocal.ErrorStatus(codes.DeadlineExceeded, &localpb.ErrorDetail{
+					Code:    localpb.ErrorCode_ERROR_CODE_INTERNAL,
+					Message: "the Broker did not answer",
+				})
+			},
+		}, "agent-1")
+
+		// The backstop is the test's own bound, not the product's: on the
+		// unfixed code the fake never returns and this fires.
+		const backstop = topicRPCTimeout + 5*time.Second
+		start := time.Now()
+		done := make(chan error, 1)
+		go func() {
+			_, err := h.ListTopics(context.Background(), NoArgs{})
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			elapsed := time.Since(start)
+			if err == nil {
+				t.Fatal("ListTopics succeeded although the Broker never answered")
+			}
+			if elapsed < topicRPCTimeout-time.Second {
+				t.Fatalf("ListTopics returned after %s, want about %s", elapsed, topicRPCTimeout)
+			}
+			if !strings.Contains(err.Error(), "(code: internal)") {
+				t.Errorf("error = %q, want a tool error carrying code internal", err)
+			}
+		case <-time.After(backstop):
+			t.Fatalf("ListTopics did not return within %s although topicRPCTimeout is %s; the call is not bounded", backstop, topicRPCTimeout)
+		}
+	})
 }

@@ -39,6 +39,10 @@ func (h *handlers) ListTopics(ctx context.Context, _ NoArgs) (ListTopicsOut, err
 	if err != nil {
 		return ListTopicsOut{}, err
 	}
+	// The RPC is bounded like every other topic tool call, so a Broker that
+	// does not answer returns an error instead of holding the tool call open.
+	ctx, cancel := context.WithTimeout(ctx, topicRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.ListTopics(ctx, &localpb.ListTopicsRequest{AgentId: st.AgentID})
 	if err != nil {
 		return ListTopicsOut{}, rpcError("list_topics", callGeneric, permNone, err)

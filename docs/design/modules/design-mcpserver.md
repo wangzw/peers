@@ -145,6 +145,8 @@ Broker 不可用、登记未完成或登记失败期间，本进程不退出，�
 
 默认 topic 的列表另存一份，不随退出而删除。这份列表按“默认 topic 的确定”的第三至第五步得出，不看 `topics.auto_join` 与项目配置文件的 `auto_join`。`join_topic` 的 `name` 为空时逐个加入列表中的 topic，`public` 与 `description` 对每一个生效；`leave_topic` 的 `name` 为空时逐个退出其中已加入的 topic，未加入的跳过。列表为空时，两者都返回 `invalid_argument` 类的本地错误，说明本会话没有默认 topic。退出的 topic 按现有规则从记忆中删除，本会话内重新登记时不再加入；新的会话重新确定默认 topic 并自动加入（`REQ-topics-026`、`REQ-topics-027`）。
 
+topic 工具对 Broker 的每次调用都套 `topicRPCTimeout`（10 秒）：`list_topics` 与 `join_topic`、`leave_topic` 相同，Broker 不回应时返回带错误码的工具错误，而不是让调用一直等到连接或进程结束。
+
 登记完成时的自动加入另按“默认 topic 的确定”的第一、二步判断 `topics.auto_join` 与项目配置文件的 `auto_join`，两项都允许时加入这份列表。不带名字的 `join_topic` 是用户明确的请求，不看这两项，直接加入列表。
 
 ### 默认 topic 的确定
