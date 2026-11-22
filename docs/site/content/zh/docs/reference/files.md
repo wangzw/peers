@@ -14,7 +14,7 @@ Broker 把配置、身份、对端表、名录和审计日志放在固定位置�
 | `~/.peers/identity.crt` | 与私钥配对的自签名证书，权限 `0600`。 |
 | `~/.peers/peers.json` | 已配对的对端，权限 `0600`。 |
 | `~/.peers/directory.json` | 本 Broker 已知的名片与公开 topic 声明。 |
-| `~/.peers/name-owners.json` | 每个名字的归属账户，权限 `0600`。 |
+| `~/.peers/name-owners.json` | 名字归属表：每个名字的归属账户，以及名字最后一次被持有的时间，权限 `0600`。 |
 | `~/.peers/audit.log` | 审计日志，权限 `0600`。 |
 | `/tmp/peers-<uid>/broker.sock` | 本机 socket，权限 `0600`。 |
 | `/tmp/peers-<uid>/broker.lock` | 账户锁，保证每个账户至多一个 Broker。 |
@@ -34,7 +34,7 @@ Broker 每分钟把账户锁、运行时目录与本机 socket 的时间戳设�
 | `/var/lib/peers/identity.crt` | 与私钥配对的自签名证书，权限 `0600`。 |
 | `/var/lib/peers/peers.json` | 已配对的对端，权限 `0600`。 |
 | `/var/lib/peers/directory.json` | 本 Broker 已知的名片与公开 topic 声明。 |
-| `/var/lib/peers/name-owners.json` | 每个名字的归属账户，权限 `0600`。 |
+| `/var/lib/peers/name-owners.json` | 名字归属表：每个名字的归属账户，以及名字最后一次被持有的时间，权限 `0600`。 |
 | `/var/lib/peers/admin-group` | 本次安装创建的管理组名（创建过时才有），权限 `0600`。 |
 | `/var/log/peers/audit.log` | 审计日志，权限 `0600`。 |
 | `/run/peers/broker.sock` | 本机 socket，Linux。 |
