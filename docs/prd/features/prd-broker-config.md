@@ -1,602 +1,602 @@
-# Broker 配置、审计与运行
+# Broker configuration, audit and operation
 
-## 问题陈述
+## Problem Statement
 
-用户在会话里工作时需要查看和调整 [Broker](../../glossary.md) 的配置，不必离开会话去编辑文件。配置中有影响安全的配置项。谁能读、谁能改，应当与操作系统对配置文件的权限一致，经工具操作只是便捷途径；改了什么也要能在事后查到。
+While working in a session, the user needs to view and adjust a [Broker](../../glossary.md)'s configuration without leaving the session to edit files. Some configuration options affect security. Who can read and who can change them should agree with the operating system's permission on the configuration file, and operating through tools is only a convenience; what was changed must also be findable afterward.
 
-Broker 有两种部署形态。生产部署时由管理员把它作为系统服务运行，一个 Broker 服务主机上的多个账户；个人使用时它以普通账户运行，只服务这个账户；用户把它安装为服务一次之后，它随登录启动并持续运行，不需要每次手动启动。同一台主机上的多个 Broker 不能互相干扰，一个账户也不应同时有两个 Broker。
+A Broker has two deployment forms. In production deployment an administrator runs it as a system service, and one Broker serves several accounts on the host; for personal use it runs under an ordinary account and serves only that account; after the user installs it as a service once, it starts at login and keeps running, without needing a manual start each time. Several Brokers on one host must not interfere with each other, and one account should not have two Brokers at once.
 
-## 范围
+## Scope
 
-本文档覆盖 Broker 的两种部署形态及各自的服务范围、Broker 的安装、启动、持续运行与卸载、降级运行、下线与上线、监听地址与对外地址的确定、配置的读取与修改及其权限、审计日志、本机的状态查看。
+This document covers the two deployment forms of a Broker and the service scope of each, a Broker's installation, startup, continuous running and uninstallation, degraded run, going offline and online, how the listen address and advertised addresses are determined, reading and modifying configuration and its permissions, the audit log, and viewing status on the host.
 
-### 范围外
+### Out of Scope
 
-- 独立于 Claude Code 权限机制的二次确认。一次工具调用是否需要用户确认，由所在会话的 Claude Code 权限设置决定；它与本文档规定的文件权限前提各自独立，两者都满足时调用才被执行。
-- 文件权限之外另设的管理员名单或角色。
-- 同一账户下运行多个 Broker 实例。
-- 监听地址被占用时自动改用其他地址或端口。
-- 对端读取或修改本 Broker 的配置。
-- 分布式追踪与指标导出。
+- A second confirmation independent of Claude Code's permission mechanism. Whether a tool call needs user confirmation is decided by the Claude Code permission settings of its session; this is independent of the file-permission precondition this document specifies, and the call runs only when both are satisfied.
+- An administrator list or roles set up outside file permissions.
+- Running several Broker instances under one account.
+- Automatically switching to another address or port when the listen address is occupied.
+- A peer reading or modifying this Broker's configuration.
+- Distributed tracing and metrics export.
 
-## 参与者
+## Actors
 
-本文档中的账户指操作系统账户。
+In this document, account means an operating-system account.
 
-| 参与者 | 权限 |
+| Actor | Authority |
 |---|---|
-| Agent | 列出 Agent、列出 topic、加入与退出 topic、发送消息不需要对配置文件的任何权限。读取配置要求所属账户对 Broker 的配置文件有读权限；修改配置、生成配对密钥、发起配对、解除配对要求有写权限。 |
-| 用户 | 经 Claude Code 的权限设置决定哪些工具调用需要确认。对自己账户下的用户级 Broker，可以直接编辑配置文件、在本机终端查看状态与审计日志、把它安装为服务（安装后立即启动并随登录启动），或在终端手动启动它。 |
-| 管理员 | 安装并启动系统级 Broker，以文件权限决定哪些账户可以使用它、哪些账户可以读取或修改它的配置。 |
+| agent | Listing agents, listing topics, joining and leaving topics and sending messages require no permission on the configuration file. Reading configuration requires the owning account to have read permission on the Broker's configuration file; modifying configuration, generating pairing keys, initiating pairing and unpairing require write permission. |
+| User | Through Claude Code's permission settings, decides which tool calls need confirmation. For a user Broker under their own account, can directly edit the configuration file, view status and the audit log in the local terminal, install it as a service (started immediately after installation and starting at login), or start it manually in the terminal. |
+| Administrator | Installs and starts the system Broker, and by file permission decides which accounts may use it and which accounts may read or modify its configuration. |
 
-## 功能需求
+## Functional Requirements
 
 ### REQ-broker-config-001
 
-所属账户对 Broker 的配置文件有读权限的 Agent，必须能读取该 Broker 的当前配置。权限前提由 `REQ-broker-config-022` 规定。
+An agent whose account has read permission on the Broker's configuration file MUST be able to read that Broker's current configuration. The permission precondition is specified by `REQ-broker-config-022`.
 
-- **验收**：读取结果中的别名、是否公开、监听地址、是否自动加入默认 topic 与 Broker 的实际行为一致。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryCardReachesWholeNetwork`
+- **Acceptance**: The alias, whether it is public, the listen address and whether it auto-joins the default topic in the read result match the Broker's actual behavior.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryCardReachesWholeNetwork`
 
 ### REQ-broker-config-002
 
-所属账户对 Broker 的配置文件有写权限的 Agent，必须能修改该 Broker 的配置项，`REQ-broker-pairing-031` 与 `REQ-broker-config-029` 规定不能经工具修改的情形除外。权限前提由 `REQ-broker-config-021` 规定。
+An agent whose account has write permission on the Broker's configuration file MUST be able to modify that Broker's options, except the cases `REQ-broker-pairing-031` and `REQ-broker-config-029` specify as not modifiable through tools. The permission precondition is specified by `REQ-broker-config-021`.
 
-- **验收**：把别名改为新值，调用成功后再读取配置，别名是新值。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_test.go` 的 `TestConfigTools/SetAliasIsAudited`
+- **Acceptance**: Change the alias to a new value; after the call succeeds, reading configuration again gives the new alias.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_test.go` `TestConfigTools/SetAliasIsAudited`
 
 ### REQ-broker-config-003
 
-读取配置与修改配置必须能分别授权。
+Reading configuration and modifying configuration MUST be authorizable separately.
 
-- **验收**：在 Claude Code 权限设置中只放行读取配置的工具，Agent 读取配置不触发确认，修改配置触发确认。
-- **状态**：已实现
-- **端到端测试**：`test/realsession/probes/permissions.sh`（经 `.github/workflows/real-session.yml` 推送 `probe/permissions` 运行）
+- **Acceptance**: In Claude Code's permission settings allow only the tool that reads configuration; the agent reading configuration triggers no confirmation, and modifying configuration triggers confirmation.
+- **Status**: Implemented
+- **E2E test**: `test/realsession/probes/permissions.sh` (run through `.github/workflows/real-session.yml` pushing `probe/permissions`)
 
 ### REQ-broker-config-004
 
-没有副作用的工具必须声明为只读（[REF-mcp](../../references.md)），有副作用的工具不得声明为只读。没有副作用是指不改变 Broker 的状态，也不投递消息。
+A tool with no side effect MUST be declared read-only ([REF-mcp](../../references.md)), and a tool with a side effect MUST NOT be declared read-only. No side effect means neither changing the Broker's state nor delivering messages.
 
-- **验收**：检查全部工具的声明，列出 Agent、列出 topic、列出 Broker、读取配置带只读标记；加入与退出 topic、发送消息、生成配对密钥、发起配对、解除配对、修改配置、设置上线与下线、升级 Broker 不带只读标记。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_test.go` 的 `TestConfigToolAnnotations`
+- **Acceptance**: Check the declarations of all tools: listing agents, listing topics, listing Brokers and reading configuration carry the read-only annotation; joining and leaving topics, sending messages, generating pairing keys, initiating pairing, unpairing, modifying configuration, setting online and offline, and upgrading the Broker do not carry the read-only annotation.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_test.go` `TestConfigToolAnnotations`
 
 ### REQ-broker-config-005
 
-生成配对密钥必须能独立于修改配置获得授权。
+Generating a pairing key MUST be authorizable independently of modifying configuration.
 
-- **验收**：在 Claude Code 权限设置中只放行生成配对密钥的工具，Agent 生成一次性配对密钥不触发确认，修改配置触发确认。
-- **状态**：已实现
-- **端到端测试**：`test/realsession/probes/permissions.sh`（经 `.github/workflows/real-session.yml` 推送 `probe/permissions` 运行）
+- **Acceptance**: In Claude Code's permission settings allow only the tool that generates pairing keys; the agent generating a one-time pairing key triggers no confirmation, and modifying configuration triggers confirmation.
+- **Status**: Implemented
+- **E2E test**: `test/realsession/probes/permissions.sh` (run through `.github/workflows/real-session.yml` pushing `probe/permissions`)
 
 ### REQ-broker-config-006
 
-Agent 对配置的每次修改必须写入审计日志，记录发起修改的 Agent 及其所属账户、被修改的配置项、修改前的值、修改后的值和时间。预置静态密钥只记录发生了变化，不记录取值。
+Every modification an agent makes to configuration MUST be written to the audit log, recording the agent that initiated it and its owning account, the option changed, the value before, the value after and the time. For a pre-provisioned static key, only that it changed is recorded, not the value.
 
-- **验收**：修改别名后，审计日志新增一条记录，各项内容与这次修改一致。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_test.go` 的 `TestConfigTools/SetAliasIsAudited`
+- **Acceptance**: After the alias is modified, the audit log gains one record whose content matches this change.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_test.go` `TestConfigTools/SetAliasIsAudited`
 
 ### REQ-broker-config-007
 
-每次生成一次性配对密钥、配对成功、配对失败、链路建立、链路断开和解除配对必须写入审计日志，记录事件类型、相关 Broker 的指纹与别名和时间；由 Agent 发起时，还记录发起的 Agent 及其所属账户。
+Each generation of a one-time pairing key, successful pairing, failed pairing, link establishment, link disconnection and unpairing MUST be written to the audit log, recording the event type, the fingerprints and aliases of the Brokers involved and the time; when an agent initiates it, the initiating agent and its owning account are also recorded.
 
-- **验收**：依次执行生成一次性配对密钥、一次失败的配对、一次成功的配对、断开网络、恢复网络、解除配对，审计日志按顺序各新增一条对应类型的记录；其中由 Agent 发起的记录带有该 Agent 的地址和它所属的账户。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/PairingAndLinkEventsInOrder`
+- **Acceptance**: Run in turn the generation of a one-time pairing key, a failed pairing, a successful pairing, a network disconnect, a network restoration and an unpairing; the audit log gains one record of the corresponding type each, in order; among them, records initiated by an agent carry that agent's address and its owning account.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_cluster_test.go` `TestConfigToolsCluster/PairingAndLinkEventsInOrder`
 
 ### REQ-broker-config-008
 
-审计日志不得记录配对密钥的值和消息正文。
+The audit log MUST NOT record pairing key values or message bodies.
 
-- **验收**：完成一次配对和一次消息发送后，在审计日志中搜索所用的配对密钥和消息正文，都搜不到。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_cluster_test.go` 的 `TestConfigToolsCluster/AuditHasNoSecrets`
+- **Acceptance**: After one pairing and one message send, searching the audit log for the pairing key used and the message body finds neither.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_cluster_test.go` `TestConfigToolsCluster/AuditHasNoSecrets`
 
 ### REQ-broker-config-009
 
-所属账户对 Broker 的配置文件有读权限的用户，必须能在本机终端查看该 Broker 的审计日志。
+A user whose account has read permission on the Broker's configuration file MUST be able to view that Broker's audit log in the local terminal.
 
-- **验收**：以有读权限的账户在终端执行查看审计日志的命令，输出包含此前产生的全部审计记录；以没有读权限的账户执行，得到权限不足的错误。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig009_AuditNeedsReadPermissionOnSystemBroker`（系统级：有读权限的账户看到的输出与 Broker 的全部审计记录逐条对应；无读权限的账户被拒）；`test/e2e/config_tools_test.go` 的 `TestConfigTools/TerminalAuditCommand`（用户级：输出与 `Oracle.Audit` 逐条对应）
+- **Acceptance**: Run the command to view the audit log in the terminal as an account with read permission and the output contains all audit records produced earlier; run it as an account without read permission and get an insufficient permission error.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig009_AuditNeedsReadPermissionOnSystemBroker` (system: the output an account with read permission sees corresponds one-to-one with all the Broker's audit records; an account without read permission is refused); `test/e2e/config_tools_test.go` `TestConfigTools/TerminalAuditCommand` (user: the output corresponds one-to-one with `Oracle.Audit`)
 
 ### REQ-broker-config-010
 
-用户必须能在本机终端查看 Broker 的状态，包括已登记的 Agent、各 Agent 所在的 topic、全部对端及其连接状态。所属账户对配置文件没有读权限的用户，只能看到自己账户下的 Agent，对端及其连接状态照常可见。
+A user MUST be able to view the Broker's status in the local terminal, including registered agents, each agent's topics, and all peers and their connection status. A user whose account has no read permission on the configuration file can see only agents under their own account, and peers and their connection status remain visible as usual.
 
-- **验收**：登记两个 Agent 并让它们加入不同的 topic，与一个对端配对后断开网络；以有读权限的账户在终端执行查看状态的命令，输出列出这两个 Agent 及各自的 topic，并显示该对端未连接。在系统级 Broker 上以没有读权限的账户执行，输出只含该账户自己的 Agent，并同样列出该对端及其连接状态。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents`（无读权限的账户只看到自己的 Agent，并看到对端未连接；有读权限的非 root 账户看到两个 Agent 及各自 topic，与对端配对后停掉对端 Broker 代替“断开网络”，对端仍列出且显示为未连接）
+- **Acceptance**: Register two agents and have them join different topics, and after pairing with one peer disconnect the network; run the status command in the terminal as an account with read permission and the output lists these two agents and their topics and shows that peer as not connected. Run it on a system Broker as an account without read permission and the output contains only this account's own agents and likewise lists that peer and its connection status.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents` (an account without read permission sees only its own agents and sees the peer as not connected; a non-root account with read permission sees two agents and their topics, and after pairing with the peer stops the peer Broker instead of "disconnecting the network", and the peer is still listed and shown as not connected)
 
 ### REQ-broker-config-011
 
-Broker 必须以结构化格式输出运行日志。
+A Broker MUST output its runtime log in a structured format.
 
-- **验收**：运行日志的每一行都能被解析为一条记录，记录中有时间、级别和事件名这几个字段。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/broker_process_test.go` 的 `TestBrokerProcessInContainer/REQ-broker-config-011 structured log`
+- **Acceptance**: Every line of the runtime log can be parsed as one record, with the fields time, level and event name.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/broker_process_test.go` `TestBrokerProcessInContainer/REQ-broker-config-011 structured log`
 
 ### REQ-broker-config-038
 
-MCP 服务进程不得启动任何 Broker。会话按 `REQ-broker-config-026` 的顺序找不到可用的 Broker 时，工具调用必须返回说明如何启动 Broker 的错误；Broker 随后启动的，会话不必重新连接 MCP 服务即可使用。
+The MCP server process MUST NOT start any Broker. When a session finds no available Broker following the order of `REQ-broker-config-026`, a tool call MUST return an error stating how to start a Broker; when the Broker starts afterward, the session can use it without reconnecting the MCP service.
 
-- **验收**：在没有任何 Broker 进程的主机上启动一个启用了工具的会话，工具调用返回的错误说明可以安装服务或在终端启动 Broker，主机上不出现 Broker 进程；随后在终端启动该账户的 Broker，不在 Claude Code 中重新连接 MCP 服务，下一次列出 Agent 成功。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/broker_process_test.go` 的 `TestBrokerProcessLocal/REQ-broker-config-038 no Broker until started`；`test/e2e/broker_process_test.go` 的 `TestBrokerProcessInContainer/REQ-broker-config-024 default address taken`、`TestBrokerProcessInContainer/REQ-agent-messaging-038 recover without reconnect`（终端启动失败、会话报错、手工启动后恢复）
+- **Acceptance**: Start a session with the tools enabled on a host with no Broker process; the error a tool call returns states that the service can be installed or the Broker started in the terminal, and no Broker process appears on the host; then start this account's Broker in the terminal, and without reconnecting the MCP service in Claude Code, the next agent listing succeeds.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/broker_process_test.go` `TestBrokerProcessLocal/REQ-broker-config-038 no Broker until started`; `test/e2e/broker_process_test.go` `TestBrokerProcessInContainer/REQ-broker-config-024 default address taken` and `TestBrokerProcessInContainer/REQ-agent-messaging-038 recover without reconnect` (terminal startup fails, the session reports an error, and it recovers after a manual start)
 
 ### REQ-broker-config-039
 
-用户必须能在本机终端执行 Broker 的每一项查询与管理操作：查看状态、读取审计日志、列出 Broker、读取配置、修改配置、设置上线与下线、生成一次性配对密钥、发起配对、解除配对。终端命令与 Agent 的对应操作遵守同一权限规则，按执行命令的账户判定，并写入同样的审计记录。
+A user MUST be able to perform every query and management operation of a Broker in the local terminal: view status, read the audit log, list Brokers, read configuration, modify configuration, set online and offline, generate one-time pairing keys, initiate pairing and unpair. A terminal command and the agent's corresponding operation follow the same permission rules, judged by the account running the command, and write the same audit records.
 
-- **验收**：在系统级 Broker 上，以对配置文件没有写权限的账户在会话中生成配对密钥，被拒绝；以管理员身份在终端执行生成配对密钥的命令，输出密钥、失效时间和本机对外地址，另一台主机在终端凭这些信息发起配对成功，两边在终端列出 Broker 时都显示对方已连接。同样以管理员身份在终端读取并修改一个配置项、解除这个配对，都成功，审计日志依次记录这些操作和执行它们的账户。以没有写权限的账户执行修改配置的命令，返回权限不足，并给出配置文件的路径。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/term_admin_test.go` 的 `TestREQBrokerConfig039_TerminalAdminCommands`
+- **Acceptance**: On a system Broker, an account without write permission on the configuration file generates a pairing key in a session and is refused; run the command to generate a pairing key in the terminal as the administrator and the output gives the key, the expiry time and the local advertised addresses, and another host initiates pairing in the terminal with this information and succeeds, and both sides listing Brokers in the terminal show the other as connected. Also as the administrator, read and modify one option in the terminal and unpair this peer, all succeeding, and the audit log records these operations and the accounts running them in order. Run the command to modify configuration as an account without write permission and it returns insufficient permission and gives the configuration file path.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/term_admin_test.go` `TestREQBrokerConfig039_TerminalAdminCommands`
 
 ### REQ-broker-config-040
 
-安装服务时，该级别的配置文件如果还不存在，必须生成一份列出全部配置项的配置文件：有默认值的配置项写出默认值，没有固定默认值的配置项以注释形式给出，每个配置项附一行说明。已存在的配置文件不得改动。
+When installing a service, if the configuration file for that level does not yet exist, it MUST generate a configuration file listing every option: options with a default value are written with the default, options with no fixed default are given as comments, and each option has a one-line explanation. An existing configuration file MUST NOT be changed.
 
-- **验收**：在没有配置文件的主机上分别安装用户级和系统级服务，生成的配置文件中，设计规定的每个配置项恰好出现一次；写出的取值与读取配置时得到的当前值一致。取消某个注释掉的配置项的注释并填入合法值，Broker 不重启即采用。用修改配置的工具修改一个注释掉的配置项后，文件中这一项只有一处生效的值，其他配置项和注释不变。配置文件已存在时再次安装，文件内容不变。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/config_template_test.go` 的 `TestREQBrokerConfig040_SystemInstallWritesTemplate`、`TestREQBrokerConfig040_UserInstallWritesTemplate`
+- **Acceptance**: Install a user and a system service separately on hosts with no configuration file; in the generated configuration file every option the design specifies appears exactly once; the values written match the current values obtained when reading configuration. Uncomment one commented-out option and fill in a valid value, and the Broker adopts it without restarting. After modifying a commented-out option with the configuration tool, this option has only one effective value in the file, and other options and comments are unchanged. When the configuration file already exists, installing again leaves its content unchanged.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/config_template_test.go` `TestREQBrokerConfig040_SystemInstallWritesTemplate`, `TestREQBrokerConfig040_UserInstallWritesTemplate`
 
 ### REQ-broker-config-041
 
-发布包必须附带安装脚本，用户解压后执行一条命令即可完成安装：把二进制装到合适的位置，把 Broker 安装为服务并启动，为执行安装的用户在 Claude Code 中注册本系统的 MCP 服务。系统级安装由脚本自行经 sudo 取得管理员身份。主机上装有 fish 时，安装脚本还必须安装 fish 的补全；主机上没有 fish 时跳过，也不创建 fish 的配置目录。重复执行安装脚本不得出错，也不得重复注册。
+The release package MUST include an install script, and after extracting it the user can complete the installation with one command: install the binary in a suitable location, install the Broker as a service and start it, and register this system's MCP service in Claude Code for the user running the installation. A system installation has the script gain administrator identity through sudo itself. When fish is installed on the host, the install script MUST also install the fish completion; when the host has no fish it skips this and does not create fish's configuration directory. Running the install script repeatedly MUST NOT fail or register twice.
 
-- **验收**：在没有安装过本系统的 Linux 主机上，解压发布包，以普通账户执行安装脚本。之后在新的终端中，`peers --version` 输出发布版本，该账户的用户级 Broker 正在运行，`claude mcp get peer` 显示已注册。以普通账户执行安装脚本并对级别询问回答 y，输入 sudo 密码后，系统级 Broker 正在运行，二进制位于 root 所有、组与其他人不可写的目录，执行 sudo 的账户在 Claude Code 中已注册 MCP 服务。每种方式各再执行一次，都成功，MCP 服务只注册一次。在装有 fish 的主机上安装，fish 的补全文件存在；在没有 fish 的主机上安装，fish 的补全文件不存在，fish 的配置目录也没有被创建。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig041_UserInstallScript`、`TestREQBrokerConfig041_SystemInstallScript`、`TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel`（对级别询问回答 y 的系统级安装）
+- **Acceptance**: On a Linux host where this system has never been installed, extract the release package and run the install script as an ordinary account. Afterward in a new terminal, `peers --version` prints the release version, this account's user Broker is running, and `claude mcp get peer` shows it is registered. Run the install script as an ordinary account, answer y to the level prompt and enter the sudo password; the system Broker is running, the binary is in a root-owned directory not writable by group or others, and the account that ran sudo has registered the MCP service in Claude Code. Run each way once more, and both succeed, with the MCP service registered only once. Install on a host with fish and the fish completion file exists; install on a host without fish and the fish completion file does not exist and fish's configuration directory is not created either.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_script_test.go` `TestREQBrokerConfig041_UserInstallScript`, `TestREQBrokerConfig041_SystemInstallScript`, `TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel` (system installation answering y to the level prompt)
 
 ### REQ-broker-config-042
 
-用户必须能用一条命令从本项目的 GitHub 正式发布在线安装：命令下载最新正式版本中本平台的发布包，校验后用发布包中的安装脚本完成安装。系统级安装执行同一条命令并对级别询问回答 y。用户可以指定要安装的版本。校验和不符或下载失败时，安装必须中止，主机上不得留下任何改动。
+A user MUST be able to install online from this project's GitHub official releases with one command: the command downloads this platform's release package from the latest official version, verifies it, and then completes the installation with the install script in the package. A system installation runs the same command and answers y to the level prompt. The user can specify the version to install. When the checksum does not match or the download fails, the installation MUST abort and leave no change on the host.
 
-- **验收**：在没有安装过本系统的 Linux 主机上，以普通账户执行一条在线安装命令，结果与在本地执行发布包内安装脚本相同；执行同一条命令并对级别询问回答 y，结果与本地系统级安装相同。指定一个已发布的版本时，安装的是该版本；指定一个不存在的版本时，命令以非零退出，报错 `version <v> not found`，主机上没有改动。让下载的发布包与校验和不符，命令以非零退出，二进制、服务、MCP 注册都没有改动，也没有留下临时文件。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/remote_install_test.go` 的 `TestREQBrokerConfig042_RemoteInstallUser`、`TestREQBrokerConfig042_RemoteInstallSystem`、`TestREQBrokerConfig042_RemoteInstallPinnedVersion`、`TestREQBrokerConfig042_RemoteInstallUnknownVersion`、`TestREQBrokerConfig042_RemoteInstallArchiveWithoutInstallScript`、`TestREQBrokerConfig042_RemoteInstallTruncatedScript`、`TestREQBrokerConfig042_RemoteInstallChecksumMismatch`
+- **Acceptance**: On a Linux host where this system has never been installed, run one online install command as an ordinary account, and the result is the same as running the install script in the release package locally; run the same command and answer y to the level prompt, and the result is the same as a local system installation. With a published version specified, that version is installed; with a nonexistent version specified, the command exits nonzero with the error `version <v> not found`, and the host has no change. Make the downloaded release package mismatch its checksum, and the command exits nonzero, with no change to the binary, service or MCP registration, and no temporary file left.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/remote_install_test.go` `TestREQBrokerConfig042_RemoteInstallUser`, `TestREQBrokerConfig042_RemoteInstallSystem`, `TestREQBrokerConfig042_RemoteInstallPinnedVersion`, `TestREQBrokerConfig042_RemoteInstallUnknownVersion`, `TestREQBrokerConfig042_RemoteInstallArchiveWithoutInstallScript`, `TestREQBrokerConfig042_RemoteInstallTruncatedScript`, `TestREQBrokerConfig042_RemoteInstallChecksumMismatch`
 
 ### REQ-broker-config-013
 
-同一账户下至多运行一个 Broker 实例。已有实例在运行时，以任何监听地址或配置再启动一个都必须失败，并说明已有实例在运行。
+At most one Broker instance runs under one account. While an instance is running, starting another with any listen address or configuration MUST fail and state that an instance is already running.
 
-- **验收**：在没有 Broker 进程的主机上，以同一个账户同时运行五次启动 Broker 的命令，该账户名下只有一个 Broker 进程持续运行，其余都以说明已有实例在运行的错误退出；随后在该账户下启动五个启用了工具的会话，它们都登记在这个 Broker 上；再以同一个账户指定另一个监听地址手动启动一个 Broker，启动失败，错误说明已有实例在运行，原有的 Broker 不受影响。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/broker_process_test.go` 的 `TestBrokerProcessLocal/REQ-broker-config-013 single instance`
+- **Acceptance**: On a host with no Broker process, run the command to start the Broker five times at once under the same account; only one Broker process under that account keeps running and the rest exit with an error stating that an instance is already running; then start five sessions with the tools enabled under that account, and all register with this Broker; then start a Broker manually under the same account with another listen address, and startup fails with an error stating that an instance is already running, and the existing Broker is unaffected.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/broker_process_test.go` `TestBrokerProcessLocal/REQ-broker-config-013 single instance`
 
 ### REQ-broker-config-014
 
-该 Broker 上的最后一个 Agent 的会话结束后，Broker 必须继续运行并保持与对端的链路。
+After the last agent's session on that Broker ends, the Broker MUST keep running and keep its links with peers.
 
-- **验收**：结束主机上全部会话，Broker 进程仍在，对端列出 Broker 的结果仍显示它已连接。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/links_test.go` 的 `TestLinks/REQ-broker-config-014 broker outlives last session`
+- **Acceptance**: End every session on the host; the Broker process is still there, and a peer's result of listing Brokers still shows it as connected.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/links_test.go` `TestLinks/REQ-broker-config-014 broker outlives last session`
 
 ### REQ-broker-config-015
 
-用户必须能把自己账户下的用户级 Broker 安装为服务：安装后立即启动，此后随该账户登录而启动。
+A user MUST be able to install the user Broker under their own account as a service: started immediately after installation, and starting at that account's login thereafter.
 
-- **验收**：安装后不重新登录，该账户的 Broker 进程已在运行；重新登录后，在未启动任何会话的情况下，该账户的 Broker 进程已在运行，并已恢复与对端的链路。macOS 与 Linux 都满足。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/user_service_test.go` 的 `TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink`（Linux：安装后立即运行、重新登录后启动并恢复链路）；`test/e2e/darwinservice/darwin_test.go` 的 `TestUserServiceRestoresLinkAfterRelogin`（macOS：以 bootout/bootstrap 模拟登录，断言出现新 pid 且对端链路恢复为已连接）
+- **Acceptance**: After installation, without logging in again, this account's Broker process is already running; after logging in again, with no session started, this account's Broker process is already running and has restored links with peers. Both macOS and Linux satisfy this.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/user_service_test.go` `TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink` (Linux: runs immediately after installation, starts after logging in again and restores the link); `test/e2e/darwinservice/darwin_test.go` `TestUserServiceRestoresLinkAfterRelogin` (macOS: simulates login with bootout/bootstrap, asserting a new pid appears and the peer link is restored to connected)
 
 ### REQ-broker-config-016
 
-会话的 MCP 服务进程与正在运行的 Broker 版本不兼容时，工具调用必须失败并提示用户重启 Broker，系统不得自行终止正在运行的 Broker。
+When a session's MCP server process is incompatible with the version of the running Broker, a tool call MUST fail and prompt the user to restart the Broker, and the system MUST NOT terminate the running Broker on its own.
 
-- **验收**：让一个不兼容版本的 MCP 服务进程连接正在运行的 Broker，工具调用返回提示重启 Broker 的错误，原 Broker 进程和已登记在它上面的其他 Agent 不受影响。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/version_local_test.go` 的 `TestLocalVersionMismatchReq016`、`TestLocalVersionMismatchRecoveryReq016`
+- **Acceptance**: Connect an incompatible version's MCP server process to the running Broker, and a tool call returns an error prompting to restart the Broker, and the original Broker process and other agents registered with it are unaffected.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/version_local_test.go` `TestLocalVersionMismatchReq016`, `TestLocalVersionMismatchRecoveryReq016`
 
 ### REQ-broker-config-017
 
-用户直接修改 Broker 的配置文件后，Broker 必须在不重启的情况下采用其中合法的新值，不合法的配置项保持原值，并为每个采用了新值的配置项写一条审计记录；预置静态密钥只记录发生了变化，不记录取值。以启动参数给定监听地址的运行期间，监听地址一项的变化不在此列。
+After the user directly modifies the Broker's configuration file, the Broker MUST adopt the valid new values without restarting, keep the original values for invalid options, and write one audit record for each option that adopted a new value; for a pre-provisioned static key, only that it changed is recorded, not the value. During a run where the listen address is given by a startup parameter, a change to the listen address option is not covered by this.
 
-- **验收**：Broker 运行期间在配置文件中把别名改为新值，不重启 Broker，再读取配置得到新值，审计日志新增一条写有该配置项前后取值的审计记录；同一次修改中把别名改为新值、同时把另一个配置项改为不合法的值时，别名采用新值，另一个配置项保持原值。以启动参数指定监听 `:17444` 运行时，在配置文件中同时修改监听地址和别名：Broker 仍在 17444 端口上监听，审计日志只新增别名一项的记录。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_test.go` 的 `TestConfigTools/FileEditHotReload`
+- **Acceptance**: While the Broker runs, change the alias to a new value in the configuration file; without restarting the Broker, reading configuration again gives the new value, and the audit log gains one record with the before and after values of this option; when the same modification changes the alias to a new value and another option to an invalid value, the alias adopts the new value and the other option keeps its original value. When running with the startup parameter specifying listen `:17444`, modify both the listen address and the alias in the configuration file: the Broker still listens on port 17444, and the audit log gains only the record for the alias.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_test.go` `TestConfigTools/FileEditHotReload`
 
 ### REQ-broker-config-018
 
-以特权身份作为系统服务运行的 Broker，即系统级 Broker，必须能同时服务本机多个账户下的 Agent。
+A Broker running with privileges as a system service, namely a system Broker, MUST be able to serve agents under several accounts on the host at once.
 
-- **验收**：主机上运行着一个系统级 Broker，两个不同的账户各启动一个启用了工具的会话，两个会话都登记在这个 Broker 上；两者加入同一个 topic 后互相可见，并能互发消息。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/multi_account_test.go` 的 `TestREQBrokerConfig018_TwoAccountsShareSystemBroker`
+- **Acceptance**: A system Broker runs on the host, two different accounts each start a session with the tools enabled, and both sessions register with this Broker; after both join the same topic they see each other and can exchange messages.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/multi_account_test.go` `TestREQBrokerConfig018_TwoAccountsShareSystemBroker`
 
 ### REQ-broker-config-019
 
-用户级 Broker 必须拒绝其他账户的登记与调用。
+A user Broker MUST refuse registration and calls from other accounts.
 
-- **验收**：账户甲运行着一个用户级 Broker；账户乙的会话的 MCP 服务进程和账户乙在终端执行的命令都连不上它，甲的 Broker 上不出现乙的 Agent，乙也读不到它的状态、配置和审计日志。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/accounts_test.go` 的 `TestOtherAccountRejected/REQ-broker-config-019 filesystem layer`、`TestOtherAccountRejected/REQ-broker-config-019 credential layer`、`TestOtherAccountRejected/REQ-broker-config-019 account paths`
+- **Acceptance**: Account A runs a user Broker; account B's session's MCP server process and account B's commands in the terminal cannot connect to it, B's agent does not appear on A's Broker, and B cannot read its status, configuration or audit log.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/accounts_test.go` `TestOtherAccountRejected/REQ-broker-config-019 filesystem layer`, `TestOtherAccountRejected/REQ-broker-config-019 credential layer`, `TestOtherAccountRejected/REQ-broker-config-019 account paths`
 
 ### REQ-broker-config-020
 
-系统级 Broker 必须拒绝把不属于调用方账户的会话登记为 Agent。
+A system Broker MUST refuse to register as an agent a session that does not belong to the caller's account.
 
-- **验收**：账户乙的进程向系统级 Broker 要求登记账户甲的一个会话，所报出的会话信息与该会话自己的 MCP 服务进程报出的完全相同，登记被拒绝，任何 Agent 的列表中都不出现由此产生的 Agent。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/foreign_session_test.go` 的 `TestREQBrokerConfig020_ForeignSocketOwnerRejected/unreadable record`、`TestREQBrokerConfig020_ForeignSocketOwnerRejected/record readable but socket owned by another account`
+- **Acceptance**: Account B's process asks the system Broker to register a session of account A, and the session information it reports is exactly the same as that session's own MCP server process reports; the registration is refused, and no agent resulting from it appears in any agent's list.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/foreign_session_test.go` `TestREQBrokerConfig020_ForeignSocketOwnerRejected/unreadable record`, `TestREQBrokerConfig020_ForeignSocketOwnerRejected/record readable but socket owned by another account`
 
 ### REQ-broker-config-021
 
-修改配置、设置上线与下线、生成配对密钥、发起配对、解除配对，只有在调用方账户对该 Broker 的配置文件有写权限时才能执行；没有写权限时必须返回权限不足，并且不改变任何状态。
+Modifying configuration, setting online and offline, generating pairing keys, initiating pairing and unpairing can be performed only when the caller's account has write permission on the Broker's configuration file; without write permission it MUST return insufficient permission and change no state.
 
-- **验收**：在系统级 Broker 上，以对配置文件没有写权限的账户依次调用这些操作，每次都返回权限不足，配置、对端和有效的配对密钥都没有变化；管理员把配置文件的写权限授予该账户所属的组之后，同样的调用全部成功。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig021_WriteNeedsConfigWritePermission`
+- **Acceptance**: On a system Broker, an account without write permission on the configuration file calls these operations in turn, each returns insufficient permission, and the configuration, peers and valid pairing keys are unchanged; after the administrator grants write permission on the configuration file to the group the account belongs to, the same calls all succeed.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig021_WriteNeedsConfigWritePermission`
 
 ### REQ-broker-config-022
 
-读取配置，只有在调用方账户对该 Broker 的配置文件有读权限时才能返回配置内容；没有读权限时必须返回权限不足。
+Reading configuration can return configuration content only when the caller's account has read permission on the Broker's configuration file; without read permission it MUST return insufficient permission.
 
-- **验收**：在系统级 Broker 上，以对配置文件没有读权限的账户读取配置，返回权限不足，结果中不含任何配置项的值；以有读权限的账户读取，返回当前配置。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig022_ReadNeedsConfigReadPermission`
+- **Acceptance**: On a system Broker, an account without read permission on the configuration file reads configuration, it returns insufficient permission and the result contains no option value; an account with read permission reads it and it returns the current configuration.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig022_ReadNeedsConfigReadPermission`
 
 ### REQ-broker-config-023
 
-登记、列出 Agent、列出 topic、列出 Broker、加入与退出 topic、发送消息，不得以对配置文件的任何权限为前提。
+Registering, listing agents, listing topics, listing Brokers, joining and leaving topics, and sending messages MUST NOT require any permission on the configuration file.
 
-- **验收**：在系统级 Broker 上，一个对配置文件既没有读权限也没有写权限的账户启动会话，该会话完成登记，并成功执行列出 Agent、列出 topic、列出 Broker、加入 topic、退出 topic 和发送消息。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig023_NoPermissionStillWorksOnSystemBroker`
+- **Acceptance**: On a system Broker, an account with neither read nor write permission on the configuration file starts a session; the session completes registration and successfully performs listing agents, listing topics, listing Brokers, joining a topic, leaving a topic and sending messages.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig023_NoPermissionStillWorksOnSystemBroker`
 
 ### REQ-broker-config-024
 
-未允许降级运行而启动的 Broker，在配置或启动参数给出的监听地址无法绑定时必须启动失败并报告该地址不可用，不得改用其他地址或端口。
+A Broker started without degraded run allowed MUST fail to start and report that the address is unavailable when the listen address given by configuration or a startup parameter cannot be bound, and MUST NOT switch to another address or port.
 
-- **验收**：先让另一个进程在本机全部地址的 17443 端口上监听，再以默认配置在终端执行 `peers service run`：启动失败，退出码非零，错误指出地址 `:17443` 不可用，主机上没有留下这个 Broker 的进程，也没有它在其他端口上的监听。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/broker_process_test.go` 的 `TestBrokerProcessInContainer/REQ-broker-config-024 default address taken`
+- **Acceptance**: First make another process listen on port 17443 on every local address, then run `peers service run` in the terminal with the default configuration: startup fails with a nonzero exit code, the error states that the address `:17443` is unavailable, and the host has no process of this Broker or its listener on another port left.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/broker_process_test.go` `TestBrokerProcessInContainer/REQ-broker-config-024 default address taken`
 
 ### REQ-broker-config-025
 
-启动 Broker 时必须能指定监听地址，以取代配置中的值。
+Starting a Broker MUST allow specifying the listen address, replacing the value in configuration.
 
-- **验收**：配置保持默认，启动时指定监听 `:17444`：Broker 在本机全部地址的 17444 端口上监听，不在 17443 端口上监听，配置文件的内容没有变化。
-- **状态**：已实现
-- **端到端测试**：`cmd/peers/broker_process_test.go`: `TestBrokerListenFlagOverridesConfig`
+- **Acceptance**: Keep the configuration at default and start with the listen address `:17444`: the Broker listens on port 17444 on every local address, does not listen on port 17443, and the configuration file content is unchanged.
+- **Status**: Implemented
+- **E2E test**: `cmd/peers/broker_process_test.go`: `TestBrokerListenFlagOverridesConfig`
 
 ### REQ-broker-config-026
 
-会话尚未选定 Broker 时，存在多个可用的 Broker，MCP 服务进程必须按以下顺序选择第一个可用的：本账户下正在运行的用户级 Broker；本账户有权使用的系统级 Broker。
+When a session has not yet selected a Broker and several Brokers are available, the MCP server process MUST pick the first available in this order: a running user Broker under this account; a system Broker this account is permitted to use.
 
-- **验收**：主机上同时运行着系统级 Broker 和账户甲的用户级 Broker，系统级 Broker 监听 `:17443`，甲的用户级 Broker 监听 `:17444`。甲的会话登记在甲的用户级 Broker 上；甲的用户级 Broker 停止后新开的会话登记在系统级 Broker 上；没有用户级 Broker 的账户乙的会话登记在系统级 Broker 上。会话的环境中设置已被移除的旧版变量 `AGENT_PEER_SOCKET`，不影响选择。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/select_reregister_test.go` 的 `TestSelectOrderReq026`
+- **Acceptance**: The host runs both a system Broker and account A's user Broker; the system Broker listens on `:17443` and A's user Broker on `:17444`. A's session registers with A's user Broker; after A's user Broker stops, a newly opened session registers with the system Broker; an account B without a user Broker has its session register with the system Broker. Setting an old removed variable `AGENT_PEER_SOCKET` in the session's environment does not affect the choice.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/select_reregister_test.go` `TestSelectOrderReq026`
 
 ### REQ-broker-config-027
 
-系统级 Broker 的管理员必须能以文件权限限定哪些账户可以使用它。
+A system Broker's administrator MUST be able to limit by file permission which accounts may use it.
 
-- **验收**：管理员把系统级 Broker 的使用权限限定到某个组。组内账户的会话照常登记在它上面；组外账户已在自己的配置中把监听地址设为 `:17444`，它的会话不能登记在系统级 Broker 上，按 `REQ-broker-config-038` 返回说明没有可用 Broker 的错误；该账户启动自己的用户级 Broker 后，会话登记在它上面。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/socket_group_test.go` 的 `TestREQBrokerConfig027_GroupRestrictsUse`、`TestSystemSocketGroupReappliedOnReload`、`TestSystemSocketGroupUnknownRejected`
+- **Acceptance**: The administrator limits the system Broker's use to a group. Sessions of accounts in the group register with it as usual; an account outside the group has set its listen address to `:17444` in its own configuration, its session cannot register with the system Broker, and per `REQ-broker-config-038` it returns an error stating there is no available Broker; after this account starts its own user Broker, the session registers with it.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/socket_group_test.go` `TestREQBrokerConfig027_GroupRestrictsUse`, `TestSystemSocketGroupReappliedOnReload`, `TestSystemSocketGroupUnknownRejected`
 
 ### REQ-broker-config-028
 
-Broker 在未经配置时必须在本机全部地址的 17443 端口上监听，启用了 IPv6 时包括 IPv6 地址；把监听地址配置为空时不监听。
+Without configuration, a Broker MUST listen on port 17443 on every local address, including IPv6 addresses when IPv6 is enabled; when the listen address is configured empty it does not listen.
 
-- **验收**：在启用了 IPv6 的主机上以默认配置启动 Broker，另一台主机经该主机的 IPv4 地址和 IPv6 地址都能连到它的 17443 端口；把监听地址配置为空后重新启动，它不在任何端口上监听，仍能主动连接由它发起配对的对端。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/addresses_test.go` 的 `TestAdvertisedAddresses/REQ-broker-config-028 dual stack and no listen`
+- **Acceptance**: On a host with IPv6 enabled, start a Broker with the default configuration, and another host can reach its port 17443 over both the host's IPv4 and IPv6 addresses; after configuring the listen address empty and restarting, it listens on no port and can still connect out to peers it paired with.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/addresses_test.go` `TestAdvertisedAddresses/REQ-broker-config-028 dual stack and no listen`
 
 ### REQ-broker-config-029
 
-以启动参数给定监听地址的运行期间，经工具修改监听地址的调用必须失败并说明原因，配置文件不得被改动。
+During a run where the listen address is given by a startup parameter, a call modifying the listen address through a tool MUST fail with the reason stated, and the configuration file MUST NOT be changed.
 
-- **验收**：以启动参数指定监听 `:17444` 启动 Broker，经工具把监听地址改为 `:17445`：调用返回错误，说明本次运行的监听地址由启动参数给定；配置文件的内容没有变化，Broker 仍在 17444 端口上监听。不带该参数重新启动后，同样的修改成功。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_test.go` 的 `TestConfigTools/ListenFlagBlocksSet`
+- **Acceptance**: Start the Broker with the startup parameter specifying listen `:17444`, then modify the listen address to `:17445` through a tool: the call returns an error stating that this run's listen address is given by a startup parameter; the configuration file content is unchanged and the Broker still listens on port 17444. After restarting without the parameter, the same modification succeeds.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_test.go` `TestConfigTools/ListenFlagBlocksSet`
 
 ### REQ-broker-config-030
 
-Broker 监听全部地址且未配置含主机的对外地址时，对外地址列表必须只包含每个默认路由所在接口的地址，以及用户配置追加的地址。
+When a Broker listens on every address and has no advertised address containing a host configured, the advertised address list MUST contain only the address of each default route's interface, plus addresses the user added through configuration.
 
-- **验收**：B 以默认配置运行，所在主机默认 IPv4 路由所在接口的地址是 `192.0.2.20`，另有一个虚拟网络接口，地址是 `10.211.55.2`，没有默认 IPv6 路由。A 凭 B 的地址和 B 生成的配对密钥与 B 配对后，A 列出 Broker 的结果中 B 的对外地址列表只有 `192.0.2.20:17443`。为 B 的主机加上默认 IPv6 路由，该路由所在接口的全局地址是 `2001:db8::20` 后，列表变为 `192.0.2.20:17443` 与 `[2001:db8::20]:17443`，仍不含 `10.211.55.2`；把 B 的对外地址配置为只含端口的 `:18443` 后，列表中的端口都变为 18443；再为 B 追加对外地址 `b.vpn.example`，列表末尾多出 `b.vpn.example:18443`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/addresses_test.go` 的 `TestAdvertisedAddresses/REQ-broker-config-030 default route addresses`
+- **Acceptance**: B runs with the default configuration; the host's default IPv4 route's interface address is `192.0.2.20`, there is another virtual network interface with address `10.211.55.2`, and there is no default IPv6 route. After A pairs with B using B's address and a pairing key B generated, B's advertised address list in A's result of listing Brokers has only `192.0.2.20:17443`. After adding a default IPv6 route to B's host, whose interface's global address is `2001:db8::20`, the list becomes `192.0.2.20:17443` and `[2001:db8::20]:17443`, still without `10.211.55.2`; after configuring B's advertised address to the port-only `:18443`, the ports in the list all change to 18443; after adding the advertised address `b.vpn.example` to B, the list gains `b.vpn.example:18443` at the end.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/addresses_test.go` `TestAdvertisedAddresses/REQ-broker-config-030 default route addresses`
 
 ### REQ-broker-config-031
 
-配置了含主机的对外地址时，对外地址列表必须以该地址为首项，其后只有用户配置追加的地址。
+When an advertised address containing a host is configured, the advertised address list MUST have that address first, followed only by addresses the user added through configuration.
 
-- **验收**：公开 Broker B 在 17443 端口上监听，把对外地址配置为 `b.example:443`：B 的拨号方列出 Broker 的结果中 B 的对外地址列表首项是 `b.example:443`，持有 B 的名片的其他 Broker 列出的同样如此，列表中没有默认路由所在接口的地址。把对外地址改为只含主机的 `b.example` 后，列表首项是 `b.example:17443`；再追加对外地址 `b.vpn.example`，列表依次是 `b.example:17443` 与 `b.vpn.example:17443`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_address_test.go` 的 `TestCardShowsConfiguredAddresses`
+- **Acceptance**: Public Broker B listens on port 17443 and has its advertised address configured to `b.example:443`: B's advertised address list in B's dialer's result of listing Brokers has `b.example:443` first, and so do other Brokers holding B's card, and the list has no default-route interface address. After changing the advertised address to the host-only `b.example`, the first item is `b.example:17443`; after adding the advertised address `b.vpn.example`, the list is `b.example:17443` and `b.vpn.example:17443` in order.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_address_test.go` `TestCardShowsConfiguredAddresses`
 
 ### REQ-broker-config-032
 
-监听地址含具体主机而对外地址只含端口时，或监听地址为空而对外地址、追加的对外地址非空时，Broker 必须拒绝启动并指出这两项配置；运行期间的此类修改必须失败并保留原值。
+When the listen address contains a specific host and the advertised address is port-only, or when the listen address is empty and the advertised address or an added advertised address is non-empty, the Broker MUST refuse to start and point out these two options; such a change during operation MUST fail and keep the original value.
 
-- **验收**：把监听地址配置为 `192.0.2.20:17443`、对外地址配置为只含端口的 `:18443` 后启动 Broker，启动失败，错误同时指出监听地址与对外地址这两项配置。以监听 `192.0.2.20:17443`、不配置对外地址运行时，经工具把对外地址改为 `:18443`，调用返回错误，再读取配置得到原值；在配置文件中做同样的修改，Broker 不采用，读取配置仍得到原值。监听地址配置为空而对外地址或追加的对外地址非空时，结果相同。
-- **状态**：已实现
-- **端到端测试**：运行期间经工具修改由 `test/e2e/config_tools_test.go` 的 `TestConfigTools/RuntimeAddressRulesThroughTools` 覆盖，配置文件路径由 `TestConfigTools/FileEditRejectsCombination` 覆盖，监听地址为空时工具与配置文件两条路径由 `TestConfigTools/EmptyListenRejectsAddresses` 覆盖；启动失败一半由 `test/e2e/addresses_test.go` 的 `TestAdvertisedAddresses/REQ-broker-config-032 and 036 startup half` 覆盖
+- **Acceptance**: Configure the listen address to `192.0.2.20:17443` and the advertised address to the port-only `:18443`, then start the Broker; startup fails and the error points out both the listen address and the advertised address. Running with listen `192.0.2.20:17443` and no advertised address, modify the advertised address to `:18443` through a tool: the call returns an error, and reading configuration again gives the original value; make the same modification in the configuration file, the Broker does not adopt it, and reading configuration still gives the original value. When the listen address is configured empty and the advertised address or an added advertised address is non-empty, the result is the same.
+- **Status**: Implemented
+- **E2E test**: modification through a tool during operation is covered by `TestConfigTools/RuntimeAddressRulesThroughTools` in `test/e2e/config_tools_test.go`, the configuration-file path by `TestConfigTools/FileEditRejectsCombination`, and both the tool and configuration-file paths when the listen address is empty by `TestConfigTools/EmptyListenRejectsAddresses`; the startup failure half is covered by `test/e2e/addresses_test.go` `TestAdvertisedAddresses/REQ-broker-config-032 and 036 startup half`
 
 ### REQ-broker-config-033
 
-用户必须能配置追加的对外地址，追加的地址出现在对外地址列表中。
+A user MUST be able to configure added advertised addresses, and the added addresses appear in the advertised address list.
 
-- **验收**：以默认配置运行的 Broker B 追加对外地址 `b.vpn.example` 与 `198.51.100.7:8443` 后，B 的拨号方列出 Broker 的结果中，B 的对外地址列表在默认路由所在接口的地址之后依次是 `b.vpn.example:17443` 与 `198.51.100.7:8443`；B 设为公开后，持有 B 的名片的其他 Broker 列出的是同样的列表。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_address_test.go` 的 `TestCardShowsConfiguredAddresses`
+- **Acceptance**: After Broker B running with the default configuration adds the advertised addresses `b.vpn.example` and `198.51.100.7:8443`, in B's dialer's result of listing Brokers, B's advertised address list has `b.vpn.example:17443` and `198.51.100.7:8443` in order after the default-route interface address; after B is set public, other Brokers holding B's card list the same list.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_address_test.go` `TestCardShowsConfiguredAddresses`
 
 ### REQ-broker-config-034
 
-运行期间把监听地址改为无法绑定的地址时，修改必须失败，Broker 必须继续在原来的监听地址上监听。
+When the listen address is changed during operation to an unbindable address, the change MUST fail and the Broker MUST keep listening on the original listen address.
 
-- **验收**：Broker 在 `:17444` 上监听，另一个进程占用着本机全部地址的 17445 端口；经工具把监听地址改为 `:17445`，调用返回说明该地址不可用的错误，再读取配置得到 `:17444`，另一台主机仍能连到它的 17444 端口；在配置文件中做同样的修改，结果相同。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/config_tools_test.go` 的 `TestConfigTools/UnbindableListen`（工具与配置文件两条路径；本机拨号）
+- **Acceptance**: The Broker listens on `:17444` and another process occupies port 17445 on every local address; modify the listen address to `:17445` through a tool, the call returns an error stating that the address is unavailable, reading configuration again gives `:17444`, and another host can still reach its port 17444; make the same modification in the configuration file and the result is the same.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/config_tools_test.go` `TestConfigTools/UnbindableListen` (both the tool and the configuration-file paths; local dialing)
 
 ### REQ-broker-config-035
 
-Broker 监听特定地址且未配置对外地址时，对外地址列表必须以监听地址为首项，其后只有用户配置追加的地址。
+When a Broker listens on a specific address and has no advertised address configured, the advertised address list MUST have the listen address first, followed only by addresses the user added through configuration.
 
-- **验收**：把监听地址配置为 `192.0.2.20:17443`、不配置对外地址，B 的拨号方列出 Broker 的结果中 B 的对外地址列表只有 `192.0.2.20:17443`；再追加对外地址 `b.vpn.example`，列表依次是 `192.0.2.20:17443` 与 `b.vpn.example:17443`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/addresses_test.go` 的 `TestAdvertisedAddresses/REQ-broker-config-035 specific listen`
+- **Acceptance**: Configure the listen address to `192.0.2.20:17443` with no advertised address; B's advertised address list in B's dialer's result of listing Brokers has only `192.0.2.20:17443`; after adding the advertised address `b.vpn.example`, the list is `192.0.2.20:17443` and `b.vpn.example:17443` in order.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/addresses_test.go` `TestAdvertisedAddresses/REQ-broker-config-035 specific listen`
 
 ### REQ-broker-config-036
 
-对外地址的配置使对外地址列表超过 8 项时，Broker 必须拒绝启动并指出该配置项；运行期间的此类修改必须失败并保留原值。
+When the advertised address configuration makes the advertised address list exceed 8 items, the Broker MUST refuse to start and point out this option; such a change during operation MUST fail and keep the original value.
 
-- **验收**：配置含主机的对外地址，并追加 8 项对外地址后启动 Broker，启动失败，错误指出追加的对外地址这一项；以只追加 7 项的配置运行时，经工具再追加 1 项，调用返回错误，再读取配置得到原值。
-- **状态**：已实现
-- **端到端测试**：运行期间经工具修改由 `test/e2e/config_tools_test.go` 的 `TestConfigTools/RuntimeAddressRulesThroughTools` 覆盖，配置文件路径由 `TestConfigTools/FileEditRejectsAddressOverflow` 覆盖；启动失败一半由 `test/e2e/addresses_test.go` 的 `TestAdvertisedAddresses/REQ-broker-config-032 and 036 startup half` 覆盖
+- **Acceptance**: Configure an advertised address containing a host and add 8 advertised addresses, then start the Broker; startup fails and the error points out the added advertised addresses option; when running with a configuration that adds only 7, add one more through a tool, the call returns an error, and reading configuration again gives the original value.
+- **Status**: Implemented
+- **E2E test**: modification through a tool during operation is covered by `TestConfigTools/RuntimeAddressRulesThroughTools` in `test/e2e/config_tools_test.go`, the configuration-file path by `TestConfigTools/FileEditRejectsAddressOverflow`; the startup failure half is covered by `test/e2e/addresses_test.go` `TestAdvertisedAddresses/REQ-broker-config-032 and 036 startup half`
 
 ### REQ-broker-config-037
 
-会话所登记的 Broker 进程退出后，系统必须把该会话重新登记到同一个 Broker，不得改登记到另一个 Broker。
+After the Broker process a session registered with exits, the system MUST register the session again with the same Broker, and MUST NOT re-register it with another Broker.
 
-- **验收**：主机上同时运行着系统级 Broker 和账户甲的用户级 Broker，两者监听不同的端口，甲的会话登记在用户级 Broker 上；终止用户级 Broker 进程，在它重新启动之前，会话的列出 Agent 返回说明没有可用 Broker 的错误，主机上不出现别的 Broker；它由用户级的服务管理机制或用户重新启动之后，不重新连接 MCP 服务，会话的下一次列出 Agent 成功，会话仍登记在指纹不变的这个用户级 Broker 上，系统级 Broker 上不出现该会话的 Agent。账户乙的会话登记在系统级 Broker 上时，终止系统级 Broker 进程，在它由系统的服务管理机制重新启动之前，主机上不出现乙的用户级 Broker；重新启动之后，乙的会话重新登记在系统级 Broker 上。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/select_reregister_test.go` 的 `TestReregisterUserBrokerReq037`、`TestReregisterSystemBrokerReq037`
+- **Acceptance**: The host runs both a system Broker and account A's user Broker on different ports, and A's session registers with the user Broker; terminate the user Broker process, and before it restarts, the session's listing agents returns an error stating there is no available Broker, and no other Broker appears on the host; after it is restarted by the user service management mechanism or by the user, without reconnecting the MCP service, the session's next agent listing succeeds, and the session is still registered with this user Broker whose fingerprint is unchanged, and the session's agent does not appear on the system Broker. When account B's session registers with the system Broker, terminate the system Broker process, and before it is restarted by the system service management mechanism, B's user Broker does not appear on the host; after it restarts, B's session registers again with the system Broker.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/select_reregister_test.go` `TestReregisterUserBrokerReq037`, `TestReregisterSystemBrokerReq037`
 
 ### REQ-broker-config-043
 
-安装系统级服务时，系统必须提供一个管理组：组不存在时创建，新生成的配置文件以该组为属组并授予组读写权限。组已存在、有成员且不是 peers 以前创建的，生成新配置文件前必须由管理员显式指定该组才继续；管理组的 gid 不得为 0。管理组成员不经 root 或 sudo，即可执行需要配置文件读写权限的全部操作。用发布包内的安装脚本安装系统级服务时，脚本必须询问是否把执行安装的管理员账户加入管理组，默认不加入；无法询问时按不加入处理并给出加入的命令。
+When installing a system service, the system MUST provide an admin group: create it when it does not exist, and make the newly generated configuration file owned by the group with read and write permission for the group. When the group already exists, has members and was not created by peers earlier, it MUST continue only after the administrator explicitly specifies this group before generating a new configuration file; the admin group's gid MUST NOT be 0. Members of the admin group can perform every operation that needs read and write permission on the configuration file without root or sudo. When installing a system service with the install script in the release package, the script MUST ask whether to add the administrator account running the installation to the admin group, defaulting to not adding; when it cannot ask, it treats it as not adding and gives the command to add.
 
-- **验收**：在全新主机上以普通账户执行 `sh ./install.sh`，对级别询问回答 y 并输入 sudo 密码，对管理组询问回答 y，执行 sudo 的账户重新登录后，不经 sudo 在终端成功执行生成配对密钥、修改配置项、发起配对，审计记录的是该账户；对询问直接回车或在没有终端时执行，该账户不加入管理组，输出给出加入管理组的命令；带 `--join-admin-group` 执行时不询问直接加入；不在组内的普通账户执行同样的命令返回权限不足。配置文件已存在时重新安装，文件的属组与权限不变。在已有一个含成员的同名 `peers` 组、没有 `/var/lib/peers/admin-group` 记录且配置文件不存在的主机上执行 `service install --system`，不指定 `--admin-group` 时安装失败，错误列出成员并给出 `--admin-group peers` 与改用其他组名两条出路，配置文件没有生成；加 `--admin-group peers` 重装成功，汇总的 `admin group:` 行把该组标为沿用（显式指定后不再读取成员），配置文件属组为该组。gid 为 0 的组即使显式指定也被拒绝。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/admin_group_test.go` 的 `TestREQBrokerConfig043_SystemInstallAdminGroup`（测试环境以 NOPASSWD 配置 sudo；“输入 sudo 密码”一步由静态阅读安装脚本与 sudo 重新执行的用例共同覆盖）、`TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation`（已有含成员的同名组：不指定时拒绝且不写配置文件，显式指定后成功，汇总只标为沿用并跳过成员读取）
+- **Acceptance**: On a fresh host, run `sh ./install.sh` as an ordinary account, answer y to the level prompt, enter the sudo password and answer y to the admin group prompt; after the account that ran sudo logs in again, it successfully runs, without sudo in the terminal, generating a pairing key, modifying a configuration option and initiating pairing, and the audit records that account; when the prompt is answered with a blank line, or the script runs without a terminal, the account is not added to the admin group, and the output gives the command to add it; run with `--join-admin-group`, it joins without asking; an ordinary account not in the group running the same commands returns insufficient permission. When the configuration file already exists, reinstalling leaves its owning group and permissions unchanged. On a host that already has a `peers` group with members, with no `/var/lib/peers/admin-group` record and no configuration file, run `service install --system` without `--admin-group`; the installation fails, the error lists the members and gives two ways out, `--admin-group peers` and switching to another group name, and the configuration file is not generated; reinstall with `--admin-group peers` and it succeeds, the summary's `admin group:` line marks the group as reused (after explicit specification it no longer reads the members), and the configuration file's owning group is this group. A group with gid 0 is refused even when explicitly specified.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/admin_group_test.go` `TestREQBrokerConfig043_SystemInstallAdminGroup` (the test environment configures sudo with NOPASSWD; the "enter the sudo password" step is covered jointly by statically reading the install script and the sudo re-execution case), `TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation` (existing same-named group with members: refused without specifying and does not write the configuration file, succeeds after explicit specification, and the summary only marks it as reused and skips reading members)
 
 ### REQ-broker-config-044
 
-不带 `--system` 与 `--user`、能在终端询问的非 root 安装，必须询问 `Install for every account on this host? [y/N]`，回答 y 时经 sudo 完成系统级安装，其他回答完成用户级安装。
+A non-root installation without `--system` or `--user` that can prompt in the terminal MUST ask `Install for every account on this host? [y/N]`, complete a system installation through sudo when answered y, and complete a user installation for any other answer.
 
-- **验收**：在没有安装过本系统的主机上，以普通账户执行 `curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh`：出现这句询问；回答 y 并输入 sudo 密码后，系统级 Broker 正在运行，二进制位于 root 所有的目录，执行安装的账户在 Claude Code 中已注册 MCP 服务；在另一台主机上直接回车，该账户的用户级 Broker 正在运行，主机上没有系统级服务。解压发布包后执行 `sh ./install.sh`，结果相同。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel`、`TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser`；`test/e2e/system/remote_install_test.go` 的 `TestREQBrokerConfig042_RemoteInstallSystem`
+- **Acceptance**: On a host where this system has never been installed, run `curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh` as an ordinary account: this prompt appears; after answering y and entering the sudo password, the system Broker is running, the binary is in a root-owned directory, and the account running the installation has registered the MCP service in Claude Code; on another host, answer with a blank line, and this account's user Broker is running and the host has no system service. After extracting the release package, run `sh ./install.sh`, and the result is the same.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_script_test.go` `TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel`, `TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser`; `test/e2e/system/remote_install_test.go` `TestREQBrokerConfig042_RemoteInstallSystem`
 
 ### REQ-broker-config-045
 
-以 root 执行的安装必须不经询问完成系统级安装。
+An installation run as root MUST complete a system installation without asking.
 
-- **验收**：以 root 执行一条在线安装命令，不带任何参数，安装过程不出现级别询问，结束后系统级 Broker 正在运行，主机上没有 root 的用户级服务。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig045_InstallScriptRootDoesNotAsk`
+- **Acceptance**: Run an online install command as root with no parameters; the level prompt does not appear during installation, and afterward the system Broker is running and the host has no root user service.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_script_test.go` `TestREQBrokerConfig045_InstallScriptRootDoesNotAsk`
 
 ### REQ-broker-config-046
 
-无法在终端询问的非 root 安装必须不经询问完成用户级安装。
+A non-root installation that cannot prompt in the terminal MUST complete a user installation without asking.
 
-- **验收**：以普通账户在没有控制终端的环境中执行一条在线安装命令，例如经 `setsid` 并把标准输入接到 `/dev/null`：命令不等待输入，结束后该账户的用户级 Broker 正在运行，主机上没有系统级服务。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig046_InstallScriptWithoutTerminal`
+- **Acceptance**: Run an online install command as an ordinary account in an environment with no controlling terminal, for example through `setsid` with standard input connected to `/dev/null`: the command waits for no input, and afterward this account's user Broker is running and the host has no system service.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_script_test.go` `TestREQBrokerConfig046_InstallScriptWithoutTerminal`
 
 ### REQ-broker-config-047
 
-主机上已安装系统级服务时，`REQ-broker-config-044` 的询问必须改为 `Upgrade the system installation? [Y/n]`，直接回车或回答 y 时经 sudo 升级系统级安装；回答 n 时不得改动主机，命令以 0 退出，并说明系统安装没有改动。
+When a system service is already installed on the host, the prompt of `REQ-broker-config-044` MUST become `Upgrade the system installation? [Y/n]`; a blank line or y upgrades the system installation through sudo; n MUST NOT change the host, and the command exits with 0, stating that the system installation was not changed.
 
-- **验收**：在已安装旧版本系统级服务的主机上，以普通账户执行一条在线安装命令：询问为这一句；直接回车并输入 sudo 密码后，系统级 Broker 以新版本运行，配置文件内容不变。在另一台同样的主机上回答 n：命令以 0 退出，二进制、服务与配置都没有变化，输出说明系统安装没有改动，不提示改用 `--user`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig047_InstallScriptUpgradePrompt`
+- **Acceptance**: On a host with an older system service installed, run an online install command as an ordinary account: the prompt is this sentence; after a blank line and entering the sudo password, the system Broker runs the new version and the configuration file content is unchanged. On another identical host, answer n: the command exits with 0, the binary, service and configuration are unchanged, and the output states that the system installation was not changed and does not suggest `--user`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_script_test.go` `TestREQBrokerConfig047_InstallScriptUpgradePrompt`
 
 ### REQ-broker-config-048
 
-带 `--user` 的安装必须不经询问完成用户级安装；带 `--system` 的安装必须不经级别询问完成系统级安装。
+An installation with `--user` MUST complete a user installation without asking; an installation with `--system` MUST complete a system installation without the level prompt.
 
-- **验收**：以普通账户执行 `curl ... | sh -s -- --user`，不出现级别询问，结束后用户级 Broker 正在运行；以普通账户执行 `curl ... | sh -s -- --system`，不出现级别询问，脚本经 sudo 完成系统级安装；同时带两者时以用法错误退出，主机上没有改动；以 root 执行带 `--user` 的安装被拒绝，提示去掉 `--user`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig048_InstallScriptBothFlags`、`TestREQBrokerConfig048_InstallScriptUserFlag`、`TestREQBrokerConfig048_InstallScriptSystemFlag`
+- **Acceptance**: Run `curl ... | sh -s -- --user` as an ordinary account; the level prompt does not appear, and afterward the user Broker is running; run `curl ... | sh -s -- --system` as an ordinary account; the level prompt does not appear, and the script completes the system installation through sudo; with both flags together it exits with a usage error and the host has no change; run as root with `--user` and it is refused, prompting to drop `--user`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_script_test.go` `TestREQBrokerConfig048_InstallScriptBothFlags`, `TestREQBrokerConfig048_InstallScriptUserFlag`, `TestREQBrokerConfig048_InstallScriptSystemFlag`
 
 ### REQ-broker-config-049
 
-安装、升级与卸载失败时，输出必须写明具体原因，不得只说连不上或没有启动。
+When installation, upgrade or uninstallation fails, the output MUST state the specific reason, and MUST NOT say only that it cannot connect or did not start.
 
-- **验收**：分别制造下列失败，每种情况命令都以非零退出，输出含括号中的内容：监听地址被另一个进程占用（地址、配置文件路径与配置项 `broker.listen`）；`systemctl` 或 `launchctl` 返回失败（执行的命令与它的错误输出）；对安装目录或配置文件没有权限（路径与所缺的权限）；Broker 在启动阶段退出（运行日志中 `startup_failed` 记录的原因）。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_port_conflict_test.go` 的 `TestSystemServiceInstallListenPortConflict`、`test/e2e/darwinservice/install_port_test.go` 的 `TestUserServiceInstallRefusesAnOccupiedListenPort`（地址被占时错误含地址、配置文件路径与 `broker.listen`）；其余失败路径由单元测试覆盖：`internal/broker/service/install_test.go` 的 `TestInstallLinuxStepFailures`、`TestInstallDarwinBootstrapFailureReportsTheOutput`、`TestCreateConfigRemovesPartialFileOnWriteFailure`、`TestInstallReportsTheStartupFailureOnTimeout`、`TestInstallReportsTheServiceManagerStateOnTimeout`（命令失败、权限不足、启动阶段退出与服务管理器状态），`cmd/peers/uninstall_cmd_test.go` 的 `TestUninstallStopsAfterAFailedStep`、`TestUninstallReportsPathsRemovedBeforeAPurgeFailure`（卸载失败的步骤、路径与原因），`internal/broker/update/apply_test.go` 的 `TestApplyFailureLeavesTargetUnchanged` 与 `api_test.go` 的 `TestLatestRejectsAPIError`、`TestLatestRejectsInvalidContent`（升级失败的原因）
+- **Acceptance**: Induce the following failures separately, and in each case the command exits nonzero and the output contains the content in parentheses: the listen address is occupied by another process (the address, the configuration file path and the option `broker.listen`); `systemctl` or `launchctl` returns failure (the command run and its error output); no permission on the installation directory or the configuration file (the path and the missing permission); the Broker exits during startup (the reason in the `startup_failed` record in the runtime log).
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_port_conflict_test.go` `TestSystemServiceInstallListenPortConflict`, `test/e2e/darwinservice/install_port_test.go` `TestUserServiceInstallRefusesAnOccupiedListenPort` (when the address is occupied the error contains the address, the configuration file path and `broker.listen`); the remaining failure paths are covered by unit tests: `TestInstallLinuxStepFailures`, `TestInstallDarwinBootstrapFailureReportsTheOutput`, `TestCreateConfigRemovesPartialFileOnWriteFailure`, `TestInstallReportsTheStartupFailureOnTimeout` and `TestInstallReportsTheServiceManagerStateOnTimeout` in `internal/broker/service/install_test.go` (command failure, insufficient permission, exit during startup and service manager state), `TestUninstallStopsAfterAFailedStep` and `TestUninstallReportsPathsRemovedBeforeAPurgeFailure` in `cmd/peers/uninstall_cmd_test.go` (the step, paths and reason of a failed uninstallation), and `TestApplyFailureLeavesTargetUnchanged` in `internal/broker/update/apply_test.go` and `TestLatestRejectsAPIError` and `TestLatestRejectsInvalidContent` in `api_test.go` (the reason for a failed upgrade)
 
 ### REQ-broker-config-050
 
-安装或升级成功后，输出必须给出安装级别、二进制路径、版本、配置文件路径、运行日志的位置、审计日志路径、启动、停止与重启 Broker 的命令，以及卸载命令。
+After installation or upgrade succeeds, the output MUST give the installation level, the binary path, the version, the configuration file path, the runtime log location, the audit log path, the commands to start, stop and restart the Broker, and the uninstall command.
 
-- **验收**：分别完成一次用户级安装与一次系统级安装，输出中逐项出现上述内容，其中的路径在主机上存在，给出的启动、停止、重启与卸载命令照抄执行都成功。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_summary_test.go` 的 `TestREQBrokerConfig050_SystemServiceInstallPrintsSummary`、`TestREQBrokerConfig050_UserServiceInstallPrintsSummary`（Linux：系统级与用户级，路径存在与沿用配置，并照抄汇总里的 start、stop、restart、uninstall 命令逐条执行成功）；`test/e2e/darwinservice/install_summary_test.go` 的 `TestREQBrokerConfig050_UserServiceInstallPrintsSummary`、`TestREQBrokerConfig050_SystemServiceInstallPrintsSummary`（macOS：用户级与系统级，同一组断言与照抄执行）；`test/e2e/system/install_script_test.go` 的 `TestREQBrokerConfig050_InstallScriptUserSummary`、`TestREQBrokerConfig050_InstallScriptSystemSummary`（Linux：经发布包内的安装脚本完成用户级与系统级安装，汇总出现在脚本输出里，路径存在并照抄执行）
+- **Acceptance**: Complete one user installation and one system installation separately; the output contains each of the above, the paths in it exist on the host, and the start, stop, restart and uninstall commands it gives all succeed when copied and run.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_summary_test.go` `TestREQBrokerConfig050_SystemServiceInstallPrintsSummary`, `TestREQBrokerConfig050_UserServiceInstallPrintsSummary` (Linux: system and user, the paths exist and the configuration is reused, and the `start`, `stop`, `restart` and `uninstall` commands in the summary all run successfully when copied); `test/e2e/darwinservice/install_summary_test.go` `TestREQBrokerConfig050_UserServiceInstallPrintsSummary`, `TestREQBrokerConfig050_SystemServiceInstallPrintsSummary` (macOS: user and system, the same assertions and copying); `test/e2e/system/install_script_test.go` `TestREQBrokerConfig050_InstallScriptUserSummary`, `TestREQBrokerConfig050_InstallScriptSystemSummary` (Linux: user and system installations through the install script in the release package, the summary appears in the script output, and the paths exist and are copied and run)
 
 ### REQ-broker-config-051
 
-`peers uninstall` 必须判别已安装的级别，并删除该级别的服务定义、服务定义所启动的二进制、执行卸载的账户在 Claude Code 中的 MCP 注册、该级别的运行时目录，以及安装脚本写入的补全文件；系统级还要删除本项目的 man 页。
+`peers uninstall` MUST determine the installed level and remove that level's service definition, the binary the service definition starts, the uninstalling account's MCP registration in Claude Code, that level's runtime directory, and the completion files the install script wrote; for a system installation it also removes this project's man pages.
 
-- **验收**：在完成用户级安装的主机上执行 `peers uninstall` 并对数据询问直接回车：之后该账户的 Broker 进程不存在，服务定义文件、二进制、运行时目录都不存在，`claude mcp get peer` 报告未注册；配置文件、身份、审计日志与服务日志仍在。对系统级安装执行，结果相同。主机上同时有系统级与用户级安装时，非 root 账户只卸载用户级，结束后输出说明主机上仍有系统级安装及 `sudo peers uninstall`。再执行一次，命令成功并报告没有安装。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/uninstall_test.go` 的 `TestUninstallREQBrokerConfig051UserLevel`、`TestUninstallREQBrokerConfig051SystemLevel`、`TestUninstallREQBrokerConfig051NoService`、`TestUninstallREQBrokerConfig051UnrecordedGroup`；`test/e2e/darwinservice/uninstall_test.go` 的 `TestUninstallREQBrokerConfig051UserLevel`
+- **Acceptance**: On a host with a completed user installation, run `peers uninstall` and answer the data prompt with a blank line: afterward this account's Broker process does not exist, and the service definition file, the binary and the runtime directory do not exist, and `claude mcp get peer` reports not registered; the configuration file, identity, audit log and service log remain. Run it for a system installation and the result is the same. When the host has both a system and a user installation, a non-root account uninstalls only the user installation, and afterward the output states that the host still has a system installation and `sudo peers uninstall`. Run it again and the command succeeds and reports that nothing is installed.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/uninstall_test.go` `TestUninstallREQBrokerConfig051UserLevel`, `TestUninstallREQBrokerConfig051SystemLevel`, `TestUninstallREQBrokerConfig051NoService`, `TestUninstallREQBrokerConfig051UnrecordedGroup`; `test/e2e/darwinservice/uninstall_test.go` `TestUninstallREQBrokerConfig051UserLevel`
 
 ### REQ-broker-config-052
 
-非 root 账户只有系统级安装时，`peers uninstall` 必须经 sudo 重跑：给了 `--yes` 时直接重跑；有终端时先询问，回答 y 后重跑。没有终端又没有 `--yes` 时报错并以状态 1 退出，错误信息给出可以直接重跑的 `sudo peers uninstall ... --yes`。
+When a non-root account has only a system installation, `peers uninstall` MUST re-run through sudo: re-run directly when `--yes` is given; when there is a terminal, ask first and re-run after y. With no terminal and no `--yes` it reports an error and exits with status 1, and the error message gives `sudo peers uninstall ... --yes` that can be re-run directly.
 
-- **验收**：主机上只有系统级安装，以普通账户在没有终端的情况下执行 `peers uninstall`：命令报错，状态为 1，错误信息含 `sudo peers uninstall` 与 `--yes`，主机上没有改动；照抄这条命令执行并输入 sudo 密码后，系统级安装按 `REQ-broker-config-051` 删除。在终端上执行同一命令，回答 y 后命令经 sudo 重跑，系统级安装同样删除；以 `--yes` 执行时不提问，直接经 sudo 重跑。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/uninstall_test.go` 的 `TestUninstallREQBrokerConfig052NonRootSystemOnly`、`TestUninstallREQBrokerConfig052TwoLevels`
+- **Acceptance**: The host has only a system installation; run `peers uninstall` as an ordinary account without a terminal: the command reports an error with status 1, the error message contains `sudo peers uninstall` and `--yes`, and the host has no change; copy this command, run it and enter the sudo password, and the system installation is removed per `REQ-broker-config-051`. Run the same command on a terminal and after answering y the command re-runs through sudo, and the system installation is likewise removed; run with `--yes` and it re-runs through sudo directly without asking.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/uninstall_test.go` `TestUninstallREQBrokerConfig052NonRootSystemOnly`, `TestUninstallREQBrokerConfig052TwoLevels`
 
 ### REQ-broker-config-053
 
-卸载必须询问 `Also remove configuration, identity, audit and service logs? [y/N]`，只有回答 y 时才删除这些数据；`--yes` 跳过询问并保留这些数据。系统级安装同时删除其安装记录能够证明由本项目创建的管理组；没有安装记录时保留管理组，并输出保留原因与手动删除命令。不带 `--purge` 的卸载在其他情况下不得删除它们。没有终端又没有 `--yes` 时，命令报错并以状态 1 退出，不做任何删除，`--purge` 也一样。
+Uninstallation MUST ask `Also remove configuration, identity, audit and service logs? [y/N]`, and remove this data only when answered y; `--yes` skips the prompt and keeps this data. A system installation also removes an admin group whose installation record proves it was created by this project; without an installation record it keeps the admin group and outputs the reason for keeping it and the manual removal command. An uninstallation without `--purge` MUST NOT remove them in other cases. With no terminal and no `--yes`, the command reports an error and exits with status 1, removing nothing, and the same for `--purge`.
 
-- **验收**：在系统级安装的主机上卸载，对这句询问直接回车：配置文件、身份与对端表、审计日志都在，管理组仍存在；重新安装后，Broker 的指纹与卸载前相同，原有对端仍是对端。另一台主机上回答 y：这些数据都不存在；有安装记录时管理组也不存在，没有记录时管理组保留并输出保留原因与手动删除命令。没有终端又没有 `--yes` 时，命令以状态 1 退出，不做任何删除。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/uninstall_test.go` 的 `TestUninstallREQBrokerConfig051UserLevel`、`TestUninstallREQBrokerConfig051SystemLevel`（保留数据与管理组的断言）
+- **Acceptance**: Uninstall on a host with a system installation and answer this prompt with a blank line: the configuration file, identity and peer table, and audit log are there, and the admin group still exists; after reinstalling, the Broker's fingerprint is the same as before uninstallation, and existing peers are still peers. On another host, answer y: this data does not exist; with an installation record the admin group does not exist either, and without a record the admin group is kept and the reason for keeping it and the manual removal command are output. With no terminal and no `--yes`, the command exits with status 1 and removes nothing.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/uninstall_test.go` `TestUninstallREQBrokerConfig051UserLevel`, `TestUninstallREQBrokerConfig051SystemLevel` (assertions for keeping data and the admin group)
 
 ### REQ-broker-config-054
 
-`peers uninstall --purge` 必须不经数据询问删除 `REQ-broker-config-051` 与 `REQ-broker-config-053` 所列的全部内容；删除后这些路径下都没有本系统的文件或目录，服务定义、二进制与 MCP 注册都不存在；管理组只在安装记录证明由本项目创建时删除，没有记录时保留并输出保留原因与手动删除命令。
+`peers uninstall --purge` MUST, without the data prompt, remove everything listed in `REQ-broker-config-051` and `REQ-broker-config-053`; afterward none of these paths has this system's files or directories, and the service definition, binary and MCP registration do not exist; the admin group is removed only when the installation record proves this project created it, and without a record it is kept with the reason and the manual removal command output.
 
-- **验收**：在分别完成用户级与系统级安装、配对过一个对端、产生过审计记录的主机上执行 `peers uninstall --purge`：命令不询问数据去留；之后配置文件与配置目录、数据目录、审计日志、运行时目录都不存在，服务管理器中查不到 peers 服务，`claude mcp get peer` 报告未注册；有安装记录时 `getent group peers`（macOS 上 `dscl . -read /Groups/peers`）报告不存在，没有记录时管理组保留并输出保留原因与手动删除命令。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/uninstall_test.go` 的 `TestUninstallREQBrokerConfig051UserLevel`、`TestUninstallREQBrokerConfig051SystemLevel`、`TestUninstallREQBrokerConfig051UnrecordedGroup`、`TestUninstallREQBrokerConfig054OtherAccountBroker`
+- **Acceptance**: On a host with a completed user and system installation, one paired peer and produced audit records, run `peers uninstall --purge`: the command does not ask about the data; afterward the configuration file and configuration directory, data directory, audit log and runtime directory do not exist, the peers service cannot be found in the service manager, and `claude mcp get peer` reports not registered; with an installation record `getent group peers` (on macOS `dscl . -read /Groups/peers`) reports it does not exist, and without a record the admin group is kept and the reason and the manual removal command are output.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/uninstall_test.go` `TestUninstallREQBrokerConfig051UserLevel`, `TestUninstallREQBrokerConfig051SystemLevel`, `TestUninstallREQBrokerConfig051UnrecordedGroup`, `TestUninstallREQBrokerConfig054OtherAccountBroker`
 
 ### REQ-broker-config-055
 
-用户必须能用 `peers service start`、`stop` 与 `restart` 启动、停止与重启 Broker 服务，作用的级别由 `--system` 或 `--user` 指定，两者互斥；都不给时按执行命令的账户确定：root 作用于系统级服务，其他账户作用于本账户的用户级服务。没有安装该级别的服务时，命令必须失败并说明该级别没有安装服务；非 root 账户只有系统级安装时，命令必须失败并给出 `sudo peers service <命令> --system`。`start` 与 `restart` 之后服务在运行而 Broker 处于降级运行时，命令必须输出故障与修复命令，并以退出码 3 结束。
+A user MUST be able to start, stop and restart the Broker service with `peers service start`, `stop` and `restart`, with the level acted on specified by `--system` or `--user`, which are mutually exclusive; when neither is given it is decided by the account running the command: root acts on the system service and other accounts act on this account's user service. When the service of that level is not installed, the command MUST fail and state that no service of that level is installed; when a non-root account has only a system installation, the command MUST fail and give `sudo peers service <command> --system`. When, after `start` or `restart`, the service is running but the Broker is in degraded run, the command MUST output the fault and the repair command and exit with exit code 3.
 
-- **验收**：在同时有系统级服务与账户甲的用户级服务的主机上，甲执行 `peers service stop`，甲的用户级 Broker 停止，系统级 Broker 不受影响；甲执行 `sudo peers service restart`，系统级 Broker 以新的进程号运行，甲的用户级 Broker 仍是停止状态；甲执行 `peers service start`，用户级 Broker 重新运行。没有安装该级别的服务时，命令以非零退出并说明该级别没有安装服务；甲在只有系统级服务的主机上执行，命令以 1 退出并给出 `sudo peers service <命令> --system`。先停止甲的用户级服务，让另一个进程占用配置中的监听端口，甲执行 `peers service start`：输出降级原因与修复命令，退出码为 3，服务处于运行状态。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/service_control_test.go` 的 `TestServiceControl`（`stop and start act on one level only`、`a user command with only the system service names sudo`、`no installed service names the level`、`start reports a degraded Broker and keeps the service running`；最后一例保留 `service start` 的退出码 3，并断言 `peers service status` 的 stdout 含 `Broker: degraded (local only):` 与 `Fix:`）；`test/e2e/darwinservice/control_test.go` 的 `TestUserServiceControl`、`TestSystemServiceControl`、`TestServiceControlNotInstalled`、`TestUserServiceControlDegraded`（同样断言 `peers service status` 的 stdout 含状态行与 `Fix:`）
+- **Acceptance**: On a host with both a system service and account A's user service, A runs `peers service stop` and A's user Broker stops while the system Broker is unaffected; A runs `sudo peers service restart` and the system Broker runs with a new process id while A's user Broker is still stopped; A runs `peers service start` and the user Broker runs again. When the service of that level is not installed, the command exits nonzero and states that no service of that level is installed; A runs it on a host with only the system service and the command exits with 1 and gives `sudo peers service <command> --system`. First stop A's user service and let another process occupy the configured listen port, then A runs `peers service start`: it outputs the degraded reason and the repair command, the exit code is 3, and the service is running.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/service_control_test.go` `TestServiceControl` (`stop and start act on one level only`, `a user command with only the system service names sudo`, `no installed service names the level`, `start reports a degraded Broker and keeps the service running`; the last case keeps the exit code 3 of `service start` and asserts that the stdout of `peers service status` contains `Broker: degraded (local only):` and `Fix:`); `test/e2e/darwinservice/control_test.go` `TestUserServiceControl`, `TestSystemServiceControl`, `TestServiceControlNotInstalled`, `TestUserServiceControlDegraded` (likewise asserting that the stdout of `peers service status` contains the status line and `Fix:`)
 
 ### REQ-broker-config-056
 
-不带 `--allow-degraded` 启动的 Broker，在启动的任何一步失败时必须在标准错误输出原因并以非零退出码结束。
+A Broker started without `--allow-degraded` MUST, when any startup step fails, output the reason on standard error and end with a nonzero exit code.
 
-- **验收**：在终端以 `peers service run` 分别制造配置文件无法解析、监听地址被占用、身份文件不可读三种失败，每次进程都退出，退出码非零，标准错误的最后一行写明原因，运行时目录中没有留下本机 socket。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-056 foreground failures exit`
+- **Acceptance**: In the terminal with `peers service run`, induce the three failures of an unparseable configuration file, an occupied listen address and an unreadable identity file; each time the process exits with a nonzero exit code, the last line of standard error states the reason, and the runtime directory has no local socket left.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-056 foreground failures exit`
 
 ### REQ-broker-config-057
 
-带 `--allow-degraded` 启动的 Broker 取得账户锁之后，监听地址无法绑定，或数据目录、审计日志不可用时，必须不退出，并在本机 socket 上应答；配置文件读取或解析失败、取值不合法，以及其他与数据目录无关的启动失败，仍必须像不带该参数时一样退出。
+A Broker started with `--allow-degraded`, after acquiring the account lock, MUST NOT exit when the listen address cannot be bound or the data directory or audit log is unavailable, and MUST answer on the local socket; when reading or parsing the configuration file fails, a value is invalid, or another startup failure unrelated to the data directory occurs, it MUST still exit as without the parameter.
 
-- **验收**：以 `peers service run --allow-degraded` 启动，把数据目录中的身份文件改成当前账户不可读，或让审计日志所在目录不可写：进程持续运行，`peers service status` 能连上它并输出故障；监听地址被占用时同样如此。把配置文件写成无法解析的内容再以同一个参数启动，进程以非零退出码结束，与不带该参数时相同。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-057 diagnostics entry and recovery`
+- **Acceptance**: Start with `peers service run --allow-degraded` and make the identity file in the data directory unreadable by the current account, or make the directory containing the audit log unwritable: the process keeps running, and `peers service status` can connect to it and output the fault; the same when the listen address is occupied. Write unparseable content into the configuration file and start with the same parameter; the process ends with a nonzero exit code, the same as without the parameter.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-057 diagnostics entry and recovery`
 
 ### REQ-broker-config-058
 
-降级运行中只有监听地址无法绑定时，Broker 必须照常提供本机的登记、列出、topic 与本机消息功能，生成配对密钥必须失败，错误写明无法绑定的地址与配置项 `broker.listen`。系统级 Broker 的监听端口小于 1024 而配置文件可被其他账户写入时，按本条处理。
+In degraded run where only the listen address cannot be bound, the Broker MUST provide local registration, listing, topic and local message functions as usual, and generating a pairing key MUST fail with the error stating the unbindable address and the option `broker.listen`. When a system Broker's listen port is below 1024 and the configuration file is writable by other accounts, this requirement applies.
 
-- **验收**：另一个进程占用 17443 端口时以 `--allow-degraded` 和默认配置启动 Broker：两个会话登记成功、加入同一 topic 后互发消息成功；会话调用 `create_pairing_key` 返回 `broker_degraded`，说明含 `:17443` 与 `broker.listen`；本机不在任何端口上监听；`peers service status` 输出该故障；向本方作为接受方的对端发送时返回 `peer_unreachable`，说明末尾附降级原因。另把系统级 Broker 的监听端口设为 1024 以下并让配置文件可被组写入，启动后同样进入仅本机降级，`peers service status` 的修复提示含 `chmod g-w` 或改用 1024 以上的端口。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-058 local only keeps local features`；peer_unreachable 附带降级原因由单元测试 `internal/broker/degradedrpc_test.go` 的 `TestPeerUnreachableReasonOnlyForAcceptor` 覆盖；低端口修复提示含 `chmod g-w` 由单元测试 `internal/broker/degradedstate_test.go` 的 `TestDegradedFixHints` 覆盖
+- **Acceptance**: With another process occupying port 17443, start the Broker with `--allow-degraded` and the default configuration: two sessions register successfully, and after joining the same topic they exchange messages successfully; a session calling `create_pairing_key` returns `broker_degraded`, with the message containing `:17443` and `broker.listen`; the host does not listen on any port; `peers service status` outputs the fault; sending to a peer for which this side is the acceptor returns `peer_unreachable`, with the degraded reason appended at the end of the message. Also set the system Broker's listen port below 1024 and make the configuration file group-writable; after startup it likewise enters local only degraded run, and the repair hint of `peers service status` contains `chmod g-w` or switching to a port above 1024.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-058 local only keeps local features`; peer_unreachable carrying the degraded reason is covered by the unit test `TestPeerUnreachableReasonOnlyForAcceptor` in `internal/broker/degradedrpc_test.go`; the low-port repair hint containing `chmod g-w` is covered by the unit test `TestDegradedFixHints` in `internal/broker/degradedstate_test.go`
 
 ### REQ-broker-config-059
 
-降级运行中数据目录或审计日志不可用时，`peers service status` 必须输出故障与修复提示，会话中每个工具调用都必须返回 `broker_degraded` 及原因。
+In degraded run where the data directory or audit log is unavailable, `peers service status` MUST output the fault and a repair hint, and every tool call in a session MUST return `broker_degraded` and the reason.
 
-- **验收**：以 `--allow-degraded` 启动、审计日志所在目录不可写时，`peers service status` 输出审计日志的路径、原因与修复方法，退出码非零；会话中调用 `list_agents`、`send_message`、`get_config` 都返回 `broker_degraded`，说明与 `peers service status` 输出的原因一致；会话不需要重新连接 MCP 服务。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-059 diagnostics from the audit log`
+- **Acceptance**: Start with `--allow-degraded` with the audit log's directory unwritable; `peers service status` outputs the audit log's path, the reason and the repair method, with a nonzero exit code; calls to `list_agents`, `send_message` and `get_config` in a session all return `broker_degraded`, with the message matching the reason `peers service status` outputs; the session does not need to reconnect the MCP service.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-059 diagnostics from the audit log`
 
 ### REQ-broker-config-060
 
-带 `--allow-degraded` 的 Broker 在取得账户锁之前失败时，必须与不带该参数时一样退出。
+A Broker with `--allow-degraded` that fails before acquiring the account lock MUST exit as without the parameter.
 
-- **验收**：以 `--allow-degraded` 分别在会话的进程树内启动、以非 root 带 `--system` 启动、在已有实例持有账户锁时启动，三种情况进程都以 `REQ-broker-config-056` 的方式退出，原有实例不受影响。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-060 before-lock failures exit`
+- **Acceptance**: Start with `--allow-degraded` separately inside a session's process tree, as non-root with `--system`, and while an existing instance holds the account lock; in all three cases the process exits the way `REQ-broker-config-056` describes, and the existing instance is unaffected.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-060 before-lock failures exit`
 
 ### REQ-broker-config-061
 
-降级运行中，Broker 必须在配置文件发生变化时立即重试失败的那一步，并每分钟重试一次；重试成功后不重启进程即退出降级运行。重试失败时只在原因发生变化时写运行日志。
+In degraded run, the Broker MUST retry the failed step immediately when the configuration file changes and once a minute; after a retry succeeds it exits degraded run without restarting the process. On a failed retry it writes the runtime log only when the reason changes.
 
-- **验收**：以 `--allow-degraded` 启动、审计日志所在目录不可写；恢复该目录的权限后不重启 Broker，60 秒内 `peers service status` 不再报告故障。另以默认配置启动、17443 端口被占用；把 `broker.listen` 改为空闲端口后，不重启 Broker，60 秒内 `peers service status` 不再报告故障，Broker 在新端口上监听，进程号不变。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-059 diagnostics from the audit log`、`TestDegradedRun/REQ-broker-config-061 recovery listens on the new port`
+- **Acceptance**: Start with `--allow-degraded` with the audit log's directory unwritable; after restoring that directory's permission without restarting the Broker, within 60 seconds `peers service status` no longer reports the fault. Also start with the default configuration with port 17443 occupied; after changing `broker.listen` to a free port without restarting the Broker, within 60 seconds `peers service status` no longer reports the fault, the Broker listens on the new port, and the process id is unchanged.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-059 diagnostics from the audit log`, `TestDegradedRun/REQ-broker-config-061 recovery listens on the new port`
 
 ### REQ-broker-config-062
 
-降级运行中监听地址无法绑定时，Broker 必须以不超过 1 分钟的间隔重试绑定，地址可用后不重启进程即开始监听。
+In degraded run where the listen address cannot be bound, the Broker MUST retry binding at intervals of no more than 1 minute, and once the address is available, start listening without restarting the process.
 
-- **验收**：以 `--allow-degraded` 启动时 17443 端口被占用；结束占用该端口的进程，不改配置，2 分钟内另一台主机能连上该 Broker 的 17443 端口，`peers service status` 不再报告故障，Broker 的进程号不变。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/degraded_run_test.go` 的 `TestDegradedRun/REQ-broker-config-062 listen retry reaches the address`
+- **Acceptance**: Start with `--allow-degraded` while port 17443 is occupied; end the process occupying that port without changing configuration, within 2 minutes another host can reach this Broker's port 17443, `peers service status` no longer reports the fault, and the Broker's process id is unchanged.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/degraded_run_test.go` `TestDegradedRun/REQ-broker-config-062 listen retry reaches the address`
 
 ### REQ-broker-config-063
 
-`peers service install` 生成的服务定义必须以允许降级运行的方式启动 Broker。
+The service definition `peers service install` generates MUST start the Broker in a way that allows degraded run.
 
-- **验收**：分别安装用户级与系统级服务，Linux 上单元文件的 `ExecStart` 与 macOS 上 plist 的 `ProgramArguments` 都含 `--allow-degraded`；在已完成安装的主机上停止服务，让另一个进程占用配置中的监听端口，再执行 `peers service start`：Broker 进入降级运行，服务管理器报告服务处于运行状态，至少 30 秒（`RestartSec=5` 的 6 倍）内进程 pid 不变、服务管理器不重启它，`peers service status` 报告降级运行。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/service_control_test.go` 的 `TestServiceControl/start reports a degraded Broker and keeps the service running`（并断言用户级与系统级单元文件含 `--allow-degraded`，保留 `service start` 的退出码 3，并断言 `peers service status` 的 stdout 含 `Broker: degraded (local only):` 与 `Fix:`）；`test/e2e/darwinservice/control_test.go` 的 `TestUserServiceControlDegraded`（并断言 plist 含 `--allow-degraded`，同样的状态行断言）；服务定义模板的两级内容另由 `internal/broker/service/units_test.go` 覆盖；终端状态行的逐字输出由“终端与会话显示降级与下线”单元覆盖
+- **Acceptance**: Install the user and system services separately; on Linux the unit file's `ExecStart` and on macOS the plist's `ProgramArguments` both contain `--allow-degraded`; on a host with installation completed, stop the service, let another process occupy the configured listen port, and run `peers service start`: the Broker enters degraded run, the service manager reports the service as running, for at least 30 seconds (six times `RestartSec=5`) the process pid is unchanged and the service manager does not restart it, and `peers service status` reports degraded run.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/service_control_test.go` `TestServiceControl/start reports a degraded Broker and keeps the service running` (also asserting that the user and system unit files contain `--allow-degraded`, keeping the exit code 3 of `service start`, and asserting that the stdout of `peers service status` contains `Broker: degraded (local only):` and `Fix:`); `test/e2e/darwinservice/control_test.go` `TestUserServiceControlDegraded` (also asserting that the plist contains `--allow-degraded`, with the same status-line assertions); the content of the service definition template for both levels is also covered by `internal/broker/service/units_test.go`; the verbatim output of the terminal status line is covered by the "Show degraded run and offline in the terminal and in a session" unit
 
 ### REQ-broker-config-064
 
-服务注册之后 Broker 进入降级运行时，`peers service install` 必须保留已安装并在运行的服务，输出故障与修复命令，并以退出码 3 结束。注册之前预检发现监听地址被占用时，安装必须拒绝并不注册服务。
+When the Broker enters degraded run after the service is registered, `peers service install` MUST keep the installed and running service, output the fault and the repair command, and exit with exit code 3. When the precheck before registration finds the listen address occupied, the installation MUST refuse and register no service.
 
-- **验收**：在已完成安装的主机上让审计日志所在目录不可写，再执行 `peers service install`：命令以 3 退出，输出写明原因、路径与修复命令；服务定义与二进制都在，服务管理器报告服务处于运行状态，`peers service status` 报告降级运行。另在安装前让 17443 端口被另一个进程占用：安装失败并说明地址不可用，服务定义没有写入，主机上没有本服务。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/system/install_summary_test.go` 的 `TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog`、`test/e2e/system/install_port_conflict_test.go` 的 `TestSystemServiceInstallListenPortConflict/an occupied port fails the install and registers nothing`（Linux：审计日志不可用后的降级重装与预检端口占用）；`test/e2e/darwinservice/install_summary_test.go` 的 `TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog`、`test/e2e/darwinservice/install_port_test.go` 的 `TestUserServiceInstallRefusesAnOccupiedListenPort`（macOS：同一验收）
+- **Acceptance**: On a host with installation completed, make the audit log's directory unwritable and run `peers service install`: the command exits with 3 and the output states the reason, the path and the repair command; the service definition and binary are both there, the service manager reports the service as running, and `peers service status` reports degraded run. Also, before installation, let another process occupy port 17443: the installation fails and states that the address is unavailable, the service definition is not written, and the host has no such service.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/system/install_summary_test.go` `TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog`, `test/e2e/system/install_port_conflict_test.go` `TestSystemServiceInstallListenPortConflict/an occupied port fails the install and registers nothing` (Linux: degraded reinstall after the audit log is unavailable, and the precheck port occupation); `test/e2e/darwinservice/install_summary_test.go` `TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog`, `test/e2e/darwinservice/install_port_test.go` `TestUserServiceInstallRefusesAnOccupiedListenPort` (macOS: the same acceptance)
 
 ### REQ-broker-config-065
 
-Broker 的下线状态必须保存在配置中，Broker 重启后保持重启前的状态。
+A Broker's offline state MUST be saved in configuration, and after a Broker restart it keeps the state from before the restart.
 
-- **验收**：把 Broker 设为下线后重启它，`peers service status` 仍报告下线，对端向它的 Agent 发送仍被拒绝；在配置文件中把 `broker.offline` 改为 `false`，不重启，对端的发送成功，审计日志新增一条该配置项的变更记录。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/offline_test.go` 的 `TestBrokerOffline/REQ-broker-config-065 state survives restart and a file edit`
+- **Acceptance**: Set the Broker offline and restart it; `peers service status` still reports offline, and a peer's send to its agents is still refused; change `broker.offline` to `false` in the configuration file without restarting, and the peer's send succeeds, and the audit log gains one record of this option's change.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/offline_test.go` `TestBrokerOffline/REQ-broker-config-065 state survives restart and a file edit`
 
 ### REQ-broker-config-066
 
-用户必须能在终端执行 `peers service offline` 与 `peers service online` 使 Broker 下线与上线，权限与修改配置相同。
+A user MUST be able to run `peers service offline` and `peers service online` in the terminal to take the Broker offline and online, with the same permission as modifying configuration.
 
-- **验收**：以对配置文件有写权限的账户执行 `peers service offline`，命令成功，`peers service status` 报告下线；执行 `peers service online` 后报告上线；以没有写权限的账户执行，返回权限不足并给出配置文件路径，状态不变；审计日志记录每次变化与执行的账户。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/offline_test.go` 的 `TestBrokerOffline/REQ-broker-config-066 terminal commands`；`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig021_WriteNeedsConfigWritePermission`（没有写权限时 `offline` 与 `online` 返回 `permission_denied` 并给出配置文件路径，配置文件不变）
+- **Acceptance**: Run `peers service offline` as an account with write permission on the configuration file and the command succeeds, and `peers service status` reports offline; after running `peers service online` it reports online; run them as an account without write permission and it returns insufficient permission and gives the configuration file path, with the state unchanged; the audit log records each change and the account that ran it.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/offline_test.go` `TestBrokerOffline/REQ-broker-config-066 terminal commands`; `test/e2e/system/permission_test.go` `TestREQBrokerConfig021_WriteNeedsConfigWritePermission` (without write permission, `offline` and `online` return `permission_denied` and give the configuration file path, and the configuration file is unchanged)
 
 ### REQ-broker-config-067
 
-Agent 必须能用工具 `set_broker_online` 使所连 Broker 下线或上线，该工具必须能独立于修改配置获得授权。
+An agent MUST be able to use the tool `set_broker_online` to take the connected Broker offline or online, and this tool MUST be authorizable independently of modifying configuration.
 
-- **验收**：会话调用 `set_broker_online`，参数 `online` 为假，调用成功，Broker 下线；为真时上线。在 Claude Code 权限设置中只放行该工具时，调用它不触发确认，`set_config` 触发确认。对配置文件没有写权限的账户调用返回 `permission_denied`。工具声明不带只读标记。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/offline_test.go` 的 `TestBrokerOffline/REQ-broker-config-067 tool changes the state`；`test/e2e/system/permission_test.go` 的 `TestREQBrokerConfig021_WriteNeedsConfigWritePermission`（没有写权限时返回 `permission_denied`）；`test/e2e/config_tools_test.go` 的 `TestConfigToolAnnotations`（声明为非只读）。Claude Code 按工具单独授权、只放行它时不触发确认，属于 Claude Code 的权限行为，不在端到端中验证，由 `internal/mcpserver/tools_test.go` 的工具声明测试覆盖声明层面
+- **Acceptance**: A session calls `set_broker_online` with the parameter `online` false and the call succeeds, taking the Broker offline; true takes it online. When Claude Code's permission settings allow only this tool, calling it triggers no confirmation and `set_config` triggers confirmation. An account without write permission on the configuration file calling it returns `permission_denied`. The tool declaration does not carry the read-only annotation.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/offline_test.go` `TestBrokerOffline/REQ-broker-config-067 tool changes the state`; `test/e2e/system/permission_test.go` `TestREQBrokerConfig021_WriteNeedsConfigWritePermission` (without write permission it returns `permission_denied`); `test/e2e/config_tools_test.go` `TestConfigToolAnnotations` (declared not read-only). Claude Code authorizing a tool individually and not triggering confirmation when only it is allowed is Claude Code's permission behavior, not verified in end-to-end tests; the declaration level is covered by the tool-declaration test in `internal/mcpserver/tools_test.go`
 
 ### REQ-broker-config-068
 
-本机终端查看状态与列出 Broker 时，必须显示本 Broker 是否下线。
+Viewing status and listing Brokers in the local terminal MUST show whether this Broker is offline.
 
-- **验收**：Broker 下线后，`peers service status` 与 `peers broker list` 的输出各有一行说明本 Broker 已下线及上线的命令，会话中 `list_brokers` 的结果带本 Broker 的下线状态；上线后这些说明消失。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/offline_test.go` 的 `TestBrokerOffline/REQ-broker-config-068 status shows the state`（`Status.offline`、`ListBrokers.local.offline`，以及 `peers service status` 与 `broker list` 的下线状态行；上线后状态行消失）
+- **Acceptance**: After the Broker goes offline, the output of `peers service status` and `peers broker list` each has a line stating that this Broker is offline and the command to go online, and in a session the result of `list_brokers` carries this Broker's offline state; after going online these statements disappear.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/offline_test.go` `TestBrokerOffline/REQ-broker-config-068 status shows the state` (`Status.offline`, `ListBrokers.local.offline`, and the offline status lines of `peers service status` and `broker list`; after going online the status lines disappear)
 
 ### REQ-broker-config-069
 
-同一来源在合并窗口内被拒绝的未认证连接，不论对方更换多少证书，审计日志中只新增一条记录；同一时段内被拒绝的来源再多，审计日志新增的记录数也有上限。
+For unauthenticated connections from one source rejected within the merge window, no matter how many certificates the other side switches, the audit log gains only one record; however many sources are rejected in the same period, the number of records the audit log gains also has a cap.
 
-- **验收**：一个未配对的对端在同一来源地址上用五张不同证书各发起一次连接，每次都被拒绝；随后读取审计日志，只有一条 `connection_rejected` 记录，`count` 为 5，`detail` 带该来源的前缀。伪造大量不同来源的连接时，一个 10 分钟窗口内所有可合并事件合计写入审计日志的普通记录不超过 256 条，超出部分合并为一条 `detail` 为 `other sources` 的汇总记录。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/security_test.go` 的 `TestREQBrokerConfig069_RejectedConnectionsMergeBySource`
+- **Acceptance**: An unpaired peer initiates one connection each with five different certificates from the same source address, and each is rejected; then read the audit log, and there is only one `connection_rejected` record, with `count` 5 and `detail` carrying the prefix of this source. When forging many connections from different sources, the ordinary records all mergeable events write to the audit log within one 10-minute window total no more than 256, and the excess is merged into one summary record whose `detail` is `other sources`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/security_test.go` `TestREQBrokerConfig069_RejectedConnectionsMergeBySource`
 
-## 数据需求
+## Data Requirements
 
-Broker 的配置和审计日志保存在本机磁盘上，谁能读、谁能改由它们的文件权限决定。用户级 Broker 的配置文件和审计日志属于运行它的账户，只有该账户可以读写。系统级 Broker 的配置文件默认只有 root 与管理组可以读写。审计日志只追加，不由系统删除。
+A Broker's configuration and audit log are stored on the local disk, and who can read and who can change them is decided by their file permissions. A user Broker's configuration file and audit log belong to the account running it, and only that account can read and write them. A system Broker's configuration file by default can be read and written only by root and the admin group. The audit log is append-only and is not deleted by the system.
 
-每个 Broker 实例各有自己的配置和审计日志，同一台主机上的多个 Broker 互不共用。Broker 的下线状态保存在配置文件中；卸载删除哪些数据由 `REQ-broker-config-051` 至 `REQ-broker-config-054` 规定。
+Each Broker instance has its own configuration and audit log, and several Brokers on the same host share neither. A Broker's offline state is saved in the configuration file; what data uninstallation removes is specified by `REQ-broker-config-051` through `REQ-broker-config-054`.
 
-## 外部接口需求
+## External Interface Requirements
 
-- Claude Code：工具调用是否需要用户确认，由 Claude Code 依据会话的权限设置决定。
-- 操作系统：调用方属于哪个账户、该账户对配置文件有什么权限，以操作系统给出的为准，不以调用方的陈述为准。系统级 Broker 由 macOS 或 Linux 的系统服务管理机制启动，用户级 Broker 安装为服务时由用户级的服务管理机制启动。
+- Claude Code: whether a tool call needs user confirmation is decided by Claude Code according to the session's permission settings.
+- Operating system: which account the caller belongs to and what permission that account has on the configuration file is decided by what the operating system reports, not by the caller's statement. A system Broker is started by macOS's or Linux's system service management mechanism, and a user Broker, when installed as a service, is started by the user service management mechanism.
 
-## 约束
+## Constraints
 
-- 默认配置在本机全部地址的 17443 端口上监听；17443 只是默认配置中的取值，系统不对这个端口作任何区别对待。
-- 同一台主机上的第二个 Broker 按默认配置启动时，监听地址已被占用：新装或重装时，预检发现地址被其他进程占用，安装失败且不注册服务（`REQ-broker-config-064`）；已经装好的服务之后再启动，服务进入仅本机降级，在前台启动则启动失败。降级运行只能提供本机功能，需要用户或管理员为它指定另一个地址或端口。
+- The default configuration listens on port 17443 on every local address; 17443 is only a value in the default configuration, and the system gives this port no special treatment.
+- When a second Broker on the same host starts with the default configuration, the listen address is already occupied: on a fresh or reinstall, the precheck finds the address occupied by another process, and the installation fails and registers no service (`REQ-broker-config-064`); when starting an already-installed service afterward, the service enters local only degraded run, and starting in the foreground fails to start. Degraded run provides only local functions, and the user or administrator must specify another address or port for it.
 
-## 假设与依赖
+## Assumptions and Dependencies
 
-- 系统识别的是发起调用的进程所属的账户，不是人，也不是模型。同一账户下的任何进程都能以该账户的权限调用 Broker。
-- 账户对配置文件有写权限，并且把修改配置、生成配对密钥、发起配对或升级 Broker 的工具加入了 Claude Code 的自动批准名单时，这些操作不再有任何确认。审计日志是此时的事后依据。
-- 会话中的模型能以所在会话拥有的文件访问权限直接读写该账户有权访问的配置文件和审计日志。系统不防范这一途径，由 Claude Code 对文件操作的权限确认承担。
-- 生成配对密钥、发起配对和解除配对并不写入配置文件，它们同样以对配置文件的写权限为前提。
-- 默认路由所在接口的地址在经过地址转换的网络之外连不上；这种情形需要配置含主机的对外地址，或追加对外地址。
-- 升级只替换二进制，不改写服务定义。已安装的服务要重新执行安装，才采用当前版本的服务定义与启动方式。
-- 能写 Broker 配置文件的账户可以修改 `broker.offline`，与执行上线、下线命令等价。
+- The system identifies the account the calling process belongs to, not a person and not a model. Any process under an account can call the Broker with that account's permissions.
+- When an account has write permission on the configuration file and has added the tools that modify configuration, generate pairing keys, initiate pairing or upgrade the Broker to Claude Code's auto-approval list, these operations have no confirmation any more. The audit log is the evidence afterward.
+- The model in a session can, with the file access permission its session has, directly read and write the configuration file and audit log the account is permitted to access. The system does not guard against this path; Claude Code's permission confirmation for file operations covers it.
+- Generating pairing keys, initiating pairing and unpairing do not write to the configuration file, and they likewise require write permission on the configuration file.
+- The address of the default route's interface cannot be reached from outside a network that translates addresses; this case needs an advertised address containing a host configured, or added advertised addresses.
+- An upgrade only replaces the binary and does not rewrite the service definition. An installed service must have the installation run again to adopt the current version's service definition and startup method.
+- An account that can write the Broker's configuration file can modify `broker.offline`, equivalent to running the online and offline commands.
