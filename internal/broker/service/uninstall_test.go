@@ -254,8 +254,9 @@ func TestUninstallRequiresTheMatchingAccount(t *testing.T) {
 		opts.System = true
 		opts.EUID = 1000
 		_, err := Uninstall(opts)
-		if err == nil || !strings.Contains(err.Error(), "must run as root") {
-			t.Fatalf("Uninstall error = %v, want the root requirement", err)
+		const want = "service remove --system must run as root"
+		if err == nil || err.Error() != want {
+			t.Fatalf("Uninstall error = %v, want %q", err, want)
 		}
 	})
 
@@ -263,8 +264,9 @@ func TestUninstallRequiresTheMatchingAccount(t *testing.T) {
 		opts := baseOptions(t)
 		opts.EUID = 0
 		_, err := Uninstall(opts)
-		if err == nil || !strings.Contains(err.Error(), "must not run as root") {
-			t.Fatalf("Uninstall error = %v, want the root rejection", err)
+		const want = "service remove without --system must not run as root; the user unit belongs to one account"
+		if err == nil || err.Error() != want {
+			t.Fatalf("Uninstall error = %v, want %q", err, want)
 		}
 	})
 }

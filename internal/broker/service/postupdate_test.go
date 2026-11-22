@@ -748,8 +748,10 @@ func TestPostUpdateOptionsSystemNeedsNoHome(t *testing.T) {
 func TestPostUpdateRejectsAnUnsupportedPlatform(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "windows"
-	if err := PostUpdate(opts); err == nil {
-		t.Fatal("PostUpdate accepted an unsupported platform")
+	err := PostUpdate(opts)
+	const want = `cannot update the service definition on platform "windows"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("PostUpdate error = %v, want %q", err, want)
 	}
 }
 

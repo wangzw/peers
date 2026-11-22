@@ -253,8 +253,9 @@ func TestInstalledUnsupportedPlatform(t *testing.T) {
 	opts.GOOS = "windows"
 
 	installed, err := Installed(opts)
-	if err == nil {
-		t.Fatal("Installed succeeded on an unsupported platform")
+	const want = `cannot check for an installed service on platform "windows"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("Installed error = %v, want %q", err, want)
 	}
 	if installed {
 		t.Error("Installed = true on an unsupported platform")

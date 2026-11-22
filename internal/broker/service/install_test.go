@@ -768,8 +768,9 @@ func TestInstallSystemRequiresRoot(t *testing.T) {
 	}
 
 	_, err := Install(opts)
-	if err == nil || !strings.Contains(err.Error(), "must run as root") {
-		t.Fatalf("Install error = %v, want the root requirement", err)
+	const want = "service install --system must run as root"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Install error = %v, want %q", err, want)
 	}
 	assertNoEntries(t, opts.Root)
 	if called {
@@ -788,8 +789,9 @@ func TestInstallUserRejectsRoot(t *testing.T) {
 	}
 
 	_, err := Install(opts)
-	if err == nil || !strings.Contains(err.Error(), "must not run as root") {
-		t.Fatalf("Install error = %v, want the root rejection", err)
+	const want = "service install without --system must not run as root; the user unit belongs to one account"
+	if err == nil || err.Error() != want {
+		t.Fatalf("Install error = %v, want %q", err, want)
 	}
 	assertNoEntries(t, opts.Root)
 	if called {
@@ -3160,8 +3162,10 @@ func TestServiceManagerStateQueryArguments(t *testing.T) {
 func TestInstallUnsupportedOS(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "freebsd"
-	if _, err := Install(opts); err == nil {
-		t.Fatal("Install succeeded on an unsupported platform")
+	_, err := Install(opts)
+	const want = `cannot install the service on platform "freebsd"`
+	if err == nil || err.Error() != want {
+		t.Fatalf("Install error = %v, want %q", err, want)
 	}
 }
 
