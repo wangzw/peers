@@ -18,11 +18,16 @@ type fakeUpdateClient struct {
 	localpb.LocalClient
 	resp  *localpb.ApplyUpdateResponse
 	err   error
+	block bool
 	calls int
 }
 
-func (f *fakeUpdateClient) ApplyUpdate(context.Context, *localpb.ApplyUpdateRequest, ...grpc.CallOption) (*localpb.ApplyUpdateResponse, error) {
+func (f *fakeUpdateClient) ApplyUpdate(ctx context.Context, _ *localpb.ApplyUpdateRequest, _ ...grpc.CallOption) (*localpb.ApplyUpdateResponse, error) {
 	f.calls++
+	if f.block {
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
 	return f.resp, f.err
 }
 
@@ -122,4 +127,30 @@ func TestUpdateBroker(t *testing.T) {
 			t.Errorf("error = %q, want %q", err, want)
 		}
 	})
+}
+
+// TestUpdateBrokerTimeout covers a Broker that does not finish the update: the
+// tool returns the dedicated timeout text instead of waiting for Claude Code's
+// own tool timeout. The text is asserted verbatim.
+func TestUpdateBrokerTimeout(t *testing.T) {
+	t.Parallel()
+
+	const want = "Upgrade failed: the Broker did not complete the upgrade within 4 minutes (code: internal). The upgrade was either abandoned, leaving the running version unchanged (a replacement that had started is rolled back), or completed, leaving the Broker restarting with the new version. To check the result, run `peers --version`, run `peers service status`, or run `peers update` in a terminal."
+
+	h := newUpdateTestHandler(&fakeUpdateClient{block: true})
+	h.updateTimeout = handlerTimeoutSeam
+
+	elapsed, err := waitBoundedCall(t, "UpdateBroker", func() error {
+		_, err := h.UpdateBroker(context.Background(), NoArgs{})
+		return err
+	})
+	if err == nil {
+		t.Fatal("UpdateBroker succeeded although the Broker never answered")
+	}
+	if elapsed < handlerTimeoutSeam/2 {
+		t.Errorf("UpdateBroker returned after %s, want about %s", elapsed, handlerTimeoutSeam)
+	}
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err, want)
+	}
 }

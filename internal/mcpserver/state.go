@@ -129,6 +129,8 @@ type handlers struct {
 	connectTimeout time.Duration
 	// sendTimeout bounds send_message. Zero means sendMessageRPCTimeout.
 	sendTimeout time.Duration
+	// updateTimeout bounds update_broker. Zero means updateBrokerRPCTimeout.
+	updateTimeout time.Duration
 }
 
 // preflight returns the Status a tool call may use, or an error whose text is
