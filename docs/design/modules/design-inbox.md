@@ -1,173 +1,180 @@
 # inbox
 
-`inbox` 是系统里唯一接触 Claude Code 内部格式的包。它在[会话注册表](../../glossary.md)中查找会话的记录，得到会话的名字、状态和 inbox socket 路径，监听注册表目录的变化；它向 inbox socket 写入一帧带署名的消息；它还提供名字规范化与署名清洗两项纯计算。注册表与帧的格式都没有公开的兼容承诺，把对它们的依赖收在一个包里，Claude Code 版本变化时只需改动这里。本包总是以所在进程的账户行事：在用户级 Broker 里它运行在 Broker 进程内；在系统级 Broker 里，查找、监听、重读与写入都运行在目标账户的辅助进程内，见 [broker](design-broker.md)。
+`inbox` is the only package in the system that touches Claude Code's internal formats. It looks up a session's record in the [session registry](../../glossary.md), getting the session's name, status and inbox socket path, and watches the registry directory for changes; it writes one signature-wrapped message frame into an inbox socket; it also provides two pure computations, name normalization and signature cleaning. Neither the registry nor the frame format carries a public compatibility promise, so the dependency on them is gathered into one package, and a Claude Code version change only needs a change here. This package always acts as the account of its own process: in a user Broker it runs inside the Broker process; in a system Broker the lookup, watch, reread and write all run inside the target account's helper process, see [broker](design-broker.md).
 
-## 职责
+## Responsibilities
 
-- 按调用方给出的 inbox socket 路径或进程号，在指定配置目录下的会话注册表中查找会话记录，返回会话的当前信息（`REQ-agent-messaging-001`、`REQ-agent-messaging-036`）。
-- 监听会话注册表目录的文件变化，把变化了的记录告知调用方；按调用方的要求重读一条记录（`REQ-agent-messaging-005`、`REQ-agent-messaging-010`）。
-- 向指定会话的 inbox socket 写入一条消息，以调用方给出的署名包装，并把结果区分为已写入、未写入和不确定（`REQ-agent-messaging-022`、`REQ-agent-messaging-023`）。
-- 写入时不发送认证行（[ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md)，`REQ-agent-messaging-024`），不带会话标识（`REQ-agent-messaging-033`）。
-- 提供不涉及 I/O 的计算：一条消息编码成帧后的字节数，会话名的规范化结果，一个署名经接收方清洗后的结果（`REQ-agent-messaging-003`、`REQ-agent-messaging-029`、`REQ-agent-messaging-037`）。
-- 判断本进程是否运行在某个 Claude Code 会话的进程树内，供 `broker` 在启动时确认自己不是任何会话的后代。
+- Look up a session record in the session registry under the given configuration directory by the inbox socket path or process id the caller gives, and return the session's current information (`REQ-agent-messaging-001`, `REQ-agent-messaging-036`).
+- Watch the session registry directory for file changes and tell the caller the records that changed; reread one record at the caller's request (`REQ-agent-messaging-005`, `REQ-agent-messaging-010`).
+- Write a message into the given session's inbox socket, wrapping it with the signature the caller gives, and classify the result as written, not written or uncertain (`REQ-agent-messaging-022`, `REQ-agent-messaging-023`).
+- When writing, send no authentication line ([ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md), `REQ-agent-messaging-024`) and carry no session identifier (`REQ-agent-messaging-033`).
+- Provide computations that involve no I/O: the byte count of a message encoded into a frame, the normalized result of a session name, and the result of a signature after the receiver cleans it (`REQ-agent-messaging-003`, `REQ-agent-messaging-029`, `REQ-agent-messaging-037`).
+- Decide whether this process runs within a Claude Code session's process tree, for `broker` to confirm at startup that it is not a descendant of any session.
 
-### 非职责
+### Non-Responsibilities
 
-- 不决定消息该不该投递，不做可见性检查和去重，由 [topic](design-topic.md) 与 [broker](design-broker.md) 负责。
-- 不重试。写入的结果原样返回，由 `broker` 决定是否重试。
-- 不接收会话发回的投递状态，不为远端 Agent 绑定任何 socket；系统不采用投递状态（[ADR-inbox-write-is-success](../../adr/adr-inbox-write-is-success.md)）。
-- 不登记会话。由哪些会话参与由 MCP 服务进程的登记决定，见 [mcpserver](design-mcpserver.md)；会话名能否使用、Agent 是否成立，由 `broker` 判定。
-- 不核对 inbox socket 的属主，由 `broker` 负责。
-- 不切换账户，不派生辅助进程。系统级形态下以哪个账户的身份运行本包，由 [broker](design-broker.md) 决定并安排。
-- 不读取同目录下各会话的密钥文件，不读取其他账户的会话注册表。
-- 不决定署名的内容。署名由 `broker` 拼出后传入。
+- Does not decide whether a message should be delivered, and does no visibility check or deduplication; [topic](design-topic.md) and [broker](design-broker.md) own those.
+- Does not retry. The write result is returned as-is, and `broker` decides whether to retry.
+- Does not receive delivery status sent back by a session, and binds no socket for a remote agent; the system does not use delivery status ([ADR-inbox-write-is-success](../../adr/adr-inbox-write-is-success.md)).
+- Does not register a session. Which sessions participate is decided by the MCP server process's registration, see [mcpserver](design-mcpserver.md); whether a session name is usable and whether an agent exists are decided by `broker`.
+- Does not check the inbox socket's owner; `broker` owns that.
+- Does not switch accounts and does not fork a helper process. Under the system form, under which account this package runs is decided and arranged by [broker](design-broker.md).
+- Does not read the key files of the sessions in the same directory, and does not read another account's session registry.
+- Does not decide the signature's content. The signature is assembled by `broker` and passed in.
 
-## 外部接口契约
+## External Interface Contract
 
-接口只供 `broker` 调用，随 Claude Code 内部格式的变化而调整实现，签名保持稳定。
+The interface is for `broker` to call only; the implementation is adjusted with changes to Claude Code's internal formats, and the signatures stay stable.
 
 ```go
-// Lookup 在 configDir 下的会话注册表中查找会话记录，configDir 为空表示本账户的默认位置。
-// 取 messagingSocketPath 与 socketPath 相同的记录；同一路径出现在多条记录中时，取修改时间最新的一条。
-// 找不到记录时返回 ErrNoRecord。
+// Lookup looks up a session record in the session registry under configDir; an empty
+// configDir means this account's default location. It takes the record whose
+// messagingSocketPath equals socketPath; when the same path appears in several
+// records it takes the one with the latest modification time. It returns ErrNoRecord
+// when no record is found.
 func Lookup(configDir, socketPath string) (Session, error)
 
-// Reread 重读 s 所在的那条记录。记录已删除、不再是普通文件或超过大小上限时
-// 返回 ErrNoRecord；普通文件的内容无法解析（写了一半或为空）时返回 ErrPartial，
-// 调用方保留上一次的值。
+// Reread rereads the record s is in. It returns ErrNoRecord when the record has been
+// deleted, is no longer a regular file, or exceeds the size cap; it returns
+// ErrPartial when the regular file's content cannot be parsed (half-written or
+// empty), and the caller keeps the previous value.
 func Reread(s Session) (Session, error)
 
-// Watch 监听 configDir 下的注册表目录，目录中的记录新增、改写或删除时，
-// 以变化的记录所属的进程号回调；无法得知是哪条记录时以 0 回调。
+// Watch watches the registry directory under configDir, calling back with the process
+// id that owns the changed record when a record in it is added, rewritten or deleted;
+// it calls back with 0 when which record it is cannot be known.
 func Watch(configDir string, onChange func(pid int)) (stop func(), err error)
 
-// Deliver 以署名 sig 向会话写入一条消息。
-// 返回 nil 表示已写入；ErrNotWritten 表示确定没有写入；ErrUncertain 表示帧可能已被接收；
-// ErrBadSignature 表示 sig 为空或不能原样被接收方识别，没有写入。
+// Deliver writes one message to the session with signature sig.
+// Returning nil means written; ErrNotWritten means definitely not written; ErrUncertain
+// means the frame may have been received; ErrBadSignature means sig is empty or cannot be
+// recognized by the receiver as-is, and nothing was written.
 func Deliver(ctx context.Context, s Session, sig, text, msgID string, timeout time.Duration) error
 
-// FrameSize 返回这条消息编码成帧后的字节数。
+// FrameSize returns the byte count of this message encoded into a frame.
 func FrameSize(sig, text string) int
 
-// MaxNameBytes 是可以登记、发布到名录或从对端接受的 Agent 名字的最长字节数。
+// MaxNameBytes is the longest byte count of an agent name that can be registered,
+// published to the directory or accepted from a peer.
 const MaxNameBytes = 128
 
-// NormalizeName 返回会话名按 Claude Code 匹配会话名的规则规范化后的结果。
-// 结果超过 MaxNameBytes 字节时在 UTF-8 字符边界上截断，截断后留在末尾的 "-" 去掉。
+// NormalizeName returns the session name normalized by the rule Claude Code uses before
+// matching session names. When the result exceeds MaxNameBytes bytes it is truncated on a
+// UTF-8 character boundary, and a "-" left at the end after truncation is dropped.
 func NormalizeName(name string) string
 
-// CleanSignature 返回 sig 经接收方清洗后的结果。
+// CleanSignature returns the result of sig after the receiver cleans it.
 func CleanSignature(sig string) string
 
-// InSession 报告本进程是否运行在某个 Claude Code 会话的进程树内。
+// InSession reports whether this process runs within a Claude Code session's process tree.
 func InSession() bool
 
 type Session struct {
-    ConfigDir    string // 记录所在的配置目录
-    PID          int    // 会话进程号，即记录的文件名
-    Name         string // 会话名，原样取自记录
-    Status       string // 原样取自记录，可以为空
-    SocketPath   string // 取自记录，不自行拼接；绑定 inbox 之前为空
-    PeerProtocol int    // 取自记录的 peerProtocol；缺失或不是正整数时为 0
+    ConfigDir    string // the configuration directory the record is in
+    PID          int    // the session process id, that is the record's file name
+    Name         string // the session name, taken as-is from the record
+    Status       string // taken as-is from the record, may be empty
+    SocketPath   string // taken from the record, not assembled here; empty before the inbox is bound
+    PeerProtocol int    // taken from the record's peerProtocol; 0 when missing or not a positive integer
 }
 ```
 
-`Deliver` 返回 nil 的确切含义是：帧已写入 socket，接收方已关闭连接。之后该会话是立即处理、排队、留待用户批准还是丢弃，`inbox` 得不到这方面的信息，也不去查询；这与 `REQ-agent-messaging-015` 对成功的定义一致。入站控制放行的消息到达空闲会话时，会话自行开始处理（`REQ-agent-messaging-021`），这是 Claude Code 接收端的行为（[REF-claude-code-cross-session-messaging](../../references.md)）。
+`Deliver` returning nil means exactly this: the frame was written to the socket and the receiver closed the connection. Whether the session then processes it immediately, queues it, keeps it for user approval or drops it, `inbox` gets no such information and does not query it; this matches `REQ-agent-messaging-015`'s definition of success. When a message that inbound controls let through reaches an idle session, the session begins processing it itself (`REQ-agent-messaging-021`), which is the behaviour of Claude Code's receive side ([REF-claude-code-cross-session-messaging](../../references.md)).
 
-`Status` 的取值由 Claude Code 决定，已知的取值有 `idle`、`busy`、`waiting`、`shell`，其余取值与缺失由 `broker` 记为未知。
+`Status`'s values are decided by Claude Code, the known values being `idle`, `busy`, `waiting` and `shell`; other values and a missing value are recorded by `broker` as unknown.
 
-## 依赖
+## Dependencies
 
-帧格式、署名包装与地址编码使用 claude-code-socket-transport（[REF-claude-code-socket-transport](../../references.md)，[ADR-reuse-socket-transport-library](../../adr/adr-reuse-socket-transport-library.md)），源码按引用文件登记的提交纳入本仓库的 `third_party` 目录，不随上游自动更新。该库实现的是依据 Claude Code v2.1.233 得出的协议版本 1。会话注册表不经该库读取，由本包自行读取。注册表目录的变化经操作系统的文件变化通知得知。`inbox` 不引用本项目的其他包；写入期限由调用方传入。
+The frame format, signature wrapping and address encoding use claude-code-socket-transport ([REF-claude-code-socket-transport](../../references.md), [ADR-reuse-socket-transport-library](../../adr/adr-reuse-socket-transport-library.md)), whose source is vendored into this repository's `third_party` directory at the commit registered in the references file and is not updated with upstream automatically. That library implements the protocol version 1 derived from Claude Code v2.1.233. The session registry is not read through that library; this package reads it itself. Changes to the registry directory are learned through the operating system's file-change notifications. `inbox` references no other package of this project; the write deadline is passed in by the caller.
 
-调用该库时固定下列选项：
+The following options are fixed when calling that library:
 
-| 选项 | 取值 | 作用 |
+| Option | Value | Effect |
 |---|---|---|
-| `Client.NoAuth` | `true` | 不发送认证行，不读取目标会话的令牌文件（[ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md)） |
-| `Client.Timeout` | 调用方给出的写入期限 | 单次写入的时间上限；实际期限取它与调用方上下文期限中较早的一个 |
-| 发送接口 | 按 socket 地址发送 | 库不经注册表查找目标，也就不自动填入会话标识 |
-| `Message.FromName` | 调用方给出的署名 | 接收方据此显示发送方 |
-| `Message.From` | 空 | 不提供回复地址，不接收投递状态（[ADR-inbox-write-is-success](../../adr/adr-inbox-write-is-success.md)） |
-| `Message.SessionID` | 空 | 不带会话标识：带了而与接收方当前的会话标识不一致的帧会被接收方静默丢弃，不通知发送方，而会话执行 `/clear` 后会话标识即变化；Claude Code 自带的发送工具也不带 |
-| `Message.Priority` | `next` | 在下一个可处理的时机交给模型 |
-| `Message.MsgID` | 调用方给出的消息标识 | 与链路上的消息标识一致，便于对照日志 |
+| `Client.NoAuth` | `true` | Sends no authentication line and reads no target session's token file ([ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md)) |
+| `Client.Timeout` | the write deadline the caller gives | The time cap of one write; the effective deadline is the earlier of it and the caller context's deadline |
+| send interface | send by socket address | The library does not look up the target through the registry, so it does not fill in a session identifier automatically |
+| `Message.FromName` | the signature the caller gives | The receiver displays the sender from it |
+| `Message.From` | empty | Provides no reply address and receives no delivery status ([ADR-inbox-write-is-success](../../adr/adr-inbox-write-is-success.md)) |
+| `Message.SessionID` | empty | Carries no session identifier: a frame that carries one inconsistent with the receiver's current session identifier is silently dropped by the receiver without notifying the sender, and the session identifier changes right after the session runs `/clear`; Claude Code's built-in send tool carries none either |
+| `Message.Priority` | `next` | Hands to the model at the next processable moment |
+| `Message.MsgID` | the message identifier the caller gives | Consistent with the message identifier on the link, for correlating logs |
 
-## 核心算法与流程
+## Core Algorithms and Flows
 
-### 查找会话记录
+### Looking Up a Session Record
 
-会话注册表位于配置目录下的 `sessions` 目录，每个会话进程一个文件，文件名是进程号加 `.json`；进程号取自文件名，记录内容中的 `pid` 字段不使用。配置目录取调用方给出的值，为空时取本账户家目录下的 `.claude`。读取目录中的全部记录，取 `messagingSocketPath` 与所给 socket 路径相同的一条；同一路径出现在多条记录中时，取修改时间最新的一条。写了一半或为空、内容无法解析的记录在读取时跳过，不参与匹配，也不影响其余记录的读取。没有可用记录时返回 `ErrNoRecord`。配置目录与 socket 路径都由 MCP 服务进程报出，本包不核实；它们只决定本账户读取自己的哪条记录，本包以本账户的身份读取，读不到其他账户不允许它读的内容。会话存续期间记录中的 `messagingSocketPath` 不变，绑定之前为空。
+The session registry is the `sessions` directory under the configuration directory, one file per session process, the file name being the process id plus `.json`; the process id is taken from the file name, and a `pid` field in the record content is not used. The configuration directory takes the value the caller gives, and an empty value takes `.claude` under this account's home directory. It reads every record in the directory and takes the one whose `messagingSocketPath` equals the given socket path; when the same path appears in several records it takes the one with the latest modification time. A record that is half-written, empty or unparsable is skipped on read, taking no part in matching and not affecting the reading of the other records. It returns `ErrNoRecord` when no usable record exists. The configuration directory and socket path are both reported by the MCP server process and are not verified by this package; they only decide which of this account's own records it reads, and this package reads as this account and cannot read what another account does not allow it. While a session lasts, `messagingSocketPath` in its record does not change, and is empty before binding.
 
-### 宽松解析
+### Lenient Parsing
 
-记录内容依赖 `name`、`status`、`messagingSocketPath` 三个字段，另读取 `peerProtocol` 交给调用方；其余字段一律忽略，字段缺失不算错误。Claude Code 改写记录时就地写入，不是原子替换，读取时可能遇到普通文件中写了一半的内容：JSON 无法解析（包括空文件）时返回 `ErrPartial`，调用方保留上一次的值，等待下一次变化通知。记录文件不存在、不是普通文件（例如符号链接、FIFO、目录、设备或 socket），或超过大小上限（256 KiB）时返回 `ErrNoRecord`，调用方视为会话结束，`Lookup` 跳过这类记录。`peerProtocol` 只读取，本包不据此判断兼容与否；它缺失或不是正整数时 `PeerProtocol` 为 0，不影响记录的其余字段，也不算记录不完整；是否告警由 [broker](design-broker.md) 决定。
+The record content depends on three fields, `name`, `status` and `messagingSocketPath`, and also reads `peerProtocol` for the caller; every other field is ignored, and a missing field is not an error. Claude Code writes a record in place when rewriting it, not by atomic replacement, so a read may encounter half-written content in a regular file: when the JSON cannot be parsed (including an empty file) it returns `ErrPartial`, and the caller keeps the previous value, waiting for the next change notification. When the record file is absent, is not a regular file (for example a symbolic link, FIFO, directory, device or socket), or exceeds the size cap (256 KiB), it returns `ErrNoRecord`, the caller treats the session as ended, and `Lookup` skips such records. `peerProtocol` is only read, and this package does not judge compatibility by it; when it is missing or not a positive integer `PeerProtocol` is 0, which does not affect the record's other fields or make the record incomplete; whether to warn is decided by [broker](design-broker.md).
 
-### 监听与重读
+### Watching and Rereading
 
-`Watch` 对每个配置目录只建立一个监听，回调变化了的记录所属的进程号。系统没有周期性的检查，记录的变化只经通知得知；调用方另在使用记录之前调用 `Reread` 按需重读，见 [broker](design-broker.md)。
+`Watch` installs one watch per configuration directory, calling back the process id owning the record that changed. The system has no periodic check, and a record's change is learned only through notifications; the caller also calls `Reread` on demand before using a record, see [broker](design-broker.md).
 
-监听的目标取当前能观察到注册表变化的最深一层目录：注册表目录存在时监听它，只有配置目录存在时监听配置目录，配置目录也不存在时改听距离它最近、仍然存在的上级目录。启动时与运行期使用同一套选择与安装逻辑：启动时配置目录不存在，`Watch` 不报错，改听其最近的上级目录并以进程号 0 回调一次，配置目录与注册表目录随后出现时再逐层把监听移回下层；连上级目录也无法监听时，`Watch` 返回错误。注册表目录或配置目录自身被删除、改名后，操作系统会撤掉对应的监听，即使路径在事件处理时已经重新出现。收到这样的事件时，`Watch` 不依据自己记录的监听状态，直接按监听已失效处理：重新选择目标并安装监听，再按快照补报一次差异。安装监听之后会再检查一次目录，这样在检查与安装之间出现的目录也能被监听到。配置目录被删除，或运行期找不到任何可监听的目录时，以进程号 0 回调一次，之后靠上级目录的变化恢复，不会静默失效。
+The watch target is the deepest directory in which registry changes can currently be observed: when the registry directory exists it watches it, when only the configuration directory exists it watches the configuration directory, and when neither the registry directory nor the configuration directory exists it watches the nearest existing ancestor instead. Startup and runtime use the same selection and installation logic: at startup the configuration directory may not exist, `Watch` does not error but watches its nearest ancestor and calls back once with process id 0, and later as the configuration directory and the registry directory appear the watch is moved back down layer by layer; when even the ancestor directory cannot be watched, `Watch` returns an error. When the registry directory or the configuration directory itself is deleted or renamed, the operating system drops the corresponding watch, even if the path has already reappeared by the time the event is handled. On receiving such an event, `Watch` does not rely on its own recorded watch state but treats the watch as invalid directly: it reselects the target and installs a watch, then reports the difference once by snapshot. After installing a watch it checks the directory once more, so a directory that appeared between the check and the install can also be watched. When the configuration directory is deleted, or during runtime no watchable directory is found, it calls back once with process id 0, then recovers through a change of the ancestor, and does not silently fail.
 
-### 名字规范化
+### Name Normalization
 
-`NormalizeName` 与 Claude Code 自带的发送工具匹配会话名之前的规范化相同：去掉控制字符与格式字符，去掉首尾空白，转为小写，空白换成 `-`。结果超过 `MaxNameBytes`（128 字节）时在 UTF-8 字符边界上截断到不超过该长度，再删掉末尾的 `-`。`MaxNameBytes` 是 Broker 登记、发布成员名单或接受对端成员条目时使用的最长名字字节数。结果用作 Agent 的名字，结果是否可用由 `broker` 判定。
+`NormalizeName` is the same as the normalization Claude Code's built-in send tool applies before matching session names: drop control and format characters, drop leading and trailing whitespace, convert to lowercase, and replace whitespace with `-`. When the result exceeds `MaxNameBytes` (128 bytes) it is truncated on a UTF-8 character boundary to no more than that length, then a trailing `-` is removed. `MaxNameBytes` is the longest name byte count the Broker uses when registering, publishing a roster or accepting a peer's member entry. The result is used as the agent's name, and whether the result is usable is decided by `broker`.
 
-### 署名清洗与校验
+### Signature Cleaning and Validation
 
-接收方在识别署名包装之前清洗发送方的名字：删除双引号 `"`、尖括号 `<` 与 `>`、反斜杠 `\`，删除 `strconv.IsPrint` 判定为不可打印的所有码点，控制字符、格式字符、代理项、行分隔符、段分隔符、私用区、未分配码点与非 ASCII 空白都在其中；再去掉首尾空白，超过 64 个码点时截断。`CleanSignature` 按这一规则计算，规则依据是在 Claude Code v2.1.327 上的程序分析。在 v2.1.311 上实测，接收方去掉的字符集是 `CleanSignature` 去掉的字符集的子集：接收方保留而 `CleanSignature` 删除的有中间的 U+00A0、私用区的 U+E000、未分配的 U+0378、可打印的 U+3164 与反斜杠。`CleanSignature` 多删的方向是安全的，系统不会发出接收方会改变的名字。接收方把署名放进 JSON 字符串后显示，上面列出的字符在 JSON 字符串里都需要转义；清洗后的署名不含这些字符，`strconv.Quote` 的结果就是前后各加一个双引号，接收方看到的名字与发送方写下的完全相同。
+Before recognizing the signature wrapper, the receiver cleans the sender's name: it deletes double quotes `"`, angle brackets `<` and `>`, and backslash `\`, and deletes every code point that `strconv.IsPrint` judges unprintable, including control characters, format characters, surrogates, line separators, paragraph separators, the private use area, unassigned code points and non-ASCII whitespace; then it drops leading and trailing whitespace and truncates to 64 code points. `CleanSignature` computes by this rule, derived from program analysis on Claude Code v2.1.327. Measured on v2.1.311, the character set the receiver deletes is a subset of the set `CleanSignature` deletes: characters the receiver keeps but `CleanSignature` deletes include a U+00A0 inside the name, a private-use U+E000, an unassigned U+0378, a printable U+3164 and the backslash. `CleanSignature` deleting more is the safe direction, and the system does not send a name the receiver would change. The receiver puts the signature into a JSON string to display it, and the characters listed above all need escaping in a JSON string; the cleaned signature contains none of them, so `strconv.Quote`'s result is just a double quote on each side, and the name the receiver sees is exactly the one the sender wrote.
 
-清洗后的结果与原文不完全相同时，接收方不识别整个署名包装，消息照常交付，但看不到发送方是谁。依赖的库在写入前按自己的规则再清洗一次，超过 200 字节时截断。
+When the cleaned result is not identical to the original text, the receiver does not recognize the whole signature wrapper; the message is delivered as usual, but the receiver cannot see who the sender is. The dependent library cleans once more by its own rule before writing and truncates beyond 200 bytes.
 
-`Deliver` 在写入之前校验署名：`sig` 非空，`CleanSignature(sig)` 与 `sig` 完全相同，且 `sig` 不超过 200 字节，才写入；否则返回 `ErrBadSignature`，不写入。空署名写入后库不加署名包装，接收方看不到发送方，因此空署名同样不合法。通过校验的署名，库的清洗与接收方的清洗都不改变它。
+`Deliver` validates the signature before writing: only when `sig` is non-empty, `CleanSignature(sig)` is exactly the same as `sig`, and `sig` does not exceed 200 bytes, does it write; otherwise it returns `ErrBadSignature` and writes nothing. An empty signature, if written, would make the library add no signature wrapper and the receiver see no sender, so an empty signature is equally invalid. A signature that passes validation is changed by neither the library's cleaning nor the receiver's cleaning.
 
-### 进程树的判断
+### Process Tree Detection
 
-Claude Code 把所属会话的 inbox socket 路径放在它启动的命令与 MCP 服务进程的环境变量 `CLAUDE_CODE_MESSAGING_SOCKET` 中。`InSession` 先看本进程的这个变量；非空时报告本进程在某个会话的进程树内。变量为空时，它沿父进程链向上，直到 pid 1：任一祖先的环境含非空的该变量，或祖先的 pid 在本账户的会话注册表（配置目录下的 `sessions/<pid>.json`，配置目录取 `CLAUDE_CONFIG_DIR`，未设置时取本账户默认的 `~/.claude`）中，也报告在会话的进程树内。读不到的祖先环境，例如权限不足，跳过并继续向上；读不到某个进程的父进程号时停止向上遍历，视为不在会话中，理由是再没有可检查的祖先，猜测只会把会话外的进程误判为在会话内。链长上限 256 层，防止异常数据造成循环。只读取进程信息，不发信号；Linux 从 `/proc/<pid>/stat` 取父进程号、从 `/proc/<pid>/environ` 取环境，macOS 用 `sysctl` 的 `kern.proc.pid` 与 `kern.procargs2`。测试构建（`peers_testenv`）提供环境变量 `PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK`，设置后只关闭沿父进程链的检查，本进程自身环境变量的检查不变，发布构建完全忽略该变量；这样做的理由是测试运行器本身处在会话的进程树内，测试沙箱启动的 Broker 子进程不关闭祖先检查就会被误判为在会话内而拒绝启动。
+Claude Code puts the inbox socket path of the session it belongs to into the environment variable `CLAUDE_CODE_MESSAGING_SOCKET` of the commands and MCP server processes it starts. `InSession` first looks at this variable in its own process; when non-empty it reports that this process is within a session's process tree. When the variable is empty, it walks up the parent chain to pid 1: if any ancestor's environment contains a non-empty instance of this variable, or an ancestor's pid is in this account's session registry (the configuration directory's `sessions/<pid>.json`, the configuration directory being `CLAUDE_CONFIG_DIR` or this account's default `~/.claude` when unset), it also reports being within a session's process tree. An unreadable ancestor environment, for example due to insufficient permission, is skipped and the walk continues upward; when an ancestor's parent process id cannot be read the walk stops and it reports not being in a session, because no ancestor remains to check and a guess would only misjudge a process outside a session as inside. The chain length is capped at 256 levels, preventing malformed data from causing a loop. Only process information is read, and no signal is sent; Linux takes the parent process id from `/proc/<pid>/stat` and the environment from `/proc/<pid>/environ`, and macOS uses `sysctl`'s `kern.proc.pid` and `kern.procargs2`. The test build (`peers_testenv`) provides the environment variable `PEERS_TEST_SKIP_ANCESTOR_SESSION_CHECK`, which when set disables only the check along the parent chain and leaves the check of this process's own environment unchanged, and release builds ignore the variable entirely; the reason is that the test runner is itself within a session's process tree, and a Broker child process started by the test sandbox would otherwise be misjudged as inside a session and refuse to start.
 
-Broker 因此不能在会话的进程树内启动，在会话里启动的 Broker 以退出码 6 失败，见 [broker](design-broker.md)。先用 `setsid` 或两次 fork 把进程挂到 init 下再启动时，祖先链里已经没有会话，这项检查发现不了；这样的进程是否仍被 Claude Code 视为会话的子进程，取决于 Claude Code 的判定方式（[ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md)）。
+The Broker therefore cannot start within a session's process tree, and a Broker started inside a session fails with exit code 6, see [broker](design-broker.md). When the process is first detached to init with `setsid` or a double fork before starting, the session is no longer in the ancestor chain and this check cannot find it; whether such a process is still regarded by Claude Code as a child of the session depends on Claude Code's way of deciding ([ADR-inbox-delivery-without-auth-token](../../adr/adr-inbox-delivery-without-auth-token.md)).
 
-### 写入
+### Writing
 
-连接 socket，写入一行 JSON，半关闭，等待接收方关闭连接。接收方看到的正文形如：
+Connect to the socket, write one line of JSON, half-close, and wait for the receiver to close the connection. The body the receiver sees looks like:
 
 ```
 <cross-session-message from-name="api-worker@hostA">
-正文
+body
 </cross-session-message>
 ```
 
-正文中出现的信封起始标签与结束标签，不区分大小写，都由 `escapeBody`（`internal/inbox/frame.go`）在 `<` 之后插入一个反斜杠，保留原文的大小写：`</cross-session-message>` 变成 `<\/cross-session-message>`，`<Cross-Session-Message` 变成 `<\Cross-Session-Message`。已经跟在反斜杠之后的标签不再处理。这是第一道防线，在正文交给依赖的库之前完成写入。接收方在信封外加一段固定文案；本系统信封的开标签和闭合标签不参与补反斜杠，正文中的信封标签序列会被再补一次反斜杠。这是第二道独立防线，与第一道不冲突。两层行为的依据是 Claude Code v2.1.311 的程序分析与实测。
+The envelope's opening and closing tags appearing in the body, case-insensitively, are both handled by `escapeBody` (`internal/inbox/frame.go`) inserting a backslash after `<`, preserving the original case: `</cross-session-message>` becomes `<\/cross-session-message>` and `<Cross-Session-Message` becomes `<\Cross-Session-Message`. A tag already following a backslash is left alone. This is the first line of defence, done before the body is handed to the dependent library. The receiver adds a fixed piece of text outside the envelope; this system's envelope opening and closing tags do not take part in the backslash insertion, and the envelope tag sequences in the body get another backslash added. This is the second, independent line of defence, not conflicting with the first. The basis of both layers' behaviour is program analysis and measurement on Claude Code v2.1.311.
 
-已知限制：`escapeBody` 只处理这两种标签文字本身，不处理 HTML 实体、零宽字符与同形字符。这些形式不会改变接收方对署名与信封的识别，只能改变正文在会话里的显示，因此不另行处理。
+Known limitation: `escapeBody` handles only these two tag texts themselves, not HTML entities, zero-width characters or homoglyphs. These forms do not change the receiver's recognition of the signature and envelope and can only change how the body displays in the session, so they are not handled separately.
 
-写入结果的判定：连接失败，或在写出任何字节之前出错，是未写入；整行写出且接收方关闭了连接，是已写入；其余情形，包括写出之后等待关闭超时，是不确定。依赖的库在写出阶段出错时不报告已写出的字节数，因此写出阶段的失败一律按不确定处理；连接失败与写出前的编码失败仍是未写入。帧写出之后等待接收方关闭连接期间，调用方上下文的取消不会中断等待，取消在写入期限到期时生效。
+The write result's classification: a connection failure, or an error before any byte is written, is not written; the whole line written and the receiver closed the connection is written; every other case, including a timeout waiting for the close after writing, is uncertain. The dependent library does not report the number of bytes written when it errors during the write phase, so a failure in the write phase is always treated as uncertain; a connection failure and an encoding failure before writing are still not written. While waiting for the receiver to close the connection after the frame is written, cancellation of the caller context does not interrupt the wait, and cancellation takes effect when the write deadline expires.
 
-### 帧大小
+### Frame Size
 
-接收方在一行超过 1 MiB 仍未见换行时断开连接（REF-claude-code-socket-transport）。`FrameSize` 对正文套用与写入相同的转义后再按实际的编码方式计算：署名包装后的正文作为 JSON 字符串编码，其中 `<`、`>`、`&`、引号、反斜杠和控制字符按转义后的长度计，其余字符按 UTF-8 的字节数计，再加上帧中其他字段的长度。结果与依赖的库实际写出的字节数一致。`broker` 以它的结果与 1 000 000 字节的上限比较。
+The receiver disconnects when a line exceeds 1 MiB without a newline (REF-claude-code-socket-transport). `FrameSize` applies to the body the same escaping as writing, then computes by the actual encoding: the signature-wrapped body is encoded as a JSON string, in which `<`, `>`, `&`, quotes, backslashes and control characters are counted at their escaped length and other characters at their UTF-8 byte count, plus the length of the frame's other fields. The result matches the byte count the dependent library actually writes. `broker` compares its result with the 1 000 000-byte cap.
 
-## 错误与失败语义
+## Error and Failure Semantics
 
-| 情形 | 返回 | 说明 |
+| Situation | Return | Explanation |
 |---|---|---|
-| 注册表中没有符合条件的记录 | `ErrNoRecord` | 会话没有绑定 inbox，会话没有注册表记录，配置目录不对，记录已不是普通文件或超过大小上限，或会话已结束 |
-| 记录是普通文件，内容写了一半或为空，无法解析 | `ErrPartial` | 调用方保留上一次的值 |
-| 署名为空、经接收方清洗后会改变，或超过 200 字节 | `ErrBadSignature` | 没有写入；这样的署名写入后，接收方照常交付消息但看不到发送方 |
-| socket 无法连接，或写出之前出错 | `ErrNotWritten` | 可以重试 |
-| 写出阶段失败，或写出之后未能确认接收方关闭连接 | `ErrUncertain` | 帧可能已被接收，重试可能使会话收到两份 |
-| 接收方读走了帧但随后丢弃 | nil | `inbox` 无从得知，包括入站策略拒收、超出限速额度、与同一发送方的上一条内容完全相同而被去重、排队已满；本系统写入的消息在接收方那里以写入进程识别发送方，规则与数值见 [ADR-no-broker-rate-limiting](../../adr/adr-no-broker-rate-limiting.md) |
+| No matching record in the registry | `ErrNoRecord` | The session has not bound an inbox, has no registry record, the configuration directory is wrong, the record is no longer a regular file or exceeds the size cap, or the session has ended |
+| The record is a regular file whose content is half-written or empty and cannot be parsed | `ErrPartial` | The caller keeps the previous value |
+| The signature is empty, would change after the receiver cleans it, or exceeds 200 bytes | `ErrBadSignature` | Not written; such a signature, if written, would let the receiver deliver the message as usual but not see the sender |
+| The socket cannot connect, or an error before writing | `ErrNotWritten` | Can be retried |
+| A failure in the write phase, or failing to confirm the receiver closed the connection after writing | `ErrUncertain` | The frame may have been received, and a retry may make the session receive two copies |
+| The receiver read the frame but then dropped it | nil | `inbox` cannot know, including an inbound policy rejection, exceeding a rate limit, deduplication because the content is identical to the same sender's previous message, or a full queue; a message this system writes is identified at the receiver by the writing process as the sender, and the rules and values are in [ADR-no-broker-rate-limiting](../../adr/adr-no-broker-rate-limiting.md) |
 
-写入不是幂等的：同一条消息写两次，会话收到两份，接收方的去重只在同一发送方 30 秒内连续发来相同内容时生效。系统的去重由 `broker` 在写入之前完成。
+Writing is not idempotent: the same message written twice is received twice by the session, and the receiver's deduplication takes effect only when the same sender sends identical content within 30 seconds. The system's deduplication is done by `broker` before writing.
 
-Claude Code 版本更新使帧格式或注册表格式不兼容时，表现为 `Lookup` 找不到记录，或 `Deliver` 返回 nil 而会话收不到消息。会话收不到消息的情形 `inbox` 无法自行发现，要靠用真实会话做的验证。
+When a Claude Code version update makes the frame format or registry format incompatible, it shows as `Lookup` finding no record, or `Deliver` returning nil while the session receives no message. The case where a session receives no message cannot be discovered by `inbox` itself and relies on verification with a real session.
 
-## 实现状态
+## Implementation Status
 
-| 能力 | 状态 | 代码 |
+| Capability | Status | Code |
 |---|---|---|
-| 会话记录的查找与宽松解析 | 已实现 | [`internal/inbox/session.go`](../../../internal/inbox/session.go)（`Lookup`、`Reread`、`parseRecord`、`protocolField`） |
-| 注册表目录的监听与重读 | 已实现 | [`internal/inbox/watch.go`](../../../internal/inbox/watch.go)（`Watch`、`watcher`、`scanAndNotify`） |
-| 消息写入与结果判定 | 已实现 | [`internal/inbox/deliver.go`](../../../internal/inbox/deliver.go)（`Deliver`、`classifySendError`） |
-| 帧大小、名字规范化与署名清洗的计算 | 已实现 | [`internal/inbox/frame.go`](../../../internal/inbox/frame.go)（`FrameSize`）、[`internal/inbox/name.go`](../../../internal/inbox/name.go)（`NormalizeName`）、[`internal/inbox/signature.go`](../../../internal/inbox/signature.go)（`CleanSignature`） |
-| 进程树的判断 | 已实现 | [`internal/inbox/insession.go`](../../../internal/inbox/insession.go)（`InSession`） |
+| Looking up and leniently parsing a session record | Implemented | [`internal/inbox/session.go`](../../../internal/inbox/session.go) (`Lookup`, `Reread`, `parseRecord`, `protocolField`) |
+| Watching the registry directory and rereading | Implemented | [`internal/inbox/watch.go`](../../../internal/inbox/watch.go) (`Watch`, `watcher`, `scanAndNotify`) |
+| Writing a message and classifying the result | Implemented | [`internal/inbox/deliver.go`](../../../internal/inbox/deliver.go) (`Deliver`, `classifySendError`) |
+| Computing frame size, name normalization and signature cleaning | Implemented | [`internal/inbox/frame.go`](../../../internal/inbox/frame.go) (`FrameSize`), [`internal/inbox/name.go`](../../../internal/inbox/name.go) (`NormalizeName`), [`internal/inbox/signature.go`](../../../internal/inbox/signature.go) (`CleanSignature`) |
+| Process tree detection | Implemented | [`internal/inbox/insession.go`](../../../internal/inbox/insession.go) (`InSession`) |
