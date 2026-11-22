@@ -37,13 +37,15 @@ func gitOrigin(ctx context.Context, dir string) (string, error) {
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", fmt.Errorf("cannot read the git origin in %s: %w", dir, ctxErr)
+		detail := ctx.Err()
+		if detail == nil {
+			if text := strings.TrimSpace(stderr.String()); text != "" {
+				detail = fmt.Errorf("%w: %s", err, text)
+			} else {
+				detail = err
+			}
 		}
-		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return "", fmt.Errorf("cannot read the git origin in %s: %w: %s", dir, err, detail)
-		}
-		return "", fmt.Errorf("cannot read the git origin in %s: %w", dir, err)
+		return "", fmt.Errorf("cannot read the git origin in %s: %w", dir, detail)
 	}
 	url := strings.TrimSpace(stdout.String())
 	if url == "" {
@@ -126,10 +128,11 @@ func lookupDefaultTopics(ctx context.Context, dir string, readOrigin originReade
 // joined automatically can always be left by name later; leaving a topic does
 // not remove it from the list.
 type sessionTopicList struct {
-	mu       sync.Mutex
-	computed bool
-	result   defaultLookup
-	compute  func(context.Context) defaultLookup
+	mu sync.Mutex
+	// result.settled marks a cached answer; a lookup that did not settle is
+	// never stored.
+	result  defaultLookup
+	compute func(context.Context) defaultLookup
 }
 
 // lookup returns the session's default topics and the switches that apply to
@@ -140,7 +143,7 @@ type sessionTopicList struct {
 func (s *sessionTopicList) lookup(ctx context.Context) defaultLookup {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.computed {
+	if s.result.settled {
 		return s.result
 	}
 	got := s.compute(ctx)
@@ -148,7 +151,6 @@ func (s *sessionTopicList) lookup(ctx context.Context) defaultLookup {
 		return got
 	}
 	s.result = got
-	s.computed = true
 	return got
 }
 
