@@ -30,7 +30,7 @@ func TestSendOversizedFrame(t *testing.T) {
 	if err := h.l.Send(dc.fp, Frame{Kind: 200, Payload: []byte("small")}); err != nil {
 		t.Fatalf("Send after the oversized frame: %v", err)
 	}
-	f := dc.recvPeer(t, 3*time.Second)
+	f := dc.recvPeer(t)
 	if f.GetKind() != 200 || string(f.GetPayload()) != "small" {
 		t.Fatalf("next frame = kind %d payload %q, want kind 200 payload small", f.GetKind(), f.GetPayload())
 	}
@@ -43,7 +43,7 @@ func TestRequestOversizedFrame(t *testing.T) {
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)
 	dc.awaitUp(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	_, sent, err := h.l.Request(ctx, dc.fp, oversizedFrame())
 	if !errors.Is(err, ErrFrameTooLarge) || sent {
@@ -56,7 +56,7 @@ func TestRequestOversizedFrame(t *testing.T) {
 	if err := h.l.Send(dc.fp, Frame{Kind: 200, Payload: []byte("small")}); err != nil {
 		t.Fatalf("Send after the oversized request: %v", err)
 	}
-	if f := dc.recvPeer(t, 3*time.Second); string(f.GetPayload()) != "small" {
+	if f := dc.recvPeer(t); string(f.GetPayload()) != "small" {
 		t.Fatalf("next frame payload = %q, want small", f.GetPayload())
 	}
 }
@@ -75,7 +75,7 @@ func TestSendLatestOversizedFrame(t *testing.T) {
 	if err := h.l.Send(dc.fp, Frame{Kind: 200, Payload: []byte("small")}); err != nil {
 		t.Fatalf("Send after the oversized frame: %v", err)
 	}
-	if f := dc.recvPeer(t, 3*time.Second); f.GetKind() != 200 || string(f.GetPayload()) != "small" {
+	if f := dc.recvPeer(t); f.GetKind() != 200 || string(f.GetPayload()) != "small" {
 		t.Fatalf("next frame = kind %d payload %q, want kind 200 payload small", f.GetKind(), f.GetPayload())
 	}
 }
@@ -95,7 +95,7 @@ func TestSendLatestKeyOversizedFrame(t *testing.T) {
 	if err := h.l.Send(dc.fp, Frame{Kind: 200, Payload: []byte("small")}); err != nil {
 		t.Fatalf("Send after the oversized frame: %v", err)
 	}
-	if f := dc.recvPeer(t, 3*time.Second); string(f.GetPayload()) != "small" {
+	if f := dc.recvPeer(t); string(f.GetPayload()) != "small" {
 		t.Fatalf("next frame payload = %q, want small", f.GetPayload())
 	}
 }
@@ -138,7 +138,7 @@ func TestOversizedReplyDropped(t *testing.T) {
 	}
 
 	h.l.handleRequest(c, &linkpb.Frame{Kind: 301, RequestId: 8})
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for len(a.sent()) == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("the connection stopped carrying replies after the oversized one")

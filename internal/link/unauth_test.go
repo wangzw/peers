@@ -126,7 +126,7 @@ func newTrackedPair(t *testing.T, reg *unauthRegistry) (*trackedConn, net.Conn) 
 // expectEOF asserts that the client side observes the server connection close.
 func expectEOF(t *testing.T, c net.Conn) {
 	t.Helper()
-	if err := c.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := c.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
 	buf := make([]byte, 1)
@@ -144,7 +144,7 @@ func roundTrip(t *testing.T, tc *trackedConn, client net.Conn) {
 	if _, err := client.Write(msg); err != nil {
 		t.Fatalf("client write: %v", err)
 	}
-	if err := tc.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := tc.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
 	buf := make([]byte, len(msg))

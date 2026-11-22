@@ -77,7 +77,7 @@ func (h *recordHarness) snapshot() []recordedEvent {
 // waitCount blocks until n events were recorded and returns them.
 func (h *recordHarness) waitCount(t *testing.T, n int) []recordedEvent {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		evs := h.snapshot()
 		if len(evs) >= n {
@@ -129,7 +129,7 @@ func newRecordConn(t *testing.T, peer Fingerprint, role pairing.Role) *conn {
 // waitAudit returns at least n audit events of kind.
 func waitAudit(t *testing.T, s *linktest.FakeSettings, kind config.EventKind, n int) []config.Event {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		var out []config.Event
 		for _, e := range s.Events() {
@@ -321,7 +321,7 @@ func TestDropIsAsyncAndOrdered(t *testing.T) {
 	}()
 	select {
 	case <-dropReturned:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Drop blocked while the caller held a lock")
 	}
 
@@ -332,6 +332,23 @@ func TestDropIsAsyncAndOrdered(t *testing.T) {
 		_, ok := h.l.install(peer, role, c2, []byte("two"), gen)
 		installed <- ok
 	}()
+
+	// install must wait for the in-flight Drop. The checks below read the state
+	// that forces the wait, but that state alone does not show install stayed
+	// blocked; what proves install only completed after Drop is the event order
+	// checked at the end of the test.
+	h.l.mu.Lock()
+	dropping := h.l.dropping[peer] != nil
+	h.l.mu.Unlock()
+	if !dropping {
+		t.Fatal("install ran without an in-flight Drop to wait for")
+	}
+	for _, ev := range h.snapshot() {
+		if ev.peer == peer && !ev.up {
+			t.Fatal("the drop's down event was posted before install was released")
+		}
+	}
+	// Negative window: a late install that ignored the drop still returns here.
 	select {
 	case <-installed:
 		t.Fatal("install returned before Drop finished")
@@ -346,7 +363,7 @@ func TestDropIsAsyncAndOrdered(t *testing.T) {
 		if !ok {
 			t.Fatal("install after Drop returned false")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("install did not finish after Drop")
 	}
 
@@ -406,7 +423,7 @@ func TestOnDownCallbackMayTakeLockHeldBySender(t *testing.T) {
 	}()
 	select {
 	case <-dropReturned:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Drop blocked while the caller held the callback's lock")
 	}
 	m.Unlock()
@@ -414,7 +431,7 @@ func TestOnDownCallbackMayTakeLockHeldBySender(t *testing.T) {
 
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("onDown was not called after Drop")
 	}
 }
@@ -440,7 +457,7 @@ func TestCallbacksMayCallLinkMethods(t *testing.T) {
 	}
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("onUp calling Link methods deadlocked")
 	}
 }
@@ -471,7 +488,7 @@ func TestNotificationsAreSerialAndOrdered(t *testing.T) {
 		if i == 0 {
 			select {
 			case <-entered:
-			case <-time.After(3 * time.Second):
+			case <-time.After(eventTimeout):
 				t.Fatal("first callback did not start")
 			}
 		}
@@ -489,7 +506,7 @@ func TestNotificationsAreSerialAndOrdered(t *testing.T) {
 			if got != want {
 				t.Fatalf("event %d delivered for %v, want %v", i, got, want)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("event %d was not delivered", i)
 		}
 	}
@@ -557,7 +574,7 @@ func TestKickOnlyInDialerBackoff(t *testing.T) {
 	}()
 	select {
 	case <-kicked:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("repeated Kick blocked")
 	}
 	if n := kickSignals(h.kickChan(backoff)); n != 1 {
@@ -572,7 +589,7 @@ func TestKickOnlyInDialerBackoff(t *testing.T) {
 // and stop is allowed to let an in-flight delivery finish.
 func waitNotifierStopped(t *testing.T, n *notifier) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		n.mu.Lock()
 		stopped := n.stopped
@@ -612,7 +629,7 @@ func TestStopDiscardsAndReleasesWaiters(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("first callback did not start")
 	}
 
@@ -636,7 +653,7 @@ func TestStopDiscardsAndReleasesWaiters(t *testing.T) {
 
 	select {
 	case <-stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("stop did not return")
 	}
 	select {

@@ -12,17 +12,17 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// waitFor polls cond until it is true or three seconds pass.
+// waitFor polls cond until it is true or eventTimeout passes.
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
 		}
 		time.Sleep(time.Millisecond)
 	}
-	t.Fatal("condition not met within 3s")
+	t.Fatalf("condition not met within %v", eventTimeout)
 }
 
 // TestEnqueueNeverBlocks checks that a full send queue closes the connection
@@ -46,7 +46,7 @@ func TestEnqueueNeverBlocks(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("enqueue blocked on a full queue")
 	}
 	close(errs)
@@ -102,7 +102,7 @@ func TestCloseAsyncUnderForeignLock(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("closeAsync blocked while a foreign lock was held")
 	}
 	if !aborted.Load() {
@@ -170,6 +170,14 @@ func TestRequestSentFlagQueuedThenCanceled(t *testing.T) {
 	if f.GetKind() != 300 {
 		t.Fatalf("first frame kind = %d, want 300", f.GetKind())
 	}
+	// Supplement: the queue is drained, so the synchronous count is a quick
+	// extra check; the negative window below is what catches a late write of
+	// the canceled request.
+	waitFor(t, func() bool { return len(c.out) == 0 })
+	if sent := a.sent(); len(sent) != 1 || sent[0].GetKind() != 300 {
+		t.Fatalf("connection wrote %d frames, want only the first frame", len(sent))
+	}
+	// Negative window: a late write of the canceled request still shows up here.
 	select {
 	case f := <-b.in:
 		t.Fatalf("canceled request was written: kind %d", f.GetKind())
@@ -274,7 +282,7 @@ func TestUnreadIsReturnedFirst(t *testing.T) {
 	if err := b.Send(&linkpb.Frame{Kind: 200, Payload: []byte("y")}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	got, err = c.recv(ctx)
 	if err != nil {

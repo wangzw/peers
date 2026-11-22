@@ -14,11 +14,11 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// recvPeerKind waits for the next frame of the given kind, discarding other
-// frames such as replies to the blocked handlers.
-func recvPeerKind(t *testing.T, dc *dispatchConn, kind FrameKind, d time.Duration) *linkpb.Frame {
+// recvPeerKind waits up to eventTimeout for the next frame of the given kind,
+// discarding other frames such as replies to the blocked handlers.
+func recvPeerKind(t *testing.T, dc *dispatchConn, kind FrameKind) *linkpb.Frame {
 	t.Helper()
-	deadline := time.Now().Add(d)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
@@ -35,21 +35,21 @@ func recvPeerKind(t *testing.T, dc *dispatchConn, kind FrameKind, d time.Duratio
 }
 
 // waitConnClosed fails when the connection under test does not close within
-// three seconds.
+// eventTimeout.
 func waitConnClosed(t *testing.T, c *conn) {
 	t.Helper()
 	select {
 	case <-c.done():
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatalf("connection did not close; reason is %v", c.reason())
 	}
 }
 
 // waitLogEvent returns the first log entry whose message is msg, failing when
-// none appears within timeout.
-func waitLogEvent(t *testing.T, logs *logBuffer, msg string, timeout time.Duration) map[string]any {
+// none appears within eventTimeout.
+func waitLogEvent(t *testing.T, logs *logBuffer, msg string) map[string]any {
 	t.Helper()
-	deadline := time.Now().Add(timeout)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		for _, line := range strings.Split(logs.String(), "\n") {
 			line = strings.TrimSpace(line)
@@ -104,7 +104,7 @@ func TestStateQueueFrameLimitClosesLink(t *testing.T) {
 		t.Fatalf("close reason = %v, want inbound_limit", got)
 	}
 
-	entry := waitLogEvent(t, h.logs, "link_inbound_limit", 3*time.Second)
+	entry := waitLogEvent(t, h.logs, "link_inbound_limit")
 	if entry["peer"] != dc.fp.String() {
 		t.Errorf("log peer = %v, want %s", entry["peer"], dc.fp)
 	}
@@ -155,7 +155,7 @@ func TestStateQueueByteLimitClosesLink(t *testing.T) {
 		t.Fatalf("close reason = %v, want inbound_limit", got)
 	}
 
-	entry := waitLogEvent(t, h.logs, "link_inbound_limit", 3*time.Second)
+	entry := waitLogEvent(t, h.logs, "link_inbound_limit")
 	if entry["peer"] != dc.fp.String() {
 		t.Errorf("log peer = %v, want %s", entry["peer"], dc.fp)
 	}
@@ -229,7 +229,7 @@ func TestRequestSlotFreedResumesInboundAndReplies(t *testing.T) {
 	// The router is reading again, so a reply to a request from this side
 	// arrives even while 64 handlers are running.
 	res := startRequest(h, dc.fp, 400)
-	req := recvPeerKind(t, dc, 400, 3*time.Second)
+	req := recvPeerKind(t, dc, 400)
 	dc.sendPeer(t, &linkpb.Frame{Kind: 400, RequestId: req.GetRequestId(), IsReply: true, Payload: []byte("ok")})
 	r := waitRequestResult(t, res)
 	if r.err != nil || string(r.reply.Payload) != "ok" {
@@ -326,7 +326,7 @@ func TestRequestSlotsForgottenOnUnpair(t *testing.T) {
 		dc.sendPeer(t, &linkpb.Frame{Kind: 300, RequestId: 1})
 		select {
 		case <-started:
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("the request handler did not start")
 		}
 
@@ -377,7 +377,7 @@ func TestStateQueueCountsInflightBytes(t *testing.T) {
 	}
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the state handler did not start on the first frame")
 	}
 
@@ -391,7 +391,7 @@ func TestStateQueueCountsInflightBytes(t *testing.T) {
 	if got := dc.c.reason(); got != FailInboundLimit {
 		t.Fatalf("close reason = %v, want inbound_limit", got)
 	}
-	entry := waitLogEvent(t, h.logs, "link_inbound_limit", 3*time.Second)
+	entry := waitLogEvent(t, h.logs, "link_inbound_limit")
 	if entry["limit"] != "state_bytes" {
 		t.Errorf("log limit = %v, want state_bytes", entry["limit"])
 	}

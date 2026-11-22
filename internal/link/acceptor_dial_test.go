@@ -53,7 +53,10 @@ func TestREQBrokerPairing027_AcceptorNeverDialsWithCandidates(t *testing.T) {
 	if got := dials.n(); got != 0 {
 		t.Fatalf("acceptor dialed %d times after the link broke", got)
 	}
-	if st := acceptor.State(fpDialer); st.Phase != link.PhaseWaiting {
-		t.Fatalf("acceptor state after the teardown = %+v, want waiting", st)
+	// A dial loop that armed a backoff timer without dialing yet moves the record
+	// into PhaseBackoff and publishes a NextDial; check that state, not only the
+	// dial count.
+	if st := acceptor.State(fpDialer); st.Phase != link.PhaseWaiting || st.Role != pairing.RoleAcceptor || !st.NextDial.IsZero() {
+		t.Fatalf("acceptor state after the teardown = %+v, want a waiting acceptor with no next dial", st)
 	}
 }

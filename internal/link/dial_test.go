@@ -220,8 +220,8 @@ func (h *dialHarness) waitWorkers(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("dial loop did not exit within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("dial loop did not exit within %v", eventTimeout)
 	}
 }
 
@@ -675,8 +675,8 @@ func TestPairDialRunsConnAfterDrop(t *testing.T) {
 		if err != nil {
 			t.Fatalf("second PairDial: %v", err)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("second PairDial did not return within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("second PairDial did not return within %v", eventTimeout)
 	}
 	waitFor(t, func() bool { return dialer.upCount(acceptorFP) >= 2 })
 
@@ -687,8 +687,8 @@ func TestPairDialRunsConnAfterDrop(t *testing.T) {
 	}()
 	select {
 	case <-closed:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Close did not return within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("Close did not return within %v", eventTimeout)
 	}
 }
 

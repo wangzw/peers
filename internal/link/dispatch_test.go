@@ -89,7 +89,7 @@ func (h *dispatchHarness) attach(fp Fingerprint, role pairing.Role) *dispatchCon
 		c.closeAsync(FailConnectionLost)
 		select {
 		case <-c.stateDone:
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			h.t.Errorf("connection did not finish")
 		}
 	})
@@ -101,7 +101,7 @@ func (dc *dispatchConn) awaitUp(t *testing.T) {
 	t.Helper()
 	select {
 	case <-dc.delivered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("link up notification was not delivered")
 	}
 }
@@ -114,10 +114,10 @@ func (dc *dispatchConn) sendPeer(t *testing.T, f *linkpb.Frame) {
 	}
 }
 
-// recvPeer waits for one frame from the link.
-func (dc *dispatchConn) recvPeer(t *testing.T, d time.Duration) *linkpb.Frame {
+// recvPeer waits up to eventTimeout for one frame from the link.
+func (dc *dispatchConn) recvPeer(t *testing.T) *linkpb.Frame {
 	t.Helper()
-	f, ok := tryRecvPeer(dc, d)
+	f, ok := tryRecvPeer(dc, eventTimeout)
 	if !ok {
 		t.Fatal("timed out waiting for a frame from the link")
 	}
@@ -147,10 +147,10 @@ func tryRecvPeer(dc *dispatchConn, d time.Duration) (*linkpb.Frame, bool) {
 	}
 }
 
-// dispatchWait polls cond until it holds or three seconds passed.
+// dispatchWait polls cond until it holds or eventTimeout passed.
 func dispatchWait(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for !cond() {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
@@ -245,13 +245,13 @@ func TestStateFramesInArrivalOrder(t *testing.T) {
 			if n != i {
 				t.Fatalf("state frame %d arrived as %d", i, n)
 			}
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("timed out after %d state frames", i)
 		}
 	}
 	select {
 	case <-sent:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("peer sender did not finish")
 	}
 }
@@ -284,13 +284,13 @@ func TestOnUpCompletesBeforeFirstStateFrame(t *testing.T) {
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("onUp did not start")
 	}
 
 	dc.sendPeer(t, &linkpb.Frame{Kind: 200, Payload: dispatchIntPayload(1)})
 	dc.sendPeer(t, &linkpb.Frame{Kind: 301, RequestId: 7})
-	if reply := dc.recvPeer(t, 3*time.Second); reply.GetKind() != 302 || !reply.GetIsReply() {
+	if reply := dc.recvPeer(t); reply.GetKind() != 302 || !reply.GetIsReply() {
 		t.Fatalf("barrier reply = kind %d is_reply %v, want kind 302", reply.GetKind(), reply.GetIsReply())
 	}
 	if n := calls.Load(); n != 0 {
@@ -300,7 +300,7 @@ func TestOnUpCompletesBeforeFirstStateFrame(t *testing.T) {
 	close(block)
 	select {
 	case <-handled:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("state handler did not run after onUp returned")
 	}
 }
@@ -332,7 +332,7 @@ func TestNoStateFrameAfterOnDown(t *testing.T) {
 	}
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("state handler did not start")
 	}
 
@@ -342,7 +342,7 @@ func TestNoStateFrameAfterOnDown(t *testing.T) {
 	var atDown int
 	select {
 	case atDown = <-down:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("onDown was not called")
 	}
 	if got := int(calls.Load()); got != atDown {
@@ -372,12 +372,12 @@ func TestRequestNotBlockedByStateHandler(t *testing.T) {
 	dc.sendPeer(t, &linkpb.Frame{Kind: 200, Payload: dispatchIntPayload(1)})
 	select {
 	case <-stateEntered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("state handler did not start")
 	}
 
 	dc.sendPeer(t, &linkpb.Frame{Kind: 300, RequestId: 5})
-	f := dc.recvPeer(t, 3*time.Second)
+	f := dc.recvPeer(t)
 	if f.GetKind() != 300 || f.GetRequestId() != 5 || !f.GetIsReply() {
 		t.Fatalf("reply = kind %d request_id %d is_reply %v", f.GetKind(), f.GetRequestId(), f.GetIsReply())
 	}
@@ -387,7 +387,7 @@ func TestStateHandlerCanAwaitReplyOnSameLink(t *testing.T) {
 	h := newDispatchHarness(t)
 	result := make(chan error, 1)
 	h.l.HandleState(200, func(peer Fingerprint, _ Frame) {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 		reply, sent, err := h.l.Request(ctx, peer, Frame{Kind: 300, Payload: []byte("ask")})
 		if err == nil && !sent {
@@ -403,7 +403,7 @@ func TestStateHandlerCanAwaitReplyOnSameLink(t *testing.T) {
 	dc.awaitUp(t)
 	dc.sendPeer(t, &linkpb.Frame{Kind: 200, Payload: dispatchIntPayload(1)})
 
-	req := dc.recvPeer(t, 3*time.Second)
+	req := dc.recvPeer(t)
 	if req.GetKind() != 300 || req.GetRequestId() == 0 || req.GetIsReply() {
 		t.Fatalf("request frame = kind %d request_id %d is_reply %v", req.GetKind(), req.GetRequestId(), req.GetIsReply())
 	}
@@ -414,7 +414,7 @@ func TestStateHandlerCanAwaitReplyOnSameLink(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("state handler blocked while awaiting a reply")
 	}
 }
@@ -425,7 +425,7 @@ func TestUnknownRequestGetsUnsupported(t *testing.T) {
 	dc.awaitUp(t)
 
 	dc.sendPeer(t, &linkpb.Frame{Kind: 999, RequestId: 7})
-	f := dc.recvPeer(t, 3*time.Second)
+	f := dc.recvPeer(t)
 	kind, err := decodeUnsupported(f)
 	if err != nil {
 		t.Fatalf("decode unsupported reply: %v", err)
@@ -455,7 +455,7 @@ func TestUnknownStateFrameDropped(t *testing.T) {
 		if string(f.GetPayload()) != "kept" {
 			t.Fatalf("handler saw payload %q, want kept", f.GetPayload())
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("registered state frame was not handled")
 	}
 	select {
@@ -485,11 +485,47 @@ func waitRequestResult(t *testing.T, res <-chan requestResult) requestResult {
 	select {
 	case r := <-res:
 		return r
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Request did not return")
 		return requestResult{}
 	}
 }
+
+// manualDeadline is a context the test expires explicitly. It reports
+// DeadlineExceeded once expired, so a Request takes exactly the branch a real
+// expired deadline takes. A test that must observe the frame written before the
+// deadline fires cannot use a real timer without racing the scheduler to the
+// deadline; firing this one only after the write removes that race.
+type manualDeadline struct {
+	done chan struct{}
+}
+
+func newManualDeadline() *manualDeadline { return &manualDeadline{done: make(chan struct{})} }
+
+func (m *manualDeadline) Deadline() (time.Time, bool) {
+	select {
+	case <-m.done:
+		return time.Unix(0, 0), true
+	default:
+		return time.Unix(1<<40, 0), true
+	}
+}
+
+func (m *manualDeadline) Done() <-chan struct{} { return m.done }
+
+func (m *manualDeadline) Err() error {
+	select {
+	case <-m.done:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
+func (m *manualDeadline) Value(any) any { return nil }
+
+// expire fires the deadline.
+func (m *manualDeadline) expire() { close(m.done) }
 
 func TestRequestReplyAndUnsupported(t *testing.T) {
 	h := newDispatchHarness(t)
@@ -498,7 +534,7 @@ func TestRequestReplyAndUnsupported(t *testing.T) {
 
 	// A normal reply.
 	res := startRequest(h, dc.fp, 300)
-	req := dc.recvPeer(t, 3*time.Second)
+	req := dc.recvPeer(t)
 	if req.GetKind() != 300 || req.GetRequestId() == 0 || req.GetIsReply() {
 		t.Fatalf("request = kind %d request_id %d is_reply %v", req.GetKind(), req.GetRequestId(), req.GetIsReply())
 	}
@@ -510,7 +546,7 @@ func TestRequestReplyAndUnsupported(t *testing.T) {
 
 	// An Unsupported reply.
 	res = startRequest(h, dc.fp, 301)
-	req = dc.recvPeer(t, 3*time.Second)
+	req = dc.recvPeer(t)
 	dc.sendPeer(t, &linkpb.Frame{
 		Kind:      linkpb.KindUnsupported,
 		RequestId: req.GetRequestId(),
@@ -551,6 +587,9 @@ func TestRequestSentSemantics(t *testing.T) {
 		}
 		dispatchWait(t, "the writer to take one frame", func() bool { return len(dc.c.out) == 1 })
 
+		// The writer stays blocked for the whole deadline, so the result is
+		// fixed: Request queues the frame, gives up when the deadline expires,
+		// and reports that it never wrote it.
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		_, sent, err := h.l.Request(ctx, dc.fp, Frame{Kind: 300})
@@ -559,21 +598,21 @@ func TestRequestSentSemantics(t *testing.T) {
 		}
 
 		release()
-		var frames []*linkpb.Frame
-		for {
-			f, ok := tryRecvPeer(dc, 100*time.Millisecond)
-			if !ok {
-				break
-			}
-			frames = append(frames, f)
-		}
-		if len(frames) != 2 {
-			t.Fatalf("peer got %d frames, want the two fillers only", len(frames))
-		}
-		for i, f := range frames {
-			if f.GetKind() != 200 {
+		// The writer drains the queue: it writes the two fillers and skips the
+		// canceled request. Read the two known frames, then hold a negative
+		// window for a third: the writer may already have taken the canceled
+		// request from the queue but not yet sent it when the queue empties, so
+		// a synchronous count alone can miss the late write.
+		for i := 0; i < 2; i++ {
+			if f := dc.recvPeer(t); f.GetKind() != 200 {
 				t.Fatalf("frame %d has kind %d, want the filler kind 200", i, f.GetKind())
 			}
+		}
+		dc.expectNoPeerFrame(t, 100*time.Millisecond)
+		// Supplement: the synchronous count once the queue drained.
+		dispatchWait(t, "the writer to drain the queue", func() bool { return len(dc.c.out) == 0 })
+		if frames := dc.link.sent(); len(frames) != 2 {
+			t.Fatalf("peer got %d frames, want the two fillers only", len(frames))
 		}
 	})
 
@@ -582,17 +621,19 @@ func TestRequestSentSemantics(t *testing.T) {
 		dc := h.attach(Fingerprint{1}, pairing.RoleDialer)
 		dc.awaitUp(t)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		defer cancel()
+		// Expire the deadline only after the frame reached the transport, so the
+		// Request is in the written state when it observes the deadline.
+		ctx := newManualDeadline()
 		res := make(chan requestResult, 1)
 		go func() {
 			f, sent, err := h.l.Request(ctx, dc.fp, Frame{Kind: 300})
 			res <- requestResult{reply: f, sent: sent, err: err}
 		}()
-		req := dc.recvPeer(t, 3*time.Second)
+		req := dc.recvPeer(t)
 		if req.GetKind() != 300 {
 			t.Fatalf("request kind = %d, want 300", req.GetKind())
 		}
+		ctx.expire()
 		r := waitRequestResult(t, res)
 		if !r.sent || !errors.Is(r.err, context.DeadlineExceeded) {
 			t.Fatalf("Request = (%v, %v), want (true, deadline exceeded)", r.sent, r.err)
@@ -605,7 +646,7 @@ func TestRequestSentSemantics(t *testing.T) {
 		dc.awaitUp(t)
 
 		res := startRequest(h, dc.fp, 300)
-		req := dc.recvPeer(t, 3*time.Second)
+		req := dc.recvPeer(t)
 		if req.GetKind() != 300 {
 			t.Fatalf("request kind = %d, want 300", req.GetKind())
 		}
@@ -640,7 +681,7 @@ func TestSendDoesNotBlockUnderTopicLock(t *testing.T) {
 	defer close(block)
 
 	m.Lock()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	var sendErr error
 	for time.Now().Before(deadline) {
 		if err := h.l.Send(dc.fp, Frame{Kind: 200}); err != nil {
@@ -655,7 +696,7 @@ func TestSendDoesNotBlockUnderTopicLock(t *testing.T) {
 
 	select {
 	case <-downCalled:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("onDown was not called after the queue filled")
 	}
 }
@@ -714,7 +755,7 @@ func TestPeerInfoObservedByRole(t *testing.T) {
 		dc.sendPeer(t, &linkpb.Frame{Kind: 201})
 		select {
 		case <-processed:
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("state handler did not process the marker frame")
 		}
 		obs := h.peers.Observed(peer)
@@ -742,7 +783,7 @@ func TestAnnounceAliasAndAddresses(t *testing.T) {
 	dial.awaitUp(t)
 
 	h.l.AnnounceAlias()
-	info, err := decodePeerInfo(acc.recvPeer(t, 3*time.Second))
+	info, err := decodePeerInfo(acc.recvPeer(t))
 	if err != nil {
 		t.Fatalf("decode acceptor PeerInfo: %v", err)
 	}
@@ -754,7 +795,7 @@ func TestAnnounceAliasAndAddresses(t *testing.T) {
 		t.Fatalf("acceptor PeerInfo addresses = %+v, want %+v", got, addrs)
 	}
 
-	info, err = decodePeerInfo(dial.recvPeer(t, 3*time.Second))
+	info, err = decodePeerInfo(dial.recvPeer(t))
 	if err != nil {
 		t.Fatalf("decode dialer PeerInfo: %v", err)
 	}
@@ -763,7 +804,7 @@ func TestAnnounceAliasAndAddresses(t *testing.T) {
 	}
 
 	h.l.AnnounceAddresses()
-	info, err = decodePeerInfo(acc.recvPeer(t, 3*time.Second))
+	info, err = decodePeerInfo(acc.recvPeer(t))
 	if err != nil {
 		t.Fatalf("decode second acceptor PeerInfo: %v", err)
 	}
@@ -771,6 +812,14 @@ func TestAnnounceAliasAndAddresses(t *testing.T) {
 	if len(got) != len(addrs) || got[0] != addrs[0] || got[1] != addrs[1] {
 		t.Fatalf("announced addresses = %+v, want %+v", got, addrs)
 	}
+	// Supplement: AnnounceAddresses targets acceptors only, so the dialer must
+	// not have received a second announcement. The synchronous count is only a
+	// quick extra check; the negative window below is what catches a late frame.
+	dispatchWait(t, "the dialer writer to drain", func() bool { return len(dial.c.out) == 0 })
+	if got := len(dial.link.sent()); got != 1 {
+		t.Fatalf("dialer wrote %d frames, want only the alias announcement", got)
+	}
+	// Negative window: a frame queued after the check still shows up here.
 	dial.expectNoPeerFrame(t, 100*time.Millisecond)
 }
 
@@ -793,7 +842,7 @@ func TestCloseWaitsForRequestHandler(t *testing.T) {
 	dc.sendPeer(t, &linkpb.Frame{Kind: 300, RequestId: 11})
 	select {
 	case <-entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("request handler did not start")
 	}
 
@@ -803,6 +852,10 @@ func TestCloseWaitsForRequestHandler(t *testing.T) {
 		close(closed)
 	}()
 
+	// Close must block until the handler returns. A correct Close waits for the
+	// handler and cannot return while the gate stays open, so this window only
+	// detects the bug and cannot fail a correct Close. There is no state that
+	// says "Close is blocked", so the window is the assertion, not a fallback.
 	select {
 	case <-closed:
 		close(gate)
@@ -813,7 +866,7 @@ func TestCloseWaitsForRequestHandler(t *testing.T) {
 	close(gate)
 	select {
 	case <-closed:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Close did not return after the request handler finished")
 	}
 }

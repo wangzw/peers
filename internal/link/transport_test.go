@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -191,8 +192,15 @@ func TestServerRejectsClientWithoutCertificate(t *testing.T) {
 	// peer certificate.
 	_ = tc.Handshake()
 	_ = tc.SetReadDeadline(time.Now().Add(eventTimeout))
-	if _, err := tc.Read(make([]byte, 1)); err == nil {
+	// A close shows up as EOF or a reset; a read timeout would mean the server
+	// kept the connection open, so it must fail rather than count as a close.
+	_, err = tc.Read(make([]byte, 1))
+	var netErr net.Error
+	switch {
+	case err == nil:
 		t.Fatal("server kept a certificate-less connection open")
+	case errors.As(err, &netErr) && netErr.Timeout():
+		t.Fatal("the certificate-less connection stayed open: the read timed out instead of closing")
 	}
 
 	// The TLS handshake already ended, so onStream cannot run after this point.
@@ -323,7 +331,9 @@ func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 
 	// The server advertises one stream per connection, so the second stream
 	// either waits for the first to finish or is refused by the handler; both
-	// end in an error and never reach onStream.
+	// end in an error and never reach onStream. The gRPC client takes the
+	// waiting branch and holds for a slot until this context ends, so the
+	// deadline is how the expected path terminates, not a fallback.
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
 	defer secondCancel()
 	second, err := cli.Connect(secondCtx)

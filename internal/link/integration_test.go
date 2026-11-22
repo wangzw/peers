@@ -893,6 +893,13 @@ func TestClosedLinkRejectsStartAndPairDial(t *testing.T) {
 	}
 
 	n.Start()
+	// Supplement: Start runs asynchronously, so reading the count right after it
+	// returns has almost no discriminating power; the negative window below is
+	// what catches a dial started after Start.
+	if got := dials.n(); got != 0 {
+		t.Fatalf("a closed link dialed %d times after Start", got)
+	}
+	// Negative window: a late dial still shows up here.
 	dials.assertNoDial(t, 100*time.Millisecond)
 
 	if err := n.Listen("127.0.0.1:0"); !errors.Is(err, link.ErrClosed) {

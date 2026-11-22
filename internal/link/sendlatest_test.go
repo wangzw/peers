@@ -18,7 +18,7 @@ func blockWriter(t *testing.T, h *dispatchHarness, dc *dispatchConn) {
 			t.Fatalf("fill Send %d: %v", i, err)
 		}
 	}
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for len(dc.link.sent()) != pipeBuffer+1 {
 		if time.Now().After(deadline) {
 			t.Fatalf("writer did not block: %d frames recorded", len(dc.link.sent()))
@@ -31,7 +31,7 @@ func blockWriter(t *testing.T, h *dispatchHarness, dc *dispatchConn) {
 func drainFiller(t *testing.T, dc *dispatchConn) {
 	t.Helper()
 	for i := 0; i < pipeBuffer+1; i++ {
-		if f := dc.recvPeer(t, 3*time.Second); f.GetKind() != 210 {
+		if f := dc.recvPeer(t); f.GetKind() != 210 {
 			t.Fatalf("filler frame %d has kind %d, want 210", i, f.GetKind())
 		}
 	}
@@ -69,7 +69,7 @@ func TestSendLatestReplacesInPlace(t *testing.T) {
 	drainFiller(t, dc)
 	want := []string{"211:A", "212:L2", "211:B"}
 	for _, name := range want {
-		f := dc.recvPeer(t, 3*time.Second)
+		f := dc.recvPeer(t)
 		got := fmt.Sprintf("%d:%s", f.GetKind(), f.GetPayload())
 		if got != name {
 			t.Fatalf("frame = %q, want %q", got, name)
@@ -94,7 +94,7 @@ func TestSendLatestDoesNotFillQueue(t *testing.T) {
 	}
 
 	drainFiller(t, dc)
-	f := dc.recvPeer(t, 3*time.Second)
+	f := dc.recvPeer(t)
 	if f.GetKind() != 212 || string(f.GetPayload()) != fmt.Sprintf("L%d", n-1) {
 		t.Fatalf("delivered latest = kind %d payload %q, want kind 212 payload L%d", f.GetKind(), f.GetPayload(), n-1)
 	}
@@ -102,7 +102,7 @@ func TestSendLatestDoesNotFillQueue(t *testing.T) {
 	if err := h.l.Send(dc.fp, Frame{Kind: 211, Payload: []byte("still up")}); err != nil {
 		t.Fatalf("Send after the replacements: %v", err)
 	}
-	if f := dc.recvPeer(t, 3*time.Second); string(f.GetPayload()) != "still up" {
+	if f := dc.recvPeer(t); string(f.GetPayload()) != "still up" {
 		t.Fatalf("frame after the replacements = %q, want still up", f.GetPayload())
 	}
 }
@@ -119,14 +119,14 @@ func TestSendLatestAfterWriterTookFrame(t *testing.T) {
 	if err := h.l.SendLatest(dc.fp, Frame{Kind: 212, Payload: []byte("L1")}); err != nil {
 		t.Fatalf("SendLatest L1: %v", err)
 	}
-	if f := dc.recvPeer(t, 3*time.Second); string(f.GetPayload()) != "L1" {
+	if f := dc.recvPeer(t); string(f.GetPayload()) != "L1" {
 		t.Fatalf("first frame payload = %q, want L1", f.GetPayload())
 	}
 
 	if err := h.l.SendLatest(dc.fp, Frame{Kind: 212, Payload: []byte("L2")}); err != nil {
 		t.Fatalf("SendLatest L2: %v", err)
 	}
-	if f := dc.recvPeer(t, 3*time.Second); string(f.GetPayload()) != "L2" {
+	if f := dc.recvPeer(t); string(f.GetPayload()) != "L2" {
 		t.Fatalf("second frame payload = %q, want L2; the slot was not released after the writer took L1", f.GetPayload())
 	}
 }
@@ -179,7 +179,7 @@ func TestSendLatestConcurrentWithWriter(t *testing.T) {
 	}
 	select {
 	case <-arrived:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the connection stopped carrying frames")
 	}
 }

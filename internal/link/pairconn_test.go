@@ -81,6 +81,8 @@ func TestPairConnContract(t *testing.T) {
 	// Send returns the context error while the peer's stream blocks.
 	block := make(chan struct{})
 	a.blockSend = block
+	// The stream is blocked, so Send can return only through the deadline: the
+	// deadline is the assertion, not a fallback, and no event must precede it.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if err := pc.Send(ctx, 103, nil); !errors.Is(err, context.DeadlineExceeded) {

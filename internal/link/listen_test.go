@@ -133,7 +133,7 @@ func requireStopped(t *testing.T, ln net.Listener) {
 	if !ok {
 		t.Fatalf("listener is a %T, want a TCP listener", base)
 	}
-	err := tcp.SetDeadline(time.Now().Add(2 * time.Second))
+	err := tcp.SetDeadline(time.Now().Add(eventTimeout))
 	if errors.Is(err, net.ErrClosed) {
 		return
 	}
@@ -333,7 +333,7 @@ func TestSilentConnectionClosedAtFirstFrameDeadline(t *testing.T) {
 	// completes, before any stream exists. Take the first byte so the close is
 	// observed with data already buffered, the ordering that made a single Read
 	// misreport the connection as open.
-	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
 	if n, err := conn.Read(make([]byte, 1)); err != nil || n != 1 {
@@ -352,7 +352,7 @@ func TestSilentConnectionClosedAtFirstFrameDeadline(t *testing.T) {
 	// whether the connection is still open. Only EOF, a reset or a locally
 	// closed connection prove the deadline closed it; a read timeout proves it
 	// did not.
-	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
 	buf := make([]byte, 4096)
@@ -369,6 +369,32 @@ func TestSilentConnectionClosedAtFirstFrameDeadline(t *testing.T) {
 			t.Fatal("the silent connection stayed open past the first-frame deadline: read timed out")
 		}
 		t.Fatalf("read after the first-frame deadline: %v", err)
+	}
+}
+
+// assertServerClosed reads from conn until the server closes it. Data already
+// buffered is drained first; only EOF, a reset or a locally closed connection
+// prove the close. A read timeout proves the connection stayed open, so it
+// fails instead of counting as a close.
+func assertServerClosed(t *testing.T, conn net.Conn, what string) {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	buf := make([]byte, 4096)
+	for {
+		_, err := conn.Read(buf)
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) {
+			return
+		}
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			t.Fatalf("%s: the read timed out instead of the connection closing", what)
+		}
+		t.Fatalf("%s: read after the server close: %v", what, err)
 	}
 }
 
@@ -397,12 +423,7 @@ func TestUnauthenticatedCapAppliesToListener(t *testing.T) {
 
 	waitFor(t, func() bool { return acceptor.l.unauth.count() == 2 })
 
-	if err := raw[0].SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
-		t.Fatalf("set read deadline: %v", err)
-	}
-	if _, err := raw[0].Read(make([]byte, 1)); err == nil {
-		t.Fatal("the oldest unauthenticated connection was not closed")
-	}
+	assertServerClosed(t, raw[0], "the oldest unauthenticated connection")
 	if n := acceptor.l.unauth.count(); n != 2 {
 		t.Fatalf("unauthenticated count = %d, want 2", n)
 	}

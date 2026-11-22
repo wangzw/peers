@@ -86,7 +86,7 @@ func TestREQBrokerPairing020_DialerWithoutListenerBothDirections(t *testing.T) {
 		if got != "to-dialer" {
 			t.Fatalf("dialer state frame = %q", got)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("dialer did not receive the acceptor's state frame")
 	}
 
@@ -98,11 +98,11 @@ func TestREQBrokerPairing020_DialerWithoutListenerBothDirections(t *testing.T) {
 		if got != "to-acceptor" {
 			t.Fatalf("acceptor state frame = %q", got)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("acceptor did not receive the dialer's state frame")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	reply, sent, err := dialer.l.Request(ctx, acceptorFP, Frame{Kind: 300, Payload: []byte("d")})
 	if err != nil || !sent {
@@ -152,7 +152,7 @@ func TestPairDialReturnsRunErrorUnchanged(t *testing.T) {
 	err := dialer.l.PairDial(context.Background(), addr, func(pairing.PairConn) error {
 		select {
 		case <-handlerStarted:
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Error("acceptor handler did not start")
 		}
 		return errSentinel
@@ -162,7 +162,7 @@ func TestPairDialReturnsRunErrorUnchanged(t *testing.T) {
 	}
 	select {
 	case <-streamDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("acceptor side stream did not end")
 	}
 }
@@ -173,6 +173,8 @@ func TestPairConnReceiveHonoursContext(t *testing.T) {
 	dialer := newDialHarness(t)
 
 	err := dialer.l.PairDial(context.Background(), addr, func(pc pairing.PairConn) error {
+		// No frame is sent, so Receive can return only through the deadline: the
+		// deadline is the assertion, not a fallback.
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		_, _, err := pc.Receive(ctx)
@@ -268,7 +270,7 @@ func TestPairDialCallerCancelAfterReturnKeepsLink(t *testing.T) {
 		if got != "after-cancel" {
 			t.Fatalf("state frame = %q", got)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("link died with the caller's context")
 	}
 }

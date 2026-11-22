@@ -120,7 +120,7 @@ func (h *handshakeHarness) onDown(peer Fingerprint) {
 
 func (h *handshakeHarness) waitEvents(t *testing.T, n int) []hsEvent {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		h.mu.Lock()
 		evs := append([]hsEvent(nil), h.events...)
@@ -173,7 +173,7 @@ func waitHSResult(t *testing.T, ch <-chan hsResult) hsResult {
 	select {
 	case r := <-ch:
 		return r
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("serveInbound did not return")
 		return hsResult{}
 	}
@@ -203,7 +203,7 @@ func hsRecv(t *testing.T, p *pipeEnd) *linkpb.Frame {
 			t.Fatalf("recv frame: %v", r.err)
 		}
 		return r.f
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("timed out receiving a frame")
 		return nil
 	}
@@ -213,7 +213,7 @@ func hsWaitClosed(t *testing.T, c *conn) {
 	t.Helper()
 	select {
 	case <-c.done():
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("connection was not closed")
 	}
 }
@@ -244,7 +244,7 @@ func waitHSDial(t *testing.T, ch <-chan hsDialResult) hsDialResult {
 	select {
 	case r := <-ch:
 		return r
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("dialerHandshake did not return")
 		return hsDialResult{}
 	}
@@ -338,7 +338,7 @@ func TestNothingSentBeforeFirstFrame(t *testing.T) {
 
 	select {
 	case <-local.recvWaiting():
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the link did not start reading the first frame")
 	}
 	if sent := local.sent(); len(sent) != 0 {
@@ -428,8 +428,8 @@ func TestRejectLingerExitsWhenLinkCloses(t *testing.T) {
 
 	select {
 	case <-exited:
-	case <-time.After(3 * time.Second):
-		t.Fatal("reject linger goroutine did not exit within 3s of Close")
+	case <-time.After(eventTimeout):
+		t.Fatalf("reject linger goroutine did not exit within %v of Close", eventTimeout)
 	}
 	if n := h.clock.Pending(); n != 0 {
 		t.Fatalf("%d timers still pending after the linger goroutine exited, want none", n)
@@ -589,7 +589,7 @@ func pairHandshake(t *testing.T, h *handshakeHarness, peer Fingerprint) (hsPairF
 	var first hsPairFirst
 	select {
 	case first = <-firsts:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("pairing Accept was not called")
 	}
 
