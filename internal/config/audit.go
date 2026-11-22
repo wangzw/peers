@@ -102,6 +102,12 @@ func (p *pendingAudit) deadline() time.Time {
 	return p.started.Add(auditMergeWindow)
 }
 
+// withinMergeWindow reports whether t falls in the window: at or after its
+// start and no more than one merge window later.
+func (p *pendingAudit) withinMergeWindow(t time.Time) bool {
+	return !t.Before(p.started) && t.Sub(p.started) <= auditMergeWindow
+}
+
 // auditExpiryHeap orders the open windows by deadline, then by merge key so
 // equal deadlines flush in a stable file order. A summary window at the same
 // deadline comes after the ordinary windows.
@@ -311,7 +317,7 @@ func (a *auditLog) append(e Event) error {
 func (a *auditLog) mergeLocked(key string, e Event) {
 	a.flushExpiredLocked(a.now())
 	if pending, ok := a.pending[key]; ok {
-		if !e.Time.Before(pending.started) && e.Time.Sub(pending.started) <= auditMergeWindow {
+		if pending.withinMergeWindow(e.Time) {
 			pending.occurrences++
 			return
 		}
@@ -331,7 +337,7 @@ func (a *auditLog) mergeLocked(key string, e Event) {
 // the overflow detail.
 func (a *auditLog) mergeSummaryLocked(kind EventKind, e Event) {
 	if pending, ok := a.summary[kind]; ok {
-		if !e.Time.Before(pending.started) && e.Time.Sub(pending.started) <= auditMergeWindow {
+		if pending.withinMergeWindow(e.Time) {
 			pending.occurrences++
 			return
 		}
@@ -700,39 +706,19 @@ func encodeEvent(e Event) ([]byte, error) {
 func encodeValue(v Value) (*wireValue, error) {
 	switch v.Kind {
 	case KindString:
-		data, err := json.Marshal(v.String)
-		if err != nil {
-			return nil, err
-		}
-		return &wireValue{Kind: "string", Value: data}, nil
+		return marshalWireValue("string", v.String)
 	case KindBool:
-		data, err := json.Marshal(v.Bool)
-		if err != nil {
-			return nil, err
-		}
-		return &wireValue{Kind: "bool", Value: data}, nil
+		return marshalWireValue("bool", v.Bool)
 	case KindInt:
-		data, err := json.Marshal(v.Int)
-		if err != nil {
-			return nil, err
-		}
-		return &wireValue{Kind: "int", Value: data}, nil
+		return marshalWireValue("int", v.Int)
 	case KindDuration:
-		data, err := json.Marshal(v.Duration.String())
-		if err != nil {
-			return nil, err
-		}
-		return &wireValue{Kind: "duration", Value: data}, nil
+		return marshalWireValue("duration", v.Duration.String())
 	case KindStringList:
 		values := v.Strings
 		if values == nil {
 			values = []string{}
 		}
-		data, err := json.Marshal(values)
-		if err != nil {
-			return nil, err
-		}
-		return &wireValue{Kind: "string_list", Value: data}, nil
+		return marshalWireValue("string_list", values)
 	case KindSecret:
 		// A secret value never reaches the audit log. Callers that build an
 		// event directly have the field stripped by append, but returning an
@@ -741,6 +727,15 @@ func encodeValue(v Value) (*wireValue, error) {
 	default:
 		return nil, fmt.Errorf("unknown value kind %d", v.Kind)
 	}
+}
+
+// marshalWireValue encodes plain as the payload of a value of the named kind.
+func marshalWireValue(kind string, plain any) (*wireValue, error) {
+	data, err := json.Marshal(plain)
+	if err != nil {
+		return nil, err
+	}
+	return &wireValue{Kind: kind, Value: data}, nil
 }
 
 func decodeEvent(line []byte) (Event, error) {
