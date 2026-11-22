@@ -64,12 +64,9 @@ func (l *Link) registerHandler(kind FrameKind, state func(Fingerprint, Frame), r
 // is above MaxMessageSize. An oversized frame is not queued and the link stays
 // up.
 func (l *Link) Send(peer Fingerprint, f Frame) error {
-	if f.Kind < reservedKindLimit {
-		return ErrInvalidKind
-	}
-	wire := &linkpb.Frame{Kind: f.Kind, Payload: f.Payload}
-	if frameExceedsLimit(wire) {
-		return ErrFrameTooLarge
+	wire, err := wireFrame(f)
+	if err != nil {
+		return err
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -101,12 +98,9 @@ func (l *Link) SendLatestKey(peer Fingerprint, key string, f Frame) (replaced bo
 
 // sendLatestKey is the shared body of SendLatest and SendLatestKey.
 func (l *Link) sendLatestKey(peer Fingerprint, key string, f Frame) (replaced bool, err error) {
-	if f.Kind < reservedKindLimit {
-		return false, ErrInvalidKind
-	}
-	wire := &linkpb.Frame{Kind: f.Kind, Payload: f.Payload}
-	if frameExceedsLimit(wire) {
-		return false, ErrFrameTooLarge
+	wire, err := wireFrame(f)
+	if err != nil {
+		return false, err
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -115,6 +109,18 @@ func (l *Link) sendLatestKey(peer Fingerprint, key string, f Frame) (replaced bo
 		return false, ErrNotEstablished
 	}
 	return c.enqueueLatest(key, wire)
+}
+
+// wireFrame validates a state frame for sending and returns its wire form.
+func wireFrame(f Frame) (*linkpb.Frame, error) {
+	if f.Kind < reservedKindLimit {
+		return nil, ErrInvalidKind
+	}
+	wire := &linkpb.Frame{Kind: f.Kind, Payload: f.Payload}
+	if frameExceedsLimit(wire) {
+		return nil, ErrFrameTooLarge
+	}
+	return wire, nil
 }
 
 // kindKey is the latest-slot key SendLatest uses for the frames of one kind. It
