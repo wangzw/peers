@@ -2,6 +2,7 @@ package termcmd
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -44,11 +45,7 @@ func Describe(err error) string {
 		return sanitizeText(err.Error())
 	}
 
-	for _, detail := range st.Details() {
-		ed, ok := detail.(*localpb.ErrorDetail)
-		if !ok {
-			continue
-		}
+	if ed := errorDetailOf(st); ed != nil {
 		message := sanitizeText(ed.GetMessage())
 		if ed.GetCode() == localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH {
 			// The Broker states both versions and names its own restart advice;
@@ -68,6 +65,22 @@ func Describe(err error) string {
 	return st.Code().String() + ": " + sanitizeText(st.Message())
 }
 
+// describedError keeps a Local service error's description as an error value,
+// so a command can return it unchanged.
+func describedError(err error) error {
+	return errors.New(Describe(err))
+}
+
+// errorDetailOf returns the first ErrorDetail carried by st, or nil.
+func errorDetailOf(st *status.Status) *localpb.ErrorDetail {
+	for _, detail := range st.Details() {
+		if ed, ok := detail.(*localpb.ErrorDetail); ok {
+			return ed
+		}
+	}
+	return nil
+}
+
 // errorCode returns the stable Broker error code carried in err, or
 // ERROR_CODE_UNSPECIFIED when err carries no ErrorDetail. A terminal command
 // uses it to add the command-line form of a hint that the Broker states in
@@ -77,10 +90,8 @@ func errorCode(err error) localpb.ErrorCode {
 	if !ok {
 		return localpb.ErrorCode_ERROR_CODE_UNSPECIFIED
 	}
-	for _, detail := range st.Details() {
-		if ed, ok := detail.(*localpb.ErrorDetail); ok {
-			return ed.GetCode()
-		}
+	if ed := errorDetailOf(st); ed != nil {
+		return ed.GetCode()
 	}
 	return localpb.ErrorCode_ERROR_CODE_UNSPECIFIED
 }

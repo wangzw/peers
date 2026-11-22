@@ -52,7 +52,7 @@ func RunStatus(ctx context.Context, sel Selector, w io.Writer) error {
 
 	resp, err := client.Status(callCtx, &localpb.StatusRequest{})
 	if err != nil {
-		return errors.New(Describe(err))
+		return describedError(err)
 	}
 	if err := WriteStatus(w, resp); err != nil {
 		return err
@@ -75,7 +75,7 @@ func RunAudit(ctx context.Context, sel Selector, limit uint32, w io.Writer) erro
 
 	stream, err := client.Audit(ctx, &localpb.AuditRequest{Limit: limit})
 	if err != nil {
-		return errors.New(Describe(err))
+		return describedError(err)
 	}
 	for {
 		ev, err := stream.Recv()
@@ -83,7 +83,7 @@ func RunAudit(ctx context.Context, sel Selector, limit uint32, w io.Writer) erro
 			return nil
 		}
 		if err != nil {
-			return errors.New(Describe(err))
+			return describedError(err)
 		}
 		if err := WriteAuditEvent(w, ev); err != nil {
 			return err
@@ -105,7 +105,7 @@ func RunConfigGet(ctx context.Context, sel Selector, key string, w io.Writer) er
 
 	resp, err := client.GetConfig(callCtx, &localpb.GetConfigRequest{Key: key})
 	if err != nil {
-		return errors.New(Describe(err))
+		return describedError(err)
 	}
 	return WriteConfigEntries(w, resp.GetEntries())
 }
@@ -124,7 +124,7 @@ func RunConfigSet(ctx context.Context, sel Selector, key, value string, w io.Wri
 
 	resp, err := client.SetConfig(callCtx, &localpb.SetConfigRequest{Key: key, Value: value})
 	if err != nil {
-		return errors.New(Describe(err))
+		return describedError(err)
 	}
 	return WriteConfigChange(w, key, resp.GetOldValue(), resp.GetNewValue())
 }
@@ -150,7 +150,7 @@ func RunSetOnline(ctx context.Context, sel Selector, online bool, w io.Writer) e
 		Key:   "broker.offline",
 		Value: value,
 	}); err != nil {
-		return errors.New(Describe(err))
+		return describedError(err)
 	}
 	_, err = fmt.Fprintln(w, message)
 	return err
@@ -196,12 +196,9 @@ func RunPeerList(ctx context.Context, sel Selector, w io.Writer) error {
 	}
 	defer closeConn()
 
-	callCtx, cancel := context.WithTimeout(ctx, UnaryTimeout)
-	defer cancel()
-
-	resp, err := client.ListBrokers(callCtx, &localpb.ListBrokersRequest{})
+	resp, err := listBrokers(ctx, client)
 	if err != nil {
-		return errors.New(Describe(err))
+		return describedError(err)
 	}
 	return WriteBrokerList(w, resp.GetBrokers(), resp.GetLocal())
 }
@@ -286,12 +283,9 @@ func PeerNames(ctx context.Context, sel Selector) ([]string, error) {
 	}
 	defer closeConn()
 
-	callCtx, cancel := context.WithTimeout(ctx, UnaryTimeout)
-	defer cancel()
-
-	resp, err := client.ListBrokers(callCtx, &localpb.ListBrokersRequest{})
+	resp, err := listBrokers(ctx, client)
 	if err != nil {
-		return nil, errors.New(Describe(err))
+		return nil, describedError(err)
 	}
 	var names []string
 	for _, b := range resp.GetBrokers() {
@@ -371,9 +365,17 @@ func RunUpdateStatus(ctx context.Context, sel Selector) (current, available stri
 	defer cancel()
 	resp, err := client.UpdateStatus(callCtx, &localpb.UpdateStatusRequest{})
 	if err != nil {
-		return "", "", errors.New(Describe(err))
+		return "", "", describedError(err)
 	}
 	return resp.GetCurrentVersion(), resp.GetAvailableVersion(), nil
+}
+
+// listBrokers calls ListBrokers with the unary timeout. Both the listing
+// commands and shell completion read the Broker list this way.
+func listBrokers(ctx context.Context, client localpb.LocalClient) (*localpb.ListBrokersResponse, error) {
+	callCtx, cancel := context.WithTimeout(ctx, UnaryTimeout)
+	defer cancel()
+	return client.ListBrokers(callCtx, &localpb.ListBrokersRequest{})
 }
 
 // dial selects the Broker, opens a connection through the selector's dialer and
@@ -387,7 +389,7 @@ func dial(ctx context.Context, sel Selector) (localpb.LocalClient, func(), error
 
 	conn, client, err := open()
 	if err != nil {
-		return nil, nil, errors.New(Describe(err))
+		return nil, nil, describedError(err)
 	}
 	closeConn := func() { _ = conn.Close() }
 
@@ -400,7 +402,7 @@ func dial(ctx context.Context, sel Selector) (localpb.LocalClient, func(), error
 		if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 			return nil, nil, fmt.Errorf("cannot reach the Broker at %s: %s", path, sanitizeText(st.Message()))
 		}
-		return nil, nil, errors.New(Describe(err))
+		return nil, nil, describedError(err)
 	}
 	if v := resp.GetProtocolVersion(); v != localpb.ProtocolVersion {
 		closeConn()
