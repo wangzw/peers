@@ -58,6 +58,20 @@ func capKnown(addrs []config.AdvertisedAddr) []config.AdvertisedAddr {
 	return out
 }
 
+// validDialPort reports whether port is a decimal number in 1 to 65535.
+func validDialPort(port string) bool {
+	if port == "" {
+		return false
+	}
+	for i := 0; i < len(port); i++ {
+		if port[i] < '0' || port[i] > '9' {
+			return false
+		}
+	}
+	number, err := strconv.Atoi(port)
+	return err == nil && number >= 1 && number <= 65535
+}
+
 // validAdvertisedAddr reports whether addr is a host:port this version can dial.
 // The host follows config.ValidDialHost and the port is a decimal number in 1 to
 // 65535, the same rules connect_broker applies to its address. The "name(addr)" display
@@ -74,7 +88,7 @@ func validAdvertisedAddr(addr string) bool {
 		return false
 	}
 	host, port, err := net.SplitHostPort(addr)
-	if err != nil || host == "" || port == "" || !config.ValidDialHost(host) {
+	if err != nil || host == "" || !validDialPort(port) || !config.ValidDialHost(host) {
 		return false
 	}
 	// config.ValidDialHost strips one trailing dot from a fully qualified name
@@ -85,19 +99,7 @@ func validAdvertisedAddr(addr string) bool {
 	if strings.HasSuffix(host, ".") {
 		stored--
 	}
-	if stored > maxAdvertisedAddrLen {
-		return false
-	}
-	for i := 0; i < len(port); i++ {
-		if port[i] < '0' || port[i] > '9' {
-			return false
-		}
-	}
-	number, convErr := strconv.Atoi(port)
-	if convErr != nil || number < 1 || number > 65535 {
-		return false
-	}
-	return true
+	return stored <= maxAdvertisedAddrLen
 }
 
 // mergeCandidateList merges the stored sources in the order acceptor, card,

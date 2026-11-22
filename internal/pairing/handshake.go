@@ -3,12 +3,10 @@ package pairing
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"time"
 
@@ -93,8 +91,7 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	acceptorFP := conn.PeerFingerprint()
 	acceptorPub := conn.PeerPublicKey()
 	if len(acceptorPub) != 32 || FingerprintOf(acceptorPub) != acceptorFP {
-		_ = conn.Close()
-		return Peer{}, &PairingError{Reason: ReasonVerificationFailed, Detail: "peer certificate does not match its fingerprint"}
+		return closeAndFail(conn, &PairingError{Reason: ReasonVerificationFailed, Detail: "peer certificate does not match its fingerprint"})
 	}
 
 	request := &pairingpb.PairRequest{
@@ -111,28 +108,23 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 		return Peer{}, p.initiatorFrameError(conn, parent, runCtx, err)
 	}
 	if kind == kindPairReject {
-		_ = conn.Close()
-		return Peer{}, rejectError(payload)
+		return closeAndFail(conn, rejectError(payload))
 	}
 	if kind != kindPairChallenge {
-		_ = conn.Close()
-		return Peer{}, fmt.Errorf("%w: expected PairChallenge, got frame %d", ErrProtocol, kind)
+		return closeAndFail(conn, fmt.Errorf("%w: expected PairChallenge, got frame %d", ErrProtocol, kind))
 	}
 	var challenge pairingpb.PairChallenge
 	if err := proto.Unmarshal(payload, &challenge); err != nil {
-		_ = conn.Close()
-		return Peer{}, fmt.Errorf("%w: cannot decode PairChallenge: %v", ErrProtocol, err)
+		return closeAndFail(conn, fmt.Errorf("%w: cannot decode PairChallenge: %v", ErrProtocol, err))
 	}
 	nr := challenge.GetResponderNonce()
 	if len(nr) != nonceLength || len(challenge.GetProof()) != proofLength {
-		_ = conn.Close()
-		return Peer{}, fmt.Errorf("%w: PairChallenge has a malformed nonce or proof", ErrProtocol)
+		return closeAndFail(conn, fmt.Errorf("%w: PairChallenge has a malformed nonce or proof", ErrProtocol))
 	}
 
 	want := responderProof([]byte(key), ni, nr, acceptorFP, p.identity.fingerprint())
 	if !hmac.Equal(want, challenge.GetProof()) {
-		_ = conn.Close()
-		return Peer{}, &PairingError{Reason: ReasonVerificationFailed, Detail: "responder proof did not verify"}
+		return closeAndFail(conn, &PairingError{Reason: ReasonVerificationFailed, Detail: "responder proof did not verify"})
 	}
 
 	finalAlias, local := p.chooseInitiatorAlias(acceptorFP, challenge.GetResponderAlias(), ownAlias, localAlias)
@@ -141,8 +133,7 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 		token, reserved = p.reserveAlias(acceptorFP, finalAlias, ownAlias)
 	}
 	if !reserved {
-		_ = conn.Close()
-		return Peer{}, ErrNeedsLocalAlias
+		return closeAndFail(conn, ErrNeedsLocalAlias)
 	}
 	committed := false
 	defer func() {
@@ -163,12 +154,10 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	}
 	switch kind {
 	case kindPairReject:
-		_ = conn.Close()
-		return Peer{}, rejectError(payload)
+		return closeAndFail(conn, rejectError(payload))
 	case kindPairDone:
 	default:
-		_ = conn.Close()
-		return Peer{}, fmt.Errorf("%w: expected PairDone, got frame %d", ErrProtocol, kind)
+		return closeAndFail(conn, fmt.Errorf("%w: expected PairDone, got frame %d", ErrProtocol, kind))
 	}
 
 	// The reservation and the own alias are re-checked inside the peer-table
@@ -177,8 +166,7 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	entry := p.dialerEntry(acceptorFP, acceptorPub, challenge.GetResponderAlias(), local, dialAddr, challenge.GetAdvertisedAddresses())
 	replaced, committedAlias, frozen, err := p.peers.commitHandshake(entry, token)
 	if err != nil {
-		_ = conn.Close()
-		return Peer{}, err
+		return closeAndFail(conn, err)
 	}
 	committed = true
 	if replaced {
@@ -210,8 +198,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 	initiatorFP := conn.PeerFingerprint()
 	initiatorPub := conn.PeerPublicKey()
 	if len(initiatorPub) != 32 || FingerprintOf(initiatorPub) != initiatorFP {
-		_ = conn.Close()
-		return fmt.Errorf("%w: peer certificate does not match its fingerprint", ErrProtocol)
+		return closeWithError(conn, fmt.Errorf("%w: peer certificate does not match its fingerprint", ErrProtocol))
 	}
 
 	kind, payload, err := conn.Receive(ctx)
@@ -219,13 +206,11 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return p.acceptFrameError(conn, ctx, initiatorFP, "", err)
 	}
 	if kind != kindPairRequest {
-		_ = conn.Close()
-		return fmt.Errorf("%w: expected PairRequest, got frame %d", ErrProtocol, kind)
+		return closeWithError(conn, fmt.Errorf("%w: expected PairRequest, got frame %d", ErrProtocol, kind))
 	}
 	var request pairingpb.PairRequest
 	if err := proto.Unmarshal(payload, &request); err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("%w: cannot decode PairRequest: %v", ErrProtocol, err)
+		return closeWithError(conn, fmt.Errorf("%w: cannot decode PairRequest: %v", ErrProtocol, err))
 	}
 	// The version check comes before any key lookup: a peer speaking another
 	// protocol cannot be paired, and reporting a version conflict keeps it from
@@ -236,8 +221,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 	}
 	ni := request.GetInitiatorNonce()
 	if len(ni) != nonceLength || len(request.GetLookupTag()) != lookupTagLength {
-		_ = conn.Close()
-		return fmt.Errorf("%w: PairRequest has a malformed nonce or lookup tag", ErrProtocol)
+		return closeWithError(conn, fmt.Errorf("%w: PairRequest has a malformed nonce or lookup tag", ErrProtocol))
 	}
 
 	// The alias arrives later, in PairConfirm, and is read only once the
@@ -248,13 +232,11 @@ func (p *Pairing) Accept(conn PairConn) error {
 	now := p.clock.Now()
 	maxFailures, err := p.settings.MaxFailures()
 	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("%w: %v", ErrStore, err)
+		return closeWithError(conn, fmt.Errorf("%w: %v", ErrStore, err))
 	}
 	maxAttempts, err := p.settings.MaxAttemptsPerMinute()
 	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("%w: %v", ErrStore, err)
+		return closeWithError(conn, fmt.Errorf("%w: %v", ErrStore, err))
 	}
 	match, found, lookupErr := p.keys.lookupAtRequest(ni, request.GetLookupTag(), initiatorFP, now, sourcePrefix(conn.RemoteAddr()), maxAttempts, p.settings.StaticKey)
 	if !found {
@@ -270,18 +252,15 @@ func (p *Pairing) Accept(conn PairConn) error {
 
 	nr, err := p.nonce()
 	if err != nil {
-		_ = conn.Close()
-		return err
+		return closeWithError(conn, err)
 	}
 	ownAlias, err := p.alias()
 	if err != nil {
-		_ = conn.Close()
-		return err
+		return closeWithError(conn, err)
 	}
 	advertised, err := p.settings.Advertised()
 	if err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("%w: %v", ErrStore, err)
+		return closeWithError(conn, fmt.Errorf("%w: %v", ErrStore, err))
 	}
 
 	challenge := &pairingpb.PairChallenge{
@@ -299,17 +278,14 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return p.acceptFrameError(conn, ctx, initiatorFP, initiatorAlias, err)
 	}
 	if kind != kindPairConfirm {
-		_ = conn.Close()
-		return fmt.Errorf("%w: expected PairConfirm, got frame %d", ErrProtocol, kind)
+		return closeWithError(conn, fmt.Errorf("%w: expected PairConfirm, got frame %d", ErrProtocol, kind))
 	}
 	var confirm pairingpb.PairConfirm
 	if err := proto.Unmarshal(payload, &confirm); err != nil {
-		_ = conn.Close()
-		return fmt.Errorf("%w: cannot decode PairConfirm: %v", ErrProtocol, err)
+		return closeWithError(conn, fmt.Errorf("%w: cannot decode PairConfirm: %v", ErrProtocol, err))
 	}
 	if len(confirm.GetProof()) != proofLength {
-		_ = conn.Close()
-		return fmt.Errorf("%w: PairConfirm has a malformed proof", ErrProtocol)
+		return closeWithError(conn, fmt.Errorf("%w: PairConfirm has a malformed proof", ErrProtocol))
 	}
 
 	verifiedAt := p.clock.Now()
@@ -331,13 +307,11 @@ func (p *Pairing) Accept(conn PairConn) error {
 
 	ownAliasNow, err := p.alias()
 	if err != nil {
-		_ = conn.Close()
-		return err
+		return closeWithError(conn, err)
 	}
 	finalAlias, localAlias, token, ok := p.reserveAcceptorAlias(initiatorFP, initiatorAlias, ownAliasNow)
 	if !ok {
-		_ = conn.Close()
-		return ErrNeedsLocalAlias
+		return closeWithError(conn, ErrNeedsLocalAlias)
 	}
 	reserved := true
 	defer func() {
@@ -366,8 +340,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return p.acceptFrameError(conn, ctx, initiatorFP, finalAlias, err)
 	}
 	if kind != kindHello {
-		_ = conn.Close()
-		return fmt.Errorf("%w: expected link Hello after PairDone, got frame %d", ErrProtocol, kind)
+		return closeWithError(conn, fmt.Errorf("%w: expected link Hello after PairDone, got frame %d", ErrProtocol, kind))
 	}
 	conn.Unread(kindHello, payload)
 
@@ -377,8 +350,7 @@ func (p *Pairing) Accept(conn PairConn) error {
 	// inconsistent commit.
 	replaced, committedAlias, frozen, err := p.peers.commitHandshake(pending, token)
 	if err != nil {
-		_ = conn.Close()
-		return err
+		return closeWithError(conn, err)
 	}
 	reserved = false
 	if replaced {
@@ -396,26 +368,26 @@ func (p *Pairing) Accept(conn PairConn) error {
 	return nil
 }
 
-// responderProof computes the acceptor's authentication code.
-func responderProof(key, ni, nr []byte, acceptor, initiatorSeen Fingerprint) []byte {
+// pairProof computes one side's authentication code over both nonces and both
+// fingerprints, under the given domain label.
+func pairProof(label string, key, ni, nr []byte, self, seen Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(pairResponderLabel))
+	mac.Write([]byte(label))
 	mac.Write(ni)
 	mac.Write(nr)
-	mac.Write(acceptor[:])
-	mac.Write(initiatorSeen[:])
+	mac.Write(self[:])
+	mac.Write(seen[:])
 	return mac.Sum(nil)
+}
+
+// responderProof computes the acceptor's authentication code.
+func responderProof(key, ni, nr []byte, acceptor, initiatorSeen Fingerprint) []byte {
+	return pairProof(pairResponderLabel, key, ni, nr, acceptor, initiatorSeen)
 }
 
 // initiatorProof computes the initiator's authentication code.
 func initiatorProof(key, ni, nr []byte, initiator, acceptorSeen Fingerprint) []byte {
-	mac := hmac.New(sha256.New, key)
-	mac.Write([]byte(pairInitiatorLabel))
-	mac.Write(ni)
-	mac.Write(nr)
-	mac.Write(initiator[:])
-	mac.Write(acceptorSeen[:])
-	return mac.Sum(nil)
+	return pairProof(pairInitiatorLabel, key, ni, nr, initiator, acceptorSeen)
 }
 
 // rejectAcceptor sends PairReject with reason, records the acceptor-owned audit
@@ -467,6 +439,18 @@ func (p *Pairing) initiatorFrameError(conn PairConn, parent, runCtx context.Cont
 		return &PairingError{Reason: ReasonTimeout, Detail: "handshake timed out"}
 	}
 	return &PairingError{Reason: ReasonNotConnected, Detail: "connection closed during pairing"}
+}
+
+// closeAndFail closes conn and returns err with the zero Peer.
+func closeAndFail(conn PairConn, err error) (Peer, error) {
+	_ = conn.Close()
+	return Peer{}, err
+}
+
+// closeWithError closes conn and returns err.
+func closeWithError(conn PairConn, err error) error {
+	_ = conn.Close()
+	return err
 }
 
 // chooseInitiatorAlias picks the alias the initiator will hold. A caller
@@ -526,13 +510,8 @@ func (p *Pairing) releaseAlias(token uint64) {
 }
 
 // peerView returns the committed entry as the exported view. The entry is read
-// back so candidate sources and filtering come from the peer table itself.
+// back from the peer table so candidate sources and filtering come from it.
 func (p *Pairing) peerView(fp Fingerprint) Peer {
-	for _, peer := range p.peers.snapshot() {
-		if peer.Fingerprint == fp {
-			return peer
-		}
-	}
 	entry, _ := p.peers.get(fp)
 	return entry.toPeer()
 }
@@ -703,16 +682,7 @@ func parseConnectAddress(address string) (dialAddr, shownHost string, err error)
 		}
 	}
 	host, port, splitErr := net.SplitHostPort(dialAddr)
-	if splitErr != nil || host == "" || port == "" || !config.ValidDialHost(host) {
-		return "", "", ErrInvalidAddress
-	}
-	for i := 0; i < len(port); i++ {
-		if port[i] < '0' || port[i] > '9' {
-			return "", "", ErrInvalidAddress
-		}
-	}
-	number, convErr := strconv.Atoi(port)
-	if convErr != nil || number < 1 || number > 65535 {
+	if splitErr != nil || host == "" || !validDialPort(port) || !config.ValidDialHost(host) {
 		return "", "", ErrInvalidAddress
 	}
 	return dialAddr, shownHost, nil
@@ -728,17 +698,10 @@ func (p *Pairing) alias() (string, error) {
 	return alias, nil
 }
 
-// nonce returns a fresh 32-byte random value. randRead is the test seam
-// installed by newPairing; crypto/rand is the production fallback.
+// nonce returns a fresh 32-byte random value from the injected random source.
 func (p *Pairing) nonce() ([]byte, error) {
 	buf := make([]byte, nonceLength)
-	if p.randRead != nil {
-		if _, err := p.randRead(buf); err != nil {
-			return nil, err
-		}
-		return buf, nil
-	}
-	if _, err := rand.Read(buf); err != nil {
+	if err := p.randomBytes(buf); err != nil {
 		return nil, err
 	}
 	return buf, nil

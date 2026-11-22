@@ -3,9 +3,24 @@ package pairing
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/wangzw/peers/internal/config"
 )
+
+// isAliasByte reports whether c is one of the bytes an alias may contain:
+// ASCII letters, digits, '.', '-' and '_'.
+func isAliasByte(c byte) bool {
+	switch {
+	case c >= 'a' && c <= 'z':
+	case c >= 'A' && c <= 'Z':
+	case c >= '0' && c <= '9':
+	case c == '.', c == '-', c == '_':
+	default:
+		return false
+	}
+	return true
+}
 
 // validAlias reports whether s can be used as an alias. Aliases are 1 to
 // config.AliasMaxLen bytes long and consist of ASCII letters, digits, '.', '-'
@@ -15,13 +30,7 @@ func validAlias(s string) bool {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c >= 'a' && c <= 'z':
-		case c >= 'A' && c <= 'Z':
-		case c >= '0' && c <= '9':
-		case c == '.', c == '-', c == '_':
-		default:
+		if !isAliasByte(s[i]) {
 			return false
 		}
 	}
@@ -49,16 +58,11 @@ func sanitizeAliasPart(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == '.', r == '-', r == '_':
-		default:
-			b.WriteByte('-')
+		if r < utf8.RuneSelf && isAliasByte(byte(r)) {
+			b.WriteRune(r)
 			continue
 		}
-		b.WriteRune(r)
+		b.WriteByte('-')
 	}
 	return b.String()
 }
