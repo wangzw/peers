@@ -357,7 +357,7 @@ func (c *Client) Reread(ctx context.Context, s inbox.Session) (inbox.Session, er
 	req := &helperpb.HelperRequest{
 		Id: id,
 		Op: &helperpb.HelperRequest_Reread{Reread: &helperpb.RereadRequest{
-			Session: clientSessionToProto(s),
+			Session: toProtoSession(s),
 		}},
 	}
 	if err := c.send(ctx, req); err != nil {
@@ -486,7 +486,7 @@ func (c *Client) Deliver(ctx context.Context, s inbox.Session, sig, text, msgID 
 	req := &helperpb.HelperRequest{
 		Id: id,
 		Op: &helperpb.HelperRequest_Deliver{Deliver: &helperpb.DeliverRequest{
-			Session:   clientSessionToProto(s),
+			Session:   toProtoSession(s),
 			Signature: sig,
 			Text:      text,
 			MessageId: msgID,
@@ -560,7 +560,7 @@ func clientSessionResult(resp *helperpb.HelperResponse) (inbox.Session, error) {
 		return inbox.Session{}, clientError(e)
 	}
 	if s := resp.GetSession(); s != nil {
-		return clientSessionFromProto(s), nil
+		return fromProtoSession(s), nil
 	}
 	return inbox.Session{}, ErrProtocol
 }
@@ -597,26 +597,6 @@ func clientError(e *helperpb.HelperError) error {
 		if msg == "" {
 			msg = e.GetCode().String()
 		}
-		return fmt.Errorf("%s", msg)
-	}
-}
-
-func clientSessionFromProto(s *helperpb.Session) inbox.Session {
-	return inbox.Session{
-		ConfigDir:  s.GetConfigDir(),
-		PID:        int(s.GetPid()),
-		Name:       s.GetName(),
-		Status:     s.GetStatus(),
-		SocketPath: s.GetSocketPath(),
-	}
-}
-
-func clientSessionToProto(s inbox.Session) *helperpb.Session {
-	return &helperpb.Session{
-		ConfigDir:  s.ConfigDir,
-		Pid:        int64(s.PID),
-		Name:       s.Name,
-		Status:     s.Status,
-		SocketPath: s.SocketPath,
+		return errors.New(msg)
 	}
 }
