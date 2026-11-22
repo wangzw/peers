@@ -72,10 +72,8 @@ type savedUnit struct {
 // itself fails, the error says so separately and an update_failed record names
 // the problem.
 func PostUpdate(opts Options) error {
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return fmt.Errorf("cannot update the service definition on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "update the service definition"); err != nil {
+		return err
 	}
 
 	path, err := unitPath(opts)
@@ -735,10 +733,7 @@ func reloadLaunchd(opts Options, domain, plistPath string) error {
 	cmdline := "launchctl bootstrap " + domain + " " + plistPath
 	out, err := bootstrapService(opts, domain, plistPath)
 	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-		}
-		return fmt.Errorf("cannot run %s: %w", cmdline, err)
+		return commandError("cannot run "+cmdline, out, err)
 	}
 	return nil
 }

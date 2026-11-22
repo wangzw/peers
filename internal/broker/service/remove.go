@@ -179,10 +179,8 @@ func launchdProgramBinary(content, defPath string) (string, error) {
 
 // RemoveRuntimeDir removes the runtime directory of opts' level.
 func RemoveRuntimeDir(opts Options) ([]string, error) {
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return nil, fmt.Errorf("cannot remove the runtime directory on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "remove the runtime directory"); err != nil {
+		return nil, err
 	}
 	dir := filepath.Dir(localSocketPath(opts))
 	removed, err := removePath(opts, dir)
@@ -202,10 +200,8 @@ func RemoveRuntimeDir(opts Options) ([]string, error) {
 // <reason>" for a group that was left in place. A group that does not exist is
 // skipped.
 func PurgeData(opts Options) (removed []string, err error) {
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return nil, fmt.Errorf("cannot purge data on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "purge data"); err != nil {
+		return nil, err
 	}
 	if !opts.System && !filepath.IsAbs(opts.Home) {
 		return nil, fmt.Errorf("cannot purge data: the home directory %q is not an absolute path", opts.Home)
@@ -545,10 +541,7 @@ func deleteAdminGroup(opts Options, name string) error {
 	cmdline := strings.Join(argv, " ")
 	out, err := opts.Run(argv[0], argv[1:]...)
 	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-		}
-		return fmt.Errorf("cannot run %s: %w", cmdline, err)
+		return commandError("cannot run "+cmdline, out, err)
 	}
 	return nil
 }

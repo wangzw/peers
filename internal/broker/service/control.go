@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"strings"
 	"time"
 )
 
@@ -143,10 +142,8 @@ func Restart(opts Options) (Result, error) {
 // session, and then Stop has nothing to unload.
 func serviceTarget(opts Options, needsDomain bool) (Result, string, error) {
 	var res Result
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return res, "", fmt.Errorf("cannot run the service command on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "run the service command"); err != nil {
+		return res, "", err
 	}
 
 	installed, err := Installed(opts)
@@ -162,7 +159,7 @@ func serviceTarget(opts Options, needsDomain bool) (Result, string, error) {
 	if opts.System {
 		return res, "system", nil
 	}
-	domain := fmt.Sprintf("gui/%d", opts.UID)
+	domain := serviceDomain(false, opts.UID)
 	if launchctlDomainExists(opts, domain) {
 		return res, domain, nil
 	}
@@ -198,10 +195,7 @@ func enableAndBootstrap(opts Options, domain string, res *Result) error {
 	res.Commands = append(res.Commands, cmdline)
 	out, err := bootstrapService(opts, domain, path)
 	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-		}
-		return fmt.Errorf("cannot run %s: %w", cmdline, err)
+		return commandError("cannot run "+cmdline, out, err)
 	}
 	return nil
 }
