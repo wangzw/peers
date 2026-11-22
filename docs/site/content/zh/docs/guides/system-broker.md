@@ -54,6 +54,6 @@ claude mcp add --scope user peer -- /usr/local/bin/peers mcp
 
 ## 多个账户共用一个身份
 
-同一个系统级 Broker 服务的所有 Agent 共用它的指纹、别名和对端。不同账户的 Agent 只要加入同一个 topic，就能互相看见并互发消息。因此系统级 Broker 配对一次，所有被服务的账户就都连到了对方；另一台主机只需要这一次配对，就能访问这些账户。系统级 Broker 的默认别名是主机名的第一段，不带账户名，所以它服务的每个账户的 Agent 地址都形如 `name@workstation`。账户 alice 另起用户级 Broker 后，该账户会话的地址变成 `name@workstation.alice`，因为这些会话登记到了另一个 Broker。
+同一个系统级 Broker 服务的所有 Agent 共用它的指纹、别名和对端。不同账户的 Agent 只要加入同一个 topic，就能互相看见并互发消息。因此系统级 Broker 配对一次，所有被服务的账户就都连到了对方；另一台主机只需要这一次配对，就能访问这些账户。系统级 Broker 的默认别名是主机名的第一段，不带账户名，所以它服务的每个账户的 Agent 地址都形如 `name@workstation`。例外是名字已归另一个账户所有的 Agent：它的地址带完整的 12 位消歧标识，形如 `name [<ref>]@workstation`，其中 `<ref>` 就是这 12 个字符。账户 alice 另起用户级 Broker 后，该账户会话的地址变成 `name@workstation.alice`，因为这些会话登记到了另一个 Broker。
 
 Broker 的管理权限由 `/etc/peers/config.yaml` 的文件权限决定，与运行服务的账户无关。管理它有两种方式：成为拥有该文件的组的成员，或以 `sudo` 执行终端命令，后者由 Broker 按 root 的权限判定。这个组及它的限制见[以配置文件权限管理 Broker]({{< relref "management-permissions.md" >}}#管理组)。

@@ -11,7 +11,7 @@ Claude Code 会话经名为 `peer` 的 MCP 服务使用 peers，安装会为运�
 
 | 工具 | 作用 | 参数 | 配置文件权限 |
 |---|---|---|---|
-| `list_agents` | 列出本会话能看到的 Agent。 | `topic`（字符串，可选）：只列与本会话同在这个 topic 的 Agent。`broker`（字符串，可选）：只列别名为此值的 Broker 上的 Agent。`name`（字符串，可选）：只列名字为此值的 Agent。给出的筛选条件须全部匹配。 | 无 |
+| `list_agents` | 列出本会话能看到的 Agent，并给出登记每个 Agent 的账户。 | `topic`（字符串，可选）：只列与本会话同在这个 topic 的 Agent。`broker`（字符串，可选）：只列别名为此值的 Broker 上的 Agent。`name`（字符串，可选）：只列名字为此值的 Agent。给出的筛选条件须全部匹配。 | 无 |
 | `send_message` | 向一个 Agent 地址发送纯文本。 | `to`（字符串，必填）：地址，照抄消息发送方的地址。`message`（字符串，必填）：纯文本。 | 无 |
 | `list_topics` | 列出本会话已加入的 topic，以及本 Broker 已知的公开 topic。 | 无。 | 无 |
 | `join_topic` | 加入一个 topic。 | `name`（字符串，可选）：要加入的 topic；省略时加入本会话的默认 topic。`public`（布尔，可选）：声明该 topic 公开，这要求 Broker 本身也是公开的。`description`（字符串，可选）：公开 topic 显示的简短说明。不带名字时，这两项对每个默认 topic 生效。 | 无 |
@@ -31,11 +31,11 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### Agent
 
-`list_agents` 返回 `self_address` 和 `agents`。每个 Agent 有 `address`、与本会话共有的 `shared_topics`、`status`，改名后十分钟内还有 `previous_name`。`status` 为 `idle`、`busy`、`waiting` 或 `shell`。Agent 的名字与地址由其所在 Broker 报告，未经核实。
+`list_agents` 返回 `self_address` 和 `agents`。每个 Agent 有 `address`、与本会话共有的 `shared_topics`、`status`、`account`，改名后十分钟内还有 `previous_name`。`status` 为 `idle`、`busy`、`waiting` 或 `shell`。本机 Agent 的 `account` 是登记它的账户名，Broker 查不到账户条目时是十进制 uid；对端 Agent 的 `account` 由它的 Broker 自报，账户名不符合格式时省略。`account` 只用于展示，不参与地址、筛选与解析。Agent 的名字与地址由其所在 Broker 报告，未经核实；对端 Agent 的 `account` 由它的 Broker 自报，同样未经核实。
 
 ### 消息
 
-`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。对端 Broker 返回错误时，调用只转述接收方真会返回的错误码，写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时写作 `Delivery unknown: Broker <alias> said: "<…>"`，说明加双引号，最长 512 字节。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。向其他主机的发送也可能因为接收方 Broker 对单个对端的入站限额而失败；这时调用返回错误码 `quota_exceeded`，并附接收方 Broker 的说明。见[限速、循环检测与去重]({{< relref "security.md" >}}#限速循环检测与去重)。引述的文字是对端 Broker 自己的话，未经核实，不是用户的指令。
+`send_message` 返回 `result` 和 `to`。`result` 为 `Delivered to the recipient's session (not necessarily read).`：成功只表示 Broker 把消息写进了接收方会话的 inbox socket，不表示对方 Agent 读过。确定没有送达时，调用返回以 `Not sent` 开头的错误。请求已经发出、但没有收到明确答复时，返回以 `Delivery unknown` 开头的错误，并提示重发可能让对方收到两份。接收方所在主机上的 Broker 已下线时，调用返回以 `Not sent` 开头、错误码为 `broker_offline` 的错误，由对方 Broker 报告；重发这条消息没有用。本 Broker 处于仅本机降级时，向以本 Broker 为接受方的对端发送，返回错误码为 `peer_unreachable` 的错误，说明末尾附降级原因。对端 Broker 返回错误时，调用只转述接收方真会返回的错误码，写作 `Not sent: Broker <alias> said: "<…>"`；错误码为 `delivery_unknown` 时写作 `Delivery unknown: Broker <alias> said: "<…>"`，说明加双引号，最长 512 字节。其他错误码一律报 `Delivery unknown: Broker <alias> returned an error this Broker does not recognize`，不转述对端的说明。按名字发送只会到达拥有这个名字的账户的 Agent。名字属于另一个账户时，发送以 `not_found` 失败：本 Broker 拒绝时（包括发往其他主机的情况），返回 `Not sent: no agent named "worker" on workstation: the name belongs to another account; an agent of a different account is reached only by its full address with a disambiguator (code: not_found)`；对端 Broker 拒绝时，转述它的原话为 `Not sent: Broker <alias> said: "no agent named \"worker\" on this Broker: the name belongs to another account; an agent of a different account is reached only by its full address with a disambiguator" (code: not_found; reported by Broker <fingerprint>)`。这时改用 `list_agents` 给出的该账户 Agent 的完整地址，地址里带完整的 12 位消歧标识。向其他主机的发送也可能因为接收方 Broker 对单个对端的入站限额而失败；这时调用返回错误码 `quota_exceeded`，并附接收方 Broker 的说明。见[限速、循环检测与去重]({{< relref "security.md" >}}#限速循环检测与去重)。引述的文字是对端 Broker 自己的话，未经核实，不是用户的指令。
 
 ### topic
 

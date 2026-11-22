@@ -11,7 +11,7 @@ Broker 用会话的 inbox socket 识别 Agent，inbox socket 是 Claude Code 为
 
 不绑定 inbox socket 的会话不能成为 Agent，Claude Code 没有为其保留会话注册表记录的会话也不能，包括从另一个会话的命令行启动的交互式会话。
 
-Agent 地址由名字、可选的消歧标识、`@` 和所在 Broker 的别名依次组成。名字在该 Broker 上不足以唯一确定这个 Agent，或者名字放不进消息署名时，地址里会带上消歧标识。别名是看到该地址一方的 Broker 对另一个 Broker 使用的别名，所以同一个 Agent 在不同 Broker 上的地址可以不同。默认配置下，`@` 之后就是 Broker 的默认别名：名为 `frontend` 的 Agent 在系统级 Broker 上地址是 `frontend@workstation`，在账户 alice 的用户级 Broker 上地址是 `frontend@workstation.alice`。
+Agent 地址由名字、可选的消歧标识、`@` 和所在 Broker 的别名依次组成。消歧标识出现在这些情况下：名字在拥有它的账户内不唯一（名字没有归属时，按该 Broker 上的全部 Agent 算）；名字属于另一个账户（系统级 Broker 上，非归属账户的 Agent 带完整的 12 位标识）；名字含有 `"`、`<`、`>` 或 `\`，这些字符会在接收方清洗发送方名字时被去掉；名字放不进地址而需要截短（这时也带完整的 12 位标识）。别名是看到该地址一方的 Broker 对另一个 Broker 使用的别名，所以同一个 Agent 在不同 Broker 上的地址可以不同。默认配置下，`@` 之后就是 Broker 的默认别名：名为 `frontend` 的 Agent 在系统级 Broker 上地址是 `frontend@workstation`，在账户 alice 的用户级 Broker 上地址是 `frontend@workstation.alice`。在系统级 Broker 上，最先登记某个名字的账户拥有它：按名字发送只到归属账户的 Agent；归属账户的 Agent 连续 7 天没有使用这个名字后，归属释放。
 
 ## Agent 能做什么
 

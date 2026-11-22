@@ -14,6 +14,7 @@ The Broker keeps its configuration, identity, peer table, directory and audit lo
 | `~/.peers/identity.crt` | The self-signed certificate that matches the key, mode `0600`. |
 | `~/.peers/peers.json` | Paired peers, mode `0600`. |
 | `~/.peers/directory.json` | Broker cards and public-topic declarations this Broker knows. |
+| `~/.peers/name-owners.json` | The account that owns each name, mode `0600`. |
 | `~/.peers/audit.log` | Audit log, mode `0600`. |
 | `/tmp/peers-<uid>/broker.sock` | Local socket, mode `0600`. |
 | `/tmp/peers-<uid>/broker.lock` | Account lock that allows one Broker per account. |
@@ -33,6 +34,7 @@ Every minute, the Broker sets the account lock, the runtime directory and the lo
 | `/var/lib/peers/identity.crt` | The matching self-signed certificate, mode `0600`. |
 | `/var/lib/peers/peers.json` | Paired peers, mode `0600`. |
 | `/var/lib/peers/directory.json` | Broker cards and public-topic declarations this Broker knows. |
+| `/var/lib/peers/name-owners.json` | The account that owns each name, mode `0600`. |
 | `/var/lib/peers/admin-group` | The name of the admin group this installation created, if it created one, mode `0600`. |
 | `/var/log/peers/audit.log` | Audit log, mode `0600`. |
 | `/run/peers/broker.sock` | Local socket, on Linux. |

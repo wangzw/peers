@@ -103,6 +103,10 @@ topic 是 Agent 之间可见与通信的范围。同一个项目里工作的会�
 
 对方主机上的会话从你这台 Broker 收消息太快，超过了接收方 Broker 的限额。它按来源 Broker 与目标会话分别计算，连续最多 10 条，之后每 10 秒恢复 1 条，所以其他主机和其他会话不受影响。按报错里给出的秒数等待后重发即可；见[限速、循环检测与去重]({{< relref "security.md" >}}#限速循环检测与去重)。
 
+## `send_message` 说名字属于另一个账户
+
+在系统级 Broker 上，最先登记某个名字的账户拥有它，按名字发送只到归属账户的 Agent。名字属于另一个账户时，发送以 `not_found` 失败，错误说明会写明这一点。这时改用 `list_agents` 给出的该账户 Agent 的完整地址，地址里带完整的 12 位消歧标识。归属账户的 Agent 连续 7 天没有使用这个名字后，归属释放，同一个短地址之后可能到达另一个账户的 Agent。
+
 ## 谁能修改 Broker 的配置？
 
 对 Broker 配置文件有写权限的账户可以用 `set_config` 或 `peers config set` 修改配置，用 `create_pairing_key` 或 `peers key create` 生成一次性配对密钥，用 `connect_broker` 与 `disconnect_broker`，或 `peers broker connect` 与 `peers broker disconnect` 配对和解除配对；读权限允许读取配置和审计日志。终端命令按执行命令的账户判定权限。管理组成员不用 `sudo` 就能管理系统级 Broker：`peers service status`、`audit`、`online`、`offline` 加 `--system` 连到它，本账户没有运行自己的用户级 Broker 时，`peers config`、`peers key`、`peers broker` 直接连到它；`peers service start`、`stop`、`restart`、`install`、`remove` 仍需 `sudo`；管理员用 `sudo` 执行命令时，系统级 Broker 按 root 的权限判定。见[管理权限]({{< relref "guides/management-permissions.md" >}})，管理组的说明见[管理组]({{< relref "guides/management-permissions.md" >}}#管理组)一节。
