@@ -62,16 +62,12 @@ func (a *app) run(ctx context.Context, args []string) int {
 
 	var exit *exitError
 	if errors.As(err, &exit) {
-		if exit.code == exitUsage {
-			// A nil cause means the command already printed its own usage.
-			if exit.err != nil {
-				_, _ = fmt.Fprintf(a.stderr, "%s: %v\n", path, exit.err)
-				_, _ = fmt.Fprintf(a.stderr, "Run '%s --help' for usage.\n", path)
-			}
-			return exitUsage
-		}
+		// A nil cause means the command already printed its own diagnostics.
 		if exit.err != nil {
 			_, _ = fmt.Fprintf(a.stderr, "%s: %v\n", path, exit.err)
+		}
+		if exit.code == exitUsage && exit.err != nil {
+			_, _ = fmt.Fprintf(a.stderr, "Run '%s --help' for usage.\n", path)
 		}
 		return exit.code
 	}

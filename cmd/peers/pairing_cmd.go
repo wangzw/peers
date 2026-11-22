@@ -24,10 +24,7 @@ func (a *app) newBrokerCommand() *cobra.Command {
 			Short: "List the Brokers this host knows about",
 			Args:  noPositionalArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				if err := a.deps.runPeerList(cmd.Context(), a.stdout); err != nil {
-					return err
-				}
-				return nil
+				return a.deps.runPeerList(cmd.Context(), a.stdout)
 			},
 		},
 		a.newBrokerConnectCommand(),
@@ -49,10 +46,7 @@ func (a *app) newBrokerConnectCommand() *cobra.Command {
 			if key == "" {
 				return usageErrorf("missing --key")
 			}
-			if err := a.deps.runPeerConnect(cmd.Context(), args[0], key, alias, a.stdout, a.stderr); err != nil {
-				return err
-			}
-			return nil
+			return a.deps.runPeerConnect(cmd.Context(), args[0], key, alias, a.stdout, a.stderr)
 		},
 	}
 	cmd.Flags().String("key", "", "one-time pairing key printed by the other Broker")
@@ -79,10 +73,7 @@ func (a *app) newBrokerDisconnectCommand() *cobra.Command {
 			return names, cobra.ShellCompDirectiveNoFileComp
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := a.deps.runPeerDisconnect(cmd.Context(), args[0], a.stdout); err != nil {
-				return err
-			}
-			return nil
+			return a.deps.runPeerDisconnect(cmd.Context(), args[0], a.stdout)
 		},
 	}
 	return cmd
@@ -100,10 +91,7 @@ func (a *app) newKeyCommand() *cobra.Command {
 		Short: "Create a one-time pairing key",
 		Args:  noPositionalArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := a.deps.runPairingKeyCreate(cmd.Context(), a.stdout); err != nil {
-				return err
-			}
-			return nil
+			return a.deps.runPairingKeyCreate(cmd.Context(), a.stdout)
 		},
 	})
 	return key

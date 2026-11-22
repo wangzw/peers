@@ -73,8 +73,6 @@ func exitCodeFor(f startFailure) int {
 		return exitRuntimeDir
 	case failInvalidListen:
 		return exitUsage
-	case failOther:
-		return exitFailure
 	default:
 		return exitFailure
 	}
