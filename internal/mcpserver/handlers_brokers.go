@@ -19,6 +19,12 @@ const (
 	textNoPeerBroker     = "list_brokers shows the paired Brokers."
 )
 
+// connectBrokerRPCTimeout bounds connect_broker. The Broker spends at most 5s
+// dialing each address (link.dial_timeout by default), 10s on the pairing
+// handshake and 10s on the link Hello, 25s in all; the extra 5s lets the Broker
+// reach its own deadline first and report the precise cause.
+const connectBrokerRPCTimeout = 30 * time.Second
+
 // ListBrokers lists the Brokers this Broker knows. It works before the
 // session is registered, so that a model can inspect the pairing state while
 // registration is still pending.
@@ -144,6 +150,8 @@ func (h *handlers) ConnectBroker(ctx context.Context, in ConnectBrokerIn) (Conne
 		return ConnectBrokerOut{}, err
 	}
 
+	ctx, cancel := withRPCTimeout(ctx, h.connectTimeout, connectBrokerRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.Connect(ctx, &localpb.ConnectRequest{
 		Address:    in.Address,
 		Key:        in.Key,

@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
@@ -378,4 +379,51 @@ func TestSendMessageConcurrentAgentID(t *testing.T) {
 			t.Errorf("agent_id = %q, want agent-7", got)
 		}
 	}
+}
+
+// TestMessagingToolCallTimeouts covers list_agents and send_message. Each
+// returns a tool error instead of waiting for a Broker that never answers.
+func TestMessagingToolCallTimeouts(t *testing.T) {
+	t.Parallel()
+
+	blocked := func(ctx context.Context) error {
+		<-ctx.Done()
+		return status.Error(codes.DeadlineExceeded, "the Broker did not answer")
+	}
+
+	t.Run("list_agents", func(t *testing.T) {
+		t.Parallel()
+		path := fakelocal.SocketPath(t)
+		fakelocal.Start(t, path, fakelocal.Handlers{
+			ListAgents: func(ctx context.Context, _ *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h := messagingTestHandlers(messagingTestClient(t, path), "agent-7")
+		h.listAgentsTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "ListAgents", func() error {
+			_, err := h.ListAgents(context.Background(), ListAgentsIn{})
+			return err
+		})
+		checkBoundedError(t, "ListAgents", err, elapsed, "list_agents failed", "(code: internal)")
+	})
+
+	t.Run("send_message", func(t *testing.T) {
+		t.Parallel()
+		path := fakelocal.SocketPath(t)
+		fakelocal.Start(t, path, fakelocal.Handlers{
+			Send: func(ctx context.Context, _ *localpb.SendRequest) (*localpb.SendResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h := messagingTestHandlers(messagingTestClient(t, path), "agent-7")
+		h.sendTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "SendMessage", func() error {
+			_, err := h.SendMessage(context.Background(), SendMessageIn{To: "you@host", Message: "hi"})
+			return err
+		})
+		checkBoundedError(t, "SendMessage", err, elapsed, "Delivery unknown", "(code: delivery_unknown)")
+	})
 }

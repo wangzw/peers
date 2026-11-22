@@ -123,6 +123,12 @@ type handlers struct {
 	// network I/O and runs no timer. Zero means handlerRPCTimeout; tests set a
 	// short value.
 	rpcTimeout time.Duration
+	// listAgentsTimeout bounds list_agents. Zero means listAgentsRPCTimeout.
+	listAgentsTimeout time.Duration
+	// connectTimeout bounds connect_broker. Zero means connectBrokerRPCTimeout.
+	connectTimeout time.Duration
+	// sendTimeout bounds send_message. Zero means sendMessageRPCTimeout.
+	sendTimeout time.Duration
 }
 
 // preflight returns the Status a tool call may use, or an error whose text is

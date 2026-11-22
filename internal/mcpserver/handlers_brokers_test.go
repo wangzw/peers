@@ -577,4 +577,22 @@ func TestBrokerToolCallTimeouts(t *testing.T) {
 		})
 		checkBoundedError(t, "CreatePairingKey", err, elapsed, "create_pairing_key failed", "(code: internal)")
 	})
+
+	// connect_broker has its own bound because the Broker dials, handshakes and
+	// says Hello before it answers. On a timeout it keeps the connect text.
+	t.Run("connect_broker", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newBrokerHandlersForTest(t, "agent-1", fakelocal.Handlers{
+			Connect: func(ctx context.Context, _ *localpb.ConnectRequest) (*localpb.ConnectResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.connectTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "ConnectBroker", func() error {
+			_, err := h.ConnectBroker(context.Background(), ConnectBrokerIn{Address: "host:17443", Key: "k"})
+			return err
+		})
+		checkBoundedError(t, "ConnectBroker", err, elapsed, "Not connected", "(code: internal)")
+	})
 }

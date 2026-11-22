@@ -2,8 +2,21 @@ package mcpserver
 
 import (
 	"context"
+	"time"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+)
+
+const (
+	// listAgentsRPCTimeout bounds list_agents. The Broker refreshes every
+	// session it knows with a 1s sessionCallTimeout, so 20s covers about twenty
+	// sessions that do not answer; a healthy refresh takes milliseconds.
+	listAgentsRPCTimeout = 20 * time.Second
+	// sendMessageRPCTimeout bounds send_message. The Broker reports the result
+	// within send.request_timeout, 20s by default; the extra 10s lets the
+	// Broker decide whether the message was delivered before the handler gives
+	// up and reports delivery_unknown.
+	sendMessageRPCTimeout = 30 * time.Second
 )
 
 // agentStatusName maps a registered agent status to the word shown to the
@@ -30,6 +43,8 @@ func (h *handlers) ListAgents(ctx context.Context, in ListAgentsIn) (ListAgentsO
 	if err != nil {
 		return ListAgentsOut{}, err
 	}
+	ctx, cancel := withRPCTimeout(ctx, h.listAgentsTimeout, listAgentsRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.ListAgents(ctx, &localpb.ListAgentsRequest{
 		AgentId: st.AgentID,
 		Topic:   in.Topic,
@@ -69,6 +84,8 @@ func (h *handlers) SendMessage(ctx context.Context, in SendMessageIn) (SendMessa
 	if err != nil {
 		return SendMessageOut{}, err
 	}
+	ctx, cancel := withRPCTimeout(ctx, h.sendTimeout, sendMessageRPCTimeout)
+	defer cancel()
 	if _, err := st.Client.Send(ctx, &localpb.SendRequest{
 		AgentId:   st.AgentID,
 		ToAddress: in.To,
