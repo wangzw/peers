@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 
+	"github.com/wangzw/peers/internal/broker/helper"
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
@@ -369,6 +370,37 @@ func TestCheckerErrorIsInternal(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "checking configuration file access failed") {
 		t.Errorf("message %q does not explain the check failure", err)
+	}
+	if handled != 0 {
+		t.Errorf("handler called %d times, want 0", handled)
+	}
+}
+
+// TestCheckerNoSlotIsQuotaExceeded covers the refusal when every permission
+// check slot is taken: the Broker is running and busy, so the call is a quota
+// refusal with a sentence the model can act on, not an internal failure.
+func TestCheckerNoSlotIsQuotaExceeded(t *testing.T) {
+	checker := &fakeAccessChecker{err: fmt.Errorf("helper: access check: %w", helper.ErrNoCheckSlot)}
+	handled := 0
+	err := runAccessUnary(accessUnaryInterceptor(checker, accessPath),
+		accessCallerContext(1000, "alice"),
+		localpb.Local_GetConfig_FullMethodName,
+		func(context.Context, any) (any, error) {
+			handled++
+			return nil, nil
+		})
+	if err == nil {
+		t.Fatal("a checker without a free slot let the call through")
+	}
+	if code := accessErrorCode(t, err); code != localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED {
+		t.Errorf("code = %v, want QUOTA_EXCEEDED", code)
+	}
+	if status.Code(err) != codes.ResourceExhausted {
+		t.Errorf("gRPC code = %v, want ResourceExhausted", status.Code(err))
+	}
+	const want = "Too many configuration access checks are running; try again shortly."
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("message %q does not explain the quota", err)
 	}
 	if handled != 0 {
 		t.Errorf("handler called %d times, want 0", handled)

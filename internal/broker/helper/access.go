@@ -303,8 +303,12 @@ func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need
 	slots := c.slotSet()
 	entry, err := slots.acquireAccount(ctx, key)
 	if err != nil {
+		if errors.Is(err, errAccessSlotTableFull) {
+			c.logBusy(log, key, uid)
+			return false, fmt.Errorf("cannot check access for uid %d: %w", uid, err)
+		}
 		c.logBusy(log, key, uid)
-		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
+		return false, fmt.Errorf("cannot check access for uid %d: %w within %s", uid, ErrNoCheckSlot, humanDuration(timeout))
 	}
 	// Release the exact entry the slot was taken from. Looking the key up again
 	// would find a replacement if the table swept and rebuilt it meanwhile, and
@@ -312,7 +316,7 @@ func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need
 	defer slots.releaseAccount(entry)
 	if err := slots.acquireGlobal(ctx); err != nil {
 		c.logBusy(log, key, uid)
-		return false, fmt.Errorf("cannot check access for uid %d: no check slot became free within %s", uid, humanDuration(timeout))
+		return false, fmt.Errorf("cannot check access for uid %d: %w within %s", uid, ErrNoCheckSlot, humanDuration(timeout))
 	}
 	defer slots.releaseGlobal()
 
@@ -519,6 +523,12 @@ func humanDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%d seconds", seconds)
 }
+
+// ErrNoCheckSlot reports that a permission check could not take a slot before
+// its budget ran out. The Broker is running and too many checks are in
+// progress, which is a quota refusal rather than a broken check: the Broker
+// maps it to quota_exceeded and tells the caller to retry shortly.
+var ErrNoCheckSlot = errors.New("no check slot became free")
 
 // errAccessSlotTableFull reports that the account slot table reached its bound
 // with every entry in use. The check is refused (fail closed) rather than

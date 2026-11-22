@@ -2,9 +2,11 @@ package broker
 
 import (
 	"context"
+	"errors"
 
 	"google.golang.org/grpc"
 
+	"github.com/wangzw/peers/internal/broker/helper"
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
@@ -96,6 +98,13 @@ func (d accessDecision) decide(ctx context.Context, fullMethod string) (context.
 	path := d.configPath()
 	granted, err := d.checker.Check(ctx, who, path, rule.need)
 	if err != nil {
+		if errors.Is(err, helper.ErrNoCheckSlot) {
+			// The Broker is running and its check slots are full, so the call
+			// is refused by a quota, not broken. The model sees a sentence it
+			// can act on and a code that says retrying will work.
+			return ctx, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+				"Too many configuration access checks are running; try again shortly."))
+		}
 		return ctx, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL, "checking configuration file access failed: %v", err))
 	}
 	if granted {

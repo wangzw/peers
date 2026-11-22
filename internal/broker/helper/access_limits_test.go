@@ -302,6 +302,9 @@ func TestCheckNoSlotWithinBudgetFails(t *testing.T) {
 	if !strings.Contains(err.Error(), "no check slot became free") {
 		t.Errorf("Check error = %v, want it to name the missing check slot", err)
 	}
+	if !errors.Is(err, ErrNoCheckSlot) {
+		t.Errorf("Check error = %v, want it to wrap ErrNoCheckSlot", err)
+	}
 	select {
 	case <-started:
 		t.Error("a check process started after the slot wait expired")

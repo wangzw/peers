@@ -438,7 +438,7 @@ stateDiagram-v2
 - 用户级 Broker 不做判定。它的配置文件属于本账户，调用方就是本账户。
 - 系统级 Broker 每次判定时派生一个权限检查进程：子进程以 root 身份执行，进入协议循环前依次把附属组、有效组与有效 uid 切换为调用方账户此刻在账户数据库中的对应值，真实与保存的 uid 仍为 root，调用方因此既不能停止也不能读取这个进程。目标 uid 与 gid 已等于子进程的有效身份时不做切换：跳过要求有效 uid 与有效 gid 都相同，而子进程由 Broker 以 root 启动，只有检查的目标账户也是 root 时才满足，不存在以 root 的有效身份替其他账户判定的失效开放。子进程以隐藏的子命令 `peers internal access-check` 运行本二进制，对配置文件做一次读或写的访问检查，返回结果后退出。检查直接调用 `faccessat2`（`AT_EACCESS`），按有效身份判定，读检查 `R_OK`，写检查 `W_OK`；文件不存在、调用方没有权限、路径中有一段不是目录等情形判为不允许。判定不根据权限位推算，检查结果因此包含了组权限和访问控制列表的作用。`faccessat2` 要求 Linux 5.8 及以上；内核返回 `ENOSYS` 或 `EPERM` 时，检查按自身失败处理，调用以 `internal` 失败，不退回按权限位推算，因为那样的回退会绕过访问控制列表。macOS 没有独立的 `faccessat2`，`faccessat(AT_EACCESS)` 由内核直接按有效身份判定，没有按权限位推算的回退。子进程的标准错误不继承 Broker，写入的内容被丢弃。检查超时 5 秒、派生失败或子进程报告的有效 uid 与调用方不符时，调用以 `internal` 失败；账户数据库中没有调用方 uid 时判为不允许。
 
-系统级 Broker 同时最多运行 8 个检查进程，每个 uid 最多 2 个。一次检查先查调用方账户，再取该账户的槽，最后取全局槽，因此一个账户占不满全部名额；取槽的等待与检查本身共用 5 秒的超时预算，预算内取不到槽时调用以 `internal` 失败，不放行，并记一条 Warn `access_check_busy`（字段 uid），每个 uid 每分钟至多一条。两个槽都在子进程被回收之后释放，超时被放弃的检查同样在子进程停止后释放。
+系统级 Broker 同时最多运行 8 个检查进程，每个 uid 最多 2 个。一次检查先查调用方账户，再取该账户的槽，最后取全局槽，因此一个账户占不满全部名额；取槽的等待与检查本身共用 5 秒的超时预算，预算内取不到槽时调用以 `quota_exceeded` 失败，说明为 `Too many configuration access checks are running; try again shortly.`，不放行，并记一条 Warn `access_check_busy`（字段 uid），每个 uid 每分钟至多一条。两个槽都在子进程被回收之后释放，超时被放弃的检查同样在子进程停止后释放。
 
 账户查询使用上文的进程级 getent 门，同时最多 4 个，与调用方名字查询合计。查询失败或超时的 uid 不建每 uid 槽条目，按失败拒绝该请求（fail closed）；只有确定“无此账户”才共享未知账户桶并判为不允许，并记一条 Warn `access_check_unknown_account`（字段 uid），所有无账户的 uid 共用一个限频窗口，每分钟至多一条，限频只保存一个时间戳，不随 uid 数增长。账户槽表只保留确实存在的账户，某一账户的槽空闲 5 分钟后删除，另有 4096 条的总上限；总上限已满且没有可删除的空闲条目时，新账户的检查以 `internal` 失败，不扩大表。
 macOS 上，身份切换不经过 `setgroups`：Darwin 的 `setgroups` 与 `initgroups` 的静态组表都受 `NGROUPS`（16）限制，所属组超过 16 个的账户直接切换会得到 `EINVAL`。检查进程先 `setegid` 到账户主组，再以 Darwin 的 `initgroups` 系统调用（`bsd/kern/syscalls.master` 中的 243 号，签名为 `initgroups(u_int gidsetsize, gid_t *gidset, int gmuid)`，没有 libc stub）传入只含主组的静态表和账户 uid 作为 `gmuid`，由内核在判定组成员时经 memberd 解析其余组，最后 `seteuid` 到账户 uid。静态表因此始终不超过 `NGROUPS`，判定仍由内核按账户的完整组成员关系完成，组权限与 ACL 都包含在内。任何一步失败都按检查失败处理，不退回按权限位推算。切换失败时，检查进程把带 errno 的错误写进响应的 `Error` 字段后以失败退出；Broker 读取响应时先看 `Error`，非空就以 `internal` 失败，并用 Warn 记录这段文本，因此 errno 进入 Broker 日志，该响应也不会被判为允许。这个系统调用号是私有接口，由 macOS 的端到端测试守护。
@@ -451,7 +451,7 @@ Linux 上，账户与组经 `getent` 取自系统的账户数据库，来源由 
 
 系统级安装创建管理组并让新配置文件的属组为它，管理员也可以用 `chgrp` 与 `chmod` 把已有文件交给一个组（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`）。管理组等同于可以手工编辑配置文件，不获得配置文件以外的能力。`broker.listen` 的端口小于 1024 时，只在配置文件只有 root 可写时才生效：经 `SetConfig` 修改而调用方不是 root 的返回 `permission_denied`；文件可被组或其他人写入时，热加载保留旧值并记 Warn 与 `config_rejected` 审计，启动时拒绝启动。配置目录 `/etc/peers` 以 root 为属主、组不可写，配置文件写入以 `O_NOFOLLOW` 打开，细节见 [config](design-config.md)。直接编辑配置文件触发的重载没有账户归属，审计的 `account` 与 `actor` 为空。系统级的 `peers update` 不直接替换属 root 的二进制，而是经 `ApplyUpdate` 由 Broker 自己替换并重启；对配置文件有写权限的账户因此不需要 root 就能更新（`REQ-update-007`）。
 
-权限判定由本机接口的 gRPC 拦截器执行，一元调用与流式调用分别由对应的拦截器判定：按调用的完整方法名查表，表项与外部接口契约中的权限表对应，拦截器经服务端选项挂到本机服务上。用户级 Broker 的检查器恒允许，不读文件；系统级的检查器派生权限检查进程，对配置文件做一次读或写的访问检查。表外的调用返回 `internal`；检查器自身失败也返回 `internal`，不放行。权限不足时返回 `permission_denied`，说明缺的是读权限还是写权限，并给出配置文件的路径。`Status` 不因缺少读权限而拒绝：拦截器把读判定记在调用的上下文上，`Status` 据此只省略其他账户的 Agent，对端与链路照常返回。
+权限判定由本机接口的 gRPC 拦截器执行，一元调用与流式调用分别由对应的拦截器判定：按调用的完整方法名查表，表项与外部接口契约中的权限表对应，拦截器经服务端选项挂到本机服务上。用户级 Broker 的检查器恒允许，不读文件；系统级的检查器派生权限检查进程，对配置文件做一次读或写的访问检查。表外的调用返回 `internal`；检查器自身失败返回 `internal`，不放行，每账户或全局名额已占满、预算内取不到检查槽的失败是例外，返回 `quota_exceeded` 并说明稍后重试。权限不足时返回 `permission_denied`，说明缺的是读权限还是写权限，并给出配置文件的路径。`Status` 不因缺少读权限而拒绝：拦截器把读判定记在调用的上下文上，`Status` 据此只省略其他账户的 Agent，对端与链路照常返回。
 
 topic 变更按调用方账户限速。`JoinTopic` 与 `LeaveTopic` 的每一次调用消耗该账户一个令牌，令牌桶容量 64，每秒补充 4 个；令牌不足时返回 `quota_exceeded`，说明稍后再试，不改变成员关系。不带名字的调用由 [mcpserver](design-mcpserver.md) 对每个默认 topic 各调用一次，每个 topic 各消耗一个令牌。注销时的 `LeaveAll` 不限速。用户级 Broker 只有一个账户，系统级 Broker 的各账户各自计数，时间取自 `Deps.Clock`。
 
@@ -735,6 +735,7 @@ drop-in 不在服务定义之内，只在删除数据时删除，因为其中可
 | 名字对应多个可见的 Agent | `ambiguous` | 否 |
 | 调用方与目标不可见 | `not_visible` | 否 |
 | 调用方账户对配置文件没有所需的权限 | `permission_denied` | 否 |
+| 权限检查取不到空闲的检查槽，每账户或全局的名额都已占满 | `quota_exceeded` | 是，稍后重试 |
 | 本 Broker 下线时收到对端的投递请求 | `broker_offline` | 否 |
 | 降级运行中调用不可用的功能：仅诊断时的任何调用，仅本机时的 `CreatePairingKey` | `broker_degraded` | 否 |
 | 当前 Broker 不是由服务管理器启动，`ApplyUpdate` 因此被拒绝 | `failed_precondition` | 否 |
