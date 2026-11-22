@@ -1,179 +1,179 @@
-# Broker 发现
+# Broker discovery
 
-## 问题陈述
+## Problem Statement
 
-用户想连接一台 [Broker](../../glossary.md) 时，需要知道网络里有哪些 Broker、各自能否连上。同时，不愿被人知道的 Broker 不应因为与别人配对就被传播出去。
+When a user wants to connect to a [Broker](../../glossary.md), they need to know which Brokers are on the network and whether each can be reached. At the same time, a Broker that does not want to be known must not be propagated merely because it paired with someone.
 
-## 范围
+## Scope
 
-本文档覆盖 Broker 的公开与不公开、名片在连通网络内的传播与失效、已知 Broker 的列出与状态。
+This document covers a Broker being public or not, the propagation and expiry of cards within the connected network, and the listing and status of known Brokers.
 
-### 范围外
+### Out of Scope
 
-- Agent 与成员名单的传播，由 [topic](prd-topics.md) 规定。
-- 对 Broker 是否可达的主动探测。
-- 依据发现结果自动发起配对。
+- Propagation of agents and rosters, which [topic](prd-topics.md) specifies.
+- Active probing of whether a Broker is reachable.
+- Automatically initiating pairing based on discovery results.
 
-## 参与者
+## Actors
 
-| 参与者 | 权限 |
+| Actor | Authority |
 |---|---|
-| 用户 | 决定本机 Broker 是否公开。 |
-| Agent | 列出本机 Broker 已知的全部 Broker 及其状态。 |
-| 对端 | 向本 Broker 传递它持有的名片。 |
+| User | Decides whether the local Broker is public. |
+| agent | Lists every Broker the local Broker knows and their status. |
+| Peer | Passes to this Broker the cards it holds. |
 
-## 功能需求
+## Functional Requirements
 
 ### REQ-broker-discovery-001
 
-Broker 未在配置中明确设为公开时必须是不公开的。
+A Broker that is not explicitly set public in configuration MUST be not public.
 
-- **验收**：以默认配置启动的 Broker A 与 B 配对，C 与 B 相连而与 A 之间没有链路；C 列出已知 Broker 的结果不含 A。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryPrivateByDefault`
+- **Acceptance**: Brokers A and B started with the default configuration are paired, and C is connected to B with no link to A; C's result of listing known Brokers does not contain A.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryPrivateByDefault`
 
 ### REQ-broker-discovery-002
 
-Broker 设为公开后必须发布名片，名片的内容是它的指纹、别名和对外地址列表，列表可以为空。
+Once set public, a Broker MUST publish a card whose content is its fingerprint, alias and advertised address list, and the list may be empty.
 
-- **验收**：设为公开后，与它没有链路的 Broker 列出已知 Broker 的结果包含它，指纹、别名和对外地址列表与其实际值一致；把监听地址配置为空的公开 Broker，结果中它的对外地址列表为空。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryCardReachesWholeNetwork`；`test/e2e/discovery_test.go` 的 `TestDiscoveryPublicWithoutListen`
+- **Acceptance**: After it is set public, the result of a Broker with no link to it listing known Brokers contains it, with the fingerprint, alias and advertised address list matching its actual values; for a public Broker whose listen address is configured empty, its advertised address list in the result is empty.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryCardReachesWholeNetwork`; `test/e2e/discovery_test.go` `TestDiscoveryPublicWithoutListen`
 
 ### REQ-broker-discovery-003
 
-公开 Broker 的名片必须到达连通网络内的每一个 Broker，不限于它的对端。
+A public Broker's card MUST reach every Broker in the connected network, not only its peers.
 
-- **验收**：A 与 B 已连接，B 与 C 已连接，C 与 D 已连接，其余各对之间没有链路；A 设为公开后，D 列出已知 Broker 的结果包含 A。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryCardReachesWholeNetwork`；`test/e2e/journey_public_broker_test.go` 的 `TestJourneyConnectPublicBroker/main`
+- **Acceptance**: A is connected to B, B to C and C to D, with no links among the other pairs; after A is set public, D's result of listing known Brokers contains A.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryCardReachesWholeNetwork`; `test/e2e/journey_public_broker_test.go` `TestJourneyConnectPublicBroker/main`
 
 ### REQ-broker-discovery-004
 
-Broker 不得把另一个不公开 Broker 的任何信息传给该 Broker 的对端以外的 Broker。
+A Broker MUST NOT pass any information about another non-public Broker to a Broker other than that Broker's peers.
 
-- **验收**：不公开的 A 与 B 已连接，B 与 C 已连接，A 与 C 之间没有链路；C 上任何工具的返回结果和 C 的日志中都不出现 A 的指纹、别名或对外地址。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryPrivateByDefault`
+- **Acceptance**: Non-public A is connected to B and B to C, with no link between A and C; neither the return result of any tool on C nor C's log shows A's fingerprint, alias or advertised address.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryPrivateByDefault`
 
 ### REQ-broker-discovery-005
 
-不公开的 Broker 必须同样能获知连通网络内其他 Broker 的名片。
+A non-public Broker MUST likewise be able to learn the cards of other Brokers in the connected network.
 
-- **验收**：不公开的 A 与 B 已连接，B 持有公开 Broker C 的名片；A 列出已知 Broker 的结果包含 C。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryPrivateBrokerLearnsCards`
+- **Acceptance**: Non-public A is connected to B, and B holds the card of public Broker C; A's result of listing known Brokers contains C.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryPrivateBrokerLearnsCards`
 
 ### REQ-broker-discovery-006
 
-Broker 必须拒绝内容被传递者改动过的名片，以及并非由名片所述 Broker 发布的名片。
+A Broker MUST reject cards whose content a relay has altered, and cards not published by the Broker the card names.
 
-- **验收**：一个对端传来对外地址列表被改动的名片，以及一张冒用他人指纹的名片，接收方列出已知 Broker 的结果不含这两张名片。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryRejectsTamperedCards`
+- **Acceptance**: A peer passes a card whose advertised address list was altered, and a card that uses another's fingerprint; the receiver's result of listing known Brokers does not contain either card.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryRejectsTamperedCards`
 
 ### REQ-broker-discovery-007
 
-名片的有效期必须为 7 天，自发布或最近一次续签起算。
+A card's validity period MUST be 7 days, counted from its publication or most recent renewal.
 
-- **验收**：一张名片在发布后第 6 天仍出现在其他 Broker 的结果中；发布者此后一直离线，第 8 天该名片不再出现。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_expiry_test.go` 的 `TestCardExpiresAfterSevenDays`
+- **Acceptance**: A card still appears in other Brokers' results on the sixth day after publication; the publisher then stays offline, and on the eighth day the card no longer appears.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_expiry_test.go` `TestCardExpiresAfterSevenDays`
 
 ### REQ-broker-discovery-008
 
-在线的公开 Broker 必须每天续签一次自己的名片。
+An online public Broker MUST renew its card once a day.
 
-- **验收**：公开 Broker 持续在线 10 天，期间它的名片始终出现在其他 Broker 的结果中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_expiry_test.go` 的 `TestCardRenewedDaily`
+- **Acceptance**: A public Broker stays online for 10 days, and during this time its card always appears in other Brokers' results.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_expiry_test.go` `TestCardRenewedDaily`
 
 ### REQ-broker-discovery-009
 
-Broker 由公开改为不公开后，它的名片必须在 60 秒内从与它持续连通的各 Broker 的已知 Broker 结果中消失，且不得因其他 Broker 仍持有旧名片而重新出现。当时没有与它连通的 Broker 在重新连通并对账之后才收到撤回，不在此限。
+After a Broker changes from public to not public, its card MUST disappear within 60 seconds from the known-Broker results of the Brokers continuously connected to it, and MUST NOT reappear because another Broker still holds the old card. A Broker not connected to it at the time is not covered by this and receives the revocation only after it reconnects and reconciles.
 
-- **验收**：A 公开后名片到达 C；A 改为不公开，60 秒后 C 的结果不再含 A；此后让一台持有 A 旧名片的 Broker 重新接入网络，C 的结果仍不含 A。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryRevokeWithin60s`
+- **Acceptance**: After A becomes public its card reaches C; A changes to not public, and after 60 seconds C's result no longer contains A; then a Broker holding A's old card is reconnected to the network, and C's result still does not contain A.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryRevokeWithin60s`
 
 ### REQ-broker-discovery-010
 
-Broker 不得接受对端以外的来源传来的名片。
+A Broker MUST NOT accept cards from a source other than a peer.
 
-- **验收**：未配对的 Broker 无法使任何名片出现在本 Broker 列出已知 Broker 的结果中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryRejectsUnpairedSource`
+- **Acceptance**: An unpaired Broker cannot make any card appear in this Broker's result of listing known Brokers.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryRejectsUnpairedSource`
 
 ### REQ-broker-discovery-011
 
-名录保存的记录数量必须有可配置的上限。达到上限后，尚无名片的 Broker 再传来名片时必须拒绝，已存名片的续签不受影响。
+The number of records the directory keeps MUST have a configurable cap. After the cap is reached, a card passed by a Broker that has no card yet MUST be rejected, and renewal of stored cards is unaffected.
 
-- **验收**：把上限配置为 3，让对端传来 5 张互不相同的有效名片，本 Broker 列出已知 Broker 的结果含其中 3 张；这 3 张名片的续签到达后被接受，它们在超过原有效期后仍在结果中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_expiry_test.go` 的 `TestDirectoryTotalLimitKeepsRenewals`
+- **Acceptance**: Set the cap to 3 and have a peer pass 5 distinct valid cards; this Broker's result of listing known Brokers contains 3 of them; when renewals of these 3 cards arrive they are accepted, and they remain in the result past their original validity period.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_expiry_test.go` `TestDirectoryTotalLimitKeepsRenewals`
 
 ### REQ-broker-discovery-012
 
-Agent 必须能列出本机 Broker 已知的全部 Broker，包括全部对端，以及本 Broker 持有其名片的非对端。每一项给出该 Broker 的对外地址列表；是对端的，另标明本方是它的拨号方还是接受方。
+An agent MUST be able to list every Broker the local Broker knows, including all peers and the non-peers whose cards this Broker holds. Each entry gives that Broker's advertised address list; for a peer, it also states whether this side is its dialer or its acceptor.
 
-- **验收**：本 Broker 有两个不公开的对端，一个由本方发起配对，另一个向本方发起配对；本 Broker 另持有一张非对端的名片。结果同时包含这三个 Broker，每一项都带有该 Broker 的对外地址列表，不知道其对外地址的，列表为空；由本方发起配对的对端标明本方是拨号方，向本方发起配对的对端标明本方是接受方。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/links_test.go` 的 `TestLinks/REQ-broker-discovery-012 peers listed` 覆盖对端与角色；非对端名片那一半由 `test/e2e/discovery_test.go` 的 `TestDiscoveryCardReachesWholeNetwork` 覆盖。
+- **Acceptance**: This Broker has two non-public peers, one paired by this side and the other having paired with this side; this Broker also holds a non-peer's card. The result contains all three Brokers, each entry carrying that Broker's advertised address list, empty for one whose advertised address is unknown; the peer paired by this side is marked as this side being the dialer, and the peer that paired with this side is marked as this side being the acceptor.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/links_test.go` `TestLinks/REQ-broker-discovery-012 peers listed` covers peers and roles; the non-peer card half is covered by `test/e2e/discovery_test.go` `TestDiscoveryCardReachesWholeNetwork`.
 
 ### REQ-broker-discovery-013
 
-列出的每个 Broker 必须标明且只标明一种状态：已连接、可连接或不可直达。已连接指当前与它之间有链路；可连接指当前没有链路且知道它至少有一个对外地址；不可直达指当前没有链路且不知道它的任何对外地址。
+Each listed Broker MUST be marked with exactly one status: connected, connectable or unreachable. Connected means there is currently a link to it; connectable means there is currently no link and at least one of its advertised addresses is known; unreachable means there is currently no link and none of its advertised addresses is known.
 
-- **验收**：分别构造这几种情形的 Broker，结果中的状态与情形一一对应。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/links_test.go` 的 `TestLinks/REQ-broker-discovery-013 three statuses`
+- **Acceptance**: Construct Brokers for each of these situations, and the status in the result corresponds one-to-one with the situation.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/links_test.go` `TestLinks/REQ-broker-discovery-013 three statuses`
 
 ### REQ-broker-discovery-014
 
-列出的每个 Broker 必须标明它是否为本 Broker 当前的对端。
+Each listed Broker MUST be marked as to whether it is currently a peer of this Broker.
 
-- **验收**：结果中标为对端的 Broker 与本 Broker 当前的对端完全一致；解除配对后，该 Broker 不再标为对端。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/links_test.go` 的 `TestLinks/REQ-broker-discovery-014 peer flag` 覆盖对端；非对端一半由 `test/e2e/discovery_test.go` 的 `TestDiscoveryCardReachesWholeNetwork` 覆盖。
+- **Acceptance**: The Brokers marked as peers in the result exactly match this Broker's current peers; after unpairing, that Broker is no longer marked as a peer.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/links_test.go` `TestLinks/REQ-broker-discovery-014 peer flag` covers peers; the non-peer half is covered by `test/e2e/discovery_test.go` `TestDiscoveryCardReachesWholeNetwork`.
 
 ### REQ-broker-discovery-015
 
-经同一个对端传入的记录数量必须有单独的可配置上限，使单个对端无法占满名录。
+The number of records accepted over one peer MUST have a separate configurable cap, so that a single peer cannot fill the directory.
 
-- **验收**：把名录上限配置为 10、单个对端的上限配置为 4；一个对端传来 10 条有效记录，只有 4 条被接受，另一个对端此后传来的名片仍被接受。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryPerLinkLimit`
+- **Acceptance**: Set the directory cap to 10 and the per-peer cap to 4; one peer passes 10 valid records and only 4 are accepted, and cards passed later by another peer are still accepted.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryPerLinkLimit`
 
 ### REQ-broker-discovery-016
 
-公开 Broker 的对外地址列表变化后，它必须重新发布名片，使连通网络内的其他 Broker 得到新的列表。
+After a public Broker's advertised address list changes, it MUST republish its card so that other Brokers in the connected network get the new list.
 
-- **验收**：公开 Broker A 与 B 已连接，B 与 C 已连接，A 与 C 之间没有链路；不重启 A，把 A 所在主机默认路由所在接口的地址由 `198.51.100.4` 改为 `198.51.100.9`，此后 C 列出已知 Broker 的结果中 A 的对外地址列表变为 `198.51.100.9:17443`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_address_test.go` 的 `TestCardFollowsAddressChange`
+- **Acceptance**: Public Broker A is connected to B and B to C, with no link between A and C; without restarting A, change the address of the interface carrying A's default route from `198.51.100.4` to `198.51.100.9`, and afterward A's advertised address list in C's result of listing known Brokers becomes `198.51.100.9:17443`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_address_test.go` `TestCardFollowsAddressChange`
 
 ### REQ-broker-discovery-017
 
-名片中含有本 Broker 不认识的地址种类时，Broker 必须忽略该地址而仍然接受并传播这张名片，名片中其余的地址照常可用。
+When a card contains an address kind this Broker does not recognize, the Broker MUST ignore that address and still accept and propagate the card, and the remaining addresses in the card remain usable.
 
-- **验收**：B 与 C 已连接；B 的对端 A 传来一张有效的名片，其对外地址列表含一项 B 不认识的地址种类和一项 `198.51.100.4:17443`。B 列出已知 Broker 的结果包含该名片的发布者，对外地址列表为 `198.51.100.4:17443`，状态为可连接；C 列出已知 Broker 的结果同样包含该发布者。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryUnknownAddressKind`
+- **Acceptance**: B is connected to C; B's peer A passes a valid card whose advertised address list contains one item of an address kind B does not recognize and one `198.51.100.4:17443`. B's result of listing known Brokers contains the card's publisher with an advertised address list of `198.51.100.4:17443` and a status of connectable; C's result of listing known Brokers likewise contains the publisher.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryUnknownAddressKind`
 
 ### REQ-broker-discovery-018
 
-名片中含有书写不合规定的直连地址项的，本 Broker 必须忽略该地址项而仍然接受并传播这张名片，名片中其余地址照常可用。
+When a card contains a direct address item written in a nonconforming way, this Broker MUST ignore that address item and still accept and propagate the card, and the remaining addresses in the card remain usable.
 
-- **验收**：B 与 C 已连接；B 的对端 A 传来一张有效的名片，其对外地址列表含一项带 ESC 字符的地址和一项 `198.51.100.4:17443`。B 列出已知 Broker 的结果包含该名片的发布者，对外地址列表只有 `198.51.100.4:17443`；C 列出已知 Broker 的结果同样包含该发布者。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryMalformedDirectAddress`；单元测试 `internal/directory/validate_test.go` 的 `TestValidDirectAddr`、`internal/directory/views_test.go` 的 `TestBrokersSkipsMalformedDirectAddresses`
+- **Acceptance**: B is connected to C; B's peer A passes a valid card whose advertised address list contains one address with an ESC character and one `198.51.100.4:17443`. B's result of listing known Brokers contains the card's publisher with an advertised address list of only `198.51.100.4:17443`; C's result of listing known Brokers likewise contains the publisher.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryMalformedDirectAddress`; unit tests `TestValidDirectAddr` in `internal/directory/validate_test.go` and `TestBrokersSkipsMalformedDirectAddresses` in `internal/directory/views_test.go`
 
-## 数据需求
+## Data Requirements
 
-名录保存在本机磁盘上，Broker 重启后仍可列出。名片只含指纹、别名和对外地址列表，不含 Agent、topic 成员关系或配置。
+The directory is stored on the local disk and can still be listed after the Broker restarts. A card carries only a fingerprint, an alias and an advertised address list, and no agents, topic membership or configuration.
 
-## 假设与依赖
+## Assumptions and Dependencies
 
-- 公开 Broker 的名片把它的对外地址列表公布给连通网络内的所有 Broker。
-- Broker 是否可直达，以本 Broker 是否知道它的对外地址为准，不保证知道对外地址的 Broker 实际连得上。
-- 本机地址变化之后、新的名片传到各处之前，其他 Broker 持有的是旧的对外地址列表。名片不构成信任依据，与公开 Broker 配对仍需它的配对密钥。
+- A public Broker's card publishes its advertised address list to every Broker in the connected network.
+- Whether a Broker is directly reachable is decided by whether this Broker knows its advertised addresses, and knowing the advertised addresses does not guarantee that the Broker can actually be reached.
+- After the local address changes and before the new card reaches everywhere, other Brokers hold the old advertised address list. A card is not a basis for trust, and pairing with a public Broker still needs its pairing key.
