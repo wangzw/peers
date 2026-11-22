@@ -1,92 +1,92 @@
 # pairing
 
-`pairing` 负责确认另一个 [Broker](../../glossary.md) 的身份并决定是否把它当作对端。它持有本 Broker 的身份密钥与证书，保存对端表，生成和核验配对密钥，执行把一个陌生 Broker 变成对端的握手，记下本方在每对对端中的角色，并管理每个对端的别名与候选地址。握手之后的每次连接只核对指纹，不再涉及密钥。可以把它看作一份只能由用户亲手添加条目的指纹名单。
+`pairing` confirms another [Broker](../../glossary.md)'s identity and decides whether to treat it as a peer. It holds this Broker's identity key and certificate, stores the peer table, creates and verifies pairing keys, runs the handshake that turns a stranger Broker into a peer, records this side's role in each peer pair, and manages each peer's alias and candidate addresses. After the handshake, every connection only checks the fingerprint and involves no key. It can be thought of as a fingerprint list to which only the user can add entries by hand.
 
-## 核心概念
+## Core Concepts
 
-系统里没有证书颁发机构，每个 Broker 的证书都是自签的。TLS 本身只能保证“连接的另一端持有这张证书的私钥”，不能说明那一端是不是用户想连的 Broker。配对握手补上这一步（[ADR-pairing-key-trust](../../adr/adr-pairing-key-trust.md)）：双方用配对密钥各自对“自己的指纹加上自己在本次 TLS 连接中看到的对方指纹”求消息认证码并互相出示。中间人若把连接拆成两段并分别出示自己的证书，双方看到的对方指纹就与本方在认证码中使用的对方指纹不同，认证码对不上；中间人不知道密钥，也无法重算。
+The system has no certificate authority; every Broker's certificate is self-signed. TLS itself guarantees only that "the other end of the connection holds the private key of this certificate", not that this end is the Broker the user wants to connect to. The pairing handshake adds that step ([ADR-pairing-key-trust](../../adr/adr-pairing-key-trust.md)): both sides compute a message authentication code over "their own fingerprint plus the other side's fingerprint they saw in this TLS connection" with the pairing key, and show it to each other. If a man in the middle splits the connection into two segments and shows its own certificate to each, the other side's fingerprint the two sides see differs from the one each used in its authentication code, and the codes do not match; the man in the middle does not know the key and cannot recompute them.
 
-握手成功后信任转移到指纹上，密钥此后是否作废都不影响已有的对端。
+After the handshake succeeds, trust moves to the fingerprint, and whether the key is later invalidated does not affect the existing peer.
 
-指纹是身份，别名只是显示名，而 Agent 地址用的是别名。同一个别名若能指向两个 Broker，地址就会指错对象。本包因此为每个对端维护一个生效别名，并保证本机别名与全部对端的生效别名互不相同：对方自报的别名与已有的冲突时，用本地别名把它区分开。
+A fingerprint is identity, an alias is only a display name, and an agent address uses the alias. If the same alias could point to two Brokers, the address would point to the wrong party. This package therefore maintains an effective alias for each peer and guarantees that the local alias and every peer's effective alias are all different: when the other side's self-reported alias conflicts with an existing one, it is told apart with a local alias.
 
-配对还决定这对对端今后由谁来连。下文把配对握手中凭地址和配对密钥发起配对的一方称为发起方，持有该密钥、接受配对的一方称为接受方；配对完成后，发起方是拨号方，接受方仍是接受方（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。本包把角色记在对端表中，只为本方是拨号方的对端保存候选地址，即拨号时依次尝试的地址，供 [link](design-link.md) 拨号；接受方在握手应答中把自己的对外地址列表告诉发起方，发起方不报告自己的地址。
+Pairing also decides which side connects the pair from now on. Below, the side that initiates pairing by address and pairing key in the pairing handshake is called the initiator, and the side that holds the key and accepts pairing is called the acceptor; after pairing completes, the initiator is the dialer and the acceptor is still the acceptor ([ADR-initiator-redials](../../adr/adr-initiator-redials.md)). This package records the role in the peer table and keeps candidate addresses only for peers on which this side is the dialer, that is the addresses tried in turn when dialing, for [link](design-link.md) to dial; the acceptor tells the initiator its own advertised address list in the handshake reply, and the initiator does not report its own address.
 
-## 职责
+## Responsibilities
 
-- 首次启动时生成身份密钥与自签证书并保存，此后每次启动加载同一份，使指纹保持不变（`REQ-broker-pairing-001`）。
-- 生成一次性配对密钥，并在结果中另附供展示的本机地址；在密钥过期、成功使用一次或验证失败次数达到上限时作废密钥，按时间过期的密钥在过期后 24 小时内仍能凭查找标记认出，以便回复密钥已过期（`REQ-broker-pairing-005` 至 `REQ-broker-pairing-007`、`REQ-broker-pairing-028`）。
-- 配置了预置静态密钥时，接受凭它进行的配对；不生成、不保存预置静态密钥（[ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)，`REQ-broker-pairing-008`、`REQ-broker-pairing-009`、`REQ-broker-pairing-025`）。
-- 作为发起方或接受方执行配对握手，成功后把对方写入对端表并记下本方的角色：发起方是拨号方，接受方是接受方；同一对 Broker 重新配对时，角色按新的发起方重新确定（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)，`REQ-broker-pairing-010` 至 `REQ-broker-pairing-012`、`REQ-broker-pairing-027`）。
-- 持久保存对端表，使配对之后的连接只凭指纹认证，Broker 重启后配对关系仍在（`REQ-broker-pairing-016`、`REQ-broker-pairing-017`）。
-- 为本方是拨号方的对端保存候选地址及其来源和上一次连通的地址，按发起配对时给出的地址、接受方告知的对外地址列表和该对端名片中的列表更新（[ADR-advertised-address](../../adr/adr-advertised-address.md)）。
-- 维护别名：发起配对时别名冲突的要求调用方提供本地别名；接受配对时发生冲突的，以及对方自报的别名日后变更而发生冲突的，自行生成本地别名（`REQ-broker-pairing-004`、`REQ-broker-pairing-024`、`REQ-broker-pairing-026`）。
-- 限制配对尝试的频率，使配对密钥不能被逐个试出。
-- 解除配对时从对端表删除条目，并经注入的接口关闭链路（`REQ-broker-pairing-021`）。
-- 为 `link` 提供 TLS 配置、“指纹是否为对端”与“本方是什么角色”的查询以及候选地址，为 [directory](design-directory.md) 提供签名与验签。
+- On the first startup, generate the identity key and self-signed certificate and save them, and load the same pair on every later startup so the fingerprint stays the same (`REQ-broker-pairing-001`).
+- Generate a one-time pairing key and additionally attach the local address for display in the result; invalidate the key when it expires, has been used successfully once or has reached the verification-failure cap, and a key expired by time is still recognizable by its lookup tag for 24 hours after expiry, so that the reply can say the key has expired (`REQ-broker-pairing-005` to `REQ-broker-pairing-007`, `REQ-broker-pairing-028`).
+- When a pre-provisioned static key is configured, accept pairing done with it; neither generates nor stores the pre-provisioned static key ([ADR-static-pairing-key](../../adr/adr-static-pairing-key.md), `REQ-broker-pairing-008`, `REQ-broker-pairing-009`, `REQ-broker-pairing-025`).
+- Run the pairing handshake as initiator or acceptor, and on success write the other side into the peer table and record this side's role: the initiator is the dialer and the acceptor is the acceptor; when the same pair of Brokers pairs again, the roles are redetermined by the new initiator ([ADR-initiator-redials](../../adr/adr-initiator-redials.md), `REQ-broker-pairing-010` to `REQ-broker-pairing-012`, `REQ-broker-pairing-027`).
+- Persist the peer table, so that a connection after pairing authenticates by fingerprint alone and the pairing relation survives a Broker restart (`REQ-broker-pairing-016`, `REQ-broker-pairing-017`).
+- For peers on which this side is the dialer, store candidate addresses with their source and the last connected address, updating them by the address given when pairing was initiated, the advertised address list the acceptor told and the list in that peer's card ([ADR-advertised-address](../../adr/adr-advertised-address.md)).
+- Maintain aliases: on alias conflict when initiating pairing, require the caller to provide a local alias; on conflict when accepting pairing, and on conflict when the other side's self-reported alias changes later, generate a local alias itself (`REQ-broker-pairing-004`, `REQ-broker-pairing-024`, `REQ-broker-pairing-026`).
+- Limit the rate of pairing attempts so that pairing keys cannot be tried out one by one.
+- On unpairing, delete the entry from the peer table and close the link through the injected interface (`REQ-broker-pairing-021`).
+- Provide `link` with the TLS configuration, the queries "is this fingerprint a peer" and "what role is this side", and candidate addresses, and provide [directory](design-directory.md) with signing and verification.
 
-### 非职责
+### Non-Responsibilities
 
-- 不建立和维护链路，由 `link` 负责。握手所用的连接由 `link` 建立后交来。
-- 不决定是否发起配对。每次配对由一次明确的调用触发（`REQ-broker-pairing-014`），调用来自 [broker](design-broker.md)。
-- 不查名录。握手得到的指纹与名片所载指纹的比对由 `broker` 完成。
-- 不传递配对密钥与地址。它们由用户经系统之外的途径交给对方。
-- 不判定调用方有没有权限生成配对密钥、发起配对或解除配对，由 `broker` 在调用本包之前按调用方账户对配置文件的写权限判定（[ADR-management-by-config-file-permission](../../adr/adr-management-by-config-file-permission.md)，`REQ-broker-config-021`）。
-- 不决定本机默认别名的取法，不计算本机的对外地址列表，不校验、不读写预置静态密钥的配置项，由 [config](design-config.md) 负责；本包只在握手时取用预置静态密钥的取值。
+- Does not establish or maintain links; `link` owns those. The connection the handshake uses is established by `link` and handed over.
+- Does not decide whether to initiate pairing. Every pairing is triggered by an explicit call (`REQ-broker-pairing-014`), coming from [broker](design-broker.md).
+- Does not consult the directory. Comparing the handshake's fingerprint with the fingerprint a card carries is done by `broker`.
+- Does not pass pairing keys and addresses. They are handed to the other side by the user outside the system.
+- Does not decide whether the caller may create a pairing key, initiate pairing or unpair; `broker` decides by the caller's account's write permission on the configuration file before calling this package ([ADR-management-by-config-file-permission](../../adr/adr-management-by-config-file-permission.md), `REQ-broker-config-021`).
+- Does not decide how the local default alias is derived, does not compute the local advertised address list, and does not validate, read or write the pre-provisioned static key's configuration key; [config](design-config.md) owns those, and this package only uses the pre-provisioned static key's value at handshake time.
 
-## 外部接口契约
+## External Interface Contract
 
-供 `broker`、`link`、`directory` 调用，签名稳定。下列方法都在主类型 `*Pairing` 上；`Verify` 与 `FingerprintOf` 是无状态的包级函数，`Fingerprint` 是类型名，与方法 `(*Pairing).Fingerprint()` 同名不冲突。
+Called by `broker`, `link` and `directory`; the signatures are stable. The methods below are all on the main type `*Pairing`; `Verify` and `FingerprintOf` are stateless package-level functions, and `Fingerprint` is a type name, not conflicting with the method `(*Pairing).Fingerprint()` despite the same name.
 
 ```go
-// Open 在 config.Load 之后调用，每个数据目录一个实例。
+// Open is called after config.Load, one instance per data directory.
 func Open(t Transport) (*Pairing, error)
 
 func (p *Pairing) Fingerprint() Fingerprint
-func (p *Pairing) TLSConfig() *tls.Config            // 出示本机证书；握手阶段接受任意对方证书，指纹在握手后核对
+func (p *Pairing) TLSConfig() *tls.Config            // presents the local certificate; in the handshake stage accepts any peer certificate, the fingerprint checked after the handshake
 func (p *Pairing) IsPeer(fp Fingerprint) bool
-func (p *Pairing) Role(fp Fingerprint) Role          // 本方在这对对端中的角色：Dialer 或 Acceptor
+func (p *Pairing) Role(fp Fingerprint) Role          // this side's role in the peer pair: Dialer or Acceptor
 func (p *Pairing) Peers() []Peer
 func (p *Pairing) EffectiveAlias(fp Fingerprint) string
-func (p *Pairing) ResolveAlias(alias string) (Fingerprint, bool) // 只解析已提交的对端
-// SetOwnAlias 由 broker 在装配时以及 broker.alias 每次变更时调用，缓存本机别名。
+func (p *Pairing) ResolveAlias(alias string) (Fingerprint, bool) // resolves only committed peers
+// SetOwnAlias is called by broker during assembly and on each broker.alias change, caching the local alias.
 func (p *Pairing) SetOwnAlias(alias string)
-// AliasConflict 报告 alias 是否已被某个对端或进行中的握手占用；只取本包的锁。
+// AliasConflict reports whether alias is already taken by a peer or an in-progress handshake; takes only this package's lock.
 func (p *Pairing) AliasConflict(alias string) bool
 
-// CreateOneTimeKey 是唯一生成配对密钥的接口；shown 是供展示的本机地址，没有可展示的地址时为空。
+// CreateOneTimeKey is the only interface that creates a pairing key; shown is the local address for display, empty when there is no showable address.
 func (p *Pairing) CreateOneTimeKey() (key string, expires time.Time, shown []string, err error)
-// Connect 凭对方的地址与配对密钥发起配对；shownHost 是 address 中的主机名，只供展示。
+// Connect initiates pairing by the other side's address and pairing key; shownHost is the hostname in address, for display only.
 func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) (peer Peer, shownHost string, err error)
-func (p *Pairing) Accept(conn PairConn) error        // 由 link 在首帧为 PairRequest 时调用
+func (p *Pairing) Accept(conn PairConn) error        // called by link when the first frame is PairRequest
 func (p *Pairing) Unpair(fp Fingerprint) error
 
-func (p *Pairing) ObserveAlias(fp Fingerprint, alias string)                  // 由 link 在收到 Hello 或 PeerInfo 时调用
-func (p *Pairing) ObserveAcceptorAddresses(fp Fingerprint, addresses []config.AdvertisedAddr) // 由 link 在本方是拨号方、收到接受方的 Hello 或 PeerInfo 时调用
-func (p *Pairing) ObserveConnected(fp Fingerprint, address string)                            // 由 link 在拨号连通、链路建立后调用
-func (p *Pairing) UpdateCardAddresses(fp Fingerprint, addresses []config.AdvertisedAddr)      // 由 broker 在接受对端的名片时调用
-func (p *Pairing) Candidates(fp Fingerprint) (addresses []string, last string)                // 供 link 拨号；只含直连地址；本方是接受方时为空
+func (p *Pairing) ObserveAlias(fp Fingerprint, alias string)                  // called by link on receiving Hello or PeerInfo
+func (p *Pairing) ObserveAcceptorAddresses(fp Fingerprint, addresses []config.AdvertisedAddr) // called by link when this side is the dialer and the acceptor's Hello or PeerInfo is received
+func (p *Pairing) ObserveConnected(fp Fingerprint, address string)                            // called by link after the dial connects and the link is established
+func (p *Pairing) UpdateCardAddresses(fp Fingerprint, addresses []config.AdvertisedAddr)      // called by broker when a peer's card is accepted
+func (p *Pairing) Candidates(fp Fingerprint) (addresses []string, last string)                // for link to dial; only direct addresses; empty when this side is the acceptor
 
-func (p *Pairing) PublicKey() []byte              // 本机 32 字节裸 Ed25519 公钥的副本；没有身份时为 nil
+func (p *Pairing) PublicKey() []byte              // a copy of the local 32-byte raw Ed25519 public key; nil when there is no identity
 func (p *Pairing) Sign(data []byte) []byte
 func Verify(pub, data, sig []byte) bool
 func FingerprintOf(pub []byte) Fingerprint
 
-// Transport 由 broker 在装配时注入，其实现在 link 包。
+// Transport is injected by broker during assembly, implemented in the link package.
 type Transport interface {
     PairDial(ctx context.Context, address string, run func(PairConn) error) error
     Drop(fp Fingerprint)
 }
 ```
 
-`PairConn` 是 `link` 交给握手的一条 TLS 连接，`pairing` 只经它收发原始帧，不解析链路帧：
+`PairConn` is a TLS connection `link` hands to the handshake; `pairing` only sends and receives raw frames through it and does not parse link frames:
 
 ```go
 type PairConn interface {
     PeerFingerprint() Fingerprint
     PeerPublicKey() []byte
     RemoteAddr() string
-    // ProtocolVersion 是本次连接使用的链路协议版本；配对把它写进请求并在接受方比较。
+    // ProtocolVersion is the link protocol version this connection uses; pairing writes it into the request and compares it at the acceptor.
     ProtocolVersion() uint32
     Send(ctx context.Context, kind uint32, payload []byte) error
     Receive(ctx context.Context) (kind uint32, payload []byte, err error)
@@ -95,244 +95,244 @@ type PairConn interface {
 }
 ```
 
-`link` 实现 `PairConn` 与 `Transport` 时必须满足下列契约：
+When `link` implements `PairConn` and `Transport` it must satisfy the following contract:
 
-- `ProtocolVersion` 返回该 `Link` 实际使用的链路协议版本，包括测试注入的覆盖值。配对发生在链路 `Hello` 之前，没有独立的配对版本常量，配对帧由链路版本覆盖。
-- 接受方路径：`link` 识别出首帧为 `PairRequest`（kind 100）后把连接交给 `Accept`。适配层必须让 `Accept` 的第一次 `Receive` 返回这一帧，做法可以是在构造适配器时预置首帧，或缓冲后重放。
-- `Send` 与 `Receive` 监听传入 context 的 `Done()`，在它取消或到期时返回 `ctx.Err()`。一次配对的 10 秒期限依靠这一点打断阻塞的读写。
-- `RemoteAddr` 返回对端的 `host:port`。`pairing` 按它得出限流与审计合并所用的来源前缀：IPv4 取 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理并去掉 zone；解析不出 IP 地址的归入同一个未知来源，且不设合并键。
-- `PairDial` 在拨号本身失败时用 `ErrDialFailed` 包装错误，`run` 返回的错误原样返回。`Connect` 只把包装了 `ErrDialFailed` 的错误映射为 `ErrPeerUnreachable`，其余错误按原值返回或按 `PairingError` 处理。
-- `run` 返回 nil 后连接归 `PairDial` 所有：它在同一连接上发送发起方的链路 `Hello`，再把连接转为链路。`Connect` 自己不发送 `Hello`。
-- `Accept` 在发出 `PairDone` 后读取下一帧，要求 kind 为 1（链路的 `Hello`），再用 `Unread` 放回同一帧后提交对端，`link` 随后能再次读到它。其他 kind 按协议错误处理。
-- `Close` 可以重复调用。`run` 返回错误时由 `PairDial` 关闭连接，`Connect` 在出错路径上也会关闭。
+- `ProtocolVersion` returns the link protocol version that `Link` actually uses, including a test-injected override. Pairing happens before the link's `Hello`, there is no separate pairing version constant, and pairing frames are covered by the link version.
+- Acceptor path: after `link` recognizes the first frame as `PairRequest` (kind 100) it hands the connection to `Accept`. The adapter must make `Accept`'s first `Receive` return this frame, either by pre-seeding the first frame when constructing the adapter or by buffering and replaying it.
+- `Send` and `Receive` listen to the given context's `Done()` and return `ctx.Err()` when it is cancelled or expires. A pairing's 10-second deadline relies on this to break a blocked read or write.
+- `RemoteAddr` returns the peer's `host:port`. `pairing` uses it to derive the source prefix for rate limiting and audit merging: a /32 for IPv4, the /64 for IPv6, an IPv4-mapped IPv6 address handled as IPv4 with the zone removed; an address from which no IP can be parsed goes into one unknown source, and sets no merge key.
+- `PairDial` wraps the error with `ErrDialFailed` when dialing itself fails, and returns `run`'s error as-is. `Connect` maps only an error wrapping `ErrDialFailed` to `ErrPeerUnreachable`, returning the rest as-is or handling them as a `PairingError`.
+- After `run` returns nil the connection belongs to `PairDial`: it sends the initiator's link `Hello` on the same connection and then turns the connection into a link. `Connect` does not send `Hello` itself.
+- After sending `PairDone`, `Accept` reads the next frame, requires kind 1 (the link's `Hello`), then puts the same frame back with `Unread` before committing the peer, so `link` can read it again. Another kind is treated as a protocol error.
+- `Close` is callable repeatedly. When `run` returns an error, `PairDial` closes the connection, and `Connect` also closes it on the error path.
 
-一次性配对密钥是系统生成的 80 位随机数，编码为 16 个字符，每 4 个一组以 `-` 分隔，字母表取 Crockford Base32 的 `0123456789ABCDEFGHJKMNPQRSTVWXYZ`（[REF-crockford-base32](../../references.md)），例如 `K7QF-2M9X-HT4C-PWZ3`。预置静态密钥是配置项 `pairing.static_key` 的取值，长度 16 至 128 个字符。两种密钥在握手中都按原样使用，区分大小写；预置静态密钥不套用一次性配对密钥的分组格式与字母表。
+A one-time pairing key is an 80-bit random number the system generates, encoded as 16 characters, grouped in fours separated by `-`, with the alphabet Crockford Base32's `0123456789ABCDEFGHJKMNPQRSTVWXYZ` ([REF-crockford-base32](../../references.md)), for example `K7QF-2M9X-HT4C-PWZ3`. A pre-provisioned static key is the value of the configuration key `pairing.static_key`, 16 to 128 characters. Both keys are used as-is in the handshake, case-sensitively; the pre-provisioned static key does not follow the one-time pairing key's grouping format and alphabet.
 
-`CreateOneTimeKey` 的 `shown` 是本机对外地址列表中每一项的展示写法，首项在前，形如 `buildbox(192.168.1.10:17443)` 或 `buildbox([2001:db8::1]:17443)`：括号外是 `config` 给出的系统主机名，括号里是这一项 `Addr` 的写法，直连项即 `主机:端口`。展示不是密钥的一部分，也不与密钥绑定（`REQ-broker-pairing-028`）。
+`CreateOneTimeKey`'s `shown` is the display spelling of each item of the local advertised address list, the first item first, in the form `buildbox(192.168.1.10:17443)` or `buildbox([2001:db8::1]:17443)`: outside the parentheses is the system hostname `config` gives, inside is the spelling of this item's `Addr`, that is `host:port` for a direct item. The display is not part of the key and is not bound to it (`REQ-broker-pairing-028`).
 
-`Connect` 的 `address` 有两种写法：`地址:端口`，或接受方生成密钥时展示的 `主机名(地址:端口)`。后一种写法只取括号里的部分用于拨号；主机名部分被读取后只作为 `shownHost` 交回调用方展示，不用于拨号，不参与身份的判定，也不记入候选地址。地址是 IP 地址或域名，IPv6 地址带方括号，端口不可省略。
+`Connect`'s `address` has two spellings: `address:port`, or the `hostname(address:port)` shown by the acceptor when creating a key. In the latter, only the part inside the parentheses is used for dialing; the hostname part, once read, is returned to the caller as `shownHost` for display only, and is not used for dialing, does not take part in identity, and is not recorded as a candidate address. The address is an IP address or domain name, an IPv6 address in brackets, and the port cannot be omitted.
 
-别名由字母、数字、`.`、`-`、`_` 组成，长度 1 至 24，本地别名同样如此（`REQ-broker-pairing-037`）。本机自报的别名取自 `config`：配置了 `broker.alias` 时取它，否则是按主机名与账户得出的默认别名，系统级形如 `buildbox`，用户级形如 `buildbox.alice`（`REQ-broker-pairing-002`）。
+An alias consists of letters, digits, `.`, `-`, `_`, length 1 to 24, and a local alias likewise (`REQ-broker-pairing-037`). The local self-reported alias comes from `config`: it takes the configured `broker.alias`, otherwise the default alias derived from the hostname and account, in the form `buildbox` for the system form and `buildbox.alice` for the user form (`REQ-broker-pairing-002`).
 
-## 依赖
+## Dependencies
 
-`pairing` 引用 `config`，用来读取别名、系统主机名、本方的对外地址列表、预置静态密钥、数据目录的位置和各项限制，并把配对与别名事件交给它写入审计日志。它不引用 `link`：发起握手所需的拨号和解除配对所需的关闭链路，经 `Transport` 接口由 `broker` 注入；`link` 引用本包，方向与模块依赖图一致。
+`pairing` references `config` to read the alias, the system hostname, this side's advertised address list, the pre-provisioned static key, the data directory's location and the various limits, and to hand it pairing and alias events to write into the audit log. It does not reference `link`: dialing for the handshake and closing the link for unpairing are injected by `broker` through the `Transport` interface; `link` references this package, the direction matching the module dependency graph.
 
-## UML 图
+## UML Diagrams
 
-下图是一次配对握手。`PairRequest` 携带发起方随机数、查找标记与发起方使用的协议版本；查找标记由配对密钥、本次随机数与发起方指纹算出，接受方据此找出发起方用的是哪个密钥，算式见核心数据结构。发起方在收到 `PairDone` 后写入对端表；接受方验证通过后先把对方记为待提交的条目，在同一连接上收到发起方的首个 `Hello` 时才写入对端表。只有接受方的应答带对外地址列表，发起方不报告自己的地址。发起方在验证 `mr` 之后才在 `PairConfirm` 中带出自己的别名。
+The diagram below is one pairing handshake. `PairRequest` carries the initiator's nonce, the lookup tag and the protocol version the initiator uses; the lookup tag is computed from the pairing key, this nonce and the initiator's fingerprint, and the acceptor uses it to find which key the initiator used, the formula being in Core Data Structures. The initiator writes the peer table after receiving `PairDone`; the acceptor, after verification passes, first records the other side as a pending entry, writing the peer table only when it receives the initiator's first `Hello` on the same connection. Only the acceptor's reply carries the advertised address list, and the initiator does not report its own address. The initiator carries its own alias in `PairConfirm` only after verifying `mr`.
 
-接受方先比较协议版本，版本不同即回 `PairReject`；在找不到相符的密钥、密钥已过期、尝试次数超过限制或验证 `mi` 失败时也回 `PairReject` 并关闭连接。握手超过期限时只关闭连接，不发帧。发起方收到 `PairReject`，或在 `PairDone` 之前连接被关闭，都得到 `pairing_rejected`，说明以 `Not connected` 开头；发起方本地的握手超时同样映射为 `pairing_rejected`。
+The acceptor compares the protocol version first and replies `PairReject` when they differ; it also replies `PairReject` and closes the connection when no matching key is found, the key has expired, the attempt count exceeds the limit, or verifying `mi` fails. When the handshake exceeds the deadline it only closes the connection without sending a frame. The initiator gets `pairing_rejected` on receiving `PairReject` or on the connection being closed before `PairDone`, the explanation beginning with `Not connected`; the initiator's own local handshake timeout is likewise mapped to `pairing_rejected`.
 
 ```mermaid
 sequenceDiagram
-    participant I as 发起方 pairing
-    participant R as 接受方 pairing
-    Note over I,R: TLS 已建立，双方各自记下对方证书的指纹
-    I->>R: PairRequest（发起方随机数 ni，查找标记，协议版本）
-    R->>R: 先比较协议版本；再从一次性配对密钥、已过期密钥记录与预置静态密钥中按查找标记确定密钥
-    alt 协议版本不同，或没有相符的密钥、密钥已过期或尝试过于频繁
-        R->>I: PairReject（版本不兼容、密钥无效、密钥已过期或稍后再试）
-        R->>R: 关闭连接
-    else 找到密钥
-        R->>I: PairChallenge（接受方随机数 nr，接受方别名，接受方的对外地址列表，认证码 mr）
-        I->>I: 用密钥验证 mr，检查别名冲突
-        I->>R: PairConfirm（认证码 mi，发起方别名）
-        R->>R: 用当前的密钥验证 mi
-        alt 验证失败
-            R->>I: PairReject（验证失败）
-            R->>R: 关闭连接
-        else 验证通过
-            R->>R: 作废一次性密钥，记下待提交的条目
+    participant I as Initiator pairing
+    participant R as Acceptor pairing
+    Note over I,R: TLS established, each side records the other certificate's fingerprint
+    I->>R: PairRequest (initiator nonce ni, lookup tag, protocol version)
+    R->>R: compare the protocol version first, then determine the key by the lookup tag from the one-time pairing keys, expired-key records and the pre-provisioned static key
+    alt protocol versions differ, or no matching key, key expired or attempts too frequent
+        R->>I: PairReject (version incompatible, key invalid, key expired or try later)
+        R->>R: close the connection
+    else key found
+        R->>I: PairChallenge (acceptor nonce nr, acceptor alias, acceptor's advertised address list, authentication code mr)
+        I->>I: verify mr with the key, check the alias conflict
+        I->>R: PairConfirm (authentication code mi, initiator alias)
+        R->>R: verify mi with the current key
+        alt verification fails
+            R->>I: PairReject (verification failed)
+            R->>R: close the connection
+        else verification passes
+            R->>R: invalidate the one-time key, record the pending entry
             R->>I: PairDone
-            I->>I: 写入对端表，本方是拨号方，记下候选地址
-            I->>R: Hello（同一连接）
-            R->>R: 提交条目，写入对端表，本方是接受方
+            I->>I: write the peer table, this side is the dialer, record the candidate addresses
+            I->>R: Hello (same connection)
+            R->>R: commit the entry, write the peer table, this side is the acceptor
         end
     end
 ```
 
-## 核心数据结构
+## Core Data Structures
 
-配对握手的帧：
+The pairing handshake frames:
 
-| 帧 | kind | 类别 | 内容 |
+| Frame | kind | Class | Content |
 |---|---|---|---|
-| `PairRequest` | 100 | 状态帧 | 发起方随机数 ni、查找标记、协议版本 |
-| `PairChallenge` | 101 | 状态帧 | 接受方随机数 nr、接受方别名、接受方的对外地址列表、认证码 mr |
-| `PairConfirm` | 102 | 状态帧 | 认证码 mi、发起方别名 |
-| `PairDone` | 103 | 状态帧 | 无载荷 |
-| `PairReject` | 104 | 状态帧 | 拒绝原因：密钥无效、密钥已过期、验证失败、稍后再试或版本不兼容 |
+| `PairRequest` | 100 | state frame | Initiator nonce ni, lookup tag, protocol version |
+| `PairChallenge` | 101 | state frame | Acceptor nonce nr, acceptor alias, acceptor's advertised address list, authentication code mr |
+| `PairConfirm` | 102 | state frame | Authentication code mi, initiator alias |
+| `PairDone` | 103 | state frame | No payload |
+| `PairReject` | 104 | state frame | Rejection reason: key invalid, key expired, verification failed, try later or version incompatible |
 
-配对握手的帧都是状态帧，不带请求号，也不产生应答。线上的拒绝原因只有密钥无效、密钥已过期、验证失败、稍后再试与版本不兼容；握手超时不是线上原因，由发起方在本地判定。
+The pairing handshake frames are all state frames, carrying no request id and producing no reply. The on-wire rejection reasons are only key invalid, key expired, verification failed, try later and version incompatible; a handshake timeout is not an on-wire reason, judged by the initiator locally.
 
-| 结构 | 内容 | 存放 |
+| Structure | Content | Storage |
 |---|---|---|
-| 身份 | Ed25519 私钥与自签证书，证书不含主机名 | 数据目录内的 `identity.key`、`identity.crt` |
-| 对端表 | 每个对端的指纹、公钥、对方自报的别名、本地别名、对方在本次对端关系中放弃过的生效别名（至多 8 个）、本方的角色、配对时间；本方是拨号方的，另有候选地址及其来源和上一次连通的地址 | 数据目录内的 `peers.json` |
-| 一次性配对密钥表 | 密钥、生成时间、验证失败次数 | 仅内存 |
-| 已过期密钥的记录 | 按时间过期的一次性配对密钥及其保留截止时间（过期时刻加 24 小时）；只用于计算查找标记，不用于验证，至多 64 条，超出时先丢弃截止时间最早的 | 仅内存 |
-| 配对尝试计数 | 当前这一分钟内既没有匹配上一次性配对密钥、已过期密钥记录，也没有匹配上预置静态密钥的请求数，按来源分别计数并另记全部来源的合计；来源取 IPv4 /32 或 IPv6 /64，解析不出 IP 地址的归入同一个未知来源，分钟变化时整表清空 | 仅内存 |
-| 待提交的条目 | 接受方已验证、尚未收到发起方 `Hello` 的对方信息 | 仅内存，随握手所在的连接存续 |
+| Identity | Ed25519 private key and self-signed certificate, the certificate carrying no hostname | `identity.key`, `identity.crt` in the data directory |
+| Peer table | Each peer's fingerprint, public key, self-reported alias, local alias, effective aliases the other side has abandoned in the current peer relation (at most 8), this side's role, pairing time; for a peer on which this side is the dialer, also the candidate addresses with their source and the last connected address | `peers.json` in the data directory |
+| One-time pairing key table | Key, creation time, verification-failure count | Memory only |
+| Expired-key records | Time-expired one-time pairing keys and their retention deadline (the expiry instant plus 24 hours); used only to compute the lookup tag, not for verification, at most 64, dropping the earliest deadline first when exceeded | Memory only |
+| Pairing attempt counter | The number of requests in the current minute that matched neither a one-time pairing key nor an expired-key record nor the pre-provisioned static key, counted separately by source with an additional total across all sources; the source is IPv4 /32 or IPv6 /64, an address from which no IP can be parsed going into one unknown source; the whole table is cleared when the minute changes | Memory only |
+| Pending entry | The other side's information that the acceptor has verified and not yet received the initiator's `Hello` for | Memory only, lasting as long as the connection carrying the handshake |
 
-数据目录的位置由 `config` 按部署形态给出。同一主机上的每个 Broker 实例各有自己的数据目录，因而各有自己的身份与对端表。指纹是证书公钥信息的 SHA-256，显示时取十六进制；监听地址与对外地址都不参与身份的判定。对端的生效别名是它的本地别名，没有本地别名时是它自报的别名。对方自报的别名不符合别名规则时，对端表保存规整值，不保存原值：把不属于别名字符集的字符换成 `-`，再截短到 24 个字符，结果可以为空；该别名能否作为生效别名仍按原值判定。预置静态密钥不在数据目录中，只在配置文件里。
+The data directory's location is given by `config` by deployment form. Each Broker instance on one host has its own data directory and thus its own identity and peer table. A fingerprint is the SHA-256 of the certificate's public key information, shown as hex; neither the listen address nor the advertised address takes part in identity. A peer's effective alias is its local alias, or, without a local alias, its self-reported alias. When the other side's self-reported alias does not meet the alias rules, the peer table stores a normalized value, not the original: characters outside the alias character set are replaced by `-`, then the result is truncated to 24 characters and may be empty; whether the alias can be an effective alias is still judged by the original value. The pre-provisioned static key is not in the data directory, only in the configuration file.
 
-候选地址按来源分别保存，每个来源只保留最近一次给出的列表，每个列表至多 8 项：`acceptor` 是接受方在 `PairChallenge`、`Hello` 或 `PeerInfo` 中告知的对外地址列表，类型是 `[]config.AdvertisedAddr`；`card` 是该对端名片所载的列表，类型相同；`pairing` 是发起配对时拨通的地址。候选地址只含本版本认识且可拨号的地址项：`acceptor` 与 `card` 两个来源的列表中种类不认识的项，以及 `Addr` 不是合法 `主机:端口` 的项，都在记入时跳过，不保存，也不用于拨号，列表中其余的项照常记入（[ADR-advertised-address](../../adr/adr-advertised-address.md)）。`Addr` 的写法与发起配对时用于拨号的地址遵循同一规则：主机是 IP 地址或域名，IPv6 地址带方括号，端口是 1 到 65535 的十进制数；`主机名(地址:端口)` 的展示写法不接受。域名以 `.` 分隔成标签，每个标签是 1 至 63 个 ASCII 字母、数字、`-` 或 `_`，不以 `-` 开头或结尾，整个域名至多 253 字节；完全限定名可以带一个末尾的 `.`，校验时去掉这个点，末尾带两个点则剩下一个空标签，按不合法拒绝。`config` 校验 `broker.advertise` 与 `broker.advertise_extra` 时按同一规则判断，因此不符合这条规则的配置在加载时就被拒绝，不会留到记入对端表时才被丢掉。`Candidates` 返回按 `acceptor`、`card`、`pairing` 的顺序合并去重并跳过种类不认识的项后的直连地址（`主机:端口`），以及上一次连通的地址。本方是接受方的对端不保存候选地址；重新配对使本方成为接受方时，原有的候选地址随之删除。
+Candidate addresses are stored separately by source, each source keeping only the most recently given list, each list at most 8 items: `acceptor` is the advertised address list the acceptor told in `PairChallenge`, `Hello` or `PeerInfo`, of type `[]config.AdvertisedAddr`; `card` is the list the peer's card carries, of the same type; `pairing` is the address dialed when pairing was initiated. A candidate address contains only address items this version recognizes and can dial: an item of an unrecognized kind in the `acceptor` and `card` sources, and an item whose `Addr` is not a legal `host:port`, are skipped when recording, not stored and not used for dialing, while the rest of the list is recorded as usual ([ADR-advertised-address](../../adr/adr-advertised-address.md)). `Addr`'s spelling follows the same rules as the address used for dialing when initiating pairing: the host is an IP address or domain name, an IPv6 address in brackets, the port a decimal number from 1 to 65535; the display spelling `hostname(address:port)` is not accepted. A domain name is split by `.` into labels, each 1 to 63 ASCII letters, digits, `-` or `_`, not starting or ending with `-`, the whole name at most 253 bytes; a fully qualified name may carry one trailing `.`, dropped during validation, and two trailing dots leave an empty label, rejected as invalid. `config` judges `broker.advertise` and `broker.advertise_extra` by the same rule, so a configuration that does not meet it is rejected when loading and does not wait to be dropped when recording into the peer table. `Candidates` returns the direct addresses (`host:port`), merged and deduplicated in the order `acceptor`, `card`, `pairing` and with unrecognized-kind items skipped, and the last connected address. A peer on which this side is the acceptor keeps no candidate addresses; when pairing again makes this side the acceptor, the existing candidate addresses are deleted with it.
 
-认证码与查找标记的计算，`‖` 表示拼接：
+Computing the authentication code and lookup tag, `‖` meaning concatenation:
 
 ```
-标记 = HMAC-SHA256(密钥, "peers pair hint" ‖ ni ‖ 发起方指纹) 的前 8 个字节
-mr   = HMAC-SHA256(密钥, "peers pair responder" ‖ ni ‖ nr ‖ 接受方指纹 ‖ 接受方看到的发起方指纹)
-mi   = HMAC-SHA256(密钥, "peers pair initiator" ‖ ni ‖ nr ‖ 发起方指纹 ‖ 发起方看到的接受方指纹)
+lookup tag = the first 8 bytes of HMAC-SHA256(key, "peers pair hint" ‖ ni ‖ initiator fingerprint)
+mr = HMAC-SHA256(key, "peers pair responder" ‖ ni ‖ nr ‖ acceptor fingerprint ‖ initiator fingerprint as seen by the acceptor)
+mi = HMAC-SHA256(key, "peers pair initiator" ‖ ni ‖ nr ‖ initiator fingerprint ‖ acceptor fingerprint as seen by the initiator)
 ```
 
-`ni`、`nr` 与链路 `Hello` 中的随机数各是 32 字节。标记里的发起方指纹是发起方自己的指纹；接受方对一次性配对密钥、已过期密钥记录与预置静态密钥，都用本次 TLS 连接中看到的发起方指纹重算标记。转发他人标记的中转方出示的是自己的证书，重算结果对不上，匹配不到任何密钥，只按密钥无效计入它自己来源的尝试计数。
+`ni`, `nr` and the nonce in the link `Hello` are each 32 bytes. The initiator fingerprint in the lookup tag is the initiator's own; the acceptor recomputes the tag with the initiator fingerprint it saw in this TLS connection, for one-time pairing keys, expired-key records and the pre-provisioned static key alike. A relay forwarding another's tag presents its own certificate, the recomputation does not match, no key matches, and it only counts as key invalid against its own source's attempt counter.
 
-每一方验证时，把对方算式里的两个指纹换成自己视角下的值：自己看到的对方指纹，以及自己的指纹。连接在中途被拆成出示不同证书的两段时，两个视角不一致，验证失败。两个认证码的标签不同，一方的认证码不能充当另一方的。
+When each side verifies, it replaces the two fingerprints in the other's formula with the values from its own view: the other's fingerprint it sees, and its own fingerprint. When the connection is split midway into two segments presenting different certificates, the two views are inconsistent and verification fails. The two authentication codes have different labels, so one side's code cannot serve as the other's.
 
-## 核心算法与流程
+## Core Algorithms and Flows
 
-### 走查
+### Worked Example
 
-Broker A 按默认配置监听全部地址，系统主机名是 `hostA`，默认路由所在接口的地址是 `192.0.2.10`，对外地址列表只有 `192.0.2.10:17443`；Broker B 位于 NAT 之后，A 连不到 B。A 的用户生成一次性配对密钥，把展示的地址和密钥交给 B 的用户，B 的用户凭它们发起配对。
+Broker A listens on every address under the default configuration, its system hostname is `hostA`, the default-route interface address is `192.0.2.10`, and its advertised address list is only `192.0.2.10:17443`; Broker B sits behind NAT and A cannot reach B. A's user creates a one-time pairing key and gives the shown address and key to B's user, and B's user initiates pairing with them.
 
-| 步骤 | 事件 | A 的密钥表 | A 的对端表 | B 的对端表 |
+| Step | Event | A's key table | A's peer table | B's peer table |
 |---|---|---|---|---|
-| 1 | A 调用 `CreateOneTimeKey`，得到密钥 `K7QF-2M9X-HT4C-PWZ3`，展示 `hostA(192.0.2.10:17443)` | `K7QF…`，失败 0 次 | 空 | 空 |
-| 2 | B 调用 `Connect`，`address` 为 `hostA(192.0.2.10:17443)`，取括号里的地址经注入的 `PairDial` 建立 TLS | 不变 | 空 | 空 |
-| 3 | B 发 `PairRequest`；A 按查找标记找到 `K7QF…`，计算 `mr`，回 `PairChallenge`，带对外地址列表 `192.0.2.10:17443` | 不变 | 空 | 空 |
-| 4 | B 验证 `mr` 通过，别名无冲突，发 `PairConfirm` | 不变 | 空 | 空 |
-| 5 | A 验证 `mi` 通过，删除密钥，把 B 记为待提交 | 空 | 空，B 待提交 | 空 |
-| 6 | A 回 `PairDone`，B 写入 A | 空 | 空，B 待提交 | A，本方是拨号方；候选地址 `192.0.2.10:17443`，来源 `acceptor` 与 `pairing`；上一次连通的也是它 |
-| 7 | B 在同一连接上发 `Hello`；A 收到后提交 B，连接转为链路 | 空 | B，本方是接受方 | A |
+| 1 | A calls `CreateOneTimeKey`, gets key `K7QF-2M9X-HT4C-PWZ3` and shows `hostA(192.0.2.10:17443)` | `K7QF…`, 0 failures | empty | empty |
+| 2 | B calls `Connect` with `address` `hostA(192.0.2.10:17443)`, takes the address inside the parentheses and establishes TLS through the injected `PairDial` | unchanged | empty | empty |
+| 3 | B sends `PairRequest`; A finds `K7QF…` by the lookup tag, computes `mr` and replies `PairChallenge` with advertised address list `192.0.2.10:17443` | unchanged | empty | empty |
+| 4 | B verifies `mr` and passes, the alias has no conflict, B sends `PairConfirm` | unchanged | empty | empty |
+| 5 | A verifies `mi` and passes, deletes the key, records B as pending | empty | empty, B pending | empty |
+| 6 | A replies `PairDone`, B writes A | empty | empty, B pending | A, this side is the dialer; candidate addresses `192.0.2.10:17443` from sources `acceptor` and `pairing`; the last connected is the same |
+| 7 | B sends `Hello` on the same connection; A commits B on receiving it and the connection becomes a link | empty | B, this side is the acceptor | A |
 
-`hostA` 只作为 `shownHost` 出现在 B 的配对结果中，供 B 的用户核对，不进入 B 的对端表。A 没有记下 B 的任何地址，链路断开后只由 B 重新连入；B 在 `Hello` 中不报告自己的地址。A 在第 7 步的 `Hello` 中再次给出对外地址列表，与 `PairChallenge` 中的相同，B 的候选地址不变。
+`hostA` appears only as `shownHost` in B's pairing result for B's user to check, and does not enter B's peer table. A records none of B's addresses, and after the link goes down only B reconnects in; B does not report its own address in `Hello`. A again gives the advertised address list in the `Hello` at step 7, the same as in `PairChallenge`, so B's candidate addresses are unchanged.
 
-A 收到 B 的 `Hello` 之前的任何一处失败，A 的对端表都保持不变。`PairDone` 丢失时，B 没有写入 A，A 在连接关闭时丢弃待提交的 B，两边都没有对方；B 的用户看到失败，A 的密钥已作废，A 的用户重新生成密钥后 B 再次发起即可。`PairDone` 到达而 B 的 `Hello` 没有到达时，B 已有 A 而 A 没有 B；B 的 `Hello` 到达后 A 提交失败时结果相同，B 已有 A 而 A 没有 B。两种情形都会造成双方状态不一致：B 此后的拨号遭 A 拒绝，B 的用户重新配对即可恢复。提交失败时 A 不保留待提交的条目，原有的链路也不变。
+Any failure at A before it receives B's `Hello` leaves A's peer table unchanged. When `PairDone` is lost, B has not written A, A discards the pending B when the connection closes, and neither side has the other; B's user sees the failure, A's key has been invalidated, and A's user creating a new key lets B initiate again. When `PairDone` arrives but B's `Hello` does not, B has A but A does not have B; when B's `Hello` arrives and A's commit fails the result is the same, B has A and A does not have B. Both cases make the two sides inconsistent: B's later dialing is rejected by A, and B's user pairing again recovers. On a commit failure A keeps no pending entry and the existing link is unchanged.
 
-### 生成配对密钥
+### Creating a Pairing Key
 
-`CreateOneTimeKey` 只生成一次性配对密钥，本包不生成其他密钥（`REQ-broker-pairing-025`）。监听地址配置为空的 Broker 无法由对方拨到，不生成密钥，返回 `invalid_argument`，[mcpserver](design-mcpserver.md) 在错误后补上提示，要求用户经 peers 之外的途径向对方主机的用户取得密钥、再用 `connect_broker` 发起配对，不向其他 Agent 索取密钥（`REQ-broker-pairing-036`）。
+`CreateOneTimeKey` creates only a one-time pairing key, and this package creates no other key (`REQ-broker-pairing-025`). A Broker whose listen address is configured empty cannot be dialed by the other side, creates no key and returns `invalid_argument`, and [mcpserver](design-mcpserver.md) adds a hint after the error, requiring the user to obtain the key from the other host's user outside peers and then initiate pairing with `connect_broker`, not requesting a key from another agent (`REQ-broker-pairing-036`).
 
-一次性配对密钥在生成 10 分钟后过期，这个时长不可配置；过期的密钥移出密钥表，转入已过期密钥的记录，保留 24 小时后删除。成功使用一次或验证失败次数达到上限而作废的密钥直接删除，不留记录。同一时刻可以有多个未过期的密钥并存。
+A one-time pairing key expires 10 minutes after creation, a duration not configurable; an expired key is moved out of the key table into the expired-key records and kept for 24 hours then deleted. A key invalidated by one successful use or by reaching the verification-failure cap is deleted directly with no record kept. Several unexpired keys can coexist at one time.
 
-结果中的展示取自 `config` 给出的对外地址列表与系统主机名，见外部接口契约。对外地址列表为空而 Broker 在监听时，即没有配置含主机的对外地址、也没有默认路由，照常生成密钥，`shown` 为空，由 [mcpserver](design-mcpserver.md) 说明没有可展示的地址、需要用户自行告知对方连接地址（`REQ-broker-pairing-028`）。
+The display in the result comes from the advertised address list and system hostname `config` gives, see External Interface Contract. When the advertised address list is empty while the Broker is listening, that is neither an advertised address containing a host is configured nor a default route exists, the key is created as usual with `shown` empty, and [mcpserver](design-mcpserver.md) says there is no showable address and the user must tell the other side the connection address (`REQ-broker-pairing-028`).
 
-### 预置静态密钥
+### The Pre-Provisioned Static Key
 
-配置项 `pairing.static_key` 有值即生效，没有值即不启用（[ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)，`REQ-broker-pairing-008`、`REQ-broker-pairing-009`）。它的取值在一项请求通过两项频率检查之后才从 `config` 读取当前值：匹配上一次性的配对密钥、命中已过期密钥记录或被频率拒绝的请求都不读取。本包不另存副本，配置重载后的下一次握手即按新值判定，不需要重启；删除或更换只影响之后的握手，对端表不变，已凭它配对的对端仍是对端（`REQ-broker-pairing-032`、`REQ-broker-pairing-033`）。它可以用于任意多次配对，不过期；验证失败不计次数，只受配对尝试频率的限制。验证 `mi` 时仍重新读取当前值。它的长度校验、不经工具修改与读取时不返回取值由 `config` 负责（`REQ-broker-pairing-029` 至 `REQ-broker-pairing-031`）。
+The configuration key `pairing.static_key` takes effect once it has a value and is not enabled when empty ([ADR-static-pairing-key](../../adr/adr-static-pairing-key.md), `REQ-broker-pairing-008`, `REQ-broker-pairing-009`). Its value is read from `config`'s current value only after a request passes two frequency checks: a request that matches a one-time pairing key, hits an expired-key record or is rejected by frequency reads it not at all. This package keeps no separate copy; the next handshake after a configuration reload judges by the new value, with no restart; deleting or replacing it affects only later handshakes, the peer table is unchanged, and a peer already paired with it is still a peer (`REQ-broker-pairing-032`, `REQ-broker-pairing-033`). It can be used for any number of pairings and does not expire; verification failures are not counted, only limited by the pairing attempt rate. Verifying `mi` still rereads the current value. Its length validation, its not being modifiable through a tool and its value not returned on read are `config`'s responsibility (`REQ-broker-pairing-029` to `REQ-broker-pairing-031`).
 
-### 发起方
+### Initiator
 
-1. 解析 `address`，得到拨号用的地址，以及可能有的主机名。写法不合法，或调用方提供的本地别名不符合别名的规则时，返回 `invalid_argument`。
-2. 经 `PairDial` 向该地址建立连接。
-3. 发 `PairRequest`；收 `PairChallenge`，验证 `mr`。
-4. 检查别名：对方自报的别名与本机别名或某个对端的生效别名相同，或不符合别名的规则，而调用方没有提供本地别名的，中止并返回 `needs_local_alias`；提供了的，核对它不与已有的别名重复。
-5. 发 `PairConfirm`，收到 `PairDone` 后写入对端表：本方是拨号方；候选地址中来源 `pairing` 的是本次拨通的地址，来源 `acceptor` 的是 `PairChallenge` 中的对外地址列表；上一次连通的地址是本次拨通的地址。对方指纹已在表中时覆盖，角色按本次重新确定；来源 `card` 的候选地址保留原有列表，本地别名在调用方没有提供时保留原值、提供时替换。
+1. Parse `address` to get the dialing address and, possibly, a hostname. When the spelling is invalid, or the caller-provided local alias does not meet the alias rules, return `invalid_argument`.
+2. Establish a connection to that address through `PairDial`.
+3. Send `PairRequest`; receive `PairChallenge`, verify `mr`.
+4. Check the alias: when the other side's self-reported alias equals the local alias or a peer's effective alias, or does not meet the alias rules, and the caller provided no local alias, abort and return `needs_local_alias`; when one is provided, check that it does not duplicate an existing alias.
+5. Send `PairConfirm`, and after receiving `PairDone` write the peer table: this side is the dialer; the candidate addresses from source `pairing` are this connection's address, and those from source `acceptor` are the advertised address list in `PairChallenge`; the last connected address is this connection's address. When the other side's fingerprint is already in the table it is overwritten, the role redetermined by this pairing; candidate addresses from source `card` keep the existing list, and the local alias keeps its old value when the caller provided none and is replaced when one is provided.
 
-发起方不因对方的指纹已在对端表中而省略握手。
+The initiator does not skip the handshake because the other side's fingerprint is already in the peer table.
 
-### 接受方
+### Acceptor
 
-0. 比较 `PairRequest` 中的协议版本与本次连接使用的链路协议版本；不相等，包括未填写的 0，回 `PairReject`（原因为版本不兼容）并关闭，不计入配对尝试计数，写审计 `version incompatible`，与限流失败一样以来源前缀为合并键（见下文“审计的写入方”）。版本比较在查找任何密钥之前，使不同版本的双方不会把版本不兼容误报成密钥无效。
-1. 对密钥表中每个未过期的一次性配对密钥计算查找标记，有与请求相符的即用它，这样的请求不计入配对尝试计数。
-2. 没有相符的一次性配对密钥时，对已过期密钥的记录计算查找标记，相符的回 `PairReject`（原因为密钥已过期）并关闭，这样的请求不计入配对尝试计数，也不受它限制。
-3. 也没有相符的已过期密钥记录时，检查两级配对尝试计数：本来源本分钟已满 `pairing.max_attempts_per_minute`，或全部来源本分钟合计已满它的十倍，回 `PairReject`（原因为稍后再试）并关闭，不计数；两级都未满的，对已配置的预置静态密钥计算查找标记，相符即用它且不计入计数，不相符的本来源与合计各加一并回 `PairReject`（原因为密钥无效），随后关闭。计数先于读取预置静态密钥进行，匹配成功后撤销这一次计数：某来源恰好还差一次到上限时，并发的静态密钥请求可能被暂时判为稍后再试，下一次请求即恢复。
-4. 计算 `mr`，回 `PairChallenge`，其中带 `config` 给出的本方对外地址列表；收 `PairConfirm`，验证 `mi`。验证时重新取当前的密钥：一次性配对密钥必须仍在密钥表中，预置静态密钥必须仍是 `config` 给出的当前值。一次性配对密钥在验证时已过期的，回 `PairReject`（原因为密钥已过期）并关闭，不计失败次数。验证失败的，回 `PairReject`（原因为验证失败）并关闭；相符的是一次性配对密钥的，其失败次数加一，达到 `pairing.max_failures` 后作废。
-5. 验证通过：一次性配对密钥立即作废；别名取自 `PairConfirm` 中发起方的自报别名，有冲突或不符合别名的规则时为它准备本地别名；把对方记为待提交的条目，回 `PairDone`。
-6. 在同一连接上收到发起方的首个 `Hello` 后提交：写入对端表，本方是接受方，不记任何地址；对方指纹已在表中时覆盖，角色按本次重新确定，全部候选地址与上一次连通的地址删除，同一对端原有的链路被关闭。连接在此之前关闭或握手超过期限的，丢弃待提交的条目，对端表与原有的链路都不变。
+0. Compare the protocol version in `PairRequest` with the link protocol version this connection uses; when unequal, including an unfilled 0, reply `PairReject` (reason version incompatible) and close, not counting toward the pairing attempt counter, and write audit `version incompatible`, using the source prefix as the merge key like a rate-limit failure (see "The Audit Writer" below). The version comparison precedes looking up any key, so two sides of different versions do not misreport an incompatible version as an invalid key.
+1. Compute the lookup tag for each unexpired one-time pairing key in the key table, and use it when one matches the request; such a request does not count toward the pairing attempt counter.
+2. When no one-time pairing key matches, compute the lookup tag for the expired-key records, and on a match reply `PairReject` (reason key expired) and close; such a request neither counts toward the pairing attempt counter nor is limited by it.
+3. When no expired-key record matches either, check the two-level pairing attempt counter: when this source this minute has reached `pairing.max_attempts_per_minute`, or all sources this minute combined have reached ten times it, reply `PairReject` (reason try later) and close, not counting; when neither level is full, compute the lookup tag for the configured pre-provisioned static key, and if it matches use it without counting, otherwise add one to this source's and the total's count and reply `PairReject` (reason key invalid), then close. The count happens before reading the pre-provisioned static key, and a successful match cancels this one count: when a source is exactly one short of the cap, a concurrent static-key request may be temporarily judged try later, recovering on the next request.
+4. Compute `mr` and reply `PairChallenge` carrying this side's advertised address list from `config`; receive `PairConfirm` and verify `mi`. Verification rereads the current key: a one-time pairing key must still be in the key table, and the pre-provisioned static key must still be `config`'s current value. A one-time pairing key that has expired at verification time replies `PairReject` (reason key expired) and closes, not counting a failure. A verification failure replies `PairReject` (reason verification failed) and closes; if the match was a one-time pairing key, its failure count is incremented and it is invalidated after reaching `pairing.max_failures`.
+5. Verification passes: the one-time pairing key is invalidated immediately; the alias is taken from the initiator's self-reported alias in `PairConfirm`, and a local alias is prepared for it when there is a conflict or it does not meet the alias rules; the other side is recorded as a pending entry and `PairDone` is replied.
+6. On receiving the initiator's first `Hello` on the same connection, commit: write the peer table, this side being the acceptor, recording no address; when the other side's fingerprint is already in the table it is overwritten, the role redetermined by this pairing, every candidate address and the last connected address deleted, and the same peer's existing link closed. When the connection closes before that or the handshake exceeds the deadline, the pending entry is discarded and the peer table and the existing link are unchanged.
 
-一次配对握手从发出或收到 `PairRequest` 起，到接受方提交为止，整体以 10 秒为限。接受方超过期限时只关闭连接，不发帧；发起方超时在本地判定，映射为 `pairing_rejected`。
+One pairing handshake, from sending or receiving `PairRequest` until the acceptor commits, is bounded at 10 seconds overall. The acceptor past the deadline only closes the connection without sending a frame; the initiator's timeout is judged locally and mapped to `pairing_rejected`.
 
-查找标记由密钥、本次握手的随机数与发起方指纹算出。向接受方猜测密钥的一方，猜错时得不到任何认证码，只能止步于“没有相符的密钥”；对预置静态密钥的这种猜测受每分钟尝试次数的限制，一次性配对密钥有 80 位随机性，不需要这一限制。查找标记是发起方在核实对方之前发出的：发起方连到的若不是预期的接受方，例如地址写错或域名被劫持，对方可以拿查找标记离线穷举预置静态密钥，不受尝试次数的限制（[ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)）；一次性配对密钥的随机性使这种穷举不可行。标记绑定发起方指纹，转发他人标记的一方重算结果对不上，拿不到 `PairChallenge`，也不消耗别人的一次性配对密钥。
+The lookup tag is computed from the key, this handshake's nonce and the initiator's fingerprint. A party guessing keys against the acceptor gets no authentication code on a wrong guess and can only stop at "no matching key"; this kind of guessing against the pre-provisioned static key is limited by the per-minute attempt count, while a one-time pairing key has 80 bits of randomness and needs no such limit. The lookup tag is sent by the initiator before verifying the other side: if the initiator connects to a party that is not the intended acceptor, for example because the address is wrong or the domain is hijacked, that party can take the lookup tag to brute-force the pre-provisioned static key offline, not limited by the attempt count ([ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)); a one-time pairing key's randomness makes such brute force infeasible. The tag is bound to the initiator's fingerprint, so a party forwarding another's tag gets a recomputation that does not match, receives no `PairChallenge`, and does not consume another's one-time pairing key.
 
-### 解除配对
+### Unpairing
 
-`Unpair` 先在对端表的锁内删除该指纹的条目并持久化，随后在锁内复核该指纹是否已被一次新的配对提交取代（`entrySuperseded`）：已被取代的，保留新条目及其链路，跳过关闭；未被取代的，在复核释放锁后调用 `Transport.Drop` 关闭该指纹的链路。复核与关闭分开，使关闭链路不在对端表的锁内执行。
+`Unpair` first deletes that fingerprint's entry from the peer table under the lock and persists it, then rechecks under the lock whether that fingerprint has been superseded by a new pairing commit (`entrySuperseded`): when superseded, it keeps the new entry and its link and skips closing; when not superseded, after the recheck releases the lock it calls `Transport.Drop` to close that fingerprint's link. The recheck and the close are separate, so closing the link does not run under the peer table's lock.
 
-在复核判定为未被取代之后、`Drop` 发出之前，同一指纹的重新配对若恰好提交成功，这条新链路会被这次 `Drop` 关闭。新条目已经写入对端表，配对关系不受影响；拨号方重连后链路恢复。本包不为此在 `Drop` 前再取一次锁，也不延长临界区。
+After the recheck judges "not superseded" and before `Drop` is sent, if a re-pairing of the same fingerprint happens to commit successfully, this new link is closed by this `Drop`. The new entry is already written to the peer table, the pairing relation unaffected; the dialer reconnecting restores the link. This package neither takes the lock again before `Drop` for this nor extends the critical section.
 
-这个窗口是 `Unpair` 先释放锁再关闭链路所接受的代价：它只覆盖复核返回与 `Drop` 发出之间的一次检查与一次调用。把 `Drop` 放进对端表的锁内，会让注入的 `link` 在持锁时被调用，违反 `pairing` 持锁不调用外部组件的约束，也与 `Unpair` 先释放锁再关闭链路的设计目的冲突。
+This window is the cost accepted for `Unpair` releasing the lock before closing the link: it covers only one check and one call between the recheck returning and `Drop` being sent. Putting `Drop` under the peer table's lock would call the injected `link` while holding the lock, violating the constraint that `pairing` calls no external component while holding its lock, and conflicting with the design purpose of `Unpair` releasing the lock before closing the link.
 
-### 别名的维护
+### Alias Maintenance
 
-本地别名的生成规则是“对方自报的别名、`-`、指纹的前 4 位十六进制”，仍然重复时增加指纹的位数。对方自报的别名中不属于别名字符集的字符换成 `-`，结果超过 24 个字符时从末尾截短这一部分，使整个本地别名不超过 24 个字符。
+The local alias generation rule is "the other side's self-reported alias, `-`, the first 4 hex digits of the fingerprint", adding more fingerprint digits while still duplicated. Characters in the other side's self-reported alias outside the alias character set are replaced by `-`, and when the result exceeds 24 characters this part is truncated from the end, so the whole local alias does not exceed 24 characters.
 
-`ObserveAlias` 在每次得知对方当前自报的别名时调用：链路建立时的 `Hello`，以及链路存续期间的 `PeerInfo`。新的自报别名与本机别名或其他对端的生效别名相同，或不符合别名的规则，而该对端没有本地别名时，为它生成本地别名并写审计 `local_alias_assigned`。已有本地别名的对端不受自报别名变化的影响。在同一条对端关系存续期间，一个别名至多解析到一个 Broker，已经交到模型手里的 Agent 地址不会因为该对端改了别名而指向另一个 Broker；解除配对之后，它的本地别名可以分配给别的对端。
+`ObserveAlias` is called every time the other side's current self-reported alias is learned: the `Hello` at link establishment, and `PeerInfo` during the link's life. When the new self-reported alias equals the local alias or another peer's effective alias, or does not meet the alias rules, and that peer has no local alias, a local alias is generated for it and audit `local_alias_assigned` is written. A peer with a local alias is unaffected by a change of self-reported alias. During one peer relation, an alias resolves to at most one Broker, so an agent address already handed to the model does not point to another Broker because that peer changed its alias; after unpairing, its local alias can be assigned to another peer.
 
-对端在本次对端关系中放弃过的生效别名记录为它的墓碑。生效别名变化时，旧的生效别名成为该对端的墓碑：`ObserveAlias` 采用新的自报别名、为它生成本地别名，或重新配对更换本地别名，都属于这种变化；对端改回自己墓碑中的别名时，该别名移出墓碑，重新生效。其他对端的墓碑在判断别名是否被占用时视同生效别名：`aliasAvailableLocked`、`reserveAliasLocked`、`ensureReservationLocked`、`putLocked` 的冲突检查和生成本地别名时避开的集合 `takenAliasesLocked` 都把它算作已占用。因此另一对端自报某个墓碑别名时按冲突处理：链路上报时生成它的本地别名并写审计 `local_alias_assigned`，发起配对时返回 `needs_local_alias`，接受配对时生成本地别名。墓碑本身不解析到任何对端，向它发消息仍按未知 Broker 失败。
+An effective alias a peer has abandoned in the current peer relation is recorded as its tombstone. When the effective alias changes, the old effective alias becomes that peer's tombstone: `ObserveAlias` adopting the new self-reported alias, generating a local alias for it, or pairing again changing the local alias all count as this change; when the peer changes back to an alias in its tombstones, that alias is moved out of the tombstones and takes effect again. Another peer's tombstone counts as an effective alias when judging whether an alias is taken: `aliasAvailableLocked`, `reserveAliasLocked`, `ensureReservationLocked` and `putLocked`'s conflict checks and the set `takenAliasesLocked` a local alias generation avoids all count it as taken. So when another peer self-reports a tombstone alias it is treated as a conflict: on a link report a local alias is generated for it and audit `local_alias_assigned` written, when initiating pairing `needs_local_alias` is returned, and when accepting pairing a local alias is generated. A tombstone resolves to no peer itself, and sending a message to it still fails as an unknown Broker.
 
-每个对端最多保留 8 个墓碑。墓碑已满时生效别名再要变化，改为把当前生效别名设为该对端的本地别名，此后自报别名的变化不再影响它，也不再新增墓碑，这次赋值写审计 `local_alias_assigned`，事件里的别名是实际提交的生效别名。冻结优先于本次配对原本要采用的本地别名：发起方提供的本地别名或接受方生成的本地别名都让位给冻结的当前生效别名，`Peer.LocalAlias` 返回实际提交的这一个。冻结只改变本机对端表，`PairDone` 不带载荷，冻结的别名不回报发起方；双方在之后的链路 `Hello` 与 `PeerInfo` 中照常只交换各自的自报别名。墓碑随条目保存在 `peers.json` 的 `retired_aliases` 中，为空时省略该字段；加载时校验每个墓碑符合别名规则、每个对端不超过 8 个、且不与任何对端的生效别名或其他对端的墓碑重复，不符合的返回 `ErrStore`。解除配对删除条目时墓碑一并删除；重新配对覆盖条目时保留原有墓碑。
+Each peer keeps at most 8 tombstones. When the tombstones are full and the effective alias would change again, the change instead sets the current effective alias as that peer's local alias, after which a change of self-reported alias no longer affects it and no new tombstone is added, and this assignment writes audit `local_alias_assigned` with the alias in the event being the actually committed effective alias. Freezing takes precedence over the local alias this pairing would otherwise use: a local alias the initiator provided or one the acceptor generated both give way to the frozen current effective alias, and `Peer.LocalAlias` returns the one actually committed. Freezing changes only the local peer table, `PairDone` carries no payload, and the frozen alias is not reported back to the initiator; the two sides still exchange only their self-reported aliases in the later link `Hello` and `PeerInfo`. Tombstones are kept with the entry in `peers.json`'s `retired_aliases`, the field omitted when empty; loading validates that each tombstone meets the alias rules, that each peer has no more than 8, and that none duplicates any peer's effective alias or another peer's tombstone, returning `ErrStore` otherwise. Deleting the entry on unpairing deletes the tombstones too; overwriting the entry on re-pairing keeps the existing tombstones.
 
-本机别名经配置修改时，若新别名与某个已提交对端的生效别名相同，与某个对端的墓碑相同，或与一次进行中的握手预占的别名相同，修改以 `invalid_argument` 拒绝。校验由 `broker` 注册，它调用只取本包锁的 `AliasConflict`，不读配置。
+When the local alias changes through configuration, if the new alias equals a committed peer's effective alias, equals a peer's tombstone, or equals an alias reserved by an in-progress handshake, the change is refused with `invalid_argument`. The check is registered by `broker`, which calls `AliasConflict`, taking only this package's lock and reading no configuration.
 
-`ResolveAlias` 只解析已提交的对端：握手预占的别名在提交之前不是 Agent 地址，解析返回 false；提交之后返回该对端的指纹。
+`ResolveAlias` resolves only committed peers: an alias reserved by a handshake is not an agent address before commit, and resolution returns false; after commit it returns that peer's fingerprint.
 
-### 审计的写入方
+### The Audit Writer
 
-审计事件按触发来源划分写入方。管理调用触发的 `pairing_key_created`、发起方的 `pairing_succeeded`、发起方的 `pairing_failed` 与 `unpaired` 由 `broker` 在调用返回后带调用方的 `agent_id` 写入；对端与链路触发的事件，即接受方的 `pairing_succeeded`、接受方的 `pairing_failed` 与 `local_alias_assigned`，由 `pairing` 写，`Actor` 与 `Account` 留空。限流失败与协议版本不兼容这两种可以由陌生来源反复触发、又不计入尝试次数的 `pairing_failed` 以来源前缀为合并键，写作 `source:<前缀>`：来源取 `PairConn.RemoteAddr()` 的主机，IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理并去掉 zone，解析不出 IP 地址时不设合并键。审计日志在合并键之外还按失败原因分组，同一来源、同一原因的事件合并为一条，同一来源的两类失败各记一条并各自保留原因。接受方在发起方的 `mi` 验证通过之前的失败审计只记指纹，不带对方别名；验证失败、等待 `PairConfirm` 时的连接中断与超时都属于这类。
+Audit events are divided by trigger source into writers. The management call's `pairing_key_created`, the initiator's `pairing_succeeded`, the initiator's `pairing_failed` and `unpaired` are written by `broker` after the call returns, with the caller's `agent_id`; the events triggered by a peer and a link, that is the acceptor's `pairing_succeeded`, the acceptor's `pairing_failed` and `local_alias_assigned`, are written by `pairing`, with `Actor` and `Account` empty. A rate-limit failure and a protocol-version incompatibility, two kinds of `pairing_failed` that a stranger source can trigger repeatedly and that are not counted toward the attempt count, use the source prefix as the merge key, written `source:<prefix>`: the source is the host of `PairConn.RemoteAddr()`, a /32 for IPv4, the /64 for IPv6, an IPv4-mapped IPv6 address handled as IPv4 with the zone removed, and no merge key when no IP can be parsed. Beyond the merge key the audit log also groups by failure reason, events of the same source and same reason merging into one, with the two classes of failure of one source each recorded separately and keeping their own reason. A failure audit by the acceptor before the initiator's `mi` verification passes records only the fingerprint, not the other side's alias; verification failure, and an interrupted connection or a timeout while waiting for `PairConfirm`, all belong to this class.
 
-## 错误与失败语义
+## Error and Failure Semantics
 
-| 情形 | 发起方得到 | 接受方的处理 |
+| Situation | What the initiator gets | The acceptor's handling |
 |---|---|---|
-| 没有与查找标记相符的密钥：密钥错误、已使用、因验证失败作废、因 64 条上限被挤掉的过期记录，或过期已超过 24 小时 | `pairing_rejected`：密钥无效 | 回 `PairReject`（原因：密钥无效），关闭连接；尝试计数加一，写审计 |
-| 查找标记与过期不满 24 小时的一次性配对密钥相符，或密钥在验证时已过期 | `pairing_rejected`：密钥已过期，说明以 `key expired` 开头 | 回 `PairReject`（原因：密钥已过期），关闭连接；不计入尝试计数，写审计 |
-| 接受方验证 `mi` 失败 | `pairing_rejected`：验证失败 | 回 `PairReject`（原因：验证失败），关闭连接；相符的是一次性配对密钥的，其失败次数加一；写审计 |
-| 发起方验证 `mr` 失败 | `pairing_rejected`：验证失败 | 无，连接由发起方关闭 |
-| 尝试过于频繁 | `pairing_rejected`：稍后再试 | 回 `PairReject`（原因：稍后再试），关闭连接；写审计，同一来源的重复记录由 `config` 合并 |
-| 发起方的协议版本与本方不同或未填写 | `pairing_rejected`：版本不兼容，说明为 `link protocol version incompatible with the other Broker; upgrade the older Broker` | 回 `PairReject`（原因：版本不兼容），关闭连接；不计入尝试计数，写审计 `version incompatible`，以来源前缀为合并键，同一来源的重复记录由 `config` 合并 |
-| `address` 写法不合法，或提供的本地别名不符合别名的规则 | `invalid_argument` | 无 |
-| 地址无法连接 | `peer_unreachable` | 无 |
-| 别名冲突且未提供本地别名 | `needs_local_alias` | 无，握手未完成 |
-| 对方已是对端 | 成功，条目被覆盖，角色按本次重新确定 | 收到发起方的 `Hello` 后覆盖已有条目，角色按本次重新确定 |
-| 握手超过期限：发起方自己的 10 秒期限届满，且没有收到 `PairReject` | `pairing_rejected`：握手超时 | 只关闭连接，不发帧；丢弃待提交的条目 |
-| `PairDone` 之前连接被关闭，没有收到 `PairReject`，且发起方自己的 10 秒期限未届满 | `pairing_rejected`：未连接 | 无 |
+| No key matches the lookup tag: wrong key, used key, a key invalidated by verification failure, an expired record squeezed out by the 64 cap, or expired more than 24 hours ago | `pairing_rejected`: key invalid | Reply `PairReject` (reason: key invalid), close the connection; increment the attempt counter, write audit |
+| The lookup tag matches a one-time pairing key expired less than 24 hours ago, or the key has expired at verification time | `pairing_rejected`: key expired, the explanation beginning with `key expired` | Reply `PairReject` (reason: key expired), close the connection; not counted toward the attempt counter, write audit |
+| The acceptor fails to verify `mi` | `pairing_rejected`: verification failed | Reply `PairReject` (reason: verification failed), close the connection; if the match was a one-time pairing key, increment its failure count; write audit |
+| The initiator fails to verify `mr` | `pairing_rejected`: verification failed | None, the initiator closes the connection |
+| Attempts too frequent | `pairing_rejected`: try later | Reply `PairReject` (reason: try later), close the connection; write audit, with repeated records of the same source merged by `config` |
+| The initiator's protocol version differs from this side's or is unfilled | `pairing_rejected`: version incompatible, the explanation `link protocol version incompatible with the other Broker; upgrade the older Broker` | Reply `PairReject` (reason: version incompatible), close the connection; not counted toward the attempt counter, write audit `version incompatible` with the source prefix as the merge key, repeated records of the same source merged by `config` |
+| `address` spelling invalid, or the provided local alias does not meet the alias rules | `invalid_argument` | None |
+| The address cannot connect | `peer_unreachable` | None |
+| Alias conflict and no local alias provided | `needs_local_alias` | None, the handshake not completed |
+| The other side is already a peer | Success, the entry overwritten, the role redetermined by this pairing | After receiving the initiator's `Hello`, overwrite the existing entry, the role redetermined by this pairing |
+| The handshake exceeds the deadline: the initiator's own 10-second deadline elapses with no `PairReject` received | `pairing_rejected`: handshake timed out | Only close the connection without sending a frame; discard the pending entry |
+| The connection closes before `PairDone` with no `PairReject` received, and the initiator's own 10-second deadline has not elapsed | `pairing_rejected`: not connected | None |
 
-发起方按下列先后判定失败：收到过 `PairReject` 的，把帧上的原因映射为 `pairing_rejected`；没有收到的，`PairDone` 之前连接关闭时按自己的 10 秒期限决定说明，期限已届满的用“握手超时”，未届满的用“未连接”。
+The initiator judges failure in the following order: having received a `PairReject`, it maps the frame's reason to `pairing_rejected`; having received none, on the connection closing before `PairDone` it decides the explanation by its own 10-second deadline, using "handshake timed out" when elapsed and "not connected" when not.
 
-协议版本从 1 提升到 2 是第一次发生含义变化的提升，有一处无法避免的不对称。旧的发起方连新的接受方时，新接受方回“版本不兼容”，但旧发起方不认识原因 5，会按协议错误报告，用户看到 `protocol error: unknown PairReject reason 5`；反过来，新的发起方连旧的接受方时，旧接受方不认识 `PairRequest` 的字段 4，仍按旧方式查找密钥，因此回“密钥无效”，用户看到 `Not connected: pairing key is invalid`。此后的版本提升两端都做上述比较，配对阶段即报出版本不兼容，不再出现“配对成功但链路建不起来”。
+Raising the protocol version from 1 to 2 is the first meaning-changing raise and has one unavoidable asymmetry. When an old initiator connects to a new acceptor, the new acceptor replies "version incompatible", but the old initiator does not recognize reason 5 and reports a protocol error, so the user sees `protocol error: unknown PairReject reason 5`; conversely, when a new initiator connects to an old acceptor, the old acceptor does not recognize `PairRequest`'s field 4 and looks up the key in the old way, so it replies "key invalid" and the user sees `Not connected: pairing key is invalid`. After this, both sides do the comparison above for a version raise, reporting version incompatibility at the pairing stage and no longer having "pairing succeeds but the link cannot be established".
 
-`Connect` 对同一个一次性配对密钥不是幂等的：密钥在首次成功后作废。`Unpair` 是幂等的。除发起方已收到 `PairDone` 的情形外，配对失败时双方都不保存对方的身份（`REQ-broker-pairing-011`）。发起方收到 `PairDone` 后即保存接受方，而接受方在 `Hello` 没有到达或随后提交失败时都不保存发起方。发起方此后的重拨会被接受方当作非对端拒绝，只能重新配对。
+`Connect` is not idempotent for the same one-time pairing key: the key is invalidated after the first success. `Unpair` is idempotent. Except when the initiator has received `PairDone`, on pairing failure neither side saves the other's identity (`REQ-broker-pairing-011`). The initiator saves the acceptor right after receiving `PairDone`, while the acceptor saves the initiator in neither the case where `Hello` does not arrive nor the case where the later commit fails. The initiator's later redial is rejected by the acceptor as a non-peer and can only pair again.
 
-`PairingError` 是唯一带原因的错误类型，其余错误是包级哨兵，调用方一律用 `errors.Is` 或 `errors.As` 判定：
+`PairingError` is the only error type carrying a reason; the other errors are package-level sentinels, and a caller judges them all with `errors.Is` or `errors.As`:
 
-| 错误 | 返回情形 |
+| Error | Return situation |
 |---|---|
-| `*PairingError`（`errors.Is(err, ErrPairingRejected)`） | 对方拒绝，或握手在 `PairDone` 之前中止。`Reason` 为密钥无效、密钥已过期、验证失败、稍后再试、握手超时或未连接；`Error()` 以 `Not connected` 开头。 |
-| `ErrPeerUnreachable` | `Connect` 经 `PairDial` 拨号失败，且该错误包装了 `ErrDialFailed`。 |
-| `ErrDialFailed` | `Transport` 实现的拨号失败标记，由 `link` 包装；`pairing` 的方法不直接返回它。 |
-| `ErrProtocol` | 帧的 kind、顺序、长度或拒绝原因不符合协议，连接随后关闭。 |
-| `ErrIdentity` | `Open` 加载或生成身份失败，包括文件权限、属主、PEM 解析与密钥证书不匹配。 |
-| `ErrStore` | `Open` 读取 `peers.json` 失败，或对端表写入临时文件、改名失败。 |
-| `ErrNoTransport` | `Open` 收到的 `Transport` 为 nil。 |
-| `ErrNotOpen` | 有错误返回值的、需要身份或 transport 的方法在实例未完成 `Open` 时被调用。 |
-| `ErrInvalidAddress`、`ErrInvalidAlias`、`ErrNeedsLocalAlias`、`ErrNotListening` | 调用参数不合法：地址写法、本地别名、别名冲突而调用方未提供本地别名、监听地址为空时生成密钥。 |
+| `*PairingError` (`errors.Is(err, ErrPairingRejected)`) | The other side rejects, or the handshake aborts before `PairDone`. `Reason` is key invalid, key expired, verification failed, try later, handshake timed out or not connected; `Error()` begins with `Not connected`. |
+| `ErrPeerUnreachable` | `Connect`'s dial through `PairDial` failed and the error wraps `ErrDialFailed`. |
+| `ErrDialFailed` | The dial-failure marker of a `Transport` implementation, wrapped by `link`; `pairing`'s methods do not return it directly. |
+| `ErrProtocol` | A frame's kind, order, length or rejection reason does not meet the protocol, and the connection is then closed. |
+| `ErrIdentity` | `Open` fails to load or generate the identity, including file permission, owner, PEM parsing and key-certificate mismatch. |
+| `ErrStore` | `Open` fails to read `peers.json`, or writing the peer table's temporary file or renaming fails. |
+| `ErrNoTransport` | `Open` receives a nil `Transport`. |
+| `ErrNotOpen` | A method with an error return that needs the identity or transport is called before the instance has completed `Open`. |
+| `ErrInvalidAddress`, `ErrInvalidAlias`, `ErrNeedsLocalAlias`, `ErrNotListening` | Invalid call parameters: the address spelling, the local alias, an alias conflict with no caller-provided local alias, or creating a key with an empty listen address. |
 
-## 并发与事务边界
+## Concurrency and Transaction Boundaries
 
-对端表的每次修改先写入临时文件再原子替换 `peers.json`，然后更新内存；候选地址与上一次连通的地址的更新同样如此。观察到的自报别名、候选地址列表或上一次连通的地址与已有条目相同时，对端表的内容不变，不写 `peers.json`。一次性配对密钥的“验证通过并作废”在密钥表的锁内完成，两个同时到达的握手使用同一个密钥时只有一个成功。别名的冲突检查与本地别名的写入在对端表的锁内完成。
+Every modification of the peer table first writes a temporary file then atomically replaces `peers.json`, and then updates memory; candidate addresses and the last connected address are updated the same way. When the observed self-reported alias, candidate address list or last connected address equals the existing entry, the peer table's content is unchanged and `peers.json` is not written. A one-time pairing key's "verified and invalidated" is done under the key table's lock, so when two simultaneous handshakes use the same key only one succeeds. Alias conflict checks and local alias writes are done under the peer table's lock.
 
-握手使用的生效别名（对方自报的或生成的）在发出 `PairDone` 之前于对端表的锁内预占：发起方在发出 `PairConfirm` 前预占，接受方在发出 `PairDone` 前预占；每次握手持有自己的预占令牌，同一指纹的并发握手各自持有令牌。预占只存在于内存，不写入 `peers.json`。提交时在同一把锁内复核该握手仍持有生效别名的预占、别名不与缓存的本机别名或其他对端的生效别名冲突；生效别名在预占之后因 `ObserveAlias` 改变时，预占移到新的生效别名后继续提交，新的生效别名已被占用时返回 `needs_local_alias`。复核失败时释放预占，不写条目。握手失败、超时、连接关闭、`PairDone` 丢失或持久化失败时都只释放本次握手的预占，其他并发握手的预占不受影响，后续握手可以复用该别名。
+The effective alias a handshake uses (the other side's self-reported or generated one) is reserved under the peer table's lock before `PairDone` is sent: the initiator reserves before sending `PairConfirm`, and the acceptor reserves before sending `PairDone`; each handshake holds its own reservation token, and concurrent handshakes of the same fingerprint each hold their own. A reservation exists only in memory and is not written to `peers.json`. On commit it rechecks under the same lock that this handshake still holds the effective alias's reservation and that the alias does not conflict with the cached local alias or another peer's effective alias; when the effective alias changed after the reservation because of `ObserveAlias`, the reservation moves to the new effective alias and the commit continues, returning `needs_local_alias` when the new effective alias is already taken. On a failed recheck it releases the reservation and writes no entry. On handshake failure, timeout, connection close, `PairDone` loss or persistence failure it releases only this handshake's reservation, other concurrent handshakes' reservations are unaffected, and a later handshake can reuse the alias.
 
-`pairing` 持有对端表的锁时不得调用 `config` 的任何函数，包括 `config.Get`。本机别名由 `broker` 在装配时以及 `broker.alias` 每次变更时调用 `SetOwnAlias` 推入，订阅者在 `config` 的锁外执行；`pairing` 在自己的锁内缓存它，提交复核与 `ResolveAlias` 都读这份缓存。`broker.alias` 的校验函数在 `config` 的锁内调用 `AliasConflict` 与 `ResolveAlias`，这两个方法只取对端表的锁。两包之间的锁序是：先取 `config` 锁，再取 `pairing` 锁；反向禁止。
+While holding the peer table's lock `pairing` must call no function of `config`, including `config.Get`. The local alias is pushed by `broker` through `SetOwnAlias` during assembly and on each `broker.alias` change, the subscriber running outside `config`'s lock; `pairing` caches it under its own lock, and the commit recheck and `ResolveAlias` both read this cache. `broker.alias`'s validation function calls `AliasConflict` and `ResolveAlias` under `config`'s lock, and these two methods take only the peer table's lock. The lock order between the two packages is: take `config`'s lock first, then `pairing`'s; the reverse is forbidden.
 
-校验通过到订阅推入 `SetOwnAlias` 之间存在窄窗口：`config` 已提交新的本机别名，而 `pairing` 的缓存仍是旧值。窗口内提交的握手可能拿到与新本机别名相同的生效别名。窗口结束后缓存更新，之后的提交复核会拒绝这个别名。这个窗口是消除锁序反转所接受的代价：`config` 的通知队列异步、按提交顺序送达，窗口的长度取决于队列的排队情况。
+Between validation passing and the subscriber pushing `SetOwnAlias` there is a narrow window: `config` has committed the new local alias while `pairing`'s cache is still the old value. A handshake committed within the window may take an effective alias equal to the new local alias. After the window closes the cache updates, and a later commit recheck rejects this alias. This window is the cost accepted for eliminating the lock-order inversion: `config`'s notification queue is asynchronous and delivered in commit order, and the window's length depends on the queue's backlog.
 
-预置静态密钥的删除或更换与进行中的握手之间，以验证 `mi` 的时刻为准：验证时重新取当前的密钥，此前已删除或已更换的密钥不能完成握手（`REQ-broker-pairing-032`、`REQ-broker-pairing-033`）。一次性配对密钥同理，验证时已过期的不能完成握手，回密钥已过期；已作废的回密钥无效。
+Between deleting or replacing the pre-provisioned static key and an in-progress handshake, the instant of verifying `mi` is authoritative: verification rereads the current key, and a key deleted or replaced earlier cannot complete the handshake (`REQ-broker-pairing-032`, `REQ-broker-pairing-033`). A one-time pairing key is the same: one expired at verification time cannot complete the handshake and replies key expired, and an invalidated one replies key invalid.
 
-## 实现状态
+## Implementation Status
 
-| 能力 | 状态 | 代码 |
+| Capability | Status | Code |
 |---|---|---|
-| 身份生成与加载 | 已实现 | `internal/pairing/identity.go`（`loadIdentity`、`generateIdentity`） |
-| 一次性配对密钥的生成、展示与作废 | 已实现 | `internal/pairing/pairkey.go`（`CreateOneTimeKey`、`keyTable`、`expireLocked`、`expiredKey`） |
-| 预置静态密钥的启用、更换与禁用 | 已实现 | `internal/pairing/pairkey.go`（`lookupAtRequest`、`verifyAtConfirm`） |
-| 配对握手 | 已实现 | `internal/pairing/handshake.go`（`Connect`、`Accept`、`rejectReasonFromPB`） |
-| 配对尝试的限制 | 已实现 | `internal/pairing/pairkey.go`（`attemptCounter`、`lookupAtRequest`） |
-| 对端表与角色的持久化 | 已实现 | `internal/pairing/peers.go`、`internal/pairing/store.go`（`peerTable`、`atomicWrite`） |
-| 候选地址的记录 | 已实现 | `internal/pairing/addresses.go`（`filterKnown`、`mergeCandidates`） |
-| 别名的解析、冲突检查与本地别名 | 已实现 | `internal/pairing/alias.go`、`internal/pairing/peers.go`（`assignLocalAlias`、`peerTable.resolveAlias`、`SetOwnAlias`、`AliasConflict`、`applyAliasChange`、`retiresAlias`） |
-| 解除配对 | 已实现 | `internal/pairing/peers.go`（`Unpair`） |
-| 签名与验签 | 已实现 | `internal/pairing/queries.go`、`internal/pairing/api.go`（`PublicKey`、`Sign`、`Verify`、`FingerprintOf`） |
+| Identity generation and loading | Implemented | `internal/pairing/identity.go` (`loadIdentity`, `generateIdentity`) |
+| Creating, showing and invalidating a one-time pairing key | Implemented | `internal/pairing/pairkey.go` (`CreateOneTimeKey`, `keyTable`, `expireLocked`, `expiredKey`) |
+| Enabling, replacing and disabling the pre-provisioned static key | Implemented | `internal/pairing/pairkey.go` (`lookupAtRequest`, `verifyAtConfirm`) |
+| Pairing handshake | Implemented | `internal/pairing/handshake.go` (`Connect`, `Accept`, `rejectReasonFromPB`) |
+| Limiting pairing attempts | Implemented | `internal/pairing/pairkey.go` (`attemptCounter`, `lookupAtRequest`) |
+| Persisting the peer table and roles | Implemented | `internal/pairing/peers.go`, `internal/pairing/store.go` (`peerTable`, `atomicWrite`) |
+| Recording candidate addresses | Implemented | `internal/pairing/addresses.go` (`filterKnown`, `mergeCandidates`) |
+| Alias resolution, conflict checking and local aliases | Implemented | `internal/pairing/alias.go`, `internal/pairing/peers.go` (`assignLocalAlias`, `peerTable.resolveAlias`, `SetOwnAlias`, `AliasConflict`, `applyAliasChange`, `retiresAlias`) |
+| Unpairing | Implemented | `internal/pairing/peers.go` (`Unpair`) |
+| Signing and verification | Implemented | `internal/pairing/queries.go`, `internal/pairing/api.go` (`PublicKey`, `Sign`, `Verify`, `FingerprintOf`) |
