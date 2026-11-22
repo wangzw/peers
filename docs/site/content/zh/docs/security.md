@@ -87,6 +87,8 @@ Broker 还会把所报告每个 Agent 的登记账户名一并交给对端，系
 
 系统级 Broker 的本机接口同样设有按账户的占用上限，一个账户耗不尽 Broker，也挤不掉其他账户。每个账户最多持有 256 条本机连接和 256 个登记，每条连接最多承载 64 个并发流。所有账户合计，Broker 同时最多接受 4096 条本机连接。检查调用方读写配置文件的权限由单独的进程执行，这样的检查同时最多 8 个，一个账户最多 2 个。账户数据库能查到条目的 uid 各自占用一份配额；查不到条目的 uid，例如 rootless 容器轮换使用的那批，共用一份配额。这些数值都是常量，不可配置。
 
+下列上限达到时，会话会收到带错误码的说明。握手时被拒绝的连接返回 `the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly.`，错误码为 `internal`。登记数超过每账户上限时，返回 Broker 的说明 `cannot register: account <account> already has 256 open registrations`，错误码为 `quota_exceeded`。权限检查拿不到槽位时，返回 `Too many configuration access checks are running; try again shortly.`，错误码为 `quota_exceeded`。权限检查这一种稍后重试即可。另外两种拒绝不必手动重试：MCP 服务会在后台自行重连，本账户的其他会话或连接结束并释放名额后，会话才能接入；主机连接总数达到上限时，则要等主机上任一连接结束。登记名额从会话接入一直占到它断开，账户已有 256 个会话时，要等其中一个结束，新会话才登记得进来。
+
 ## 更新检查会访问 GitHub
 
 每个 Broker 在启动后不久检查一次 GitHub 上有没有更新的正式发布版本，此后默认每 24 小时检查一次。`peers update` 选中在服务管理器下运行的 Broker 时，由该 Broker 执行更新，系统级与用户级都是如此。没有正在运行的 Broker，或选中的用户级 Broker 不在服务管理器下运行时，由命令自己执行更新。

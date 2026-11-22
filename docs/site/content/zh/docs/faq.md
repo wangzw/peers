@@ -41,7 +41,7 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 ## 没有 Broker 在运行时会怎样？
 
-工具调用返回错误，说明该怎么做，具体视情形而定。MCP 服务进程不会启动 Broker。有两种情形得到同一条提示：第一次查找时既找不到用户级 Broker 也找不到系统级 Broker，以及用户级 Broker 的 socket 消失、拒绝连接（例如被强杀之后）。提示先说明：本机如有系统级 Broker，请管理员启动它；再给出两种运行用户级 Broker 的方法：`peers service install`，或在 Claude Code 之外的终端里运行 `peers service run`。原先连在系统级 Broker 上的会话断开后，提示联系管理员；本账户是 root 时，提示用 `peers service start --system` 启动它。用户级 socket 还在应答，但握手或调用失败时，报告 Broker 不可用，并说明 MCP 服务会在后台重试，不给出启动方法。启动 Broker 之后，会话不必重新连接 MCP 服务。需要 Broker 的终端命令，例如 `peers broker list`，做法相同：只查找正在运行的 Broker，不会启动它。见[命令行]({{< relref "reference/cli.md" >}})。
+工具调用返回错误，说明该怎么做，具体视情形而定。MCP 服务进程不会启动 Broker。有两种情形得到同一条提示：第一次查找时既找不到用户级 Broker 也找不到系统级 Broker，以及用户级 Broker 的 socket 消失、拒绝连接（例如被强杀之后）。提示先说明：本机如有系统级 Broker，请管理员启动它；再给出两种运行用户级 Broker 的方法：`peers service install`，或在 Claude Code 之外的终端里运行 `peers service run`。原先连在系统级 Broker 上的会话因该 Broker 未运行而失去连接后，提示联系管理员；本账户是 root 时，提示用 `peers service start --system` 启动它。Broker 在运行时仍可能拒绝本会话，错误会说明原因。Broker 拒绝本会话的连接时，原因可能是本账户或整台主机的连接数已达到上限，调用返回 `the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly.`，错误码为 `internal`。Broker 拒绝登记时，调用照原样转述 Broker 的说明：账户的登记数达到上限 256 时，返回 `cannot register: account <account> already has 256 open registrations`，错误码为 `quota_exceeded`。这两种拒绝都不必手动重试：MCP 服务会在后台自行重连，本账户的其他会话或连接结束并释放名额后，会话才能接入；主机连接总数达到上限时，则要等主机上任一连接结束。登记名额从会话接入一直占到它断开，账户已有 256 个会话时，要等其中一个结束，新会话才登记得进来。用户级 Broker 能够应答但连接建不起来，或者登记之后连接中断时，报告 Broker 不可用，并说明 MCP 服务会在后台重试，不给出启动方法。启动 Broker 之后，会话不必重新连接 MCP 服务。需要 Broker 的终端命令，例如 `peers broker list`，做法相同：只查找正在运行的 Broker，不会启动它。见[命令行]({{< relref "reference/cli.md" >}})。
 
 ## 一个账户能运行多个 Broker 吗？
 

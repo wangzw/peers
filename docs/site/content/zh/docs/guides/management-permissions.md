@@ -67,3 +67,4 @@ chgrp peers /etc/peers/config.yaml && chmod 0660 /etc/peers/config.yaml
 - 不要把 `update_broker` 加入 Claude Code 的自动批准名单。这条确认是升级前的最后一道人工检查；系统级安装时，Broker 替换的是以 root 运行的二进制。
 - 工具和终端命令都不能设置 `pairing.static_key`，也不能读取它的取值。`get_config` 与 `peers config list` 只报告它是否已设置，`set_config` 与 `peers config set` 对它总是失败。要设置、更换或删除它，直接编辑配置文件；Broker 无需重启就会采用改动。
 - 权限不足的错误不会改变任何状态：配置、对端和有效的配对密钥都保持原样。终端命令权限不足时，Broker 给出的错误会写到标准错误，其中包含配置文件的路径，命令以退出码 1 结束。
+- 配置文件权限检查在单独的进程里执行，槽位数量固定。槽位全部占用时，需要检查的命令会失败：`peers config set` 把 `peers config set: quota_exceeded: Too many configuration access checks are running; try again shortly.` 写到标准错误，以退出码 1 结束。稍后重试即可。

@@ -29,6 +29,8 @@ Claude Code 会话经名为 `peer` 的 MCP 服务使用 peers，安装会为运�
 
 Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个工具都返回错误码为 `broker_degraded` 的错误并附原因，`peers service status` 也会给出同样的原因与修复方法。仅本机降级时，工具照常工作，只有 `create_pairing_key` 返回 `broker_degraded`，错误说明里给出无法绑定的地址，以及修改 `broker.listen` 的方法。两档降级都会自行恢复，不重启进程；重试时机见 [`peers service run`]({{< relref "/docs/reference/cli" >}}#peers-service-run)。
 
+Broker 在运行时的两种拒绝各有自己的报错。Broker 拒绝本会话的连接时，原因可能是本账户或整台主机的连接数已达到上限，调用返回 `<tool> failed: the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly. (code: internal)`；`send_message` 用 `Not sent` 开头，`connect_broker` 用 `Not connected` 开头，代替 `<tool> failed`。Broker 拒绝登记时，照原样返回它自己的说明：账户的登记数达到上限 256 时，返回 `<tool> failed: cannot register: account <account> already has 256 open registrations (code: quota_exceeded)`，这两种工具同样以 `Not sent` 或 `Not connected` 开头。两种拒绝都不必手动重试：MCP 服务会在后台自行重连，本账户的其他会话或连接结束并释放名额后，会话才能接入；主机连接总数达到上限时，则要等主机上任一连接结束。登记名额从会话接入一直占到它断开，账户已有 256 个会话时，要等其中一个结束，新会话才登记得进来。
+
 ### Agent
 
 `list_agents` 返回 `self_address` 和 `agents`。每个 Agent 有 `address`、与本会话共有的 `shared_topics`、`status`、`account`，改名后十分钟内还有 `previous_name`。`status` 为 `idle`、`busy`、`waiting` 或 `shell`。本机 Agent 的 `account` 是登记它的账户名，Broker 查不到账户条目时是十进制 uid；对端 Agent 的 `account` 由它的 Broker 自报，账户名不符合格式时省略。`account` 只用于展示，不参与地址、筛选与解析。Agent 的名字与地址由其所在 Broker 报告，未经核实；对端 Agent 的 `account` 由它的 Broker 自报，同样未经核实。
@@ -39,7 +41,7 @@ Broker 的降级运行会体现在工具调用上。仅诊断降级时，每个�
 
 ### topic
 
-`list_topics` 返回 `joined_topics` 和 `public_topics`，后者每项有 `name` 和可选的 `description`。`join_topic` 与 `leave_topic` 返回更新后的列表 `topics`；本会话没有默认 topic 时返回说明这一点的错误。公开 topic 的名字与简介由其他 Broker 发布，未经核实。多个发布者声明同一个名字时只列一项，`description` 先取本 Broker 的声明，其次取对端的声明，最后取其他发布者的声明；名字或简介不合规定的不会列出。见[公开 topic]({{< relref "/docs/concepts/topics" >}}#公开-topic)。`join_topic` 与 `leave_topic` 超过上限或被限速时返回错误码 `quota_exceeded`，见[上限]({{< relref "/docs/concepts/topics" >}}#上限)。
+`list_topics` 返回 `joined_topics` 和 `public_topics`，后者每项有 `name` 和可选的 `description`。`join_topic` 与 `leave_topic` 返回更新后的列表 `topics`；本会话没有默认 topic 时返回说明这一点的错误。公开 topic 的名字与简介由其他 Broker 发布，未经核实。多个发布者声明同一个名字时只列一项，`description` 先取本 Broker 的声明，其次取对端的声明，最后取其他发布者的声明；名字或简介不合规定的不会列出。见[公开 topic]({{< relref "/docs/concepts/topics" >}}#公开-topic)。`join_topic` 与 `leave_topic` 超过上限或被限速时返回错误码 `quota_exceeded`，见[上限]({{< relref "/docs/concepts/topics" >}}#上限)。topic 调用等待 Broker 最多 10 秒，不带名字的 `join_topic` 或 `leave_topic` 为默认 topic 发出的每次 Broker 调用都计入；Broker 没有在时限内应答时，调用返回错误码为 `internal` 的错误。
 
 ### Broker
 
@@ -74,6 +76,8 @@ peers <latest> is available (this Broker runs <installed>). To upgrade, the user
 - 用户级 Broker 的配置文件属于本账户，所以每次调用都通过。
 - 系统级 Broker 以该文件判定权限：读权限允许 `get_config`；写权限允许 `connect_broker`、`disconnect_broker`、`create_pairing_key`、`set_config`、`set_broker_online` 与 `update_broker`。管理员给组 `peers` 授予文件的相应权限，就把这些操作委托给了这个组；管理组见[以配置文件权限管理 Broker]({{< relref "/docs/guides/management-permissions" >}})。
 - 消息与 topic 工具以及 `list_brokers` 不要求配置文件权限。
+
+系统级 Broker 在单独的进程里执行每一次配置文件权限检查，槽位数量有限。槽位全部占用时，调用返回 `Too many configuration access checks are running; try again shortly.`，错误码为 `quota_exceeded`；稍后重试即可。
 
 `update_broker` 不是只读工具：它的声明不带只读标记，并标为破坏性操作，Claude Code 默认会在执行前请你确认。不要把 `update_broker` 加入自动批准：这道确认是 Broker 被替换并重启前的最后一道人工检查。`set_broker_online` 与 `set_config` 分开声明，Claude Code 的权限设置可以单独放行它。
 
