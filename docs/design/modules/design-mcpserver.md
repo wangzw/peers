@@ -145,8 +145,6 @@ Broker 不可用、登记未完成或登记失败期间，本进程不退出，�
 
 默认 topic 的列表另存一份，不随退出而删除。这份列表按“默认 topic 的确定”的第三至第五步得出，不看 `topics.auto_join` 与项目配置文件的 `auto_join`。`join_topic` 的 `name` 为空时逐个加入列表中的 topic，`public` 与 `description` 对每一个生效；`leave_topic` 的 `name` 为空时逐个退出其中已加入的 topic，未加入的跳过。列表为空时，两者都返回 `invalid_argument` 类的本地错误，说明本会话没有默认 topic。退出的 topic 按现有规则从记忆中删除，本会话内重新登记时不再加入；新的会话重新确定默认 topic 并自动加入（`REQ-topics-026`、`REQ-topics-027`）。
 
-topic 工具对 Broker 的每次调用都套 `topicRPCTimeout`（10 秒）：`list_topics` 与 `join_topic`、`leave_topic` 相同，Broker 不回应时返回带错误码的工具错误，而不是让调用一直等到连接或进程结束。
-
 登记完成时的自动加入另按“默认 topic 的确定”的第一、二步判断 `topics.auto_join` 与项目配置文件的 `auto_join`，两项都允许时加入这份列表。不带名字的 `join_topic` 是用户明确的请求，不看这两项，直接加入列表。
 
 ### 默认 topic 的确定
@@ -186,6 +184,33 @@ peers <v> is available (this Broker runs <c>). To upgrade, the user can ask you 
 ```
 
 其中 `<v>` 是可用版本，`<c>` 是当前版本。
+
+### 工具调用的时限
+
+`mcpserver` 在把一次工具调用转给 Broker 之前，给这次调用的上下文设一个上限，调用返回时取消。Broker 在期限内没有应答时，调用在该上限附近返回带错误码的工具错误，而不是一直等到 Claude Code 自己的超时或连接结束。上限按工具取固定值：
+
+| 工具 | 上限 | 依据 |
+|---|---|---|
+| `get_config`、`set_config`、`set_broker_online`、`list_brokers`、`disconnect_broker`、`create_pairing_key` | 10 秒（`handlerRPCTimeout`） | Broker 一侧的这些请求不做网络 I/O、不起定时器，只读写一个小文件或从内存作答；数值与 topic 工具的 `topicRPCTimeout` 和终端命令的 `UnaryTimeout` 相同 |
+| `list_topics`、`join_topic`、`leave_topic` | 10 秒（`topicRPCTimeout`） | `join_topic` 与 `leave_topic` 的一次无名调用可能逐个加入或退出默认 topic，其中的多次 Broker 请求共用一个上限；Broker 不应答时整次调用即返回，不把 topic 的锁一直占着 |
+| `list_agents` | 20 秒（`listAgentsRPCTimeout`） | Broker 以 1 秒的 `sessionCallTimeout` 逐个刷新它认识的会话，20 秒覆盖约 20 个不应答的会话；正常刷新是毫秒级 |
+| `connect_broker` | 30 秒（`connectBrokerRPCTimeout`） | 拨号 5 秒（`link.dial_timeout` 的默认值）、配对握手 10 秒、link 的 `Hello` 10 秒，合计 25 秒，另加 5 秒；上限大于 Broker 一侧的合计，Broker 先到自己的期限并给出精确原因 |
+| `send_message` | 30 秒（`sendMessageRPCTimeout`） | `send.request_timeout` 默认 20 秒，另加 10 秒；上限大于 Broker 一侧的期限，Broker 先判定消息是否已投递 |
+| `update_broker` | 4 分钟（`updateBrokerRPCTimeout`） | 查询最新版本 30 秒、预检 30 秒、100 MiB 的发布包按 1 MiB/s 下载约 100 秒、post-update 步骤 30 秒，合计 190 秒，再加 50 秒余量 |
+
+这些上限是 `mcpserver` 的常量，不随 `send.request_timeout`、`link.dial_timeout` 等配置项变化，`mcpserver` 也不为了决定上限去读配置。Broker 一侧的期限由配置决定，配置调大后可以超过上面的固定值。`send.request_timeout` 调到 30 秒以上时，`send_message` 先到上限，返回 `Delivery unknown`，说明消息可能已送达、重发可能使对方收到两份；`link.dial_timeout` 调大到使一次配对超过 30 秒时，`connect_broker` 先到上限，以 `Not connected` 开头返回，说明配对可能已完成、可查看 `list_brokers`。这两种返回属于预期行为：调用方在期限内只看到 Broker 没有应答，无从得知 Broker 是否还在处理。
+
+上限到期时沿用该工具已有的错误映射。`send_message` 得到 `Delivery unknown` 与 `delivery_unknown` 码；`connect_broker` 以 `Not connected` 开头，错误码 `internal`；其余工具以该工具的开头短语开头，说明为 `the Broker did not answer` 与底层错误，错误码 `internal`。`update_broker` 用下面一段专门的文字。
+
+### update_broker 超时后的状态
+
+`update_broker` 的上限最长，因为 Broker 一侧要查询版本、下载并安装发布包，还要运行新二进制的 post-update 步骤。到期时工具返回一段专门的文字：开头为 `Upgrade failed`，写明 Broker 没有在 4 分钟内完成升级，再给出实际可能出现的两种结果和核实方法：
+
+- 升级被放弃：截止时间随请求传到 Broker，尚未完成的替换连同服务定义一起回滚，正在运行的版本不变。
+- 升级已经完成：Broker 的应答没有送达调用方，Broker 正在用新版本重启。
+- 无法判断是哪种：运行 `peers --version`、`peers service status`，或在终端运行 `peers update` 核实。
+
+期限到期时取消这次请求。这个截止时间随 gRPC 传给 Broker 的 `ApplyUpdate`，安装步骤用同一个上下文：看到上下文已取消就中止，尚未替换文件的下载或校验直接作废，已经替换的二进制连同改写的服务定义一起回滚。这不是只停止等待。安装在取消之前已经完成的，Broker 仍按原计划重启，新版本照常生效。到点会中止一次正常但较慢的升级并回滚，这是预期行为，上限的作用是不让调用一直挂着。调用方看不到是哪种结果，所以文字按上述两种结果如实说明。
 
 ## 错误与失败语义
 
@@ -233,6 +258,7 @@ Broker 返回的错误码转成一句以结果开头的文字，随后附上错�
 | 默认 topic 的确定 | 已实现 | `internal/mcpserver/defaulttopic.go`（`defaultTopics`、`gitOrigin`）、`internal/mcpserver/project.go`（`findProjectConfig`） |
 | 仓库地址的规范化 | 已实现 | `internal/mcpserver/remote.go`（`normalizeRemote`） |
 | 工具调用转发与错误转换 | 已实现 | `internal/mcpserver/handlers_messaging.go`、`handlers_topics.go`、`handlers_brokers.go`、`handlers_config.go`（`handlers` 的各工具方法）、`internal/mcpserver/errtext.go`（`rpcError`、`codeName`） |
+| 工具调用的时限 | 已实现 | `internal/mcpserver/state.go`（`withRPCTimeout`、`handlerRPCTimeout`）、`internal/mcpserver/handlers_config.go`、`handlers_update.go`、`handlers_brokers.go`、`handlers_messaging.go`、`handlers_topics.go`（各工具方法与各自的上限常量） |
 | `list_brokers` 的本机状态 | 已实现 | `internal/mcpserver/tools.go`（`ListBrokersOut`、`LocalBrokerOut`、`DegradedStateOut`）、`internal/mcpserver/handlers_brokers.go`（`ListBrokers`） |
 | 更新提示 | 已实现 | `internal/mcpserver/updatehint.go`（`updateHint`、`middleware`、`take`）、`internal/mcpserver/update_status.go`（`brokerUpdateStatus`、`queryUpdateStatus`）、`internal/mcpserver/run.go` |
 | 升级工具 | 已实现 | `internal/mcpserver/handlers_update.go`（`UpdateBroker`、`updateBrokerError`）、`internal/mcpserver/tools.go`（`UpdateBrokerOut`、`addDestructiveTool`） |
