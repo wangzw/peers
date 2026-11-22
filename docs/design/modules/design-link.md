@@ -1,120 +1,140 @@
 # link
 
-`link` 维护本 Broker 与每个对端之间的[链路](../../glossary.md)：谁来拨号、如何认证、断了由谁重新建立、帧怎么收发。它不解析帧里装的是成员名单、名录记录还是消息，只提供一条经过身份认证的双向帧通道，并把链路的建立与断开告知上层。一对对端之间只有一条链路，由拨号方建立并在断开后重新建立，接受方只等待对方连入（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。可以把它看作“每个对端一条管道，断了总由同一头接回去”。
+`link` maintains the [link](../../glossary.md) between this Broker and each peer: who dials, how authentication works, who re-establishes it after a disconnect, and how frames are sent and received. It does not parse whether a frame carries a roster, a directory record or a message; it only provides an identity-authenticated bidirectional frame channel and tells the upper layer when a link is established or goes down. A peer pair has only one link, established by the dialer and re-established after a disconnect, while the acceptor only waits for the other side to connect in ([ADR-initiator-redials](../../adr/adr-initiator-redials.md)). It can be thought of as "one pipe per peer, always reconnected from the same end".
 
-首次阅读按顺序读职责、核心数据结构里的状态一览和核心算法与流程；外部接口契约供查阅。
+On a first read, read Responsibilities, State at a Glance under Core Data Structures, and Core Algorithms and Flows in order; the External Interface Contract is for reference.
 
-## 职责
+## Responsibilities
 
-- 在本次运行的监听地址上接受入站连接，默认配置下即在本机的全部地址上监听（[ADR-listen-by-default](../../adr/adr-listen-by-default.md)，`REQ-broker-config-028`），监听地址配置为空时不接受入站连接。
-- 绑定监听地址并把绑定的成败如实返回给调用方，不在绑定失败时改用其他地址或端口。
-- 对本方是拨号方的对端拨号建立链路，Broker 启动时即拨号，链路断开后按退避间隔重新建立；对本方是接受方的对端从不拨号，只等待对方连入（`REQ-broker-pairing-018`、`REQ-broker-pairing-019`、`REQ-broker-pairing-027`）。发起配对的一方能连到对方，双方就有链路可用（`REQ-broker-pairing-020`）。
-- 拨号时按候选地址的顺序逐个尝试，每个地址有单独的期限，对方证书的指纹不是该对端的，放弃该地址；候选地址只含本版本认识的地址项（[ADR-advertised-address](../../adr/adr-advertised-address.md)）。
-- 以双向 TLS 认证对方：对方证书的指纹在对端表中则建立链路；证书指纹不在对端表中的连接只允许做配对握手，握手由 [pairing](design-pairing.md) 完成（`REQ-broker-pairing-013`、`REQ-broker-pairing-015`）。
-- 保证每个对端至多有一条已建立的链路：本方是接受方时，同一对端的新连接取代旧的。
-- 对方以“不是对端”拒绝时停止拨号，直到用户重新配对（`REQ-broker-pairing-035`）。
-- 以保活探测发现失效的连接并关闭它。
-- 为上层收发帧：按序发送，状态帧按到达顺序串行处理，请求帧并发处理并与应答对应。
-- 链路建立时与对方各提供一半随机数，拼成本次链路的盐值；把对方自报的别名交给 `pairing`。
-- 本方是接受方时，在 `Hello` 中，以及对外地址列表变化时在 `PeerInfo` 中，把本方的对外地址列表告诉拨号方；本方是拨号方时，把收到的列表交给 `pairing` 更新候选地址（[ADR-advertised-address](../../adr/adr-advertised-address.md)，`REQ-broker-config-030`、`REQ-broker-config-031`、`REQ-broker-pairing-034`）。
+- Accept inbound connections on this run's listen address, which under the default configuration means listening on every local address ([ADR-listen-by-default](../../adr/adr-listen-by-default.md), `REQ-broker-config-028`), and accept no inbound connection when the listen address is configured empty.
+- Bind the listen address and return the bind result to the caller truthfully, not switching to another address or port on a bind failure.
+- For a peer on which this side is the dialer, dial to establish a link, dialing at Broker startup and re-establishing at the backoff interval after a disconnect; for a peer on which this side is the acceptor, never dial and only wait for the other side to connect (`REQ-broker-pairing-018`, `REQ-broker-pairing-019`, `REQ-broker-pairing-027`). That the side that initiated pairing can reach the other side means the two have a usable link (`REQ-broker-pairing-020`).
+- When dialing, try candidate addresses one by one in order, trying each address with its own deadline; when the peer certificate's fingerprint is not that peer's, abandon the address; a candidate address contains only address items this version recognizes ([ADR-advertised-address](../../adr/adr-advertised-address.md)).
+- Authenticate the other side with mutual TLS: a link is established when the other certificate's fingerprint is in the peer table; a connection whose certificate fingerprint is not in the peer table is allowed only to do a pairing handshake, done by [pairing](design-pairing.md) (`REQ-broker-pairing-013`, `REQ-broker-pairing-015`).
+- Guarantee at most one established link per peer: when this side is the acceptor, a new connection from the same peer replaces the old one.
+- Stop dialing when the other side rejects with "not a peer", until the user pairs again (`REQ-broker-pairing-035`).
+- Detect a failed connection with a keepalive probe and close it.
+- Send and receive frames for the upper layer: send in order, process state frames serially in arrival order, and process request frames concurrently, matching replies to requests.
+- When a link is established, each side contributes half a nonce, concatenated into this link's salt; and hand the other side's self-reported alias to `pairing`.
+- When this side is the acceptor, tell the dialer this side's advertised address list in `Hello`, and in `PeerInfo` when the advertised address list changes; when this side is the dialer, hand the received list to `pairing` to update candidate addresses ([ADR-advertised-address](../../adr/adr-advertised-address.md), `REQ-broker-config-030`, `REQ-broker-config-031`, `REQ-broker-pairing-034`).
 
-只修改 `broker.listen` 的主机部分（例如把 `:17443` 改为 `127.0.0.1:17443`）会被拒绝：校验以新值探测绑定时，旧监听仍占着同一端口，探测因此失败。修改这一项需要同时改端口，或改配置文件后重启 Broker；修改失败时 `link` 继续在原地址监听（`REQ-broker-config-034`）。
+Changing only the host part of `broker.listen` (for example from `:17443` to `127.0.0.1:17443`) is refused: when validation probes binding with the new value, the old listener still holds the same port, so the probe fails. Changing this item requires changing the port at the same time, or editing the configuration file and restarting the Broker; on a failed change `link` keeps listening on the original address (`REQ-broker-config-034`).
 
-### 非职责
+### Non-Responsibilities
 
-- 不解析上层帧的内容，不做可见性检查，分别由注册该帧类型的 [topic](design-topic.md)、[directory](design-directory.md) 与 [broker](design-broker.md) 负责。
-- 不保存对端表、角色与候选地址，不验证配对密钥，由 `pairing` 负责。
-- 不查名录。拨号的目标只取自对端表中的候选地址，名片带来的地址由 `broker` 交给 `pairing` 记入候选地址。
-- 不决定监听哪个地址，不计算本方的对外地址列表，也不决定绑定失败之后进程是否退出。地址与列表由 [config](design-config.md) 给出，启动时绑定失败即退出由 `broker` 执行。
-- 不使用连接上看到的对方地址，不保存它，也不把它告诉对方。
-- 不缓存发不出去的帧。链路不在已建立状态时，发送立即失败，是否重试或等待由调用方决定。
-- 不在链路之间转发帧，系统中没有转发（[ADR-direct-links-only](../../adr/adr-direct-links-only.md)）。
+- Does not parse an upper-layer frame's content and does no visibility check; the package that registers the frame type, [topic](design-topic.md), [directory](design-directory.md) or [broker](design-broker.md), owns those.
+- Does not store the peer table, roles or candidate addresses and does not verify pairing keys; `pairing` owns those.
+- Does not consult the directory. The dial target comes only from the peer table's candidate addresses, and an address a card brings is handed by `broker` to `pairing` to record as a candidate address.
+- Does not decide which address to listen on, does not compute this side's advertised address list, and does not decide whether the process exits after a bind failure. The address and list are given by [config](design-config.md), and `broker` implements exiting on a bind failure at startup.
+- Does not use the other side's address seen on the connection, does not store it, and does not tell it to the other side.
+- Does not cache frames that cannot be sent. When the link is not in the established state a send fails immediately, and the caller decides whether to retry or wait.
+- Does not forward frames between links; the system has no forwarding ([ADR-direct-links-only](../../adr/adr-direct-links-only.md)).
 
-## 外部接口契约
+## External Interface Contract
 
-供 `broker`、`topic`、`directory` 调用，签名稳定。以下方法除 `New` 外都定义在 `*Link` 上；其余声明是这些方法的签名所用的类型，以及构造 `Options` 依赖的 `RealClock` 与 `ConfigSettings`。
+Called by `broker`, `topic` and `directory`; the signatures are stable. The methods below except `New` are all defined on `*Link`; the other declarations are the types these methods' signatures use, and the `RealClock` and `ConfigSettings` an `Options` depends on.
 
 ```go
-// New 构造一条尚未开始工作的链路。Peers 与 Settings 为 nil 时返回错误。
-// 协议版本取 Options.ProtocolVersion，为 0 时取 linkpb.ProtocolVersion。
+// New constructs a link that has not started working. It returns an error when Peers
+// or Settings is nil. The protocol version is Options.ProtocolVersion, or
+// linkpb.ProtocolVersion when 0.
 func New(opts Options) (*Link, error)
 
-// Start 让本方是拨号方的对端开始拨号；由 broker 在写出 ok 之后调用。
+// Start makes the peers on which this side is the dialer begin dialing; broker calls it
+// after writing ok.
 func (l *Link) Start()
 
-// Listen 在 address 上绑定并开始接受入站连接；绑定失败时返回错误，原有的监听不变。
-// address 的主机部分为空时在本机的全部地址上监听；address 为空表示停止监听。
-// 启动时与 broker.listen 变更时由 broker 调用。
+// Listen binds on address and begins accepting inbound connections; a bind failure
+// returns an error and the existing listener is unchanged. When address's host part is
+// empty it listens on every local address; an empty address means stop listening.
+// broker calls it at startup and when broker.listen changes.
 func (l *Link) Listen(address string) error
 
-// Addr 返回当前的监听地址；没有监听时返回 nil。
+// Addr returns the current listen address; nil when not listening.
 func (l *Link) Addr() net.Addr
 
-// Close 停止监听，关闭全部连接与协程。可重复调用，返回后不再有回调；订阅者的回调与帧处理函数内不得调用（Close 会等待它们返回）。
+// Close stops listening and closes every connection and goroutine. Callable repeatedly,
+// with no callbacks after it returns; must not be called from a subscriber's callback or
+// a frame handler (Close waits for them to return).
 func (l *Link) Close()
 
-// Send 把一帧放入与 peer 的链路的有序发送队列；链路未建立、队列已满，或编码后的帧超过
-// MaxMessageSize 时立即返回错误。超过上限的帧不入队，链路不受影响。
+// Send puts a frame into the ordered send queue of the link with peer; it returns an
+// error immediately when the link is not established, the queue is full, or the encoded
+// frame exceeds MaxMessageSize. An over-limit frame is not queued and the link is
+// unaffected.
 func (l *Link) Send(peer Fingerprint, f Frame) error
 
-// SendLatest 与 Send 相同，但同一 kind 的帧若仍有一帧由 SendLatest 放入、尚未被写协程
-// 取走，就地把它的内容换成 f，不占新的队列位置；取走之后的替换按新帧入队。
+// SendLatest is like Send, but when a frame of the same kind put in by SendLatest is
+// still not taken by the write goroutine, its content is replaced with f in place
+// without taking a new queue position; a replacement after it is taken is enqueued as a
+// new frame.
 func (l *Link) SendLatest(peer Fingerprint, f Frame) error
 
-// SendLatestKey 与 SendLatest 相同，但用调用方给定的 key 而不是 kind 标识待替换的位置。
-// 同一 key 的帧若仍有一帧由 SendLatestKey 放入、尚未被写协程取走，就地把内容换成 f，
-// 并以 replaced 报告发生了替换；取走之后的替换按新帧入队。上层为一个摘要的两种帧
-// 使用同一个 key 时，新帧不论 kind 都替换旧帧。
+// SendLatestKey is like SendLatest, but identifies the position to replace by the
+// caller-given key instead of the kind. When a frame with the same key put in by
+// SendLatestKey is still not taken by the write goroutine, its content is replaced with
+// f in place and replaced reports that a replacement happened; a replacement after it is
+// taken is enqueued as a new frame. When the upper layer uses the same key for two kinds
+// of frames about one digest, a new frame replaces the old one regardless of kind.
 func (l *Link) SendLatestKey(peer Fingerprint, key string, f Frame) (replaced bool, err error)
 
-// Request 发出一帧并等待对方以同一请求号应答，直到 ctx 到期。
-// 返回的 sent 表示该帧是否已交给传输层。帧超过 MaxMessageSize 时返回 ErrFrameTooLarge，
-// sent 为假。
+// Request sends a frame and waits for the other side's reply under the same request id,
+// until ctx expires. The returned sent says whether the frame was handed to the
+// transport. It returns ErrFrameTooLarge when the frame exceeds MaxMessageSize, with sent
+// false.
 func (l *Link) Request(ctx context.Context, peer Fingerprint, f Frame) (reply Frame, sent bool, err error)
 
-// HandleState 注册一种状态帧的处理函数；同一链路上的状态帧按到达顺序逐个调用。
+// HandleState registers a handler for a state frame kind; state frames on the same link
+// call it one by one in arrival order.
 func (l *Link) HandleState(kind FrameKind, h func(peer Fingerprint, f Frame))
 
-// HandleRequest 注册一种请求帧的处理函数；各请求并发调用，每个对端至多 64 个同时处理，该对端的各条连接共用这份名额；处理函数不得等待同一链路上的应答，返回值作为应答发回。
+// HandleRequest registers a handler for a request frame kind; requests are called
+// concurrently, at most 64 per peer at once, shared by that peer's connections; a handler
+// must not wait for a reply on the same link, and its return value is sent back as the
+// reply.
 func (l *Link) HandleRequest(kind FrameKind, h func(ctx context.Context, peer Fingerprint, f Frame) Frame)
 
-// Subscribe 订阅链路的建立与断开；建立事件带有本次链路的盐值。
+// Subscribe subscribes to link establishment and teardown; the establishment event
+// carries this link's salt.
 func (l *Link) Subscribe(onUp func(peer Fingerprint, salt []byte), onDown func(peer Fingerprint))
 
-// State 返回与 peer 的链路的当前状态。
+// State returns the current state of the link with peer.
 func (l *Link) State(peer Fingerprint) LinkState
 
-// Kick 促使对 peer 的拨号立即进行，不等待退避间隔；本方是 peer 的接受方时不起作用。
+// Kick makes the dial to peer happen immediately without waiting for the backoff
+// interval; it has no effect when this side is peer's acceptor.
 func (l *Link) Kick(peer Fingerprint)
 
-// AnnounceAlias 在每条已建立的链路上发送 PeerInfo，由 broker 在本机别名变化时调用。
+// AnnounceAlias sends PeerInfo on each established link, called by broker when the local
+// alias changes.
 func (l *Link) AnnounceAlias()
 
-// AnnounceAddresses 在本方是接受方的每条已建立的链路上发送 PeerInfo，
-// 由 broker 在本方的对外地址列表变化时调用。
+// AnnounceAddresses sends PeerInfo on each established link on which this side is the
+// acceptor, called by broker when this side's advertised address list changes.
 func (l *Link) AnnounceAddresses()
 
-// Drop 关闭与 peer 的链路并删除这条链路记录，在解除配对时调用；不等待关闭完成。
+// Drop closes the link with peer and deletes this link record, called on unpairing; it
+// does not wait for the close to complete.
 func (l *Link) Drop(peer Fingerprint)
 
-// PairDial 向 address 建立连接并把它交给 run 做配对握手；run 成功返回后该连接转为链路。
-// 实现 pairing.Transport。
+// PairDial connects to address and hands it to run for the pairing handshake; after run
+// returns successfully the connection becomes a link. Implements pairing.Transport.
 func (l *Link) PairDial(ctx context.Context, address string, run func(pairing.PairConn) error) error
 
-// Frame 是链路上的一帧；request_id 与 is_reply 不暴露给上层。
+// Frame is one frame on a link; request_id and is_reply are not exposed to the upper layer.
 type Frame struct {
     Kind    FrameKind
     Payload []byte
 }
 
-// MaxMessageSize 是一次收发的帧消息上限，按编码后的长度计。
+// MaxMessageSize is the cap of one sent or received frame message, counted by the encoded length.
 const MaxMessageSize = 4 << 20
 
-// Fingerprint 与 pairing 的指纹是同一类型。
+// Fingerprint is the same type as pairing's fingerprint.
 type Fingerprint = pairing.Fingerprint
 type FrameKind = uint32
 
-// Phase 是链路记录的状态；没有链路记录时是 PhaseNone。
+// Phase is the state of a link record; PhaseNone when there is no link record.
 type Phase uint8
 const (
     PhaseNone Phase = iota
@@ -126,7 +146,7 @@ const (
     PhaseRejected
 )
 
-// FailReason 是最近一次失败的原因；建立后复位为 FailNone。
+// FailReason is the reason of the latest failure; reset to FailNone after establishment.
 type FailReason uint8
 const (
     FailNone FailReason = iota
@@ -143,34 +163,34 @@ const (
 type LinkState struct {
     Phase       Phase
     Role        pairing.Role
-    LastFailure FailReason // 最近一次失败；建立后复位为 FailNone
-    PeerVersion uint32     // LastFailure 为 FailVersionIncompatible 时对方报的版本，未知为 0
-    NextDial    time.Time  // 仅 PhaseBackoff
+    LastFailure FailReason // the latest failure; reset to FailNone after establishment
+    PeerVersion uint32     // the version the other side reported when LastFailure is FailVersionIncompatible, 0 when unknown
+    NextDial    time.Time  // PhaseBackoff only
 }
 
 var (
-    ErrNotEstablished = errors.New("link: not established") // broker 映射为 peer_unreachable
+    ErrNotEstablished = errors.New("link: not established") // broker maps to peer_unreachable
     ErrQueueFull      = fmt.Errorf("%w: send queue full", ErrNotEstablished)
     ErrLinkDown       = errors.New("link: link went down before the reply arrived")
     ErrClosed         = errors.New("link: closed")
     ErrInvalidKind    = errors.New("link: frame kind is reserved for link and pairing")
-    ErrFrameTooLarge  = errors.New("link: frame is larger than the message limit") // 不入队，不包装 ErrNotEstablished
+    ErrFrameTooLarge  = errors.New("link: frame is larger than the message limit") // not queued, does not wrap ErrNotEstablished
 )
 
-// UnsupportedError 表示对方以“不支持”应答了请求。
+// UnsupportedError means the other side answered a request with "unsupported".
 type UnsupportedError struct{ Kind FrameKind }
 func (e *UnsupportedError) Error() string
 
-// Options 是构造链路所需的依赖与参数。
+// Options holds the dependencies and parameters needed to construct a link.
 type Options struct {
     Peers           Peers
     Settings        Settings
-    Clock           Clock        // nil 时用 RealClock()
-    Logger          *slog.Logger // nil 时用 slog.Default()
-    ProtocolVersion uint32       // 0 表示 linkpb.ProtocolVersion
+    Clock           Clock        // RealClock() when nil
+    Logger          *slog.Logger // slog.Default() when nil
+    ProtocolVersion uint32       // 0 means linkpb.ProtocolVersion
 }
 
-// Peers 是链路对 pairing 的窄接口；*pairing.Pairing 满足它。
+// Peers is the link's narrow interface to pairing; *pairing.Pairing satisfies it.
 type Peers interface {
     Fingerprint() pairing.Fingerprint
     TLSConfig() *tls.Config
@@ -184,7 +204,7 @@ type Peers interface {
     Accept(conn pairing.PairConn) error
 }
 
-// Settings 是链路对 config 的窄接口；ConfigSettings() 满足它。
+// Settings is the link's narrow interface to config; ConfigSettings() satisfies it.
 type Settings interface {
     Alias() string
     Advertised() []config.AdvertisedAddr
@@ -196,7 +216,7 @@ type Settings interface {
     Audit(e config.Event)
 }
 
-// Clock 提供当前时间与定时器；RealClock() 返回基于标准库的实现。
+// Clock provides the current time and timers; RealClock() returns a standard-library implementation.
 type Clock interface {
     Now() time.Time
     AfterFunc(d time.Duration, f func()) (stop func() bool)
@@ -206,9 +226,9 @@ func RealClock() Clock
 func ConfigSettings() Settings
 ```
 
-`*Link` 同时实现 `pairing.Transport`。`pairing.Open` 构造时就要这个接口，而 `link.New` 要一个已经打开的 `*pairing.Pairing`，两者因此经一个转接对象装配：转接对象实现 `pairing.Transport`，`PairDial`、`Drop` 转发给稍后填入的 `*Link`；`pairing.Open` 拿到转接对象后，`link.New` 构造 `*Link` 并填入转接对象。`broker` 的 `Run` 依次执行各包注册帧类型与订阅、各组件 `Start`、`Listen`、绑定本机 socket、写出 `ok`、`Start`。`link` 不为 `Subscribe` 之前已经建立的链路补发建立通知，`Run` 让 `Listen` 排在全部组件的 `Start` 之后，`Start` 排在写出 `ok` 之后。生产路径上这也是先 `Listen` 后 `Start`，版本不兼容的入站失败若落在接受方创建对端记录之前的这段窗口里，这一次不会被记下，但拨号方退避后会重拨，那时记录已存在，失败被记下，因此窗口至多持续一个退避间隔，随后自行恢复。
+`*Link` also implements `pairing.Transport`. `pairing.Open` needs this interface at construction, while `link.New` needs an already-opened `*pairing.Pairing`, so the two are assembled through an adapter object: the adapter implements `pairing.Transport`, and `PairDial` and `Drop` forward to a `*Link` filled in later; after `pairing.Open` gets the adapter, `link.New` constructs `*Link` and fills in the adapter. `broker`'s `Run` runs in order the packages registering frame types and subscriptions, the components' `Start`, `Listen`, binding the local socket, writing `ok` and `Start`. `link` does not send an establishment notification for a link already established before `Subscribe`; `Run` orders `Listen` after all components' `Start` and `Start` after writing `ok`. On the production path this is also `Listen` before `Start`, and an incompatible-version inbound failure falling in this window before the acceptor creates its peer record is not recorded this time, but the dialer redials after backoff, by which time the record exists and the failure is recorded, so the window lasts at most one backoff interval and then recovers on its own.
 
-Broker 之间的传输协议是 gRPC 上的一个双向流方法，承载在 TLS 1.3 之上（[ADR-grpc-stream-links](../../adr/adr-grpc-stream-links.md)）：
+The transport protocol between Brokers is one bidirectional-stream method on gRPC over TLS 1.3 ([ADR-grpc-stream-links](../../adr/adr-grpc-stream-links.md)):
 
 ```proto
 service Link {
@@ -216,216 +236,216 @@ service Link {
 }
 
 message Frame {
-  uint32 kind = 1;        // 帧类型，由注册它的包定义
-  uint64 request_id = 2;  // 非零表示请求或其应答
+  uint32 kind = 1;        // frame type, defined by the package that registers it
+  uint64 request_id = 2;  // non-zero means a request or its reply
   bool   is_reply = 3;
-  bytes  payload = 4;     // 由帧类型决定的消息
+  bytes  payload = 4;     // the message determined by the frame type
 }
 ```
 
-本包自己定义的帧：
+The frames this package defines:
 
-| 帧 | 类别 | 内容 | 用途 |
+| Frame | Class | Content | Use |
 |---|---|---|---|
-| `Hello` | 状态帧 | 协议版本、发送方自报的别名、一段 32 字节的随机数，以及发送方是接受方时它的对外地址列表 | 链路建立时双方各发一次 |
-| `PeerInfo` | 状态帧 | 发送方自报的别名，以及发送方是接受方时它的对外地址列表 | 发送方的别名在链路存续期间变化时在每条链路上发送（`REQ-broker-pairing-002`、`REQ-broker-pairing-003`）；发送方的对外地址列表变化时，在发送方是接受方的链路上发送 |
-| `Reject` | 状态帧 | 原因：协议版本不兼容、不是对端或角色不符 | 接受连接的一方拒绝一个连接时，以及拨号方发现协议版本不兼容时发送，随后关闭 |
-| `Unsupported`（kind 4） | 应答帧 | 被应答的请求的 kind，只有这一项 | 收到不认识的请求帧时作为它的应答发出，`is_reply` 为真，`request_id` 沿用该请求的请求号 |
+| `Hello` | state frame | The protocol version, the sender's self-reported alias, a 32-byte nonce, and the sender's advertised address list when the sender is the acceptor | Each side sends it once when the link is established |
+| `PeerInfo` | state frame | The sender's self-reported alias, and its advertised address list when the sender is the acceptor | Sent on each link when the sender's alias changes during the link's life (`REQ-broker-pairing-002`, `REQ-broker-pairing-003`); sent on the links on which the sender is the acceptor when the sender's advertised address list changes |
+| `Reject` | state frame | Reason: protocol version incompatible, not a peer, or role mismatch | Sent when the side accepting a connection rejects it, and when the dialer finds the protocol version incompatible, then the connection is closed |
+| `Unsupported` (kind 4) | reply frame | The kind of the request being replied to, only this item | Sent as the reply when an unrecognized request frame is received, with `is_reply` true and `request_id` the request's request id |
 
-对外地址列表取自 [config](design-config.md)，至多 8 项，每项带有种类；本方发出的列表只含直连的项，形如 `主机:端口`。收到的列表中种类不认识的项不用于拨号，不影响帧中其余的内容，也不影响列表中认识的项。发送方是拨号方时这一项为空，收到的一方也不读取它。
+The advertised address list comes from [config](design-config.md), at most 8 items, each carrying a kind; the list this side sends contains only direct items, in the form `host:port`. An item of an unrecognized kind in a received list is not used for dialing and does not affect the rest of the frame's content or the recognized items in the list. When the sender is the dialer this item is empty, and the receiver does not read it.
 
-流上的首帧由发起连接的一方发送，是 `Hello` 或配对握手的 `PairRequest`。接受连接的一方在核实对方之前不发送任何帧。接受连接后，在未读到首帧的期限之后关闭连接。同时处于未认证状态的连接按来源限额（[ADR-unauthenticated-connection-limits](../../adr/adr-unauthenticated-connection-limits.md)）：来源取对方地址的网络前缀，IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理，去掉 IPv6 的 zone，地址中没有 IP 地址的连接共同归入一个来源。同一来源超过每来源上限时，关闭该来源最早建立的一条；全部来源合计超过全局上限时，关闭连接数最多的来源中最早建立的一条，连接数并列时取最早连接最早建立的那个来源。`Hello` 中的协议版本是一个整数，双方的版本相等才建立链路，不相等时回 `Reject` 并关闭。配对握手使用同一版本：`PairConn.ProtocolVersion` 返回该链路实际使用的版本（包括测试注入的覆盖值），`pairing` 把它写进 `PairRequest` 并在接受方比较，见 [pairing](design-pairing.md)。只增不改的变化不改变协议版本：新增帧类型，以及给已有的帧增加字段；收到不认识的状态帧时丢弃，收到不认识的请求帧时回以“不支持”的应答，不认识的字段被忽略。改变已有帧或已有字段含义的变化，才提升协议版本。帧类型的编号空间按包划分。
+The first frame on the stream is sent by the side that initiates the connection and is `Hello` or the pairing handshake's `PairRequest`. The side accepting the connection sends no frame before verifying the other side. After accepting, it closes the connection after a deadline for not reading the first frame. Connections simultaneously in the unauthenticated state follow source quotas ([ADR-unauthenticated-connection-limits](../../adr/adr-unauthenticated-connection-limits.md)): the source is the network prefix of the other side's address, a /32 for IPv4 and the /64 for IPv6, an IPv4-mapped IPv6 address handled as IPv4, the IPv6 zone removed, and connections whose address has no IP address gathered into one source. When one source exceeds its per-source cap, that source's earliest-established connection is closed; when all sources combined exceed the global cap, the earliest-established connection of the source with the most connections is closed, and on a tie the source whose earliest connection is oldest. The protocol version in `Hello` is an integer, and a link is established only when the two versions are equal; otherwise it replies `Reject` and closes. The pairing handshake uses the same version: `PairConn.ProtocolVersion` returns the version this link actually uses (including a test-injected override), and `pairing` writes it into `PairRequest` and compares it at the acceptor, see [pairing](design-pairing.md). An additive-only change does not change the protocol version: adding a frame type, and adding a field to an existing frame; an unrecognized state frame is dropped, an unrecognized request frame is answered with an "unsupported" reply, and unrecognized fields are ignored. Only a change that alters the meaning of an existing frame or field raises the protocol version. The frame type's number space is divided by package.
 
-首帧期限 10 秒，自 TCP 接受起计。每来源上限 8，全局上限 64。TLS 握手完成、证书指纹在本方对端表中的连接转入已知对端池，不计入这两个上限；每个指纹的已知对端池至多 2 条，超过时关闭该指纹最早建立的一条。认证前从一条连接读入的字节数（含 TLS 握手、HTTP/2 前言与帧）上限 64 KiB，超过即关闭；HTTP/2 头部列表上限 16 KiB。未认证的范围从 TCP 接受到首帧 `Hello` 核实通过、或首帧 `PairRequest` 交给 `pairing` 且握手成功为止，配对握手期间的连接仍计入其所在池的上限：指纹不在对端表中的连接计入陌生来源池的每来源上限与全局上限，指纹已在对端表中的连接计入该指纹的已知对端池上限。每条 TCP 连接只承载一个 `Connect` 流，同一连接上的第二个流以错误结束。`Reject` 发出后，连接最多再保留 1 秒。认证后一次收发的消息上限是 `MaxMessageSize`，即 4 MiB。驱逐超限的连接、因已知对端池超限关闭连接，以及认证前读取超过预算时，各写一条 Debug 级运行日志 `link: closed an unauthenticated connection`，字段 `source` 为来源前缀，`cause` 为关闭原因（`source_limit`、`global_limit`、`known_peer_limit` 或 `byte_budget`）；首帧期限到期不写这条日志。
+The first-frame deadline is 10 seconds, counted from the TCP accept. The per-source cap is 8 and the global cap 64. A connection whose TLS handshake completes and whose certificate fingerprint is in this side's peer table moves into the known-peer pool and is not counted toward these two caps; each fingerprint's known-peer pool has at most 2 connections, and beyond that the fingerprint's earliest-established connection is closed. The bytes read from a connection before authentication (including the TLS handshake, HTTP/2 preface and frames) are capped at 64 KiB, closed on exceeding; the HTTP/2 header list is capped at 16 KiB. The unauthenticated range runs from the TCP accept until the first `Hello` verifies, or until the first `PairRequest` is handed to `pairing` and the handshake succeeds; a connection during the pairing handshake still counts toward its pool's cap: a connection whose fingerprint is not in the peer table counts toward the unknown-source pool's per-source and global caps, and a connection whose fingerprint is already in the peer table counts toward that fingerprint's known-peer pool cap. Each TCP connection carries only one `Connect` stream, and a second stream on the same connection ends with an error. After `Reject` is sent, the connection is kept for at most 1 second more. After authentication the cap on one sent or received message is `MaxMessageSize`, that is 4 MiB. Evicting an over-limit connection, closing a connection for exceeding the known-peer pool cap, and reading over budget before authentication each write one run log at Debug level `link: closed an unauthenticated connection`, with field `source` the source prefix and `cause` the close reason (`source_limit`, `global_limit`, `known_peer_limit` or `byte_budget`); an expired first-frame deadline does not write this log.
 
-## 依赖
+## Dependencies
 
-`link` 引用 `pairing`，用来取得本机身份证书，查询对端表中的对端、本方的角色与候选地址，提交对方自报的别名、接受方告知的对外地址列表和这次连通的地址，并把首帧为 `PairRequest` 的连接交给它握手；引用 `config` 读取监听地址、本方的对外地址列表、拨号期限与各项间隔。它不引用 `topic`、`directory` 与 `broker`，这些包在它上面注册帧类型，符合模块依赖图的方向。
+`link` references `pairing` to get the local identity certificate, to query the peers in the peer table, this side's role and candidate addresses, to submit the other side's self-reported alias, the advertised address list the acceptor told and this connection's address, and to hand it a connection whose first frame is `PairRequest` for the handshake; and it references `config` to read the listen address, this side's advertised address list, the dial deadline and the various intervals. It references neither `topic`, `directory` nor `broker`; those packages register frame types on top of it, matching the module dependency graph's direction.
 
-## UML 图
+## UML Diagrams
 
-链路的状态属于“与某个对端的链路”，不属于某一条连接，可取的状态由本方在这对对端中的角色决定。下图是本方是[拨号方](../../glossary.md)时的状态变化。拨号中的一轮依次尝试全部候选地址，只要有一个地址建立了 TLS 且对方证书的指纹相符就进入握手中。
+A link's state belongs to "the link with a peer", not to a connection, and the states it can take are decided by this side's role in the pair. The diagram below is the state change when this side is the [dialer](../../glossary.md). One round of dialing tries every candidate address in turn, and enters handshaking as soon as one address establishes TLS with the peer certificate's fingerprint matching.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> 拨号中: Broker 启动
-    [*] --> 握手中: 配对握手成功
-    拨号中 --> 握手中: 某个候选地址上 TLS 建立且指纹相符
-    拨号中 --> 退避中: 全部候选地址都失败
-    握手中 --> 已建立: Hello 交换完成
-    握手中 --> 退避中: 版本不兼容、角色不符或连接中断
-    握手中 --> 被拒绝: 收到 Reject，原因是不是对端
-    已建立 --> 退避中: 流中断、保活超时或发送队列已满
-    退避中 --> 拨号中: 间隔到期或 Kick
+    [*] --> Dialing: Broker starts
+    [*] --> Handshaking: pairing handshake succeeds
+    Dialing --> Handshaking: TLS established on a candidate address with matching fingerprint
+    Dialing --> Backoff: every candidate address failed
+    Handshaking --> Established: Hello exchange complete
+    Handshaking --> Backoff: version incompatible, role mismatch or connection interrupted
+    Handshaking --> Rejected: received Reject, reason not a peer
+    Established --> Backoff: stream interrupted, keepalive timeout or send queue full
+    Backoff --> Dialing: interval expired or Kick
 ```
 
-下图是本方是[接受方](../../glossary.md)时的状态变化。接受方不拨号，没有拨号中、退避中和被拒绝，链路不在已建立状态时一律停在等待对方。
+The diagram below is the state change when this side is the [acceptor](../../glossary.md). The acceptor does not dial and has no dialing, backoff or rejected states; when the link is not established it stays waiting for the other side.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> 等待对方: Broker 启动
-    [*] --> 握手中: 配对握手成功
-    等待对方 --> 握手中: 对方连入，首帧是 Hello
-    握手中 --> 已建立: Hello 交换完成
-    握手中 --> 等待对方: 版本不兼容或连接中断
-    已建立 --> 等待对方: 流中断、保活超时或发送队列已满
+    [*] --> Waiting: Broker starts
+    [*] --> Handshaking: pairing handshake succeeds
+    Waiting --> Handshaking: the other side connects in, first frame is Hello
+    Handshaking --> Established: Hello exchange complete
+    Handshaking --> Waiting: version incompatible or connection interrupted
+    Established --> Waiting: stream interrupted, keepalive timeout or send queue full
 ```
 
-两图都省略了 `Drop`：任一状态下调用它都关闭连接并删除这条链路记录。配对握手成功后，握手所在的连接直接进入握手中；同一对 Broker 重新配对时，原有的链路记录按新的角色重建，见“同一对端的新连接”。
+Both diagrams omit `Drop`: calling it in any state closes the connection and deletes this link record. After the pairing handshake succeeds, the connection carrying the handshake enters handshaking directly; when the same pair of Brokers pairs again, the existing link record is rebuilt by the new roles, see "A New Connection from the Same Peer".
 
-## 核心数据结构
+## Core Data Structures
 
-每个对端一条链路记录，只存在于内存：对方指纹、本方的角色、当前状态、当前的流、盐值、有序发送队列、下一次拨号的时间、本轮拨号尚未尝试的候选地址、未应答请求的等待表、最近一次失败的原因。
+One link record per peer, existing only in memory: the other side's fingerprint, this side's role, the current state, the current stream, the salt, the ordered send queue, the time of the next dial, the candidate addresses not yet tried in this round of dialing, the wait table of unanswered requests, and the latest failure reason.
 
-### 状态一览
+### State at a Glance
 
-| 状态 | 一句话含义 | 当前动作（link） | 直觉画面 |
+| State | What it means | What is happening (link) | Mental image |
 |---|---|---|---|
-| 拨号中 | 本方是拨号方，正在按顺序连接对方的候选地址 | 对每个地址建立 TCP 与 TLS 并核对证书指纹，每个地址以 `link.dial_timeout` 为限 | 照着通讯录上的号码一个个拨过去 |
-| 等待对方 | 本方是接受方，链路未建立，只等对方连入 | 无；监听端口照常接受连接 | 守着电话等对方打来 |
-| 握手中 | 连接已通，正在确认身份与版本 | 核对证书指纹与角色，交换 `Hello` | 接通后先报姓名 |
-| 已建立 | 链路可用 | 收发帧，定时保活；本方是接受方时，同一对端的新连接到来即改用新的 | 通话中 |
-| 退避中 | 本方是拨号方，上一轮拨号失败或链路中断，等待下一轮 | 计时；`Kick` 时提前结束 | 挂断后过一会儿再拨 |
-| 被拒绝 | 本方是拨号方，对方已不把本方当作对端 | 不再拨号，记下原因供列出 Broker 时展示 | 对方说不认识，不再打过去 |
+| Dialing | This side is the dialer, connecting the other side's candidate addresses in order | Establish TCP and TLS for each address and check the certificate fingerprint, each address bounded by `link.dial_timeout` | Dialing the numbers in the address book one after another |
+| Waiting | This side is the acceptor, the link is not established, only waiting for the other side to connect in | None; the listening port accepts connections as usual | Sitting by the phone waiting for the call |
+| Handshaking | The connection is up, confirming identity and version | Check the certificate fingerprint and role, exchange `Hello` | Saying your name first after the call connects |
+| Established | The link is usable | Send and receive frames, keepalive on a timer; when this side is the acceptor, a new connection from the same peer switches to the new one | On the call |
+| Backoff | This side is the dialer, the last round of dialing failed or the link was interrupted, waiting for the next round | Timing; `Kick` ends it early | Calling again a little while after hanging up |
+| Rejected | This side is the dialer, the other side no longer regards this side as a peer | No more dialing, recording the reason to show when listing Brokers | The other side says it does not know you, so stop calling |
 
-## 核心算法与流程
+## Core Algorithms and Flows
 
-### 走查
+### Worked Example
 
-Broker B 位于 NAT 之后，监听地址配置为空，凭 A 的地址和 A 生成的配对密钥发起过配对，因此 B 是 A 的拨号方，A 是 B 的接受方。A 的对外地址列表是 `203.0.113.5:17443` 与 `10.0.0.5:17443`，后者是用 `broker.advertise_extra` 追加的 A 所在内网的地址；B 的对端表中 A 的候选地址就是这两项，上一次连通的是 `203.0.113.5:17443`。B 所在的局域网恰好也是 `10.0.0.0/24`，其中的 `10.0.0.5` 上运行着另一个 Broker C。A 重启，重启前后地址不变。
+Broker B sits behind NAT, its listen address configured empty, and has paired using A's address and a pairing key A generated, so B is A's dialer and A is B's acceptor. A's advertised address list is `203.0.113.5:17443` and `10.0.0.5:17443`, the latter being A's intranet address added with `broker.advertise_extra`; B's peer table has exactly these two as A's candidate addresses, and the last connected was `203.0.113.5:17443`. B's local network happens to be `10.0.0.0/24` too, and on its `10.0.0.5` runs another Broker C. A restarts, its address unchanged before and after.
 
-| 步骤 | 事件 | A 对 B 的链路状态 | B 对 A 的链路状态 |
+| Step | Event | A's link state to B | B's link state to A |
 |---|---|---|---|
-| 1 | A 进程退出 | 无 | 已建立 |
-| 2 | B 的流中断 | 无 | 退避中，间隔 1 秒 |
-| 3 | 间隔到期，B 先试上一次连通的 `203.0.113.5:17443`，A 尚未启动，连接被拒；再试与本机同网段的 `10.0.0.5:17443`，连到 C，C 的证书指纹不是 A 的，B 关闭连接 | 无 | 退避中，间隔 2 秒 |
-| 4 | A 启动，加载对端表，本方是 B 的接受方 | 等待对方 | 退避中 |
-| 5 | 间隔到期，B 先试 `203.0.113.5:17443`，TLS 建立，指纹是 A 的；B 发 `Hello`，A 核对 B 的指纹在对端表中，且本方是它的接受方 | 握手中 | 握手中 |
-| 6 | A 回 `Hello`，带本方的对外地址列表；盐值由 B 的随机数接 A 的随机数拼成 | 已建立，盐值 `s2` | 已建立，盐值 `s2` |
-| 7 | B 把 A 的列表交给 `pairing`，记下这次连通的 `203.0.113.5:17443`；`link` 通知订阅者链路建立，`topic` 与 `directory` 开始交换 | 已建立 | 已建立 |
+| 1 | A's process exits | none | established |
+| 2 | B's stream is interrupted | none | backoff, interval 1 second |
+| 3 | The interval expires, B first tries the last connected `203.0.113.5:17443`, A has not started and the connection is refused; then tries `10.0.0.5:17443` on its own subnet, connects to C, C's certificate fingerprint is not A's, and B closes the connection | none | backoff, interval 2 seconds |
+| 4 | A starts, loads the peer table, this side is B's acceptor | waiting | backoff |
+| 5 | The interval expires, B first tries `203.0.113.5:17443`, TLS is established and the fingerprint is A's; B sends `Hello`, A checks that B's fingerprint is in the peer table and that this side is its acceptor | handshaking | handshaking |
+| 6 | A replies `Hello` with this side's advertised address list; the salt is B's nonce concatenated with A's nonce | established, salt `s2` | established, salt `s2` |
+| 7 | B hands A's list to `pairing` and records this connection's `203.0.113.5:17443`; `link` notifies subscribers the link is established, and `topic` and `directory` begin exchanging | established | established |
 
-A 自始至终没有向 B 发起连接，也不知道 B 的任何地址。B 在第 3 步没有向 C 发送任何帧：同一个私有地址在 B 所在的网络里指向其他 Broker，不会使 B 连错对象。A 在 `Hello` 中给出的列表与此前相同，B 的候选地址不变。盐值 `s2` 与重启前的不同，重启前交换的摘要全部作废。
+A never initiates a connection to B and does not know any of B's addresses. At step 3 B sends C no frame: the same private address points to another Broker in B's network and does not make B connect to the wrong party. The list A gives in `Hello` is the same as before, so B's candidate addresses are unchanged. The salt `s2` differs from before the restart, and every digest exchanged before the restart is void.
 
-### 入站连接的处理
+### Handling an Inbound Connection
 
-TLS 握手阶段接受任意的对方证书，握手完成后立即取出对方证书的指纹。指纹在本方对端表中的连接转入已知对端池，不在首帧核实前被陌生来源的连接挤掉；指纹不在对端表中的连接留在陌生来源池，受每来源上限与全局上限约束。之后读首帧：
+The TLS handshake stage accepts any peer certificate, and immediately after the handshake completes it takes the peer certificate's fingerprint. A connection whose fingerprint is in this side's peer table moves into the known-peer pool and is not pushed out by an unknown-source connection before the first-frame verification; a connection whose fingerprint is not in the peer table stays in the unknown-source pool, subject to the per-source and global caps. It then reads the first frame:
 
-- 首帧是 `PairRequest`：把连接交给 `pairing` 握手，不论指纹是否已在对端表中。握手成功后发起方接着在同一连接上发 `Hello`；`pairing` 收到这个 `Hello` 时才提交本方的接受方角色，连接随即转为链路。
-- 首帧是 `Hello`，指纹在对端表中且本方是该对端的接受方：回 `Hello`，链路建立。已有一条已建立的链路时，按“同一对端的新连接”处理。
-- 首帧是 `Hello`，指纹在对端表中而本方是该对端的拨号方：回原因为“角色不符”的 `Reject` 并关闭，运行日志记录。
-- 首帧是 `Hello` 而指纹不在对端表中：回原因为“不是对端”的 `Reject` 并关闭，写审计 `connection_rejected`，`Peer` 只填指纹，按来源合并（`REQ-broker-pairing-015`、`REQ-broker-pairing-022`、`REQ-broker-config-069`）。
-- 首帧既不是 `Hello` 也不是 `PairRequest`：指纹不在对端表中时回原因为“不是对端”的 `Reject` 并关闭，写审计 `connection_rejected`，同样按来源合并；指纹在对端表中时直接关闭。
+- The first frame is `PairRequest`: hand the connection to `pairing` for the handshake, whether or not the fingerprint is already in the peer table. After the handshake succeeds the initiator then sends `Hello` on the same connection; `pairing` commits this side's acceptor role when it receives that `Hello`, and the connection then becomes a link.
+- The first frame is `Hello`, the fingerprint is in the peer table and this side is that peer's acceptor: reply `Hello` and the link is established. When there is already an established link, handle it as "A New Connection from the Same Peer".
+- The first frame is `Hello`, the fingerprint is in the peer table but this side is that peer's dialer: reply `Reject` with reason "role mismatch" and close, recording it in the run log.
+- The first frame is `Hello` but the fingerprint is not in the peer table: reply `Reject` with reason "not a peer" and close, writing audit `connection_rejected` with `Peer` carrying only the fingerprint, merged by source (`REQ-broker-pairing-015`, `REQ-broker-pairing-022`, `REQ-broker-config-069`).
+- The first frame is neither `Hello` nor `PairRequest`: when the fingerprint is not in the peer table, reply `Reject` with reason "not a peer" and close, writing audit `connection_rejected`, likewise merged by source; when the fingerprint is in the peer table, close directly.
 
-在读到并核实首帧之前，本方不在流上发送任何内容，对方自报的别名、本方的对外地址列表之类的信息不会交给未经核实的连接。
+Before reading and verifying the first frame, this side sends nothing on the stream, so information such as the other side's self-reported alias or this side's advertised address list is not handed to an unverified connection.
 
-### 拨号与重新建立
+### Dialing and Re-Establishing
 
-本方是拨号方的对端，链路不在已建立状态时由本方拨号。每一轮拨号从 `pairing` 取该对端的候选地址，其中只有本版本认识的地址项，按下列顺序逐个尝试，有一个地址建立了 TCP 与 TLS、且对方证书的指纹就是该对端时，这一轮结束：
+For a peer on which this side is the dialer, this side dials while the link is not established. Each round takes that peer's candidate addresses from `pairing`, keeping only the address items this version recognizes, and tries them one by one in the following order, the round ending as soon as one address establishes TCP and TLS and the peer certificate's fingerprint is that peer's:
 
-1. 上一次连通的地址。
-2. 主机是 IP 地址、且与本机某个接口的地址处于同一网段的地址。
-3. 其余地址，按 `pairing` 给出的顺序。
+1. The last connected address.
+2. Addresses whose host is an IP address in the same subnet as one of this host's interface addresses.
+3. The remaining addresses, in the order `pairing` gives.
 
-每个地址的 TCP 连接与 TLS 握手以 `link.dial_timeout` 为限，一轮拨号的耗时因此不超过候选地址数乘以这个期限。连不上、超时或对方证书的指纹不是该对端的，放弃这个地址，尝试下一个；指纹不符时本方不在连接上发送任何帧，但对方在 TLS 握手中已经看到本方的证书与指纹；不同网络中重复的私有地址因此不会使本方连到其他 Broker（[ADR-advertised-address](../../adr/adr-advertised-address.md)）。候选地址中有一个指纹相符的，本轮即结束，随后在同一连接上交换 `Hello`；`Hello` 交换失败时按失败原因进入退避或被拒绝。
+Each address's TCP connection and TLS handshake are bounded by `link.dial_timeout`, so one round of dialing takes no longer than the number of candidate addresses times this deadline. An address that cannot connect, times out, or has a certificate fingerprint that is not that peer's is abandoned and the next tried; on a fingerprint mismatch this side sends no frame on the connection, but the other side has already seen this side's certificate and fingerprint in the TLS handshake; a private address duplicated in different networks therefore does not make this side connect to another Broker ([ADR-advertised-address](../../adr/adr-advertised-address.md)). When one candidate address matches the fingerprint, the round ends and `Hello` is exchanged on the same connection; when the `Hello` exchange fails it enters backoff or rejected by the failure reason.
 
-一轮中的全部地址都失败，或链路中断后，进入退避，间隔从 `link.reconnect_min` 起每次翻倍，上限 `link.reconnect_max`；链路建立后间隔复位，并把这次连通的地址交给 `pairing` 记为上一次连通的地址。`Kick` 使退避立即结束。退避的两个边界值在每一轮开始时从配置读取，修改 `link.reconnect_min`、`link.reconnect_max` 对下一轮生效。收到原因为“不是对端”的 `Reject` 后进入被拒绝状态，不再拨号，并写审计 `rejected_by_peer`（`REQ-broker-pairing-035`）；原因为“角色不符”或协议版本不兼容的，进入退避，并记下原因供列出 Broker 时展示。双方都自认是拨号方时，“角色不符”会一直持续，列出 Broker 的结果提示需要重新配对（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。
+When every address in a round fails, or after the link is interrupted, it enters backoff, the interval starting at `link.reconnect_min` and doubling each time up to `link.reconnect_max`; after the link is established the interval resets, and this connection's address is handed to `pairing` to record as the last connected address. `Kick` ends the backoff immediately. The two boundary values of backoff are read from the configuration at the start of each round, and modifying `link.reconnect_min` or `link.reconnect_max` takes effect on the next round. After receiving a `Reject` with reason "not a peer" it enters the rejected state, no longer dials and writes audit `rejected_by_peer` (`REQ-broker-pairing-035`); with reason "role mismatch" or protocol version incompatible it enters backoff and records the reason to show when listing Brokers. When both sides regard themselves as the dialer, "role mismatch" persists, and the result of listing Brokers hints that pairing again is needed ([ADR-initiator-redials](../../adr/adr-initiator-redials.md)).
 
-`PairDial` 是 `pairing.Transport` 的拨号入口。`run` 成功返回时配对已由 `pairing` 提交，`PairDial` 总是返回 nil；随后在同一连接上用 `Link` 的根上下文与 10 秒期限完成 `Hello` 交换，交换成功即安装链路，失败时按普通拨号方的结果进入退避或被拒绝，交由拨号循环继续。
+`PairDial` is `pairing.Transport`'s dial entry point. When `run` returns successfully the pairing has been committed by `pairing`, and `PairDial` always returns nil; it then completes the `Hello` exchange on the same connection with `Link`'s root context and a 10-second deadline, and on success installs the link, while on failure it enters backoff or rejected by the ordinary dialer's result and leaves it to the dial loop to continue.
 
-### 接受方的等待
+### The Acceptor's Wait
 
-本方是接受方的对端，本方从不拨号，链路不在已建立状态时停在等待对方，`Kick` 对它不起作用，拨号方连入后的处理见“入站连接的处理”。链路连着的期间，本方在 `Hello` 中和对外地址列表变化时的 `PeerInfo` 中把列表告诉拨号方，拨号方因此持有本方最新的对外地址。本方在链路断开之后、重新建立之前更换了地址，而拨号方又没有从名片得到新地址时，链路不能自行恢复，要重新配对（[ADR-initiator-redials](../../adr/adr-initiator-redials.md)）。
+For a peer on which this side is the acceptor, this side never dials and stays waiting for the other side while the link is not established; `Kick` has no effect on it, and the handling after the dialer connects in is in "Handling an Inbound Connection". While the link is up, this side tells the dialer its list in `Hello` and in the `PeerInfo` sent when the advertised address list changes, so the dialer holds this side's latest advertised addresses. When this side changes its address after the link goes down and before it is re-established, and the dialer has not obtained the new address from a card, the link cannot recover on its own and pairing again is required ([ADR-initiator-redials](../../adr/adr-initiator-redials.md)).
 
-### 对外地址列表的告知
+### Telling the Advertised Address List
 
-本方是接受方时，`Hello` 与 `PeerInfo` 中的对外地址列表取 `config` 给出的本方列表；本方是拨号方时这一项为空，拨号方不向接受方报告自己的地址。`broker` 在本方的对外地址列表变化时调用 `AnnounceAddresses`，使本方是接受方的每条已建立的链路收到 `PeerInfo`。
+When this side is the acceptor, the advertised address list in `Hello` and `PeerInfo` is this side's list from `config`; when this side is the dialer this item is empty, and the dialer does not report its own address to the acceptor. `broker` calls `AnnounceAddresses` when this side's advertised address list changes, making each established link on which this side is the acceptor receive `PeerInfo`.
 
-本方是拨号方时，收到对方 `Hello` 或 `PeerInfo` 中的列表即交给 `pairing`，作为来源为接受方告知的候选地址，取代该来源此前的列表，链路断开后的拨号即按新的列表进行（`REQ-broker-pairing-034`）；列表中种类不认识的项由 `pairing` 在记入时跳过，`Hello` 与 `PeerInfo` 中的别名、随机数等其余内容照常处理；`Hello` 中的列表在链路建立通知之前交付。本方是接受方时，忽略对方帧中的这一项。本包不验证列表中的地址能否连通，连上之后的指纹核对使错误的地址只会连不上。
+When this side is the dialer, on receiving the list in the other side's `Hello` or `PeerInfo` it hands it to `pairing` as candidate addresses from the acceptor source, replacing that source's previous list, and dialing after the link goes down follows the new list (`REQ-broker-pairing-034`); an item of an unrecognized kind in the list is skipped by `pairing` when recording, while the rest of `Hello` and `PeerInfo` such as the alias and nonce are handled as usual; the list in `Hello` is delivered before the link-establishment notification. When this side is the acceptor, it ignores this item in the other side's frame. This package does not verify whether the addresses in the list are reachable; the fingerprint check after connecting makes a wrong address only fail to connect.
 
-### 同一对端的新连接
+### A New Connection from the Same Peer
 
-本方是接受方时，同一对端的一条新连接完成 `Hello` 交换，而已有一条已建立的链路的，采用新的，关闭旧的。这种情形出现在拨号方重启后重新连入、而本方尚未发现旧连接已失效时。拨号方只在链路不在已建立状态时拨号，不会自己造出第二条连接。
+When this side is the acceptor, a new connection from the same peer completes the `Hello` exchange while there is already an established link, and the new one is adopted and the old one closed. This situation arises after the dialer restarts and reconnects while this side has not yet found the old connection stale. The dialer dials only while the link is not established and does not create a second connection by itself.
 
-配对握手成功、握手所在的连接转为链路时，同一对端已有链路记录的，按对端表中新的角色重建这条记录，原有的连接被关闭。
+When the pairing handshake succeeds and the connection carrying the handshake becomes a link, if the same peer already has a link record, the record is rebuilt by the new role in the peer table and the original connection is closed.
 
-被关闭的连接不触发断开通知；保留的连接与此前的不是同一条时，先通知断开、再通知建立，使上层按新的盐值重新交换。
+A closed connection does not trigger a teardown notification; when the kept connection is not the same one as before, the teardown notification comes first and then the establishment notification, so the upper layer re-exchanges with the new salt.
 
-### 盐值
+### Salt
 
-盐值是拨号方 `Hello` 中的随机数接上接受方 `Hello` 中的随机数。两端按同一顺序拼接。
+The salt is the dialer's `Hello` nonce concatenated with the acceptor's `Hello` nonce. Both ends concatenate in the same order.
 
-### 帧的发送与处理
+### Sending and Handling Frames
 
-`Send` 在入队前检查编码后的帧大小，超过 `MaxMessageSize`（4 MiB）时返回 `ErrFrameTooLarge`，帧不入队，链路照常收发。其余情况下把帧放入该链路的有序发送队列后返回，写协程按入队顺序发出。队列有界，上限 1024 帧；满了说明对方长时间不读，此时关闭连接并进入退避。
+`Send` checks the encoded frame size before queueing and returns `ErrFrameTooLarge` when it exceeds `MaxMessageSize` (4 MiB), in which case the frame is not queued and the link sends and receives as usual. Otherwise it puts the frame into that link's ordered send queue and returns, and the write goroutine sends it in queue order. The queue is bounded at 1024 frames; being full means the other side has not read for a long time, so it closes the connection and enters backoff.
 
-`SendLatest` 与 `Send` 做同样的检查与入队，但同一 kind 的帧若仍有一帧由 `SendLatest` 放入、尚未被写协程取走，就地把它的内容换成新的，不占新的队列位置；写协程取走之后的替换按新帧入队。`SendLatestKey` 是同样语义的通用形式：替换位置由调用方给的 key 标识，`SendLatest` 相当于以 kind 为 key。同一 key 的帧在队列中至多有一个待发位置，不论它的 kind；上层因此可以让一个摘要的全量快照替换排在其前的增量。被替换的帧保持第一次入队时的位置，其余帧的相对顺序不变。对一个 key 连续调用 `SendLatestKey` 不会把队列填满，对端只收到最后一次的内容。`Request` 在填入请求号之后、登记等待表与入队之前检查帧大小，超限时返回 `ErrFrameTooLarge`，`sent` 为假，等待表不留下条目。
+`SendLatest` does the same check and queueing as `Send`, but when a frame of the same kind put in by `SendLatest` is still not taken by the write goroutine, its content is replaced with the new one in place without taking a new queue position; a replacement after the write goroutine takes it is enqueued as a new frame. `SendLatestKey` is the general form with the same semantics: the replacement position is identified by the caller-given key, and `SendLatest` is equivalent to using the kind as the key. A key has at most one pending send position in the queue regardless of its kind, so the upper layer can let a full snapshot of a digest replace an increment queued before it. A replaced frame keeps the position of its first queueing, and the relative order of the other frames is unchanged. Calling `SendLatestKey` repeatedly on one key does not fill the queue, and the peer receives only the last content. `Request` checks the frame size after filling in the request id and before registering the wait table and queueing, returning `ErrFrameTooLarge` with `sent` false when over-limit, and leaving no entry in the wait table.
 
-应答帧超过 `MaxMessageSize` 时不入队，记一条 Warn 运行日志 `link: dropping a reply`，字段为对端指纹、kind 与原因 `frame_too_large`；请求方按现有的超时处理。
+When a reply frame exceeds `MaxMessageSize` it is not queued, and one Warn run log `link: dropping a reply` is recorded with fields the peer fingerprint, the kind and the reason `frame_too_large`; the requester handles it by the existing timeout.
 
-读侧分成读协程与路由协程。读协程按到达顺序读帧，路由协程把应答按请求号交给等待它的调用方，把请求帧交给处理协程（该对端的 64 个处理名额用完时先等名额，各条连接共用这份名额），把状态帧放入该链路的状态帧队列。状态帧由一个处理协程逐帧处理，前一帧的处理函数返回才处理后一帧；请求与应答都不经过这个协程，因此状态帧的处理函数里可以对同一链路发 `Request` 并等待应答而不死锁。
+The read side is split into a read goroutine and a routing goroutine. The read goroutine reads frames in arrival order, and the routing goroutine hands a reply to the caller waiting on its request id, a request frame to a handler goroutine (first waiting for a slot when that peer's 64 handler slots are used up, shared by its connections), and a state frame into that link's state-frame queue. State frames are processed one by one by one handler goroutine, handling the next only after the previous handler returns; requests and replies do not pass through this goroutine, so a state-frame handler can send a `Request` on the same link and wait for the reply without deadlocking.
 
-状态帧队列有界：每条连接在队列中的帧与正在处理的帧合计至多 4096 帧，payload 合计至多 64 MiB，任一上限超出即以 `FailInboundLimit` 关闭这条连接。超限时不停读：停读会让排在后面的应答停住，状态帧处理函数中等待应答的调用随之死锁；只断开越限对端的连接，没越限的对端不受影响。上限的取值依据是正常对端在链路建立时的突发（成员名单与名录对账）远低于上限，整体决定见 ADR-peer-resource-limits；已认证的对端不因认证而获得无限占用资源的权利（[architecture](../architecture.md) 的“认证与授权边界”）。
+The state-frame queue is bounded: each connection's frames in the queue plus the frame being handled number at most 4096 frames, with a payload total of at most 64 MiB, and exceeding either cap closes this connection with `FailInboundLimit`. On exceeding it does not stop reading: stopping would stall the replies queued behind, deadlocking a state-frame handler's wait for a reply; instead only the over-limit peer's connection is closed, and peers within limits are unaffected. The cap's basis is that a normal peer's burst when a link is established (the roster and directory reconciliation) is far below it, and the overall decision is in ADR-peer-resource-limits; an authenticated peer gains no right to unlimited resource use by being authenticated ("Authentication and Authorization Boundaries" of [architecture](../architecture.md)).
 
-一条连接的 `onDown` 在该连接的状态帧处理协程退出之后才投递，请求处理函数这时可能仍在运行，它们的应答被丢弃。
+A connection's `onDown` is delivered only after that connection's state-frame handler goroutine exits, and request handlers may still be running then, with their replies dropped.
 
-### 保活
+### Keepalive
 
-链路上每隔 `link.keepalive_interval` 发送一次 gRPC 保活探测，`link.keepalive_timeout` 内没有回应即判定连接失效并关闭，进入退避。穿过 NAT 的连接靠探测维持其地址映射。
+A gRPC keepalive probe is sent every `link.keepalive_interval`, and a connection with no reply within `link.keepalive_timeout` is judged failed and closed, entering backoff. A connection through NAT keeps its address mapping alive by the probes.
 
-服务端的保活执行策略是探测间隔至少 5 秒，且允许在没有活动流时探测；这一下限低于 gRPC 客户端的 10 秒最小探测间隔，对端无论怎样配置 `link.keepalive_interval` 都不会触发 `too_many_pings`。gRPC 客户端把小于 10 秒的探测间隔按 10 秒发送。接受方一侧的保活参数在第一次监听、创建 gRPC 服务端时读取，之后修改 `link.keepalive_interval` 或 `link.keepalive_timeout`，在接受方一侧重启后生效；拨号方一侧的参数在每条新拨出的连接上读取，对下一条连接生效。
+The server's keepalive enforcement policy is a probe interval of at least 5 seconds, allowing probes with no active stream; this floor is below the gRPC client's 10-second minimum probe interval, so the peer does not trigger `too_many_pings` however it configures `link.keepalive_interval`. The gRPC client sends a probe interval under 10 seconds at 10 seconds. The acceptor side's keepalive parameters are read when first listening and creating the gRPC server, so modifying `link.keepalive_interval` or `link.keepalive_timeout` takes effect on the acceptor side after a restart; the dialer side's parameters are read on each new outgoing connection, taking effect on the next connection.
 
-### 请求与应答
+### Requests and Replies
 
-`Request` 为帧分配一个本链路内递增的请求号，登记到等待表后入队，在收到同号应答、链路中断或上下文到期时返回，并从等待表中删除该条目。`sent` 表示该帧是否已交给传输层：写协程开始对该帧调用 gRPC `Send` 即为已交给传输层。请求在队列里等待时上下文到期，该请求被取消，写协程跳过它，返回 `(Frame{}, false, ctx.Err())`；写协程先取到该帧的，返回的 `sent` 为真。链路在写出之前断开返回 `(Frame{}, false, ErrNotEstablished 的包装)`；写出之后断开返回 `(Frame{}, true, ErrLinkDown)`。对方以“不支持”应答该请求时返回 `(Frame{}, true, *UnsupportedError)`，其 `Kind` 是被拒绝的请求 kind；调用方用 `errors.As` 取回它。
+`Request` assigns a frame a request id incrementing within this link, registers it in the wait table and queues it, returning on receiving a reply with the same id, on the link being interrupted, or on the context expiring, and deletes the entry from the wait table. `sent` says whether the frame was handed to the transport: once the write goroutine starts calling gRPC `Send` on the frame, it is handed to the transport. When the context expires while the request waits in the queue, the request is cancelled and the write goroutine skips it, returning `(Frame{}, false, ctx.Err())`; when the write goroutine took the frame first, the returned `sent` is true. A link that goes down before the write returns `(Frame{}, false, a wrapping of ErrNotEstablished)`; a link that goes down after the write returns `(Frame{}, true, ErrLinkDown)`. When the other side answers the request with "unsupported" it returns `(Frame{}, true, *UnsupportedError)`, whose `Kind` is the rejected request kind; the caller retrieves it with `errors.As`.
 
-## 错误与失败语义
+## Error and Failure Semantics
 
-| 情形 | 行为 |
+| Situation | Behaviour |
 |---|---|
-| 链路不在已建立状态时调用 `Send`、`SendLatest`、`SendLatestKey` 或 `Request` | 立即返回 `peer_unreachable`，`sent` 为假，不排队 |
-| 编码后的帧超过 `MaxMessageSize`（`Send`、`SendLatest`、`SendLatestKey` 或 `Request`） | 返回 `ErrFrameTooLarge`，帧不入队，链路不断；`Request` 的 `sent` 为假 |
-| 应答帧超过 `MaxMessageSize` | 丢弃该应答，记 Warn 运行日志 `link: dropping a reply`（原因 `frame_too_large`），请求方按超时处理 |
-| 等待应答期间链路中断或上下文到期 | 返回错误，`sent` 为真；对方是否已处理该请求不确定，由 [broker](design-broker.md) 归结为结果未知并以消息标识保证重发安全 |
-| 候选地址连不上、超时，或对方证书的指纹不是该对端 | 放弃该地址，尝试下一个；一轮中全部失败后进入退避 |
-| 证书指纹不在对端表中，且首帧不是 `PairRequest` | 回原因为“不是对端”的 `Reject`，关闭连接，写审计 |
-| 本方是拨号方的对端连入 | 回原因为“角色不符”的 `Reject`，关闭连接，运行日志记录；对方收到后进入退避，列出 Broker 时展示这一原因 |
-| 对方的协议版本不兼容 | 回 `Reject`，关闭流；本方是拨号方时进入退避，是接受方时回到等待对方；运行日志记录双方版本 |
-| 已被解除配对的一方再次连入 | 指纹不在对端表中，按上面的未知指纹处理；对方收到 `Reject` 后停止拨号 |
-| 发送队列已满 | 关闭连接；本方是拨号方时进入退避，是接受方时回到等待对方 |
-| 发送队列已满时调用 `Send` | 返回 `ErrQueueFull`，属于 `peer_unreachable` |
-| 状态帧队列超出 4096 帧或 64 MiB 的 payload 上限 | 关闭连接；审计 `link_down` 的 `detail` 为 `inbound_limit`，运行日志 `link_inbound_limit` 带 `peer` 与 `limit`（`state_frames` 或 `state_bytes`）；本方是拨号方时进入退避，是接受方时回到等待对方 |
-| 同一 TCP 连接上打开第二个 `Connect` 流 | 第二个流以错误结束，同一连接上已建立的链路不受影响 |
+| `Send`, `SendLatest`, `SendLatestKey` or `Request` called while the link is not established | Return `peer_unreachable` immediately, `sent` false, not queued |
+| The encoded frame exceeds `MaxMessageSize` (`Send`, `SendLatest`, `SendLatestKey` or `Request`) | Return `ErrFrameTooLarge`, the frame not queued, the link not broken; `Request`'s `sent` false |
+| A reply frame exceeds `MaxMessageSize` | Drop the reply, record Warn run log `link: dropping a reply` (reason `frame_too_large`), the requester handling it by timeout |
+| The link is interrupted or the context expires while waiting for a reply | Return an error, `sent` true; whether the other side processed the request is unknown, which [broker](design-broker.md) reduces to an unknown result and makes resend-safe with the message identifier |
+| A candidate address cannot connect, times out, or its certificate fingerprint is not that peer's | Abandon the address and try the next; after all fail in one round, enter backoff |
+| The certificate fingerprint is not in the peer table and the first frame is not `PairRequest` | Reply `Reject` with reason "not a peer", close the connection, write audit |
+| A peer on which this side is the dialer connects in | Reply `Reject` with reason "role mismatch", close the connection, record in the run log; the other side enters backoff on receiving it, and listing Brokers shows this reason |
+| The other side's protocol version is incompatible | Reply `Reject`, close the stream; when this side is the dialer enter backoff, when the acceptor return to waiting; the run log records both versions |
+| An unpaired party connects in again | Its fingerprint is not in the peer table, handled as the unknown fingerprint above; the other side stops dialing after receiving `Reject` |
+| The send queue is full | Close the connection; when this side is the dialer enter backoff, when the acceptor return to waiting |
+| `Send` called while the send queue is full | Return `ErrQueueFull`, which is a `peer_unreachable` |
+| The state-frame queue exceeds 4096 frames or the 64 MiB payload cap | Close the connection; audit `link_down`'s `detail` is `inbound_limit`, run log `link_inbound_limit` with `peer` and `limit` (`state_frames` or `state_bytes`); when this side is the dialer enter backoff, when the acceptor return to waiting |
+| A second `Connect` stream opened on the same TCP connection | The second stream ends with an error, and the link already established on the connection is unaffected |
 
-`link` 自己写四类审计事件：`link_up`、`link_down`、`connection_rejected` 与 `rejected_by_peer`。`link_up` 与 `link_down` 在每次投递建立与断开通知时各写一条，`Peer` 填对端指纹与生效别名，`link_down` 的 `detail` 是断开原因的名字；这两类事件不填 `MergeKey`，v0.1.0 不合并。`connection_rejected` 在未知指纹的连接被拒时写，`Peer` 只填指纹，按来源合并，`detail` 写作 `not a peer from <来源前缀>`（`REQ-broker-pairing-015`、`REQ-broker-config-069`）；`rejected_by_peer` 在收到原因为“不是对端”的 `Reject` 时写（`REQ-broker-pairing-035`）。
+`link` itself writes four kinds of audit events: `link_up`, `link_down`, `connection_rejected` and `rejected_by_peer`. `link_up` and `link_down` are each written once per delivery of an establishment or teardown notification, `Peer` carrying the peer fingerprint and effective alias, and `link_down`'s `detail` being the name of the teardown reason; these two kinds do not fill in `MergeKey`, and v0.1.0 does not merge them. `connection_rejected` is written when a connection with an unknown fingerprint is rejected, `Peer` carrying only the fingerprint, merged by source, with `detail` written `not a peer from <source prefix>` (`REQ-broker-pairing-015`, `REQ-broker-config-069`); `rejected_by_peer` is written on receiving a `Reject` with reason "not a peer" (`REQ-broker-pairing-035`).
 
-链路协议与帧不变，链路协议版本不提升。投递应答中的 `broker_offline` 由 [broker](design-broker.md) 解读，本包只转交应答帧，不因新增错误码而改动；未升级的发送方把不认识的数值错误码按 `internal` 处理，提示文字仍带接收方给出的说明。降级只在本机接口体现，链路帧不新增错误码。下线不改变链路状态，`list_brokers` 中对端的状态不反映对端是否下线。降级运行仅本机时，本包没有监听，本方是接受方的对端停在等待对方；本方是拨号方的对端照常拨号。
+The link protocol and frames are unchanged, and the link protocol version is not raised. The `broker_offline` in a delivery reply is interpreted by [broker](design-broker.md); this package only forwards the reply frame and is not changed by the new error code; an unupgraded sender treats an unrecognized numeric error code as `internal`, and the message still carries the receiver's explanation. Degradation appears only in the local interface, and link frames gain no new error code. Going offline does not change the link state, and a peer's status in `list_brokers` does not reflect whether the peer is offline. In local-only degraded run this package does not listen, a peer on which this side is the acceptor stays waiting, and a peer on which this side is the dialer dials as usual.
 
-## 并发与事务边界
+## Concurrency and Transaction Boundaries
 
-每条链路有一个读协程、一个写协程、一个路由协程和一个状态帧处理协程。写协程从有序发送队列取帧，保证同一链路上的帧按入队顺序发出。`Send` 不阻塞：队列已满时关闭连接并返回 `ErrQueueFull`。
+Each link has one read goroutine, one write goroutine, one routing goroutine and one state-frame handler goroutine. The write goroutine takes frames from the ordered send queue, guaranteeing that frames on the same link are sent in queue order. `Send` does not block: when the queue is full it closes the connection and returns `ErrQueueFull`.
 
-`SendLatest` 与 `SendLatestKey` 的就地替换与写协程取走该帧互斥：写协程先从队列取下该帧并注销它的替换位置，再读取它的内容发送；在这之后到达的替换按新帧入队。因此一帧不会在发送途中被改写，同一 key 在队列中至多有一个待发位置（`SendLatest` 的 key 是 kind），其余帧的相对顺序不变。
+`SendLatest`'s and `SendLatestKey`'s in-place replacement and the write goroutine taking the frame exclude each other: the write goroutine first takes the frame off the queue and unregisters its replacement position, then reads its content to send; a replacement arriving after that is enqueued as a new frame. A frame is therefore never rewritten mid-send, one key has at most one pending send position in the queue (`SendLatest`'s key is the kind), and the relative order of the other frames is unchanged.
 
-同一个对端的各条连接合计同时运行至多 64 个请求处理协程；名额用完时路由协程停在取名额处，不再读帧，压力经 HTTP/2 流控传回对端。替换连接时旧连接的处理协程可能仍在运行，新连接因此先等这些名额，重连不能叠加出第二份并发。连接关闭会让等待名额的路由协程立即退出，`Close` 不因此挂起。处理函数不得等待同一链路上的应答，否则名额全部占用时路由协程不再读帧，应答永远到不了。
+All of one peer's connections together run at most 64 request handler goroutines at once; when the slots run out the routing goroutine stops at taking a slot and no longer reads frames, and the pressure is passed back to the peer through HTTP/2 flow control. When replacing a connection the old connection's handlers may still be running, so the new connection first waits for these slots, and reconnecting cannot stack a second concurrency. A connection closing makes a routing goroutine waiting for a slot exit immediately, so `Close` does not hang because of it. A handler must not wait for a reply on the same link, or when all slots are taken the routing goroutine stops reading frames and the reply can never arrive.
 
-建立与断开的通知由一个通知协程串行投递，各事件先进先出，订阅者按 `Subscribe` 的先后被调用。一条连接的状态帧在它的 `onUp` 全部返回之后才开始处理；一条连接的 `onDown` 在该连接的状态帧处理协程退出之后才入队，因此上层不会在 `onDown` 之后再收到这条连接的状态帧。`onDown` 从不在 `Send`、`Drop`、`Kick` 或队列溢出的调用者栈上执行。接受方用新连接取代旧连接时，只发一次 `onDown` 再发一次新连接的 `onUp`。
+The establishment and teardown notifications are delivered serially by one notification goroutine, the events first-in-first-out, and subscribers are called in `Subscribe` order. A connection's state frames begin to be processed only after all of its `onUp` have returned; a connection's `onDown` is enqueued only after that connection's state-frame handler goroutine exits, so the upper layer never receives this connection's state frames after `onDown`. `onDown` never runs on the caller's stack of `Send`, `Drop`, `Kick` or a queue overflow. When the acceptor replaces an old connection with a new one, it sends exactly one `onDown` then the new connection's `onUp`.
 
-链路状态的转换由链路记录上的锁保护。持锁期间不调用 `Peers`、`Settings`、订阅者回调与帧处理函数，也不做阻塞的网络操作；关闭一律异步进行。`Drop` 不等待：它删除记录并异步关闭连接，在该连接的状态帧处理协程退出后补发 `onDown`；同一对端在这次 `onDown` 入队之前不能安装新连接，因此上层一定先见 `onDown` 再见 `onUp`。`Close` 返回后不再有回调；订阅者的回调内不得调用 `Close`，帧处理函数内也不得调用 `Close`（`Close` 会等待它返回）。
+Link state transitions are protected by a lock on the link record. While holding the lock it calls no `Peers`, `Settings`, subscriber callback or frame handler, and does no blocking network operation; closing is always asynchronous. `Drop` does not wait: it deletes the record and closes the connection asynchronously, sending `onDown` after that connection's state-frame handler goroutine exits; the same peer cannot install a new connection before this `onDown` is enqueued, so the upper layer always sees `onDown` before `onUp`. After `Close` returns there are no callbacks; a subscriber's callback must not call `Close`, and a frame handler must not call `Close` either (`Close` waits for it to return).
 
-## 扩展点
+## Extension Points
 
-链路所依托的连接怎样建立是一个扩展点，为经第三方在连接层中转而预留。现有的方式只有一种：拨号方直接连到接受方的监听地址，对应直连的地址项；地址项的种类为其他建立方式留有位置，不认识的种类被跳过（[ADR-advertised-address](../../adr/adr-advertised-address.md)）。链路的认证、帧的收发、谁负责重新建立都不依赖连接是怎样建立的：任何方式建立的连接上都做同样的双向 TLS 与指纹核对，一对对端之间仍只有一条链路，仍只由拨号方建立并重新建立。
+How the connection underlying a link is established is an extension point, reserved for relaying through a third party at the connection layer. The current way is only one: the dialer connects directly to the acceptor's listen address, corresponding to a direct address item; the address item's kind leaves room for other establishment ways, and an unrecognized kind is skipped ([ADR-advertised-address](../../adr/adr-advertised-address.md)). A link's authentication, frame sending and receiving, and who is responsible for re-establishing it do not depend on how the connection is established: on a connection established in any way it does the same mutual TLS and fingerprint check, a peer pair still has only one link, and it is still established and re-established only by the dialer.
 
-## 实现状态
+## Implementation Status
 
-| 能力 | 状态 | 代码 |
+| Capability | Status | Code |
 |---|---|---|
-| 监听地址的绑定与入站连接的处理 | 已实现 | `internal/link/listen.go`、`internal/link/handshake.go`、`internal/link/unauth.go`、`internal/link/source.go`（`Listen`、`acceptStream`、`serveInbound`、`unauthRegistry`、`sourcePrefix`） |
-| 按候选地址拨号、退避与重新建立 | 已实现 | `internal/link/dial.go`、`internal/link/order.go`、`internal/link/transport.go`（`startDialLoop`、`orderCandidates`、`backoffDelay`、`dialTLS`） |
-| 接受方的等待与同一对端新连接的取代 | 已实现 | `internal/link/record.go`、`internal/link/handshake.go`（`install`、`teardown`、`serveInbound`） |
-| 保活 | 已实现 | `internal/link/transport.go`（`serverOptions`、`newGRPCServer`、`clientKeepalive`） |
-| 有序发送、状态帧串行处理与请求应答 | 已实现 | `internal/link/conn.go`、`internal/link/dispatch.go`、`internal/link/api.go`（`conn`、`runConn`、`Send`、`SendLatest`、`SendLatestKey`、`Request`、`enqueueLatest`） |
-| 帧大小上限与按 key 合并发送 | 已实现 | `internal/link/transport.go`（`MaxMessageSize`、`frameExceedsLimit`）、`internal/link/api.go`（`Send`、`SendLatest`、`SendLatestKey`、`Request`）、`internal/link/conn.go`（`latestSlot`、`writeLoop`、`enqueueLatest`、`enqueueRequest`） |
-| 盐值协商 | 已实现 | `internal/link/handshake.go`、`internal/link/frames.go`（`dialerHandshake`、`serveInbound`、`encodeHello`） |
-| 被拒绝状态 | 已实现 | `internal/link/record.go`、`internal/link/handshake.go`（`record`、`failFromReject`） |
-| 对外地址列表的告知 | 已实现 | `internal/link/api.go`、`internal/link/handshake.go`（`AnnounceAlias`、`AnnounceAddresses`、`dialerHandshake`） |
+| Binding the listen address and handling inbound connections | Implemented | `internal/link/listen.go`, `internal/link/handshake.go`, `internal/link/unauth.go`, `internal/link/source.go` (`Listen`, `acceptStream`, `serveInbound`, `unauthRegistry`, `sourcePrefix`) |
+| Dialing candidate addresses, backoff and re-establishing | Implemented | `internal/link/dial.go`, `internal/link/order.go`, `internal/link/transport.go` (`startDialLoop`, `orderCandidates`, `backoffDelay`, `dialTLS`) |
+| The acceptor's wait and replacement by a new connection from the same peer | Implemented | `internal/link/record.go`, `internal/link/handshake.go` (`install`, `teardown`, `serveInbound`) |
+| Keepalive | Implemented | `internal/link/transport.go` (`serverOptions`, `newGRPCServer`, `clientKeepalive`) |
+| Ordered sending, serial state-frame handling and request/reply | Implemented | `internal/link/conn.go`, `internal/link/dispatch.go`, `internal/link/api.go` (`conn`, `runConn`, `Send`, `SendLatest`, `SendLatestKey`, `Request`, `enqueueLatest`) |
+| Frame size cap and merging sends by key | Implemented | `internal/link/transport.go` (`MaxMessageSize`, `frameExceedsLimit`), `internal/link/api.go` (`Send`, `SendLatest`, `SendLatestKey`, `Request`), `internal/link/conn.go` (`latestSlot`, `writeLoop`, `enqueueLatest`, `enqueueRequest`) |
+| Salt negotiation | Implemented | `internal/link/handshake.go`, `internal/link/frames.go` (`dialerHandshake`, `serveInbound`, `encodeHello`) |
+| The rejected state | Implemented | `internal/link/record.go`, `internal/link/handshake.go` (`record`, `failFromReject`) |
+| Telling the advertised address list | Implemented | `internal/link/api.go`, `internal/link/handshake.go` (`AnnounceAlias`, `AnnounceAddresses`, `dialerHandshake`) |
