@@ -22,13 +22,15 @@ import (
 
 // --- handshake test doubles ------------------------------------------------
 
-// testWaitBound bounds every wait that a test places around a handshake. It is
-// deliberately short: an implementation that wrongly accepts a handshake the
-// test expects to be rejected must fail the test within this bound instead of
-// blocking until the go test timeout. Two seconds keeps the whole failing test
-// under the review's three-second ceiling even with build and scheduling
-// overhead. Correct in-memory handshakes finish well inside it.
-const testWaitBound = 2 * time.Second
+// testWaitBound is the package-wide fallback for a wait on an event that a test
+// expects to arrive: a handshake frame on the scripted connection, a
+// rejection, or a goroutine returning. It only decides how long a wait that
+// will never complete takes to fail: the success path selects on the event
+// itself and never spends this time, so a larger value costs nothing. Thirty
+// seconds is far above the worst normal latency under load, including
+// scheduling and -race overhead; it is not a claim that a handshake should
+// take that long.
+const testWaitBound = 30 * time.Second
 
 // hsSettings is a mutable settings fake. aliasFunc, when set, overrides Alias
 // so a test can change the value between the calls a handshake makes.

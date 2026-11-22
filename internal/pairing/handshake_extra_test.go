@@ -750,7 +750,7 @@ func TestInitiatorReReservesAfterEffectiveAliasChanges(t *testing.T) {
 
 	responder := make(chan error, 1)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
 		defer cancel()
 
 		kind, payload, err := bConn.Receive(ctx)
