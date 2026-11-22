@@ -1,120 +1,120 @@
-# 路线图
+# Roadmap
 
-本文件记录需求的优先级、里程碑的划分和实现过程中要验证的事项。需求本身见 [需求文档](prd/README.md)，设计见 [设计文档](design/README.md)。需求的实现状态以需求文档中每条需求的状态行所写为准，本文件不重复记录。
+This file records requirement priorities, the milestone breakdown and the items to verify during implementation. The requirements themselves are in the [requirements documentation](prd/README.md), and the design is in the [design documentation](design/README.md). The implementation status of a requirement is whatever the requirement documentation's status line for that requirement says; this file does not repeat it.
 
-## 优先级
+## Priorities
 
-| 级别 | 含义 |
+| Priority | Meaning |
 |---|---|
-| P0 | 首期必须交付，缺少它系统不能完成跨主机的一次收发 |
-| P1 | 首期交付，但不阻塞 P0 的验收 |
-| P2 | 首期之后 |
+| P0 | Must be delivered in the first release; without it the system cannot complete one send and receive across hosts |
+| P1 | Delivered in the first release but does not block P0 acceptance |
+| P2 | After the first release |
 
-## 里程碑
+## Milestones
 
-每个里程碑以所列的用户旅程或验收条件通过为完成标志。
+A milestone is complete when the user journeys or acceptance conditions it lists pass.
 
-| 里程碑 | 优先级 | 内容 | 涉及的模块 | 完成标志 |
+| Milestone | Priority | Content | Modules involved | Completion marker |
 |---|---|---|---|---|
-| M0 可行性验证 | P0 | 用手工写入 inbox socket 的方式确认方案的前提成立 | 无 | 已完成，结论见下文 |
-| M1 同机闭环 | P0 | 用户级 Broker 的启动、单实例与监听，MCP 服务进程对 Broker 的选定与登记，Broker 本机接口，inbox 写入，本机 topic，同一主机上经本系统工具列出 Agent 并收发消息 | `config`、`inbox`、`broker`、`mcpserver`、`topic` | 同一主机上处于同一默认 topic 的两个会话经 `send_message` 互发消息并回复 |
-| M2 Broker 互联 | P0 | 身份与配对、链路的建立与重建、成员名单交换、跨主机发送与重试、解除配对、列出对端及其状态 | `pairing`、`link`、`topic`、`broker`、`mcpserver`、`config`、`directory` | 用户旅程“两台主机首次配对”和“在同一个 topic 里跨主机协作”通过，验收时其中一台主机的对外地址不能被对方连上 |
-| M3 发现与配置 | P1 | 名片与公开 topic 的发布和对账、列出非对端的 Broker、配置读写及其权限判定、审计日志、终端命令 | `directory`、`config`、`mcpserver`、`broker`、`topic`、`pairing` | 用户旅程“发现并连接公开 Broker”通过 |
-| M4 运行与收尾 | P1 | 系统级 Broker（服务多个账户、向其他账户的会话投递、限定可使用的账户）、用户级 Broker 安装为随登录启动的服务、版本不兼容的处理、完成尚无结论的待验证事项 | `broker`、`mcpserver`、`inbox`、`config` | 待验证事项全部有结论，需求文档中每条需求的状态为已实现 |
+| M0 feasibility validation | P0 | Confirm by hand-writing into the inbox socket that the assumptions of the approach hold | none | done; the conclusions are below |
+| M1 same-host closed loop | P0 | Starting a user Broker, its single instance and listening, the MCP server process selecting and registering with a Broker, the Broker's local interface, inbox writes, local topics, and listing agents and exchanging messages on one host through this system's tools | `config`, `inbox`, `broker`, `mcpserver`, `topic` | two sessions on the same host in the same default topic exchange messages and replies through `send_message` |
+| M2 Broker interconnection | P0 | Identity and pairing, establishing and re-establishing links, exchanging rosters, cross-host sending and retries, unpairing, and listing peers and their status | `pairing`, `link`, `topic`, `broker`, `mcpserver`, `config`, `directory` | the user journeys "Two hosts pair for the first time" and "Collaborate across hosts in one topic" pass, and at acceptance an address one of the hosts advertises cannot be reached by the other |
+| M3 discovery and configuration | P1 | Publishing and reconciling broker cards and public topics, listing Brokers that are not peers, reading and writing configuration and its permission checks, the audit log, and terminal commands | `directory`, `config`, `mcpserver`, `broker`, `topic`, `pairing` | the user journey "Discover and connect to a public Broker" passes |
+| M4 operation and wrap-up | P1 | The system Broker (serving several accounts, delivering to sessions of other accounts, restricting the accounts that may use it), installing a user Broker as a service that starts at login, handling incompatible versions, and finishing the items still to verify | `broker`, `mcpserver`, `inbox`, `config` | every item to verify has a conclusion, and every requirement in the requirements documentation has the status implemented |
 
-各里程碑覆盖的需求：
+The requirements each milestone covers:
 
-| 里程碑 | 需求 |
+| Milestone | Requirements |
 |---|---|
-| M1 | `REQ-agent-messaging-001` 至 `007`、`009` 至 `011`、`013` 至 `016`、`018`、`021` 至 `028`、`030` 至 `038`；`REQ-topics-001` 至 `004`、`006`、`008`、`015` 至 `022`；`REQ-broker-config-011`、`013`、`014`、`019`、`023` 至 `025`、`028`、`038` |
-| M2 | `REQ-broker-pairing-001` 至 `022`、`024` 至 `037`；`REQ-agent-messaging-008`、`012`、`017`、`019`、`020`、`029`；`REQ-topics-005`、`007`、`009`、`014`；`REQ-broker-discovery-012` 至 `014`；`REQ-broker-config-030` 至 `033`、`035`、`036` |
-| M3 | `REQ-broker-discovery-001` 至 `011`、`015` 至 `017`；`REQ-broker-pairing-023`；`REQ-topics-010` 至 `013`、`023` 至 `025`；`REQ-broker-config-001` 至 `010`、`017`、`021`、`022`、`029`、`034` |
-| M4 | `REQ-broker-config-015`、`016`、`018`、`020`、`026`、`027`、`037` |
+| M1 | `REQ-agent-messaging-001` to `007`, `009` to `011`, `013` to `016`, `018`, `021` to `028`, `030` to `038`; `REQ-topics-001` to `004`, `006`, `008`, `015` to `022`; `REQ-broker-config-011`, `013`, `014`, `019`, `023` to `025`, `028`, `038` |
+| M2 | `REQ-broker-pairing-001` to `022`, `024` to `037`; `REQ-agent-messaging-008`, `012`, `017`, `019`, `020`, `029`; `REQ-topics-005`, `007`, `009`, `014`; `REQ-broker-discovery-012` to `014`; `REQ-broker-config-030` to `033`, `035`, `036` |
+| M3 | `REQ-broker-discovery-001` to `011`, `015` to `017`; `REQ-broker-pairing-023`; `REQ-topics-010` to `013`, `023` to `025`; `REQ-broker-config-001` to `010`, `017`, `021`, `022`, `029`, `034` |
+| M4 | `REQ-broker-config-015`, `016`, `018`, `020`, `026`, `027`, `037` |
 
-自动化测试不启动 Claude Code，inbox socket 与会话注册表一律用模拟实现。用真实会话做的验证按待验证事项表所列的阶段手工进行。
+Automated tests do not start Claude Code; the inbox socket and the session registry are always simulated. Verification with real sessions is done by hand at the stages listed in the items-to-verify table.
 
-## M0 的结论
+## M0 conclusions
 
-验证于 2026-11-18 在 macOS、Claude Code v2.1.327 上完成，目标会话以 auto 权限模式运行。
+The validation was done on 2026-11-18 on macOS with Claude Code v2.1.327, with the target session running in auto permission mode.
 
-- 向空闲会话的 inbox socket 写入一帧不带认证行、不带回复地址、只带署名的消息，会话被唤醒并开始处理。
-- 会话中的模型读到的发送方是署名的原文，例如 `spike@hostB`；界面的预览行把它显示为 `@spike-hostB`。
-- 连续写入 15 条不同的消息，全部按顺序送达，没有触发限速。会话忙碌时到达的消息被攒到下一个回合一并交付。
-- 两条正文相同、消息标识不同的消息都被送达，接收方没有去重。
-- 上面两项实验每次写入各用一个独立的进程。接收方在帧里没有回复地址时按写入进程识别发送方，所以这两项实验没有检验到同一个发送方的限速与去重，Broker 以同一个进程写入时的行为见“Claude Code 行为的观测记录”。
-- 会话注册表中每个会话有一份记录，含会话名、名字来源、inbox socket 路径、忙闲状态和协议版本号，协议版本号为 1。
-- 没有启用本系统工具的会话中，模型打算用 Claude Code 自带的发送工具向带 `@` 的发送方地址回复。
+- Writing one frame into an idle session's inbox socket, with no authentication line, no reply address and only a signature, wakes the session and it starts processing.
+- The sender the session's model reads is the signature text, for example `spike@hostB`; the interface's preview line displays it as `@spike-hostB`.
+- Writing 15 distinct messages in a row delivers all of them in order with no rate limit triggered. Messages that arrive while the session is busy are held until the next turn and delivered together.
+- Two messages with the same body and different message identifiers are both delivered, and the receiver does not deduplicate.
+- Each of the two experiments above used its own process for the write. When a frame carries no reply address, the receiver identifies the sender by the writing process, so these two experiments did not exercise rate limiting and deduplication for one sender; for how the Broker behaves when writing through one process, see "Observed Claude Code behavior".
+- The session registry has one record per session, holding the session name, the name source, the inbox socket path, the busy/idle status and the protocol version number; the protocol version number is 1.
+- In a session that has not enabled this system's tools, the model intends to reply to a sender address containing `@` with Claude Code's built-in send tool.
 
-## Claude Code 行为的观测记录
+## Observed Claude Code behavior
 
-除“方式”一栏另注版本的以外，下列行为在 Claude Code v2.1.327 上观测到，没有兼容承诺。“方式”一栏写明结论得自实验还是对 Claude Code 程序的分析。
+Unless the Method column notes a different version, the following behavior was observed on Claude Code v2.1.327 and carries no compatibility promise. The Method column states whether a conclusion came from an experiment or from analyzing the Claude Code program.
 
-| 行为 | 方式 |
+| Behavior | Method |
 |---|---|
-| Claude Code 在会话启动时启动配置的 stdio MCP 服务进程，它是会话进程的直接子进程 | 实验 |
-| MCP 服务进程握手超过 30 秒未完成或进程启动失败时，交互式会话把该服务标为失败，要用户在 `/mcp` 界面手动重连；stdio 服务崩溃后交互式会话不自动重启它 | 程序分析 |
-| MCP 服务进程的环境中有 `CLAUDE_CODE_MESSAGING_SOCKET`，值是所属会话的 inbox socket 路径 | 实验 |
-| 会话启动时先清除 `CLAUDE_CODE_MESSAGING_SOCKET`，绑定 inbox 成功后才设置：不绑定 inbox 的会话里没有它，也不沿用外层会话的值；inbox 的绑定晚于 MCP 服务进程启动时，该进程的环境里没有它 | 程序分析；实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 环境中的 `CLAUDE_CODE_SESSION_ID` 是进程启动时的会话标识，会话执行 `/clear` 后不更新 | 实验，并经程序分析印证 |
-| 子代理与主会话共用同一个 MCP 服务进程和同一条连接，工具调用不带调用者的信息；子代理定义中内联声明的服务在子代理运行期间另起一个进程 | 共用进程与连接、调用不带调用者信息：实验；内联声明另起进程：实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 会话退出时，Claude Code 向 MCP 服务进程发送 SIGINT | 实验 |
-| 用户在 `/mcp` 界面停用一个服务时，Claude Code 向该进程依次发送 SIGINT、100 毫秒后 SIGTERM、再 400 毫秒后 SIGKILL；重新启用时启动新进程 | 停用时发送 SIGINT、重新启用时启动新进程且环境重新构造：实验；后续信号及间隔：实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 会话改名、`/clear`、`/compact` 时，MCP 服务进程不重启，也收不到任何通知 | 改名与 `/clear`：实验；`/compact`：程序分析 |
-| 会话注册表位于配置目录下的 `sessions/<pid>.json`，配置目录取 `CLAUDE_CONFIG_DIR`，缺省为 `~/.claude`；每个会话进程一个文件，会话启动时写入，名字、状态、会话标识变化时就地改写而不是原子替换，进程退出时删除；同目录下另有各会话的密钥文件 | 程序分析 |
-| 会话注册表记录中的字段包括 `pid`、`name`、`status`、`messagingSocketPath`，`status` 取 `idle`、`busy`、`waiting`、`shell`；`messagingSocketPath` 在绑定 inbox 之后才有 | 记录的字段与 `idle`、`busy`、`waiting` 三个取值：实验，见“M0 的结论”；其余：程序分析 |
-| 无界面的 `claude -p` 会话与交互式会话同样登记并绑定 inbox | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 以无界面方式运行且跳过权限确认的会话对未声明权限类别的发送方暂扣消息，没有批准界面，暂扣的消息因发送方没有声明权限类别而被丢弃 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311，headless 探查） |
-| `/mcp` 列表用 `✔ peer   N tools` 表示服务可用，不打印 `connected` | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 会话记录中以 `origin.name` 字段记下识别出的发送方名字；界面预览行对名字另做一次显示用清洗 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 从另一个会话的命令行里启动的交互式会话不写会话注册表 | 程序分析 |
-| `claude agents --json` 读取会话注册表，输出中没有 inbox socket 路径 | 输出中没有 inbox socket 路径：实验；数据来自会话注册表：程序分析 |
-| `claude agents --json` 每次调用都执行完整的启动准备，并删除已退出会话遗留的记录与密钥文件 | 程序分析 |
-| 会话名由用户指定或由 Claude Code 自动生成；改名后，自带的发送工具用旧名字寻址即失败并提示相近的名字，自带的会话列表注明该会话不久前的名字；改名后与另一个存活会话重名时，其中一个自动改用带后缀的名字 | 用旧名字寻址失败并提示相近的名字、列表注明不久前的名字：实验；重名时自动加后缀：程序分析 |
-| 自带的发送工具匹配名字前先规范化：去掉控制字符与格式字符，去掉首尾空白，转为小写，空白换成 `-`；自带的会话列表不显示名字中含 `@` 或 `*` 的会话 | 程序分析 |
-| 自带会话列表中方括号里的标识，是对 `session:` 接 socket 路径求 SHA-256 后取十六进制前 12 位，再取能在全部候选之间区分的最短前缀，至少 6 位；它不随改名和 `/clear` 变化；列表工具名为 `ListAgents` | 算法：程序分析，并以本机会话的 socket 路径复算，与列表中显示的标识相符；不随改名和 `/clear` 变化：实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| `/clear` 不改变 socket 路径、会话名和上述标识，只更换会话标识并清空对话；此前已到达而尚未处理的会话间消息保留，进入清空之后的对话 | 不改变 socket 路径、会话名与标识：实验（GitHub 托管的 Linux x64 runner，v2.1.311），并经程序分析印证；此前已到达而尚未处理的消息保留：实验（v2.1.327），v2.1.311 上无法验证 |
-| 不带会话标识的帧被会话接收；帧里带有会话标识而与接收方当前的不一致时，帧被静默丢弃，不通知发送方；自带的发送工具发出的帧不带会话标识 | 不带会话标识的帧被接收：实验，见“M0 的结论”；其余：程序分析 |
-| 署名包装中的发送方名字在识别前被清洗：去掉 `"`、`<`、`>`，去掉 `Cc`、`Cf`、`Cs`、`Zl`、`Zp` 字符与首尾空白，超过 64 个码点时截断；清洗结果与原文不完全相同时，整个署名包装不被识别，消息照常交付，但接收方看不到发送方。v2.1.311 保留中间的 U+00A0、私用区码点、未分配的 U+0378 与可打印的 U+3164 | 程序分析（v2.1.327），并经实验确认（GitHub 托管的 Linux x64 runner，v2.1.311）；首尾空白一项的实验只测了首部 |
-| 依赖库以 Go 的 `%q` 写署名，接收方读到的是转义后的字面文本；本系统的 `Deliver` 在交给库之前调用 `CleanSignature` 并拒绝会被改变的署名（`internal/inbox/deliver.go` 的 `Deliver`） | 程序分析，并经实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 限速与去重按发送方进行，帧里有回复地址时以回复地址识别发送方，没有时以写入进程的进程号识别；每个发送方一个令牌桶，容量 30，每秒补充 0.5 个；同一发送方 30 秒内发来与上一条内容完全相同的消息时，后一条被丢弃；未处理的会话间消息至多排队 50 条；这些数值可由 Claude Code 远程调整 | 程序分析，并经实验（GitHub 托管的 Linux x64 runner，v2.1.311）；排队上限按队列峰值深度观察 |
-| 会话回合进行中入队的会话间消息在回合结束时以 remove 结束，不成为用户记录；remove 表示丢弃还是并入当前回合的上下文，无法区分 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| `crossSessionInbound` 取 `accept` 时消息直接送达，取 `hold` 时暂扣并显示提示，取 `refuse` 时丢弃 | 程序分析，并经实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 以跳过权限确认的模式运行的会话，把未声明权限类别的发送方发来的消息留待逐条批准；default 模式下同样的消息直接送达 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| Linux 上接收方以 `SO_PEERCRED` 取写入方进程号，沿 `/proc/<pid>/stat` 的父进程号向上判定是否为自己的子进程，层数上限为 12；11 层以内直接送达，13 层受入站控制 | 程序分析，并经实验（GitHub 托管的 Linux x64 runner，v2.1.311）；实测 11 层被接受、13 层被暂扣 |
-| 入站策略为 `hold` 时，发送方立即返回成功；接收方只显示一条暂扣提示，没有逐条批准界面，按 Enter 不投递，`/clear` 后暂扣的消息丢失 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 脚本在工具执行期间键入 `/clear` 并按 C-x C-s 之后，工具被中断，入队的 peer 消息先作为回合处理，然后 `/clear` 才生效 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311） |
-| 启用本系统的工具后，模型对会话间消息的回复用 `send_message` 原样以署名中的 Agent 地址为目标，不使用 Claude Code 自带的发送工具 | 实验（GitHub 托管的 Linux x64 runner，v2.1.311；claude-sonnet-5-5、claude-haiku-5-5） |
-| 自带消息的循环检测依赖署名包装里记录的经过路径 | 程序分析 |
+| At session start Claude Code starts the configured stdio MCP server process, which is a direct child of the session process | experiment |
+| If the MCP server process handshake is not done within 30 seconds or the process fails to start, an interactive session marks the server failed and asks the user to reconnect it by hand in the `/mcp` interface; after a stdio server crashes, an interactive session does not restart it automatically | program analysis |
+| The MCP server process has `CLAUDE_CODE_MESSAGING_SOCKET` in its environment, whose value is the inbox socket path of its session | experiment |
+| At session start `CLAUDE_CODE_MESSAGING_SOCKET` is cleared first and set only after the inbox is bound: a session that does not bind an inbox has none, and does not inherit an outer session's value; when inbox binding happens after the MCP server process starts, that process has none in its environment | program analysis; experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| `CLAUDE_CODE_SESSION_ID` in the environment is the session identifier at process start and is not updated after the session runs `/clear` | experiment, confirmed by program analysis |
+| A subagent shares the same MCP server process and the same connection as the main session, and tool calls carry no caller information; a server declared inline in the subagent definition starts a separate process while the subagent runs | shared process and connection, calls carry no caller information: experiment; inline declaration starts a separate process: experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| When a session exits, Claude Code sends SIGINT to the MCP server process | experiment |
+| When the user disables a server in the `/mcp` interface, Claude Code sends the process SIGINT, then SIGTERM 100 milliseconds later, then SIGKILL 400 milliseconds after that; re-enabling starts a new process | SIGINT on disable, new process with a rebuilt environment on re-enable: experiment; the later signals and their intervals: experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| On session rename, `/clear` or `/compact`, the MCP server process does not restart and receives no notification | rename and `/clear`: experiment; `/compact`: program analysis |
+| The session registry lives under the configuration directory at `sessions/<pid>.json`, the configuration directory being `CLAUDE_CONFIG_DIR`, default `~/.claude`; there is one file per session process, written at session start, rewritten in place rather than atomically replaced when the name, status or session identifier changes, and deleted when the process exits; the same directory also holds each session's key file | program analysis |
+| The session registry record's fields include `pid`, `name`, `status` and `messagingSocketPath`, with `status` taking `idle`, `busy`, `waiting` or `shell`; `messagingSocketPath` appears only after the inbox is bound | the record's fields and the three values `idle`, `busy`, `waiting`: experiment, see "M0 conclusions"; the rest: program analysis |
+| A headless `claude -p` session registers and binds an inbox the same way an interactive one does | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| A session running headless with permission confirmation skipped holds back messages from a sender that declares no permission category, has no approval interface, and drops the held messages because the sender declares no permission category | experiment (GitHub-hosted Linux x64 runner, v2.1.311, headless probe) |
+| The `/mcp` list shows a server as available with `✔ peer   N tools` and does not print `connected` | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| The session record notes the identified sender name in the `origin.name` field; the interface preview line cleans the name once more for display | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| An interactive session started from another session's command line does not write the session registry | program analysis |
+| `claude agents --json` reads the session registry and its output has no inbox socket path | no inbox socket path in the output: experiment; the data comes from the session registry: program analysis |
+| Every `claude agents --json` call runs the full startup preparation and deletes the records and key files left by exited sessions | program analysis |
+| The session name is set by the user or generated automatically by Claude Code; after a rename, the built-in send tool addresses the old name and fails, suggesting a similar name, and the built-in session list notes the session's recent name; after a rename that collides with another live session, one of them automatically takes a name with a suffix | addressing the old name fails and suggests a similar name, the list notes the recent name: experiment; automatic suffix on collision: program analysis |
+| The built-in send tool normalizes a name before matching: it removes control and format characters, trims leading and trailing whitespace, lowercases, and replaces whitespace with `-`; the built-in session list does not show sessions whose name contains `@` or `*` | program analysis |
+| The bracketed identifier in the built-in session list is the first 12 hexadecimal digits of SHA-256 over `session:` plus the socket path, then the shortest prefix that distinguishes it among all candidates, at least 6 digits; it does not change with a rename or `/clear`; the list tool is called `ListAgents` | algorithm: program analysis, recomputed with a local session's socket path and matching the identifier shown in the list; does not change with a rename or `/clear`: experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| `/clear` does not change the socket path, the session name or the above identifier, only replacing the session identifier and clearing the conversation; cross-session messages that already arrived and are not yet processed are kept and enter the conversation after the clear | does not change the socket path, session name or identifier: experiment (GitHub-hosted Linux x64 runner, v2.1.311), confirmed by program analysis; messages that already arrived and are not yet processed are kept: experiment (v2.1.327), not verifiable on v2.1.311 |
+| A frame without a session identifier is accepted by the session; a frame whose session identifier differs from the receiver's current one is silently dropped without notifying the sender; frames from the built-in send tool carry no session identifier | a frame without a session identifier is accepted: experiment, see "M0 conclusions"; the rest: program analysis |
+| The sender name in the signature wrapper is cleaned before identification: `"`, `<` and `>` are removed, `Cc`, `Cf`, `Cs`, `Zl` and `Zp` characters and leading and trailing whitespace are removed, and it is truncated beyond 64 code points; when the cleaned result is not exactly the original text, the whole signature wrapper is not recognized and the message is delivered as usual, but the receiver sees no sender. v2.1.311 keeps a middle U+00A0, private-use code points, the unassigned U+0378 and a printable U+3164 | program analysis (v2.1.327), confirmed by experiment (GitHub-hosted Linux x64 runner, v2.1.311); the leading and trailing whitespace item was tested only on the leading side |
+| The dependency library writes the signature with Go's `%q`, so the receiver reads the escaped literal text; this system's `Deliver` calls `CleanSignature` before handing the signature to the library and refuses a signature that would be changed (`Deliver` in `internal/inbox/deliver.go`) | program analysis, confirmed by experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| Rate limiting and deduplication are per sender: when a frame has a reply address the sender is identified by the reply address, otherwise by the writing process's process id; each sender has one token bucket with capacity 30 that refills 0.5 per second; when one sender sends a message identical to its previous one within 30 seconds, the later one is dropped; unprocessed cross-session messages queue at most 50; these numbers can be adjusted remotely by Claude Code | program analysis, confirmed by experiment (GitHub-hosted Linux x64 runner, v2.1.311); the queue cap was observed as the queue's peak depth |
+| A cross-session message queued during a session turn ends with remove at the end of the turn and does not become a user record; whether remove means dropping or merging into the current turn's context cannot be distinguished | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| When `crossSessionInbound` is `accept` the message is delivered directly, when `hold` it is held back with a prompt, and when `refuse` it is dropped | program analysis, confirmed by experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| A session running with permission confirmation skipped holds messages from a sender that declares no permission category for approval one by one; in default mode the same messages are delivered directly | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| On Linux the receiver gets the writer's process id with `SO_PEERCRED`, walks up the parent process ids in `/proc/<pid>/stat` to decide whether it is its own child, up to 12 levels; within 11 levels the message is delivered directly, at 13 levels it is subject to inbound controls | program analysis, confirmed by experiment (GitHub-hosted Linux x64 runner, v2.1.311); in the measurement 11 levels were accepted and 13 held back |
+| With the inbound policy `hold`, the sender returns success immediately; the receiver shows only a hold prompt with no per-message approval interface, pressing Enter does not deliver, and held messages are lost after `/clear` | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| After a script types `/clear` and presses C-x C-s while a tool is executing, the tool is interrupted, the queued peer messages are first handled as a turn, and then `/clear` takes effect | experiment (GitHub-hosted Linux x64 runner, v2.1.311) |
+| Once this system's tools are enabled, the model replies to cross-session messages with `send_message`, targeting the agent address in the signature as written, rather than the built-in Claude Code send tool | experiment (GitHub-hosted Linux x64 runner, v2.1.311; claude-sonnet-5-5, claude-haiku-5-5) |
+| The built-in messaging's loop detection relies on the path recorded in the signature wrapper | program analysis |
 
-## 待验证事项
+## Items to verify
 
-下列事项不影响方案是否成立，在实现过程中用真实会话确认，结论回写到相关的设计文档。
+The following items do not affect whether the approach holds; they are confirmed with real sessions during implementation, and the conclusions are written back into the relevant design documents.
 
-| 事项 | 关系到 | 计划阶段 | 结论 |
+| Item | Relates to | Planned stage | Conclusion |
 |---|---|---|---|
-| 以跳过权限确认的模式运行的会话是否把消息留待用户批准 | `REQ-agent-messaging-024` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：以跳过权限确认的模式运行且未设置入站策略的会话，把 Broker 写入的消息留待逐条批准，批准后才开始回合。 |
-| Broker 脱离会话的进程树之后，它写入的消息是否不再被任何会话当作自己的子进程所发，入站控制是否照常生效 | `REQ-agent-messaging-024` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：Broker 的父链中没有 Claude Code 进程，环境中没有 socket 路径；它写入的消息按非子进程处理，入站控制照常生效。 |
-| Linux 上接收方如何判定写入方是自己的子进程 | `REQ-agent-messaging-024` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：接收方以 `SO_PEERCRED` 取写入方进程号，沿 `/proc/<pid>/stat` 的父进程号向上至多 12 层判定；11 层写入方被接受，13 层写入方被暂扣。 |
-| 安装本系统的 MCP 服务并给出使用说明之后，模型是否改用 `send_message` 回复 Agent 地址；不够时在正文前加一行提示 | `REQ-agent-messaging-025` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：claude-sonnet-5-5 与 claude-haiku-5-5 对每条消息都用 `send_message` 原样以署名地址回复，不需要在正文前加提示。 |
-| inbox 的绑定晚于 MCP 服务进程启动、使其环境中没有 socket 路径的情形出现的频率 | `REQ-agent-messaging-001` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：30 次启动（20 次交互式，其中 10 次带负载；10 次无界面）中，会话注册表出现 socket 路径后，在等待注册记录出现的上限之内，MCP 服务进程的环境里都有同名路径，没有出现缺路径的窗口。 |
-| 子会话是否沿用父会话的 `CLAUDE_CODE_MESSAGING_SOCKET`；沿用会使子会话的登记归入父会话的 Agent | `REQ-agent-messaging-001`、`REQ-agent-messaging-035` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：子会话使用自己的 socket，注册记录与 MCP 服务进程环境中的路径都是子会话的，不沿用父会话的值。 |
-| 会话注册表目录的文件变化通知在 macOS 与 Linux 上是否可靠，会话改名后本系统列出的名字是否随之更新 | `REQ-agent-messaging-005`、`REQ-agent-messaging-010` | M1 | 已确认（GitHub 托管的 Linux x64 runner 与 macos-latest runner，Claude Code v2.1.311，2026-11-19）：Linux 上 10 次改名与 10 次退出都在 1 秒内反映到本系统的列表中（改名最大 255 毫秒，退出最大 249 毫秒），改名后以新名字列出并带旧名，watch 的 misses 为 0；Broker 持有 2 个 inotify 实例，限额为 1280。macOS 上以硬判据连跑 5 次，四条判据全部通过：10 次改名与 10 次退出均在 1 秒内，改名带旧名，向旧地址发送被拒，watch 的 misses 为 0。5 次运行中 10 次改名的最大值依次为 507、456、461、407、946 毫秒，首次改名依次为 507、456、402、407、946 毫秒；判据改为硬判定之前的一次运行里，首次改名曾为 1168 毫秒。Broker 用 kqueue 监听，打开的文件描述符记录为 36，只作记录；inotify 实例数与 strace 在 macOS 上跳过。 |
-| 以实验确认 `/clear` 之后 inbox socket 路径、会话名与会话列表中的标识都不变，此前已到达而尚未处理的消息进入清空之后的对话 | `REQ-agent-messaging-006`、`REQ-agent-messaging-033` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：`/clear` 之后 inbox socket 路径、会话名与会话列表中的标识都不变，其他 Agent 看到的地址与共同 topic 也不变；此前已到达而尚未处理的消息没有丢失：在工具执行期间键入 `/clear` 并按 C-x C-s 之后，入队的消息先作为回合被处理，`/clear` 随后才生效。 |
-| 以实验确认会话列表中的标识与本系统按同一算法算出的消歧标识相同 | `REQ-agent-messaging-006` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：会话列表中的标识与本系统按同一算法算出的消歧标识相同，`a<b` 一项两处都是 `dd91b0`；列表工具为 `ListAgents`。 |
-| 以实验确认署名清洗的规则：含 `"`、`<`、`>` 或超过 64 个码点的署名不被识别；本系统生成的、带消歧标识并截短了名字的署名原样到达会话，模型按它回复时能够解析 | `REQ-agent-messaging-022`、`REQ-agent-messaging-025`、`REQ-agent-messaging-037` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：含 `"`、`<`、`>` 或超过 64 个码点的署名不被接收方识别；系统生成的、带消歧标识并截短了名字的署名原样到达会话，模型按它回复时地址能够解析。 |
-| 以实验确认停用 MCP 服务时 MCP 服务进程依次收到 SIGINT、SIGTERM，重新启用时启动新进程 | `REQ-agent-messaging-034` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：停用 MCP 服务时进程依次收到 SIGINT、约 100 毫秒后 SIGTERM、约 401 毫秒后被 SIGKILL；重新启用后启动新进程，注销与重新登记以相同身份完成。 |
-| 以实验确认接收方的限速与去重：经同一个 Broker 写入的消息共用一个令牌桶，容量 30，每秒补充 0.5 个；同一写入进程 30 秒内发来与上一条内容完全相同的消息时后一条被丢弃；未处理的会话间消息至多排队 50 条 | Agent 消息的假设与依赖 | M2 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：令牌桶容量 30、每秒补充约 0.5 个，同一写入进程 30 秒内相同内容的后一条被丢弃；未处理消息的排队上限按队列峰值深度计为 50，回合进行中入队的消息被 Claude Code remove，未成为用户记录。 |
-| 以实验确认 `CleanSignature` 去掉的不可见字符集与真实接收方一致 | `REQ-agent-messaging-022`、`REQ-agent-messaging-029`、`REQ-agent-messaging-037` | 真实会话验证 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19）：接收方去掉的字符集是本系统 `CleanSignature` 去掉的字符集的子集，本系统多删的方向安全；v2.1.311 保留而本系统删除的有中间的 U+00A0、U+E000、U+0378、U+3164 与反斜杠。`CleanSignature` 的规则依据是 v2.1.327 的程序分析。 |
-| Broker 不在时 MCP 服务是否保持连接，以及手工启动 Broker 后是否无需重连即恢复 | `REQ-agent-messaging-038` | M1 | 已确认（GitHub 托管的 Linux x64 runner，Claude Code v2.1.311，2026-11-19，probe/broker-down 运行 44510569953）：占用 `127.0.0.1:27443` 后，终端启动 Broker 以退出码 4 失败并指出该地址不可用；会话启动后主机上没有 Broker 进程，`/mcp` 显示 peer 可用；工具调用返回没有可用 Broker 的错误并给出管理员与用户级两种启动方法；释放地址并手工启动 Broker 后，同一个 MCP 服务进程恢复，`/mcp` 仍显示可用。 |
-| macOS 上 LaunchAgent 启动用户级 Broker | `REQ-broker-config-015` | M4 | 已确认（GitHub 托管的 macOS runner，2026-11-19）：`make e2e-darwin` 的用户级用例验证安装后 Broker 立即运行、`peers service status` 可连，卸载后进程消失、plist 删除；`TestUserServiceRestoresLinkAfterRelogin` 以 bootout/bootstrap 模拟登录，断言出现新 pid 且对端链路恢复为已连接。 |
+| Whether a session running with permission confirmation skipped holds messages for user approval | `REQ-agent-messaging-024` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): a session running with permission confirmation skipped and no inbound policy set holds messages written by the Broker for approval one by one, and starts the turn only after approval. |
+| Whether, after a Broker leaves the session's process tree, the messages it writes are no longer taken by any session as sent by its own child, and inbound controls still apply | `REQ-agent-messaging-024` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): the Broker's parent chain contains no Claude Code process and its environment has no socket path; the messages it writes are treated as from a non-child process, and inbound controls still apply. |
+| How the receiver on Linux decides that the writer is its own child | `REQ-agent-messaging-024` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): the receiver gets the writer's process id with `SO_PEERCRED` and walks up the parent process ids in `/proc/<pid>/stat` up to 12 levels; a writer at 11 levels is accepted and at 13 levels is held back. |
+| After the system's MCP server is installed and its usage is described, whether the model switches to `send_message` to reply to agent addresses; if not, adding a prompt line before the body | `REQ-agent-messaging-025` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): claude-sonnet-5-5 and claude-haiku-5-5 reply to every message with `send_message`, targeting the signature address as written; no prompt line before the body is needed. |
+| How often the inbox binding happens after the MCP server process starts, leaving no socket path in its environment | `REQ-agent-messaging-001` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): in 30 startups (20 interactive, 10 of them under load; 10 headless), whenever the session registry had the socket path, the MCP server process's environment had a path of the same name within the bound for the registration record to appear, with no window missing the path. |
+| Whether a child session inherits the parent session's `CLAUDE_CODE_MESSAGING_SOCKET`; inheriting would file the child session's registration under the parent session's agent | `REQ-agent-messaging-001`, `REQ-agent-messaging-035` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): a child session uses its own socket, and both the registration record and the path in the MCP server process's environment are the child's, not the parent's. |
+| Whether file change notification on the session registry directory is reliable on macOS and Linux, and whether this system's listed name updates after a session rename | `REQ-agent-messaging-005`, `REQ-agent-messaging-010` | M1 | confirmed (GitHub-hosted Linux x64 runner and macos-latest runner, Claude Code v2.1.311, 2026-11-19): on Linux 10 renames and 10 exits were reflected in this system's list within 1 second (rename at most 255 milliseconds, exit at most 249 milliseconds), a renamed session is listed by the new name with the old name, and the watch's misses were 0; the Broker held 2 inotify instances against a limit of 1280. On macOS, 5 consecutive runs with hard criteria passed all four criteria: 10 renames and 10 exits were all within 1 second, a rename carries the old name, sending to the old address is refused, and the watch's misses were 0. Across the 5 runs the maximum of the 10 renames was 507, 456, 461, 407 and 946 milliseconds, and the first rename 507, 456, 402, 407 and 946 milliseconds; in one run before the criteria became hard, the first rename once took 1168 milliseconds. The Broker watches with kqueue and the open file descriptors were recorded as 36, for the record only; the inotify instance count and strace are skipped on macOS. |
+| Confirming by experiment that after `/clear` the inbox socket path, session name and session-list identifier are all unchanged, and that messages that already arrived and are not yet processed enter the conversation after the clear | `REQ-agent-messaging-006`, `REQ-agent-messaging-033` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): after `/clear` the inbox socket path, session name and session-list identifier are all unchanged, and so is the address and shared topics other agents see; messages that already arrived and are not yet processed are not lost: after typing `/clear` and pressing C-x C-s while a tool is executing, the queued messages are first handled as a turn, and `/clear` takes effect afterward. |
+| Confirming by experiment that the session-list identifier equals this system's disambiguator computed by the same algorithm | `REQ-agent-messaging-006` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): the session-list identifier equals this system's disambiguator computed by the same algorithm, and the `a<b` item is `dd91b0` in both places; the list tool is `ListAgents`. |
+| Confirming by experiment the signature cleaning rules: a signature containing `"`, `<`, `>` or more than 64 code points is not recognized; a signature this system generates, with a disambiguator and a shortened name, arrives at the session as written, and the model can parse it when replying to it | `REQ-agent-messaging-022`, `REQ-agent-messaging-025`, `REQ-agent-messaging-037` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): a signature containing `"`, `<`, `>` or more than 64 code points is not recognized by the receiver; a system-generated signature with a disambiguator and a shortened name arrives at the session as written, and the address can be parsed when the model replies to it. |
+| Confirming by experiment that disabling the MCP server sends the MCP server process SIGINT and then SIGTERM, and re-enabling starts a new process | `REQ-agent-messaging-034` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): disabling the MCP server sends the process SIGINT, then SIGTERM about 100 milliseconds later, then SIGKILL about 401 milliseconds later; re-enabling starts a new process, and unregistering and re-registering complete with the same identity. |
+| Confirming by experiment the receiver's rate limiting and deduplication: messages written through the same Broker share one token bucket with capacity 30 that refills 0.5 per second; when one writing process sends a message identical to its previous one within 30 seconds the later one is dropped; unprocessed cross-session messages queue at most 50 | the agent messaging assumptions and dependencies | M2 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): the token bucket has capacity 30 and refills about 0.5 per second, and when one writing process sends the same content within 30 seconds the later one is dropped; the queue cap for unprocessed messages measured 50 by the queue's peak depth, and a message queued during a turn is removed by Claude Code and does not become a user record. |
+| Confirming by experiment that the set of invisible characters `CleanSignature` removes matches the real receiver's | `REQ-agent-messaging-022`, `REQ-agent-messaging-029`, `REQ-agent-messaging-037` | real-session validation | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19): the set the receiver removes is a subset of the set this system's `CleanSignature` removes, so removing more is the safe direction; those that v2.1.311 keeps but this system removes are a middle U+00A0, U+E000, U+0378, U+3164 and the backslash. `CleanSignature`'s rule is based on program analysis of v2.1.327. |
+| Whether the MCP server keeps its connection while the Broker is absent, and whether it recovers without reconnecting after the Broker is started by hand | `REQ-agent-messaging-038` | M1 | confirmed (GitHub-hosted Linux x64 runner, Claude Code v2.1.311, 2026-11-19, probe/broker-down run 44510569953): after `127.0.0.1:27443` is occupied, a Broker started from the terminal fails with exit code 4 and reports the address as unavailable; after a session starts with no Broker process on the host, `/mcp` shows peer as available; a tool call returns an error that no Broker is available and gives both the administrator and user startup methods; after the address is released and a Broker is started by hand, the same MCP server process recovers and `/mcp` still shows it as available. |
+| A LaunchAgent starting a user Broker on macOS | `REQ-broker-config-015` | M4 | confirmed (GitHub-hosted macOS runner, 2026-11-19): `make e2e-darwin`'s user case verifies that after installation the Broker runs at once and `peers service status` can connect, and that after uninstallation the process is gone and the plist deleted; `TestUserServiceRestoresLinkAfterRelogin` simulates login with bootout/bootstrap and asserts a new pid appears and the peer link recovers to connected. |
 
-Claude Code 每次升级后，核对 inbox 帧格式与会话注册表的字段是否仍与观测记录一致。
+After every Claude Code upgrade, check whether the inbox frame format and the session registry fields still match the observation record.
 
-## 首期之后
+## After the first release
 
-- 与外部 A2A Agent 互通，限于消息的收发：外部 Agent 的回复是另一条消息，不包括 A2A 的任务、流式与回推。首期只在 Broker 之间的消息体上沿用 A2A 的 Message 结构，设计中把消息送达不在本机的 Agent 的方式与对端成员名单的来源预留为扩展点（[broker](design/modules/design-broker.md)、[topic](design/modules/design-topic.md)）。
-- 原生 Windows。
-- 两台主机都不可达时的互通。注册服务由一台长期在线的公开 Broker 承担，沿用名片的发布与传播，不需要新的机制。中转在连接层进行，被中转的两个 Broker 之间仍是端到端认证的链路，不在消息层转发；设计中把链路所依托的连接怎样建立预留为扩展点（[link](design/modules/design-link.md)）。
-- 由团队证书颁发机构签发证书的信任方式，作为配对密钥之外的另一种信任来源。
-- 文件与会话上下文的传递。
-- 分布式追踪与指标导出。
+- Interoperating with external A2A agents, limited to exchanging messages: a reply from an external agent is another message and does not include A2A's tasks, streaming or push notifications. The first release only reuses A2A's Message structure for the message body between Brokers, and the design reserves as extension points how a message reaches an agent not on the local host and where a peer roster comes from ([broker](design/modules/design-broker.md), [topic](design/modules/design-topic.md)).
+- Native Windows.
+- Interoperating when both hosts are unreachable. A long-online public Broker takes on the registration service, reusing card publishing and propagation, with no new mechanism. Relaying happens at the connection layer, and two relayed Brokers still have an end-to-end authenticated link, with no forwarding at the message layer; the design reserves as an extension point how the connection a link relies on is established ([link](design/modules/design-link.md)).
+- A trust method with certificates issued by a team certificate authority, as another trust source besides the pairing key.
+- Passing files and session context.
+- Distributed tracing and metrics export.
