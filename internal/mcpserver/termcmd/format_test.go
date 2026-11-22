@@ -822,3 +822,27 @@ func TestSanitizeText(t *testing.T) {
 		})
 	}
 }
+
+// TestSortBrokersBreaksAliasTiesByFingerprint checks that brokers sharing an
+// alias are ordered by fingerprint rather than by their position in the input,
+// which is what a stable sort keeps when no tie-break is applied.
+func TestSortBrokersBreaksAliasTiesByFingerprint(t *testing.T) {
+	low := bytes.Repeat([]byte{0x01}, 32)
+	high := bytes.Repeat([]byte{0xff}, 32)
+	brokers := []*localpb.BrokerInfo{
+		{Alias: "host-a", Fingerprint: high},
+		{Alias: "host-a", Fingerprint: low},
+	}
+
+	sorted := sortBrokers(brokers)
+
+	if got, want := fingerprintHex(sorted[0].GetFingerprint()), fingerprintHex(low); got != want {
+		t.Errorf("first fingerprint = %s, want the lower one %s", got, want)
+	}
+	if got, want := fingerprintHex(sorted[1].GetFingerprint()), fingerprintHex(high); got != want {
+		t.Errorf("second fingerprint = %s, want the higher one %s", got, want)
+	}
+	if got, want := fingerprintHex(brokers[0].GetFingerprint()), fingerprintHex(high); got != want {
+		t.Errorf("input order changed: first fingerprint = %s, want %s", got, want)
+	}
+}
