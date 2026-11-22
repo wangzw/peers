@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -259,6 +260,31 @@ func loopStart(t *testing.T, deps loopDeps) (stop func()) {
 	return stop
 }
 
+// loopClosingSocket listens on path and closes every accepted connection at
+// once. This is the shape of a refusal at grpc-go's server handshake: the
+// connection is closed before any RPC frame, so the client gets a transport
+// error and its ClientConn never becomes READY, unlike a Hello the handler
+// answers with a status of its own.
+func loopClosingSocket(t *testing.T, path string) {
+	t.Helper()
+	lis, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("listening on %s: %v", path, err)
+	}
+	t.Cleanup(func() { _ = lis.Close() })
+	go func() {
+		for {
+			conn, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.Close()
+		}
+	}()
+}
+
+// TestRunLoop exercises the background connection loop against a fake Local
+// service and against raw sockets.
 func TestRunLoop(t *testing.T) {
 	t.Run("user reconnects to the same Broker and registers again", func(t *testing.T) {
 		// REQ-broker-config-037, REQ-topics-022
@@ -581,9 +607,105 @@ func TestRunLoop(t *testing.T) {
 		if strings.Contains(status.Detail, "peers service install") {
 			t.Fatalf("Detail = %q, must not send the user to a user service", status.Detail)
 		}
+		// A socket that is missing keeps the wording for no Broker, so the
+		// refusal text a running Broker produces cannot leak here.
+		h := &handlers{st: st}
+		_, err := h.preflight("list_agents", callGeneric, false)
+		if err == nil {
+			t.Fatal("preflight returned nil for a missing system socket")
+		}
+		if !strings.Contains(err.Error(), "ask the administrator to start it") {
+			t.Fatalf("error = %q, want the no-Broker wording", err)
+		}
+		if strings.Contains(err.Error(), textBrokerRefusedConnection) {
+			t.Fatalf("error = %q, want no refusal wording for a missing socket", err)
+		}
 		waits := loopWaitCount(t, clock, 1)
 		if waits[0] != 250*time.Millisecond {
 			t.Fatalf("first reconnect wait = %v, want 250ms", waits[0])
+		}
+	})
+
+	t.Run("a registration refused by the Broker passes its sentence to the model", func(t *testing.T) {
+		// The account is at its registration limit while the Broker is
+		// running, so the tool error quotes the Broker and never sends the
+		// reader to start a Broker that is already running.
+		path := fakelocal.SocketPath(t)
+		fakelocal.Start(t, path, fakelocal.Handlers{})
+		const brokerText = "cannot register: account alice already has 1 open registrations"
+
+		st := &statusStore{}
+		clock := newLoopClock()
+		deps := loopBaseDeps(st, clock)
+		deps.selectTarget = func(context.Context) (target, error) {
+			return target{Path: path, Kind: kindSystem}, nil
+		}
+		deps.register = func(context.Context, localpb.LocalClient, *localpb.RegisterRequest,
+			*statusStore, completeFunc, *slog.Logger) error {
+			return fakelocal.ErrorStatus(codes.ResourceExhausted, &localpb.ErrorDetail{
+				Code:    localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+				Message: brokerText,
+			})
+		}
+		loopStart(t, deps)
+
+		status := loopWaitStatus(t, st, "PhaseBrokerRejected", func(s Status) bool {
+			return s.Phase == PhaseBrokerRejected
+		})
+		if status.RejectCode != localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED {
+			t.Fatalf("RejectCode = %v, want QUOTA_EXCEEDED", status.RejectCode)
+		}
+		h := &handlers{st: st}
+		_, err := h.preflight("list_agents", callGeneric, false)
+		if err == nil {
+			t.Fatal("preflight returned nil for a refused registration")
+		}
+		want := "list_agents failed: " + brokerText + " (code: quota_exceeded)"
+		if got := err.Error(); got != want {
+			t.Fatalf("error = %q, want %q", got, want)
+		}
+		if strings.Contains(err.Error(), "ask the administrator to start it") {
+			t.Fatalf("error = %q, want no advice to start a running Broker", err)
+		}
+	})
+
+	t.Run("a system Broker that closes the handshake is reported as running", func(t *testing.T) {
+		// A connection limit enforced during the credential handshake closes
+		// the connection before any ErrorDetail can travel, so the text names
+		// a likely cause without claiming the Broker is gone. A listener that
+		// accepts and closes reproduces that path: the ClientConn never
+		// becomes READY, unlike a Hello the handler answers with a status.
+		path := fakelocal.SocketPath(t)
+		loopClosingSocket(t, path)
+
+		st := &statusStore{}
+		clock := newLoopClock()
+		deps := loopBaseDeps(st, clock)
+		deps.selectTarget = func(context.Context) (target, error) {
+			return target{Path: path, Kind: kindSystem}, nil
+		}
+		loopStart(t, deps)
+
+		status := loopWaitStatus(t, st, "PhaseBrokerRejected", func(s Status) bool {
+			return s.Phase == PhaseBrokerRejected
+		})
+		const refusedText = "the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly."
+		if status.Detail != refusedText {
+			t.Fatalf("Detail = %q, want %q", status.Detail, refusedText)
+		}
+		h := &handlers{st: st}
+		_, err := h.preflight("list_agents", callGeneric, false)
+		if err == nil {
+			t.Fatal("preflight returned nil for a refused handshake")
+		}
+		want := "list_agents failed: " + refusedText + " (code: internal)"
+		if got := err.Error(); got != want {
+			t.Fatalf("error = %q, want %q", got, want)
+		}
+		for _, unwanted := range []string{"ask the administrator to start it", "no Broker is available"} {
+			if strings.Contains(err.Error(), unwanted) {
+				t.Fatalf("error = %q, want no %q", err, unwanted)
+			}
 		}
 	})
 
@@ -621,6 +743,59 @@ func TestRunLoop(t *testing.T) {
 		waits := loopWaitCount(t, clock, 1)
 		if waits[0] != 250*time.Millisecond {
 			t.Fatalf("first reconnect wait = %v, want 250ms", waits[0])
+		}
+	})
+
+	// A Hello failure only becomes the refusal text when the probe confirms a
+	// socket answers and the handshake itself was closed. A probe that reports
+	// another account serving the socket, a denied connection, or any other
+	// failure is not a refusal: the phase and text stay what they were before
+	// the refusal text existed, with the original error.
+	t.Run("a Hello failure without a confirmed socket keeps the unavailable text", func(t *testing.T) {
+		for _, tc := range []struct {
+			name  string
+			probe probeResult
+		}{
+			{"the socket is served by another account", probeWrongPeer},
+			{"the account may not connect", probeDenied},
+			{"the probe failed another way", probeOther},
+		} {
+			probe := tc.probe
+			t.Run(tc.name, func(t *testing.T) {
+				path := fakelocal.SocketPath(t)
+				const helloErr = "the Broker rejected the handshake"
+
+				st := &statusStore{}
+				clock := newLoopClock()
+				deps := loopBaseDeps(st, clock)
+				deps.selectTarget = func(context.Context) (target, error) {
+					return target{Path: path, Kind: kindUser}, nil
+				}
+				deps.probe = func(context.Context, string) probeResult { return probe }
+				deps.hello = func(context.Context, localpb.LocalClient, uint32) (helloResult, error) {
+					return helloResult{}, errors.New(helloErr)
+				}
+				loopStart(t, deps)
+
+				status := loopWaitStatus(t, st, "PhaseUnavailable", func(s Status) bool {
+					return s.Phase == PhaseUnavailable
+				})
+				want := fmt.Sprintf("the Broker at %s is unavailable: %s", path, helloErr)
+				if status.Detail != want {
+					t.Fatalf("Detail = %q, want %q", status.Detail, want)
+				}
+				h := &handlers{st: st}
+				_, err := h.preflight("list_agents", callGeneric, false)
+				if err == nil {
+					t.Fatal("preflight returned nil for a Hello failure")
+				}
+				if !strings.Contains(err.Error(), helloErr) {
+					t.Fatalf("error = %q, want it to carry the original error", err)
+				}
+				if strings.Contains(err.Error(), "refused this connection") {
+					t.Fatalf("error = %q, want no refusal text", err)
+				}
+			})
 		}
 	})
 
@@ -816,6 +991,9 @@ func TestRunLoop(t *testing.T) {
 		loopStart(t, deps)
 
 		loopRetryPaused(t, func() int { return loopCountCalls(srv, "Hello") }, "Hello", clock)
+		// The handler answered Hello with a status, so the connection stayed
+		// usable and this is not a handshake refusal; the phase and text stay
+		// what a user Broker whose Hello keeps failing reported before.
 		if got := st.Get().Phase; got != PhaseUnavailable {
 			t.Fatalf("Phase while Hello keeps failing = %v, want PhaseUnavailable", got)
 		}

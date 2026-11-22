@@ -26,6 +26,11 @@ const (
 	// PhaseVersionMismatch means Hello found an incompatible local protocol
 	// version; Detail names both versions and Remedy says how to fix it.
 	PhaseVersionMismatch
+	// PhaseBrokerRejected means the Broker answered but refused this
+	// connection or registration. Detail is the Broker's own explanation when
+	// it gave one and the local text for a refused handshake otherwise;
+	// RejectCode is the Broker's code, or internal for a refusal without one.
+	PhaseBrokerRejected
 	// PhaseConnected means Hello succeeded; registration may still be pending.
 	PhaseConnected
 )
@@ -45,6 +50,9 @@ type Status struct {
 	// NotRegisteredDetail is the Broker's specific explanation of
 	// NotRegistered; empty when the Broker sent none.
 	NotRegisteredDetail string
+	// RejectCode is the error code the Broker gave for a rejection, read only
+	// in PhaseBrokerRejected; internal when the refusal carried no ErrorDetail.
+	RejectCode localpb.ErrorCode
 }
 
 // statusStore holds the current Status and is safe for concurrent use.
@@ -114,6 +122,8 @@ func (h *handlers) preflight(tool string, kind callKind, needAgent bool) (Status
 		return st, toolError(phrase, body, localpb.ErrorCode_ERROR_CODE_INTERNAL)
 	case PhaseVersionMismatch:
 		return st, toolError(phrase, fmt.Sprintf(textVersionMismatch, st.Detail, st.Remedy), localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH)
+	case PhaseBrokerRejected:
+		return st, toolError(phrase, st.Detail, st.RejectCode)
 	case PhaseConnected:
 		if needAgent && st.AgentID == "" {
 			if st.NotRegistered == localpb.NotRegisteredReason_NOT_REGISTERED_REASON_BROKER_DEGRADED {

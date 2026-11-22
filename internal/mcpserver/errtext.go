@@ -34,8 +34,13 @@ const (
 // Texts shown to the model. The local-state texts are format strings; the rest
 // are used verbatim.
 const (
-	textStarting                  = "the connection to the Broker is still being set up; retry shortly"
-	textUnavailable               = "the Broker is unavailable: %s; retrying in the background"
+	textStarting    = "the connection to the Broker is still being set up; retry shortly"
+	textUnavailable = "the Broker is unavailable: %s; retrying in the background"
+	// textBrokerRefusedConnection replaces the unavailable text when the socket
+	// answered but the Broker closed the handshake. A connection limit at the
+	// handshake gives the client no ErrorDetail, so the text names only a
+	// likely cause and never sends the reader to start a running Broker.
+	textBrokerRefusedConnection   = "the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly."
 	textNoBroker                  = "no Broker is available for this account; if a system Broker is installed on this host, ask the administrator to start it. Otherwise start a user Broker with `peers service install`, or run `peers service run` in a terminal outside the Claude Code session (a Broker started inside the session exits with code 6)"
 	textNoUserBrokerSystemRunning = "no user Broker is running for this account; a system Broker is running, so retry with `--system`"
 	textVersionMismatch           = "%s. To fix it, %s"

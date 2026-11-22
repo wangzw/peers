@@ -84,6 +84,32 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: " + textNoSystemBroker + " (code: internal)",
 		},
 		{
+			// The Broker is running and refused the registration with an
+			// explanation of its own; the model gets that sentence and code.
+			name: "Broker rejected the registration",
+			status: Status{
+				Phase:      PhaseBrokerRejected,
+				Detail:     "cannot register: account alice already has 1 open registrations",
+				RejectCode: localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
+			},
+			tool: "list_agents",
+			kind: callGeneric,
+			want: "list_agents failed: cannot register: account alice already has 1 open registrations (code: quota_exceeded)",
+		},
+		{
+			// The socket answered and the Broker closed the handshake, so the
+			// text must not send the reader to start a running Broker.
+			name: "Broker refused the handshake",
+			status: Status{
+				Phase:      PhaseBrokerRejected,
+				Detail:     "the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly.",
+				RejectCode: localpb.ErrorCode_ERROR_CODE_INTERNAL,
+			},
+			tool: "list_agents",
+			kind: callGeneric,
+			want: "list_agents failed: the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly. (code: internal)",
+		},
+		{
 			name:   "version mismatch",
 			status: Status{Phase: PhaseVersionMismatch, Detail: mismatchDetail, Remedy: remedy},
 			tool:   "list_agents",

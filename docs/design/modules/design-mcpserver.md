@@ -139,7 +139,7 @@ Broker 不可用、登记未完成或登记失败期间，本进程不退出，�
 
 ### 重新登记
 
-`Register` 流断开后，`mcpserver` 按退避重连原来那个 Broker 并重新登记，不等下一次工具调用，也不改连其他 Broker（`REQ-broker-config-037`）。用户级 Broker 与系统级 Broker 都只按退避重连原来的本机 socket，不启动 Broker：用户级等待用户级的服务管理机制或用户把它重新启动，系统级等待系统的服务管理机制把它重新启动，都不从“选定 Broker”重新开始。重连失败时，用户级 Broker 的 socket 不存在或拒绝连接的，说明没有 Broker 在监听，工具调用返回与首次找不到相同的文字；Broker 被强杀而没有删除 socket 文件时同样如此。会话原本登记在系统级 Broker 上的，只说明系统级 Broker 不可用并请用户联系管理员，不提用户级启动方法。用户级 socket 有应答而握手或调用失败的，只说该 Broker 不可用并在后台重试（`REQ-broker-config-037`、`REQ-broker-config-038`）。登记首帧的两个环境变量只在进程启动时读取一次，此后每次重新登记使用同一对值。连接退避首次等待 250ms，此后每次翻倍，封顶 5 秒；只有收到登记完成才复位，`Hello` 成功不复位。
+`Register` 流断开后，`mcpserver` 按退避重连原来那个 Broker 并重新登记，不等下一次工具调用，也不改连其他 Broker（`REQ-broker-config-037`）。用户级 Broker 与系统级 Broker 都只按退避重连原来的本机 socket，不启动 Broker：用户级等待用户级的服务管理机制或用户把它重新启动，系统级等待系统的服务管理机制把它重新启动，都不从“选定 Broker”重新开始。重连失败时，socket 不存在或拒绝连接的，说明没有 Broker 在监听，工具调用返回与首次找不到相同的文字；Broker 被强杀而没有删除 socket 文件时同样如此。socket 可以连上但 Broker 在握手阶段关闭连接的（本账户或全机的连接数在握手时已达上限即如此），说明 Broker 正在运行但拒绝了这条连接，可能是本账户或全机连接数已满，稍后重试，不让用户去找管理员启动服务。登记流被 Broker 以带 `ErrorDetail` 的错误结束的，不归为没有可用的 Broker：工具调用原样转述 Broker 的说明，错误码沿用 Broker 给出的码，例如登记数达上限时返回 `quota_exceeded`。登记流在没有错误详情的情况下断开时，会话原本登记在系统级 Broker 上的，只说明系统级 Broker 不可用并请用户联系管理员，不提用户级启动方法；用户级 socket 有应答而登记流在没有错误详情时断开的，只说该 Broker 不可用并在后台重试（`REQ-broker-config-037`、`REQ-broker-config-038`）。登记首帧的两个环境变量只在进程启动时读取一次，此后每次重新登记使用同一对值。连接退避首次等待 250ms，此后每次翻倍，封顶 5 秒；只有收到登记完成才复位，`Hello` 成功不复位。
 
 重新登记以同一个 socket 路径进行，得到的 Agent 标识不变；消歧标识按当时本 Broker 上的 Agent 集合重新计算，集合未变时其他 Agent 手里的地址继续有效。登记完成后按原来的公开声明与简介重新加入本进程记着的全部 topic；Broker 撤销登记后再次发出登记完成时同样如此。默认 topic 只在本进程第一次收到登记完成时确定一次，结果先记入记忆再逐个加入，加入途中断开时下次仍能恢复。Broker 已改为不公开的，公开声明失败，该 topic 仍以不公开方式加入。带错误详情的拒绝按错误码区分。`quota_exceeded` 不表示这个 topic 本身有问题：它既可能是 topic 变更限速，也可能是数量上限已到（本机有成员的 topic 至多 512 个，系统级 Broker 下每个账户至多 128 个），两者在 `ErrorDetail` 中只有同一个错误码，说明文字只给模型看，不能当作判别字段。这类 topic 不从记忆中删除，也不限定重试次数：遇到 `quota_exceeded` 时把它放进延后集合，本轮继续处理后面的 topic，一轮结束后整体重试延后集合，登记有效期间一直这样重试。一轮是一个循环，不按 topic 起协程：数量上限只卡住个别 topic 时，其余 topic 在第一轮内就能恢复，不会被排在前面的那个拖住。轮次之间等待的时间从 250 毫秒起逐次翻倍，最长 30 秒（限速每秒补充 4 个令牌），叠加随机抖动后再按同样的上下限截断，免得同一账户的多个会话同时被拒后同步重试、反复争抢同一个令牌。恢复循环的寿命绑在登记上而不是 `Register` 流上：同一流上收到 `not_registered` 或新的登记完成时，上一轮恢复立即停止，新登记立即开始恢复，不等旧循环的退避到期。加入被 Broker 以 `not_registered` 拒绝的，说明这个 Agent 标识已经不存在，按停止并保留处理，不从记忆中删除。连接断开时同样停止重试，条目保留到下一次登记完成。每个 topic 连续失败若干次后记一条 Warn，此后的重试不再逐次记录。数量上限与限速共用同一个错误码，走同一条路径：它只有在别的 topic 退出、腾出名额后才可能解除，所以每个被拒 topic 至多每 30 秒向 Broker 请求一次，代价可以忽略；名额一旦空出，该 topic 在下一轮重试时自行加入，不需要用户重新登记。其他错误详情（名字非法、不可见等）是确定的拒绝，从记忆中删除。没有错误详情的错误（连接中断）同样停止重试并保留。公开声明因其他原因被拒绝、改以不公开方式加入又遇到 `quota_exceeded` 的，按不公开形式保留并继续重试。本进程退出后，它记着的 topic 随之丢失：MCP 服务被停用后重新启用，新的进程只重新加入默认 topic。
 
@@ -189,7 +189,9 @@ peers <v> is available (this Broker runs <c>). To upgrade, the user can ask you 
 
 Broker 返回的错误码转成一句以结果开头的文字，随后附上错误码和可采取的做法，例如名字有歧义时列出候选地址，附上消歧标识，目标是曾用名时给出现在的地址，权限不足时指出所缺的权限。Broker 不可达或登记未完成时，工具调用立即返回说明原因的错误，不在 MCP 服务进程内排队。
 
-错误文字的固定格式是 `开头短语: 说明 (code: <错误码名>)`，开头短语与说明之间是 `: `；涉及远端 Broker 时写成 `开头短语: 说明 (code: <错误码名>; reported by Broker <64 位小写十六进制指纹>)`，有附加提示时提示接在最后。开头短语由错误码与调用它的工具确定，不取自 Broker 给出的说明：错误码为 `delivery_unknown` 时一律为 `Delivery unknown`，其余按工具取默认值，`send_message` 为 `Not sent`，`connect_broker` 为 `Not connected`，其他工具为 `<工具名> failed`。Broker 的说明若已以 `Not sent: `、`Delivery unknown: ` 或 `Not connected: ` 之一开头，先去掉这个开头短语，再按上述规则加上正确的短语。未连接、正在连接与没有可用 Broker 这些本机状态产生的错误用 `internal` 码，登记未完成用 `not_registered`，版本不兼容用 `version_mismatch`。登记未完成的说明优先取 Broker 事件里的 `detail`，它点名具体原因；`detail` 为空时按原因枚举使用固定句子，因此本进程连接不发送 `detail` 的旧 Broker 时，文字与之前一致。`send_message` 的请求发出后连接中断，按结果未知处理，开头为 `Delivery unknown`，说明消息可能已送达、重发可能使对方收到两份；`connect_broker` 的同情形以 `Not connected` 开头，说明配对可能已完成，可查看 `list_brokers`。
+错误文字的固定格式是 `开头短语: 说明 (code: <错误码名>)`，开头短语与说明之间是 `: `；涉及远端 Broker 时写成 `开头短语: 说明 (code: <错误码名>; reported by Broker <64 位小写十六进制指纹>)`，有附加提示时提示接在最后。开头短语由错误码与调用它的工具确定，不取自 Broker 给出的说明：错误码为 `delivery_unknown` 时一律为 `Delivery unknown`，其余按工具取默认值，`send_message` 为 `Not sent`，`connect_broker` 为 `Not connected`，其他工具为 `<工具名> failed`。Broker 的说明若已以 `Not sent: `、`Delivery unknown: ` 或 `Not connected: ` 之一开头，先去掉这个开头短语，再按上述规则加上正确的短语。未连接、正在连接与没有可用 Broker 这些本机状态产生的错误用 `internal` 码；Broker 在握手阶段关闭连接也用 `internal` 码，说明它正在运行并可能已达连接数上限；登记流以带 `ErrorDetail` 的错误结束时沿用 Broker 给出的错误码，说明原样转述 Broker 的句子。登记未完成用 `not_registered`，版本不兼容用 `version_mismatch`。登记未完成的说明优先取 Broker 事件里的 `detail`，它点名具体原因；`detail` 为空时按原因枚举使用固定句子，因此本进程连接不发送 `detail` 的旧 Broker 时，文字与之前一致。`send_message` 的请求发出后连接中断，按结果未知处理，开头为 `Delivery unknown`，说明消息可能已送达、重发可能使对方收到两份；`connect_broker` 的同情形以 `Not connected` 开头，说明配对可能已完成，可查看 `list_brokers`。
+
+握手阶段被拒时客户端拿不到原因，统一报 Broker 在运行但拒绝了连接、可能是连接数已满。
 
 `codeName` 加两个名字 `broker_offline` 与 `broker_degraded`。更新提示的中间件把 `broker_degraded` 与查询失败同样处理，跳过提示。
 
@@ -199,7 +201,9 @@ Broker 返回的错误码转成一句以结果开头的文字，随后附上错�
 
 | 情形 | 工具调用得到 |
 |---|---|
-| 没有可用的 Broker | 错误；首次找不到时先请用户联系管理员启动系统级 Broker，再给出用户级两种启动方法；原本使用系统级 Broker 而断开的，只说明系统级 Broker 不可用并请用户联系管理员 |
+| 没有可用的 Broker | 错误；首次找不到时先请用户联系管理员启动系统级 Broker，再给出用户级两种启动方法；原本使用系统级 Broker 而登记流在没有错误详情时断开的，只说明系统级 Broker 不可用并请用户联系管理员 |
+| socket 可以连上但 Broker 在握手阶段关闭连接 | 错误，说明 Broker 正在运行、可能是本账户或全机连接数已满、稍后重试 |
+| 登记流被 Broker 以带 `ErrorDetail` 的错误结束 | 沿用 Broker 给出的错误码，说明原样转述 Broker 的句子；登记数达上限时为 `quota_exceeded` |
 | 本机协议版本不兼容 | `version_mismatch`，提示重启 Broker |
 | Broker 连接不上，或正在重新连接 | 错误，说明 Broker 不可用、正在重试 |
 | `send_message` 的请求发出后连接中断 | `Delivery unknown`，说明消息可能已送达，重发可能使对方收到两份 |
