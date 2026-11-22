@@ -1,55 +1,55 @@
-# 预置静态密钥取自配置文件
+# Take the pre-provisioned static key from the configuration file
 
-## 背景
+## Context
 
-一次性配对密钥限时有效、使用一次即失效，每配对一台主机都要有人在接受配对的 [Broker](../glossary.md) 上生成一次。批量部署多台主机时，没有人在场逐次生成，需要一个在部署之前就能确定、写进各主机配置的密钥。这样的密钥长期有效、可以重复使用，泄露的后果比一次性配对密钥严重；用它配对过的每一台主机都知道它。经工具读写的内容会进入会话中模型的上下文与会话记录（[ADR-config-through-tools](adr-config-through-tools.md)）。
+A one-time pairing key is valid for a limited time and becomes invalid after one use, so pairing each host needs someone to generate one on the [Broker](../glossary.md) that accepts the pairing. When several hosts are deployed in bulk, no one is present to generate one each time, and the deployment needs a key that can be determined before deployment and written into each host's configuration. Such a key stays valid for a long time and can be reused, so a leak has graver consequences than a one-time pairing key, and every host paired with it knows it. Content read and written through tools enters the context and the session record of the model in the session ([ADR-config-through-tools](adr-config-through-tools.md)).
 
-## 考虑过的选项
+## Options Considered
 
-### 由系统在运行时随机生成，经工具取出
+### Generate it at run time in the system and take it out through a tool
 
-Broker 在用户启用时随机生成可重复使用的密钥并保存，用户经工具取出后分发给各主机。
+The Broker generates a reusable key at random when the user enables it and saves it, and the user takes it out through a tool and distributes it to the hosts.
 
-**否决**：密钥在 Broker 启动之后才存在，无法在部署之前写进各主机的配置。
+**Rejected**: the key exists only after the Broker starts, so it cannot be written into each host's configuration before deployment.
 
-### 为可重复使用的密钥设有效期或使用次数
+### Give the reusable key a validity period or a use count
 
-可重复使用的密钥在一段时间之后，或在若干次使用之后失效。
+The reusable key becomes invalid after a period, or after a number of uses.
 
-**否决**：预置的密钥要在整个部署过程中一直可用，期限与次数都要另行管理。
+**Rejected**: a pre-provisioned key has to stay usable throughout the deployment, and the period and the count would each have to be managed separately.
 
-### 在密钥旁附带接受方的指纹供发起方核对
+### Attach a piece of the acceptor's fingerprint beside the key for the dialer to check
 
-接受方在密钥之外另给出本机证书指纹的一段，发起方连上之后先核对对方证书的指纹，相符才握手。
+Besides the key, the acceptor gives a piece of its own certificate fingerprint, and the dialer checks the other side's certificate fingerprint after connecting and proceeds to the handshake only when they match.
 
-**否决**：接受方的指纹在它首次启动之后才产生，批量部署时要先启动各接受方、取出指纹，再写进各发起方的配置，密钥就不能在部署之前确定。
+**Rejected**: the acceptor's fingerprint is produced only after its first start, so a bulk deployment would have to start each acceptor, take out its fingerprint and write it into each dialer's configuration first, and the key could no longer be determined before deployment.
 
-### 允许经工具设置或读取
+### Allow it to be set or read through a tool
 
-可重复使用的密钥与其他配置项一样，可以经工具设置，也可以经工具读出取值。
+Like other configuration items, the reusable key can be set through a tool and its value can be read out through a tool.
 
-**否决**：长期有效的秘密会进入模型的上下文与会话记录。
+**Rejected**: a long-lived secret would enter the model's context and the session record.
 
-### 在配置文件中预置，有值即生效，只限制长度
+### Pre-provision it in the configuration file, effective when it has a value, limited only by length
 
-密钥由用户或管理员写在 Broker 的配置文件里，有值即生效，没有值即不启用。系统只检查它的长度，不生成它，也不另行保存它；修改配置文件即可设置、更换或删除，不需要重启。
+The user or administrator writes the key into the Broker's configuration file; it takes effect when it has a value and is not enabled without one. The system only checks its length, does not generate it and does not save it separately; editing the configuration file sets, replaces or removes it, with no restart needed.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-可重复使用的配对密钥是预置静态密钥，只取自 Broker 的配置文件，有值即生效，不过期，不限使用次数。系统不生成它，不另行保存它，也不经工具设置它或返回它的取值；系统只限制它的长度，取值原样比较。
+The reusable pairing key is a pre-provisioned static key taken only from the Broker's configuration file; it takes effect when it has a value, does not expire and has no use limit. The system does not generate it, does not save it separately and does not set it or return its value through a tool; the system only limits its length, and compares the value as it is.
 
-## 后果
+## Consequences
 
-批量部署可以在部署之前把同一个密钥写进各主机的配置，配合接受方的地址反复使用。未设置时，Broker 上不存在长期有效的配对密钥。经工具读取配置时不返回密钥的取值；会话中的模型若以文件操作读取配置文件，仍会读到它。修改配置文件即可设置、更换或删除密钥，不需要重启；删除或更换只阻止之后的配对，已凭它配对的对端要逐个解除配对才会断开。
+A bulk deployment can write the same key into each host's configuration before deployment and reuse it together with the acceptor's address. When none is set, no long-lived pairing key exists on the Broker. Reading configuration through a tool does not return the key's value; the model in the session still reads it if it reads the configuration file through file operations. Editing the configuration file sets, replaces or removes the key, with no restart needed; removing or replacing it only stops later pairings, and a peer already paired with it is disconnected only when it is unpaired one by one.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 密钥的随机性由设置它的人负责，长度下限挡不住够长而好猜的密钥。
-- 发起方在核实对方之前就发出由密钥算出的查找标记：能截获配对握手的一方，以及发起方因地址写错或域名被劫持而连到的任何一方，都可以据此离线穷举弱密钥。标记绑定发起方指纹，不能转给第三方重放。
-- 配对尝试按来源计数并有全局上限；能从大量来源（例如一整段 IPv6 前缀）发请求的一方仍可以占满全局上限，使凭静态密钥的配对暂时收到稍后再试，一次性配对密钥不受影响。
-- 凡用它配对过的主机都知道它；这样的主机若能截获或误导新主机的连接，可以冒充接受方完成配对。
-- 密钥以明文保存在配置文件里，能读配置文件的账户都能读到它，并能凭它让本 Broker 增加对端；对配置文件只有读权限的账户因此也能完成配对这一管理操作。
-- 泄露后只能更换密钥，再逐个解除已有的配对；更换之后，引用旧密钥的部署配置都要随之更新。
-- 有主机凭预置静态密钥配对成功时，系统只写审计日志，不另行通知用户。
+- The randomness of the key is the responsibility of whoever sets it, and a minimum length cannot keep out a key that is long enough yet easy to guess.
+- Before verifying the other side, the dialer sends a lookup tag computed from the key: a party that can intercept the pairing handshake, and any party the dialer connects to because of a mistyped address or a hijacked domain name, can use it to brute-force a weak key offline. The tag is bound to the dialer's fingerprint and cannot be handed to a third party for replay.
+- Pairing attempts are counted by source and have a global cap; a party that can send requests from many sources, such as a whole IPv6 prefix, can still fill the global cap, which makes pairing by static key receive a temporary try-later response, while one-time pairing keys are unaffected.
+- Every host paired with it knows it; such a host that can intercept or misdirect a new host's connection can impersonate the acceptor and complete pairing.
+- The key is stored in plain text in the configuration file, so every account that can read the configuration file can read it and use it to make this Broker add a peer; an account with only read permission on the configuration file can therefore also complete the management operation of pairing.
+- After a leak the key can only be replaced and the existing pairings then unpaired one by one; after a replacement, every deployment configuration that references the old key has to be updated with it.
+- When a host pairs successfully by the pre-provisioned static key, the system only writes an audit log and does not notify the user separately.

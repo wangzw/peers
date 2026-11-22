@@ -1,53 +1,53 @@
-# 以配对密钥在自签证书之间建立信任
+# Establish trust between self-signed certificates with a pairing key
 
-## 背景
+## Context
 
-两个 [Broker](../glossary.md) 首次连接时互不认识，需要确认对方就是用户想连的那一台，并防止中间人冒充。此后的连接需要加密并能认出对方。配对由用户在会话中发起。配对所需的信息要由一个用户交给另一个用户，应当便于复制粘贴。
+Two [Broker](../glossary.md) instances do not know each other on their first connection: each has to confirm that the other is the one the user wants to connect to, and has to prevent a man in the middle from impersonating it. Connections after that have to be encrypted and have to recognize the other side. The user starts pairing from within a session. The information pairing needs has to pass from one user to another and should be easy to copy and paste.
 
-## 考虑过的选项
+## Options Considered
 
-### 团队证书颁发机构
+### A team certificate authority
 
-每个 Broker 持有由团队证书颁发机构签发的证书，连接时双向校验证书链与主机名。
+Each Broker holds a certificate issued by a team certificate authority, and on connection both sides verify the certificate chain and the host name.
 
-**未采纳**：要先有一套签发和分发证书的设施，新主机加入要先申请证书；现有的使用场景是用户之间逐对建立信任，配对密钥已经够用，不需要这套设施。它可以作为配对密钥之外的另一种信任来源加入，不取代本决策。
+**Not adopted**: this needs a facility that issues and distributes certificates first, and a new host has to request a certificate before it joins. The existing use case is two users establishing trust pair by pair, and a pairing key already suffices; the facility is not needed. It can be added as another trust source beside the pairing key and does not replace this decision.
 
-### 随密钥附带完整的证书指纹并使用更长的密钥
+### Ship the full certificate fingerprint with the key and use a longer key
 
-接受方把完整的证书指纹和一个 128 位的密钥一起交给发起方。发起方凭指纹直接校验对方证书，密钥只用于向对方证明自己。
+The acceptor gives the dialer the full certificate fingerprint together with a 128-bit key. The dialer verifies the other side's certificate directly by the fingerprint, and the key serves only to prove the dialer's own identity to the other side.
 
-**否决**：要传递的内容过长，不便复制粘贴。
+**Rejected**: what has to be passed is too long to copy and paste easily.
 
-### 短码加口令认证密钥交换
+### A short code plus a password-authenticated key exchange
 
-用户手敲一个短码，握手使用抗离线猜测的口令认证密钥交换协议。
+The user types a short code by hand, and the handshake uses a password-authenticated key exchange protocol resistant to offline guessing.
 
-**否决**：短码的随机性不足，只能靠专门的协议弥补，实现复杂度高；配对密钥与地址本来就要由用户复制给对方，复制粘贴是常态，不需要短到可以手敲。
+**Rejected**: a short code has too little randomness and can only be compensated for by a dedicated protocol, which is complex to implement. The pairing key and the address already have to be copied to the other side, and copying and pasting is the norm, so nothing has to be short enough to type by hand.
 
-### 中等长度密钥加双向指纹绑定
+### A medium-length key plus two-way fingerprint binding
 
-每个 Broker 使用自签证书，以公钥指纹为身份。接受方生成一个 80 位的随机密钥，由用户连同接受方的地址交给发起方，密钥与地址分开传递。握手时双方各自用密钥对“自己的指纹与自己看到的对方指纹”计算消息认证码并互相出示；通过后双方保存对方指纹，此后只认指纹。
+Each Broker uses a self-signed certificate and takes the public key fingerprint as its identity. The acceptor generates a random 80-bit key, and the user hands it to the dialer together with the acceptor's address, with the key and the address passed separately. In the handshake each side uses the key to compute a message authentication code over "its own fingerprint and the fingerprint it sees for the other side" and shows it to the other; once that passes, both sides save the other's fingerprint and recognize only fingerprints after that.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 使用自签证书并以指纹为身份；首次连接凭配对密钥做绑定双方指纹的相互证明，之后只认已保存的指纹。
+A Broker uses a self-signed certificate and takes its fingerprint as its identity; the first connection uses the pairing key for mutual proof that binds both sides' fingerprints, and after that each side recognizes only the saved fingerprint.
 
-配对密钥中可重复使用的预置静态密钥，其取舍见 [ADR-static-pairing-key](adr-static-pairing-key.md)。
+For the pre-provisioned static key among pairing keys, which can be reused, see [ADR-static-pairing-key](adr-static-pairing-key.md).
 
-## 后果
+## Consequences
 
-不需要证书颁发机构。配对可以由用户在会话中完成，配对密钥是一段可复制的文本。别名只用于显示，默认别名不含端口，见 [ADR-default-alias-host-and-account](adr-default-alias-host-and-account.md)；别名与对外地址都不参与认证。
+No certificate authority is needed. A user can complete pairing from within a session, and the pairing key is a piece of copyable text. An alias serves only for display, and the default alias carries no port, see [ADR-default-alias-host-and-account](adr-default-alias-host-and-account.md); neither the alias nor the advertised address takes part in authentication.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 配对密钥必须经系统之外的可信途径传递，该途径被窃听即等同于密钥泄露。
-- 一次性配对密钥有 16 个字符，不便口头传达或手敲。
-- 没有统一的吊销途径：一台主机不再可信时，要在每个与它配对过的 Broker 上分别解除配对。
-- 配对一个 Broker，即信任它报告的名下 Agent 的名字和所属 topic，系统无法验证对端主机上的事实。
-- 自签证书在核对指纹之前就要出示：监听中的 Broker 的证书对任何能连到监听端口的主机可见，不公开的 Broker 的指纹因此也可能被这些主机得知。
+- The pairing key has to travel through a trusted channel outside the system, and eavesdropping on that channel amounts to leaking the key.
+- A one-time pairing key has 16 characters and is awkward to pass on by voice or to type by hand.
+- There is no unified revocation path: when a host is no longer trusted, it has to be unpaired separately on every Broker that was paired with it.
+- Pairing one Broker means trusting the names and topics of the agents it reports under itself; the system cannot verify facts on the other host.
+- A self-signed certificate has to be shown before the fingerprint is checked: the certificate of a listening Broker is visible to any host that can reach the listening port, so the fingerprint of a Broker that is not public may be learned by those hosts too.
 
-## 失效条件
+## Invalidation Conditions
 
-配对主要发生在已经有证书颁发机构的组织内部，不再由用户在会话中即时发起时，本决策不再成立。
+This decision stops holding when pairing mostly happens inside an organization that already has a certificate authority and is no longer started by a user from within a session on the spot.

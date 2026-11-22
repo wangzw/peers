@@ -1,68 +1,68 @@
-# 已认证的对端按来源限额
+# Limit authenticated peers by source
 
-## 背景
+## Context
 
-Broker 对对端的授权是交换共同 topic 的成员名单、名录记录，向可见的 Agent 投递消息。认证只确定对端是谁，不包含无限占用本机资源的权利：一条已建立的链路可以持续发来状态帧与请求帧，也可以持续投递消息，这些都是认证之后的正常通道。
+A Broker authorizes a peer to exchange the roster of agents that share a topic and directory records, and to deliver messages to visible agents. Authentication establishes only who the peer is; it does not carry a right to occupy the local host's resources without limit. An established link can keep sending state frames and request frames, and can keep delivering messages, and these are the normal channels after authentication.
 
-不设上限时，链路读侧让状态帧队列无界、每收到一个请求帧就派生一个处理协程；去重表共用一个 65536 项的全表上限；投递没有按来源区分额度。一个已配对的对端因此能让本机为它的状态帧耗尽内存、为它的请求派生无上限的协程、占满去重表使其他所有对端的投递返回忙，或者耗尽 Claude Code 接收端按写入进程共用的令牌桶，使会话丢掉其他来源的消息。[ADR-no-broker-rate-limiting](adr-no-broker-rate-limiting.md) 只按写入进程识别发送方，接收端分不清一条投递来自哪个对端，按来源限额只能由 Broker 做。[ADR-unauthenticated-connection-limits](adr-unauthenticated-connection-limits.md) 处理认证之前的连接，本记录处理认证之后的对端。
+Without a cap, the link's read side leaves the state frame queue unbounded and spawns a handler goroutine for every request frame; the dedup table shares a single whole-table cap of 65536 items; and delivery has no quota divided by source. A single paired peer can therefore make the host run out of memory for its state frames, spawn unbounded goroutines for its requests, fill the dedup table so that delivery for every other peer returns busy, or drain the token bucket that the Claude Code receiver shares by writing process so that the session drops messages from other sources. [ADR-no-broker-rate-limiting](adr-no-broker-rate-limiting.md) identifies the sender only by writing process, and the receiver cannot tell which peer a delivery comes from, so limiting by source can only be done by the Broker. [ADR-unauthenticated-connection-limits](adr-unauthenticated-connection-limits.md) covers connections before authentication; this record covers peers after it.
 
-## 考虑过的选项
+## Options Considered
 
-### 维持信任对端，不设上限
+### Trust paired peers and set no cap
 
-把已认证的对端当作完全可信，不为它占用的内存、协程、去重表条目或接收端额度设上限。
+Treat an authenticated peer as fully trusted and set no cap on the memory, goroutines, dedup table entries or receiver quota it occupies.
 
-**否决**：已配对不等于可信。一个对端失控或带有恶意时，就能耗尽本机资源，并经由共享的去重表与令牌桶影响其他所有对端，这正是审计指出的问题。
+**Rejected**: paired does not mean trusted. A peer that runs out of control or turns malicious can exhaust the host's resources and, through the shared dedup table and token bucket, affect every other peer, which is exactly the problem the audit pointed out.
 
-### 停读施压，不主动断开
+### Stop reading to apply back pressure, without disconnecting
 
-超出上限时不关闭连接，只停止读帧，让传输层的流控把压力传回对端。
+When a cap is exceeded, do not close the connection but only stop reading frames, letting the transport's flow control carry the pressure back to the peer.
 
-**否决**：状态帧超限时停读会让排在后面的应答停住，状态帧处理函数中等待同一链路应答的调用随之死锁。链路协议也没有通用的忙应答，新增一种帧要提升协议版本。请求帧超限时可以停读，因为现有的请求处理函数都不等待同一链路的应答；状态帧超限则只能断开该连接。
+**Rejected**: when state frames exceed the cap, stopping reading stalls the responses queued behind them, and a call in a state frame handler that waits for a response on the same link deadlocks with it. The link protocol also has no generic busy response, and adding a frame type requires raising the protocol version. When request frames exceed the cap, reading may stop, because no existing request handler waits for a response on the same link; when state frames exceed the cap, the only option is to close the connection.
 
-### 只用一个全局共享上限
+### Use one global shared cap
 
-不为来源分开计量，全部对端共用一个状态帧队列上限、一个请求并发上限、一个去重表上限。
+Do not meter by source, and let all peers share one state frame queue cap, one request concurrency cap and one dedup table cap.
 
-**否决**：先到先得。一个对端占满共享上限后，其他对端与合法的突发都受影响，正是审计指出的问题。
+**Rejected**: first come, first served. Once one peer fills the shared cap, every other peer and every legitimate burst is affected, which is exactly the problem the audit pointed out.
 
-### 按来源限额，状态帧超限断开、请求超限停读
+### Limit by source, closing on a state frame overflow and stopping reading on a request overflow
 
-链路状态帧队列、请求处理并发、去重表条目与投递额度都按来源分别计量；状态帧超限关闭该连接，请求处理名额用尽时路由协程停读该连接。
+Meter the link state frame queue, request handler concurrency, dedup table entries and delivery quota separately by source; close the connection when state frames overflow, and have the routing goroutine stop reading the connection when request handler slots run out.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-### 按远端 Agent 名区分投递额度
+### Divide the delivery quota by remote agent name
 
-投递额度按远端 Agent 名分别计量，而不按来源对端。
+Meter the delivery quota by remote agent name instead of by source peer.
 
-**否决**：远端 Agent 名由对端自报，按它区分等于让对端自己决定它能用多少额度。
+**Rejected**: a remote agent name is self-reported by the peer, so dividing by it lets the peer decide for itself how much quota it may use.
 
-### 为超限新增独立的错误码或忙应答帧
+### Add a separate error code or busy response frame for over-limit
 
-为限额超出新增一个专用错误码，或者新增一种表示“忙”的应答帧。
+Add a dedicated error code for exceeding a cap, or add a response frame that means "busy".
 
-**否决**：新增帧要提升协议版本。新增错误码要么把已有的数值换一层含义，要么新增枚举值并重新生成 proto；前者让同一个数值在不同版本里表示不同的失败，后者要把发送方与接收方的本地协议、错误码白名单与文案一起升级。两者都不必要：限额已满与名录的数量限制已满同属配额用尽，复用现有的 `quota_exceeded` 即可，不新增 proto 值，MCP 侧已有这个错误码的文案，能把它原样报给模型。
+**Rejected**: adding a frame requires raising the protocol version. Adding an error code either gives an existing value a new meaning or adds an enum value and regenerates the proto; the former makes the same value mean different failures in different versions, and the latter requires upgrading the sender's and receiver's local protocol, error code allowlist and message together. Neither is necessary: a full cap and the directory's record-count limit are both quota exhaustion, so the existing `quota_exceeded` can be reused, with no new proto value, and the MCP side already has a message for this error code and can report it to the model as it is.
 
-## 决策
+## Decision
 
-对已认证的对端按来源限额：Broker 对每个对端分别限制它能占用的链路状态帧队列、并发请求处理、去重表条目与会话额度，超出任何一个上限只影响该对端。一条连接的状态帧在队列中与正在处理的帧合计至多 4096 帧、payload 合计至多 64 MiB，任一上限超出即关闭这条连接；每个对端同时至多运行 64 个请求处理函数，该对端的各条连接共用这份名额，替换连接的旧处理函数仍在运行时新连接先等名额，重连不能叠加出第二份并发；去重表保留 65536 项的全表上限，另设每个来源至多 4096 项；每个（来源对端指纹，目标 Agent）一个令牌桶，容量 10，每 10 秒补充 1 个，没有令牌时不写入目标会话。令牌桶在解除配对时按对端删除、Agent 结束时按目标删除，链路断开时不删除，对端重连因此不能刷新额度；补满的桶等同于没有，由取令牌的路径直接丢弃，表的大小不超过已配对的对端数与本机 Agent 数的乘积。限额超出复用 `quota_exceeded`，全表已满时沿用 `inbox_unwritable`，说明为 `Not sent: the Broker is temporarily holding too many messages`。这些数值是常量，不新增配置项。
+Authenticated peers are limited by source: the Broker limits separately, for each peer, the link state frame queue, concurrent request handling, dedup table entries and session quota it may occupy, and exceeding any one cap affects only that peer. A single connection's state frames, queued and being handled together, come to at most 4096 frames and at most 64 MiB of payload in total, and exceeding either cap closes the connection; each peer runs at most 64 request handlers at once, the peer's several connections share that allotment, a new connection waits for a slot while the old handlers of the connection it replaces are still running, and reconnecting cannot stack up a second share of concurrency; the dedup table keeps its whole-table cap of 65536 items, with at most 4096 items per source; and each (source peer fingerprint, target agent) pair has a token bucket with capacity 10 that refills 1 item every 10 seconds, and no message is written to the target session when no token is available. A token bucket is removed by peer when the pair is unpaired and by target when the agent ends, and is not removed when a link drops, so a reconnecting peer cannot refresh its quota; a full bucket counts as no bucket and is dropped by the token-taking path, and the table size does not exceed the number of paired peers times the number of local agents. Over-limit reuses `quota_exceeded`; when the whole table is full it keeps `inbox_unwritable`, with the explanation `Not sent: the Broker is temporarily holding too many messages`. These values are constants, and no configuration item is added.
 
-## 后果
+## Consequences
 
-一个对端越限只损失它自己的连接、去重表份额与会话额度，其他对端与本机其他 Agent 不受影响。状态帧超限时断开该连接而不是停读，使状态帧处理函数中等待应答的调用不会死锁。请求处理名额用尽时停读而不新增帧，协议版本因此不变。复用 `quota_exceeded` 不新增 proto 值，也不需要重新生成代码；本版本的发送方已把这个码列入对端可返回的错误集合，接收方的话会以 `Not sent: Broker <别名> said: ...` 转述给模型，而不是被当作集合外的错误报成 `delivery_unknown`。
+A peer that exceeds a cap loses only its own connection, dedup table share and session quota, and other peers and other local agents are unaffected. When state frames exceed the cap the connection is closed rather than left unread, so a call in a state frame handler that waits for a response does not deadlock. When request handler slots run out, reading stops without adding a frame, so the protocol version stays the same. Reusing `quota_exceeded` adds no proto value and needs no code regeneration; this version's sender has already included this code in the set of errors a peer may return, so what the receiver says is passed on to the model as `Not sent: Broker <alias> said: ...`, rather than reported as `delivery_unknown` for an error outside the set.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 多个对端合谋时仍能共同耗尽 Claude Code 接收端按写入进程共用的令牌桶。按来源限额只把单个对端限制在接收端容量约三分之一、补充速度约五分之一（接收端容量 30、每秒 0.5，单对端 10、每 10 秒 1）。
-- 去重表的全表上限仍是 65536 项，每来源 4096 项，16 个合谋的恶意对端仍能把它填满。此后所有对端的新消息标识都以 `inbox_unwritable` 拒绝，说明为 `Not sent: the Broker is temporarily holding too many messages`，直到条目过期或被清理。这个失败是有界且可重试的，参与的对端必须已经配对。
-- 正常对端的一次突发如果超过状态帧上限，会被断开并退避重连。上限按链路建立时的正常突发（成员名单与名录对账）远低于它来选定，但合法流量异常大时仍有误断。
-- 这些数值与 Claude Code 接收端的规则绑定。接收端调整容量或补充速度后，按来源留出的份额可能过时。
-- 去重表按来源计数，令牌桶是内存状态，Broker 重启后清空；这给投递路径增加一份簿记。
+- Several peers that collude can still together drain the token bucket the Claude Code receiver shares by writing process. Limiting by source only holds a single peer to about one third of the receiver's capacity and about one fifth of its refill rate (receiver capacity 30 and 0.5 per second, single peer 10 and 1 per 10 seconds).
+- The dedup table's whole-table cap is still 65536 items, with 4096 per source, so 16 colluding malicious peers can still fill it. After that every peer's new message id is refused with `inbox_unwritable`, explained as `Not sent: the Broker is temporarily holding too many messages`, until entries expire or are cleaned. This failure is bounded and retryable, and the peers taking part must already be paired.
+- A legitimate peer's burst that exceeds the state frame cap is disconnected and reconnects after backoff. The cap is chosen to be far above a normal burst at link establishment (roster and directory reconciliation), but unusually large legitimate traffic can still be disconnected wrongly.
+- These values are tied to the Claude Code receiver's rules. After the receiver adjusts its capacity or refill rate, the share left for a source may become outdated.
+- The dedup table counts by source and the token buckets are in-memory state, cleared when the Broker restarts; this adds bookkeeping to the delivery path.
 
-## 失效条件
+## Invalidation Conditions
 
-- 正常对端的启动突发或名录对账在实测中超过状态帧上限而被断开，说明上限的取值不再合适。
-- Claude Code 接收端的令牌桶容量或补充速度调整到与单对端份额不成固定比例，或者低于这里为单对端留出的 10 条容量、每 10 秒 1 条。
-- 单个对端在合法用途下需要超过 4096 条近期消息记录，或超过 10 条突发投递额度。
-- 多个对端合谋耗尽共享令牌桶在实际部署中成为常见问题，需要补充发送侧或跨对端的共享额度机制。
+- When a normal peer's startup burst or directory reconciliation exceeds the state frame cap in measurement and is disconnected, the cap's values are no longer appropriate.
+- When the Claude Code receiver's token bucket capacity or refill rate is adjusted so that it no longer holds a fixed proportion to a single peer's share, or falls below the 10-item capacity and 1 per 10 seconds reserved here for a single peer.
+- When a single peer needs more than 4096 recent message records for legitimate use, or more than 10 items of burst delivery quota.
+- When several peers colluding to drain the shared token bucket becomes a common problem in real deployments, and a shared quota mechanism on the sending side or across peers has to be added.

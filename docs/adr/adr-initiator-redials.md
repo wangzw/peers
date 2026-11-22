@@ -1,39 +1,39 @@
-# 发起配对的一方负责重新建立链路
+# Let the side that initiates pairing re-establish the link
 
-## 背景
+## Context
 
-两个互为对端的 [Broker](../glossary.md) 之间的链路建立后双向对等（[ADR-grpc-stream-links](adr-grpc-stream-links.md)），断开后要有一方重新发起连接。一对对端之间应当只有一条链路：成员名单的交换与名录的对账都以链路为单位，两条并存的连接要么重复交换，要么必须关掉一条。配对时发起配对的一方凭用户告知的地址和配对密钥连上了对方，说明这个方向可以连通；反方向未必可以，发起配对的一方可能位于地址转换之后，也可能根本不监听。Broker 重启或网络中断后，链路两端几乎同时发现断开。
+Once a link between two [Broker](../glossary.md) instances that are peers is established it is symmetric in both directions ([ADR-grpc-stream-links](adr-grpc-stream-links.md)), and after it drops one side has to start the connection again. A peer pair should have only one link: roster exchange and directory reconciliation both work per link, so two connections that coexist either repeat the exchange or one of them has to be closed. At pairing the dialer connected to the other side at the address the user gave and with the pairing key, which shows that this direction can connect; the opposite direction may not, because the dialer may sit behind address translation or may not listen at all. After a Broker restart or a network interruption, both ends of the link notice the drop almost at the same time.
 
-## 考虑过的选项
+## Options Considered
 
-### 知道对方地址的任一方都可以重新发起，两条连接并存时按规则取舍
+### Either side that knows the other's address may start again, with a rule to choose between two coexisting connections
 
-配对后双方互相保存对方的对外地址，链路断开后知道对方地址的一方都去连接；两条连接同时建立时，按两端一致的规则保留其中一条。
+After pairing each side saves the other's advertised address, and after the link drops every side that knows the other's address connects; when two connections are established at once, a rule the two ends agree on keeps one of them.
 
-**否决**：要为并存的连接定取舍规则，并保证两端得出相同的结果；接受配对的一方还要保存并维护发起方的对外地址。同一次断开后两端同时重连是常态，每次断开后都要用到取舍规则，它不是例外。
+**Rejected**: this needs a rule to choose between coexisting connections and a guarantee that both ends reach the same result; the acceptor would also have to save and maintain the dialer's advertised address. Both ends reconnecting at once after the same drop is the norm, so the rule would be used after every drop, not as an exception.
 
-### 发起配对的一方负责重新发起，接受配对的一方只等待
+### The side that initiates pairing starts again, and the acceptor only waits
 
-配对时确定双方的角色：发起配对的一方是拨号方，接受配对的一方是接受方。链路断开后只由拨号方重新连接，接受方不主动连接对方。
+At pairing the two roles are fixed: the side that initiates pairing is the dialer, and the side that accepts pairing is the acceptor. After the link drops only the dialer reconnects, and the acceptor does not connect to the other side on its own.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-发起配对的一方是拨号方，负责建立链路并在断开后重新建立；接受配对的一方是接受方，不主动连接对方，只等待拨号方连入。角色在配对时确定，同一对 Broker 重新配对时按新的发起方重新确定。接受方收到同一对端的新连接时采用新的，关闭旧的。
+The side that initiates pairing is the dialer, responsible for establishing the link and establishing it again after a drop; the side that accepts pairing is the acceptor, which does not connect to the other side on its own and only waits for the dialer to connect in. The roles are fixed at pairing, and the same pair of Brokers fixes them again by the new initiator when it pairs again. When the acceptor receives a new connection from the same peer, it takes the new one and closes the old one.
 
-## 后果
+## Consequences
 
-一对对端之间只有一条链路，两端不需要为并存的连接定取舍规则。接受方不需要知道拨号方的地址，拨号方也不向它报告。配对能完成，说明拨号方能连到接受方，重新连接沿用同一个方向。拨号方重连所用的地址由接受方告知（[ADR-advertised-address](adr-advertised-address.md)）。
+A peer pair has only one link, and the two ends do not need a rule to choose between coexisting connections. The acceptor does not need to know the dialer's address, and the dialer does not report it. That pairing completes shows the dialer can reach the acceptor, and reconnecting follows the same direction. The address the dialer uses to reconnect is told to it by the acceptor ([ADR-advertised-address](adr-advertised-address.md)).
 
-**接受的代价：**
+**Costs accepted:**
 
-- 接受方在链路断开之后、重新建立之前更换了地址，而拨号方又没有从名片得到新地址时，拨号方连不上它，链路无法自行恢复，要重新配对。接受方的地址变化时，链路往往先于本机地址的下一次枚举断开，新地址来不及告知；地址会变的接受方要以域名配置对外地址才能避开这一情形。
-- 角色在配对时确定。地址稳定的一方若是拨号方而对方会移动，要重新配对来调换角色。
-- 链路断开期间，接受方发出的消息只能在发送的预算内等待拨号方连入。
-- 拨号方解除配对时，接受方得不到通知，仍把对方列为对端，直到接受方的用户也解除配对。
-- 配对握手的最后一步丢失，或两个 Broker 同时凭对方的密钥向对方发起配对时，双方可能都自认是拨号方，链路因角色不符无法建立，要重新配对。
+- When the acceptor changes its address after the link drops and before it is re-established, and the dialer does not get the new address from a broker card, the dialer cannot reach it, the link cannot recover on its own and the pair has to pair again. When the acceptor's address changes, the link usually drops before the next enumeration of local addresses, so the new address is not told in time; an acceptor whose address changes has to configure its advertised address by domain name to avoid this.
+- The roles are fixed at pairing. When the side with the stable address is the dialer and the other side moves, the pair has to pair again to swap roles.
+- While the link is down, a message the acceptor sends can only wait within its send budget for the dialer to connect in.
+- When the dialer unpairs, the acceptor is not notified and still lists the other side as a peer, until the acceptor's user unpairs too.
+- When the last step of the pairing handshake is lost, or two Brokers initiate pairing with each other at once using each other's keys, both may take themselves to be the dialer, the link cannot be established because the roles disagree, and the pair has to pair again.
 
-## 失效条件
+## Invalidation Conditions
 
-接受方在链路断开期间更换地址成为常态，链路多半要靠重新配对才能恢复时，本决策不再成立。
+This decision stops holding when it becomes common for the acceptor to change its address while the link is down and the link mostly has to be recovered by pairing again.

@@ -1,59 +1,59 @@
-# 对外地址默认取默认路由所在接口的地址
+# Default the advertised address to the default route's interface address
 
-## 背景
+## Context
 
-[Broker](../glossary.md) 默认监听本机的全部地址（[ADR-listen-by-default](adr-listen-by-default.md)）。这样的 Broker 有多个本机地址，不知道其中哪一个能被别的主机连上。需要对外地址的是连接它的一方：配对的发起方凭用户告知的地址连上接受配对的一方，发起配对的一方在链路断开后重新连上对方（[ADR-initiator-redials](adr-initiator-redials.md)），收到名片的 Broker 据名片得知发布者在哪里。收到名片的 Broker 与发布者的对端未必在同一个网络里，同一个私有地址在不同的网络里可以指向不同的主机。名片由发布者签名，途中经手的 Broker 不能改动其中的内容（[ADR-signed-directory-reconciliation](adr-signed-directory-reconciliation.md)）；公开 Broker 的名片传遍整个连通网络，名片中的地址会暴露主机接入了哪些网络。多数主机没有域名，也没有端口转发；少数位于代理或端口转发之后，其他 Broker 要连的是代理或转发设备的地址与端口。
+A [Broker](../glossary.md) listens on every local address by default ([ADR-listen-by-default](adr-listen-by-default.md)). Such a Broker has several local addresses and does not know which of them another host can connect to. What needs the advertised address is the side that connects to it: the dialer connects to the acceptor at the address the user gives it, the dialer connects to the other side again after the link drops ([ADR-initiator-redials](adr-initiator-redials.md)), and a Broker that receives a broker card learns from the card where the publisher is. The Broker that receives a card and the publisher's peer are not necessarily on the same network, and the same private address can point to different hosts on different networks. The card is signed by the publisher, and a Broker that handles it on the way cannot change its content ([ADR-signed-directory-reconciliation](adr-signed-directory-reconciliation.md)); the card of a public Broker travels through the whole connected network, and the addresses in it expose which networks the host has joined. Most hosts have no domain name and no port forwarding; a few sit behind a proxy or port forwarding, and other Brokers have to connect to the address and port of the proxy or forwarding device.
 
-## 考虑过的选项
+## Options Considered
 
-### 由对端回传它在连接上看到的地址，发布者据此补全名片
+### Let the peer return the address it sees on the connection, and the publisher completes the card from it
 
-对外地址默认只含端口。与发布者有连接的对端告知它在连接上看到的发布者地址，发布者用它补全名片中的主机后签名。
+The advertised address carries only a port by default. A peer that has a connection to the publisher tells it the publisher address it sees on the connection, and the publisher fills the host into the card from it and signs.
 
-**否决**：需要地址的是收到名片的第三方，它所处的网络与回传者不同，回传者看到的地址在第三方那里未必连得上；回传的地址未经验证，发布者却要把它签进自己的名片。
+**Rejected**: the one that needs the address is a third party that receives the card, whose network differs from the returning peer's, and the address the returning peer sees may not be reachable from the third party; the returned address is unverified, yet the publisher would sign it into its own card.
 
-### 由传播名片的 Broker 附上它观察到的地址
+### Let the Broker that propagates the card attach the address it observes
 
-传播名片的 Broker 在名片之外附上它在连接上观察到的发布者地址，接收方据此连接发布者。
+The Broker that propagates the card attaches beside it the publisher address it observes on the connection, and the receiver connects to the publisher from it.
 
-**否决**：附注不在发布者的签名之内，途中经手的 Broker 可以改动它；附注者看到的地址在更远的 Broker 那里同样未必连得上。
+**Rejected**: the attached note is not inside the publisher's signature, so a Broker that handles it on the way can change it; the address the attaching party sees may likewise not be reachable from a farther Broker.
 
-### 默认取系统主机名
+### Default to the system host name
 
-未配置时以系统主机名加监听端口作为对外地址，写入名片，并在生成配对密钥时展示。
+When unconfigured, use the system host name plus the listening port as the advertised address, write it into the card and show it when a pairing key is generated.
 
-**否决**：系统主机名未必能被别的主机解析。
+**Rejected**: the system host name may not resolve from another host.
 
-### 公布本机全部接口的地址，由发起连接的一方逐个尝试
+### Publish the addresses of every local interface and let the connecting side try them one by one
 
-对外地址默认包含本机每个接口上的地址，发起连接的一方逐个尝试，总有一个能连上。
+The advertised address includes the address on each local interface by default, and the connecting side tries them one by one, so one of them is bound to work.
 
-**否决**：把主机接入的全部网络公布给整个连通网络，其中包括虚拟网络与专用网络的地址。
+**Rejected**: this publishes every network the host has joined to the whole connected network, including the addresses of virtual networks and private networks.
 
-### 默认只公布默认路由所在接口的地址，可以改为指定的地址或追加地址
+### Publish only the default route's interface address by default, with the option to replace it or append addresses
 
-对外地址是一组地址。未配置时只含默认路由所在接口的地址；用户可以把它改为指定的地址，也可以在其后追加地址。发起连接的一方按顺序逐个尝试，连上之后核对证书指纹。
+The advertised address is a set of addresses. When unconfigured it holds only the address on the interface with the default route; the user can replace it with a given address, or append addresses after it. The connecting side tries them one by one in order and checks the certificate fingerprint after connecting.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-对外地址是一组地址，未配置时只含默认路由所在接口的地址，每个地址都配上监听端口；可以改为指定的地址，也可以追加地址。名片载有发布者的整组对外地址，在发布者的签名之内。接受配对的一方把自己的整组对外地址告诉发起配对的一方，发起配对的一方不报告自己的地址。对端在连接上看到的本方地址不被使用，不保存，也不传播。
+The advertised address is a set of addresses; when unconfigured it holds only the address on the interface with the default route, each address paired with the listening port, and it can be replaced with given addresses or have addresses appended. The card carries the publisher's whole set of advertised addresses, inside the publisher's signature. The acceptor tells the dialer its whole set of advertised addresses, and the dialer does not report its own addresses. The local address a peer sees on the connection is neither used, saved nor propagated.
 
-## 后果
+## Consequences
 
-多数主机不需要配置对外地址。名片中的地址由发布者自己确定并签名，与谁转发了名片无关。默认只公布主机在默认网关所在网络上的地址，主机接入的其他网络不随名片传播。不同网络中重复的私有地址不会造成误连：连到的主机出示的指纹不符即被放弃。
+Most hosts need no advertised address configuration. The addresses in a card are settled and signed by the publisher itself, regardless of who forwarded the card. By default it publishes only the host's address on the network of the default gateway, and the other networks the host has joined do not travel with the card. A private address repeated across networks does not cause a wrong connection: a host that presents a different fingerprint is abandoned.
 
-对外地址列表中的每一项带有种类，现有的种类只有直连；Broker 跳过种类不认识的项，名片与握手中的其余内容照常有效。增加新的到达方式只需增加一个种类，不认识它的 Broker 照常接受、传播载有它的名片，新旧版本的 Broker 因此可以共存。
+Each item in the advertised address list carries a kind, and the only kind so far is direct; a Broker skips an item whose kind it does not recognize, and the card and the rest of the handshake stay valid. Adding a new way to reach a Broker only adds a kind, and a Broker that does not recognize it still accepts and propagates a card that carries it, so Brokers of different versions can coexist.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 默认路由所在接口的地址在经过地址转换的网络之外连不上；这种情形要把对外地址配置为指定的地址，或追加地址。
-- 公开 Broker 的名片把它的整组对外地址公布给连通网络内的所有 Broker。
-- 本机地址变化之后、新的名片传到各处之前，其他 Broker 持有的是旧地址。
-- 首次配对时没有名片可用，连接地址由用户告知对方。
-- 拨号方连到的主机即使指纹不符，也已在 TLS 握手中看到本方的证书与指纹。
+- The address on the default route's interface is unreachable outside a network that translates addresses; in that case the advertised address has to be configured as a given address, or addresses have to be appended.
+- The card of a public Broker publishes its whole set of advertised addresses to every Broker in the connected network.
+- After a local address changes and before the new card reaches everywhere, other Brokers hold the old address.
+- On the first pairing there is no card to use, and the user tells the other side the connection address.
+- Even when the fingerprint differs, the host the dialer connects to has already seen this side's certificate and fingerprint in the TLS handshake.
 
-## 失效条件
+## Invalidation Conditions
 
-多数主机位于地址转换之后、默认路由所在接口的地址多半连不上时，本决策不再成立。
+This decision stops holding when most hosts sit behind address translation and the address on the default route's interface is mostly unreachable.

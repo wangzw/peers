@@ -1,50 +1,50 @@
-# 未认证连接按来源限额
+# Limit unauthenticated connections by source
 
-## 背景
+## Context
 
-[Broker](../glossary.md) 默认在本机的全部地址上监听（[ADR-listen-by-default](adr-listen-by-default.md)）。一条入站连接在 TLS 握手完成、首帧核实通过之前处于未认证状态，任何能连到监听端口的主机都能建立这样的连接并让它停留一段时间。这些连接不加区分地共用名额时，一个来源就能挤掉其他来源与已配对对端的连接；认证前每条连接能让本机缓存的数据也没有单独的上限。
+A [Broker](../glossary.md) listens on every local address by default ([ADR-listen-by-default](adr-listen-by-default.md)). An inbound connection is unauthenticated until the TLS handshake completes and the first frame checks out, so any host that can reach the listening port can establish such a connection and keep it around for a while. When these connections share slots without distinction, one source can crowd out the connections of other sources and of already-paired peers; and before authentication, nothing separately caps the data a single connection can make the host buffer.
 
-## 考虑过的选项
+## Options Considered
 
-### 全部未认证连接共用上限，达到上限时关闭最早建立的一条
+### Share one cap across all unauthenticated connections, closing the oldest when the cap is reached
 
-全部未认证连接共用一个上限，达到上限时关闭最早建立的一条，不分来源。
+All unauthenticated connections share one cap, and when the cap is reached the oldest is closed, regardless of source.
 
-**否决**：不区分来源。一个来源持续新建连接，就能把其他来源与已配对对端的连接逐个挤掉，同时把自己的连接保持在上限之内。
+**Rejected**: it does not distinguish sources. A source that keeps opening connections can crowd out the connections of other sources and of already-paired peers one by one, while keeping its own connections within the cap.
 
-### 表满时拒绝新连接
+### Refuse new connections when the table is full
 
-未认证连接数达到上限后，新连接一律关闭，已有连接不受影响。
+Once the number of unauthenticated connections reaches the cap, every new connection is closed and existing connections are unaffected.
 
-**否决**：名额先到先得，一个来源占满上限后可以长期持有全部名额，新的合法连接连尝试的机会都没有。攻击者只需维持已建立的连接，不必继续建连。
+**Rejected**: slots go first come, first served, so a source that fills the cap can hold every slot for a long time, and a new legitimate connection has no chance even to try. An attacker only has to keep established connections alive and need not keep opening them.
 
-### 按来源限额并区分已知对端
+### Limit by source and set known peers apart
 
-按对方地址的网络前缀划分来源，每个来源单独设上限；TLS 完成后指纹已在本方对端表中的连接转入已知对端池，不受来源上限与全局上限约束。同时给认证前从一条连接读入的字节数与 HTTP/2 头部列表设上限。
+Divide sources by the network prefix of the other address and give each source its own cap; a connection whose fingerprint is already in this side's peer table once TLS completes moves into a known-peer pool and is not subject to the per-source cap or the global cap. At the same time cap the bytes read from one connection before authentication and the HTTP/2 header list.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-### 按来源限制接受速率
+### Limit the acceptance rate by source
 
-对每个来源的接受速率设令牌桶，超过速率的连接被拒绝或延迟。
+Put a token bucket on each source's acceptance rate, and reject or delay connections that exceed the rate.
 
-**未采纳**：与按来源限额不冲突，但需要一张随来源数增长、需要定期清理的表。每来源上限已经把单个来源的轮换限制在它自己的名额内，不需要额外的速率限制。
+**Not adopted**: this does not conflict with limiting by source, but it needs a table that grows with the number of sources and has to be cleaned periodically. The per-source cap already confines a single source's rotation to its own slots, so no extra rate limit is needed.
 
-## 决策
+## Decision
 
-未认证连接按来源限额。来源取对方地址的网络前缀：IPv4 取该地址的 /32，IPv6 取所在的 /64，IPv4 映射的 IPv6 地址按 IPv4 处理，去掉 IPv6 的 zone，地址中没有 IP 地址的连接共同归入一个来源。每来源上限 8，全局上限 64。同一来源超过每来源上限时，关闭该来源最早建立的一条；全部来源合计超过全局上限时，关闭连接数最多的来源中最早建立的一条，连接数并列时取最早连接最早建立的那个来源。TLS 握手完成、证书指纹在本方对端表中的连接转入已知对端池，不计入这两个上限，每个指纹至多 2 条，超过时关闭该指纹最早建立的一条。认证前从一条连接读入的字节数（含 TLS 握手、HTTP/2 前言与帧）上限 64 KiB，HTTP/2 头部列表上限 16 KiB。认证后的消息上限保持 4 MiB。
+Unauthenticated connections are limited by source. The source is the network prefix of the other address: for IPv4 the /32 of that address, for IPv6 the /64 it lies in, an IPv4-mapped IPv6 address is treated as IPv4, the IPv6 zone is dropped, and connections whose address has no IP address are grouped into one source together. The per-source cap is 8 and the global cap is 64. When one source exceeds the per-source cap, the oldest connection of that source is closed; when all sources together exceed the global cap, the oldest connection in the source with the most connections is closed, and when connection counts tie, the source whose oldest connection was established earliest is chosen. A connection whose TLS handshake has completed and whose certificate fingerprint is in this side's peer table moves into the known-peer pool and does not count toward the two caps, with at most 2 per fingerprint, and when that is exceeded the oldest connection of that fingerprint is closed. Before authentication, the bytes read from one connection (including the TLS handshake, the HTTP/2 preface and frames) are capped at 64 KiB, and the HTTP/2 header list at 16 KiB. The message cap after authentication stays at 4 MiB.
 
-## 后果
+## Consequences
 
-一个来源的未认证连接只消耗它自己的名额，不再能挤掉其他来源的连接。已配对对端在 TLS 完成、指纹核对之后转入已知对端池，陌生来源的连接不再能把它挤掉。认证前每条连接能让本机缓存的字节数与头部列表大小都有界。
+A source's unauthenticated connections consume only its own slots and can no longer crowd out the connections of other sources. Once TLS completes and the fingerprint is checked, an already-paired peer moves into the known-peer pool, and a connection from a stranger source can no longer crowd it out. Before authentication, both the bytes a single connection can make the host buffer and the header list size are bounded.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 攻击者掌握 64 个以上来源并持续高速轮换时，仍能使陌生来源的新配对失败，也能在已配对对端完成 TCP 与 TLS 握手之前把它挤掉；TLS 完成后的已配对对端不受影响。IPv6 下一个用户通常独占一个 /64，攻击者可以取得多个 /64 或更大的地址段。
-- 共用同一个 /64 的多台主机被算作同一来源，合起来受 8 条上限。一个局域网或一个运营商分配段内的 Broker 同时重连同一远端时可能互相挤占名额，靠退避重试恢复。
-- 同一主机上多个账户的用户级 Broker 同时重连同一远端时共用一个来源，TCP 与 TLS 阶段合计可能超过 8 条，超出的连接退避后重试。
+- When an attacker controls more than 64 sources and keeps rotating them at high speed, it can still make a new pairing from a stranger source fail, and can crowd out an already-paired peer before that peer completes the TCP and TLS handshakes; a paired peer after TLS completes is unaffected. Under IPv6 a user usually holds a /64 alone, and an attacker can obtain several /64s or a larger block.
+- Several hosts that share one /64 count as one source and together fall under the cap of 8. Brokers in one LAN or one carrier allocation that reconnect to the same remote at once may crowd out each other's slots and recover through backoff and retry.
+- User Brokers under several accounts on the same host that reconnect to the same remote at once share one source, and their TCP and TLS stage combined may exceed 8 connections, with the excess retried after backoff.
 
-## 失效条件
+## Invalidation Conditions
 
-- 同一 NAT 或同一 /64 之后的大量 Broker 同时重连时，如果每来源上限使正常的重连或配对长期无法完成，本决策需要重新评估。
-- 如果 64 个以上来源的持续轮换在实际部署中成为常见攻击，按来源限制接受速率可以作为补充而不改变本决策。
+- When many Brokers behind the same NAT or the same /64 reconnect at once and the per-source cap keeps normal reconnection or pairing from completing for a long time, this decision needs to be re-evaluated.
+- If persistent rotation across more than 64 sources becomes a common attack in real deployments, limiting the acceptance rate by source can supplement this decision without changing it.

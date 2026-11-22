@@ -1,35 +1,35 @@
-# 链路采用 gRPC 双向流
+# Carry links over a gRPC bidirectional stream
 
-## 背景
+## Context
 
-两个互为对端的 [Broker](../glossary.md) 之间需要一条长连接，由其中一方发起（[ADR-initiator-redials](adr-initiator-redials.md)），建立后双方都能主动向对方发送成员名单、名录中的记录和投递请求，并且要能把一个请求与它的应答对应起来。连接要加密，要能发现已经失效的连接。部署环境的出口网络对协议没有限制。
+Two [Broker](../glossary.md) instances that are peers need a long-lived connection, started by one of them ([ADR-initiator-redials](adr-initiator-redials.md)); once it is established, both sides have to be able to send the other the roster, the records in the directory and delivery requests on their own initiative, and have to be able to match a request with its response. The connection has to be encrypted and has to detect connections that have become dead. The outbound network of the deployment environment places no restriction on the protocol.
 
-## 考虑过的选项
+## Options Considered
 
-### TLS 上的 WebSocket
+### WebSocket over TLS
 
-每个文本帧是一个 JSON 对象。它只用到 HTTP/1.1 的升级机制，能穿过只放行 HTTPS 的出口防火墙和只支持 HTTP/1.1 的代理。
+Each text frame is a JSON object. It uses only the HTTP/1.1 upgrade mechanism and can pass through an outbound firewall that allows only HTTPS and a proxy that supports only HTTP/1.1.
 
-**否决**：帧的格式、类型区分和请求与应答的对应都要自行定义和校验。它的长处是穿越受限网络，部署环境不存在这样的限制。
+**Rejected**: the frame format, the distinction between types and the matching of request with response all have to be defined and checked in-house. Its strength is passing through restricted networks, and the deployment environment has no such restriction.
 
-### gRPC 双向流
+### A gRPC bidirectional stream
 
-以一个双向流方法承载全部帧，帧用 Protocol Buffers 定义，流量控制与保活由 gRPC 提供，TLS 由其传输层提供。
+A single bidirectional streaming method carries every frame, the frames are defined with Protocol Buffers, and gRPC provides flow control and keepalive while its transport provides TLS.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-链路采用承载在 TLS 之上的 gRPC 双向流，两个互为对端的 Broker 之间一条流。
+A link is a gRPC bidirectional stream carried over TLS, one stream between two Brokers that are peers.
 
-## 后果
+## Consequences
 
-帧有带类型的定义，新增帧类型不影响既有帧。流量控制、保活探测和连接复用不必自行实现。本机接口也使用 gRPC，系统内只有一套远程调用机制。
+Frames have typed definitions, and adding a frame type does not affect existing frames. Flow control, keepalive probes and connection reuse do not have to be implemented in-house. The local interface also uses gRPC, so the system has one remote call mechanism throughout.
 
-**接受的代价：**
+**Costs accepted:**
 
-- gRPC 依赖 HTTP/2。出口处有只支持 HTTP/1.1 的代理，或有拦截 TLS 的代理时，链路无法建立。
+- gRPC depends on HTTP/2. When the outbound side has a proxy that supports only HTTP/1.1, or a proxy that intercepts TLS, the link cannot be established.
 
-## 失效条件
+## Invalidation Conditions
 
-目标部署环境出现只放行 HTTP/1.1 或拦截 TLS 的出口网络时，本决策不再成立。
+This decision stops holding when the target deployment environment has an outbound network that allows only HTTP/1.1 or intercepts TLS.
