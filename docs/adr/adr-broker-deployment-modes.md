@@ -1,62 +1,62 @@
-# Broker 分系统级与用户级两种部署形态
+# Deploy a Broker in two forms, system and user
 
-## 背景
+## Context
 
-Claude Code 把每个会话的 inbox socket 和会话注册表限定给会话所属的账户访问（[REF-claude-code-cross-session-messaging](../references.md)），普通账户下的 [Broker](../glossary.md) 因此只能为同一账户的会话投递。生产环境的常见做法是把守护进程作为系统服务运行，由管理员统一安装和维护。个人开发机上，用户希望以普通账户使用，不要求管理员参与。一台主机上可能有多个账户各自运行会话。
+Claude Code restricts each session's inbox socket and session registry to the account the session belongs to ([REF-claude-code-cross-session-messaging](../references.md)), so a [Broker](../glossary.md) under an ordinary account can deliver only to sessions of the same account. A common practice in production is to run the daemon as a system service, installed and maintained by an administrator. On a personal development machine, the user wants to use it under an ordinary account without involving an administrator. One host may have several accounts each running sessions.
 
-## 考虑过的选项
+## Options Considered
 
-### 只有用户级，每个账户一个
+### User only, one per account
 
-Broker 一律以普通账户运行，只服务同一账户的会话。
+A Broker always runs under an ordinary account and serves only sessions of the same account.
 
-**否决**：多账户的主机上要逐个账户安装、配置和配对，管理员无法为整台主机统一提供一个 Broker。
+**Rejected**: on a multi-account host, each account would be installed, configured and paired separately, and an administrator could not provide one Broker for the whole host.
 
-### 只有系统级，全机一个
+### System only, one per host
 
-Broker 一律以特权身份作为系统服务运行，服务本机所有账户。
+A Broker always runs with privileges as a system service and serves every account on the host.
 
-**否决**：安装和启动都要特权，个人开发机上的用户必须先做一次系统级的安装，不能只凭普通账户使用。
+**Rejected**: installation and startup both need privileges, so a user on a personal development machine must first perform a system installation and cannot use it under an ordinary account alone.
 
-### 由 MCP 服务进程按需启动用户级 Broker
+### Start a user Broker on demand from the MCP server process
 
-会话找不到可用的 Broker 时，由该会话的 MCP 服务进程启动一个用户级 Broker，并使它脱离会话的进程树，个人用户因此不必预先安装或启动 Broker。
+When a session finds no usable Broker, that session's MCP server process starts a user Broker and detaches it from the session's process tree, so a personal user need not install or start a Broker in advance.
 
-**否决**：Broker 的生命周期由服务管理机制或用户负责，MCP 服务只负责连接。按需启动把 Broker 的启动和启动失败的处理交给会话；用户把用户级 Broker 安装为服务一次之后，它本来就随登录启动并持续运行，这条路径没有需要解决的问题。
+**Rejected**: the Broker's lifecycle is the responsibility of the service manager or the user, and the MCP server only connects. Starting on demand hands the Broker's startup and its failure handling to the session; once the user has installed a user Broker as a service, it already starts at login and keeps running, so there is no problem here to solve.
 
-### 允许同一账户运行多个实例
+### Allow several instances under one account
 
-同一账户以不同的配置或监听地址启动多个 Broker。
+One account starts several Brokers with different configurations or listen addresses.
 
-**否决**：同一账户的会话无从确定归属哪个实例，同一个会话可能被登记到两个实例上，以两个身份出现在网络中，收到的消息也可能重复。
+**Rejected**: a session of the account cannot tell which instance it belongs to; the same session may be registered on two instances and appear in the network under two identities, and it may receive duplicate messages.
 
-### 用户级运行时目录默认放在 `/run/user/<uid>`
+### Put the user Broker's runtime directory under `/run/user/<uid>` by default
 
-非 root 账户的运行时目录一律取 `/run/user/<uid>/peers`，不再使用 `/tmp/peers-<uid>`。
+The runtime directory of a non-root account is taken to be `/run/user/<uid>/peers`, and `/tmp/peers-<uid>` is no longer used.
 
-**否决**：logind 在账户的最后一个会话结束时删除 `/run/user/<uid>`。默认使用它意味着账户的 Broker 与随后的会话可以在不同时刻看到不同的位置，同一账户的单实例约束和“总在同一个位置找本机 socket”不再成立。只在 `/tmp/peers-<uid>` 被其他账户占用时才启用它，但占用者可以随时删除并重建该目录，同一账户的进程在不同时刻仍会算出不同的位置。为此，Broker 启动时在首选与后备两处都检查账户锁，任一处被运行中的实例持有就按同一账户已有实例拒绝启动；MCP 服务与终端命令在两处探测本机 socket，只采用通过进程凭据检查的那个，两处都通过时采用账户锁被持有、即 Broker 正在运行的那个，都没有持有时采用位置规则选出的那个。占用的来回变化因此既不会让同一账户出现两个实例，也不会让会话找不到正在运行的 Broker。
+**Rejected**: logind deletes `/run/user/<uid>` when the account's last session ends. Using it by default would mean that an account's Broker and a later session see different locations at different times, and both the single-instance constraint for one account and "always find the local socket at the same place" would no longer hold. It is enabled only when `/tmp/peers-<uid>` is occupied by another account, but that occupant can delete and recreate the directory at any time, so processes of one account would still compute different locations at different times. For this reason, when starting, a Broker checks the account lock in both the preferred and the fallback location, and refuses to start under the same account if a running instance holds either; the MCP server and terminal commands probe the local socket in both locations and use only the one that passes the process-credential check; when both pass, they use the one whose account lock is held, that is, where the Broker is running, and when neither is held, they use the one selected by the location rule. Changes back and forth in occupancy therefore neither let two instances arise under one account nor leave a session unable to find the running Broker.
 
-### 两种形态并存，同一账户至多一个实例
+### Two forms coexist, at most one instance per account
 
-系统级 Broker 以特权身份作为系统服务运行，一台主机至多一个，服务本机上有权使用它的各个账户下的 Agent。用户级 Broker 以普通账户运行，只服务同一账户下的 Agent，一台主机上可以有多个账户各自运行一个。同一账户下至多一个实例。用户级 Broker 由用户安装为服务后随登录启动，或由用户在会话之外的终端启动；系统级只由管理员安装和启动。MCP 服务进程只连接，不启动任何 Broker。
+A system Broker runs with privileges as a system service, at most one per host, and serves agents under the accounts on the host that may use it. A user Broker runs under an ordinary account and serves only agents under the same account, and one host may have several accounts each running one. At most one instance runs under one account. A user Broker is installed as a service by the user and starts at login, or is started by the user in a terminal outside a session; a system Broker is installed and started only by an administrator. The MCP server process only connects and does not start any Broker.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 有系统级与用户级两种部署形态。系统级 Broker 服务本机多个账户下的 Agent，用户级 Broker 只服务同一账户下的 Agent。同一账户下至多运行一个 Broker 实例，不论它以什么配置启动。每个实例有自己的指纹、对端、名录和配置，在网络中是独立的 Broker。Broker 的生命周期由启动它的服务管理机制或用户负责；MCP 服务进程只连接，不启动 Broker。
+A Broker has two deployment forms, system and user. A system Broker serves agents under several accounts on the host, and a user Broker serves only agents under the same account. At most one Broker instance runs under one account, whichever configuration it starts with. Each instance has its own fingerprint, peers, directory and configuration, and is an independent Broker in the network. The Broker's lifecycle is the responsibility of the service manager that starts it or of the user; the MCP server process only connects and does not start a Broker.
 
-## 后果
+## Consequences
 
-管理员可以为整台主机提供一个 Broker，个人用户不需要特权也能使用。一个账户的会话只会登记到一个实例上。
+An administrator can provide one Broker for the whole host, and a personal user can use it without privileges. A session of one account is registered on only one instance.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 两种形态在文件位置、权限判定和投递方式上不同，要分别实现和测试。
-- 系统级 Broker 要以特权运行，并要读取各账户的会话注册表、向各账户的会话投递，为此要为每个被服务的账户维持一个切换到该账户的辅助进程，这些操作都由它以该账户的身份执行。
-- 非特权账户的账户锁放在 `/tmp` 下以该账户命名的目录里，其他本机账户可以抢先建立这个目录。首选目录被其他账户占用时，该账户的用户级 Broker 改用平台的每用户位置（Linux 的 `/run/user/<uid>`、macOS 的每用户临时目录）；该位置也不可用时，例如 Linux 上账户没有 logind 会话，用户级 Broker 拒绝启动。
-- 系统级 Broker 把多个账户的 Agent 放在同一个 Broker 之下：不同账户的 Agent 只要同在一个 topic 就互相可见，它们共用一个指纹、一份对端和一个别名。
-- 同一台主机上的多个 Broker 在网络中互不相干，各自配对；另一台主机要与这台主机上的两个账户通信，可能要配对两次。
-- 一个账户同时有系统级和用户级的 Broker 可用时，MCP 服务进程要按固定的顺序选定其一，用户需要知道自己的会话登记在哪一个上。
-- 用户必须先安装用户级服务，或在会话之外的终端启动 Broker，会话才能登记；在此之前，工具调用只返回说明如何启动 Broker 的错误。
-- 实例的唯一性要按账户和主机判定，不能依赖家目录下的文件，因为家目录可能由多台主机共享。
+- The two forms differ in file locations, permission checks and delivery method, so each must be implemented and tested separately.
+- A system Broker runs with privileges and must read the session registries of the accounts and deliver to their sessions; to do so it keeps one helper process per served account that switches to that account, and these operations run under that account's identity.
+- The account lock of a non-privileged account lives in a directory named after the account under `/tmp`, and other local accounts can create this directory first. When the preferred directory is occupied by another account, that account's user Broker uses the platform's per-user location (on Linux `/run/user/<uid>`, on macOS the per-user temporary directory); when that location is also unavailable, for example when the account has no logind session on Linux, the user Broker refuses to start.
+- A system Broker puts the agents of several accounts under one Broker: agents of different accounts are visible to each other whenever they share a topic, and they share one fingerprint, one set of peers and one alias.
+- Several Brokers on one host are unrelated in the network and pair separately; another host that wants to talk to two accounts on this host may have to pair twice.
+- When an account has both a system and a user Broker available, the MCP server process chooses one in a fixed order, and the user must know which one their session is registered on.
+- The user must first install the user service, or start a Broker in a terminal outside a session, before a session can register; until then, a tool call returns only an error explaining how to start a Broker.
+- Instance uniqueness is judged by account and host and cannot rely on a file under the home directory, because the home directory may be shared by several hosts.

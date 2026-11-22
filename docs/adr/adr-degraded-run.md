@@ -1,54 +1,54 @@
-# 账户锁之后的部分启动失败不退出
+# Do not exit on a partial startup failure after the account lock
 
-## 背景
+## Context
 
-[Broker](../glossary.md) 作为服务运行时，服务管理器在它退出后重新启动它：systemd 单元带 `Restart=always` 与 `RestartSec=5`，launchd 带 `KeepAlive`。监听地址被同一主机上另一个账户的 Broker 占用，或数据目录、审计日志不可读写时，进程每隔几秒退出一次，故障只留在服务日志里。会话中的工具调用这时得到的是“没有可用的 Broker”，给出的启动方法对已经安装的服务不适用；安装命令只能转述服务日志里的启动失败原因。
+When a [Broker](../glossary.md) runs as a service, the service manager restarts it after it exits: systemd units carry `Restart=always` and `RestartSec=5`, and launchd carries `KeepAlive`. When the listen address is taken by another account's Broker on the same host, or the data directory or audit log cannot be read or written, the process exits every few seconds and the fault stays only in the service log. A tool call in a session then gets "no Broker available", whose startup instructions do not apply to an installed service; the install command can only relay the startup failure from the service log.
 
-本机 Agent 的登记、topic 与本机消息不依赖链路监听。同一账户至多运行一个实例靠账户锁保证，本机 socket 只能由持锁的进程绑定；取得账户锁之前的失败，例如处在会话的进程树内、已有实例持锁、以非 root 运行系统级形态，此时没有可以安全提供的服务。配置文件读不出、解析失败或取值不合法时，Broker 无从知道监听地址与本机 socket 的属组、权限；用这样的配置决定谁能连接本机 socket 比不提供服务更危险。在终端前台运行的 Broker，失败原因直接显示给运行它的人。
+The registration of local agents, topics and local messages do not depend on the link's listening. At most one instance per account is guaranteed by the account lock, and only the lock-holding process can bind the local socket; a failure before the account lock is taken, such as being inside a session's process tree, an existing instance holding the lock, or a non-root run in the system form, leaves no service that can be safely provided. When the configuration file cannot be read, fails to parse or has an invalid value, the Broker cannot know the listen address or the group and permissions of the local socket; deciding who can connect to the local socket from such a configuration is more dangerous than providing no service. A Broker run in a terminal foreground shows the failure reason directly to whoever runs it.
 
-## 考虑过的选项
+## Options Considered
 
-### 任何启动失败都退出
+### Exit on any startup failure
 
-**否决**：在服务管理器下形成反复重启，故障对会话与安装命令都不可见，同一主机上第二个账户的本机功能也随之不可用。
+**Rejected**: under a service manager it restarts repeatedly, the fault is invisible to sessions and the install command, and the local features of a second account on the same host go down with it.
 
-### 失败时照常运行，不报告故障
+### Keep running on failure without reporting it
 
-**否决**：与 [ADR-listen-by-default](adr-listen-by-default.md) 否决“改为不监听”的理由相同，Broker 看起来正常而实际缺了功能，故障不易发现。
+**Rejected**: for the same reason [ADR-listen-by-default](adr-listen-by-default.md) rejects "switch to not listening", the Broker looks fine while actually missing a feature, and the fault is hard to find.
 
-### 一律只提供诊断
+### Always offer diagnostics only
 
-不区分失败的步骤，任何失败都只在本机 socket 上报告故障。
+Without distinguishing the failed step, report every failure only on the local socket.
 
-**否决**：监听地址被占用是最常见的失败，而本机功能不依赖监听；把它当作全部失败，会让同一主机上第二个账户的会话完全不可用。配置文件不可信时只提供诊断，还会用读错的取值决定本机 socket 的权限。
+**Rejected**: a taken listen address is the most common failure, and local features do not depend on listening; treating it as every failure would make a second account's sessions on the same host completely unusable. When the configuration file is not trusted, offering diagnostics only would also decide the local socket's permissions from a misread value.
 
-### 按是否在服务管理器下运行决定是否降级
+### Decide degradation by whether it runs under a service manager
 
-启动时向服务管理器查询服务的主进程 PID，与本进程相同才降级，不加命令行参数。
+At startup, ask the service manager for the service's main process PID and degrade only when it equals this process, without a command-line flag.
 
-**否决**：判定依赖启动最早阶段能否查询服务管理器，查询失败时结果不确定；由容器或其他监管程序启动的 Broker 无法降级；行为不能从服务定义中直接读出。
+**Rejected**: the decision depends on whether the service manager can be queried in the earliest startup stage, and the result is uncertain when the query fails; a Broker started by a container or another supervisor cannot degrade; and the behavior cannot be read directly from the service definition.
 
-### 每次启动先绑定本机 socket，再执行其余步骤
+### Bind the local socket first on every start, then run the other steps
 
-**未采纳**：成功的启动不需要提前绑定，提前绑定会使本机 socket 在 Broker 就绪之前就有应答，安装命令与 MCP 服务进程都要另外区分“启动中”。降级时在失败处绑定本机 socket 即可，与本选项不冲突，需要时可以改为提前绑定。
+**Not adopted**: a successful start does not need to bind early, and binding early would make the local socket answer before the Broker is ready, so the install command and the MCP server process would both have to distinguish "starting". For degradation, binding the local socket at the point of failure suffices, which does not conflict with this option, and it can be changed to bind early if needed.
 
-### 由参数允许降级运行，分仅本机与仅诊断两档
+### Allow a degraded run by a flag, with local-only and diagnostics-only degrees
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-`peers service run` 增加参数 `--allow-degraded`。带它时，取得账户锁之后的监听绑定失败不使进程退出：Broker 提供全部本机功能，不提供生成配对密钥。数据目录或审计日志不可用时，本机 socket 只提供诊断。两档都报告失败的步骤、原因与修复方法，配置文件变化时立即重试；仅诊断另每分钟重试一次，监听绑定按退避重试，成功后不重启即恢复。配置文件读不出、解析失败、取值不合法，`broker.local_socket_group` 指向不存在的组，以及装配或组件启动中与数据目录无关的失败，即使带该参数也使进程退出。取得账户锁之前的失败照常退出。`service install` 写入的服务定义带这个参数，前台运行默认不带。
+`peers service run` gains the flag `--allow-degraded`. With it, a listen bind failure after the account lock is taken does not make the process exit: the Broker provides all local features but does not provide pairing-key generation. When the data directory or audit log is unavailable, the local socket offers diagnostics only. Both degrees report the failed step, the reason and how to fix it, and retry at once when the configuration file changes; diagnostics only also retries once a minute, and the listen bind retries with backoff, recovering after success without a restart. When the configuration file cannot be read, fails to parse or has an invalid value, `broker.local_socket_group` points at a group that does not exist, or assembly or component startup fails for a reason unrelated to the data directory, the process still exits even with the flag. A failure before the account lock is taken also still exits. The service definition written by `service install` carries this flag, and a foreground run does not carry it by default.
 
-## 后果
+## Consequences
 
-作为服务运行的 Broker 不再因监听地址被占用反复重启；会话与终端看到的是失败的具体原因；同一主机上监听端口冲突的第二个 Broker 仍能服务本机 Agent。
+A Broker running as a service no longer restarts repeatedly because the listen address is taken; sessions and the terminal see the specific reason; and a second Broker on the same host with a conflicting listen port can still serve local agents.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 降级运行的 Broker 在服务管理器看来运行正常，只看服务状态的监控发现不了故障，要看 `peers service status` 或运行日志。
-- 同一个二进制有两种启动语义，由参数区分；前台运行与服务运行的启动失败需要各自的测试。
-- 恢复在进程内重新执行启动步骤，组件的启动与撤销要能在同一进程中重复执行。
-- 加参数之前安装的服务，升级不会改写服务定义，重新执行安装才带上该参数；在那之前它的行为与原来相同。
-- 仅本机时，本方作为接受方的对端连不进来，向它们的发送在预算内等待后失败；用户要看状态才知道原因。
-- 配置文件读不出或解析失败时进程仍然退出，服务管理器会反复重启，故障只能从服务日志与标准错误看出；这是不让不可信的配置决定诊断服务的代价。
+- A Broker in a degraded run looks healthy to the service manager, so monitoring that only watches the service state cannot find the fault; it must watch `peers service status` or the run log.
+- One binary has two startup semantics, separated by the flag; foreground and service startup failures each need their own tests.
+- Recovery re-runs the startup steps within the process, so component startup and teardown must be repeatable in one process.
+- A service installed before the flag was added is not rewritten with it on upgrade; the installation must be run again to carry the flag, and until then its behavior is unchanged.
+- In local only, peers for which this side is the acceptor cannot connect in, and sends to them fail after waiting within the budget; the user must check the status to learn why.
+- When the configuration file cannot be read or fails to parse, the process still exits and the service manager restarts it repeatedly, so the fault can be seen only in the service log and on standard error; this is the price of not letting an untrusted configuration decide the diagnostics service.

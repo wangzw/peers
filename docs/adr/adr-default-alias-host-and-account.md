@@ -1,56 +1,56 @@
-# 默认别名取主机名与账户
+# Derive the default alias from the hostname and account
 
-## 背景
+## Context
 
-Broker 的[别名](../glossary.md)出现在 Agent 地址的 `@` 之后，用于显示和寻址，不参与认证。未配置 `broker.alias` 时，别名需要由运行环境自动得出。监听端口与 Broker 的身份无关，别名却随它变化。系统级 Broker 服务整台主机，用户级 Broker 只服务一个账户，两者需要在默认别名上区分开；同一主机上的多个 Broker 在列出时应当能看出同属一台主机。
+A Broker's [alias](../glossary.md) appears after the `@` in an agent address and is used for display and addressing, not for authentication. When `broker.alias` is not configured, the alias must be derived automatically from the runtime environment. The listen port has nothing to do with a Broker's identity, yet the alias changes with it. A system Broker serves the whole host and a user Broker serves one account, so the two must differ in their default alias; and several Brokers on one host should be recognizable as belonging to the same host when listed.
 
-## 考虑过的选项
+## Options Considered
 
-### 主机名加监听端口
+### Hostname plus listen port
 
-有监听地址时取系统主机名、`-` 和监听端口，没有监听地址时只取系统主机名。
+When there is a listen address, take the system hostname, `-` and the listen port; when there is none, take only the system hostname.
 
-**否决**：别名随监听端口变化，换端口就改变对端看到的 Agent 地址；端口与 Broker 的身份无关，不该成为默认别名的一部分。
+**Rejected**: the alias changes with the listen port, so changing the port changes the agent address that peers see; the port has nothing to do with the Broker's identity and should not be part of the default alias.
 
-### 默认端口省略
+### Omit the default port
 
-约定一个端口，别名在使用该端口时省略端口，使用其他端口时仍带上端口。
+Agree on one port, omit the port from the alias when it is that port, and still include the port when it is another port.
 
-**否决**：别名仍然取决于端口，只是为一个端口开了特例；同一主机上的多个 Broker 中，使用其他端口的那个规则与其他的不同；换端口仍改变别名。端口不进别名，因此没有给任何端口开特例。
+**Rejected**: the alias still depends on the port, only with a special case for one port; among several Brokers on one host, the one on another port follows a different rule from the rest; changing the port still changes the alias. The port does not enter the alias, so no port gets a special case.
 
-### 括号写法
+### Parenthesis form
 
-系统级取 `buildbox`，用户级取 `buildbox(alice)`，用括号把账户名附在主机名之后。
+Take `buildbox` for the system form and `buildbox(alice)` for the user form, appending the account name to the hostname in parentheses.
 
-**否决**：括号已经用于 `hostname(address:port)` 的地址展示写法，别名中再用括号使两种写法难以区分；在 shell 中传递别名还要加引号；别名需要扩大字符集以容纳括号，超出当前的字母、数字、`.`、`-`、`_`。
+**Rejected**: parentheses are already used in the `hostname(address:port)` address display form, so using them again in an alias makes the two hard to tell apart; passing an alias in a shell needs quoting; and the alias would need a wider character set to hold parentheses, beyond the current letters, digits, `.`, `-` and `_`.
 
-### 账户在前
+### Account first
 
-用户级别名由账户名、`.` 和主机名组成，例如 `alice.buildbox`。
+The user alias consists of the account name, `.` and the hostname, for example `alice.buildbox`.
 
-**否决**：对端按别名排序列出同一主机上的 Broker 时，账户在前的写法把同一主机的各实例分散到不同位置；主机名在前使它们排在一起。
+**Rejected**: when a peer lists the Brokers on one host sorted by alias, the account-first form scatters the instances of one host to different positions; hostname first keeps them together.
 
-### 主机名在前，用户级追加账户名
+### Hostname first, with the account name appended for the user form
 
-系统级取主机名的第一段，用户级由主机名的第一段、`.` 和账户名依次组成，例如 `buildbox` 与 `buildbox.alice`。
+The system form takes the first segment of the hostname, and the user form consists of the first segment of the hostname, `.` and the account name, for example `buildbox` and `buildbox.alice`.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 未配置别名时，系统级别名取所在主机系统主机名的第一段（第一个 `.` 之前的部分），用户级别名由主机名的第一段、`.` 和所属账户名依次组成。别名与监听地址、监听端口和对外地址无关。主机名和账户名中不属于别名字符集的字符替换为 `-`。
+When a Broker has no configured alias, the alias for the system form is the first segment of the host's system hostname (the part before the first `.`), and the alias for the user form consists of the first segment of the hostname, `.` and the owning account name. The alias is independent of the listen address, the listen port and the advertised address. Characters in the hostname and account name that are not in the alias character set are replaced with `-`.
 
-## 后果
+## Consequences
 
-默认别名不随监听端口、监听地址或对外地址变化。同一主机上的系统级 Broker 与各账户的用户级 Broker 得到互不相同的稳定别名，用户级别名还能看出运行它的账户；按别名排序时，同一主机上的 Broker 相邻。
+The default alias does not change with the listen port, the listen address or the advertised address. The system Broker on one host and the user Brokers of its accounts get stable aliases distinct from one another, and a user alias also shows the account running it; when sorted by alias, the Brokers on one host are adjacent.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 从 v0.1.0 升级后，没有配置别名的 Broker 的别名和 Agent 地址都会改变。对端按现有的别名变更规则处理（`REQ-broker-pairing-026`），别名与已有别名冲突时生成本地别名，已有的 Agent 地址不因此指向另一个 Broker。
-- 用户级别名包含账户名，Agent 地址会显示运行 Broker 的账户。
-- 两台主机系统主机名的第一段相同时，它们上面账户名也相同的用户级 Broker 会得到相同别名。别名不是全局唯一的，对端以本地别名区分。
-- 系统级与用户级使用不同的默认别名规则，两者都要分别实现和测试。
+- After upgrading from v0.1.0, the alias and agent address of a Broker with no configured alias change. A peer handles this under its existing alias-change rule (`REQ-broker-pairing-026`); when the alias conflicts with an existing one, a local alias is generated, and existing agent addresses do not thereby point at another Broker.
+- The user alias contains the account name, so an agent address shows the account running the Broker.
+- When the first segment of the system hostname is the same on two hosts, the user Brokers with the same account name on them get the same alias. Aliases are not globally unique, and peers tell them apart by local alias.
+- The system and user forms use different default alias rules, so both must be implemented and tested separately.
 
-## 失效条件
+## Invalidation Conditions
 
-系统主机名的第一段不再能稳定代表一台主机，或默认别名需要跨主机唯一时，本决策不再成立。
+The decision no longer holds when the first segment of the system hostname no longer reliably represents one host, or when the default alias must be unique across hosts.

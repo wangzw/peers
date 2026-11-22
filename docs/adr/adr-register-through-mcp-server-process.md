@@ -1,51 +1,51 @@
-# 会话经 MCP 服务进程登记为 Agent
+# Register a session as an agent through its MCP server process
 
-## 背景
+## Context
 
-[Broker](../glossary.md) 需要知道本机有哪些 Claude Code 会话参与通信，每个会话的 inbox socket 在哪里，以及它的名字和忙闲状态，名字与状态还会在会话存续期间变化。并非每个会话都应当参与：处理敏感工作的会话不应因为主机上装了本系统就变得可见。
+A [Broker](../glossary.md) must know which Claude Code sessions on the host take part in communication, where each session's inbox socket is, and its name and busy/idle state, and the name and state change during the session's life. Not every session should take part: a session handling sensitive work should not become visible just because this system is installed on the host.
 
-Claude Code 把每个会话的名字、状态和 inbox socket 路径写在本机的会话注册表里，每个会话进程一份记录，变化时就地改写，会话退出时删除；它的格式没有公开的兼容承诺。会话启用本系统的工具时，Claude Code 在会话启动时为它启动一个 MCP 服务进程，作为会话进程的直接子进程。在 Claude Code v2.1.327 上观测到，这个进程的环境变量 `CLAUDE_CODE_MESSAGING_SOCKET` 是所属会话的 inbox socket 路径，会话不绑定 inbox 时没有这个变量，inbox 晚于 MCP 服务进程绑定时进程的环境里也没有；Claude Code 的文档只承诺把它导出给 hook 与命令行。会话改名时，MCP 服务进程收不到任何通知。
+Claude Code writes each session's name, state and inbox socket path in the host's session registry, one record per session process, rewritten in place on change and deleted when the session exits; its format has no published compatibility promise. When a session enables this system's tools, Claude Code starts an MCP server process for it at session startup, as a direct child of the session process. On Claude Code v2.1.327, it was observed that this process's environment variable `CLAUDE_CODE_MESSAGING_SOCKET` is the inbox socket path of the session it belongs to; the variable is absent when the session does not bind an inbox, and also absent from the process's environment when the inbox is bound after the MCP server process starts; Claude Code's documentation promises only to export it to hooks and the command line. When a session is renamed, the MCP server process receives no notification.
 
-## 考虑过的选项
+## Options Considered
 
-### Broker 扫描会话注册表，登记全部会话
+### The Broker scans the session registry and registers every session
 
-Broker 读取会话注册表的全部记录，把每个会话登记为 Agent。
+The Broker reads every record in the session registry and registers each session as an agent.
 
-**否决**：会话是否参与不取决于它自己，主机上的全部会话都会被纳入。
+**Rejected**: whether a session takes part does not depend on the session itself, and every session on the host would be included.
 
-### Broker 沿 MCP 服务进程的祖先链找到会话进程
+### The Broker follows the MCP server process's ancestor chain to the session process
 
-MCP 服务进程向 Broker 登记，Broker 从本机 socket 另一端的进程出发逐级查找父进程，找到会话进程后读取它的注册表记录。
+The MCP server process registers with the Broker, and the Broker starts from the process on the other end of the local socket, walks up the parent processes, and once it finds the session process reads its registry record.
 
-**否决**：要求进程之间的父子关系在各种启动方式下都成立；MCP 服务进程经包装脚本启动，或与 Broker 不在同一个 PID 命名空间时，这一要求就不成立。而查找父进程只是为了得到 inbox socket 路径，这个路径在 MCP 服务进程的环境里就有。
+**Rejected**: it requires the parent-child relationship between processes to hold under every startup method; when the MCP server process is started through a wrapper script, or is not in the same PID namespace as the Broker, the requirement does not hold. Looking up the parent process serves only to get the inbox socket path, which is already in the MCP server process's environment.
 
-### 周期性调用 `claude agents --json` 取名字与状态
+### Periodically call `claude agents --json` for the name and state
 
-MCP 服务进程向 Broker 登记，Broker 定期执行这个命令，从输出中取各会话的名字与状态。
+The MCP server process registers with the Broker, and the Broker runs this command periodically and takes each session's name and state from the output.
 
-**否决**：它读取的就是会话注册表，每次调用都要执行 Claude Code 完整的启动准备，并会删除已退出会话遗留的文件；只能定期调用而不能得知变化；输出里没有 inbox socket 路径；它还可以被用户的设置关闭。
+**Rejected**: it reads the very session registry, each call runs Claude Code's full startup preparation and deletes files left by exited sessions, it can only be called periodically and cannot learn of a change, its output carries no inbox socket path, and the user's settings can turn it off.
 
-### 环境变量给出 socket 路径，注册表记录给出名字与状态
+### The environment gives the socket path, and the registry record gives the name and state
 
-MCP 服务进程向 Broker 登记，报出环境中的 inbox socket 路径。Broker 在调用方账户的会话注册表中找到这个会话的记录，从中取名字与状态，并监听记录的变化。
+The MCP server process registers with the Broker and reports the inbox socket path in its environment. The Broker finds this session's record in the session registry of the caller's account, takes the name and state from it, and watches the record for changes.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-只有启用了本系统工具的会话才成为 Agent，由该会话的 MCP 服务进程向 Broker 登记。inbox socket 路径取自 MCP 服务进程的环境；环境中没有该路径时，登记停在等待并向会话说明原因。会话名与状态取自会话注册表中该会话的记录，Broker 监听记录的变化。
+Only a session that has enabled this system's tools becomes an agent, registered with the Broker by that session's MCP server process. The inbox socket path comes from the MCP server process's environment; when the path is absent, registration waits and tells the session why. The session name and state come from the session's record in the session registry, and the Broker watches the record for changes.
 
-## 后果
+## Consequences
 
-会话是否参与由是否启用工具决定。Broker 不查找进程之间的关系，也不执行 Claude Code 的命令；名字与状态的变化由记录的变化得知，不需要定期重复读取。
+Whether a session takes part is decided by whether it enables the tools. The Broker does not look up relationships between processes and does not run Claude Code commands; changes in name and state are learned from changes in the record, without periodic re-reading.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 未启用工具的会话无法接收本系统的消息，即使用户希望它能收到。
-- 会话注册表的格式没有兼容承诺，Claude Code 升级后登记可能要随之修改。
-- inbox socket 路径出现在 MCP 服务进程的环境里是观测到的行为，Claude Code 的文档只承诺把它导出给 hook 与命令行。
-- MCP 服务进程自己感知不到会话改名，名字的更新依赖会话注册表的文件变化通知。
-- 没有会话注册表记录的会话不能成为 Agent。
-- 环境中没有 inbox socket 路径时，登记停在等待，直到 MCP 服务进程重新启动；这样的会话期间不能成为 Agent。
-- Broker 进程意外退出后，全部 Agent 都要等各自的 MCP 服务进程重新登记才恢复。
+- A session that has not enabled the tools cannot receive this system's messages, even when the user wants it to.
+- The session registry format has no compatibility promise, so registration may need changing after a Claude Code upgrade.
+- The inbox socket path appearing in the MCP server process's environment is observed behavior; Claude Code's documentation promises only to export it to hooks and the command line.
+- The MCP server process does not itself notice a session rename, so name updates depend on file-change notification of the session registry.
+- A session with no session registry record cannot become an agent.
+- When the inbox socket path is absent from the environment, registration waits until the MCP server process restarts; during that time the session cannot become an agent.
+- After the Broker process exits unexpectedly, every agent recovers only when its MCP server process registers again.

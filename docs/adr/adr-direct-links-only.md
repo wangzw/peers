@@ -1,43 +1,43 @@
-# Broker 之间只做直连
+# Use direct links between Brokers only
 
-## 背景
+## Context
 
-两个 [Broker](../glossary.md) 之间要通信，至少有一方必须能主动连到另一方。部分主机位于 NAT 之后，没有对方能连上的对外地址。Broker 之间的信任由用户逐对配对建立，一个 Broker 只认证它配对过的对端。
+For two [Broker](../glossary.md)s to communicate, at least one side must be able to connect to the other. Some hosts sit behind NAT and have no advertised address the other side can connect to. Trust between Brokers is established by the user pairing them one pair at a time, and a Broker authenticates only the peers it has paired with.
 
-## 考虑过的选项
+## Options Considered
 
-### 经第三个 Broker 转发
+### Relay through a third Broker
 
-A 与 C 没有链路时，由同时连着两者的 B 中转成员名单与消息。两台都在 NAT 之后的主机可以借一台可达的主机互通。
+When A and C have no link, B, which is connected to both, relays the roster and messages. Two hosts both behind NAT can reach each other through one reachable host.
 
-**否决**：链路层要增加路由与环路防护。A 与 C 从未配对，A 无法认证经 B 转来的 C 的消息，只能信任 B 对 C 的陈述，或者另建一套端到端的认证。
+**Rejected**: the link layer would need routing and loop protection. A and C have never paired, so A cannot authenticate C's messages relayed through B; it could only trust B's account of C, or a separate end-to-end authentication would have to be built.
 
-### 集中式注册中心
+### A centralized registry
 
-所有 Broker 连到一个中心服务，由它维护一份全网的 Broker 清单，供各 Broker 查询发现。
+Every Broker connects to a central service that maintains a network-wide list of Brokers for each Broker to query for discovery.
 
-**未采纳**：需要一个单独部署的组件。一对主机中有一方可达时，由另一方发起配对，直连已经能覆盖。发现可以交给一台长期在线的公开 Broker，通过名片的发布与传播完成；连接层的中转不在本决策之内，被中转的两个 Broker 之间仍是端到端认证的链路，中转方看不到也改不了链路上的内容，不构成 Broker 对消息或成员名单的转发。两者都可以在不改变本决策的前提下加入。
+**Not adopted**: it needs a separately deployed component. When one of a pair of hosts is reachable, the other initiates pairing and a direct link already covers it. Discovery can be left to a long-running public Broker through the publication and propagation of broker cards; relaying at the connection layer is outside this decision, and the two relayed Brokers still communicate over an end-to-end authenticated link on which the relay cannot see or change the content, so it does not amount to a Broker relaying messages or rosters. Either can be added without changing this decision.
 
-### 只做直连，另以名片传播解决发现
+### Direct links only, with discovery left to card propagation
 
-消息只走发送方与接收方之间的链路。公开的 Broker 发布名片，使没有链路的 Broker 也能知道它的存在和对外地址，再由用户决定是否配对。
+Messages travel only over the link between sender and receiver. A public Broker publishes its card so that a Broker with no link can learn that it exists and its advertised address, and the user then decides whether to pair.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 之间只做直连。Broker 不转发消息，也不转发成员名单：消息与成员名单只在互为对端的两个 Broker 之间的链路上传递。链路所依托的连接怎样建立不在本决策之内。
+Brokers connect directly only. A Broker does not relay messages or rosters: messages and rosters travel only over the link between two Brokers that are peers. How the underlying connection of a link is established is outside this decision.
 
-## 后果
+## Consequences
 
-消息至多经过一条链路，信任关系与链路一一对应：能给本机 Agent 发消息的 Broker 都是用户配对过的。链路层不需要路由表、跳数和环路检测。
+A message crosses at most one link, and trust and links correspond one to one: every Broker that can send a message to a local agent is one the user has paired. The link layer needs no routing table, hop count or loop detection.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 两台主机都没有对方能连上的对外地址时无法互通。
-- 多台主机要两两互通时，每一对都要由用户配对一次。
-- 经名片得知的 Broker 不能直接通信，必须先配对。
+- Two hosts that both lack an advertised address the other can connect to cannot communicate.
+- When several hosts must all reach one another, the user pairs each pair once.
+- A Broker learned from a card cannot communicate directly; it must be paired first.
 
-## 失效条件
+## Invalidation Conditions
 
-双方都不可达的主机之间需要互通成为常见情形，而连接层的中转不能满足时，本决策不再成立。
+The decision no longer holds when communication between hosts that are both unreachable becomes a common case and relaying at the connection layer cannot satisfy it.

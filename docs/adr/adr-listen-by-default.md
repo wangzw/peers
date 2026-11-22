@@ -1,52 +1,52 @@
-# Broker 默认监听，地址冲突时不改用其他地址
+# Listen by default and keep the address on conflict
 
-## 背景
+## Context
 
-两个 [Broker](../glossary.md) 配对并建立链路，至少要有一方在监听。告知对方的地址、名片和对端表里记着的对外地址都带有端口，默认就是监听端口（[ADR-advertised-address](adr-advertised-address.md)），发起配对的一方凭它在断开后重新拨号（[ADR-initiator-redials](adr-initiator-redials.md)）。同一台主机上可能有多个账户各自运行一个 Broker，它们不能绑定同一个地址和端口。未配对的连接会被拒绝，监听本身不授予任何访问权。
+For two [Broker](../glossary.md)s to pair and establish a link, at least one must be listening. The address told to the other side, the broker card and the advertised address recorded in the peer table all carry a port, which by default is the listen port ([ADR-advertised-address](adr-advertised-address.md)), and the side that initiates pairing uses it to dial again after a disconnect ([ADR-initiator-redials](adr-initiator-redials.md)). One host may have several accounts each running a Broker, and they cannot bind the same address and port. An unpaired connection is refused, and listening by itself grants no access.
 
-## 考虑过的选项
+## Options Considered
 
-### 默认不监听
+### Do not listen by default
 
-Broker 在未经配置时不绑定任何端口，只能主动连接其他 Broker。
+A Broker binds no port until configured and can only connect out to other Brokers.
 
-**否决**：配对至少要有一方在监听，默认不监听使每个用户都要先改配置才能被别人连上。未配对的连接本来就被拒绝，不监听换不来相称的保护。
+**Rejected**: pairing needs at least one side listening, so not listening by default forces every user to change configuration before anyone can connect to them. Unpaired connections are refused anyway; not listening buys no protection worth the cost.
 
-### 地址被占用时自动更换端口
+### Switch to another port when the address is taken
 
-配置的监听地址无法绑定时，Broker 改用另一个可用的端口。
+When the configured listen address cannot be bound, the Broker uses another available port.
 
-**否决**：告知对方的地址、名片和对端保存的对外地址都带着端口，自动更换使它们随每次启动变化，已经告知对方的地址和对端的重连目标随之失效。
+**Rejected**: the address told to the other side, the broker card and the advertised address saved by peers all carry the port, so switching automatically makes them change on every start, and the addresses already given out and the peers' reconnect targets become invalid.
 
-### 地址被占用时改为不监听
+### Switch to not listening when the address is taken
 
-配置的监听地址无法绑定时，Broker 照常启动，只是不监听。
+When the configured listen address cannot be bound, the Broker starts as usual, only it does not listen.
 
-**否决**：用户配置了监听而 Broker 实际没有监听，又不报告，别人连不上，而本机看起来一切正常，故障不易发现。不监听但报告故障并持续重试的做法见 [ADR-degraded-run](adr-degraded-run.md)。
+**Rejected**: the user configured listening but the Broker in fact does not listen and does not report it, so others cannot connect while the local side looks fine, and the fault is hard to find. Not listening but reporting the fault and retrying is covered by [ADR-degraded-run](adr-degraded-run.md).
 
-### 为某个端口设特例
+### Make a special case for one port
 
-约定一个默认端口，别名、展示的地址等在使用该端口时省略它。
+Agree on a default port and omit it from the alias, the displayed address and so on when that port is used.
 
-**否决**：同一个 Broker 的别名和地址的写法会因端口取值而不同，同一主机上的多个实例中总有一个与其他的规则不一样。
+**Rejected**: the alias and address of one Broker would be written differently depending on the port value, and among several instances on one host one would always follow a different rule from the rest.
 
-### 默认配置即监听，地址无法绑定时不改用其他地址
+### Listen by default, and do not switch addresses when the address cannot be bound
 
-默认配置在本机的全部地址上监听一个固定的端口，启用了 IPv6 时包括 IPv6 地址，Broker 未经配置时即监听；这个端口只是默认配置里的一个普通取值，系统不对它做任何特殊处理。启动时可以另行指定监听地址。配置或启动时指定的地址无法绑定时，Broker 不更换端口：前台运行的启动失败并报告该地址不可用，带允许降级运行参数的进入降级运行。用户把监听地址明确配置为空时不监听。
+The default configuration listens on a fixed port on all of the host's addresses, including IPv6 addresses when IPv6 is enabled, so a Broker listens without configuration; that port is an ordinary value in the default configuration and the system gives it no special treatment. A listen address can be specified separately at startup. When the address given in the configuration or at startup cannot be bound, the Broker does not switch ports: a foreground start fails and reports that the address is unavailable, and one with the degraded-run flag enters a degraded run. When the user explicitly configures an empty listen address, the Broker does not listen.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 的默认配置是在本机的全部地址上监听一个固定的端口，启用了 IPv6 时包括 IPv6 地址。监听地址可以在配置中修改，也可以在启动时指定；系统不为任何端口设特例。监听地址无法绑定时 Broker 不更换端口：前台运行的启动失败，带允许降级运行参数的不监听并报告故障，按 [ADR-degraded-run](adr-degraded-run.md) 重试。
+A Broker's default configuration listens on a fixed port on all of the host's addresses, including IPv6 addresses when IPv6 is enabled. The listen address can be changed in the configuration or specified at startup; the system gives no port a special case. When the listen address cannot be bound, the Broker does not switch ports: a foreground start fails, and one with the degraded-run flag does not listen, reports the fault and retries as described in [ADR-degraded-run](adr-degraded-run.md).
 
-## 后果
+## Consequences
 
-新启动的 Broker 不经配置就能被其他主机连上并接受配对。告知对方的地址、名片和对端保存的对外地址中的端口在各次启动之间保持不变。
+A newly started Broker can be reached by other hosts and accept pairing without configuration. The port in the address told to the other side, the broker card and the peer-saved advertised address stays the same across starts.
 
-**接受的代价：**
+**Costs accepted:**
 
-- Broker 一启动，主机上就多出一个对本机全部地址开放的端口，启用了 IPv6 时也对 IPv6 地址开放。能连到它的任何一方都能看到它的证书；不希望如此的用户必须主动把监听地址配置为空，或限定到某个地址。
-- 同一台主机上第二个账户的 Broker 按默认配置运行时监听地址被占用，该账户的用户必须为它指定另一个地址或端口。新装或重装时预检发现地址被其他进程占用，安装失败且不注册服务（`REQ-broker-config-064`）。已经装好的服务之后再启动时进入降级运行，本机 Agent 照常互通，对端连不进来；在前台运行时启动失败，会话中的工具调用报错说明没有可用 Broker，直到用户改了配置并重新启动它。
-- 默认别名不含端口，见 [ADR-default-alias-host-and-account](adr-default-alias-host-and-account.md)。
-- 监听端口在认证前对任何能连到它的主机开放，它们能建立未认证连接、占用未认证连接的名额。按来源限额收窄这里的暴露面，见 [ADR-unauthenticated-connection-limits](adr-unauthenticated-connection-limits.md)。
+- As soon as a Broker starts, the host has one more port open on all of its addresses, and on IPv6 addresses when IPv6 is enabled. Anyone who can connect to it can see its certificate; a user who does not want this must explicitly configure the listen address as empty or restrict it to one address.
+- When a second account's Broker on one host runs with the default configuration, its listen address is taken, and that account's user must give it another address or port. On a new install or reinstall, when the preflight finds the address taken by another process, the installation fails and registers no service (`REQ-broker-config-064`). A service already installed enters a degraded run when it starts again, and local agents keep communicating while peers cannot connect in; a foreground start fails, and a tool call in a session returns an error saying no Broker is available, until the user changes the configuration and restarts it.
+- The default alias carries no port; see [ADR-default-alias-host-and-account](adr-default-alias-host-and-account.md).
+- The listen port is open to any host that can reach it before authentication; such hosts can open unauthenticated connections and use up the unauthenticated-connection allowance. Narrowing this exposure by source is covered by [ADR-unauthenticated-connection-limits](adr-unauthenticated-connection-limits.md).

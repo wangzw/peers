@@ -1,73 +1,73 @@
-# 系统级 Broker 的名字按账户归属
+# Own each name by the account that registered it first
 
-## 背景
+## Context
 
-系统级 [Broker](../glossary.md) 服务同一主机上的多个账户，不同账户下的 Agent 可以在同一个 topic 里互相看见。Agent 地址由名字、需要时的消歧标识、`@` 和别名依次组成，不带消歧标识时只按名字定位。
+A system [Broker](../glossary.md) serves several accounts on one host, and agents under different accounts can see each other in one topic. An agent address consists of a name, a disambiguator when needed, `@` and an alias, and without a disambiguator it locates an agent by name alone.
 
-这种形态下，同一主机上的一个账户可以对其他账户做三类事：
+In this form, one account on the host can do three kinds of things to other accounts:
 
-- 截获：先登记某个名字的账户的 Agent 离开后，另一个账户登记同名 Agent；继续用不带消歧标识的地址发送的一方，会把消息送进后来者的会话。
-- 冒充：另一个账户登记与归属账户同名的 Agent，接收方看到的署名与归属账户的 Agent 相同。
-- 标识碰撞：消歧标识是 `SHA-256("session:" + inbox socket 路径)` 的前缀，最短 6 位。一个账户可以在自己的会话下挑选 socket 路径，离线计算约 2^24 次就能让 6 位标识与受害者相同，受害者离开后旧地址唯一匹配到攻击者。
+- Interception: after the agent of the account that registered a name leaves, another account registers an agent with the same name; a party that keeps sending to the address without a disambiguator delivers the message into the later account's session.
+- Impersonation: another account registers an agent with the same name as the owning account's, and the receiver sees a signature identical to the owning account's agent.
+- Identifier collision: the disambiguator is a prefix of `SHA-256("session:" + inbox socket path)`, at least 6 digits. An account can choose socket paths under its own sessions and, with about 2^24 offline computations, make the 6-digit identifier equal the victim's, and after the victim leaves the old address uniquely matches the attacker.
 
-用户级 Broker 只服务一个账户，这些情形都不存在。
+A user Broker serves one account, so none of these cases exists.
 
-地址格式与署名格式保持现有形式。[ADR-agent-identity-by-inbox-socket](adr-agent-identity-by-inbox-socket.md) 规定消歧标识采用与 Claude Code 会话列表相同的算法，本决定不推翻它。
+The address format and the signature format keep their current form. [ADR-agent-identity-by-inbox-socket](adr-agent-identity-by-inbox-socket.md) requires the disambiguator to use the same algorithm as the Claude Code session list, and this decision does not overturn it.
 
-## 考虑过的选项
+## Options Considered
 
-### 地址带出账户
+### Put the account into the address
 
-地址写成 `名字@账户@别名` 或类似形式，按账户与名字一起定位。
+Write the address as `name@account@alias` or the like, locating by account and name together.
 
-**否决**：改变地址格式，所有已持有的地址失效，也与现有地址的组成冲突。
+**Rejected**: it changes the address format, invalidates every address already held, and conflicts with the current composition of an address.
 
-### 名字按账户归属，地址格式不变
+### Own names by account, keeping the address format
 
-系统级 Broker 记录每个名字最先登记它的账户。先登记的一方保留不带消歧标识的地址，其他账户的同名 Agent 只能用带消歧标识的地址被找到；不带消歧标识的地址只投递给归属账户的 Agent；名字闲置 7 天后释放。
+The system Broker records which account first registered each name. The first registrant keeps the address without a disambiguator, and other accounts' same-named agents can be found only by an address with a disambiguator; an address without a disambiguator delivers only to the owning account's agent; a name is released after 7 idle days.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-### 明确账户互信并收紧接入
+### Declare mutual trust between accounts and tighten admission
 
-由管理员声明哪些账户互相信任，只在互信的账户之间允许同名，并据此决定谁能使用系统级 Broker。
+An administrator declares which accounts trust each other, allows the same name only between trusting accounts, and decides who may use the system Broker on that basis.
 
-**否决**：需要新增按账户的信任配置与管理操作，默认值无论怎样取，都会留下一个缺口或让常见用法不可用；它也没有处理同一账户内部的标识碰撞。
+**Rejected**: it adds per-account trust configuration and management operations, and whatever the default, it leaves a gap or makes a common use unusable; it also does not handle identifier collisions within one account.
 
-### 消歧标识加盐派生
+### Derive the disambiguator with a salt
 
-消歧标识改由账户、私有盐与 socket 路径派生，使他人不能离线算出。
+Derive the disambiguator from the account, a private salt and the socket path, so that others cannot compute it offline.
 
-**否决**：与 [ADR-agent-identity-by-inbox-socket](adr-agent-identity-by-inbox-socket.md) 的决策冲突。该决策要求消歧标识采用与 Claude Code 会话列表相同的算法，用户在其他 Agent 处看到的标识因此与自己在 Claude Code 中看到的一致；加盐派生会推翻这一点。本决定保留现有算法，只让不属于归属账户的同名 Agent 与名字放不下、地址需要截短的 Agent 取完整 12 位标识。加盐派生可以作为纵深防御，在该决策被改写后重新考虑。
+**Rejected**: it conflicts with the decision in [ADR-agent-identity-by-inbox-socket](adr-agent-identity-by-inbox-socket.md). That decision requires the disambiguator to use the same algorithm as the Claude Code session list, so the identifier a user sees elsewhere matches the one they see in Claude Code; a salted derivation would overturn this. This decision keeps the current algorithm and only makes a same-named agent that does not belong to the owning account, and an agent whose name does not fit and whose address must be shortened, take the full 12-digit identifier. Salted derivation can serve as defense in depth and be reconsidered after that decision is rewritten.
 
-## 决策
+## Decision
 
-采纳名字按账户归属，地址与署名格式不变。
+Adopt name ownership by account, with the address and signature formats unchanged.
 
-用户对这一项选定的方案原文是“use option 2, release a name after 7 days of idleness”：采用第二项“名字按账户归属、地址格式不变”，名字闲置 7 天后释放。
+The user's chosen wording for this item is "use option 2, release a name after 7 days of idleness": adopt the second option, "own names by account, keeping the address format", and release a name after 7 idle days.
 
-- 系统级 Broker 记录每个名字最先登记它的账户。登记或改名到某个名字时，该名字没有未过期的归属，就记为当前账户；有未过期的归属时不改变。
-- 归属账户的 Agent 在它的名字于归属账户下唯一时，地址与署名不带消歧标识；其他账户的同名 Agent 一律取 Agent 标识的前 12 位，不论这个名字在对端看来是否唯一。
-- 名字放不下而需要截短地址里的名字部分时，消歧标识固定取 Agent 标识的前 12 位。解析带消歧标识的地址时，截短后的名字只在这个完整标识下、且地址里的名字等于该 Agent 在某个合法别名长度（1 至 24 字节）下渲染地址时截短得到的名字才匹配；别名长度由看的一方决定，对端看到并用于回复的地址未必按本机当前别名渲染，所以不要求等于本机当前视图的渲染结果。短于 12 位的标识只匹配完全相同的名字或名字归属账户的 Agent，不能借截短绕开归属。
-- 不带消歧标识的地址只在归属账户的 Agent 中按现有规则解析。归属账户没有可见的同名 Agent 而有其他账户的可见同名 Agent 时，返回 `not_found`，说明文字写明名字属于另一个账户，不给出其他账户 Agent 的地址。
-- 名字不被任何 Agent 持有时，从最后一个持有者离开或改名时起满 7 天后释放；持有中的名字不释放。
-- 归属表持久保存在数据目录的 `name-owners.json`，每个账户至多 1024 条，查不到账户条目的 uid 共用同一份额度，全表至多 65536 条；超出时先淘汰最旧的、未被持有的条目。
-- `list_agents` 的每一项显示登记账户的账户名，只用于展示，不参与地址与解析。
+- The system Broker records which account first registered each name. When registering or renaming to a name, if the name has no unexpired owner, it is recorded as the current account; if it has an unexpired owner, it is not changed.
+- An agent of the owning account carries no disambiguator in its address and signature when its name is unique under the owning account; a same-named agent of another account always takes the first 12 digits of the agent identifier, whether or not the name looks unique to peers.
+- When the name does not fit and the name part of the address must be shortened, the disambiguator is fixed to the first 12 digits of the agent identifier. When an address with a disambiguator is parsed, a shortened name matches only under this full identifier and only when the name in the address equals the name obtained by rendering the address at some legal alias length (1 to 24 bytes) for that agent; the alias length is chosen by the viewer, and the address a peer sees and uses to reply need not be rendered with the local current alias, so it is not required to equal the rendering under the local current view. An identifier shorter than 12 digits matches only an exactly identical name or the name-owning account's agent, and cannot use shortening to bypass ownership.
+- An address without a disambiguator resolves among the owning account's agents under the current rules. When the owning account has no visible same-named agent but another account has a visible same-named agent, return `not_found` with text saying the name belongs to another account, without giving the other account's agent address.
+- When no agent holds a name, it is released 7 days after the last holder leaves or renames; a held name is not released.
+- The owner table is persisted in `name-owners.json` in the data directory, at most 1024 entries per account, with every uid that has no account entry sharing one quota, and at most 65536 entries in all; when it overflows, the oldest unheld entries are evicted first.
+- Each item of `list_agents` shows the account name of the registering account, for display only, and it takes no part in addressing or resolution.
 
-## 后果
+## Consequences
 
-归属账户一旦登记了某个名字，其他账户的 Agent 即使与自己账户下的同名 Agent 不再并存，地址也一直带 12 位消歧标识，直到归属释放。
+Once the owning account has registered a name, another account's agent keeps a 12-digit disambiguator in its address even when it no longer coexists with a same-named agent under its own account, until the ownership is released.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 先登记的一方得到不带消歧标识的地址。一个账户可以在某个名字尚无人持有时登记它，从而长期占住这个名字的短地址，直到自己闲置 7 天。
-- 名字闲置 7 天后可以被其他账户取得，原先持有的不带消歧标识的地址此后可能解析到另一个账户的 Agent。
-- 不属于归属账户的 Agent 仍可能与受害者的 12 位标识前缀相同，需要约 2^48 次哈希，或在线反复登记约 2^48 次。12 位标识是现有算法的一个前缀，本决定接受这一残留。
-- 成员条目把登记账户的账户名发给对端，这是向对端披露本机账户名。账户名只用于显示，但它仍是对端可见的本机信息，用户接受这一代价（官网的安全说明由 site 单元单独更新，本单元不改网站）。
-- 对端在成员条目中自报的账户名不可信，只用于显示。
-- 归属表是新增的持久文件。文件无法解析时 Broker 从空表开始，归属信息随之丢失，短地址可能被其他账户取得。
-- 归属表满（单账户 1024 条，或全表 65536 条）且该账户的条目全部在持有时，新名字不记录，这个名字暂时回到没有归属表的旧规则：不带消歧标识的地址可能被其他账户取得，直到表腾出空间。
+- The first registrant gets the address without a disambiguator. An account can register a name while no one holds it and so keep the short address of that name for a long time, until it is idle for 7 days.
+- After a name has been idle for 7 days, another account can take it, and the previously held address without a disambiguator may thereafter resolve to another account's agent.
+- An agent that does not belong to the owning account can still share the victim's 12-digit identifier prefix, needing about 2^48 hashes, or about 2^48 repeated online registrations. The 12-digit identifier is a prefix of the current algorithm, and this decision accepts this residue.
+- A membership entry sends the registering account's account name to peers, which discloses a local account name to them. The account name is for display only, but it is still local information visible to peers, and the user accepts this cost (the website's security note is updated separately by the site unit; this unit does not change the website).
+- The account name a peer reports about itself in a membership entry is untrusted and is for display only.
+- The owner table is a new persistent file. When the file cannot be parsed, the Broker starts from an empty table, the ownership information is lost, and short addresses may be taken by other accounts.
+- When the owner table is full (1024 entries for one account, or 65536 entries in all) and all of that account's entries are held, a new name is not recorded, and this name temporarily returns to the old rule without an owner table: the address without a disambiguator may be taken by another account until the table frees space.
 
-## 失效条件
+## Invalidation Conditions
 
-地址格式改为携带账户，或 ADR-agent-identity-by-inbox-socket 被改写为允许私有派生消歧标识时，本决定的前提不再成立。
+The decision's premise no longer holds when the address format changes to carry the account, or when ADR-agent-identity-by-inbox-socket is rewritten to allow a private derivation of the disambiguator.

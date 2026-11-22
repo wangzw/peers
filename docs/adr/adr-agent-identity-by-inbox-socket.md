@@ -1,53 +1,53 @@
-# Agent 以 inbox socket 为身份，名字取自会话名
+# Identify an agent by its inbox socket, with the name taken from the session name
 
-## 背景
+## Context
 
-[Broker](../glossary.md) 要能区分它上面的各个 Agent，给每个 Agent 一个名字，并在名字相同时用消歧标识把它们分开。这个身份要在会话的整个存续期间保持不变，地址要与用户在 Claude Code 中看到的会话对得上。
+A [Broker](../glossary.md) must tell its agents apart, give each agent a name, and separate agents that share a name with a disambiguator. This identity must stay the same for the session's whole life, and the address must match the session the user sees in Claude Code.
 
-在 Claude Code v2.1.327 上观测到的相关事实：
+Facts observed on Claude Code v2.1.327:
 
-- 会话名由用户指定，或由 Claude Code 自动生成。会话改名与另一个存活会话重名时，Claude Code 让其中一个自动改用带后缀的名字，同一主机上重名因此少见，但自动生成的名字仍可能相同。
-- Claude Code 自带的发送工具匹配会话名之前先规范化名字：去掉控制字符与格式字符，去掉首尾空白，转为小写，空白换成 `-`。它自带的会话列表不显示名字中含 `@` 或 `*` 的会话。
-- 会话清空对话后，inbox socket 路径、会话名都不变，会话标识则换成新的；用户看到的仍是同一个会话。
-- Claude Code 会话列表中方括号里的标识，是对字符串 `session:` 接 inbox socket 路径求 SHA-256 后取十六进制前 12 位，再取能在全部候选之间区分的最短前缀，至少 6 位；它不随改名和清空对话变化。
+- The session name is given by the user or generated automatically by Claude Code. When a renamed session collides with another live session, Claude Code makes one of them switch to a suffixed name, so collisions on one host are rare, but automatically generated names can still be the same.
+- Claude Code's built-in send tool normalizes a name before matching it: it removes control and format characters, trims whitespace, lowercases, and replaces whitespace with `-`. Its built-in session list does not show sessions whose name contains `@` or `*`.
+- After a session clears its conversation, the inbox socket path and session name are unchanged, while the session identifier becomes new; the user still sees the same session.
+- The identifier in square brackets in the Claude Code session list is computed as the first 12 hex digits of SHA-256 of the string `session:` followed by the inbox socket path, taken as the shortest prefix, at least 6 digits, that distinguishes it among all candidates; it does not change with a rename or with clearing the conversation.
 
-## 考虑过的选项
+## Options Considered
 
-### 以会话标识为身份
+### Use the session identifier as identity
 
-Agent 以 Claude Code 的会话标识区分。
+An agent is distinguished by Claude Code's session identifier.
 
-**否决**：会话清空对话后会话标识即变化，而 inbox socket、会话名与用户看到的会话都没有变。
+**Rejected**: the session identifier changes once the session clears its conversation, while the inbox socket, session name and the session the user sees are unchanged.
 
-### 以进程号与进程启动标记为身份
+### Use the process id and process start marker as identity
 
-Agent 以会话进程的进程号与启动标记区分，消歧标识由二者派生。
+An agent is distinguished by the session process's process id and start marker, and the disambiguator is derived from the two.
 
-**否决**：需要另外取得进程的启动标记，派生出的标识与用户在 Claude Code 列表里看到的不同。
+**Rejected**: it needs the process start marker separately, and the derived identifier differs from the one the user sees in the Claude Code list.
 
-### 会话名不可用时以其他名字代替
+### Substitute another name when the session name is unusable
 
-会话名为空，或含有 Claude Code 列表不显示的字符时，以进程号或生成的名字作为 Agent 的名字。
+When the session name is empty or contains characters the Claude Code list does not show, use the process id or a generated name as the agent's name.
 
-**否决**：Agent 地址与用户在 Claude Code 中看到的会话名不再一致。
+**Rejected**: the agent address would no longer match the session name the user sees in Claude Code.
 
-### 以 inbox socket 路径为身份，名字必需，消歧标识与 Claude Code 相同
+### Use the inbox socket path as identity, with a required name and a disambiguator matching Claude Code's
 
-Agent 以 inbox socket 路径区分，名字是会话名的规范化结果，名字不可用的会话不登记；消歧标识按 Claude Code 会话列表的算法由 socket 路径算出。
+An agent is distinguished by the inbox socket path, its name is the normalized session name, a session with an unusable name is not registered, and the disambiguator is computed from the socket path by the same algorithm as the Claude Code session list.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Agent 的身份是会话的 inbox socket 路径。Agent 的名字是会话名按 Claude Code 匹配会话名的规则规范化后的结果，是登记的必要条件，没有替代名。消歧标识采用与 Claude Code 会话列表相同的算法。
+An agent's identity is the session's inbox socket path. An agent's name is the session name normalized by Claude Code's name-matching rules; it is a precondition for registration, and there is no substitute name. The disambiguator uses the same algorithm as the Claude Code session list.
 
-## 后果
+## Consequences
 
-清空对话不影响 Agent 的地址与成员关系。同一个会话的多个 MCP 服务进程归于同一个 Agent。用户在 Claude Code 中看到的会话名，就是其他 Agent 看到的名字。系统级 Broker 上，不属于名字归属账户的同名 Agent 的消歧标识取 12 位，可能与 Claude Code 会话列表中为它显示的标识不同（[ADR-name-ownership-by-account](adr-name-ownership-by-account.md)）。
+Clearing the conversation does not affect an agent's address or membership. Several MCP server processes of one session belong to one agent. The session name the user sees in Claude Code is the name other agents see. On a system Broker, the disambiguator of a same-named agent that does not belong to the name-owning account is 12 digits, which may differ from the identifier Claude Code's session list shows for it ([ADR-name-ownership-by-account](adr-name-ownership-by-account.md)).
 
-**接受的代价：**
+**Costs accepted:**
 
-- Claude Code 改变其标识的算法，或启用按会话标识计算标识的方式后，两边的标识不再相同。
-- 名字含 `@` 或 `*` 的会话、没有会话注册表记录的会话不能参与。
-- 改名即改变地址，持有旧地址的一方要重新获取。
-- 系统级 Broker 上跨账户的同名由名字归属规则处理：后登记的账户只能用带 12 位消歧标识的地址被找到，其地址与署名不再与 Claude Code 会话列表中看到的标识相同。
+- When Claude Code changes its identifier algorithm, or enables a way to compute the identifier from the session identifier, the two identifiers no longer match.
+- A session whose name contains `@` or `*`, and a session with no session registry record, cannot take part.
+- A rename changes the address, so a party holding the old address must fetch it again.
+- On a system Broker, a cross-account name collision is handled by the name-ownership rule: an account that registers later can be found only by an address with the 12-digit disambiguator, and its address and signature no longer match the identifier seen in the Claude Code session list.
