@@ -182,12 +182,12 @@ type PathSet struct {
 | `directory.max_topics_per_publisher` | 整数 | `16` | 同一发布者的公开 topic 声明与未知种类记录合计上限（名片与撤回不计） |
 | `send.link_retries` | 整数 | `5` | 链路未建立时的重试次数（`REQ-agent-messaging-017`） |
 | `send.link_backoff` | 时长 | `500ms` | 首次重试前的等待，之后每次翻倍，单次不超过 8 秒 |
-| `send.request_timeout` | 时长 | `20s` | 一次发送的预算，即发送调用的总时限（`REQ-agent-messaging-017`、`REQ-agent-messaging-018`） |
+| `send.request_timeout` | 时长 | `20s` | 一次发送的预算，即发送调用的总时限（`REQ-agent-messaging-017`、`REQ-agent-messaging-018`）；从 Claude Code 会话发起的 `send_message` 还受工具自身 30 秒固定上限的约束，本值高于 30 秒时多出的部分对会话发起的调用不生效（[mcpserver](design-mcpserver.md) 的“工具调用的时限”） |
 | `send.inbox_retries` | 整数 | `2` | inbox 确定未写入时的重试次数（`REQ-agent-messaging-018`） |
 | `send.inbox_backoff` | 时长 | `200ms` | inbox 写入重试之间的等待 |
 | `send.inbox_timeout` | 时长 | `5s` | 单次 inbox 写入的期限 |
 | `send.dedupe_window` | 时长 | `5m` | 去重表条目的保留时间 |
-| `link.dial_timeout` | 时长 | `5s` | 拨号时对每个地址的连接期限 |
+| `link.dial_timeout` | 时长 | `5s` | 拨号时对每个地址的连接期限；从 Claude Code 会话发起的 `connect_broker` 还受工具自身 30 秒固定上限的约束，本值高于该上限时多出的部分对会话发起的调用不生效，终端命令 `peers broker connect` 没有自己的上限，本值全部生效（[mcpserver](design-mcpserver.md) 的“工具调用的时限”） |
 | `link.reconnect_min` | 时长 | `1s` | 重建链路的初始退避间隔 |
 | `link.reconnect_max` | 时长 | `60s` | 重建链路的最大退避间隔 |
 | `link.keepalive_interval` | 时长 | `15s` | 保活探测的间隔；gRPC 客户端的实际下限 10 秒，小于 10 秒按 10 秒探测 |

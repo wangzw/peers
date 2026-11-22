@@ -65,11 +65,11 @@ send:
   link_backoff: 500ms
   # Retries while the link is not up.
   link_retries: 5
-  # Budget for one send call, i.e. the total time limit.
+  # Budget for one send call, i.e. the total time limit. A call made from a Claude Code session is also bounded by the fixed limit of the tool that makes it, 30 seconds for send_message, so any part of this value above that limit does not apply to calls made from a session.
   request_timeout: 20s
 
 link:
-  # Connection time limit for each address during dialing.
+  # Connection time limit for each address during dialing. A call made from a Claude Code session is also bounded by the fixed limit of the tool that makes it, 30 seconds for connect_broker, so any part of this value above that limit does not apply to calls made from a session; the terminal command peers broker connect has no limit of its own and uses this value in full.
   dial_timeout: 5s
   # Keepalive probe interval; the gRPC client probes at least every 10 seconds.
   keepalive_interval: 15s

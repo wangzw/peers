@@ -85,6 +85,25 @@ func TestKeyTableCompleteAndDefaults(t *testing.T) {
 	}
 }
 
+// TestTimeoutDocsNameTheToolLimit keeps the send and dial timeout descriptions
+// saying that a call made from a session is also bounded by the fixed tool
+// limit, so the relationship does not drift from the handler bounds.
+func TestTimeoutDocsNameTheToolLimit(t *testing.T) {
+	cases := map[string]string{
+		"send.request_timeout": "Budget for one send call, i.e. the total time limit. A call made from a Claude Code session is also bounded by the fixed limit of the tool that makes it, 30 seconds for send_message, so any part of this value above that limit does not apply to calls made from a session.",
+		"link.dial_timeout":    "Connection time limit for each address during dialing. A call made from a Claude Code session is also bounded by the fixed limit of the tool that makes it, 30 seconds for connect_broker, so any part of this value above that limit does not apply to calls made from a session; the terminal command peers broker connect has no limit of its own and uses this value in full.",
+	}
+	for name, want := range cases {
+		spec, ok := lookupKey(name)
+		if !ok {
+			t.Fatalf("unknown key %q", name)
+		}
+		if spec.Doc != want {
+			t.Errorf("%s doc = %q, want %q", name, spec.Doc, want)
+		}
+	}
+}
+
 // TestKeyNamesListsTheWholeTable keeps the exported key list in step with the
 // table that the parser uses.
 func TestKeyNamesListsTheWholeTable(t *testing.T) {
