@@ -46,6 +46,16 @@ func largePayloadTimeout(settings *linktest.FakeSettings) time.Duration {
 	return settings.KeepaliveInterval() + settings.KeepaliveTimeout()
 }
 
+// authReadyTimeout is the fallback bound for the wait on the server finishing
+// authentication in TestLargePayloadRoundTrip. It only turns a wait that would
+// never complete into a failure instead of a hang: the success path selects on
+// the authentication event itself and never spends this time, so a larger
+// value costs nothing. It is 30 seconds because the test packages use 30
+// seconds as the uniform fallback for event waits, not because it is derived
+// from a product timer: authentication readiness has no product timer of its
+// own to follow.
+const authReadyTimeout = 30 * time.Second
+
 // transportTestLink bundles a Link with the fakes behind it.
 type transportTestLink struct {
 	*Link
@@ -418,6 +428,9 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 	guard := largePayloadTimeout(server.settings)
 	serverReceived := make(chan []byte, 1)
 	serverFailed := make(chan error, 1)
+	// authenticated is closed once the handler below has marked the connection
+	// authenticated, so the client can wait before it sends the large frame.
+	authenticated := make(chan struct{})
 	addr := startTransportServer(t, server.Link, func(c *conn, tr *trackedConn) {
 		// This handler stands in for serveInbound; mark the connection
 		// authenticated so a 1.5 MiB frame is not charged to the
@@ -425,6 +438,7 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 		if tr != nil {
 			tr.authenticated()
 		}
+		close(authenticated)
 		ctx, cancel := context.WithTimeout(context.Background(), guard)
 		defer cancel()
 		f, err := c.recv(ctx)
@@ -441,6 +455,20 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 	})
 	client := newTransportTestLink(t)
 	c, _ := openTestStream(t, client.Link, addr)
+
+	// The product marks a connection authenticated before it sends or accepts a
+	// Hello (serveInbound in handshake.go), and only then may a frame larger
+	// than the 64 KiB pre-authentication read budget arrive. The reader
+	// goroutine charges bytes to that budget independently of the handler
+	// goroutine above, so wait for the handler's authentication before sending
+	// the large frame. Otherwise the reader can charge its first bytes to the
+	// budget and close the connection. Keep this wait: removing it restores the
+	// race.
+	select {
+	case <-authenticated:
+	case <-time.After(authReadyTimeout):
+		t.Fatal("server did not finish authenticating the stream")
+	}
 
 	// Each phase gets its own deadline so a slow send cannot consume the time
 	// the reply is later given.
