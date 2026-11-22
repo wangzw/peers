@@ -1,54 +1,54 @@
-# 账户与组取自系统的账户数据库
+# Read accounts and groups from the system account database
 
-## 背景
+## Context
 
-系统级 Broker 需要账户与组的信息：解析 `broker.local_socket_group`、派生切换到某个账户的辅助进程，以及为权限检查派生以该账户的有效身份运行的进程。这些信息都来自账户数据库。Linux 上的账户数据库由 NSS 配置决定，`/etc/passwd` 与 `/etc/group` 只是其中一个来源；LDAP、SSSD、extrausers 等来源同样可以回答查询。
+A system Broker needs account and group information: resolving `broker.local_socket_group`, spawning a helper process that switches to an account, and spawning a process running with that account's effective identity for permission checks. This information all comes from the account database. The account database on Linux is determined by the NSS configuration, and `/etc/passwd` and `/etc/group` are only one source of it; sources such as LDAP, SSSD and extrausers can answer queries just as well.
 
-发布构建固定使用 `CGO_ENABLED=0`，二进制因此是静态的，部署不依赖主机的 C 库版本。这一构建下的 `os/user` 只读本地文件，不经过 NSS。经 NSS 提供的账户因此无法解析：系统级 Broker 不能为这些账户派生辅助进程，权限检查一律判为不允许，配置里指定这类来源的组也会被判为不存在。
+Release builds always use `CGO_ENABLED=0`, so the binary is static and deployment does not depend on the host's C library version. Under this build, `os/user` reads local files only and does not go through NSS. Accounts provided through NSS therefore cannot be resolved: the system Broker cannot spawn helper processes for these accounts, permission checks always deny, and a group named in the configuration that comes from such a source is also judged not to exist.
 
-## 考虑过的选项
+## Options Considered
 
-### 在 Linux 构建中打开 cgo
+### Turn on cgo in the Linux build
 
-让 `os/user` 走 glibc 的 `getpwnam` 等接口，由 C 库完成 NSS 查询。
+Let `os/user` use glibc's `getpwnam` and similar interfaces, with the C library performing the NSS query.
 
-**否决**：打开 cgo 后二进制不再是静态的，链接与运行都依赖构建主机与目标主机的 C 库；发布产物与容器镜像的构建方式、跨发行版部署的假设都要跟着改。为一个查询功能放弃静态构建，代价与收益不相称。
+**Rejected**: with cgo on, the binary is no longer static, and both linking and running depend on the C library of the build host and the target host; the way release artifacts and container images are built, and the assumption of cross-distribution deployment, would all have to change. Abandoning a static build for one query feature is a cost out of proportion to the benefit.
 
-### 继续只读 `/etc/passwd` 与 `/etc/group`
+### Keep reading only `/etc/passwd` and `/etc/group`
 
-保持现状，把 NSS 来源中的账户排除在系统级 Broker 的服务范围之外。
+Stay as is and put accounts from NSS sources outside the service scope of the system Broker.
 
-**否决**：这正是需要修正的限制。系统级 Broker 面向一台主机上的全部账户，账户来源由系统管理员配置；按文件来源划出服务边界没有依据。
+**Rejected**: this is exactly the limitation that needs fixing. A system Broker serves every account on a host, and the account source is configured by the system administrator; drawing a service boundary by file source has no basis.
 
-### 要求部署方把账户复制进 `/etc/passwd`
+### Require the deployer to copy accounts into `/etc/passwd`
 
-由部署方维护一份本地副本，Broker 继续读文件。
+Have the deployer maintain a local copy and keep the Broker reading files.
 
-**否决**：同一份账户数据出现两个来源，副本与目录服务之间会漂移；组成员关系的变更也不能在下次调用时生效，与 `REQ-broker-config-027` 的要求冲突。
+**Rejected**: the same account data would have two sources, and the copy would drift from the directory service; changes to group membership would also not take effect on the next call, conflicting with `REQ-broker-config-027`.
 
-### 在 Linux 上调用 getent
+### Call getent on Linux
 
-以绝对路径找到 getent，由它按 NSS 配置查询账户数据库。
+Find getent by absolute path and let it query the account database according to the NSS configuration.
 
-**采纳**。
+**Adopted**.
 
-## 决策
+## Decision
 
-Linux 上，账户与组的查询经 `getent` 完成。查找顺序固定为 `/usr/bin/getent`、`/bin/getent`，不使用 `PATH`；子进程环境只给 `LANG=C`；参数在账户名或 uid 之前加 `--`，不经 shell。单次调用以 5 秒为限。
+On Linux, account and group queries go through `getent`. The lookup order is fixed to `/usr/bin/getent`, then `/bin/getent`, without using `PATH`; the child process environment gives only `LANG=C`; an argument is prefixed with `--` before the account name or uid, and no shell is involved. Each call is limited to 5 seconds.
 
-账户名先做校验，空串、含冒号、换行、NUL 或空白的名字一律拒绝。输出要求恰好一行：passwd 条目恰好 7 个字段，group 条目恰好 4 个字段，返回的名字或 uid 与请求一致，uid 与 gid 按十进制 32 位解析，家目录必须是绝对路径。补充组取自 `getent initgroups`，结果并入主组、去重并排序。
+Account names are validated first; an empty string, or a name containing a colon, newline, NUL or whitespace, is always refused. The output must be exactly one line: a passwd entry has exactly 7 fields and a group entry exactly 4, the returned name or uid matches the request, uid and gid are parsed as decimal 32-bit values, and the home directory must be an absolute path. Supplementary groups come from `getent initgroups`, and the result is merged with the primary group, deduplicated and sorted.
 
-退出码 2 表示账户数据库中不存在该条目，映射为 `ErrNotFound`。getent 不存在、超时或返回其他退出码，以及输出不符合上述校验时，退回 `os/user` 并记一条 Warn。补充组的查询失败时同样退回 `os/user`，但先核对本地条目的 uid 与请求一致；不一致则不采用，并把原来的查询失败按临时错误上报，不映射为 `ErrNotFound`。其他平台直接使用 `os/user`，行为不变。
+Exit code 2 means the entry does not exist in the account database and maps to `ErrNotFound`. When getent is missing, times out or returns another exit code, or when the output fails the validation above, the query falls back to `os/user` and logs one Warn. When the supplementary group query fails, it also falls back to `os/user`, but first checks that the local entry's uid matches the request; if it does not match, the result is not used, and the original query failure is reported as a temporary error rather than mapped to `ErrNotFound`. Other platforms use `os/user` directly, with no change in behavior.
 
-## 后果
+## Consequences
 
-- 每次查询多一次进程派生。权限检查与辅助进程的派生频率远低于消息投递，这项开销不改变调用路径的时限设计。
-- 账户来源跟随系统的 NSS 配置。`nsswitch.conf` 配错时，Broker 看到的就是配置所指向的那一份数据；管理员修改组成员关系后，下一次调用即可生效。
-- 构建仍为 `CGO_ENABLED=0`，发布二进制保持静态，不引入 C 库版本约束。
-- 退回 `os/user` 只能看到本地文件。getent 缺失或失败时，NSS 来源中的账户仍然不可见，日志中的 Warn 是唯一的线索；此时权限检查判为不允许，而不是放行。补充组退回本地来源时核对 uid，同名但不同 uid 的账户不会混入；核对不通过或本地也没有该账户时，原查询失败作为临时错误上报，权限检查以 `internal` 失败，不报成账户不存在。
-- 未找到与查询失败的区分依赖 getent 的退出码约定。getent 的版本若改变这一约定，`ErrNotFound` 与退回的边界会随之变化。
-- 绝对路径、空环境与 `--` 使以 root 运行的 Broker 不会执行 `PATH` 中的同名程序，也不会把账户名当成命令行选项；单行与字段校验使多行或格式异常的应答无法替换真实条目。
+- Each query adds one process spawn. Permission checks and helper process derivation happen far less often than message delivery, so this cost does not change the latency design of the call path.
+- The account source follows the system's NSS configuration. When `nsswitch.conf` is misconfigured, the Broker sees exactly the data that configuration points to; after an administrator changes group membership, the next call takes effect.
+- The build still uses `CGO_ENABLED=0`, so release binaries stay static and introduce no C library version constraint.
+- Falling back to `os/user` sees only local files. When getent is missing or fails, accounts from NSS sources are still invisible, and the Warn in the log is the only clue; permission checks then deny rather than allow. When supplementary groups fall back to the local source, the uid is checked, so an account with the same name but a different uid is not mixed in; when the check fails or the account is also absent locally, the original query failure is reported as a temporary error, and permission checks fail as `internal` rather than reporting the account as absent.
+- Distinguishing not found from a failed query depends on getent's exit code convention. If a getent version changes this convention, the boundary between `ErrNotFound` and the fallback changes with it.
+- The absolute path, the empty environment and `--` keep a Broker running as root from executing a same-named program on `PATH` and from treating an account name as a command-line option; the one-line and field validation keep a multi-line or malformed reply from replacing a real entry.
 
-## 失效条件
+## Invalidation Conditions
 
-若 Linux 上出现可供静态二进制使用的稳定账户数据库接口，或 Go 标准库在不启用 cgo 时也能按 NSS 查询，getent 这一层可以去掉，本记录随之改写。
+If Linux gains a stable account database interface usable by a static binary, or the Go standard library can query NSS without cgo, the getent layer can be removed and this record rewritten accordingly.

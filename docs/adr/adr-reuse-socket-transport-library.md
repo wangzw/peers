@@ -1,38 +1,38 @@
-# 复用 claude-code-socket-transport 写入 inbox socket
+# Reuse claude-code-socket-transport to write the inbox socket
 
-## 背景
+## Context
 
-Claude Code 的文档说明了程序可以向会话的 [inbox socket](../glossary.md) 写入消息，并给出了认证行的格式，但没有给出消息帧的字段、署名包装的格式和会话注册表的结构（[REF-claude-code-cross-session-messaging](../references.md)）。这些格式只能从 Claude Code 的实际行为中得出，并且没有兼容承诺。署名包装尤其容易出错：接收方把解析结果重新序列化后与原文比对，属性的顺序和空白必须完全一致。
+Claude Code's documentation describes how a program can write messages to a session's [inbox socket](../glossary.md) and gives the format of the authentication line, but it does not give the fields of the message frame, the format of the signature wrapper, or the structure of the session registry ([REF-claude-code-cross-session-messaging](../references.md)). These formats can only be derived from Claude Code's actual behavior, and they come with no compatibility promise. The signature wrapper is especially error-prone: the receiver re-serializes the parse result and compares it with the original, so attribute order and whitespace must match exactly.
 
-## 考虑过的选项
+## Options Considered
 
-### 自行实现
+### Implement it in-house
 
-系统只需要“连接、写一行、关闭”，自行编写帧的构造。
+The system only needs "connect, write one line, close", so write the frame construction itself.
 
-**否决**：帧字段、署名包装的精确格式、地址的编码规则、正文中结束标签的转义都要重新摸索并各自验证，这些细节已有现成的实现和测试。
+**Rejected**: frame fields, the exact format of the signature wrapper, the encoding rules for addresses, and the escaping of the closing tag in the body would all have to be rediscovered and verified separately, while ready-made implementations and tests for these details already exist.
 
-### 复用 claude-code-socket-transport
+### Reuse claude-code-socket-transport
 
-采用该 Go 库完成帧的构造、署名包装、地址编码与写入（[REF-claude-code-socket-transport](../references.md)），把源码按固定的提交纳入本仓库，对它的全部调用集中在一个包里。
+Use this Go library to construct the frame, the signature wrapper, address encoding and writing ([REF-claude-code-socket-transport](../references.md)), vendor the source at a fixed commit into this repository, and keep every call to it in one package.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-采用 claude-code-socket-transport 构造并写入 inbox 帧，源码按固定提交纳入本仓库，对它的调用集中在一个包里。会话注册表不经该库读取：系统只依赖其中的少数字段，读到写了一半的记录时要保留上一次的结果，由系统自行读取。
+Use claude-code-socket-transport to construct and write inbox frames, vendor the source at a fixed commit into this repository, and keep calls to it in one package. The session registry is not read through the library: the system depends on only a few of its fields, must keep the previous result when it reads a half-written record, and therefore reads it itself.
 
-## 后果
+## Consequences
 
-系统不自行维护 Claude Code 内部格式的知识。Claude Code 的格式变化时，改动范围限于更新纳入的源码和一个包。
+The system does not maintain knowledge of Claude Code's internal formats itself. When Claude Code's format changes, the scope of change is limited to updating the vendored source and one package.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 该库是个人维护的项目，其协议实现依据的是 Claude Code v2.1.233，落后于在用的版本；上游不再更新时要自行维护纳入的源码。
-- 该库的默认行为与本系统的要求有出入，调用时必须逐项显式设定：它默认读取目标会话的令牌并出示，与 [ADR-inbox-delivery-without-auth-token](adr-inbox-delivery-without-auth-token.md) 相反。
-- 该库的功能多于所需，包括接收投递状态、读取会话注册表和枚举全部会话，用不到的部分也随源码进入仓库。
-- 该库对署名中名字的清洗规则与当前的 Claude Code 不同：它按 200 字节截断，Claude Code 接收方按 64 个码点截断，并在清洗改变了名字时不识别整个署名包装。署名的生成与校验因此由系统自己负责，不依赖库的清洗，系统要保证署名经接收方清洗后不变，并且仍能唯一地指回发送方。
+- The library is a personally maintained project, and its protocol implementation is based on Claude Code v2.1.233, behind the version in use; when upstream stops updating it, the vendored source must be maintained here.
+- The library's default behavior differs from this system's requirements and must be set explicitly item by item when called: by default it reads and presents the target session's token, the opposite of [ADR-inbox-delivery-without-auth-token](adr-inbox-delivery-without-auth-token.md).
+- The library has more functionality than needed, including receiving delivery status, reading the session registry and enumerating all sessions, and the unused parts enter the repository along with the source.
+- The library's rule for cleaning the name in a signature differs from current Claude Code: it truncates at 200 bytes, while the Claude Code receiver truncates at 64 code points and does not recognize the whole signature wrapper when cleaning changes the name. Signature generation and validation are therefore the system's own responsibility, not the library's cleaning logic; the system must ensure the signature is unchanged after the receiver's cleaning and still points back uniquely to the sender.
 
-## 失效条件
+## Invalidation Conditions
 
-Claude Code 公开了消息帧与会话注册表的格式并承诺兼容，或该库与在用的 Claude Code 版本不再兼容且上游无人修复时，本决策不再成立。
+When Claude Code publishes the formats of the message frame and the session registry with a compatibility promise, or when the library is no longer compatible with the Claude Code version in use and no one upstream fixes it, this decision no longer holds.

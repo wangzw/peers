@@ -1,52 +1,52 @@
-# 命令行采用 cobra 并按名词与动词分组
+# Build the command line on cobra and group commands by noun and verb
 
-## 背景
+## Context
 
-命令行必须满足以下约束：
+The command line must meet these constraints:
 
-- 命令名与分组有统一规则，并与 MCP 工具和术语表一致。
-- 帮助、用法、shell 补全与 man 页从同一份命令定义生成，新增命令只登记一次。
-- 不考虑兼容旧命令，旧写法可以立即失效。
+- Command names and grouping follow one rule and match the MCP tools and the glossary.
+- Help, usage, shell completion and man pages are generated from one command definition, and a new command is registered once.
+- Compatibility with old commands is not considered, and old spellings may stop working at once.
 
-手写的命令分发、用法常量与选项解析无法满足这些约束：本机 Broker 的操作分散在顶层的 `broker`、`status`、`online`、`offline`、`audit` 与服务卸载子命令下，对端叫 `peer`，配对密钥叫 `pairing-key`，读取全部配置复用一个选项。帮助、用法与 shell 补全因此各自维护，新增命令时容易遗漏其中一项。
+Hand-written command dispatch, usage constants and option parsing cannot meet these constraints: the local Broker's operations are scattered across the top-level `broker`, `status`, `online`, `offline`, `audit` commands and the service uninstall subcommand, a peer is called `peer`, a pairing key is called `pairing-key`, and reading the whole configuration reuses one option. Help, usage and shell completion are therefore maintained separately, and a new command easily misses one of them.
 
-## 考虑过的选项
+## Options Considered
 
-### 保留手写的命令分发，只重整命令名
+### Keep the hand-written command dispatch and only rename the commands
 
-继续使用现有的分发与用法常量，只调整命令名与帮助文字。
+Continue using the existing dispatch and usage constants, changing only command names and help text.
 
-**否决**：帮助、用法、分组与 shell 补全仍要手写，用户明确要求引入第三方命令行工具；补齐补全功能会让手写的用法常量继续增加。
+**Rejected**: help, usage, grouping and shell completion still have to be hand-written, and the user explicitly required introducing a third-party command-line tool; adding completion support would keep growing the hand-written usage constants.
 
-### 引入第三方框架，同时保留旧命令作为别名
+### Introduce a third-party framework and keep the old commands as aliases
 
-用第三方框架重排命令，旧的 `status`、`peer`、`pairing-key` 等写法保留为别名。
+Reorder the commands with a third-party framework, keeping old spellings such as `status`, `peer` and `pairing-key` as aliases.
 
-**否决**：用户裁定“不考虑兼容”。保留别名会让两套命令名同时出现在帮助与补全中，分组仍然分散，还会把旧名长期留在脚本、测试与文档里。
+**Rejected**: the user ruled out compatibility. Keeping aliases would put two sets of command names in help and completion at once, leave the grouping just as scattered, and keep the old names in scripts, tests and documentation for a long time.
 
-### 引入 cobra，按“名词 + 动词”重排命令，不保留旧命令
+### Introduce cobra, reorder the commands as noun + verb, and keep no old command
 
-cobra 生成命令树、帮助分组、用法与 shell 补全，另有 man 页生成（[REF-cobra](../references.md)）。名词与 MCP 工具和术语表保持一致：对端叫 `broker`，配对密钥叫 `key`，本机 Broker 的全部操作归到 `service`，配置归到 `config`；针对整个安装的动作留在顶层 `update`、`uninstall` 与 `completion`。
+cobra generates the command tree, help groups, usage and shell completion, as well as man pages ([REF-cobra](../references.md)). The nouns match the MCP tools and the glossary: a peer is `broker`, a pairing key is `key`, all operations on the local Broker fall under `service`, and configuration falls under `config`; actions on the whole installation stay at the top level as `update`, `uninstall` and `completion`.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-采用 cobra 构建命令行，帮助、用法、分组、shell 补全与 man 页由它生成。命令树按“名词 + 动词”组织，`mcp` 与 `internal` 隐藏。
+Build the command line with cobra, which generates help, usage, grouping, shell completion and man pages. The command tree is organized as noun + verb, with `mcp` and `internal` hidden.
 
-不保留旧命令，也不提供别名。旧的顶层命令与 `peer`、`pairing-key` 等名词不再存在。
+Keep no old command and offer no aliases. The old top-level commands and nouns such as `peer` and `pairing-key` no longer exist.
 
-## 后果
+## Consequences
 
-命令行由一份命令树定义，帮助、用法、补全与 man 页与代码同源，新增命令只登记一次；命令名与 MCP 工具、术语表一致，用户在同一套名词下找到对端、密钥、配置与本机 Broker 的操作。
+The command line is defined by one command tree, so help, usage, completion and man pages share their source with the code, and a new command is registered once; command names match the MCP tools and the glossary, and the user finds peers, keys, configuration and local Broker operations under one set of nouns.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 破坏性变化：旧的命令写法立即失效，不提供别名，也不提供迁移提示。
-- 引入 cobra 作为外部依赖，发布产物要附带它的许可证；命令行的部分行为取决于 cobra 的默认约定，例如用法错误的处理与补全输出的格式。
-- 帮助按配对、本机 Broker 与安装分组显示，新增命令必须归入其中一组；隐藏命令不进帮助。命令树的结构成为对外约定的一部分。
-- man 页成为生成物，与代码不一致时由生成检查拒绝合入。
+- Breaking change: old command spellings stop working at once, with no alias and no migration hint.
+- cobra becomes an external dependency, and release artifacts must carry its license; some command-line behavior depends on cobra's default conventions, such as how usage errors are handled and the format of completion output.
+- Help is grouped by pairing, local Broker and installation, and a new command must belong to one of these groups; hidden commands do not appear in help. The shape of the command tree becomes part of the external contract.
+- Man pages become generated artifacts; a generation check rejects a merge when they disagree with the code.
 
-## 失效条件
+## Invalidation Conditions
 
-命令行需要同时支持旧命令以兼容已有自动化时，“不保留旧命令”的前提不再成立。cobra 无法表达所需的帮助分组、补全或 man 页生成时，采用它的决定需要重新评估。
+When the command line must also support old commands to stay compatible with existing automation, the premise of keeping no old command no longer holds. When cobra cannot express the required help groups, completion or man page generation, the decision to adopt it needs to be re-evaluated.
