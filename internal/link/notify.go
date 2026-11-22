@@ -83,9 +83,7 @@ func (n *notifier) stop() {
 		rest := n.queue
 		n.queue = nil
 		n.mu.Unlock()
-		for _, ev := range rest {
-			release(ev)
-		}
+		releaseAll(rest)
 		return
 	}
 	n.mu.Unlock()
@@ -104,9 +102,7 @@ func (n *notifier) run() {
 			rest := n.queue
 			n.queue = nil
 			n.mu.Unlock()
-			for _, ev := range rest {
-				release(ev)
-			}
+			releaseAll(rest)
 			return
 		}
 		ev := n.queue[0]
@@ -157,5 +153,12 @@ func (n *notifier) deliver(ev event) {
 func release(ev event) {
 	if ev.up && ev.delivered != nil {
 		close(ev.delivered)
+	}
+}
+
+// releaseAll releases the up-event waiters of every event in events.
+func releaseAll(events []event) {
+	for _, ev := range events {
+		release(ev)
 	}
 }
