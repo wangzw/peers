@@ -161,30 +161,20 @@ func occupiedRuntimeDir(path string, euid int) (runtimeDirOccupant, bool) {
 	if err != nil {
 		return runtimeDirOccupant{}, false
 	}
+	taken := RuntimeDirFallback{TakenPath: path, OwnerUID: -1}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return runtimeDirOccupant{
-			taken:  RuntimeDirFallback{TakenPath: path, OwnerUID: -1},
-			reason: "it is a symbolic link",
-		}, true
+		return runtimeDirOccupant{taken: taken, reason: "it is a symbolic link"}, true
 	}
 	if !info.IsDir() {
-		return runtimeDirOccupant{
-			taken:  RuntimeDirFallback{TakenPath: path, OwnerUID: -1},
-			reason: "it is not a directory",
-		}, true
+		return runtimeDirOccupant{taken: taken, reason: "it is not a directory"}, true
 	}
 	owner, ok := dirOwnerUID(info)
 	if !ok {
-		return runtimeDirOccupant{
-			taken:  RuntimeDirFallback{TakenPath: path, OwnerUID: -1},
-			reason: "it is not owned by this account",
-		}, true
+		return runtimeDirOccupant{taken: taken, reason: "it is not owned by this account"}, true
 	}
 	if owner != euid {
-		return runtimeDirOccupant{
-			taken:  RuntimeDirFallback{TakenPath: path, OwnerUID: owner},
-			reason: fmt.Sprintf("it is owned by uid %d, not %d", owner, euid),
-		}, true
+		taken.OwnerUID = owner
+		return runtimeDirOccupant{taken: taken, reason: fmt.Sprintf("it is owned by uid %d, not %d", owner, euid)}, true
 	}
 	return runtimeDirOccupant{}, false
 }

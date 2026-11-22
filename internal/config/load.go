@@ -37,8 +37,7 @@ func (c *core) load(mode Mode, listenOverride string) error {
 		c.lastFileHash = doc.contentHash
 	}
 
-	override := listenOverride != ""
-	if err := c.adoptValues(&doc, listenOverride, override); err != nil {
+	if err := c.adoptValues(&doc, listenOverride); err != nil {
 		return err
 	}
 	if err := c.validateLoadedValues(); err != nil {
@@ -102,7 +101,8 @@ func (c *core) checkRuntimeForLoad() error {
 // missing keys with their defaults, and resolves the effective listen address
 // and default alias. Under a command-line listen override the file's
 // broker.listen is neither validated nor adopted; the override is used instead.
-func (c *core) adoptValues(doc *configDocument, listenOverride string, override bool) error {
+func (c *core) adoptValues(doc *configDocument, listenOverride string) error {
+	override := listenOverride != ""
 	for _, name := range allKeyNames() {
 		spec, ok := lookupKey(name)
 		if !ok {
