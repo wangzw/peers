@@ -8,6 +8,38 @@ defaultContentLanguageInSubdir: false
 module:
   imports:
     - path: github.com/imfing/hextra
+  # Declaring mounts replaces Hugo's default mounts, so the ones this site
+  # relies on are listed again. Each content mount belongs to the language
+  # whose contentDir it backs, and the last mount publishes only the demo
+  # videos under docs/assets as /demo/demo-*.mp4. The GIFs stay out of the
+  # site build because the README uses them.
+  mounts:
+    - source: content/en
+      target: content
+      sites:
+        matrix:
+          languages: [en]
+    - source: content/zh
+      target: content
+      sites:
+        matrix:
+          languages: [zh]
+    - source: data
+      target: data
+    - source: layouts
+      target: layouts
+    - source: i18n
+      target: i18n
+    - source: archetypes
+      target: archetypes
+    - source: assets
+      target: assets
+    - source: static
+      target: static
+    - source: ../assets
+      target: static/demo
+      files:
+        - '*.mp4'
 
 markup:
   goldmark:

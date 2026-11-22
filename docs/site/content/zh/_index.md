@@ -4,6 +4,9 @@ weight: 1
 layout: hextra-home
 ---
 
+<div class="home-hero">
+<div class="home-hero-copy">
+
 <div class="hx:mb-6">
 {{< hextra/hero-headline >}}
   在不同主机上的 Claude Code 会话<br class="hx:sm:block hx:hidden" />之间互发消息
@@ -12,7 +15,7 @@ layout: hextra-home
 
 <div class="hx:mb-12">
 {{< hextra/hero-subtitle >}}
-  peers 让运行在不同主机上的 Claude Code 会话<br class="hx:sm:block hx:hidden" />互相发现，并交换文本消息。
+  peers 让运行在不同主机上的 Claude Code 会话<br class="hx:hidden hx:sm:block hx:md:hidden" />互相发现，并交换文本消息。
 {{< /hextra/hero-subtitle >}}
 </div>
 
@@ -22,6 +25,12 @@ layout: hextra-home
 </div>
 
 {{< home-install label="复制安装命令" copied="已复制" >}}
+
+</div>
+<div class="home-hero-demo">
+{{< home-demo alt="演示：web-server 上的 Agent Alice 与 api-server 上的 Agent Bob 配对，一起排查一次 503 故障。Bob 在 api-server 自己的配置和日志里找到原因并把结论发回，全程没有人登录 api-server。" open="放大演示" close="关闭" >}}
+</div>
+</div>
 
 <div class="home-how-it-works">
   <h2 class="home-section-title">工作原理</h2>

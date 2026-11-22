@@ -1,0 +1,117 @@
+{{- /*
+The home page's demo video: a thumbnail that autoplays silently and opens the
+full-size video in a modal dialog. When the user prefers reduced motion the
+thumbnail does not autoplay and stays on its first frame. The thumbnail stays
+muted. Every open of the lightbox starts unmuted and plays from the beginning;
+when the browser refuses to play unmuted, it falls back to muted playback so
+the picture never stays still.
+
+@param {string} src Optional video under static/demo. It defaults to the video
+for the page language, so the two translations call the shortcode with the same
+arguments and the site parity check sees the same link set.
+@param {string} alt The alternative text describing what the video shows.
+It describes the enlarge control and is the fallback text inside the videos.
+@param {string} open The accessible name of the enlarge control.
+@param {string} close The label of the close control.
+
+Both videos are 1458 x 918 px; the attributes keep the layout from shifting
+before the video loads.
+*/ -}}
+{{- $src := .Get "src" | default (printf "demo/demo-%s.mp4" .Page.Lang) -}}
+{{- $alt := .Get "alt" -}}
+{{- $open := .Get "open" -}}
+{{- $close := .Get "close" -}}
+{{- $url := $src | relURL -}}
+{{- $descID := printf "home-demo-desc-%d" .Ordinal -}}
+<div class="home-demo">
+  <button type="button" class="home-demo-thumb" aria-label="{{ $open }}" aria-haspopup="dialog" aria-describedby="{{ $descID }}">
+    <video class="home-demo-video" src="{{ $url }}" width="1458" height="918" muted loop playsinline preload="auto">{{ $alt }}</video>
+  </button>
+  <p class="home-demo-description" id="{{ $descID }}">{{ $alt }}</p>
+  <dialog class="home-demo-dialog" aria-label="{{ $open }}">
+    <div class="home-demo-frame">
+      <video class="home-demo-full" src="{{ $url }}" width="1458" height="918" controls muted playsinline preload="metadata" aria-describedby="{{ $descID }}">{{ $alt }}</video>
+      <button type="button" class="home-demo-close">{{ $close }}</button>
+    </div>
+  </dialog>
+</div>
+<script>
+  (function () {
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    document.querySelectorAll('.home-demo').forEach(function (root) {
+      var thumb = root.querySelector('.home-demo-thumb');
+      var video = root.querySelector('.home-demo-video');
+      var dialog = root.querySelector('.home-demo-dialog');
+      var full = root.querySelector('.home-demo-full');
+      var close = root.querySelector('.home-demo-close');
+      if (!thumb || !video || !dialog || !full || !close || root.hasAttribute('data-demo-ready')) {
+        return;
+      }
+      root.setAttribute('data-demo-ready', 'true');
+
+      function playing() {
+        return !video.paused && !video.ended;
+      }
+
+      function playThumb() {
+        video.muted = true;
+        var result = video.play();
+        if (result && typeof result.catch === 'function') {
+          result.catch(function () {});
+        }
+      }
+
+      video.muted = true;
+      if (!reduceMotion) {
+        playThumb();
+      }
+
+      thumb.addEventListener('click', function () {
+        var wasPlaying = playing();
+        video.pause();
+        dialog.setAttribute('data-thumb-was-playing', wasPlaying ? 'true' : 'false');
+        /* Every open starts unmuted and from the beginning, even if the last
+           visit muted it or closed it. */
+        full.muted = false;
+        if (full.readyState > 0) {
+          full.currentTime = 0;
+        }
+        dialog.showModal();
+        var result = full.play();
+        if (result && typeof result.catch === 'function') {
+          result.catch(function (err) {
+            /* Only a real refusal falls back to muted playback. A closed
+               dialog or an AbortError from a play() interrupted by pause()
+               must not start a second, invisible playback. */
+            if (!dialog.open || (err && err.name === 'AbortError')) {
+              return;
+            }
+            full.muted = true;
+            var fallback = full.play();
+            if (fallback && typeof fallback.catch === 'function') {
+              fallback.catch(function () {});
+            }
+          });
+        }
+      });
+
+      close.addEventListener('click', function () {
+        dialog.close();
+      });
+
+      dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) {
+          dialog.close();
+        }
+      });
+
+      dialog.addEventListener('close', function () {
+        full.pause();
+        if (dialog.getAttribute('data-thumb-was-playing') === 'true') {
+          playThumb();
+        }
+        thumb.focus();
+      });
+    });
+  })();
+</script>

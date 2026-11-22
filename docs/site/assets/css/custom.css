@@ -29,6 +29,177 @@
   margin-bottom: 1.5rem;
 }
 
+/* Home page: the hero copy and the demo video side by side. The demo
+   column takes two fifths of the container, so the video never grows past
+   half its width. Below the theme's md breakpoint the columns stack and the
+   video moves under the copy. */
+.home-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  align-items: start;
+  gap: 2rem;
+  width: 100%;
+}
+
+.home-hero-copy,
+.home-hero-demo {
+  min-width: 0;
+}
+
+.home-demo {
+  width: 100%;
+  max-width: 100%;
+}
+
+/* The thumbnail is a native button, so Tab reaches it and Enter or Space
+   opens the dialog without extra key handling. */
+.home-demo-thumb {
+  display: block;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--hx-color-gray-200);
+  border-radius: 0.75rem;
+  background-color: var(--hx-color-gray-50);
+  cursor: zoom-in;
+  transition: border-color 150ms ease-in, box-shadow 150ms ease-in;
+}
+
+.home-demo-thumb:hover {
+  border-color: var(--hx-color-gray-400);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+}
+
+.home-demo-thumb:focus-visible {
+  outline: 2px solid var(--hx-color-primary-600);
+  outline-offset: 2px;
+}
+
+/* The video fills the thumbnail button. Its width and height attributes
+   keep the aspect ratio until the first frame arrives. */
+.home-demo-thumb video {
+  display: block;
+  width: 100%;
+  height: auto;
+  background-color: var(--hx-color-gray-100);
+}
+
+:root.dark .home-demo-thumb {
+  border-color: var(--hx-color-neutral-800);
+  background-color: var(--hx-color-neutral-900);
+}
+
+:root.dark .home-demo-thumb:hover {
+  border-color: var(--hx-color-neutral-600);
+}
+
+:root.dark .home-demo-thumb video {
+  background-color: var(--hx-color-neutral-900);
+}
+
+/* The description is announced through aria-describedby without taking
+   space. */
+.home-demo-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Lightbox for the demo video. The dialog is a modal native dialog, so
+   Esc and the focus return come from the browser. The dimmed backdrop and the
+   solid close control keep the video and the control readable in both
+   themes. */
+.home-demo-dialog {
+  /* The theme resets margins, which removes the auto margin the browser uses
+     to center a dialog; restore it so the backdrop stays clickable around the
+     video. */
+  margin: auto;
+  width: min(96vw, 1600px);
+  max-width: calc(100vw - 2rem);
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  border: 0;
+  border-radius: 0.75rem;
+  background-color: var(--hx-color-gray-50);
+  color: var(--hx-color-gray-900);
+  overflow: hidden;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+}
+
+.home-demo-dialog::backdrop {
+  background-color: rgba(15, 23, 42, 0.75);
+}
+
+:root.dark .home-demo-dialog {
+  background-color: var(--hx-color-neutral-900);
+  color: var(--hx-color-gray-100);
+}
+
+:root.dark .home-demo-dialog::backdrop {
+  background-color: rgba(2, 6, 23, 0.85);
+}
+
+.home-demo-frame {
+  position: relative;
+  display: block;
+  line-height: 0;
+}
+
+.home-demo-frame video {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: calc(100vh - 2rem);
+  object-fit: contain;
+  background-color: #000;
+}
+
+.home-demo-close {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.375rem 0.875rem;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 9999px;
+  background-color: rgba(15, 23, 42, 0.78);
+  color: #fff;
+  font-size: 0.875rem;
+  line-height: 1.5rem;
+  cursor: pointer;
+}
+
+.home-demo-close:hover {
+  background-color: rgba(15, 23, 42, 0.92);
+}
+
+.home-demo-close:focus-visible {
+  outline: 2px solid var(--hx-color-primary-600);
+  outline-offset: 2px;
+}
+
+@media (max-width: 767px) {
+  .home-hero {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+}
+
+@media (min-width: 768px) {
+  /* The two-column hero gives the headline less room than a full-width one.
+     Step it down from the theme's 3rem so the Chinese headline still breaks at
+     the sentence boundary instead of leaving one character on its own. */
+  .home-hero-copy h1 {
+    font-size: 2.5rem;
+    line-height: 1.1;
+  }
+}
+
 /* Secondary button paired with the theme's primary hero button. The padding
    subtracts the 1px border so both buttons have the same height. */
 .home-secondary-button {

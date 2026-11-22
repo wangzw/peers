@@ -4,6 +4,9 @@ weight: 1
 layout: hextra-home
 ---
 
+<div class="home-hero">
+<div class="home-hero-copy">
+
 <div class="hx:mb-6">
 {{< hextra/hero-headline >}}
   Cross-host messaging&nbsp;<br class="hx:sm:block hx:hidden" />for Claude Code sessions
@@ -12,7 +15,7 @@ layout: hextra-home
 
 <div class="hx:mb-12">
 {{< hextra/hero-subtitle >}}
-  <code>peers</code> lets Claude Code sessions running on different hosts&nbsp;<br class="hx:sm:block hx:hidden" />discover each other and exchange text messages.
+  <code>peers</code> lets Claude Code sessions running on different hosts&nbsp;<br class="hx:hidden hx:sm:block hx:md:hidden" />discover each other and exchange text messages.
 {{< /hextra/hero-subtitle >}}
 </div>
 
@@ -22,6 +25,12 @@ layout: hextra-home
 </div>
 
 {{< home-install label="Copy install command" copied="Copied" >}}
+
+</div>
+<div class="home-hero-demo">
+{{< home-demo alt="Demo: Alice, an agent on web-server, pairs with Bob, an agent on api-server. Together they investigate a 503 error. Bob finds the cause in api-server's own configuration and logs and reports back, and nobody logs in to api-server." open="Enlarge the demo" close="Close" >}}
+</div>
+</div>
 
 <div class="home-how-it-works">
   <h2 class="home-section-title">How it works</h2>
