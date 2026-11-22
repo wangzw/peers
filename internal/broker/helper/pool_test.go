@@ -1092,3 +1092,34 @@ func TestPoolUnexpectedHelperExitIsAnError(t *testing.T) {
 		t.Fatalf("unexpected helper exit level = %v, want %v (log: %s)", got, want, logs.String())
 	}
 }
+
+// TestDetachLiveIgnoresARemovedHelper covers a late detach for a helper the
+// account already lost: reclamation or Close removes it first, and the goroutine
+// watching its connection reaches detachLive afterwards, by which time a new
+// helper may already be current. The late detach must report false and leave the
+// new helper and its watches alone.
+func TestDetachLiveIgnoresARemovedHelper(t *testing.T) {
+	st := &helperState{uid: 1001, watches: make(map[uint64]*poolWatch)}
+	stale := &liveHelper{conn: &poolFakeConn{done: make(chan struct{})}}
+	current := &liveHelper{conn: &poolFakeConn{done: make(chan struct{})}}
+	st.live = current
+	entry := &poolWatch{id: 1, configDir: "/cfg", onChange: func(int) {}, conn: current.conn, stop: func() {}}
+	st.watches[entry.id] = entry
+
+	watches, ok := detachLive(st, stale)
+	if ok {
+		t.Fatal("detachLive reported a helper that was already removed as current")
+	}
+	if watches != 0 {
+		t.Fatalf("detachLive watches = %d, want 0", watches)
+	}
+	if st.live != current {
+		t.Fatal("detachLive cleared the current helper while detaching an old one")
+	}
+	entry.mu.Lock()
+	conn, stop := entry.conn, entry.stop
+	entry.mu.Unlock()
+	if conn != current.conn || stop == nil {
+		t.Fatal("detachLive detached a watch of the current helper while detaching an old one")
+	}
+}
