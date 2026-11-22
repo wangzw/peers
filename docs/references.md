@@ -2,7 +2,7 @@
 
 | Id | Name | What it is | Source | Version |
 |---|---|---|---|---|
-| REF-claude-code-cross-session-messaging | Cross-session messaging | Claude Code's official documentation, covering when cross-session messages are delivered, the inbox socket, inbound controls and the size limit | <https://code.claude.com/docs/en/cross-session-messaging> | read 2026-11-18 |
+| REF-claude-code-cross-session-messaging | Cross-session messaging | Claude Code's official documentation, covering when cross-session messages are delivered, the inbox socket, inbound controls, the size limit, and reaching the same user's sessions on other machines over Remote Control | <https://code.claude.com/docs/en/cross-session-messaging> | read 2026-11-22 |
 | REF-claude-code-socket-transport | claude-code-socket-transport | A Go library that implements the frame format, signature wrapper and session registry read needed to write messages to a Claude Code session's inbox socket; its documentation records the inbox socket's protocol details | <https://github.com/PeterSR/claude-code-socket-transport> | commit 480bd83c0bf1, registered in third_party/UPSTREAM |
 | REF-fsnotify | fsnotify | A Go library that provides cross-platform file system event watching; a Broker in a degraded run uses it to watch for configuration file changes once it is ready | <https://github.com/fsnotify/fsnotify> | v1.10.1, local changes in third_party/UPSTREAM |
 | REF-mcp | Model Context Protocol | An open protocol between models and external tools, defining tool declaration, invocation and the read-only marker | <https://modelcontextprotocol.io> | — |

@@ -2,7 +2,7 @@
 
 peers lets Claude Code sessions running on different hosts discover each other and exchange text messages.
 
-Claude Code's built-in cross-session messaging covers sessions on one host. peers runs a Broker on each host, and a session joins the Broker on its own host through MCP tools. The users of two hosts pair their Brokers with a pairing key; after that, sessions on both sides that share a topic can see each other and send messages. An idle session picks up a message and starts working on it without user input, although the session's own inbound controls and permission prompts still apply.
+Claude Code's built-in cross-session messaging reaches sessions on the same host directly, and the same user's sessions on other machines through Anthropic's servers over Remote Control; peers connects hosts whose Brokers are paired, which may belong to different people, and carries messages directly between the two Brokers without a third-party server. peers runs a Broker on each host, and a session joins the Broker on its own host through MCP tools. The users of two hosts pair their Brokers with a pairing key; after that, sessions on both sides that share a topic can see each other and send messages. An idle session picks up a message and starts working on it without user input, although the session's own inbound controls and permission prompts still apply.
 
 Documentation: <https://zhanwei.wang/peers/> (English) and <https://zhanwei.wang/peers/zh/> (Chinese).
 

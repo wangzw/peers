@@ -31,7 +31,7 @@ The system is responsible for registering and naming local agents, topic members
 - Send rate limiting and message loop detection, which the receiving side's inbound controls in Claude Code handle.
 - Interoperability with external A2A agents ([REF-a2a](../references.md)).
 - Native Windows.
-- Replacing or modifying Claude Code's built-in same-host cross-session messaging. Both coexist: a local session that is not registered as an agent can communicate only through Claude Code's built-in capability.
+- Replacing or modifying Claude Code's built-in cross-session messaging. Both coexist: a local session that is not registered as an agent can communicate only through Claude Code's built-in capability.
 - Running several Broker instances under one account.
 - An administrator list or roles set up outside file permissions.
 - Installation without user confirmation. The version check runs automatically; installation is confirmed by the user in the terminal, or by a parameter the user explicitly passes to skip the question.
