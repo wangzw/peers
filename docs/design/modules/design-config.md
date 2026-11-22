@@ -1,103 +1,123 @@
 # config
 
-`config` 保存 [Broker](../../glossary.md) 的配置和审计日志，并给出两种部署形态下各类文件的位置。配置是一组有名字、有类型、有默认值的键，可以由用户编辑文件设定，也可以经本机接口读取和修改；审计日志是只追加的事件记录。其他包从这里读取自己需要的值和路径，并把需要留痕的事件交给它写入。它不引用本项目的任何其他包。
+`config` stores the [Broker](../../glossary.md)'s configuration and audit log, and provides the location of each kind of file under the two deployment forms. Configuration is a set of named, typed keys with defaults, settable by a user editing the file and readable and modifiable through the local interface; the audit log is an append-only record of events. Other packages read the values and paths they need from here and hand it the events that must leave a trace. It references no other package of this project.
 
-## 职责
+## Responsibilities
 
-- 按账户与部署形态给出运行时目录、配置文件、数据目录、审计日志和账户锁的路径（[ADR-broker-deployment-modes](../../adr/adr-broker-deployment-modes.md)）。
-- 启动时加载配置文件，对缺失的键取默认值，键的类型或取值不合法时拒绝启动并指出该键；监听地址与对外地址配置的组合非法时拒绝启动并同时指出这两项，对外地址列表超过 8 项时拒绝启动并指出该项，运行期间的这类修改不提交（`REQ-broker-config-032`、`REQ-broker-config-036`）。
-- 把启动参数给出的监听地址作为本次运行的取值，不把它写入配置文件，配置文件中的 `broker.listen` 在本次运行中不起作用；其间经本机接口修改 `broker.listen` 的调用失败（`REQ-broker-config-025`、`REQ-broker-config-029`）。
-- 在没有配置别名时按系统主机名与运行 Broker 的账户得出默认别名（`REQ-broker-pairing-002`）。
-- 由监听地址、`broker.advertise` 与 `broker.advertise_extra` 得出本次运行的对外地址列表，监听全部地址时取默认路由所在接口的地址，供 [link](design-link.md)、[pairing](design-pairing.md) 与 [directory](design-directory.md) 使用（[ADR-advertised-address](../../adr/adr-advertised-address.md)，`REQ-broker-config-030`、`REQ-broker-config-031`、`REQ-broker-config-033`、`REQ-broker-config-035`）。
-- 每隔 `broker.address_check_interval` 重新枚举本机地址，对外地址列表变化时通知订阅者（`REQ-broker-discovery-016`）。
-- 给出系统主机名，供 `pairing` 在生成配对密钥的结果中展示本机地址（`REQ-broker-pairing-028`）。
-- 保存密钥类配置项，即只经配置文件设置、取值不经本机接口返回的配置项，读取时不返回取值，审计与日志不记录取值，并校验预置静态密钥的长度（[ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)，`REQ-broker-pairing-029` 至 `REQ-broker-pairing-031`）。
-- 提供按键读取，以及经校验的修改：校验通过后持久化、更新内存、写一条审计记录、通知订阅该键的调用方（`REQ-broker-config-001`、`REQ-broker-config-002`、`REQ-broker-config-006`）。
-- 监视配置文件，文件由其他程序改动后逐项采用合法的新值，不合法的项保留原值，并为每个采用了新值的键写一条审计记录（`REQ-broker-config-017`）。
-- 按部署形态生成配置文件模板，列出全部配置项，供服务安装时写入尚不存在的配置文件（`REQ-broker-config-040`）。
-- 追加审计记录，合并同一来源的重复拒绝事件，并提供按时间顺序读取（`REQ-broker-config-007` 至 `REQ-broker-config-009`）。
+- Provide the paths of the runtime directory, configuration file, data directory, audit log and account lock by account and deployment form ([ADR-broker-deployment-modes](../../adr/adr-broker-deployment-modes.md)).
+- Load the configuration file at startup, taking defaults for missing keys, refusing to start and naming the key when a key's type or value is invalid; refuse to start and name both items when the combination of listen-address and advertised-address configuration is invalid, refuse to start and name the item when the advertised address list exceeds 8 items, and do not commit such runtime changes (`REQ-broker-config-032`, `REQ-broker-config-036`).
+- Take the listen address given by a startup parameter as this run's value without writing it into the configuration file, so that `broker.listen` in the file has no effect in this run; during that time a call through the local interface that modifies `broker.listen` fails (`REQ-broker-config-025`, `REQ-broker-config-029`).
+- Derive the default alias from the system hostname and the account running the Broker when no alias is configured (`REQ-broker-pairing-002`).
+- Derive this run's advertised address list from the listen address, `broker.advertise` and `broker.advertise_extra`, taking the address of the interface that holds the default route when listening on every address, for use by [link](design-link.md), [pairing](design-pairing.md) and [directory](design-directory.md) ([ADR-advertised-address](../../adr/adr-advertised-address.md), `REQ-broker-config-030`, `REQ-broker-config-031`, `REQ-broker-config-033`, `REQ-broker-config-035`).
+- Re-enumerate the local addresses every `broker.address_check_interval` and notify subscribers when the advertised address list changes (`REQ-broker-discovery-016`).
+- Provide the system hostname, for `pairing` to show the local address in the result of creating a pairing key (`REQ-broker-pairing-028`).
+- Store secret configuration keys, which are set only through the configuration file and whose values are not returned by the local interface, so that a read returns no value and neither audit nor logs record the value, and validate the length of a pre-provisioned static key ([ADR-static-pairing-key](../../adr/adr-static-pairing-key.md), `REQ-broker-pairing-029` to `REQ-broker-pairing-031`).
+- Provide reading by key and a validated modification: after validation passes, persist, update memory, write an audit record and notify the callers subscribed to that key (`REQ-broker-config-001`, `REQ-broker-config-002`, `REQ-broker-config-006`).
+- Watch the configuration file, adopting each legal new value item by item after another program changes the file, keeping the old value for an illegal item, and writing an audit record for each key that adopted a new value (`REQ-broker-config-017`).
+- Generate the configuration file template by deployment form, listing every configuration key, for the service installation to write a not-yet-existing configuration file (`REQ-broker-config-040`).
+- Append audit records, merge repeated rejection events from the same source, and provide reading in time order (`REQ-broker-config-007` to `REQ-broker-config-009`).
 
-### 非职责
+### Non-Responsibilities
 
-- 不决定工具的读写划分与只读标记，由 [mcpserver](design-mcpserver.md) 负责。
-- 不要求用户确认。修改是否需要确认由 Claude Code 的权限设置决定（[ADR-config-through-tools](../../adr/adr-config-through-tools.md)）。
-- 不判定调用方有没有权限读写配置。配置文件的文件权限就是管理权限的依据（[ADR-management-by-config-file-permission](../../adr/adr-management-by-config-file-permission.md)），判定由 [broker](design-broker.md) 在调用本包之前完成；本包只给出配置文件的路径。
-- 不绑定监听地址，由 [link](design-link.md) 负责；绑定失败时的处理由 `broker` 负责。
-- 不保存对端表与身份密钥，由 [pairing](design-pairing.md) 负责；不保存名录，由 [directory](design-directory.md) 负责。
-- 不读取项目配置文件 `.peers.yaml`，由 `mcpserver` 负责。
-- 不了解某个键的取值在别的包看来是否可行。这类检查由 [broker](design-broker.md) 以校验函数的形式注册进来。
-- 不输出运行日志。运行日志由各包经标准日志接口写出，本包只提供其级别设置。
+- Does not decide a tool's read/write split or read-only marker; [mcpserver](design-mcpserver.md) owns that.
+- Does not require user confirmation. Whether a change needs confirmation is decided by Claude Code's permission settings ([ADR-config-through-tools](../../adr/adr-config-through-tools.md)).
+- Does not decide whether the caller may read or write the configuration. The configuration file's file permission is the basis of management permission ([ADR-management-by-config-file-permission](../../adr/adr-management-by-config-file-permission.md)); [broker](design-broker.md) makes that decision before calling this package, and this package only provides the configuration file's path.
+- Does not bind the listen address; [link](design-link.md) owns that, and `broker` owns handling a bind failure.
+- Does not store the peer table or the identity key; [pairing](design-pairing.md) owns those. Does not store the directory; [directory](design-directory.md) owns that.
+- Does not read the project configuration file `.peers.yaml`; `mcpserver` owns that.
+- Does not know whether a key's value is feasible in another package's view. Such checks are registered by [broker](design-broker.md) as validation functions.
+- Does not emit the run log. The run log is written by each package through the standard logging interface, and this package only provides its level setting.
 
-## 外部接口契约
+## External Interface Contract
 
-供本项目其他各包调用，签名稳定。配置键的名字与含义是对用户的稳定承诺，新增键不改变既有键的含义。
+Called by the project's other packages; the signatures are stable. A configuration key's name and meaning are a stable promise to the user, and adding a key does not change the meaning of an existing key.
 
 ```go
-// Load 按形态确定各路径并加载配置；listenOverride 非空时取代 broker.listen，只对本次运行有效，
-// 其间 Set 拒绝修改 broker.listen，配置文件中这一项的变化不采用。
+// Load determines the paths by mode and loads the configuration; a non-empty
+// listenOverride replaces broker.listen, valid only for this run, during which
+// Set refuses changes to broker.listen and changes to this item in the
+// configuration file are not adopted.
 func Load(mode Mode, listenOverride string) error
-func Paths() PathSet                     // 运行时目录、配置文件、数据目录、审计日志
-func AccountLock() string                // 账户锁的路径，不依赖 Load
+func Paths() PathSet                     // runtime directory, configuration file, data directory, audit log
+func AccountLock() string                // the account lock path; does not depend on Load
 
-// Template 按形态生成配置文件模板：有固定默认值的键写出取值，没有固定默认值的键写成注释。
+// Template generates the configuration file template by mode: a key with a fixed
+// default is written with its value, a key without one is written as a comment.
 func Template(mode Mode) []byte
 
 func Get(key string) (Value, error)
 func All() []Entry
 func Set(actor Actor, key string, v Value) (old Value, err error)
 
-// Secret 返回密钥类配置项的取值，未设置时为空；只供 pairing 在握手查找密钥时调用。
+// Secret returns the value of a secret configuration key, empty when unset; it is
+// called only by pairing when looking up a key during the handshake.
 func Secret(key string) string
 
-// AdvertisedAddr 是对外地址列表中的一项。Kind 是地址种类，决定其他 Broker 怎样经这一项连到本 Broker；
-// Addr 是该种类下的地址写法。本版本产生的 Kind 只有 "direct"，此时 Addr 为 "主机:端口"，IPv6 主机带方括号。
+// AdvertisedAddr is one item of the advertised address list. Kind is the address
+// kind, deciding how another Broker reaches this Broker through this item; Addr is
+// the address spelling for that kind. This version produces only the kind "direct",
+// for which Addr is "host:port", an IPv6 host in brackets.
 type AdvertisedAddr struct {
     Kind string
     Addr string
 }
 
-// Advertised 返回本次运行的对外地址列表，至多 8 项；不监听时为空。列表中的每一项都是直连的地址项。
+// Advertised returns this run's advertised address list, at most 8 items; empty
+// when not listening. Every item in the list is a direct address item.
 func Advertised() []AdvertisedAddr
 
-// ValidDialHost 报告不带方括号的主机是否是本系统可拨号的 IP 地址或域名。
-// broker.advertise、broker.advertise_extra 与对端自报的地址共用这一条规则，
-// 因此配置接受而配对会丢弃的取值不会出现，反之亦然。
+// ValidDialHost reports whether a host without brackets is an IP address or domain
+// name this system can dial. broker.advertise, broker.advertise_extra and a peer's
+// self-reported addresses share this rule, so a value the configuration accepts but
+// pairing would drop cannot appear, and vice versa.
 func ValidDialHost(host string) bool
 
-// Hostname 返回系统主机名，其中不属于别名字符集的字符替换为 "-"。
+// Hostname returns the system hostname, with characters outside the alias
+// character set replaced by "-".
 func Hostname() string
 
-// SubscribeAdvertised 注册对外地址列表的变更通知；各次通知按发生的顺序逐个送达。
+// SubscribeAdvertised registers a change notification for the advertised address
+// list; each notification is delivered in the order it occurred.
 func SubscribeAdvertised(onChange func(old, new []AdvertisedAddr))
 
-// Actor 是一次修改或一个事件的发起者：系统账户，以及经 Agent 发起时的 Agent 地址。
+// Actor is the initiator of a change or an event: the system account, and the
+// agent address when initiated by an agent.
 type Actor struct {
     Account string
     Agent   string
 }
 
-// Validate 注册某个键的附加校验；Set 与文件重载在提交之前调用它，返回错误则不提交。
-// 校验在包内互斥锁持有期间执行，校验函数不得调用本包的其他导出函数；需要别的包判断时
-// 只可调用对方只取自身锁的查询，例如 pairing 的 AliasConflict 与 ResolveAlias。
+// Validate registers an additional check for a key; Set and file reload call it
+// before committing, and an error means no commit. The check runs while the
+// package's mutex is held, and must not call this package's other exported
+// functions; when another package must decide, it may call only that package's
+// queries that take only their own lock, such as pairing's AliasConflict and
+// ResolveAlias.
 func Validate(key string, check func(old, new Value) error)
 
-// Subscribe 注册某个键的变更通知；各次通知按提交的顺序逐个送达。
+// Subscribe registers a change notification for a key; each notification is
+// delivered in commit order.
 func Subscribe(key string, onChange func(old, new Value))
 
 func Audit(e Event)
 func ReadAudit(since time.Time) ([]Event, error)
 
-// Close 停止监视与通知协程并关闭审计日志；可重复调用，未加载时无动作。
+// Close stops the watch and notification goroutines and closes the audit log;
+// callable repeatedly, a no-op when not loaded.
 func Close()
 
-// ParseValue 把 SetConfig 请求中的文字按键的类型解析成 Value，只检查类型，不校验取值与组合。
+// ParseValue parses the text in a SetConfig request into a Value by the key's type,
+// checking only the type, not the value or the combination.
 func ParseValue(key, text string) (Value, error)
 
-// CheckRuntimeDir 创建并检查运行时目录的属主与权限，供 broker 在取账户锁之前调用。
+// CheckRuntimeDir creates and checks the runtime directory's owner and permission,
+// for broker to call before taking the account lock.
 func CheckRuntimeDir() error
 
-// ProbeListen 探测 addr 能否绑定，addr 使用 broker.listen 的写法。它绑定后立即关闭，
-// 不保留 listener；校验通过后端口仍可被真正的监听绑定。空地址表示不监听，总是成功。
+// ProbeListen probes whether addr can be bound, with addr in broker.listen's
+// spelling. It binds and immediately closes, keeping no listener, so after the
+// check passes the port can still be bound by the real listener. An empty address
+// means not listening, which always succeeds.
 func ProbeListen(addr string) error
 
 type ValueKind uint8
@@ -111,11 +131,14 @@ const (
     KindSecret
 )
 
-// KeyKind 是配置键的类型，取值由包内的键表定义；包外不需要构造它。
+// KeyKind is a configuration key's type, with values defined by the package's key
+// table; outside the package it need not be constructed.
 type KeyKind uint8
 
-// Value 是配置值的带类型表示，只有 Kind 对应的字段有意义。Strings 由调用方持有副本。
-// 密钥类配置项的取值只保存在包内，Get 与 All 返回 KindSecret 与 SecretIsSet。
+// Value is a typed representation of a configuration value, where only the field
+// for its Kind is meaningful. Strings is a copy owned by the caller. A secret
+// configuration key's value is kept only inside the package; Get and All return
+// KindSecret and SecretIsSet.
 type Value struct {
     Kind        ValueKind
     String      string
@@ -131,7 +154,8 @@ type Entry struct {
     Value Value
 }
 
-// Event 是一条审计记录。MergeKey 只参与合并判断，不属于审计文件的公开字段。
+// Event is one audit record. MergeKey takes part only in merge decisions and is not
+// a public field of the audit file.
 type Event struct {
     Time     time.Time
     Event    EventKind
@@ -143,7 +167,8 @@ type Event struct {
     New      *Value
     Count    uint64
     Detail   string
-    // MergeKey 只参与合并判断，不属于审计文件的公开字段；connection_rejected 优先于 Peer.Fingerprint。
+    // MergeKey takes part only in merge decisions and is not a public field of the
+    // audit file; connection_rejected takes precedence over Peer.Fingerprint.
     MergeKey string
 }
 
@@ -155,273 +180,273 @@ type PathSet struct {
 }
 ```
 
-加载之前调用导出函数的语义：`Get`、`Set`、`ReadAudit` 返回 `ErrNotLoaded`；`All` 与 `Advertised` 返回 `nil`；`Secret` 返回空字符串；`Paths` 返回零值；`Validate`、`Subscribe`、`SubscribeAdvertised` 是装配错误，直接 panic；`Audit` 以错误级别写一条运行日志并丢弃该事件；`Close` 无动作。`Load` 只能成功一次，第二次返回 `ErrAlreadyLoaded`。`Close` 之后本包回到未加载的状态，各导出函数按上面的语义处理：`Set` 返回 `ErrNotLoaded`，`Secret` 返回空字符串，其余同未加载时。错误以哨兵值导出（`ErrNotLoaded`、`ErrAlreadyLoaded`、`ErrUnknownKey`、`ErrSecretKey`、`ErrListenOverridden`、`ErrInvalidValue`、`ErrInvalidCombination`、`ErrTooManyAddresses`、`ErrFileWrite`），调用方用 `errors.Is` 区分。`Load` 在审计日志不可用时把错误包上可判别的哨兵值，并导出这个哨兵；数据目录不可用时，`broker` 的装配器在打开身份、对端表与名录时把错误包上同一个哨兵值。`broker` 用 `errors.Is` 按这个哨兵决定是否进入仅诊断；`Load` 的其余失败不带这一标记。
+Semantics of calling an exported function before loading: `Get`, `Set` and `ReadAudit` return `ErrNotLoaded`; `All` and `Advertised` return `nil`; `Secret` returns the empty string; `Paths` returns the zero value; `Validate`, `Subscribe` and `SubscribeAdvertised` are assembly errors and panic directly; `Audit` writes a run log at error level and drops the event; `Close` does nothing. `Load` succeeds only once; a second call returns `ErrAlreadyLoaded`. After `Close` the package returns to the unloaded state and the exported functions behave as above: `Set` returns `ErrNotLoaded`, `Secret` returns the empty string, the rest as when unloaded. Errors are exported as sentinel values (`ErrNotLoaded`, `ErrAlreadyLoaded`, `ErrUnknownKey`, `ErrSecretKey`, `ErrListenOverridden`, `ErrInvalidValue`, `ErrInvalidCombination`, `ErrTooManyAddresses`, `ErrFileWrite`), which callers tell apart with `errors.Is`. When the audit log is unavailable, `Load` wraps the error with a distinguishable sentinel and exports that sentinel; when the data directory is unavailable, `broker`'s assembler wraps the error with the same sentinel while opening the identity, peer table and directory. `broker` uses `errors.Is` against this sentinel to decide whether to enter diagnostics only; the rest of `Load`'s failures carry no such marker.
 
-启动时的低端口检查不属于 `Load`。`Load` 成功之后、绑定监听地址之前，由 `broker` 调用本包导出的检查函数；`broker.listen` 的端口小于 1024 而配置文件可被组或其他人写入时返回错误，按监听地址不可用处理。
+The low-port check at startup does not belong to `Load`. After `Load` succeeds and before the listen address is bound, `broker` calls a check function this package exports; it returns an error when `broker.listen`'s port is below 1024 while the configuration file is writable by the group or others, treated as an unavailable listen address.
 
-下表是配置键的完整集合：
+The table below is the complete set of configuration keys:
 
-| 键 | 类型 | 默认值 | 含义 |
+| Key | Type | Default | Meaning |
 |---|---|---|---|
-| `broker.alias` | 字符串 | 见“默认别名” | 本机自报的别名，1 至 24 个字符，取自字母、数字、`.`、`-`、`_`，超过 24 个字符或含其他字符的配置非法（`REQ-broker-pairing-002`、`REQ-broker-pairing-003`、`REQ-broker-pairing-037`） |
-| `broker.public` | 布尔 | `false` | 是否公开（`REQ-broker-discovery-001`） |
-| `broker.listen` | 字符串 | `:17443` | 实际绑定的地址与端口；主机部分为空表示本机的全部地址，明确配置为空表示不监听（[ADR-listen-by-default](../../adr/adr-listen-by-default.md)，`REQ-broker-config-028`） |
-| `broker.advertise` | 字符串 | 空 | 对外地址的配置，合法写法只有空、`主机`、`主机:端口`、`:端口`，见“对外地址”（[ADR-advertised-address](../../adr/adr-advertised-address.md)，`REQ-broker-config-030` 至 `REQ-broker-config-032`） |
-| `broker.advertise_extra` | 字符串列表 | 空 | 追加的对外地址，每项是 `主机` 或 `主机:端口`（`REQ-broker-config-033`） |
-| `broker.address_check_interval` | 时长 | `1m` | 重新枚举本机地址的间隔（`REQ-broker-discovery-016`） |
-| `broker.local_socket_group` | 字符串 | 空 | 系统级 Broker 本机 socket 的属组；空表示沿用运行时目录的属组，用户级忽略；组必须存在于账户数据库（Linux 上经 getent 按 NSS 配置查询，见 [ADR-account-database-source](../../adr/adr-account-database-source.md)），运行期间修改立即生效（`REQ-broker-config-027`） |
-| `broker.local_socket_mode` | 字符串 | `0666` | 系统级 Broker 本机 socket 的文件权限；用户级的固定为 `0600`（`REQ-broker-config-027`） |
-| `broker.offline` | 布尔 | `false` | 是否下线；为真时拒绝对端发来的消息，链路与名录照常，运行期间修改立即生效（`REQ-broker-config-065`、`REQ-agent-messaging-039`） |
-| `pairing.static_key` | 字符串，密钥类 | 空 | 预置静态密钥，长度 16 至 128 个字符，有值即生效（[ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)，`REQ-broker-pairing-008`、`REQ-broker-pairing-009`、`REQ-broker-pairing-029`） |
-| `pairing.max_failures` | 整数 | `5` | 一次性配对密钥作废前允许的验证失败次数 |
-| `pairing.max_attempts_per_minute` | 整数 | `10` | 每个来源每分钟允许的、没有匹配上任何配对密钥的配对请求数；全部来源合计的上限是它的 10 倍（固定倍数）；匹配上预置静态密钥的成功请求不计入 |
-| `topics.auto_join` | 布尔 | `true` | 是否自动加入默认 topic（`REQ-topics-020`） |
-| `directory.reconcile_interval` | 时长 | `10m` | 定期对账的间隔 |
-| `directory.max_records` | 整数 | `1000` | 名录记录总数的上限（`REQ-broker-discovery-011`） |
-| `directory.max_records_per_link` | 整数 | `250` | 经同一条链路接受的记录数上限（`REQ-broker-discovery-015`） |
-| `directory.max_topics_per_publisher` | 整数 | `16` | 同一发布者的公开 topic 声明与未知种类记录合计上限（名片与撤回不计） |
-| `send.link_retries` | 整数 | `5` | 链路未建立时的重试次数（`REQ-agent-messaging-017`） |
-| `send.link_backoff` | 时长 | `500ms` | 首次重试前的等待，之后每次翻倍，单次不超过 8 秒 |
-| `send.request_timeout` | 时长 | `20s` | 一次发送的预算，即发送调用的总时限（`REQ-agent-messaging-017`、`REQ-agent-messaging-018`）；从 Claude Code 会话发起的 `send_message` 还受工具自身 30 秒固定上限的约束，本值高于 30 秒时多出的部分对会话发起的调用不生效（[mcpserver](design-mcpserver.md) 的“工具调用的时限”） |
-| `send.inbox_retries` | 整数 | `2` | inbox 确定未写入时的重试次数（`REQ-agent-messaging-018`） |
-| `send.inbox_backoff` | 时长 | `200ms` | inbox 写入重试之间的等待 |
-| `send.inbox_timeout` | 时长 | `5s` | 单次 inbox 写入的期限 |
-| `send.dedupe_window` | 时长 | `5m` | 去重表条目的保留时间 |
-| `link.dial_timeout` | 时长 | `5s` | 拨号时对每个地址的连接期限；从 Claude Code 会话发起的 `connect_broker` 还受工具自身 30 秒固定上限的约束，本值高于该上限时多出的部分对会话发起的调用不生效，终端命令 `peers broker connect` 没有自己的上限，本值全部生效（[mcpserver](design-mcpserver.md) 的“工具调用的时限”） |
-| `link.reconnect_min` | 时长 | `1s` | 重建链路的初始退避间隔 |
-| `link.reconnect_max` | 时长 | `60s` | 重建链路的最大退避间隔 |
-| `link.keepalive_interval` | 时长 | `15s` | 保活探测的间隔；gRPC 客户端的实际下限 10 秒，小于 10 秒按 10 秒探测 |
-| `link.keepalive_timeout` | 时长 | `10s` | 保活探测的应答期限 |
-| `log.level` | 字符串 | `info` | 运行日志级别 |
-| `update.check` | 布尔 | `true` | 是否周期检查 GitHub 上是否有更新版本（periodically check GitHub for a newer release）；关闭后 Broker 不发出检查请求（`REQ-update-001`） |
-| `update.check_interval` | 时长 | `24h` | 周期检查的间隔，下限为 `1h`，低于下限的取值不合法（`REQ-update-001`） |
+| `broker.alias` | string | see "Default alias" | The alias this Broker reports, 1 to 24 characters drawn from letters, digits, `.`, `-`, `_`; a configuration longer than 24 characters or containing other characters is invalid (`REQ-broker-pairing-002`, `REQ-broker-pairing-003`, `REQ-broker-pairing-037`) |
+| `broker.public` | bool | `false` | Whether public (`REQ-broker-discovery-001`) |
+| `broker.listen` | string | `:17443` | The address and port actually bound; an empty host part means every local address, an explicitly configured empty value means not listening ([ADR-listen-by-default](../../adr/adr-listen-by-default.md), `REQ-broker-config-028`) |
+| `broker.advertise` | string | empty | The advertised address configuration, with only the legal spellings empty, `host`, `host:port`, `:port`; see "Advertised address" ([ADR-advertised-address](../../adr/adr-advertised-address.md), `REQ-broker-config-030` to `REQ-broker-config-032`) |
+| `broker.advertise_extra` | string list | empty | Additional advertised addresses, each `host` or `host:port` (`REQ-broker-config-033`) |
+| `broker.address_check_interval` | duration | `1m` | The interval for re-enumerating the local addresses (`REQ-broker-discovery-016`) |
+| `broker.local_socket_group` | string | empty | The group of the system Broker's local socket; empty inherits the runtime directory's group, ignored for a user Broker; the group must exist in the account database (on Linux queried via getent under the NSS configuration, see [ADR-account-database-source](../../adr/adr-account-database-source.md)), and a runtime change takes effect immediately (`REQ-broker-config-027`) |
+| `broker.local_socket_mode` | string | `0666` | The file permission of the system Broker's local socket; fixed at `0600` for a user Broker (`REQ-broker-config-027`) |
+| `broker.offline` | bool | `false` | Whether offline; when true, refuses messages from peers while links and the directory work as usual, and a runtime change takes effect immediately (`REQ-broker-config-065`, `REQ-agent-messaging-039`) |
+| `pairing.static_key` | string, secret | empty | The pre-provisioned static key, 16 to 128 characters, in effect once it has a value ([ADR-static-pairing-key](../../adr/adr-static-pairing-key.md), `REQ-broker-pairing-008`, `REQ-broker-pairing-009`, `REQ-broker-pairing-029`) |
+| `pairing.max_failures` | integer | `5` | The number of verification failures allowed before a one-time pairing key is invalidated |
+| `pairing.max_attempts_per_minute` | integer | `10` | The pairing requests per source per minute allowed that match no pairing key; the cap across all sources combined is 10 times this (a fixed multiple); successful requests that match the pre-provisioned static key are not counted |
+| `topics.auto_join` | bool | `true` | Whether to join the default topic automatically (`REQ-topics-020`) |
+| `directory.reconcile_interval` | duration | `10m` | The interval of periodic reconciliation |
+| `directory.max_records` | integer | `1000` | The cap on total directory records (`REQ-broker-discovery-011`) |
+| `directory.max_records_per_link` | integer | `250` | The cap on records accepted over one link (`REQ-broker-discovery-015`) |
+| `directory.max_topics_per_publisher` | integer | `16` | The combined cap on one publisher's public topic declarations and unknown-kind records (cards and revocations not counted) |
+| `send.link_retries` | integer | `5` | The retry count when the link is not established (`REQ-agent-messaging-017`) |
+| `send.link_backoff` | duration | `500ms` | The wait before the first retry, doubling after each, at most 8 seconds per wait |
+| `send.request_timeout` | duration | `20s` | The budget of one send, that is the total time limit of the send call (`REQ-agent-messaging-017`, `REQ-agent-messaging-018`); a `send_message` issued from a Claude Code session is also bound by the tool's own fixed 30-second cap, and when this value is above 30 seconds the excess does not apply to calls issued from a session, see "Tool Call Timeouts" in [mcpserver](design-mcpserver.md) |
+| `send.inbox_retries` | integer | `2` | The retry count when the inbox is known not written (`REQ-agent-messaging-018`) |
+| `send.inbox_backoff` | duration | `200ms` | The wait between inbox write retries |
+| `send.inbox_timeout` | duration | `5s` | The deadline of one inbox write |
+| `send.dedupe_window` | duration | `5m` | The retention time of a deduplication table entry |
+| `link.dial_timeout` | duration | `5s` | The connection deadline for each address while dialing; a `connect_broker` issued from a Claude Code session is also bound by the tool's own fixed 30-second cap, and when this value is above that cap the excess does not apply to calls issued from a session, while the terminal command `peers broker connect` has no cap of its own and this value applies in full, see "Tool Call Timeouts" in [mcpserver](design-mcpserver.md) |
+| `link.reconnect_min` | duration | `1s` | The initial backoff interval for re-establishing the link |
+| `link.reconnect_max` | duration | `60s` | The maximum backoff interval for re-establishing the link |
+| `link.keepalive_interval` | duration | `15s` | The keepalive probe interval; the gRPC client's effective floor is 10 seconds, so a value below 10 seconds probes at 10 seconds |
+| `link.keepalive_timeout` | duration | `10s` | The reply deadline of a keepalive probe |
+| `log.level` | string | `info` | The run log level |
+| `update.check` | bool | `true` | Whether to periodically check GitHub for a newer release; once off, the Broker sends no check request (`REQ-update-001`) |
+| `update.check_interval` | duration | `24h` | The interval of the periodic check, with a floor of `1h`, a value below the floor being invalid (`REQ-update-001`) |
 
-`broker.listen` 的默认值只是默认配置中的一个取值，代码不对这个端口做任何特殊处理。一次性配对密钥的有效期、名录记录的有效期和续签间隔由需求固定（`REQ-broker-pairing-006`、`REQ-broker-discovery-007`、`REQ-broker-discovery-008`），不是配置键；消息编码成 inbox 帧后的字节数上限 1 000 000 同样固定（`REQ-agent-messaging-026`），Agent 曾用名的保留时间 10 分钟是常量，两者见 [broker](design-broker.md)。表中其余默认值是实现选定的初值。
+The default value of `broker.listen` is only one value in the default configuration; the code treats this port specially in no way. The validity period of a one-time pairing key, and the validity period and renewal interval of a directory record are fixed by the requirements (`REQ-broker-pairing-006`, `REQ-broker-discovery-007`, `REQ-broker-discovery-008`) and are not configuration keys; the 1 000 000-byte cap on a message encoded into an inbox frame is likewise fixed (`REQ-agent-messaging-026`), and the 10-minute retention of an agent's previous name is a constant, both covered in [broker](design-broker.md). The other defaults in the table are initial values chosen by the implementation.
 
-两组跨键约束由本包自己检查：`link.reconnect_max` 不小于 `link.reconnect_min`，`link.keepalive_timeout` 小于 `link.keepalive_interval`。它们是纯值规则，`Set` 与文件重载都把一组键放在一起按候选值检查：组合合法时组内各键一起采用新值，非法时组内各键都保留原值。逐个键与尚未更新的同组键比较会使结果取决于键名的字典序，例如把合法的 `15s`、`10s` 改成 `5s`、`3s` 时只采用其中一项，得到用户从未写过的组合，因此按组判定。需要其他包判断的约束（监听地址能否绑定、别名是否与对端冲突）仍由 `broker` 注册的校验函数完成。
+Two cross-key constraints are checked by this package itself: `link.reconnect_max` is not less than `link.reconnect_min`, and `link.keepalive_timeout` is less than `link.keepalive_interval`. They are pure value rules; both `Set` and file reload check a group of keys together against candidate values: when the combination is legal the group adopts the new values together, and when illegal every key in the group keeps its old value. Comparing key by key against a not-yet-updated same-group key would make the result depend on key-name lexicographic order; for example, changing legal `15s`, `10s` to `5s`, `3s` would adopt only one of them, yielding a combination the user never wrote, so the decision is made by group. Constraints that another package must decide (whether the listen address can be bound, whether the alias conflicts with a peer) are still done by the validation functions `broker` registers.
 
-### SetConfig 的取值
+### Values in SetConfig
 
-`SetConfig` 请求中的 `value` 是一个字符串，原样携带模型给出的文字，不按键的类型预先编码。Broker 按键的类型把它交给 `ParseValue` 解析：字符串、布尔、整数与时长键的取值是一个 YAML 标量，例如 `10m`、`true`；字符串列表键的取值是一个 YAML 流式序列（flow sequence），例如 `[a, b]`。`ParseValue` 要求输入是单个 YAML 文档、一个根节点，节点的标签与键的类型一致；未知键返回 `ErrUnknownKey`，多余文档、类型不符或列表不是流式序列返回 `ErrInvalidValue`，错误指出键与原因。密钥类配置项按字符串标量解析，随后由 `Set` 以 `ErrSecretKey` 拒绝。解析只检查类型，别名长度、端口范围、8 项上限与组合规则由 `Set` 判断。解析结果转成 `Value` 后交给 `Set`；字符串不能按该键的类型解析时，调用以 `invalid_argument` 失败，不改动任何状态。
+The `value` in a `SetConfig` request is a string carrying the text the model gave verbatim, not pre-encoded by the key's type. The Broker hands it to `ParseValue` to parse by the key's type: a string, bool, integer or duration key's value is a YAML scalar, such as `10m` or `true`; a string-list key's value is a YAML flow sequence, such as `[a, b]`. `ParseValue` requires the input to be a single YAML document with one root node whose tag matches the key's type; an unknown key returns `ErrUnknownKey`, and an extra document, a type mismatch or a list that is not a flow sequence returns `ErrInvalidValue`, with the error naming the key and the reason. A secret configuration key is parsed as a string scalar and then refused by `Set` with `ErrSecretKey`. Parsing checks only the type; alias length, port range, the 8-item cap and the combination rules are decided by `Set`. The parse result is turned into a `Value` and handed to `Set`; when a string cannot be parsed by the key's type, the call fails with `invalid_argument` and changes no state.
 
-`GetConfig` 的应答、`SetConfig` 的应答与审计记录中的取值仍用 `ConfigValue` 表示。`Set` 接收解析后的 `Value`，不接收字符串。
+The `GetConfig` reply, the `SetConfig` reply and the values in audit records are still represented by `ConfigValue`. `Set` receives a parsed `Value`, not a string.
 
-## 依赖
+## Dependencies
 
-`config` 不引用本项目的其他包，符合模块依赖图的方向。
+`config` references no other package of this project, matching the module dependency graph's direction.
 
-## 核心数据结构
+## Core Data Structures
 
-各类文件的位置由部署形态决定：
+The location of each kind of file is decided by the deployment form:
 
-| 内容 | 用户级 | 系统级 |
+| Content | User | System |
 |---|---|---|
-| 配置文件 | `~/.peers/config.yaml` | `/etc/peers/config.yaml` |
-| 数据目录：身份、对端表、名录、名字归属 | `~/.peers/` | `/var/lib/peers/` |
-| 审计日志 | `~/.peers/audit.log` | `/var/log/peers/audit.log` |
+| Configuration file | `~/.peers/config.yaml` | `/etc/peers/config.yaml` |
+| Data directory: identity, peer table, directory, name ownership | `~/.peers/` | `/var/lib/peers/` |
+| Audit log | `~/.peers/audit.log` | `/var/log/peers/audit.log` |
 
-运行时目录内有本机 socket `broker.sock` 和账户锁 `broker.lock`。运行时目录只取决于进程的账户与文件系统的状态，与形态、环境变量、配置内容和监听地址无关：root 的是 Linux 上的 `/run/peers/`、macOS 上的 `/var/run/peers/`，系统级 Broker 与 root 的用户级 Broker 因此争用同一把锁；其他账户的首选位置是 `/tmp/peers-<uid>/`，`<uid>` 是进程的账户。首选位置已存在且是符号链接、不是目录或属主不是本账户时，视为被其他账户占用，改用后备位置：Linux 的是 `/run/user/<uid>/peers/`，macOS 的是 `getconf` 的 `DARWIN_USER_TEMP_DIR` 给出的每用户临时目录下的 `peers/`。后备位置的上级目录必须是本账户拥有、不是符号链接、组与其他人都没有任何权限的目录；首选位置的属主是本账户而权限过宽时不算被占用，仍按权限规则拒绝启动，因为账户自己能改正。两处都不可用时拒绝启动，错误写出首选位置的占用者与原因，退出码沿用运行时目录失败时的取值。这条规则只取决于文件系统的状态与进程的账户，不读环境变量；Broker、MCP 服务、终端命令、`service install` 的预检与 `service remove` 使用同一组规则。占用者可以删除并重建首选位置，因此同一账户的不同进程在不同时刻可能算出不同的位置；为此 Broker 启动时在首选与后备两处都检查账户锁，任一处被本账户运行中的实例持有就拒绝启动，MCP 服务与终端命令在同样的两处探测本机 socket，只采用通过进程凭据检查的那个，两处都通过时采用账户锁被持有的那个，都没有持有时采用位置规则选出的那个（`REQ-broker-config-013`）。root 的运行时目录权限 `0755`；系统级 Broker 的本机 socket 在绑定后按 `broker.local_socket_group` 与 `broker.local_socket_mode` 设置属组与权限，哪些账户能连接由它决定；用户级的 socket 固定为 `0600`；其他账户的运行时目录权限 `0700`。运行时目录的属主必须是本账户，不符时拒绝启动。以上位置规则对发布构建成立。带 `peers_testenv` 构建标签的测试构建例外：`PEERS_TEST_RUNTIME_ROOT` 非空时运行时目录的根取它的值，`PEERS_TEST_HOME` 非空时账户家目录取它的值；两者为空时不生效，发布构建不含这段代码。
+The runtime directory holds the local socket `broker.sock` and the account lock `broker.lock`. The runtime directory depends only on the process's account and the filesystem's state, not on the form, environment variables, configuration content or listen address: root's is `/run/peers/` on Linux and `/var/run/peers/` on macOS, so a system Broker and root's user Broker contend for the same lock; other accounts' preferred location is `/tmp/peers-<uid>/`, where `<uid>` is the process's account. When the preferred location already exists and is a symbolic link, is not a directory, or is owned by another account, it is treated as occupied by another account and the fallback location is used: on Linux `/run/user/<uid>/peers/`, on macOS `peers/` under the per-user temporary directory given by `getconf`'s `DARWIN_USER_TEMP_DIR`. The fallback location's parent directory must be owned by this account, not a symbolic link, and give the group and others no permission at all; when the preferred location is owned by this account but its permission is too broad it does not count as occupied and is still refused under the permission rule, because the account can itself correct it. When neither is available, startup is refused, with the error writing the occupier and reason of the preferred location and the exit code following the value used for a runtime directory failure. This rule depends only on the filesystem's state and the process's account and reads no environment variable; the Broker, the MCP server, the terminal commands, `service install`'s precheck and `service remove` use the same set of rules. An occupier can delete and recreate the preferred location, so different processes of the same account may compute different locations at different times; for this reason the Broker checks the account lock at both the preferred and fallback locations at startup and refuses to start if either is held by a running instance of this account, and the MCP server and terminal commands probe the local socket at the same two locations, adopting only the one that passes the process-credentials check, adopting the one whose account lock is held when both pass, and adopting the one chosen by the location rule when neither is held (`REQ-broker-config-013`). Root's runtime directory permission is `0755`; the system Broker's local socket has its group and permission set by `broker.local_socket_group` and `broker.local_socket_mode` after binding, which decides which accounts may connect; a user Broker's socket is fixed at `0600`; another account's runtime directory permission is `0700`. The runtime directory's owner must be this account, and startup is refused otherwise. The above location rules hold for release builds. The test build with the `peers_testenv` build tag is an exception: when `PEERS_TEST_RUNTIME_ROOT` is non-empty the runtime directory root takes its value, and when `PEERS_TEST_HOME` is non-empty the account home directory takes its value; when both are empty it has no effect, and release builds do not contain this code.
 
-用户级的数据目录权限 `0700`，其中的文件权限 `0600`。系统级的配置文件由 `service install --system` 在不存在时以 root 为属主、管理组为属组、`0660` 为权限创建，内容为 `Template(ModeSystem)`，已存在时安装不改动；管理组默认为 `peers`，可由 `--admin-group` 指定（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-040`、`REQ-broker-config-043`）。用户级的配置文件由 `service install` 在不存在时以本账户为属主、`0600` 为权限创建，内容为 `Template(ModeUser)`，已存在时安装不改动。管理员把它的读或写权限授予某个组，即把读取配置或管理操作委托给该组的账户。Broker 的 `Set` 在配置文件不存在而新建时，系统级也用 `0600` 的文件权限：系统级 Broker 不知道管理组，不能照安装的属组与 `0660` 加组。
+A user Broker's data directory permission is `0700`, and the files in it `0600`. The system configuration file is created by `service install --system` when absent, owned by root, grouped to the management group and permissioned `0660`, with content `Template(ModeSystem)`, and an existing file is left unchanged by installation; the management group defaults to `peers` and may be set with `--admin-group` ([ADR-admin-group](../../adr/adr-admin-group.md), `REQ-broker-config-040`, `REQ-broker-config-043`). The user configuration file is created by `service install` when absent, owned by this account and permissioned `0600`, with content `Template(ModeUser)`, and an existing file is left unchanged by installation. An administrator granting a group read or write permission on it delegates reading the configuration or management operations to that group's accounts. When the configuration file is absent and `Set` creates it, the system form also uses `0600` file permission: a system Broker does not know the management group and cannot copy the installation's group and `0660` to add the group.
 
-配置文件的结构与键名一一对应，例如 `broker.alias` 对应顶层 `broker` 下的 `alias`。文件中没有出现的键取默认值，文件不存在等同于空文件。`Set` 只改动文件中它所修改的那个键，文件里的其他内容原样保留；文件不存在时，以运行 Broker 的账户创建它，文件权限 `0600`，所在目录不存在时一并创建，用户级目录 `0700`，系统级目录 `0755`。
+The configuration file's structure corresponds one-to-one with key names, for example `broker.alias` corresponds to `alias` under the top-level `broker`. A key absent from the file takes its default, and a missing file is equivalent to an empty file. `Set` changes only the one key it modifies, keeping the rest of the file unchanged; when the file is absent it is created under the account running the Broker with file permission `0600`, creating the containing directory when absent too, the user directory `0700` and the system directory `0755`.
 
-默认别名：没有配置 `broker.alias` 时，系统级 Broker 取所在主机系统主机名的第一段（第一个 `.` 之前的部分），用户级 Broker 取主机名的第一段、`.` 与所属账户名依次组成的字符串。主机名取自 `os.Hostname()`，保留原有大小写；账户名取运行 Broker 的账户，经账户数据库查出，与审计 `account` 字段的来源相同；账户名查不到或为空时，账户名部分改用 `os.Geteuid()` 的十进制数字 uid，例如 `hostA.1000`，同一主机上唯一且每次结果相同，同时以 Warn 级别写一条运行日志，说明账户名查不到、改用 uid。别名与监听地址、监听端口和对外地址都无关。主机名和账户名中不属于别名字符集的字符替换为 `-`。主机名取不到或为空时，主机名部分取 `broker`。总长不超过 24 个字符（`REQ-broker-pairing-037`）：超长时先截短主机名部分，至少保留 1 个字符；仍然超长时再截短账户名部分，账户名部分改用 uid 时即截短 uid。截短后去掉末尾的 `.` 与 `-`，结果为空时取 `broker`。配置了 `broker.alias` 时取配置值，本节规则不适用。
+Default alias: when `broker.alias` is not configured, the system Broker takes the first segment of the host's system hostname (the part before the first `.`), and the user Broker takes the string formed in order by the hostname's first segment, `.` and the owning account name. The hostname comes from `os.Hostname()` preserving its case; the account name is the account running the Broker, looked up through the account database, the same source as the audit `account` field; when the account name cannot be found or is empty, the account-name part uses `os.Geteuid()`'s decimal uid, for example `hostA.1000`, unique on the host and the same every time, and at the same time writes a run log at Warn level saying the account name was not found and the uid is used instead. The alias is independent of the listen address, listen port and advertised address. Characters in the hostname and account name outside the alias character set are replaced by `-`. When the hostname cannot be obtained or is empty, the hostname part is `broker`. The total length does not exceed 24 characters (`REQ-broker-pairing-037`): when too long, first shorten the hostname part, keeping at least 1 character; if still too long, shorten the account-name part, and when the account-name part uses the uid, shorten the uid. After shortening, drop the trailing `.` and `-`, and when the result is empty use `broker`. When `broker.alias` is configured, its value is used and this section's rule does not apply.
 
-监听地址：`broker.listen` 的主机部分为空时，在本机的全部地址上监听，启用了 IPv6 时包括 IPv6 地址；写出了主机部分的，按字面绑定该地址，其中 `0.0.0.0` 与 `::` 在计算对外地址时按全部地址对待。端口不得为 0。
+Listen address: when `broker.listen`'s host part is empty, listen on every local address, including IPv6 addresses when IPv6 is enabled; when a host part is written, bind that address literally, where `0.0.0.0` and `::` are treated as every address when computing the advertised addresses. The port must not be 0.
 
-系统级 Broker 的 `broker.listen` 端口小于 1024 时，只有在配置文件只有 root 可写时才生效：属组与其他人都没有写权限，访问控制列表里也没有额外的写授权。经本机接口把 `broker.listen` 设为低端口而调用方不是 root 的，由 `broker` 返回 `permission_denied`，说明低端口需要 root 修改，并且配置文件只能由 root 写。配置文件可被组或其他人写入时，热加载不采用新的低端口，保留旧值，运行日志以 Warn 级记录并追加一条 `config_rejected` 审计记录。启动时这条规则不改变 `Load` 的结果，而在绑定监听地址前由 `broker` 检查：前台运行以退出码 4 结束，带 `--allow-degraded` 的服务进入仅本机降级。拒绝时的提示分两种。`SetConfig` 的拒绝说明低端口需要 root 与只有 root 可写的配置文件，配置文件现在可被其他账户写入，修复办法是 `chmod g-w <配置文件>`（并去掉授予写权限的访问控制列表），或改用 1024 及以上的端口。启动与热加载共用一个提示：写出文件中 `broker.listen` 的当前取值，说明这个值可能由能写该文件的其他账户写入，要先核对该取值是否是想要的，再收紧权限；修复办法同样是 `chmod g-w` 或改用 1024 及以上的端口。用户级 Broker 不受这条规则影响（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`、`REQ-broker-config-058`）。
+When the system Broker's `broker.listen` port is below 1024, it takes effect only when the configuration file is writable by root alone: the group and others have no write permission and the access control list grants no additional write. When a call through the local interface sets `broker.listen` to a low port and the caller is not root, `broker` returns `permission_denied`, saying a low port requires root to modify and the configuration file must be writable only by root. When the configuration file is writable by the group or others, hot reload does not adopt a new low port and keeps the old value, recording in the run log at Warn level and appending a `config_rejected` audit record. At startup this rule does not change `Load`'s result but is checked by `broker` before binding the listen address: a foreground run exits with code 4, and a service with `--allow-degraded` enters local-only degraded run. The rejection message has two forms. `SetConfig`'s rejection says a low port requires root and a configuration file writable only by root, the configuration file is now writable by other accounts, and the fix is `chmod g-w <configuration file>` (and removing an access control list entry that grants write), or using a port of 1024 or above. Startup and hot reload share one message: it writes the current value of `broker.listen` in the file, says this value may have been written by another account able to write the file, that the value should be checked for what is wanted before tightening permission, and gives the same fix of `chmod g-w` or using a port of 1024 or above. A user Broker is not affected by this rule ([ADR-admin-group](../../adr/adr-admin-group.md), `REQ-broker-config-043`, `REQ-broker-config-058`).
 
-对外地址：本次运行的对外地址列表由生效的监听地址与 `broker.advertise` 按下表得出，`broker.advertise_extra` 的各项追加在其后（[ADR-advertised-address](../../adr/adr-advertised-address.md)，`REQ-broker-config-030`、`REQ-broker-config-031`、`REQ-broker-config-033`）。
+Advertised address: this run's advertised address list is derived from the effective listen address and `broker.advertise` by the table below, with each `broker.advertise_extra` item appended after them ([ADR-advertised-address](../../adr/adr-advertised-address.md), `REQ-broker-config-030`, `REQ-broker-config-031`, `REQ-broker-config-033`).
 
-| 监听地址 | `broker.advertise` | 列表中由此得出的部分 |
+| Listen address | `broker.advertise` | The part of the list derived from this |
 |---|---|---|
-| 不为空 | `主机:端口` | 仅此一项 |
-| 不为空 | `主机` | 该主机配上监听端口 |
-| 特定地址 | 空 | 监听地址配上监听端口（`REQ-broker-config-035`） |
-| 全部地址 | 空 | 默认路由所在接口的地址，每个地址都配上监听端口 |
-| 全部地址 | `:端口` | 默认路由所在接口的地址，每个地址都配上该端口 |
-| 空，不监听 | 空 | 空 |
+| Not empty | `host:port` | Only this item |
+| Not empty | `host` | That host paired with the listen port |
+| A specific address | empty | The listen address paired with the listen port (`REQ-broker-config-035`) |
+| Every address | empty | The address of the interface that holds the default route, each paired with the listen port |
+| Every address | `:port` | The address of the interface that holds the default route, each paired with that port |
+| Empty, not listening | empty | Empty |
 
-表外的组合非法，例如监听特定地址而 `broker.advertise` 只有端口，或不监听而 `broker.advertise` 非空；不监听时 `broker.advertise_extra` 也必须为空（`REQ-broker-config-032`）。组合按本次运行生效的监听地址判定，监听地址来自启动参数时以它为准。`broker.advertise_extra` 中不带端口的项取对外地址所用的端口：`broker.advertise` 写出了端口时取它，否则取监听端口。主机是 IP 地址或域名，IPv6 地址写成带方括号的形式。域名以 `.` 分隔成标签，每个标签是 1 至 63 个 ASCII 字母、数字、`-` 或 `_`，不以 `-` 开头或结尾，整个域名至多 253 字节；完全限定名可以带一个末尾的 `.`，校验时去掉这个点，末尾带两个点则剩下一个空标签，按不合法拒绝。不满足这条规则的主机在加载配置时就被拒绝，不会留到使用时才失败。列表中重复的项只保留首次出现的。
+A combination outside the table is invalid, for example listening on a specific address while `broker.advertise` gives only a port, or not listening while `broker.advertise` is non-empty; when not listening, `broker.advertise_extra` must also be empty (`REQ-broker-config-032`). The combination is judged by this run's effective listen address, and when the listen address comes from a startup parameter it is authoritative. An item of `broker.advertise_extra` without a port takes the port used by the advertised addresses: when `broker.advertise` writes a port it takes that, otherwise the listen port. A host is an IP address or domain name, an IPv6 address written in brackets. A domain name is split by `.` into labels, each 1 to 63 ASCII letters, digits, `-` or `_`, not starting or ending with `-`, the whole name at most 253 bytes; a fully qualified name may carry one trailing `.`, which is dropped during validation, and two trailing dots leave an empty label, rejected as invalid. A host that does not satisfy this rule is rejected when loading the configuration and does not wait to fail at use. Duplicate items in the list keep only their first occurrence.
 
-对外地址列表中的每一项有一个种类，种类决定其他 Broker 怎样经这一项连到本 Broker。Go 接口以 `AdvertisedAddr` 表示一项，`Kind` 是种类，`Addr` 是该种类下的地址写法。本版本产生的种类只有直连，取值为 `direct`，其地址写作 `主机:端口`，表示可以直接向该地址建立连接，IPv6 主机带方括号；本包得出的列表只含直连的项。配置文本没有表示种类的语法：`broker.advertise` 与 `broker.advertise_extra` 的合法写法只有上表列出的形式，其他写法一律按写法不合法处理，因此本版本的配置文本没有可表达的未知种类。线路上种类的具体表示法属于实现。其他 Broker 告知的列表与名片所载的列表中出现不认识的种类时怎样处理，见 [link](design-link.md)、[pairing](design-pairing.md) 与 [directory](design-directory.md)。
+Each item of the advertised address list has a kind, deciding how another Broker reaches this Broker through this item. The Go interface represents an item as `AdvertisedAddr`, `Kind` being the kind and `Addr` the address spelling under that kind. This version produces only the direct kind, valued `direct`, whose address is written `host:port` and means a connection can be established directly to that address, an IPv6 host in brackets; the list this package derives contains only direct items. The configuration text has no syntax for expressing a kind: the legal spellings of `broker.advertise` and `broker.advertise_extra` are only the forms listed in the table above, any other spelling being invalid, so this version's configuration text has no expressible unknown kind. The wire representation of a kind belongs to the implementation. How to handle an unknown kind in a list another Broker tells or a card carries is covered in [link](design-link.md), [pairing](design-pairing.md) and [directory](design-directory.md).
 
-默认路由所在接口的地址：度量值最小的默认 IPv4 路由所在接口上的 IPv4 地址，不含 `169.254.0.0/16` 中的链路本地地址；存在默认 IPv6 路由时，另加度量值最小的那条所在接口上的全局单播 IPv6 地址，不含链路本地地址与临时地址。默认 IPv4 路由按目的地址与掩码都为零且路由处于启用状态判定，不要求带网关标志，因此只指定设备的默认路由（例如 `default dev wg0`）也算。没有默认路由时这部分为空。主机接入的其他网络上的地址不列入。启动时枚举默认路由失败不拒绝启动：这部分地址取空，运行日志以错误级别记录，周期枚举在后续轮次补上。
+The address of the interface that holds the default route: the IPv4 address on the interface that holds the default IPv4 route with the smallest metric, excluding link-local addresses in `169.254.0.0/16`; when a default IPv6 route exists, additionally the global unicast IPv6 address on the interface of the route with the smallest metric, excluding link-local and temporary addresses. A default IPv4 route is judged by both destination and mask being zero and the route being enabled, not requiring the gateway flag, so a route that only names a device (for example `default dev wg0`) also counts. When there is no default route this part is empty. Addresses on other networks the host is attached to are not included. Failing to enumerate the default routes at startup does not refuse startup: this part of the addresses is empty, a run log at error level records it, and the periodic enumeration fills it in on a later round.
 
-列表至多 8 项。`broker.advertise` 含主机时的一项加上 `broker.advertise_extra` 的项数超过 8 的配置非法（`REQ-broker-config-036`）；默认路由所在接口的地址使列表超过 8 项时，舍去这部分中排在后面的地址，`broker.advertise_extra` 的各项全部保留。
+The list has at most 8 items. A configuration where the one item containing a host in `broker.advertise` plus the number of `broker.advertise_extra` items exceeds 8 is invalid (`REQ-broker-config-036`); when the addresses of the interface that holds the default route push the list past 8 items, the later addresses in that part are dropped, and every `broker.advertise_extra` item is kept.
 
-本包每隔 `broker.address_check_interval` 重新枚举本机地址，并在 `broker.listen`、`broker.advertise`、`broker.advertise_extra` 变化后重新计算列表；列表与此前不同时通知 `SubscribeAdvertised` 的订阅者（`REQ-broker-discovery-016`）。对端在连接上看到的本方地址不参与计算。
+This package re-enumerates the local addresses every `broker.address_check_interval`, recomputes the list after `broker.listen`, `broker.advertise` or `broker.advertise_extra` change, and notifies `SubscribeAdvertised`'s subscribers when the list differs from before (`REQ-broker-discovery-016`). The local address a peer sees on the connection does not take part in the computation.
 
-名片中的列表与生成配对密钥时的展示分别见 [directory](design-directory.md) 与 [pairing](design-pairing.md)。
+The list in a card and the display when creating a pairing key are covered in [directory](design-directory.md) and [pairing](design-pairing.md) respectively.
 
-密钥类配置项：`pairing.static_key` 属于这一类，这一类配置项适用下列规则（[ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)）：
+Secret configuration keys: `pairing.static_key` is one, and this class of key follows the rules below ([ADR-static-pairing-key](../../adr/adr-static-pairing-key.md)):
 
-- 只能通过编辑配置文件设置。`Set` 对它的修改一律以 `invalid_argument` 拒绝，说明该项只能在配置文件中设置（`REQ-broker-pairing-031`）。
-- `Get` 与 `All` 只给出它是否已设置，不返回取值；取值只经 `Secret` 交给 `pairing`（`REQ-broker-pairing-030`）。
-- 配置文件被修改后的重载对它照常生效，设置、更换、删除都不需要重启（`REQ-broker-config-017`、`REQ-broker-pairing-032`、`REQ-broker-pairing-033`）。它的 `config_file_changed` 审计记录只记这一项发生了变化，不带 `old` 与 `new`；运行日志、审计日志和错误信息都不出现它的取值（`REQ-broker-config-008`、`REQ-broker-pairing-030`）。
-- 预置静态密钥的长度必须在 16 至 128 个字符之间：启动时不合法即拒绝启动并指出该键，重载时不合法即这一项保留原值（`REQ-broker-pairing-029`）。取值原样保存，不做大小写或格式的规范化。
-- 取值必须写成 YAML 字符串，写成数字等其他类型的视为不合法；含 ` #` 等会被 YAML 另作解释的字符时要加引号。
+- It can be set only by editing the configuration file. `Set` refuses every modification of it with `invalid_argument`, saying the item can be set only in the configuration file (`REQ-broker-pairing-031`).
+- `Get` and `All` give only whether it is set and return no value; the value reaches `pairing` only through `Secret` (`REQ-broker-pairing-030`).
+- Reload after the configuration file is changed applies to it as usual; setting, replacing or deleting need no restart (`REQ-broker-config-017`, `REQ-broker-pairing-032`, `REQ-broker-pairing-033`). Its `config_file_changed` audit record notes only that this item changed, carrying no `old` or `new`; no run log, audit log or error message shows its value (`REQ-broker-config-008`, `REQ-broker-pairing-030`).
+- The pre-provisioned static key's length must be between 16 and 128 characters: an invalid value at startup refuses startup and names the key, and an invalid value at reload keeps this item's old value (`REQ-broker-pairing-029`). The value is stored as given, with no case or format normalization.
+- The value must be written as a YAML string, a value written as a number or another type being invalid; when it contains characters that YAML would otherwise interpret, such as ` #`, it must be quoted.
 
-审计日志每行一个 JSON 对象：
+The audit log has one JSON object per line:
 
-| 字段 | 含义 |
+| Field | Meaning |
 |---|---|
-| `time` | 事件时间，RFC 3339 格式 |
-| `event` | 事件类型，取值见下表 |
-| `actor` | 发起的 Agent 地址；不是经 Agent 发起，或由对端、文件改动、系统触发时为空 |
-| `account` | 发起的系统账户；由对端、文件改动或系统触发时为空（`REQ-broker-config-007`） |
-| `peer` | 相关 Broker 的指纹与别名；与 Broker 无关时为空 |
-| `key`、`old`、`new` | 配置变更的键与前后的值；密钥类配置项只有 `key` |
-| `count` | 合并的事件次数；没有合并时不出现 |
-| `detail` | 失败原因等补充信息 |
+| `time` | The event time, in RFC 3339 format |
+| `event` | The event type, whose values are in the table below |
+| `actor` | The initiating agent address; empty when not initiated by an agent, or when triggered by a peer, a file change or the system |
+| `account` | The initiating system account; empty when triggered by a peer, a file change or the system (`REQ-broker-config-007`) |
+| `peer` | The related Broker's fingerprint and alias; empty when unrelated to a Broker |
+| `key`, `old`, `new` | The key of a configuration change and its values before and after; a secret configuration key has only `key` |
+| `count` | The number of merged events; absent when not merged |
+| `detail` | Supplementary information such as a failure reason |
 
-事件类型是封闭集合：
+The event types are a closed set:
 
-| 事件 | 触发 |
+| Event | Trigger |
 |---|---|
-| `config_set` | 经本机接口完成的一次配置修改 |
-| `config_file_changed` | 配置文件由其他程序改动后，某个键采用了新值 |
-| `pairing_key_created` | 生成一次性配对密钥 |
-| `pairing_succeeded` | 配对成功，发起方与接受方各记一条 |
-| `pairing_failed` | 配对失败，记录原因 |
-| `link_up` | 链路建立 |
-| `link_down` | 链路断开 |
-| `unpaired` | 解除配对 |
-| `connection_rejected` | 拒绝了一个未知指纹的连接 |
-| `rejected_by_peer` | 本方的连接遭对方以“不是对端”拒绝 |
-| `local_alias_assigned` | 系统为某个对端生成了本地别名 |
-| `config_rejected` | 配置文件的重载拒绝了一个会让管理组取得超出编辑文件能力的值 |
-| `update_applied` | Broker 完成了自我更新，记录调用方账户与新旧版本 |
-| `update_failed` | Broker 的自我更新失败，记录原因；第二段失败时 Detail 以 `second phase:` 开头 |
+| `config_set` | A configuration change completed through the local interface |
+| `config_file_changed` | A key adopted a new value after the configuration file was changed by another program |
+| `pairing_key_created` | A one-time pairing key was created |
+| `pairing_succeeded` | Pairing succeeded, with one record each for the initiator and the acceptor |
+| `pairing_failed` | Pairing failed, recording the reason |
+| `link_up` | The link was established |
+| `link_down` | The link went down |
+| `unpaired` | The pairing was removed |
+| `connection_rejected` | A connection from an unknown fingerprint was rejected |
+| `rejected_by_peer` | This side's connection was rejected by the peer as "not a peer" |
+| `local_alias_assigned` | The system generated a local alias for a peer |
+| `config_rejected` | A configuration file reload rejected a value that would give the management group more than the ability to edit the file |
+| `update_applied` | The Broker completed a self-update, recording the caller's account and the old and new versions |
+| `update_failed` | The Broker's self-update failed, recording the reason; on the second phase failing, Detail begins with `second phase:` |
 
-直接编辑配置文件触发的 `config_file_changed` 与 `config_rejected` 没有账户归属，`account` 与 `actor` 为空；经本机接口的修改记录调用方账户。审计日志不记录配对密钥的值、消息正文和消息的收发（`REQ-broker-config-008`）。密钥类配置项的变化只记键名，见“密钥类配置项”。
+A `config_file_changed` or `config_rejected` triggered by directly editing the configuration file has no account attribution, with `account` and `actor` empty; a change through the local interface records the caller's account. The audit log does not record a pairing key's value, message bodies or the sending and receiving of messages (`REQ-broker-config-008`). A secret configuration key's change records only the key name, see "Secret configuration keys".
 
-## 核心算法与流程
+## Core Algorithms and Flows
 
-### 生成配置文件模板
+### Generating the Configuration File Template
 
-`Template(mode Mode) []byte` 按部署形态生成一份列出全部配置项的配置文件模板，供服务安装时写入尚不存在的配置文件（`REQ-broker-config-040`）。
+`Template(mode Mode) []byte` generates by deployment form a configuration file template listing every configuration key, for the service installation to write a not-yet-existing configuration file (`REQ-broker-config-040`).
 
-模板由包内的键表生成，键表是它唯一的来源，不存在手写的模板常量。键表中的每个键带一行英文说明，意思与该键在配置键表中“含义”一栏一致。
+The template is generated from the package's key table, which is its only source; no hand-written template constant exists. Each key in the key table carries one English line of description matching the key's "Meaning" column in the configuration key table.
 
-段按固定顺序排列：`broker`、`pairing`、`topics`、`directory`、`send`、`link`、`log`，段内按键名排序。文件开头是说明注释：系统级沿用现有的一段关于文件权限的说明，用户级另写一段，说明该文件只供本账户使用。
+Sections are ordered fixed: `broker`, `pairing`, `topics`, `directory`, `send`, `link`, `log`, with keys sorted by name within a section. The file begins with an explanatory comment: the system form reuses the existing paragraph about file permission, and the user form writes a separate paragraph saying the file is for this account alone.
 
-有固定默认值的键写成两行：上一行是 `# <说明>`，下一行是 `<leaf>: <默认值>`。取值经 YAML 编码器写出，或按同等规则加引号，使 `Load(Template(mode))` 得到的每个有效值都等于该键的默认值，例如 `broker.listen` 的 `:17443` 要加引号。默认值为空的 `broker.advertise`、`broker.advertise_extra`、`broker.local_socket_group`、`pairing.static_key` 与默认值在运行时计算的 `broker.alias` 写成注释，形式是 `# <leaf>: <写法示例>`，下一行说明“没有固定默认值”或“默认值在运行时计算”。写法示例必须能通过该键的校验。模板不把空串写成生效值：空串在某些键上有别的含义，例如 `broker.listen` 的空串表示不监听，与默认值不同。
+A key with a fixed default is written in two lines: the line above is `# <description>` and the line below is `<leaf>: <default>`. The value is written through the YAML encoder, or quoted by an equivalent rule, so that every effective value of `Load(Template(mode))` equals that key's default, for example `broker.listen`'s `:17443` must be quoted. The empty-default `broker.advertise`, `broker.advertise_extra`, `broker.local_socket_group` and `pairing.static_key`, and `broker.alias` whose default is computed at runtime, are written as comments in the form `# <leaf>: <example>`, with the next line saying "no fixed default" or "the default is computed at runtime". The example must pass the key's validation. The template does not write an empty string as an effective value: an empty string means something else on some keys, for example `broker.listen`'s empty string means not listening, differing from the default.
 
-用户级模板同样列出 `broker.local_socket_group` 与 `broker.local_socket_mode`，并注明这两项只对系统级生效。
+The user template likewise lists `broker.local_socket_group` and `broker.local_socket_mode`, noting that these two take effect for the system form only.
 
-### 修改一个键
+### Changing a Key
 
-`Set` 依次做下面的事，前一件失败则不做后面的：
+`Set` does the following in order, doing none of the rest if one fails:
 
-- 先按“配置文件的监视”中的同一套规则采用磁盘上尚未采纳的外部改动，并为每个采用了新值的键写 `config_file_changed` 审计记录。校验因此从磁盘上的当前值出发，去抖期内保存的外部改动不会被这次写入吞掉。
-- 检查键存在且不是密钥类配置项，值的类型与取值范围合法，与其他键的组合合法，再调用为该键注册的校验函数。修改 `broker.listen`、`broker.advertise` 或 `broker.advertise_extra` 时，以新值与另外两项的当前值核对“对外地址”中的组合规则与项数上限。
-- 读取配置文件的当前内容，只替换这个键，在原文件上就地改写：截断后写入完整内容并同步到磁盘。写回要重写整个文件，文件中的其他内容原样保留，原文件的属主、组、权限位与访问控制列表因此保持不变。文件不存在时以本账户的身份创建它，文件权限 `0600`；所在目录不存在时一并创建，用户级目录 `0700`，系统级目录 `0755`。键在文件中不存在时，按下一段的占位行规则写入。写路径以 `O_NOFOLLOW` 打开配置文件，它是符号链接时写入失败、原文件不变；这条规则依赖配置目录 `/etc/peers` 以 root 为属主、组不可写（[ADR-admin-group](../../adr/adr-admin-group.md)，`REQ-broker-config-043`）。
-- 更新内存中的值。
-- 追加 `config_set` 审计记录。
-- 把这次变更放入通知队列。
+- First adopt, by the same set of rules as "Watching the Configuration File", any external change on disk not yet adopted, and write a `config_file_changed` audit record for each key that adopted a new value. Validation therefore starts from the current value on disk, and an external change saved during the debounce period is not swallowed by this write.
+- Check that the key exists and is not a secret configuration key, that the value's type and range are legal and its combination with other keys is legal, then call the validation function registered for that key. When changing `broker.listen`, `broker.advertise` or `broker.advertise_extra`, check the new value together with the other two's current values against the combination rule and item cap in "Advertised address".
+- Read the configuration file's current content, replace only this key, and rewrite it in place: truncate then write the whole content and sync to disk. The write-back rewrites the whole file, keeping the rest of the file unchanged, so the original file's owner, group, permission bits and access control list stay the same. When the file is absent it is created as this account with file permission `0600`; when the containing directory is absent it is created too, the user directory `0700` and the system directory `0755`. When the key is absent from the file, it is written by the placeholder-line rule in the next paragraph. The write path opens the configuration file with `O_NOFOLLOW`, so when it is a symbolic link the write fails and the original file is unchanged; this rule relies on the configuration directory `/etc/peers` being owned by root with the group not writable ([ADR-admin-group](../../adr/adr-admin-group.md), `REQ-broker-config-043`).
+- Update the value in memory.
+- Append a `config_set` audit record.
+- Put this change into the notification queue.
 
-键在文件中不存在时，`Set` 先在键所属的段内找一行与 `^\s*#\s*<leaf>:` 匹配的占位行。找到第一处时，把这一行替换为生效的 `<leaf>: <新值>`，位置与缩进不变，它上面的说明注释保留；找不到时，按原有做法追加到段末或文件末尾。除这次替换外，文件其余内容一字不改（`REQ-broker-config-040`）。
+When the key is absent from the file, `Set` first finds, within the section the key belongs to, a placeholder line matching `^\s*#\s*<leaf>:`. At the first match it replaces that line with the effective `<leaf>: <new value>`, keeping the position and indentation and the explanatory comment above it; when none is found, it appends to the section's end or the file's end as before. Apart from this replacement, the rest of the file is untouched (`REQ-broker-config-040`).
 
-读取与写回之间不是原子的：另一个程序在这段窗口内写入的内容会被本次写回覆盖而丢失，这是就地改写接受的代价。磁盘上的配置文件为空或不存在时，写回的内容只包含本次修改的键和文件原有的注释；其他键只留在内存中，本次运行按内存值生效，重启后回到默认值。
+The read and the write-back are not atomic: content written by another program in this window is overwritten and lost by this write-back, a cost accepted for the in-place rewrite. When the configuration file on disk is empty or absent, the write-back contains only the modified key and the file's original comments; other keys remain only in memory, in effect from memory for this run and back to their defaults after a restart.
 
-写文件失败时返回 `internal`，内存与审计不变：本包尽力把原字节写回文件；无论写回是否成功，都把内存中记录的文件哈希改成磁盘当前内容的哈希，使本进程不把这次留下的空文件或残缺内容当作外部改动采纳。
+When writing the file fails it returns `internal`, with memory and audit unchanged: this package does its best to write the original bytes back; regardless of whether the write-back succeeds, it changes the file hash recorded in memory to the hash of the current content on disk, so this process does not adopt the empty file or truncated content it left as an external change.
 
-通知队列由一个协程按提交的顺序逐个调用订阅者，对同一个键的两次修改因此按修改的先后生效。校验函数用于需要别的包判断的情形，由 `broker` 注册：`broker.listen` 的新值只做绑定探测，校验函数绑定后立即关闭，不保留 listener，变更提交后由订阅者实际绑定；探测失败则修改不提交，原有的监听不受影响（`REQ-broker-config-034`）。新值与当前值相同时不探测，直接接受这次修改：正在运行的监听仍占着该地址，探测必然失败。探测与真正的绑定之间存在时间差，期间端口可能被其他进程占用。校验函数在包内互斥锁持有期间执行，不得调用本包的其他导出函数。`broker.alias` 的新值与某个已提交对端的生效别名或一次进行中的握手预占相同时修改不提交；校验函数调用 `pairing` 的 `AliasConflict`，后者只取 `pairing` 的锁。本次运行的监听地址来自启动参数时，`Set` 对 `broker.listen` 的修改在校验之前即以 `invalid_argument` 拒绝，错误说明本次运行的监听地址由启动参数给定，配置文件与内存中的值都不变（`REQ-broker-config-029`）。
+The notification queue is drained by one goroutine calling subscribers in commit order, so two modifications of the same key take effect in their modification order. Validation functions serve cases another package must decide and are registered by `broker`: a new value of `broker.listen` only does a bind probe, the validation function binding and immediately closing, keeping no listener, and after the change commits a subscriber binds for real; a failed probe means the change does not commit and the existing listener is unaffected (`REQ-broker-config-034`). When the new value equals the current value it does not probe and accepts the change directly: the running listener still holds the address, so a probe would necessarily fail. Between the probe and the real bind there is a time gap, during which the port may be taken by another process. The validation function runs while the package's mutex is held and must not call this package's other exported functions. When `broker.alias`'s new value equals an effective alias of a committed peer or an alias reserved by a handshake in progress, the change does not commit; the validation function calls `pairing`'s `AliasConflict`, which takes only `pairing`'s lock. When this run's listen address comes from a startup parameter, `Set`'s modification of `broker.listen` is refused with `invalid_argument` before validation, the error saying this run's listen address is given by a startup parameter and neither the configuration file's nor the memory value changes (`REQ-broker-config-029`).
 
-订阅者使修改立即生效，订阅在 `broker` 装配完成后交给各包：`broker.alias` 的变更使各链路收到 `PeerInfo` 帧，并使 `directory` 重新签发名片，同时调用 `pairing` 的 `SetOwnAlias` 推入新的本机别名，`broker` 在装配时也推入一次当前值；`broker.listen` 的变更使 `link` 改在新地址上监听；对外地址列表的变化，不论来自 `broker.listen`、`broker.advertise`、`broker.advertise_extra` 的修改还是定期的重新枚举，都经 `SubscribeAdvertised` 送达，使本方是[接受方](../../glossary.md)的各条链路收到 `PeerInfo` 帧，并使 `directory` 重新签发名片；`broker.public` 的变更使 `directory` 发布或撤回本机的记录；改为公开时，`broker` 另行按各 Agent 的公开 topic 集合重新声明。`pairing.static_key` 没有订阅者，`pairing` 在下一次握手查找密钥时读取新值；`Secret` 返回取值之前读取配置文件并比较内容哈希，内容不同即重新加载，文件变化通知丢失时删除或更换仍能生效。各项间隔、次数与上限在下一次使用时取新值。
+Subscribers make a change take effect immediately, and subscription is handed to each package after `broker`'s assembly completes: a change to `broker.alias` makes each link receive a `PeerInfo` frame and makes `directory` reissue its card, and at the same time calls `pairing`'s `SetOwnAlias` to push the new local alias, with `broker` also pushing the current value once during assembly; a change to `broker.listen` makes `link` listen on the new address; a change to the advertised address list, whether from modifying `broker.listen`, `broker.advertise` or `broker.advertise_extra` or from the periodic re-enumeration, is delivered through `SubscribeAdvertised`, making each link on which this side is the [acceptor](../../glossary.md) receive a `PeerInfo` frame and making `directory` reissue its card; a change to `broker.public` makes `directory` publish or withdraw the local records, and on becoming public `broker` separately redeclares by each agent's public topic set. `pairing.static_key` has no subscriber, and `pairing` reads the new value at the next handshake's key lookup; before `Secret` returns the value it reads the configuration file and compares the content hash, reloading when the content differs, so a delete or replacement still takes effect when a file-change notification is lost. Each interval, count and cap takes its new value at the next use.
 
-`link.keepalive_interval` 与 `link.keepalive_timeout` 的生效时机与其余间隔不同：[link](design-link.md) 在接受方一侧于第一次监听、创建 gRPC 服务端时读取，修改后接受方一侧重启才生效；拨号方一侧对下一条拨出的连接生效。只修改 `broker.listen` 的主机部分（例如把 `:17443` 改为 `127.0.0.1:17443`）会被拒绝：校验以新值探测绑定时，`link` 的旧监听仍占着同一端口，探测因此失败；修改这一项需要同时改端口，或改配置文件后重启 Broker，修改失败时继续在原地址监听（`REQ-broker-config-034`）。
+The take-effect timing of `link.keepalive_interval` and `link.keepalive_timeout` differs from the other intervals: [link](design-link.md) reads them on the acceptor side when first listening and creating the gRPC server, so a modification takes effect only after the acceptor side restarts; the dialer side applies them to the next outgoing connection. Changing only the host part of `broker.listen` (for example from `:17443` to `127.0.0.1:17443`) is refused: when validation probes binding with the new value, `link`'s old listener still holds the same port, so the probe fails; changing this item requires changing the port at the same time, or editing the configuration file and restarting the Broker, and on a failed change it keeps listening on the original address (`REQ-broker-config-034`).
 
-### 配置文件的监视
+### Watching the Configuration File
 
-本包监视配置文件，重载只由文件系统通知驱动（REF-fsnotify），没有周期性重扫。文件内容变化时重新解析，与内存中的值逐键比较：
+This package watches the configuration file, and reload is driven only by filesystem notifications (REF-fsnotify), with no periodic rescan. When the file content changes it reparses and compares key by key with the value in memory:
 
-- 解析失败或读到空文件：不采用任何改动，内存中的值不变，运行日志以错误级别记录原因。空文件包括其他程序就地改写时落在截断与写入之间的窗口；只有启动加载把空文件当作空配置。截断恰好落在行边界时，剩下的一段仍可能是合法的 YAML 文档，重载会把它当作删除了其余键的外部改动采用，不再出现的键因此取默认值；这是只凭文件内容判断改动所接受的代价。
-- 解析成功：逐键判定。取值合法并通过校验函数的键采用新值；不合法或未通过校验函数的键保留原值，运行日志以错误级别记录。成对约束的键作为一组判定，组合合法时一起采用，否则整组保留原值，结果与键名的字典序无关。`broker.listen`、`broker.advertise` 与 `broker.advertise_extra` 另作为一组判定：按改动后的整体检查组合规则与项数上限，合法则一起采用，否则三项都保留原值。`broker.listen` 的新值端口小于 1024 而配置文件可被组或其他人写入时，不采用新值，保留旧值，运行日志以 Warn 级记录并追加一条 `config_rejected` 审计记录（`REQ-broker-config-043`）。
-- 对每个采用了新值的键更新内存、追加一条 `config_file_changed` 审计记录、放入通知队列。
+- Parse fails or an empty file is read: no change is adopted, the value in memory is unchanged, and a run log at error level records the reason. An empty file includes the window between truncation and write when another program rewrites in place; only the startup load treats an empty file as an empty configuration. When the truncation falls exactly on a line boundary, the remaining piece may still be a legal YAML document, and reload adopts it as an external change that deleted the other keys, so keys that no longer appear take their defaults; this is a cost accepted for judging changes by file content alone.
+- Parse succeeds: decide key by key. A key whose value is legal and passes its validation function adopts the new value; a key that is illegal or fails its validation function keeps its old value, recorded at error level. Keys of a paired constraint are decided as a group, adopted together when the combination is legal and all kept otherwise, with the result independent of key-name lexicographic order. `broker.listen`, `broker.advertise` and `broker.advertise_extra` are decided as another group: check the combination rule and item cap against the whole after the change, adopting them together when legal and keeping all three otherwise. When a new value of `broker.listen` has a port below 1024 while the configuration file is writable by the group or others, the new value is not adopted and the old value is kept, recording in the run log at Warn level and appending a `config_rejected` audit record (`REQ-broker-config-043`).
+- For each key that adopted a new value, update memory, append a `config_file_changed` audit record and put it into the notification queue.
 
-本包自己写入文件期间不处理文件变化；写入完成后把文件内容的哈希记为已采纳，不产生记录。文件变化通知丢失时由 `Secret` 在返回取值前比对文件内容哈希兜底，因此没有周期性重扫也不会让旧密钥一直生效。
+This package does not handle file changes while it writes the file itself; after the write it records the file content's hash as adopted, producing no record. When a file-change notification is lost, `Secret` compares the file content hash before returning the value as a backstop, so the absence of a periodic rescan does not let an old key stay in effect forever.
 
-本次运行的监听地址来自启动参数时，`broker.listen` 不参与比较与校验：文件中这一项的值变化时不采用，不写审计记录，运行日志记录一次；其他键照常重载（`REQ-broker-config-017`）。
+When this run's listen address comes from a startup parameter, `broker.listen` does not take part in comparison or validation: its value changing in the file is not adopted, writes no audit record, and is recorded once in the run log; other keys reload as usual (`REQ-broker-config-017`).
 
-`Load` 失败时本包不启动监视。降级运行中的 Broker 自己监视配置文件所在目录，文件变化时重新执行启动步骤，`Load` 成功后由本包照常监视（[broker](design-broker.md) 的“降级运行”）。
+When `Load` fails, this package does not start watching. A Broker in degraded run watches the configuration file's directory itself, re-runs the startup steps when the file changes, and after `Load` succeeds this package watches as usual ("Degraded Run" of [broker](design-broker.md)).
 
-### 审计日志的表示与合并
+### Audit Log Representation and Merging
 
-每行一个 JSON 对象，UTF-8。`time` 是 UTC 的 RFC 3339 纳秒时间；`event` 是事件类型的字符串值；`actor`、`account`、`key`、`detail` 为空时省略。`peer` 是 `{"fingerprint":"<64 位小写十六进制>","alias":"..."}`。`old` 与 `new` 是带类型的对象 `{"kind":"...","value":...}`，`kind` 取 `string`、`bool`、`int`、`duration`、`string_list`：时长的 `value` 是 `10m` 这样的字符串，整数的 `value` 是 JSON 数字。审计文件是 config 的私有格式；`GetConfig` 与 `SetConfig` 的应答使用 `ConfigValue`，与此处的类型对应，密钥类配置项另以是否已设置表示。密钥类配置项的变化只保留 `key`，不写 `old` 与 `new`。打开审计文件时，如果文件末尾不是换行，先追加一个换行；崩溃留下的半行仍然无法解析，但不会吞掉下一条记录。
+One JSON object per line, UTF-8. `time` is a UTC RFC 3339 nanosecond time; `event` is the event type's string value; `actor`, `account`, `key` and `detail` are omitted when empty. `peer` is `{"fingerprint":"<64 lowercase hex digits>","alias":"..."}`. `old` and `new` are typed objects `{"kind":"...","value":...}`, where `kind` is `string`, `bool`, `int`, `duration` or `string_list`: a duration's `value` is a string such as `10m`, an integer's `value` is a JSON number. The audit file is config's private format; `GetConfig`'s and `SetConfig`'s replies use `ConfigValue`, corresponding to the types here, with a secret configuration key represented separately by whether it is set. A secret configuration key's change keeps only `key` and writes no `old` or `new`. When opening the audit file, if the end is not a newline, append one first; a half line left by a crash still cannot be parsed but does not swallow the next record.
 
-`connection_rejected` 与由尝试过于频繁或协议版本不兼容引起的 `pairing_failed` 在写入前于内存中合并。合并键由事件类型、来源标识与原因组成：`connection_rejected` 用调用方给出的来源，即 IPv4 地址或 IPv6 /64 前缀，没有来源时用对端指纹；这类 `pairing_failed` 用调用方给出的合并键与 `detail` 中的原因，`pairing` 在尝试频率超限或协议版本不兼容时填入来源前缀（IPv4 取 /32，IPv6 取 /64），写作 `source:<前缀>`，`detail` 只写原因。同一来源、同一原因的事件合并为一条，同一来源的不同原因各自合并，记录保留各自的原因，不会出现一条记录的 `detail` 代表另一类失败。同一合并键上，第一个事件开启一个 10 分钟窗口，窗口从这条事件的时间起算，后续事件不顺延窗口。窗口内的后续事件只在内存中累加，不写文件。窗口到期或 `Close` 时，窗口汇总为一条记录追加到文件，记录的时间是窗口第一条事件的时间：窗口内只有一条事件时不带 `count`，多于一条时 `count` 是事件条数。内存中的普通窗口至多 256 个，各种可合并事件合计。已有窗口的事件照常并入；合并键不在表中而普通窗口已满时，事件并入该事件种类的汇总窗口。每种可合并事件至多一个汇总窗口，不计入 256。汇总窗口从第一条事件起算同样的 10 分钟，到期时写一条记录，时间与事件类型取第一条事件，`peer` 为空，`detail` 为 `other sources`，`count` 是并入的事件条数。汇总窗口开启时写一条 Warn 级运行日志 `config_audit_merge_overflow`，字段 `audit_event` 是事件类型，`limit` 是 256。`ReadAudit` 返回文件中的记录加上尚在内存中的窗口记录，按时间排序。到期调度按截止时间与合并键排序，同一截止时间的窗口按合并键顺序落盘；追加事件与安排定时器都不随待合并窗口数做全量排序。到期由一个定时器驱动，定时器始终挂在最早的截止时间上。定时器按单调时钟触发，可能比墙上时间的截止点早一点；这一次触发没有窗口到期时，实现按剩余时间重新挂一个定时器，窗口仍在截止点之后落盘。落盘因此不依赖后续事件：只要还有待合并窗口，就有一个定时器挂在最早的截止时间上。审计文件始终只追加，不改写已有行。合并键只存在于内存，不写入文件。进程在窗口落盘前崩溃时，该窗口的记录丢失，包括窗口中只有一条的事件；这是保持文件只追加所接受的代价。`Close` 期间与之后产生的审计事件不得静默丢弃：审计日志已关闭或尚未打开时，事件至少以错误级别写入运行日志。
+`connection_rejected` and a `pairing_failed` caused by too-frequent attempts or an incompatible protocol version are merged in memory before being written. The merge key is made of the event type, the source identifier and the reason: `connection_rejected` uses the source the caller gave, that is an IPv4 address or an IPv6 /64 prefix, using the peer fingerprint when there is no source; this kind of `pairing_failed` uses the merge key the caller gave and the reason in `detail`, and `pairing` fills in the source prefix when the attempt rate is exceeded or the protocol version is incompatible (a /32 for IPv4, a /64 for IPv6), written `source:<prefix>`, with `detail` giving only the reason. Events of the same source and same reason merge into one, and different reasons of the same source merge separately, each keeping its own reason, so one record's `detail` never stands for another class of failure. On one merge key, the first event opens a 10-minute window counted from that event's time, and later events do not slide the window. Later events within the window are accumulated in memory only and not written. When the window expires or `Close` runs, the window is summarized into one record appended to the file, with the record's time being the window's first event time: a window with only one event carries no `count`, and with more than one `count` is the number of events. Ordinary windows in memory number at most 256, counting all mergeable events together. An event for an existing window merges as usual; when the merge key is not in the table and ordinary windows are full, the event merges into the summary window of its event kind. Each mergeable event kind has at most one summary window, not counted in the 256. The summary window starts from its first event and lasts the same 10 minutes, and on expiry writes one record whose time and event type are the first event's, `peer` empty, `detail` `other sources`, and `count` the number of merged events. When a summary window opens it writes a run log at Warn level `config_audit_merge_overflow`, with field `audit_event` the event type and `limit` 256. `ReadAudit` returns the records in the file plus the window records still in memory, sorted by time. Expiry scheduling sorts by deadline and merge key, and windows with the same deadline are flushed in merge-key order; appending an event and scheduling a timer do not fully sort by the count of pending windows. Expiry is driven by one timer, always set at the earliest deadline. The timer fires on the monotonic clock and may fire slightly before the wall-clock deadline; when a firing finds no window expired, the implementation re-arms a timer for the remaining time, and the window is still flushed after its deadline. Flushing therefore does not depend on later events: as long as a mergeable window remains, one timer is set at the earliest deadline. The audit file is always append-only and never rewrites an existing line. The merge key lives only in memory and is not written to the file. When the process crashes before a window is flushed, that window's records are lost, including a window with only one event; this is a cost accepted for keeping the file append-only. Audit events produced during and after `Close` must not be silently dropped: when the audit log is closed or not yet opened, the event is written to the run log at error level at least.
 
-`link_up`、`link_down` 不合并：对端已经认证，属于受信任范围（[architecture](../architecture.md) 的“认证与授权边界”）。
+`link_up` and `link_down` are not merged: the peer is already authenticated and falls within the trusted scope ("Authentication and Authorization Boundaries" of [architecture](../architecture.md)).
 
-### 实现约定
+### Implementation Conventions
 
-以下约定是设计未写死、由实现确定的细节：
+The conventions below are details the design does not fix and the implementation decides:
 
-- `All` 按键名的字典序返回；`Get`、`All`、`Set` 返回的列表与字符串切片都是副本。
-- `Validate` 与 `Subscribe` 的键必须在键表中且 `Load` 已完成；未知键或未加载是装配错误，直接 panic。
-- `Load` 第二次调用返回 `ErrAlreadyLoaded`。
-- `log.level` 的取值集合是 `debug`、`info`、`warn`、`error`，不认识的取值非法。
-- `broker.advertise` 与 `broker.advertise_extra` 拒绝 `0.0.0.0` 与 `::` 作为主机，其他 Broker 无法连接通配地址。
-- `broker.local_socket_mode` 接受不带引号的整数写法（如 `0666`），取值按八进制校验；其他字符串键写成数字仍然非法。
-- 同值 `Set` 照常写文件、写审计、发通知，因为这是一次经本机接口完成的修改。
-- 当前配置文件在结构上无法解析时 `Set` 失败，不覆盖文件；单个键的取值不合法不阻止其他键的修改。
-- 任何段中重复出现的键（包括未知段与未知键）、顶层已知段不是映射、YAML 合并键 `<<` 都按解析错误处理；其余未知段与未知键保留在文件里，不参与加载，`Set` 也不改动它们。
-- 配置文件中的锚点与别名（`&name`、`*name`）按解析错误处理，映射与序列的嵌套超过 32 层同样按解析错误处理；检查只遍历节点树、不跟随别名指针，因此自引用的别名不会成环，展开后呈指数增长的别名也不会被展开。配置文件的每一处读取最多读到 1 MiB 加 1 字节，超过 1 MiB 按读取错误处理。
-- 特定地址监听且未配置 `broker.advertise` 时，监听地址这一隐含项计入 8 项上限；默认路由来源的地址超过上限时舍去排在后面的项，`broker.advertise_extra` 的项全部保留。
-- 审计合并的分组依据包含事件类型，两种不同事件不会因字符串相同而合并。
-- 汇总窗口按事件种类分开，每种可合并事件至多一个。
-- 文件监视的去抖时长与地址枚举的周期 ticker 都通过包内字段注入；测试用假 ticker 驱动重载与周期枚举，不依赖真实等待。
-- 每个平台的 `defaultRouteAddresses` 都有一条冒烟测试直接调用它，只断言 `err == nil`；macOS 的 IPv4 与 IPv6 路由夹具取自 CI 运行 44329785438 在 macOS runner 上采集的真实 `route -n get default` 输出：IPv4 是带 `gateway: 192.168.64.1` 与 `interface: en0` 的正常路由描述；IPv6 没有默认路由，输出为 `route: writing to routing socket: not in table`，退出码为零；并另有 `ifconfig` 失败分支的测试。
+- `All` returns in key-name lexicographic order; the lists and string slices returned by `Get`, `All` and `Set` are copies.
+- The keys of `Validate` and `Subscribe` must be in the key table and `Load` must have completed; an unknown key or a not-loaded state is an assembly error and panics directly.
+- A second call to `Load` returns `ErrAlreadyLoaded`.
+- The value set of `log.level` is `debug`, `info`, `warn`, `error`, and an unrecognized value is invalid.
+- `broker.advertise` and `broker.advertise_extra` refuse `0.0.0.0` and `::` as hosts, since another Broker cannot connect to a wildcard address.
+- `broker.local_socket_mode` accepts an unquoted integer spelling (such as `0666`) and validates the value as octal; other string keys written as numbers are still invalid.
+- A same-value `Set` writes the file, writes audit and sends a notification as usual, because it is a change completed through the local interface.
+- When the current configuration file cannot be parsed structurally, `Set` fails and does not overwrite the file; one key's invalid value does not block modification of other keys.
+- A key repeated in any section (including unknown sections and keys), a top-level known section that is not a mapping, and the YAML merge key `<<` are all treated as parse errors; the rest of the unknown sections and keys are kept in the file, take no part in loading and are not modified by `Set`.
+- Anchors and aliases in the configuration file (`&name`, `*name`) are treated as parse errors, and nesting of mappings and sequences beyond 32 levels likewise; the check only walks the node tree and does not follow alias pointers, so a self-referential alias does not form a cycle and an alias that would grow exponentially when expanded is not expanded. Each read of the configuration file reads at most 1 MiB plus 1 byte, and exceeding 1 MiB is treated as a read error.
+- When listening on a specific address without `broker.advertise` configured, the implicit listen-address item counts toward the 8-item cap; when the addresses from the default route exceed the cap, the later items in that part are dropped, and every `broker.advertise_extra` item is kept.
+- The grouping basis of audit merging includes the event type, so two different event types are not merged just because their strings are equal.
+- Summary windows are separated by event kind, each mergeable event kind having at most one.
+- The watch debounce duration and the address-enumeration periodic ticker are injected through package fields; tests drive reload and periodic enumeration with a fake ticker and do not depend on real waits.
+- Each platform's `defaultRouteAddresses` has a smoke test that calls it directly and asserts only `err == nil`; the macOS IPv4 and IPv6 route fixtures come from real `route -n get default` output collected on a macOS runner in CI run 44329785438: IPv4 is a normal route description with `gateway: 192.168.64.1` and `interface: en0`; IPv6 has no default route and its output is `route: writing to routing socket: not in table` with exit code zero; there is also a test for the `ifconfig` failure branch.
 
-## 错误与失败语义
+## Error and Failure Semantics
 
-| 情形 | 行为 |
+| Situation | Behaviour |
 |---|---|
-| 启动时配置文件无法解析或含不合法的值 | 拒绝启动，带 `--allow-degraded` 时同样拒绝；无法解析时错误信息给出行号与列号，或指出出错的段名、键名，或说明失败的原因，不引用文件中的取值；含不合法的值时指出键与原因，不含密钥类配置项的取值 |
-| 配置文件超过 1 MiB | 读取在 1 MiB 加 1 字节处停止，超过时按读取错误处理：启动时拒绝启动，带 `--allow-degraded` 时同样拒绝；运行期间保留全部原值，运行日志以错误级别记录 |
-| 启动时数据目录或审计日志不可用 | `Load` 返回错误；带 `--allow-degraded` 时 `broker` 进入仅诊断降级，否则拒绝启动 |
-| 启动时 `broker.listen` 端口小于 1024 且配置文件可被组或其他人写入 | 由 `broker` 在绑定监听地址前拒绝：前台运行退出码为 4，带 `--allow-degraded` 时进入仅本机降级 |
-| 启动时监听地址与对外地址配置的组合非法，或对外地址的配置超过 8 项 | 拒绝启动；组合非法时错误信息同时指出 `broker.listen` 与 `broker.advertise` 或 `broker.advertise_extra`，超过 8 项时指出 `broker.advertise_extra` |
-| 启动时枚举默认路由失败 | 不拒绝启动，这部分地址取空，运行日志以错误级别记录，周期枚举在后续轮次补上 |
-| 运行时目录或账户锁所在目录的属主、权限不符 | 拒绝启动，错误信息指出目录 |
-| `SetConfig` 请求中的 `value` 无法按该键的类型解析 | 返回 `invalid_argument`，指出该键与原因，不改动任何状态 |
-| `Set` 的键不存在，值不合法，或校验函数拒绝 | 返回 `invalid_argument`，不改动任何状态 |
-| `Set` 修改密钥类配置项 | 返回 `invalid_argument`，说明该项只能在配置文件中设置，不改动任何状态 |
-| `Set` 使监听地址与对外地址配置的组合非法，或使对外地址的配置超过 8 项 | 返回 `invalid_argument`，说明与哪一项冲突，不改动任何状态 |
-| 本次运行的监听地址来自启动参数时 `Set` 修改 `broker.listen` | 返回 `invalid_argument`，说明本次运行的监听地址由启动参数给定，不改动任何状态 |
-| 配置文件写入失败 | 返回 `internal`，内存中的值不变，不写审计记录；本包尽力把原字节写回，写回失败时文件可能为空或不完整。无论写回是否成功，本包都把内存记录的文件哈希改为磁盘当前内容的哈希，本进程不采纳这次留下的内容；进程崩溃或写回也失败时，下次启动按文件的现有内容加载，截断恰好落在行边界时，文件可能被读成一份合法的残缺配置，这是就地改写所接受的代价 |
-| 运行期间读到的配置文件为空 | 按无法解析处理，保留全部原值，运行日志以错误级别记录 |
-| 运行期间配置文件改成了不合法的内容，包括组合非法 | 不合法的项保留原值，其余合法的项照常采用，运行日志记录 |
-| 本次运行的监听地址来自启动参数时，配置文件中的 `broker.listen` 改变 | 不采用，其他键照常重载，运行日志记录 |
-| 审计日志写入失败 | 触发它的操作照常完成，运行日志以错误级别记录 |
-| 审计日志已关闭或尚未打开时收到事件 | 事件以错误级别写入运行日志后丢弃，不静默丢失 |
+| At startup the configuration file cannot be parsed or contains an invalid value | Refuse to start, also refusing with `--allow-degraded`; when unparsable the error gives a line and column, or names the offending section or key, or states the reason, without quoting a value from the file; when it contains an invalid value it names the key and the reason, without a secret configuration key's value |
+| The configuration file exceeds 1 MiB | Reading stops at 1 MiB plus 1 byte, exceeding it being treated as a read error: at startup refuse to start, also refusing with `--allow-degraded`; at runtime keep every old value and record at error level |
+| At startup the data directory or audit log is unavailable | `Load` returns an error; with `--allow-degraded` `broker` enters diagnostics-only degraded run, otherwise startup is refused |
+| At startup `broker.listen`'s port is below 1024 and the configuration file is writable by the group or others | `broker` refuses before binding the listen address: a foreground run exits with code 4, and with `--allow-degraded` it enters local-only degraded run |
+| At startup the listen address and advertised address configuration combination is invalid, or the advertised address configuration exceeds 8 items | Refuse to start; on an invalid combination the error names both `broker.listen` and `broker.advertise` or `broker.advertise_extra`, and on more than 8 items it names `broker.advertise_extra` |
+| At startup enumerating the default route fails | Do not refuse startup; this part of the addresses is empty, recorded at error level, and filled in on a later round |
+| The owner or permission of the runtime directory or the account-lock directory does not match | Refuse to start, the error naming the directory |
+| The `value` in a `SetConfig` request cannot be parsed by the key's type | Return `invalid_argument`, naming the key and the reason, and change no state |
+| `Set`'s key is absent, the value is invalid, or a validation function refuses | Return `invalid_argument` and change no state |
+| `Set` modifies a secret configuration key | Return `invalid_argument`, saying the item can be set only in the configuration file, and change no state |
+| `Set` makes the listen address and advertised address configuration combination invalid, or makes the advertised address configuration exceed 8 items | Return `invalid_argument`, saying which item conflicts, and change no state |
+| `Set` modifies `broker.listen` while this run's listen address comes from a startup parameter | Return `invalid_argument`, saying this run's listen address is given by a startup parameter, and change no state |
+| Writing the configuration file fails | Return `internal`, the value in memory unchanged, no audit record; this package does its best to write the original bytes back, and when the write-back also fails the file may be empty or incomplete. Regardless of whether the write-back succeeds, this package changes the file hash recorded in memory to the hash of the current content on disk, so this process does not adopt what it left; when the process crashes or the write-back also fails, the next startup loads the file's current content, and when the truncation falls exactly on a line boundary the file may be read as a legal but incomplete configuration, a cost accepted for the in-place rewrite |
+| The configuration file read at runtime is empty | Treat as unparsable, keep every old value and record at error level |
+| At runtime the configuration file is changed to invalid content, including an invalid combination | The invalid item keeps its old value, the other legal items are adopted as usual, and the run log records it |
+| This run's listen address comes from a startup parameter while `broker.listen` in the configuration file changes | Not adopted, other keys reload as usual, and the run log records it |
+| Writing the audit log fails | The operation that triggered it completes as usual, and the run log records at error level |
+| An event arrives while the audit log is closed or not yet opened | The event is written to the run log at error level and then dropped, not silently lost |
 
-能够写配置文件的账户不经本机接口也能直接改写它，这正是管理权限以该文件的写权限为准的含义；用户级形态下审计日志与配置文件属于同一账户，该账户下的其他进程能够改写它们，本包不防范这一途径。系统级形态下审计日志只有 root 可写。
+An account able to write the configuration file can rewrite it directly without the local interface, which is exactly what management permission being based on that file's write permission means; in the user form the audit log and configuration file belong to the same account, whose other processes can rewrite them, and this package does not guard against that path. In the system form the audit log is writable by root alone.
 
-## 并发与事务边界
+## Concurrency and Transaction Boundaries
 
-`Set` 与文件重载的各项动作由一把互斥锁串行化，订阅者在锁外由通知协程调用。为某个键注册的校验函数在 `Set` 与文件重载提交之前、持锁期间执行，因此不得调用本包的其他导出函数。`Get` 读取内存中的值，不访问磁盘。审计日志的追加由独立的锁保护，每条记录以一次写调用写入完整的一行。
+`Set`'s and file reload's actions are serialized by one mutex, and subscribers are called outside the lock by the notification goroutine. A validation function registered for a key runs before `Set` and file reload commit, while the lock is held, so it must not call this package's other exported functions. `Get` reads the value in memory without touching disk. Appending to the audit log is protected by a separate lock, and each record is written as a complete line in one write call.
 
-`config` 的锁与 `pairing` 的锁有固定顺序：先取 `config` 锁，再取 `pairing` 锁；反向禁止。`pairing` 持有自己的锁时不调用 `config` 的任何函数。`config` 的校验函数在持锁期间只调用 `pairing` 的 `AliasConflict` 与 `ResolveAlias`，这两个方法只取 `pairing` 的锁。`broker.alias` 的校验通过到订阅者把新值推入 `pairing` 之间存在窄窗口：窗口内提交的握手可能拿到与新本机别名相同的生效别名，窗口结束后 `pairing` 的提交复核恢复拒绝这个名字。窗口的长度取决于通知队列的排队情况，这是消除锁序反转所接受的代价。
+The locks of `config` and `pairing` have a fixed order: take `config`'s lock first, then `pairing`'s; the reverse is forbidden. While holding its own lock, `pairing` calls no function of `config`. While holding its lock, `config`'s validation function calls only `pairing`'s `AliasConflict` and `ResolveAlias`, which take only `pairing`'s lock. Between `broker.alias`'s validation passing and a subscriber pushing the new value into `pairing` there is a narrow window: a handshake committed within the window may take an effective alias equal to the new local alias, and after the window closes `pairing`'s commit recheck restores the refusal of this name. The window's length depends on the notification queue's backlog, a cost accepted for eliminating a lock-order inversion.
 
-## 实现状态
+## Implementation Status
 
-| 能力 | 状态 | 代码 |
+| Capability | Status | Code |
 |---|---|---|
-| 两种形态的路径与账户锁路径 | 已实现 | `internal/config/paths.go`（`resolvePaths`、`prepareDataDirs`、`CheckRuntimeDir`、`AccountLock`） |
-| 配置的加载、默认值与校验 | 已实现 | `internal/config/keys.go`、`internal/config/file.go`、`internal/config/load.go`（`load`、`adoptValues`、`validateLoadedValues`） |
-| 启动参数对监听地址的取代与默认别名 | 已实现 | `internal/config/load.go`、`internal/config/alias.go`（`adoptValues`、`defaultAlias`） |
-| 对外地址列表的计算与组合校验 | 已实现 | `internal/config/advertise.go`、`internal/config/routes_common.go`、`internal/config/routes_linux.go`、`internal/config/routes_darwin.go`、`internal/config/routes_other.go`（`computeAdvertised`、`platformAddressSource`、`defaultRouteAddresses`） |
-| 密钥类配置项的读取、修改限制与长度校验 | 已实现 | `internal/config/keys.go`、`internal/config/state.go`、`internal/config/api.go`（`validateValue`、`secretLocked`、`Secret`、`setLocked`） |
-| 本机地址的定期重新枚举与变更通知 | 已实现 | `internal/config/state.go`、`internal/config/load.go`、`internal/config/notify.go`（`startAddressTickerLocked`、`reevaluateAdvertised`、`newNotifier`） |
-| 配置的读取与修改 | 已实现 | `internal/config/api.go`、`internal/config/state.go`、`internal/config/file.go`（`Get`、`Set`、`setLocked`、`setKey`） |
-| 附加校验与变更通知 | 已实现 | `internal/config/api.go`、`internal/config/notify.go`（`Validate`、`ProbeListen`、`Subscribe`、`newNotifier`） |
-| 配置文件的监视 | 已实现 | `internal/config/watch.go`、`internal/config/state.go`（`startWatch`、`startWatchWithDebounce`、`reloadFromDisk`、`reloadLocked`） |
-| 配置文件模板的生成 | 已实现 | `internal/config/template.go`（`Template`、`templateExamples`、`templateSections`） |
-| 修改配置项时替换注释占位行 | 已实现 | `internal/config/file.go`（`replacePlaceholderLine`、`setKey`） |
-| 审计日志的追加、合并与读取 | 已实现 | `internal/config/audit.go`（`openAudit`、`append`、`mergeLocked`、`flushExpiredLocked`、`read`、`terminatePartialLine`） |
-| `broker.offline` 配置项 | 已实现 | `internal/config/keys.go`（`keyTable` 中的 `broker.offline`） |
-| `Load` 失败的分类与绑定前的低端口检查 | 已实现 | `internal/config/api.go`（`ErrDataUnavailable`、`DataUnavailableError`）、`internal/config/lowport.go`（`CheckLowPort`、`checkLowPortAtStartup`） |
+| The paths of both forms and the account lock path | Implemented | `internal/config/paths.go` (`resolvePaths`, `prepareDataDirs`, `CheckRuntimeDir`, `AccountLock`) |
+| Configuration loading, defaults and validation | Implemented | `internal/config/keys.go`, `internal/config/file.go`, `internal/config/load.go` (`load`, `adoptValues`, `validateLoadedValues`) |
+| Startup parameter overriding the listen address and the default alias | Implemented | `internal/config/load.go`, `internal/config/alias.go` (`adoptValues`, `defaultAlias`) |
+| Computing the advertised address list and combination validation | Implemented | `internal/config/advertise.go`, `internal/config/routes_common.go`, `internal/config/routes_linux.go`, `internal/config/routes_darwin.go`, `internal/config/routes_other.go` (`computeAdvertised`, `platformAddressSource`, `defaultRouteAddresses`) |
+| Reading secret configuration keys, the modification restriction and length validation | Implemented | `internal/config/keys.go`, `internal/config/state.go`, `internal/config/api.go` (`validateValue`, `secretLocked`, `Secret`, `setLocked`) |
+| Periodic re-enumeration of local addresses and change notification | Implemented | `internal/config/state.go`, `internal/config/load.go`, `internal/config/notify.go` (`startAddressTickerLocked`, `reevaluateAdvertised`, `newNotifier`) |
+| Reading and modifying the configuration | Implemented | `internal/config/api.go`, `internal/config/state.go`, `internal/config/file.go` (`Get`, `Set`, `setLocked`, `setKey`) |
+| Additional validation and change notification | Implemented | `internal/config/api.go`, `internal/config/notify.go` (`Validate`, `ProbeListen`, `Subscribe`, `newNotifier`) |
+| Watching the configuration file | Implemented | `internal/config/watch.go`, `internal/config/state.go` (`startWatch`, `startWatchWithDebounce`, `reloadFromDisk`, `reloadLocked`) |
+| Generating the configuration file template | Implemented | `internal/config/template.go` (`Template`, `templateExamples`, `templateSections`) |
+| Replacing the comment placeholder line when modifying a configuration key | Implemented | `internal/config/file.go` (`replacePlaceholderLine`, `setKey`) |
+| Appending, merging and reading the audit log | Implemented | `internal/config/audit.go` (`openAudit`, `append`, `mergeLocked`, `flushExpiredLocked`, `read`, `terminatePartialLine`) |
+| The `broker.offline` configuration key | Implemented | `internal/config/keys.go` (`broker.offline` in `keyTable`) |
+| Classifying `Load` failures and the low-port check before binding | Implemented | `internal/config/api.go` (`ErrDataUnavailable`, `DataUnavailableError`), `internal/config/lowport.go` (`CheckLowPort`, `checkLowPortAtStartup`) |
