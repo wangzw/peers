@@ -421,6 +421,8 @@ func (c *core) reloadLocked() (configBytes, error) {
 	// reference to the live map would make every later comparison see the new
 	// value as old and skip the effective listen address and ticker updates.
 	values := copyValues(c.values)
+	// group refers to the package-level addressGroupKeys slice. It is read
+	// only and must never be modified here: every reload shares the same slice.
 	group := addressGroupKeys
 
 	if c.listenOverride {
