@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -126,9 +127,7 @@ func claudeNotFoundOutcome(manual string) string {
 
 // invocation appends args to prefix without sharing prefix's backing array.
 func invocation(prefix []string, args ...string) []string {
-	out := make([]string, 0, len(prefix)+len(args))
-	out = append(out, prefix...)
-	return append(out, args...)
+	return slices.Concat(prefix, args)
 }
 
 // runArgv runs argv, whose first element names the command.
