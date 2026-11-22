@@ -5,9 +5,9 @@ source "$(dirname "$0")/lib.sh"
 
 # Probe: inbox binding timing and the child-session variables.
 #
-# It answers roadmap.md:88 (does an MCP server process ever start without the
-# inbox socket path in its process variables?) and roadmap.md:89 (does a child
-# session inherit the parent's CLAUDE_CODE_MESSAGING_SOCKET?). The first two
+# It answers the Roadmap's Items to verify section: does an MCP server process
+# ever start without the inbox socket path in its process variables, and does a
+# child session inherit the parent's CLAUDE_CODE_MESSAGING_SOCKET? The first two
 # steps start sessions without input and reach no model. The third step asks
 # the parent session to run fixed commands with its Bash tool and to start a
 # child session from that shell, under bypass permissions so no approval

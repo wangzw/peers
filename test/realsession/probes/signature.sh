@@ -7,12 +7,12 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# signature.sh answers roadmap.md:93 and :96. Steps 1 and 2 write frames
-# straight to a receiver's inbox socket, with no Broker in the path, to learn
-# which sender names the real receiver recognizes and which bytes the inbox
-# CleanSignature fix must remove. Step 3 sends from simulated Agents on the
-# peer host and reads the replies from their receive logs, which covers
-# REQ-agent-messaging-022, 023, 029 and 037.
+# signature.sh answers the Roadmap's Items to verify section. Steps 1 and 2
+# write frames straight to a receiver's inbox socket, with no Broker in the
+# path, to learn which sender names the real receiver recognizes and which
+# bytes the inbox CleanSignature fix must remove. Step 3 sends from simulated
+# agents on the peer host and reads the replies from their receive logs, which
+# covers REQ-agent-messaging-022, 023, 029 and 037.
 
 TERSE_PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 REPLY_PROMPT='When a message from another agent asks you to reply, reply exactly as asked using the appropriate tool, then stop.'

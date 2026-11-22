@@ -7,10 +7,11 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# ref-clear answers roadmap lines 91 and 92 and exercises REQ-agent-messaging-006
-# and REQ-agent-messaging-033: the disambiguation ref must match the one Claude
-# Code's own session list shows, and it must survive /rename and /clear; a
-# message held before /clear must reach the conversation created by /clear.
+# ref-clear answers the Roadmap's Items to verify section and exercises
+# REQ-agent-messaging-006 and REQ-agent-messaging-033: the disambiguation ref
+# must match the one Claude Code's own session list shows, and it must survive
+# /rename and /clear; a message held before /clear must reach the conversation
+# created by /clear.
 
 PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 OBSERVER_PROMPT='Use your built-in tool for listing the other Claude Code sessions on this machine and print its raw output verbatim. Do not do anything else.'

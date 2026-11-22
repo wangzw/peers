@@ -7,9 +7,9 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# inbound.sh answers roadmap lines 84, 85 and 86. The receiver's permission
-# mode is the variable under test: an ordinary receiver delivers an undeclared
-# sender's message directly, while a receiver started with
+# inbound.sh answers the Roadmap's Items to verify section. The
+# receiver's permission mode is the variable under test: an ordinary receiver
+# delivers an undeclared sender's message directly, while a receiver started with
 # --dangerously-skip-permissions holds it for per-message approval. The probe
 # therefore runs both a default receiver and a bypass receiver, records each
 # bottom-bar mode text, and compares their outcomes. The bypass session is the

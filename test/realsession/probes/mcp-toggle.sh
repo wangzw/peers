@@ -7,7 +7,8 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# Probe mcp-toggle answers roadmap.md:94 and accepts REQ-agent-messaging-034.
+# Probe mcp-toggle answers the Roadmap's Items to verify section and accepts
+# REQ-agent-messaging-034.
 #
 # Step 1 disables and enables a stub MCP server that records its signals and
 # keeps running after them. It shows which signals Claude Code sends, in which

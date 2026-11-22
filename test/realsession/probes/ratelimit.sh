@@ -3,11 +3,12 @@
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# This probe answers roadmap.md:95 for a real receiving session. Messages that
-# pass through one Broker share that Broker's token bucket, because the Broker
-# is the process that writes them and the frames carry no reply address. The
-# counts below come from the user records of the session transcript; the
-# deduped deliveries are also kept as excerpts through rs_excerpt.
+# This probe answers the Roadmap's Items to verify section for a real receiving
+# session. Messages that pass through one Broker share that Broker's token
+# bucket, because the Broker is the process that writes them and the frames
+# carry no reply address. The counts below come from the user records of the
+# session transcript; the deduped deliveries are also kept as excerpts through
+# rs_excerpt.
 
 LOW_CALL_PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 SLEEP_PROMPT='Run "sleep 60" with the Bash tool, then reply done.'
