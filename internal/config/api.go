@@ -337,7 +337,7 @@ func Advertised() []AdvertisedAddr {
 // when os.Hostname fails, after logging the error.
 func Hostname() string {
 	if c := currentCore(); c != nil {
-		return sanitizeHostnameFrom(c.hostname, c.logger)
+		return c.hostnameString()
 	}
 	return sanitizeHostnameFrom(os.Hostname, defaultLogger())
 }
