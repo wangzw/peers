@@ -493,6 +493,8 @@ func TestClientPermissionErrorIsNotUnavailable(t *testing.T) {
 func TestClientLookupDeadlineIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
+	// The caller's own deadline is the assertion: the helper accepted the
+	// request and never answered, so the call must end when it expires.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -517,6 +519,7 @@ func TestClientLookupDeadlineIsUnavailable(t *testing.T) {
 func TestClientWatchDeadlineIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
+	// The caller's own deadline is the assertion for the watch path too.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -542,6 +545,7 @@ func TestClientWatchDeadlineIsUnavailable(t *testing.T) {
 func TestClientRereadDeadlineIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
+	// The caller's own deadline is the assertion for the reread path too.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -587,20 +591,27 @@ func TestClientCancelIsNotUnavailable(t *testing.T) {
 func TestClientRereadCancelUnblocksPipeWrite(t *testing.T) {
 	// The scripted child never reads, so the request write blocks on the pipe.
 	// Cancellation must return rather than wait for a reader that is gone.
+	const timeout = 100 * time.Millisecond
 	c, _ := newScriptedChild(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	began := time.Now()
-	_, err := c.Reread(ctx, inbox.Session{SocketPath: "/s"})
+	done := make(chan error, 1)
+	go func() {
+		_, err := c.Reread(ctx, inbox.Session{SocketPath: "/s"})
+		done <- err
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(timeout + processTimeout):
+		t.Fatal("Reread did not return at its deadline")
+	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Reread error = %v, want context.DeadlineExceeded", err)
 	}
 	if !errors.Is(err, ErrHelperGone) {
 		t.Fatalf("Reread error = %v, want ErrHelperGone: the connection cannot be reused", err)
-	}
-	if elapsed := time.Since(began); elapsed > 3*time.Second {
-		t.Fatalf("Reread took %v, want it to return at the 100ms deadline", elapsed)
 	}
 }
 

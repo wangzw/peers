@@ -2389,7 +2389,12 @@ func TestInstallReinstallsOverItsOwnRunningService(t *testing.T) {
 func TestInstallDarwinReinstallWaitsForTheOldServiceToExit(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	writeListenConfig(t, opts, "127.0.0.1:17448")
-	opts.StopTimeout = 5 * time.Second
+	// The fake keeps the old Broker's address busy for releaseDelay. The stop
+	// budget must outlast that with the package fallback, so a loaded runner
+	// cannot expire the budget before the release is observed; the delay, not the
+	// budget, is what the test asserts.
+	const releaseDelay = 1500 * time.Millisecond
+	opts.StopTimeout = releaseDelay + processExitWait
 
 	var cmds []string
 	var bootedOut time.Time
@@ -2424,7 +2429,7 @@ func TestInstallDarwinReinstallWaitsForTheOldServiceToExit(t *testing.T) {
 		return 4242, true
 	}
 	opts.ListenProbe = func(addr string) error {
-		if held && !bootedOut.IsZero() && time.Since(bootedOut) >= 1500*time.Millisecond {
+		if held && !bootedOut.IsZero() && time.Since(bootedOut) >= releaseDelay {
 			held = false
 		}
 		if held {
@@ -3218,7 +3223,9 @@ func countCommandBefore(cmds []string, want, stop string) int {
 // out exactly once, before the wait.
 func TestInstallDarwinWaitsForTheOldServiceToUnload(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	opts.StopTimeout = 2 * time.Second
+	// The fake reports the unload after a few polls, so the budget only needs to
+	// outlast scheduling, not a real delay.
+	opts.StopTimeout = processExitWait
 
 	const loadedPolls = 3
 	bootedOut := false
@@ -3294,7 +3301,7 @@ func TestInstallDarwinWaitsForTheOldServiceToUnload(t *testing.T) {
 // teardown.
 func TestInstallDarwinWaitsForUnloadAfterBootoutExit3(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	opts.StopTimeout = 2 * time.Second
+	opts.StopTimeout = processExitWait
 
 	const loadedPolls = 2
 	bootedOut := false
@@ -3360,7 +3367,7 @@ func TestInstallDarwinWaitsForUnloadAfterBootoutExit3(t *testing.T) {
 // print failure is retried until the service is reported gone.
 func TestInstallDarwinRetriesAPrintErrorThatDoesNotProveUnloaded(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	opts.StopTimeout = 2 * time.Second
+	opts.StopTimeout = processExitWait
 
 	bootedOut := false
 	var otherPolls int
@@ -3457,7 +3464,7 @@ func TestInstallDarwinDoesNotTreatAPrintErrorAsUnloaded(t *testing.T) {
 // returns exit 5 after the old service is gone is retried.
 func TestInstallDarwinRetriesBootstrapExit5(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	opts.BootstrapTimeout = 2 * time.Second
+	opts.BootstrapTimeout = processExitWait
 
 	const failedBootstraps = 2
 	var bootstraps int
@@ -3496,7 +3503,7 @@ func TestInstallDarwinRetriesBootstrapExit5(t *testing.T) {
 // retried: another exit status fails the installation on the first attempt.
 func TestInstallDarwinFailsAtOnceOnAnotherBootstrapExit(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	opts.BootstrapTimeout = 2 * time.Second
+	opts.BootstrapTimeout = processExitWait
 
 	bootstraps := 0
 	opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -3714,7 +3721,7 @@ func TestInstallDarwinBootstrapsAfterTheUnloadWaitUsesTheStopBudget(t *testing.T
 	opts := darwinUserReinstall(t)
 	// Scaled down: two 100ms unload polls run past this deadline.
 	opts.StopTimeout = 190 * time.Millisecond
-	opts.BootstrapTimeout = 2 * time.Second
+	opts.BootstrapTimeout = processExitWait
 
 	const loadedPolls = 2
 	bootedOut := false

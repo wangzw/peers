@@ -889,6 +889,25 @@ func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 	}
 }
 
+// countingSessionRouter signals when want session backends have been acquired.
+// A Register stream acquires its backend before beginRegistration runs the
+// ownership check, so the signal means every registration has reached the
+// handler.
+type countingSessionRouter struct {
+	SessionRouter
+	acquired atomic.Int32
+	want     int32
+	all      chan struct{}
+}
+
+func (r *countingSessionRouter) Acquire(ctx context.Context, uid uint32) (SessionBackend, func(), error) {
+	base, release, err := r.SessionRouter.Acquire(ctx, uid)
+	if err == nil && r.acquired.Add(1) == r.want {
+		close(r.all)
+	}
+	return base, release, err
+}
+
 // TestConcurrentConfigDirChecksAllTakeTheWatch checks that registrations of one
 // account that arrive while an ownership check is running wait for the slot and
 // then take their watch. A Broker restart reconnects every session of an
@@ -899,13 +918,31 @@ func TestConcurrentConfigDirChecksAllTakeTheWatch(t *testing.T) {
 	const registrations = 5
 
 	var checks atomic.Int32
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var first atomic.Bool
 	stat := func(path string) (fs.FileInfo, error) {
 		checks.Add(1)
-		time.Sleep(50 * time.Millisecond)
+		if first.CompareAndSwap(false, true) {
+			// Hold the first check until every registration has reached its
+			// handler, so the later ones queue for the account's slot instead of
+			// racing a fixed delay.
+			close(entered)
+			<-release
+		}
 		return os.Stat(path)
 	}
 
-	router := statBlockingRouter{SessionRouter: &fakeSessions{}, stuckUID: uid, stat: stat}
+	arrived := make(chan struct{})
+	router := statBlockingRouter{
+		SessionRouter: &countingSessionRouter{
+			SessionRouter: &fakeSessions{},
+			want:          registrations,
+			all:           arrived,
+		},
+		stuckUID: uid,
+		stat:     stat,
+	}
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Sessions = router
 		d.AllowCaller = func(Caller) bool { return true }
@@ -916,6 +953,18 @@ func TestConcurrentConfigDirChecksAllTakeTheWatch(t *testing.T) {
 	for i := 0; i < registrations; i++ {
 		startRegistrationAt(t, tb.client, dir, filepath.Join(dir, fmt.Sprintf("queued-%d.sock", i)))
 	}
+
+	select {
+	case <-entered:
+	case <-time.After(eventTimeout):
+		t.Fatal("the first ownership check did not reach stat")
+	}
+	select {
+	case <-arrived:
+	case <-time.After(eventTimeout):
+		t.Fatal("the registrations did not all reach their session backend")
+	}
+	close(release)
 
 	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) && checks.Load() < registrations {

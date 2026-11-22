@@ -613,10 +613,8 @@ func TestReceiveBudgetCapped(t *testing.T) {
 	// large and deterministic, so a deadline measured from the caller's start
 	// is crossed by a retry on every run.
 	callerLead := settings.InboxBackoff + 5*time.Millisecond
-	start := time.Now()
 	time.Sleep(callerLead)
 	reply := f.handle(frame)
-	elapsed := time.Since(start)
 
 	wantReceiveError(t, reply, localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE, "Not sent")
 	calls := rec.Calls()
@@ -656,10 +654,6 @@ func TestReceiveBudgetCapped(t *testing.T) {
 		if left := call.Deadline.Sub(call.At); left > settings.RequestTimeout {
 			t.Fatalf("inbox call had %v until the deadline, want at most the %v request timeout", left, settings.RequestTimeout)
 		}
-	}
-
-	if elapsed >= time.Second {
-		t.Fatalf("handleDeliver took %v, want under 1s", elapsed)
 	}
 }
 

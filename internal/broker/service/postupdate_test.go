@@ -809,18 +809,25 @@ func TestWaitProcessGoneReturnsAfterTheProcessExits(t *testing.T) {
 		t.Fatalf("start the child: %v", err)
 	}
 	pid := cmd.Process.Pid
+
+	// Prove the wait reads this child as alive before the kill: with a bound
+	// below the first poll interval, seeing the pid still running is the only way
+	// to get the "still running" error. Starting the success-path wait only after
+	// that rules out a kill that lands before the child existed, and it pins the
+	// case being tested to a live process instead of one already gone.
+	if err := waitProcessGone(pid, time.Nanosecond); err == nil {
+		t.Fatal("waitProcessGone reported the running child as gone")
+	}
+
 	done := make(chan error, 1)
-	started := make(chan struct{})
 	go func() {
-		close(started)
-		done <- waitProcessGone(pid, processExitWait)
+		// The wait's own bound is far above the outer fallback, so returning
+		// within the fallback can only come from the process exit; a wait that
+		// ignored it would be caught by the outer select rather than race its own
+		// timer to the same "still running" error.
+		done <- waitProcessGone(pid, time.Hour)
 	}()
 
-	// Wait until the polling goroutine is running, then kill the child. Unlike
-	// a fixed sleep this is synchronisation: the poll either sees the child
-	// alive and sleeps, or starts after the kill and reports it gone on its
-	// first check, and both are correct.
-	<-started
 	if err := procsig.SendSignal(pid, syscall.SIGKILL); err != nil {
 		t.Fatalf("kill the child: %v", err)
 	}

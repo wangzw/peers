@@ -42,7 +42,7 @@ func TestListenProbeCheckRejectsBusyPort(t *testing.T) {
 		}
 		accepted <- err
 	}()
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	conn, err := net.DialTimeout("tcp", addr, eventTimeout)
 	if err != nil {
 		t.Fatalf("dialing the occupied address after the check: %v", err)
 	}

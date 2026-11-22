@@ -359,6 +359,10 @@ var (
 	// lookupUsername and usernameNow are seams for tests.
 	lookupUsername = accountdb.LookupUID
 	usernameNow    = time.Now
+	// usernameWaiterHook, when set by a test, runs after a caller has decided to
+	// wait for an in-flight lookup and before it blocks. It lets a test wait
+	// until every caller has reached the coalescing path instead of sleeping.
+	usernameWaiterHook func(uid uint32)
 
 	usernameMu sync.Mutex
 	// usernameCache holds every real account that has connected. Its size is
@@ -451,6 +455,9 @@ func resolveUsername(ctx context.Context, uid uint32) (string, bool, error) {
 		}
 		if wait, ok := usernameInflight[uid]; ok {
 			usernameMu.Unlock()
+			if hook := usernameWaiterHook; hook != nil {
+				hook(uid)
+			}
 			select {
 			case <-wait:
 			case <-ctx.Done():

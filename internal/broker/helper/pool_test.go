@@ -459,8 +459,9 @@ func TestPoolRejectsVersionMismatch(t *testing.T) {
 }
 
 func TestPoolReadyTimeout(t *testing.T) {
+	const readyTimeout = 100 * time.Millisecond
 	h := newPoolHarness(t, func(o *PoolOptions) {
-		o.ReadyTimeout = 100 * time.Millisecond
+		o.ReadyTimeout = readyTimeout
 	})
 	h.setBlocking(true)
 	b, release, err := h.pool.Acquire(context.Background(), 1001)
@@ -469,12 +470,21 @@ func TestPoolReadyTimeout(t *testing.T) {
 	}
 	defer release()
 
-	started := time.Now()
-	if _, err := b.Lookup(context.Background(), "/cfg", "/x.sock"); err == nil {
-		t.Fatal("Lookup succeeded although the helper never became ready")
+	// The pool's own ready timeout is the assertion. The wait is that timeout
+	// plus the package fallback, so a pool that ignores it fails instead of
+	// hanging the test.
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.Lookup(context.Background(), "/cfg", "/x.sock")
+		done <- err
+	}()
+	select {
+	case err = <-done:
+	case <-time.After(readyTimeout + processTimeout):
+		t.Fatal("Lookup did not give up at the pool's ready timeout")
 	}
-	if elapsed := time.Since(started); elapsed > 3*time.Second {
-		t.Fatalf("Lookup took %v, want well under 3s", elapsed)
+	if err == nil {
+		t.Fatal("Lookup succeeded although the helper never became ready")
 	}
 	if _, kill := h.counters(); kill != 1 {
 		t.Fatalf("Kill calls = %d, want 1", kill)
@@ -540,6 +550,8 @@ func TestPoolReadyTimeoutIsUnavailable(t *testing.T) {
 	}
 	defer release()
 
+	// The caller's own budget is the assertion: it expires before ReadyTimeout,
+	// so the DeadlineExceeded below can only come from the caller's context.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err = b.Lookup(ctx, "/cfg", "/x.sock")
@@ -597,6 +609,7 @@ func TestPoolWatchTimeoutIsUnavailable(t *testing.T) {
 	}
 	defer release()
 
+	// The caller's own deadline is the assertion for the watch path.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := b.Watch(ctx, "/cfg", func(int) {}); !errors.Is(err, ErrUnavailable) {
@@ -618,6 +631,7 @@ func TestPoolDiscardsHelperAfterCallTimeout(t *testing.T) {
 	}
 	defer release()
 
+	// The caller's own deadline is the assertion for the discarding path too.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := b.Reread(ctx, inbox.Session{}); !errors.Is(err, context.DeadlineExceeded) {
@@ -634,9 +648,9 @@ func TestPoolDiscardsHelperAfterCallTimeout(t *testing.T) {
 	}
 
 	// The next call must start a new helper rather than wait on the old one.
-	// The bound makes a missing rebuild fail at the call instead of blocking
-	// until the test timeout.
-	rebuildCtx, cancelRebuild := context.WithTimeout(context.Background(), time.Second)
+	// The package fallback bounds the rebuild: a missing rebuild fails at the
+	// call instead of blocking until the test timeout.
+	rebuildCtx, cancelRebuild := context.WithTimeout(context.Background(), processTimeout)
 	defer cancelRebuild()
 	if _, err := b.Reread(rebuildCtx, inbox.Session{}); err != nil {
 		t.Fatalf("Reread after the timeout: %v", err)

@@ -377,15 +377,29 @@ func TestCheckTimeout(t *testing.T) {
 	start, kills := pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
 		return nil, false
 	})
-	checker := &AccessChecker{Start: start, Timeout: 100 * time.Millisecond, Logger: accessTestLogger()}
+	const timeout = 100 * time.Millisecond
+	checker := &AccessChecker{Start: start, Timeout: timeout, Logger: accessTestLogger()}
 
-	begin := time.Now()
-	allowed, err := checker.Check(context.Background(), uid, "/config.yaml", AccessRead)
-	if err == nil {
-		t.Fatalf("Check = (%v, nil), want a timeout error", allowed)
+	// The check must give up at its own timeout. Waiting that bound plus the
+	// package fallback catches a check that ignores the timeout without making
+	// the assertion depend on scheduling.
+	type result struct {
+		allowed bool
+		err     error
 	}
-	if elapsed := time.Since(begin); elapsed > 3*time.Second {
-		t.Errorf("Check took %v, want it to give up near the 100ms timeout", elapsed)
+	done := make(chan result, 1)
+	go func() {
+		allowed, err := checker.Check(context.Background(), uid, "/config.yaml", AccessRead)
+		done <- result{allowed, err}
+	}()
+	var res result
+	select {
+	case res = <-done:
+	case <-time.After(timeout + processTimeout):
+		t.Fatalf("Check did not give up near the %v timeout", timeout)
+	}
+	if res.err == nil {
+		t.Fatalf("Check = (%v, nil), want a timeout error", res.allowed)
 	}
 	if kills.Load() == 0 {
 		t.Error("the check process was not killed on timeout")

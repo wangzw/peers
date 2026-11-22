@@ -157,6 +157,8 @@ func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 		_, err := stream.Recv()
 		recvDone <- err
 	}()
+	// The window is the assertion: the stream must stay open. It can only miss a
+	// premature return under load, never fail a correct run.
 	select {
 	case err := <-recvDone:
 		t.Fatalf("Register second recv returned %v, want the stream to stay open", err)
@@ -211,7 +213,7 @@ func TestDegradedServiceStopEndsConnections(t *testing.T) {
 		t.Fatal("the Register stream did not end after Stop")
 	}
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if cc.GetState() != connectivity.Ready {
 			return
@@ -247,7 +249,7 @@ func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 		}
 		accepted <- c
 	}()
-	conn, err := net.DialTimeout("unix", path, 2*time.Second)
+	conn, err := net.DialTimeout("unix", path, eventTimeout)
 	if err != nil {
 		t.Fatalf("dial after Stop: %v", err)
 	}

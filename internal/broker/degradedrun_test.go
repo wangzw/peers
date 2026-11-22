@@ -37,7 +37,7 @@ func diagnosticsLoadErr(rt *runTest) error {
 
 func waitForAnswer(t *testing.T, sock string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("unix", sock, 50*time.Millisecond)
 		if err == nil {
@@ -68,7 +68,7 @@ func statusAt(t *testing.T, sock string) (*localpb.StatusResponse, error) {
 
 func waitForStatus(t *testing.T, sock string, check func(*localpb.StatusResponse) bool) *localpb.StatusResponse {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	var last error
 	for time.Now().Before(deadline) {
 		resp, err := statusAt(t, sock)
@@ -533,7 +533,7 @@ func (r *recordRunner) addresses() []string {
 
 func (r *recordRunner) waitCall(t *testing.T, n int, what string) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		addresses := r.addresses()
 		if len(addresses) > n {
@@ -913,7 +913,7 @@ func TestRunDiagnosticsToLocalOnlyLogsFinalLevel(t *testing.T) {
 
 func waitSubscribed(t *testing.T, cfg *fakeConfig, key string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		cfg.mu.Lock()
 		n := 0

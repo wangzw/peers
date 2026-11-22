@@ -590,6 +590,9 @@ func TestScenarioTargetSessionGone(t *testing.T) {
 	if !bytes.Equal(e.Origin, b.fp[:]) {
 		t.Fatalf("Origin = %x, want the receiving Broker's fingerprint %x", e.Origin, b.fp)
 	}
+	// REQ-agent-messaging-018: the send returns within the caller's budget. The
+	// margin absorbs the final wake-up and scheduling; it stays below the budget,
+	// so a send that ignored it still fails.
 	if elapsed > settings.RequestTimeout+250*time.Millisecond {
 		t.Fatalf("elapsed = %v, want it bounded by the %v request timeout", elapsed, settings.RequestTimeout)
 	}

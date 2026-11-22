@@ -387,8 +387,13 @@ func TestSendPeerDialerKicksAndGivesUp(t *testing.T) {
 	if n := len(f.net.requests(f.self, f.peer)); n != 0 {
 		t.Fatalf("requests = %d, want 0: nothing was ever sent", n)
 	}
+	// The retries spend three backoffs of 10, 20 and 40ms, so a send that gives
+	// up on the retry budget returns in tens of milliseconds. One second is far
+	// below the 2s send budget, so a send that waited out the budget instead of
+	// retrying fails, while a loaded runner still has plenty of room; the
+	// baseline used the same bound.
 	if elapsed >= time.Second {
-		t.Fatalf("elapsed = %v, want under 1s: retries must not wait out the budget", elapsed)
+		t.Fatalf("elapsed = %v, want under 1s: retries must not wait out the 2s budget", elapsed)
 	}
 }
 
@@ -462,17 +467,26 @@ func TestSendPeerUpRaceWithGeneration(t *testing.T) {
 
 			lnk := &upDuringEstablishedLink{fakeEnd: f.net.end(f.self)}
 			f.delivery.deps.Link = lnk
-			f.delivery.waiter = newLinkWaiter(lnk, nil)
+			// A fake waiter clock makes the criterion schedule-independent: a wait
+			// that used the up event arms no timer, while one that missed it arms
+			// a backoff timer and blocks until the outer fallback fails the test.
+			clock := newFakeClock(time.Now())
+			f.delivery.waiter = newLinkWaiter(lnk, clock)
 
-			start := time.Now()
-			err := f.send(caller, "frontend@hostB", "hello")
-			elapsed := time.Since(start)
+			done := make(chan error, 1)
+			go func() { done <- f.send(caller, "frontend@hostB", "hello") }()
+			var err error
+			select {
+			case err = <-done:
+			case <-time.After(eventTimeout):
+				t.Fatal("the wait sat out a fake-clock backoff instead of using the up event that landed before it began")
+			}
 
 			if err != nil {
 				t.Fatalf("sendToPeer = %v, want nil once the link is up", err)
 			}
-			if elapsed >= 100*time.Millisecond {
-				t.Fatalf("elapsed = %v, want under 100ms: the wait must see the up event that landed before it began", elapsed)
+			if got := clock.createdTimers(); got != 0 {
+				t.Fatalf("the wait armed %d backoff timer(s), want it to return on the up event that landed before it began", got)
 			}
 			if n := len(f.net.requests(f.self, f.peer)); n != 1 {
 				t.Fatalf("requests = %d, want 1", n)
@@ -521,15 +535,30 @@ func TestSendPeerBackoffDoubles(t *testing.T) {
 // TestSendPeerAcceptorWaitsBudget checks that an acceptor never kicks and waits
 // the full budget for the dialer to connect (REQ-agent-messaging-017).
 func TestSendPeerAcceptorWaitsBudget(t *testing.T) {
+	const budget = 300 * time.Millisecond
 	f := newSendPeerFixture(t, pairing.RoleAcceptor)
 	f.settings.SetSettings(sendSettings{
-		RequestTimeout: 300 * time.Millisecond,
+		RequestTimeout: budget,
 		LinkBackoff:    10 * time.Millisecond,
 		LinkRetries:    3,
 	})
 
+	// REQ-agent-messaging-017: a send must return within the send time limit,
+	// which here is the 300ms budget an acceptor waits for the link. The margin
+	// is 700ms, the value the baseline already used when it bounded this budget
+	// at one second; it covers one scheduling of the waiter goroutine plus the
+	// final wake-up and error construction, while a send that waits out anything
+	// close to a real budget (the 20s default, or even 2s) still fails.
+	const margin = 700 * time.Millisecond
+	done := make(chan error, 1)
 	start := time.Now()
-	err := f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello")
+	go func() { done <- f.send(f.caller("api-worker", "1a2b3c"), "frontend@hostB", "hello") }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(budget + eventTimeout):
+		t.Fatal("the acceptor's wait did not end at its budget")
+	}
 	elapsed := time.Since(start)
 
 	e := requireSendPeerError(t, err)
@@ -539,11 +568,11 @@ func TestSendPeerAcceptorWaitsBudget(t *testing.T) {
 	if kicks := f.net.kicks(f.self, f.peer); kicks != 0 {
 		t.Fatalf("kicks = %d, want 0: an acceptor does not dial", kicks)
 	}
-	if elapsed < 300*time.Millisecond {
-		t.Fatalf("elapsed = %v, want at least the 300ms budget", elapsed)
+	if elapsed < budget {
+		t.Fatalf("elapsed = %v, want at least the %v budget", elapsed, budget)
 	}
-	if elapsed > time.Second {
-		t.Fatalf("elapsed = %v, want under 1s: the budget must bound the wait", elapsed)
+	if elapsed > budget+margin {
+		t.Fatalf("elapsed = %v, want at most %v: the budget must bound the wait", elapsed, budget+margin)
 	}
 }
 

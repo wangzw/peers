@@ -182,6 +182,8 @@ func TestConfigDirWatchStopClosesCleanly(t *testing.T) {
 	if err := os.WriteFile(configFile, []byte("broker:\n  listen: ''\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile after stop: %v", err)
 	}
+	// The window is the assertion: a wake after stop would be a violation. A
+	// window can only miss one under load, never fail a correct run, so it stays.
 	select {
 	case <-w.events:
 		t.Fatal("a write after stop woke the retry")

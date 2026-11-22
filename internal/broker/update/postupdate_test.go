@@ -298,21 +298,29 @@ func TestRunPostUpdateUsesItsOwnBoundWithoutADeadline(t *testing.T) {
 	if err := os.WriteFile(path, postUpdateHangScript("0.2.0"), 0o755); err != nil {
 		t.Fatalf("write the hanging binary: %v", err)
 	}
-	start := time.Now()
-	err := RunPostUpdate(context.Background(), PostUpdateOptions{
-		Binary:  path,
-		Level:   "system",
-		Timeout: 150 * time.Millisecond,
-	})
-	elapsed := time.Since(start)
+	const bound = 150 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		done <- RunPostUpdate(context.Background(), PostUpdateOptions{
+			Binary:  path,
+			Level:   "system",
+			Timeout: bound,
+		})
+	}()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(bound + 5*time.Second):
+		// The threshold is the assertion that the injected bound was used: it is
+		// far below the 30s default, so a step that ignored the injected bound
+		// still fails, while the margin absorbs process teardown under load.
+		t.Fatalf("RunPostUpdate did not stop near the injected %v bound", bound)
+	}
 	if err == nil {
 		t.Fatal("RunPostUpdate() = nil, want a timeout error")
 	}
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("error %q does not report a timeout", err)
-	}
-	if elapsed > 5*time.Second {
-		t.Errorf("RunPostUpdate took %s, want it to stop near the injected bound", elapsed)
 	}
 }
 
@@ -334,11 +342,20 @@ func TestInstallPostUpdateTimeoutRollsBack(t *testing.T) {
 	target, before := newTarget(t, original, 0o750)
 	script := postUpdateHangScript(version)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	const callerDeadline = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), callerDeadline)
 	defer cancel()
-	start := time.Now()
-	err := Install(ctx, serveScript(t, target, version, script), "system")
-	elapsed := time.Since(start)
+	// The caller's deadline is the assertion: the step must be stopped by it, not
+	// by its own 30s bound. The threshold is that deadline plus a margin that
+	// stays below the default, so a step that ignored the deadline still fails.
+	done := make(chan error, 1)
+	go func() { done <- Install(ctx, serveScript(t, target, version, script), "system") }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(callerDeadline + 8*time.Second):
+		t.Fatalf("Install did not stop near the %v caller deadline", callerDeadline)
+	}
 
 	if err == nil {
 		t.Fatal("Install() = nil, want a timeout error")
@@ -348,9 +365,6 @@ func TestInstallPostUpdateTimeoutRollsBack(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "previous binary was restored") {
 		t.Errorf("error %q does not say the binary was restored", err)
-	}
-	if elapsed > 10*time.Second {
-		t.Errorf("Install() took %s, want it to stop near the deadline", elapsed)
 	}
 	assertUnchanged(t, target, original, before)
 	assertNoRollbackFiles(t, filepath.Dir(target))
@@ -460,11 +474,19 @@ func TestInstallPostUpdateTimeoutRestoresTheUnit(t *testing.T) {
 	marker := filepath.Join(filepath.Dir(target), "post-update-ran")
 	script := postUpdateRewriteScript(version, unit, "new unit\n", marker, 0, true)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	const callerDeadline = 2 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), callerDeadline)
 	defer cancel()
-	start := time.Now()
-	err := Install(ctx, serveScript(t, target, version, script), "user")
-	elapsed := time.Since(start)
+	// The caller's deadline is the assertion, as in the rollback test above; the
+	// threshold stays below the step's 30s default.
+	done := make(chan error, 1)
+	go func() { done <- Install(ctx, serveScript(t, target, version, script), "user") }()
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(callerDeadline + 8*time.Second):
+		t.Fatalf("Install did not stop near the %v caller deadline", callerDeadline)
+	}
 
 	if err == nil {
 		t.Fatal("Install() = nil, want a timeout error")
@@ -473,9 +495,6 @@ func TestInstallPostUpdateTimeoutRestoresTheUnit(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}
-	}
-	if elapsed > 10*time.Second {
-		t.Errorf("Install() took %s, want it to stop near the deadline", elapsed)
 	}
 	if _, statErr := os.Stat(marker); statErr != nil {
 		t.Fatalf("the post-update step did not run: %v", statErr)

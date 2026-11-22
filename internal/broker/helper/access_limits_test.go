@@ -97,6 +97,8 @@ func TestCheckLimitsConcurrentChecksPerAccount(t *testing.T) {
 	}
 
 	waitStarted(maxPerAccount)
+	// The window is the assertion: a third check that started would send to
+	// started. Under load a window can miss one, never fail a correct run.
 	select {
 	case <-started:
 		close(release)
@@ -130,14 +132,14 @@ func checkAsync(checker *AccessChecker, uid uint32) <-chan checkResult {
 }
 
 // waitStartedAccount receives one started uid, failing the test if none starts
-// within timeout.
-func waitStartedAccount(t *testing.T, started <-chan uint32, timeout time.Duration) uint32 {
+// within the package fallback.
+func waitStartedAccount(t *testing.T, started <-chan uint32) uint32 {
 	t.Helper()
 	select {
 	case uid := <-started:
 		return uid
-	case <-time.After(timeout):
-		t.Fatalf("no check started within %s", timeout)
+	case <-time.After(processTimeout):
+		t.Fatalf("no check started within %s", processTimeout)
 		return 0
 	}
 }
@@ -186,7 +188,7 @@ func TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers(t *testing.T) {
 	}
 	seen := map[uint32]int{}
 	for i := 0; i < 2; i++ {
-		seen[waitStartedAccount(t, started, processTimeout)]++
+		seen[waitStartedAccount(t, started)]++
 	}
 	if seen[1000] != 2 {
 		t.Fatalf("uid 1000 started %d checks, want its per-account share of 2", seen[1000])
@@ -199,7 +201,7 @@ func TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers(t *testing.T) {
 		results = append(results, checkAsync(checker, 1001))
 	}
 	for i := 0; i < 2; i++ {
-		uid := waitStartedAccount(t, started, processTimeout)
+		uid := waitStartedAccount(t, started)
 		if uid != 1001 {
 			releaseAll()
 			t.Fatalf("started uid %d, want the second account 1001", uid)
@@ -238,10 +240,12 @@ func TestCheckGlobalSlotWaitsForASlotToFree(t *testing.T) {
 
 	first := checkAsync(checker, 1000)
 	second := checkAsync(checker, 1001)
-	waitStartedAccount(t, started, processTimeout)
-	waitStartedAccount(t, started, processTimeout)
+	waitStartedAccount(t, started)
+	waitStartedAccount(t, started)
 
 	third := checkAsync(checker, 1002)
+	// The window is the assertion: with both global slots taken, a third start
+	// would send to started.
 	select {
 	case uid := <-started:
 		t.Fatalf("uid %d started while both global slots were taken", uid)
@@ -249,7 +253,7 @@ func TestCheckGlobalSlotWaitsForASlotToFree(t *testing.T) {
 	}
 
 	releaseAll()
-	if uid := waitStartedAccount(t, started, processTimeout); uid != 1002 {
+	if uid := waitStartedAccount(t, started); uid != 1002 {
 		t.Fatalf("started uid %d, want the waiting account 1002", uid)
 	}
 	for _, r := range []<-chan checkResult{first, second, third} {
@@ -280,10 +284,11 @@ func TestCheckNoSlotWithinBudgetFails(t *testing.T) {
 	}
 
 	first := checkAsync(checker, uid)
-	waitStartedAccount(t, started, processTimeout)
+	waitStartedAccount(t, started)
 
 	// A shorter caller deadline bounds this check so the busy path is reached
-	// while the first check still holds the account's only slot.
+	// while the first check still holds the account's only slot. The deadline is
+	// the trigger for the busy path; the error below is the assertion.
 	busyCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	allowed, err := checker.Check(busyCtx, uid, "/config.yaml", AccessRead)
@@ -337,10 +342,11 @@ func TestCheckBusyLogOncePerMinute(t *testing.T) {
 	}
 
 	first := checkAsync(checker, uid)
-	waitStartedAccount(t, started, processTimeout)
+	waitStartedAccount(t, started)
 
 	// A shorter caller deadline reaches the busy path quickly while the first
-	// check keeps the account's only slot.
+	// check keeps the account's only slot. The deadline is the trigger; the log
+	// record is the assertion.
 	busy := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancel()
@@ -428,7 +434,9 @@ func TestCheckUnknownAccountsShareSlots(t *testing.T) {
 		t.Fatalf("second unknown slot: %v", err)
 	}
 
-	// A third unknown check finds both slots of the shared bucket taken.
+	// A third unknown check finds both slots of the shared bucket taken. The
+	// short caller deadline is the assertion: the acquire must fail rather than
+	// wait out the full check budget.
 	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	_, err = slots.acquireAccount(short, unknownCheckAccount)
 	cancel()
@@ -598,8 +606,11 @@ func TestCheckLookupConcurrencyCapped(t *testing.T) {
 		results = append(results, checkAsync(checker, uint32(400000+i)))
 	}
 	for i := 0; i < 4; i++ {
-		waitStartedAccount(t, started, processTimeout)
+		waitStartedAccount(t, started)
 	}
+	// The window is the assertion: a fifth lookup that ran at once would send to
+	// started. The gate's slots are unexported, so this is the only way to
+	// observe the cap; a window can miss one under load, never fail a correct run.
 	select {
 	case <-started:
 		releaseAll()

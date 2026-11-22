@@ -233,6 +233,9 @@ func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 		t.Fatalf("held registration reason = %v, want socket_path_missing", got)
 	}
 
+	// The deadline is the assertion: the second stream must be held until its own
+	// caller gives up. Cancelling it earlier would return a different code, and
+	// the 250ms only decides how long this test spends reaching the deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	if _, err := tb.client.Register(ctx); err == nil {

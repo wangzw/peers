@@ -65,15 +65,18 @@ var _ deliveryLink = (*waitLink)(nil)
 func TestLinkWaiterAlreadyUp(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{1}
-	w := newLinkWaiter(l, nil)
+	clock := newFakeClock(time.Now())
+	w := newLinkWaiter(l, clock)
 	l.fireUp(p)
 
-	start := time.Now()
 	if !w.wait(context.Background(), p, time.Second, 0) {
 		t.Fatal("wait returned false, want true")
 	}
-	if elapsed := time.Since(start); elapsed >= time.Second {
-		t.Fatalf("wait took %v, want it to return without waiting", elapsed)
+	// The recorded up event satisfies the wait before a timer is armed, so the
+	// fake clock must have no timer. That is the schedule-independent form of
+	// "returned without waiting for the maximum".
+	if got := clock.createdTimers(); got != 0 {
+		t.Fatalf("wait armed %d timer(s), want it to return on the recorded up event", got)
 	}
 }
 
@@ -107,17 +110,19 @@ func TestLinkWaiterWakesOnUp(t *testing.T) {
 func TestLinkWaiterUpBetweenObserveAndWait(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{3}
-	w := newLinkWaiter(l, nil)
+	clock := newFakeClock(time.Now())
+	w := newLinkWaiter(l, clock)
 
 	since := w.generation(p)
 	l.fireUp(p)
 
-	start := time.Now()
 	if !w.wait(context.Background(), p, 2*time.Second, since) {
 		t.Fatal("wait returned false, want true")
 	}
-	if elapsed := time.Since(start); elapsed >= time.Second {
-		t.Fatalf("wait took %v, want it woken by the up event", elapsed)
+	// The up event follows the observed generation, so the wait returns at once
+	// and never arms the fake-clock timer.
+	if got := clock.createdTimers(); got != 0 {
+		t.Fatalf("wait armed %d timer(s), want it to return on the up event that followed the observed generation", got)
 	}
 }
 
@@ -140,14 +145,23 @@ func TestLinkWaiterIgnoresUpBeforeSince(t *testing.T) {
 // the dialer's backoff still bounds the send.
 func TestLinkWaiterTimeout(t *testing.T) {
 	l := newWaitLink()
-	w := newLinkWaiter(l, nil)
+	p := peerID{4}
+	clock := newFakeClock(time.Now())
+	w := newLinkWaiter(l, clock)
 
-	start := time.Now()
-	if w.wait(context.Background(), peerID{4}, 20*time.Millisecond) {
-		t.Fatal("wait returned true, want false")
-	}
-	if elapsed := time.Since(start); elapsed >= time.Second {
-		t.Fatalf("wait took %v, want it bounded by 20ms", elapsed)
+	done := make(chan bool, 1)
+	go func() { done <- w.wait(context.Background(), p, 20*time.Millisecond) }()
+	// Registration and the timer share the waiter's lock, so once the waiter is
+	// registered the timer exists and the test can advance the clock itself.
+	waitForRegistrations(t, w, p, 1)
+	clock.Advance(20 * time.Millisecond)
+	select {
+	case ok := <-done:
+		if ok {
+			t.Fatal("wait returned true, want false once the maximum elapsed")
+		}
+	case <-time.After(eventTimeout):
+		t.Fatal("wait did not return after its maximum elapsed")
 	}
 }
 
@@ -161,7 +175,10 @@ func TestLinkWaiterContextCancel(t *testing.T) {
 	cancel()
 
 	done := make(chan bool, 1)
-	go func() { done <- w.wait(ctx, peerID{5}, 2*time.Second) }()
+	// The wait's own maximum is far above the outer fallback, so returning
+	// within it can only come from the context cancellation; a wait that ignored
+	// the context would fail the test instead of passing on its own timer.
+	go func() { done <- w.wait(ctx, peerID{5}, time.Hour) }()
 	select {
 	case ok := <-done:
 		if ok {
@@ -405,7 +422,7 @@ func waitForKicks(t *testing.T, l *staleLink, n int) {
 // certain to hit registered waiters and cannot be lost.
 func waitForRegistrations(t *testing.T, w *linkWaiter, p peerID, n int) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		w.mu.Lock()
 		got := len(w.ch[p])

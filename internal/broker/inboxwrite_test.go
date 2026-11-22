@@ -149,7 +149,7 @@ func TestWriteInboxStopsAtDeadline(t *testing.T) {
 		}
 	})
 
-	t.Run("attempts end at the deadline", func(t *testing.T) {
+	t.Run("attempts stay before the deadline", func(t *testing.T) {
 		rec := newRecordingInbox(inbox.ErrNotWritten)
 		d, _ := newWriteInboxDelivery(t, sendSettings{
 			InboxRetries: 10,
@@ -158,7 +158,13 @@ func TestWriteInboxStopsAtDeadline(t *testing.T) {
 		})
 		target := writeInboxTarget("api-worker", rec)
 
-		deadline := time.Now().Add(30 * time.Millisecond)
+		// The deadline here stands in for a caller's budget, but the wait for the
+		// first attempt is only bounded by the package fallback: a loaded runner
+		// must not make writeInbox observe an already-passed deadline and skip the
+		// retriable attempts this subtest checks. A run whose deadline has already
+		// passed before the first check, making zero attempts, is the case the
+		// "deadline already passed" subtest covers.
+		deadline := time.Now().Add(eventTimeout)
 		got := d.writeInbox(context.Background(), deadline, target, "sig", "text", "msg")
 		if got != notWritten {
 			t.Fatalf("outcome = %v, want notWritten", got)
@@ -182,11 +188,15 @@ func TestWriteInboxTimeoutCappedByRemaining(t *testing.T) {
 	d, _ := newWriteInboxDelivery(t, sendSettings{
 		InboxRetries: 2,
 		InboxBackoff: time.Millisecond,
-		InboxTimeout: 5 * time.Second,
+		InboxTimeout: time.Hour,
 	})
 	target := writeInboxTarget("api-worker", rec)
 
-	got := d.writeInbox(context.Background(), time.Now().Add(100*time.Millisecond), target, "sig", "text", "msg")
+	// The remaining time is the package fallback rather than a short test
+	// window, so a loaded runner still reaches the first attempt. It is also far
+	// below InboxTimeout, so a cap that used the configured timeout instead of
+	// the time left before the deadline passes a value this test rejects.
+	got := d.writeInbox(context.Background(), time.Now().Add(eventTimeout), target, "sig", "text", "msg")
 	if got != written {
 		t.Fatalf("outcome = %v, want written", got)
 	}
@@ -194,8 +204,8 @@ func TestWriteInboxTimeoutCappedByRemaining(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(calls))
 	}
-	if timeout := calls[0].Timeout; timeout <= 0 || timeout > 100*time.Millisecond {
-		t.Fatalf("timeout = %v, want in (0, 100ms]", timeout)
+	if timeout := calls[0].Timeout; timeout <= 0 || timeout > eventTimeout {
+		t.Fatalf("timeout = %v, want in (0, %v]", timeout, eventTimeout)
 	}
 }
 

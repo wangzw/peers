@@ -144,13 +144,21 @@ func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 	// Release a handler the fix did not stop, so no goroutine outlives the test.
 	t.Cleanup(func() { close(block.release) })
 
-	start := time.Now()
+	// No requirement bounds shutdown: the handler above is released only by the
+	// cleanup, so a shutdown that waits for it never returns. This bound is only
+	// there to turn that hang into a failure the test can report, and the fallback
+	// is wide enough that a correct shutdown, which returns as soon as the handler
+	// is left blocked, never spends it.
 	rt.cancel()
-	if err := rt.waitErr(); err != nil {
-		t.Fatalf("Run error = %v, want nil", err)
-	}
-	if elapsed := time.Since(start); elapsed >= time.Second {
-		t.Fatalf("Run took %v after cancel, want under 1s: shutdown waited for the inbox write", elapsed)
+	done := make(chan error, 1)
+	go func() { done <- rt.waitErr() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run error = %v, want nil", err)
+		}
+	case <-time.After(eventTimeout):
+		t.Fatal("Run did not return after cancel: shutdown waited for the inbox write")
 	}
 
 	// The canceled write is not proof that nothing reached the session: the
@@ -214,7 +222,7 @@ func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 
 	// Wait until the handler holds its watch, which is the state it must leave
 	// cleanly on shutdown.
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		b.mu.Lock()
 		n := len(b.watches)

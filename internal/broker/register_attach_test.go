@@ -40,7 +40,7 @@ func TestAttachExistingAgentRequiresSameAccount(t *testing.T) {
 	tb.b.mu.Unlock()
 
 	rs := startRegistration(t, tb, fake)
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for tb.lockedWaitingCount() == 0 {
 		select {
 		case resp := <-rs.events:

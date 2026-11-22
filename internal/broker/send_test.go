@@ -473,6 +473,11 @@ func TestSendLocalInboxUnwritable(t *testing.T) {
 	if got := errorCode(err); got != localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE {
 		t.Fatalf("code = %v, want inbox_unwritable", got)
 	}
+	// REQ-agent-messaging-018: the send returns within the caller's budget. The
+	// margin is the 500ms the baseline used: it absorbs the final inbox wake-up,
+	// the retry loop's cleanup and one scheduling delay under -race, and it still
+	// bounds the call at twice the budget, so a send that waits far past the
+	// budget fails.
 	if elapsed > settings.RequestTimeout+500*time.Millisecond {
 		t.Fatalf("Send took %v, want at most %v", elapsed, settings.RequestTimeout+500*time.Millisecond)
 	}

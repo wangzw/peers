@@ -85,7 +85,7 @@ func (t *manualTimer) Stop() bool {
 
 func eventually(t *testing.T, what string, check func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if check() {
 			return

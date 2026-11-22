@@ -72,24 +72,20 @@ func (r *fakeRunner) Close() { r.order.add("Close") }
 
 // runWaitBound bounds every wait for Run to reach its next lifecycle step or
 // to return. It is a liveness bound, not a latency budget: it fires only when
-// Run is stuck, so a slow but correct startup must not trip it. It shares the
-// package fallback: the system form resolves broker.local_socket_group before
-// it binds anything, and one account-database lookup may take
-// accountdb.LookupBound on a host whose NSS source is slow, which the fallback
-// covers with room for the rest of startup and scheduling delay under load.
-const runWaitBound = eventTimeout
+// Run is stuck, so a slow but correct startup must not trip it. The system form
+// resolves broker.local_socket_group before it binds anything, and one
+// account-database lookup may take accountdb.LookupBound on a host whose NSS
+// source is slow. One lookup is a product timer, so the bound is that timer plus
+// the package fallback rather than a separate margin.
+const runWaitBound = accountdb.LookupBound + eventTimeout
 
 // TestRunWaitBoundCoversAccountLookup checks the invariant behind runWaitBound:
 // a Run test must not give up on startup while the account database is still
 // inside its own bound for one lookup. accountdb.LookupBound is the product
-// bound (seven seconds on Linux: getentTimeout plus getentWaitDelay), and
-// runWaitBound adds a startup margin to it. Lowering runWaitBound below the
-// bound would reintroduce the "Run did not return" failure on a slow NSS
-// source.
+// bound, and runWaitBound must be that bound plus the package fallback.
 func TestRunWaitBoundCoversAccountLookup(t *testing.T) {
-	const startupMargin = 3 * time.Second
-	if want := accountdb.LookupBound + startupMargin; runWaitBound < want {
-		t.Fatalf("runWaitBound = %v, want at least %v (accountdb.LookupBound %v plus %v startup margin)", runWaitBound, want, accountdb.LookupBound, startupMargin)
+	if want := accountdb.LookupBound + eventTimeout; runWaitBound != want {
+		t.Fatalf("runWaitBound = %v, want %v (accountdb.LookupBound %v plus the %v package fallback)", runWaitBound, want, accountdb.LookupBound, eventTimeout)
 	}
 }
 

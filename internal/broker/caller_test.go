@@ -108,7 +108,7 @@ func TestUsernameForCachesUntilTTL(t *testing.T) {
 // waitForRefresh waits until no background refresh for uid is running.
 func waitForRefresh(t *testing.T, uid uint32) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		usernameMu.Lock()
 		_, running := usernameInflight[uid]
@@ -195,6 +195,9 @@ func TestUsernameForCoalescesConcurrentLookups(t *testing.T) {
 	const workers = 10
 	ready := make(chan struct{})
 	gate := make(chan struct{})
+	waiting := make(chan struct{}, workers)
+	usernameWaiterHook = func(uint32) { waiting <- struct{}{} }
+	t.Cleanup(func() { usernameWaiterHook = nil })
 	var wg sync.WaitGroup
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
@@ -216,8 +219,16 @@ func TestUsernameForCoalescesConcurrentLookups(t *testing.T) {
 	case <-time.After(eventTimeout):
 		t.Fatal("the lookup never started")
 	}
-	// Give every worker time to reach the cache while the first lookup is held.
-	time.Sleep(100 * time.Millisecond)
+	// The other callers must already be waiting on the in-flight lookup, not
+	// merely scheduled to reach it: the hook runs inside the coalescing path, so
+	// the count is the barrier the fixed sleep stood in for.
+	for i := 1; i < workers; i++ {
+		select {
+		case <-waiting:
+		case <-time.After(eventTimeout):
+			t.Fatalf("only %d callers reached the coalescing wait, want %d", i, workers-1)
+		}
+	}
 	close(release)
 	wg.Wait()
 	if got := calls.Load(); got != 1 {
@@ -348,6 +359,10 @@ func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("Hello error = %v (code %v), want code %v", err, status.Code(err), codes.Unavailable)
 	}
+	// The window is the assertion: a handler that ran would push into the
+	// buffered channel, and watching for it is the only way to catch a start
+	// that races the handshake. A window can only miss such a start under load,
+	// not fail a correct run.
 	select {
 	case call := <-srv.calls:
 		t.Fatalf("Hello was called with caller %+v, want the connection rejected during the handshake", call.caller)
@@ -376,6 +391,9 @@ func TestReadPeerCredErrorClosesConnection(t *testing.T) {
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("Hello error = %v (code %v), want code %v", err, status.Code(err), codes.Unavailable)
 	}
+	// The window is the assertion: an early handler would push into the
+	// buffered channel. A window can only miss such a start under load, not
+	// fail a correct run.
 	select {
 	case call := <-srv.calls:
 		t.Fatalf("Hello was called with caller %+v, want the connection closed during the handshake", call.caller)
@@ -607,6 +625,9 @@ func TestUsernameLookupConcurrencyIsBounded(t *testing.T) {
 			t.Fatalf("only %d lookups started, want %d", i, lookupgate.Concurrency)
 		}
 	}
+	// The window is the assertion: a fifth lookup that ran at once would send to
+	// started. Under load a window can miss that, never fail a correct run, so it
+	// stays; the monotonic peak checked after wg.Wait is the supplementary form.
 	select {
 	case <-started:
 		close(release)
@@ -614,14 +635,14 @@ func TestUsernameLookupConcurrencyIsBounded(t *testing.T) {
 		t.Fatalf("more than %d lookups ran at once", lookupgate.Concurrency)
 	case <-time.After(100 * time.Millisecond):
 	}
-	if got := peak.Load(); got > lookupgate.Concurrency {
-		close(release)
-		wg.Wait()
-		t.Fatalf("peak lookups = %d, want at most %d", got, lookupgate.Concurrency)
-	}
 
 	close(release)
 	wg.Wait()
+	// peak is monotonic and covers the whole run, including the waiters released
+	// after the gate, so a broken gate raises it even if the window missed it.
+	if got := peak.Load(); got > lookupgate.Concurrency {
+		t.Fatalf("peak lookups = %d, want at most %d", got, lookupgate.Concurrency)
+	}
 }
 
 // TestRealAccountCacheSurvivesUnknownRotation checks that resolving a real
@@ -753,6 +774,9 @@ func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 		releaseLookups()
 		t.Fatalf("third connection: err = %v (code %v), want the handshake refused while the lookup queue is blocked", err, status.Code(err))
 	}
+	// The window is the assertion: a lookup that started despite the taken slots
+	// would send to lookupStarted. A window can only miss that under load, never
+	// fail a correct run.
 	select {
 	case uid := <-lookupStarted:
 		releaseLookups()
@@ -922,7 +946,7 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 
 	// Wait for the queue to fill, recording its peak so a bound that is
 	// exceeded even briefly fails the test.
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	peak := 0
 	for len(handshakeLookupWaiters) < wantWaiters {
 		if n := len(handshakeLookupWaiters); n > peak {
@@ -1143,6 +1167,10 @@ func TestBrokerAndHelperShareLookupGate(t *testing.T) {
 		releaseAll()
 		t.Fatal("the broker lookup ran while the helper held every process-wide lookup slot")
 	case <-time.After(200 * time.Millisecond):
+		// The window is the assertion here. The lookup gate's slots are
+		// unexported, so the only way to observe that the broker's lookup stayed
+		// out is to give it a window in which a violation would complete; a
+		// blocked lookup cannot false-fail because nothing is expected to finish.
 	}
 
 	releaseAll()

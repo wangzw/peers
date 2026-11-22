@@ -115,6 +115,9 @@ func (rs *regStream) problem(d time.Duration) localpb.NotRegisteredReason {
 	return rs.problemEvent(d).GetReason()
 }
 
+// expectNoEvent fails when the stream yields an event within d. The window is
+// the assertion and is deliberately short: a negative window can only miss an
+// event under load, never fail a correct run, so it is not a flake source.
 func (rs *regStream) expectNoEvent(d time.Duration) {
 	rs.t.Helper()
 	select {
@@ -141,7 +144,7 @@ func (rs *regStream) closeErr(d time.Duration) error {
 
 func waitForReg(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
