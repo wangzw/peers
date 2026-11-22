@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
@@ -365,5 +366,66 @@ func TestSetConfig(t *testing.T) {
 		if !strings.Contains(err.Error(), "write permission") {
 			t.Errorf("error = %q, want it to mention write permission", err)
 		}
+	})
+}
+
+// TestConfigToolCallTimeouts covers get_config, set_config and
+// set_broker_online: each returns a tool error instead of waiting for a Broker
+// that never answers. The seam is short; the backstop in waitBoundedCall is the
+// test's own bound and fires on a handler that never returns.
+func TestConfigToolCallTimeouts(t *testing.T) {
+	t.Parallel()
+
+	blocked := func(ctx context.Context) error {
+		<-ctx.Done()
+		return status.Error(codes.DeadlineExceeded, "the Broker did not answer")
+	}
+
+	t.Run("get_config", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newConfigTestHandler(t, fakelocal.Handlers{
+			GetConfig: func(ctx context.Context, _ *localpb.GetConfigRequest) (*localpb.GetConfigResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.rpcTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "GetConfig", func() error {
+			_, err := h.GetConfig(context.Background(), GetConfigIn{})
+			return err
+		})
+		checkBoundedError(t, "GetConfig", err, elapsed, "get_config failed", "(code: internal)")
+	})
+
+	t.Run("set_config", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newConfigTestHandler(t, fakelocal.Handlers{
+			SetConfig: func(ctx context.Context, _ *localpb.SetConfigRequest) (*localpb.SetConfigResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.rpcTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "SetConfig", func() error {
+			_, err := h.SetConfig(context.Background(), SetConfigIn{Key: "broker.alias", Value: "b"})
+			return err
+		})
+		checkBoundedError(t, "SetConfig", err, elapsed, "set_config failed", "(code: internal)")
+	})
+
+	t.Run("set_broker_online", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newConfigTestHandler(t, fakelocal.Handlers{
+			SetConfig: func(ctx context.Context, _ *localpb.SetConfigRequest) (*localpb.SetConfigResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.rpcTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "SetBrokerOnline", func() error {
+			_, err := h.SetBrokerOnline(context.Background(), SetBrokerOnlineIn{Online: true})
+			return err
+		})
+		checkBoundedError(t, "SetBrokerOnline", err, elapsed, "set_broker_online failed", "(code: internal)")
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"google.golang.org/grpc"
 
@@ -94,6 +95,22 @@ type topicRecorder interface {
 	unlockTopic()
 }
 
+// handlerRPCTimeout bounds one Broker RPC of a tool whose Broker side does no
+// network I/O and runs no timer: get_config, set_config, set_broker_online,
+// list_brokers, disconnect_broker and create_pairing_key read or write a small
+// local file or answer from memory. The value matches topicRPCTimeout and
+// termcmd.UnaryTimeout. Tests override it through handlers.rpcTimeout.
+const handlerRPCTimeout = 10 * time.Second
+
+// withRPCTimeout returns ctx bounded by timeout, using fallback when timeout is
+// zero. The caller defers the cancel.
+func withRPCTimeout(ctx context.Context, timeout, fallback time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = fallback
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 // handlers is the shared skeleton of the forwarding tool handlers.
 type handlers struct {
 	st     *statusStore
@@ -102,6 +119,10 @@ type handlers struct {
 	// sessionTopics returns this session's default topics for a nameless
 	// join_topic or leave_topic. nil means the session has none.
 	sessionTopics func(context.Context) []string
+	// rpcTimeout bounds one Broker RPC of a tool whose Broker side does no
+	// network I/O and runs no timer. Zero means handlerRPCTimeout; tests set a
+	// short value.
+	rpcTimeout time.Duration
 }
 
 // preflight returns the Status a tool call may use, or an error whose text is

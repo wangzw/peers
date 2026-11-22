@@ -517,3 +517,64 @@ func TestCreatePairingKeyNotListening(t *testing.T) {
 		t.Errorf("error = %q, want (code: invalid_argument)", err)
 	}
 }
+
+// TestBrokerToolCallTimeouts covers the broker tools whose Broker side does no
+// network I/O of its own: list_brokers, disconnect_broker and
+// create_pairing_key. Each returns a tool error instead of waiting for a Broker
+// that never answers.
+func TestBrokerToolCallTimeouts(t *testing.T) {
+	t.Parallel()
+
+	blocked := func(ctx context.Context) error {
+		<-ctx.Done()
+		return status.Error(codes.DeadlineExceeded, "the Broker did not answer")
+	}
+
+	t.Run("list_brokers", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newBrokerHandlersForTest(t, "agent-1", fakelocal.Handlers{
+			ListBrokers: func(ctx context.Context, _ *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.rpcTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "ListBrokers", func() error {
+			_, err := h.ListBrokers(context.Background(), NoArgs{})
+			return err
+		})
+		checkBoundedError(t, "ListBrokers", err, elapsed, "list_brokers failed", "(code: internal)")
+	})
+
+	t.Run("disconnect_broker", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newBrokerHandlersForTest(t, "agent-1", fakelocal.Handlers{
+			Disconnect: func(ctx context.Context, _ *localpb.DisconnectRequest) (*localpb.DisconnectResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.rpcTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "DisconnectBroker", func() error {
+			_, err := h.DisconnectBroker(context.Background(), DisconnectBrokerIn{Broker: "peer1"})
+			return err
+		})
+		checkBoundedError(t, "DisconnectBroker", err, elapsed, "disconnect_broker failed", "(code: internal)")
+	})
+
+	t.Run("create_pairing_key", func(t *testing.T) {
+		t.Parallel()
+		h, _ := newBrokerHandlersForTest(t, "agent-1", fakelocal.Handlers{
+			CreatePairingKey: func(ctx context.Context, _ *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error) {
+				return nil, blocked(ctx)
+			},
+		})
+		h.rpcTimeout = handlerTimeoutSeam
+
+		elapsed, err := waitBoundedCall(t, "CreatePairingKey", func() error {
+			_, err := h.CreatePairingKey(context.Background(), NoArgs{})
+			return err
+		})
+		checkBoundedError(t, "CreatePairingKey", err, elapsed, "create_pairing_key failed", "(code: internal)")
+	})
+}

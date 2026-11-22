@@ -28,6 +28,8 @@ func (h *handlers) ListBrokers(ctx context.Context, in NoArgs) (ListBrokersOut, 
 		return ListBrokersOut{}, err
 	}
 
+	ctx, cancel := withRPCTimeout(ctx, h.rpcTimeout, handlerRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.ListBrokers(ctx, &localpb.ListBrokersRequest{})
 	if err != nil {
 		return ListBrokersOut{}, rpcError("list_brokers", callGeneric, permNone, err)
@@ -177,6 +179,8 @@ func (h *handlers) DisconnectBroker(ctx context.Context, in DisconnectBrokerIn) 
 		return DisconnectBrokerOut{}, err
 	}
 
+	ctx, cancel := withRPCTimeout(ctx, h.rpcTimeout, handlerRPCTimeout)
+	defer cancel()
 	_, err = st.Client.Disconnect(ctx, &localpb.DisconnectRequest{
 		Broker:  in.Broker,
 		AgentId: st.AgentID,
@@ -200,6 +204,8 @@ func (h *handlers) CreatePairingKey(ctx context.Context, in NoArgs) (CreatePairi
 		return CreatePairingKeyOut{}, err
 	}
 
+	ctx, cancel := withRPCTimeout(ctx, h.rpcTimeout, handlerRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.CreatePairingKey(ctx, &localpb.CreatePairingKeyRequest{AgentId: st.AgentID})
 	if err != nil {
 		out := rpcError("create_pairing_key", callGeneric, permWrite, err)

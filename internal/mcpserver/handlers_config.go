@@ -19,6 +19,8 @@ func (h *handlers) GetConfig(ctx context.Context, in GetConfigIn) (GetConfigOut,
 	if err != nil {
 		return GetConfigOut{}, err
 	}
+	ctx, cancel := withRPCTimeout(ctx, h.rpcTimeout, handlerRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.GetConfig(ctx, &localpb.GetConfigRequest{Key: in.Key})
 	if err != nil {
 		return GetConfigOut{}, rpcError("get_config", callGeneric, permRead, err)
@@ -38,6 +40,8 @@ func (h *handlers) SetConfig(ctx context.Context, in SetConfigIn) (SetConfigOut,
 	if err != nil {
 		return SetConfigOut{}, err
 	}
+	ctx, cancel := withRPCTimeout(ctx, h.rpcTimeout, handlerRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.SetConfig(ctx, &localpb.SetConfigRequest{
 		Key:     in.Key,
 		Value:   in.Value,
@@ -66,6 +70,8 @@ func (h *handlers) SetBrokerOnline(ctx context.Context, in SetBrokerOnlineIn) (S
 	if in.Online {
 		value = "false"
 	}
+	ctx, cancel := withRPCTimeout(ctx, h.rpcTimeout, handlerRPCTimeout)
+	defer cancel()
 	resp, err := st.Client.SetConfig(ctx, &localpb.SetConfigRequest{
 		Key:     "broker.offline",
 		Value:   value,
