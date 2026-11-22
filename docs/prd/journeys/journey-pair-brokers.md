@@ -1,36 +1,36 @@
-# 两台主机首次配对
+# Two hosts pair for the first time
 
-## 参与者
+## Who
 
-主机 A 的用户与主机 B 的用户，可以是同一个人。两人各自在本机有一个启用了本系统工具的 Claude Code 会话，并能批准该会话中的工具调用。两人的账户对各自会话所登记的 Broker 的配置文件有写权限。
+The user on host A and the user on host B, who may be the same person. Each person has a Claude Code session with this system's tools enabled on their own host and can approve tool calls in that session. Both accounts have write permission on the configuration file of the Broker their sessions register with.
 
-## 前置条件
+## Precondition
 
-- 两台主机上的 [Broker](../../glossary.md) 都在运行，彼此尚未配对。
-- 主机 A 的 Broker 按默认配置监听，主机 B 能连上 A 默认路由所在接口的地址。主机 B 可以位于 NAT 之后。
-- 两位用户之间有一条系统之外的可信途径可以传递配对密钥。
+- The [Broker](../../glossary.md) on both hosts is running, and they are not yet paired with each other.
+- Host A's Broker listens with the default configuration, and host B can reach the address of the interface A's default route uses. Host B may be behind NAT.
+- There is a trusted channel outside the system between the two users that can carry a pairing key.
 
-## 步骤
+## Steps
 
-1. A 的用户要求会话中的 Agent 生成一次性配对密钥，并在权限确认中批准。
-2. A 的用户看到 Agent 给出的配对密钥及其失效时间，以及 A 的 Broker 的主机名和地址。
-3. A 的用户把地址和配对密钥经系统之外的途径交给 B 的用户，两者可以经不同的途径。
-4. B 的用户要求会话中的 Agent 凭这个地址和配对密钥发起配对，并在权限确认中批准。
-5. B 的用户看到配对成功的结果，其中有 A 的别名和指纹。
-6. 两位用户各自要求 Agent 列出 Broker，都看到对方标为对端，状态为已连接。B 的用户看到 A 的对外地址列表，并看到本方是拨号方；A 的用户看到本方是接受方。
+1. A's user asks the agent in the session to generate a one-time pairing key, and approves it in the permission confirmation.
+2. A's user sees the pairing key and its expiry time given by the agent, along with the hostname and address of A's Broker.
+3. A's user hands the address and the pairing key to B's user through a channel outside the system; the two may go through different channels.
+4. B's user asks the agent in the session to initiate pairing with this address and pairing key, and approves it in the permission confirmation.
+5. B's user sees the successful pairing result, which carries A's alias and fingerprint.
+6. Each user asks the agent to list Brokers, and both see the other marked as a peer with a status of connected. B's user sees A's advertised address list and sees that this side is the dialer; A's user sees that this side is the acceptor.
 
-## 结果
+## Outcome
 
-A 与 B 互为对端，并且已连接。
+A and B are each other's peers and are connected.
 
-## 备选路径
+## Alternate Paths
 
-- 配对密钥在生成 10 分钟后才被使用：B 的用户在第 5 步看到密钥已过期的错误，双方都没有保存对方的身份。A 的用户从第 1 步重新开始。
-- A 的别名与 B 已有的某个对端的别名相同：B 的用户在第 5 步看到要求指定本地别名的结果，指定后配对完成。
-- B 连不上第 2 步展示的地址，例如 A 位于端口转发之后：A 的用户在第 3 步把 B 能连上的地址交给 B 的用户，B 的用户在第 4 步使用它。
-- 配对完成后两台主机之间的网络中断又恢复：无需任何一方操作，两位用户再次列出 Broker，都看到对方的状态为已连接。
+- The pairing key is used only after 10 minutes: B's user sees the key expired error at step 5, and neither side stores the other's identity. A's user starts again from step 1.
+- A's alias is the same as that of a peer B already has: B's user sees a result asking for a local alias at step 5, and after specifying one the pairing completes.
+- B cannot reach the address shown at step 2, for example because A is behind port forwarding: A's user hands an address B can reach to B's user at step 3, and B's user uses it at step 4.
+- The network between the two hosts goes down and comes back after pairing: without any action by either side, the two users list Brokers again and both see the other's status as connected.
 
-## 覆盖的需求
+## Requirements Exercised
 
 - `REQ-broker-pairing-005`
 - `REQ-broker-pairing-006`
@@ -45,8 +45,8 @@ A 与 B 互为对端，并且已连接。
 - `REQ-broker-config-028`
 - `REQ-broker-config-030`
 
-## 端到端测试
+## End-to-End Test
 
-`test/e2e/journey_pair_test.go` 的 `TestJourneyPairBrokers`
+`test/e2e/journey_pair_test.go` `TestJourneyPairBrokers`
 
-以上备选路径中，“配对密钥在生成 10 分钟后才被使用”不在本旅程的端到端测试中，由 `internal/pairing` 的单元测试覆盖。依赖真实 Claude Code 会话的验证留待用户批准。
+Among the alternate paths above, "The pairing key is used only after 10 minutes" is not covered by this journey's end-to-end test and is covered by the unit tests of `internal/pairing`. Verification that depends on a real Claude Code session awaits user approval.

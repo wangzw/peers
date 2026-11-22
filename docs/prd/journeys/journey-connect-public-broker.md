@@ -1,37 +1,37 @@
-# 发现并连接公开 Broker
+# Discover and connect to a public Broker
 
-## 参与者
+## Who
 
-主机 C 的用户，想与一台尚未配对的主机 A 上的 Agent 通信；主机 A 的用户配合完成配对。两人各自在本机有一个启用了本系统工具的 Claude Code 会话，并能批准该会话中的工具调用。两人的账户对各自会话所登记的 Broker 的配置文件有写权限。
+The user on host C, who wants to communicate with an agent on a host A that is not yet paired; host A's user cooperates to complete the pairing. Each person has a Claude Code session with this system's tools enabled on their own host and can approve tool calls in that session. Both accounts have write permission on the configuration file of the Broker their sessions register with.
 
-## 前置条件
+## Precondition
 
-- A 的 [Broker](../../glossary.md) 与 B 的 Broker 已连接，C 的 Broker 与 B 的 Broker 已连接，A 与 C 尚未配对。
-- A 的 Broker 已设为公开，按默认配置监听，C 能连上 A 默认路由所在接口的地址。
-- A 上有一个 Agent 以公开方式加入了 topic `infra-help`，并附有简介。
-- A 的用户与 C 的用户之间有一条系统之外的可信途径。
+- A's [Broker](../../glossary.md) is connected to B's Broker, C's Broker is connected to B's Broker, and A and C are not yet paired.
+- A's Broker is set to public, listens with the default configuration, and C can reach the address of the interface A's default route uses.
+- On A, an agent has joined the topic `infra-help` publicly, with a description.
+- There is a trusted channel outside the system between A's user and C's user.
 
-## 步骤
+## Steps
 
-1. C 的用户要求 Agent 列出 Broker，看到 A 的别名、指纹和对外地址列表，状态为可连接，且不是对端。
-2. C 的用户要求 Agent 列出 topic，看到公开 topic `infra-help` 及其简介。
-3. C 的用户经系统之外的途径联系 A 的用户，请求配对。
-4. A 的用户要求自己的 Agent 生成一次性配对密钥，批准后把密钥交给 C 的用户。
-5. C 的用户要求 Agent 凭第 1 步看到的 A 的对外地址和这个密钥发起配对，批准后看到配对成功，结果中 A 的指纹与第 1 步看到的一致。
-6. C 的用户要求 Agent 加入 `infra-help`。
-7. C 的用户要求 Agent 列出可见的 Agent，看到 A 上加入了 `infra-help` 的 Agent。
-8. C 的用户要求 Agent 向它发送消息，看到发送成功的结果。
+1. C's user asks the agent to list Brokers and sees A's alias, fingerprint and advertised address list, with a status of connectable and not a peer.
+2. C's user asks the agent to list topics and sees the public topic `infra-help` and its description.
+3. C's user contacts A's user through a channel outside the system and asks to pair.
+4. A's user asks their agent to generate a one-time pairing key, approves it, and hands the key to C's user.
+5. C's user asks the agent to initiate pairing with A's advertised address seen at step 1 and this key, and after approval sees the pairing succeed, with A's fingerprint in the result matching the one seen at step 1.
+6. C's user asks the agent to join `infra-help`.
+7. C's user asks the agent to list the visible agents and sees the agent on A that joined `infra-help`.
+8. C's user asks the agent to send it a message and sees the successful send result.
 
-## 结果
+## Outcome
 
-C 与 A 互为对端，并且已连接。C 上的 Agent 与 A 上同在 `infra-help` 的 Agent 互相可见，并能互发消息。
+C and A are each other's peers and are connected. The agent on C and the agent on A that share `infra-help` see each other and can exchange messages.
 
-## 备选路径
+## Alternate Paths
 
-- 第 5 步对方实际出示的指纹与第 1 步看到的不一致：C 的用户在配对结果中看到指纹不一致的警告，据此决定是否解除配对。
-- A 的监听地址被配置为空：第 1 步看到 A 的对外地址列表为空，状态为不可直达。配对改由 A 的用户发起：C 的用户生成配对密钥，把它和 C 的 Broker 的地址交给 A 的用户，这个地址要能被 A 连上。
+- At step 5 the other side actually presents a fingerprint different from the one seen at step 1: C's user sees a fingerprint warning in the pairing result and decides from it whether to unpair.
+- A's listen address is configured empty: at step 1 A's advertised address list is empty and the status is unreachable. Pairing is then initiated by A's user: C's user generates a pairing key and hands it and C's Broker's address to A's user, and this address must be one A can reach.
 
-## 覆盖的需求
+## Requirements Exercised
 
 - `REQ-broker-discovery-002`
 - `REQ-broker-discovery-003`
@@ -50,6 +50,6 @@ C 与 A 互为对端，并且已连接。C 上的 Agent 与 A 上同在 `infra-h
 - `REQ-agent-messaging-008`
 - `REQ-agent-messaging-013`
 
-## 端到端测试
+## End-to-End Test
 
-`test/e2e/journey_public_broker_test.go` 中的 `TestJourneyConnectPublicBroker`
+`test/e2e/journey_public_broker_test.go` `TestJourneyConnectPublicBroker`
