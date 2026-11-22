@@ -28,6 +28,10 @@ const (
 
 const emptyCell = "-"
 
+// brokerOfflineLine is the status line printed when the Broker refuses messages
+// from other hosts.
+const brokerOfflineLine = "Broker: offline; messages from other hosts are refused. Run peers service online to accept them.\n"
+
 // WriteStatus writes resp as the two sections shown by "peers service status":
 // a table of registered agents followed by a table of peers. A Broker that runs
 // degraded or offline gets status lines before the sections. A degraded Broker
@@ -36,18 +40,12 @@ const emptyCell = "-"
 // Each section is sorted and its columns are aligned with text/tabwriter. An
 // empty section is written as "Agents: none" or "Peers: none".
 func WriteStatus(w io.Writer, resp *localpb.StatusResponse) error {
-	if degraded := resp.GetDegraded(); degraded != nil {
-		if err := WriteDegraded(w, degraded.GetLevel(), degraded.GetReason(), degraded.GetFix()); err != nil {
-			return err
-		}
-		if degraded.GetLevel() == localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
-			return nil
-		}
+	done, err := writeBrokerStateLines(w, resp.GetDegraded(), resp.GetOffline())
+	if err != nil {
+		return err
 	}
-	if resp.GetOffline() {
-		if _, err := io.WriteString(w, "Broker: offline; messages from other hosts are refused. Run peers service online to accept them.\n"); err != nil {
-			return err
-		}
+	if done {
+		return nil
 	}
 
 	agents, peers := statusEntries(resp)
@@ -123,6 +121,26 @@ func WriteDegraded(w io.Writer, level localpb.DegradedLevel, reason, fix string)
 	}
 	_, err := fmt.Fprintf(w, "Fix: %s\n", sanitizeText(fix))
 	return err
+}
+
+// writeBrokerStateLines writes the degraded and offline lines shared by the
+// status and broker-list output. done reports that the Broker runs diagnostics
+// only, so the caller writes nothing else.
+func writeBrokerStateLines(w io.Writer, degraded *localpb.DegradedState, offline bool) (done bool, err error) {
+	if degraded != nil {
+		if err := WriteDegraded(w, degraded.GetLevel(), degraded.GetReason(), degraded.GetFix()); err != nil {
+			return false, err
+		}
+		if degraded.GetLevel() == localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
+			return true, nil
+		}
+	}
+	if offline {
+		if _, err := io.WriteString(w, brokerOfflineLine); err != nil {
+			return false, err
+		}
+	}
+	return false, nil
 }
 
 // WriteAuditEvent writes ev as one line: the event time, the event name and
@@ -240,18 +258,12 @@ func WriteBrokerList(w io.Writer, brokers []*localpb.BrokerInfo, local *localpb.
 	if local == nil {
 		return errors.New("the Broker did not report its local state")
 	}
-	if degraded := local.GetDegraded(); degraded != nil {
-		if err := WriteDegraded(w, degraded.GetLevel(), degraded.GetReason(), degraded.GetFix()); err != nil {
-			return err
-		}
-		if degraded.GetLevel() == localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
-			return nil
-		}
+	done, err := writeBrokerStateLines(w, local.GetDegraded(), local.GetOffline())
+	if err != nil {
+		return err
 	}
-	if local.GetOffline() {
-		if _, err := io.WriteString(w, "Broker: offline; messages from other hosts are refused. Run peers service online to accept them.\n"); err != nil {
-			return err
-		}
+	if done {
+		return nil
 	}
 
 	if len(brokers) == 0 {
@@ -259,14 +271,7 @@ func WriteBrokerList(w io.Writer, brokers []*localpb.BrokerInfo, local *localpb.
 		return err
 	}
 
-	sorted := append([]*localpb.BrokerInfo(nil), brokers...)
-	sort.SliceStable(sorted, func(i, j int) bool {
-		left, right := peerSortKey(sorted[i]), peerSortKey(sorted[j])
-		if left != right {
-			return left < right
-		}
-		return fingerprintHex(sorted[i].GetFingerprint()) < fingerprintHex(sorted[j].GetFingerprint())
-	})
+	sorted := sortBrokers(brokers)
 
 	rows := make([][]string, 0, len(sorted))
 	for _, b := range sorted {
@@ -343,7 +348,7 @@ func statusEntries(resp *localpb.StatusResponse) ([]*localpb.AgentStatusEntry, [
 		return nil, nil
 	}
 	agents := append([]*localpb.AgentStatusEntry(nil), resp.GetAgents()...)
-	peers := append([]*localpb.BrokerInfo(nil), resp.GetPeers()...)
+	peers := sortBrokers(resp.GetPeers())
 
 	sort.SliceStable(agents, func(i, j int) bool {
 		if agents[i].GetAddress() != agents[j].GetAddress() {
@@ -351,14 +356,20 @@ func statusEntries(resp *localpb.StatusResponse) ([]*localpb.AgentStatusEntry, [
 		}
 		return agents[i].GetAgentId() < agents[j].GetAgentId()
 	})
-	sort.SliceStable(peers, func(i, j int) bool {
-		left, right := peerSortKey(peers[i]), peerSortKey(peers[j])
+	return agents, peers
+}
+
+// sortBrokers returns a copy of brokers sorted by alias, then fingerprint.
+func sortBrokers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
+	sorted := append([]*localpb.BrokerInfo(nil), brokers...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		left, right := peerSortKey(sorted[i]), peerSortKey(sorted[j])
 		if left != right {
 			return left < right
 		}
-		return fingerprintHex(peers[i].GetFingerprint()) < fingerprintHex(peers[j].GetFingerprint())
+		return fingerprintHex(sorted[i].GetFingerprint()) < fingerprintHex(sorted[j].GetFingerprint())
 	})
-	return agents, peers
+	return sorted
 }
 
 // peerSortKey orders peers by alias. A peer without a local alias sorts by its
