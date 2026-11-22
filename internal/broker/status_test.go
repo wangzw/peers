@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/config"
@@ -24,7 +23,7 @@ func statusRegisterAgent(t *testing.T, tb *testBroker, name string) (AgentID, *f
 	t.Helper()
 	fake := fakesession.New(t, fakesession.Options{Name: name})
 	stream := startRegistration(t, tb, fake)
-	stream.complete(3 * time.Second)
+	stream.complete(eventTimeout)
 	return mustAgentID(t, fake.SocketPath()), fake
 }
 

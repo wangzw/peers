@@ -162,7 +162,7 @@ func waitBarrier(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the config component's AfterReady did not run")
 	}
 }
@@ -249,7 +249,7 @@ func TestRunLateListenNotificationDoesNotRebindTwice(t *testing.T) {
 	close(async.release)
 	select {
 	case <-async.done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the late notification was not delivered")
 	}
 

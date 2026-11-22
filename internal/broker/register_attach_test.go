@@ -54,7 +54,7 @@ func TestAttachExistingAgentRequiresSameAccount(t *testing.T) {
 	}
 	tb.clock.Advance(registrationWait)
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
 		t.Fatalf("reason = %v, want socket_not_owned", reason)
 	}
 	if conns := tb.lockedConnCount(id); conns != 0 {

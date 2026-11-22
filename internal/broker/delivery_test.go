@@ -87,7 +87,7 @@ func TestInboxPackageDelegates(t *testing.T) {
 		t.Fatalf("Deliver: %v", err)
 	}
 
-	frame, ok := fake.WaitFrame(3 * time.Second)
+	frame, ok := fake.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("no frame reached the session")
 	}

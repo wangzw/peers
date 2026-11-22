@@ -33,7 +33,7 @@ func TestRegisterSocketSymlinkNotOwned(t *testing.T) {
 		return tb.lockedWaitingCount() == 1
 	})
 	tb.clock.Advance(10 * time.Second)
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
 		t.Fatalf("reason = %v, want socket_not_owned", reason)
 	}
 }
@@ -58,7 +58,7 @@ func TestRegisterRegularFileNotOwned(t *testing.T) {
 		return tb.lockedWaitingCount() == 1
 	})
 	tb.clock.Advance(10 * time.Second)
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
 		t.Fatalf("reason = %v, want socket_not_owned", reason)
 	}
 }

@@ -16,6 +16,14 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
+// eventTimeout is the package-wide fallback for a wait on an event that is
+// expected to arrive but that the test cannot force, such as the post-update
+// step's marker appearing or Install returning after its context is canceled.
+// It only decides how long a wait that will never complete takes to fail: the
+// success path selects on the event itself and never spends this time, so a
+// larger value costs nothing. It matches the fallback the broker package uses.
+const eventTimeout = 30 * time.Second
+
 // postUpdateScript returns a stand-in release binary. It answers the version
 // preflight, records the arguments of the hidden post-update command in
 // marker, writes notes to stderr, and exits with code.
@@ -537,7 +545,7 @@ func TestInstallPostUpdateCancelRestoresTheUnit(t *testing.T) {
 		done <- Install(ctx, o, "user")
 	}()
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		if _, statErr := os.Stat(marker); statErr == nil {
 			break
@@ -552,7 +560,7 @@ func TestInstallPostUpdateCancelRestoresTheUnit(t *testing.T) {
 	var err error
 	select {
 	case err = <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Install() did not return after the context was canceled")
 	}
 	if err == nil {

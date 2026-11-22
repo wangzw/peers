@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 	"unicode/utf8"
 
 	"google.golang.org/grpc/codes"
@@ -23,7 +22,7 @@ import (
 // listCall performs one ListAgents call with a bounded context.
 func listCall(t *testing.T, client localpb.LocalClient, req *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return client.ListAgents(ctx, req)
 }
@@ -42,7 +41,7 @@ func mustListAgents(t *testing.T, tb *testBroker, req *localpb.ListAgentsRequest
 func registerListAgent(t *testing.T, tb *testBroker, fake *fakesession.Fake) AgentID {
 	t.Helper()
 	rs := startRegistration(t, tb, fake)
-	return AgentID(rs.complete(3 * time.Second).GetAgentId())
+	return AgentID(rs.complete(eventTimeout).GetAgentId())
 }
 
 // joinListTopics joins the agent to each topic on the fake topic table.

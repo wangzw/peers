@@ -197,7 +197,7 @@ func TestFakeNetHandlerContextCancelledOnDown(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("handler context error = %v, want context.Canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the handler context was not canceled when the link went down")
 	}
 	select {
@@ -205,7 +205,7 @@ func TestFakeNetHandlerContextCancelledOnDown(t *testing.T) {
 		if !errors.Is(err, link.ErrLinkDown) {
 			t.Fatalf("Request err = %v, want ErrLinkDown", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Request did not return after the link went down")
 	}
 }
@@ -266,7 +266,7 @@ func TestFakeNetHandlerContextOutlivesRequest(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Request did not return after the caller's context ended")
 	}
 	close(release)
@@ -275,7 +275,7 @@ func TestFakeNetHandlerContextOutlivesRequest(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handler context error = %v, want nil: only a link drop cancels it", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the handler did not finish")
 	}
 }
@@ -312,14 +312,14 @@ func TestFakeNetCleanupCancelsAbandonedHandler(t *testing.T) {
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("Request did not return after the caller's context ended")
 		}
 	})
 
 	select {
 	case <-released:
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the abandoned handler was not canceled when the test cleanup ran")
 	}
 }

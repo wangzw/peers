@@ -45,7 +45,9 @@ type waitingRunner struct {
 	handlerDone <-chan struct{}
 }
 
-const closeWait = 2 * time.Second
+// closeWait shares the package fallback: an unfixed shutdown still fails the
+// elapsed-time assertion, it just takes the fallback to reach it.
+const closeWait = eventTimeout
 
 func (*waitingRunner) Listen(string) error { return nil }
 func (r *waitingRunner) Start()            { r.order.add("Start") }
@@ -136,7 +138,7 @@ func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 	}()
 	select {
 	case <-block.entered:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the delivery handler never reached the inbox write")
 	}
 	// Release a handler the fix did not stop, so no goroutine outlives the test.
@@ -157,7 +159,7 @@ func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 	select {
 	case reply := <-replies:
 		wantReceiveError(t, reply, localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN, "Delivery unknown:")
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the delivery handler did not return after shutdown")
 	}
 }
@@ -200,7 +202,7 @@ func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 	var b *Broker
 	select {
 	case b = <-captured:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the component never received the Broker")
 	}
 
@@ -237,7 +239,7 @@ func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 
 	select {
 	case <-released:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the registration handler did not release its backend")
 	}
 

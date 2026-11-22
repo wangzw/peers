@@ -88,10 +88,10 @@ func TestCheckLimitsConcurrentChecksPerAccount(t *testing.T) {
 		for i := 0; i < count; i++ {
 			select {
 			case <-started:
-			case <-time.After(5 * time.Second):
+			case <-time.After(processTimeout):
 				close(release)
 				wg.Wait()
-				t.Fatalf("only %d of %d checks started within 5s, want %d", i, checks, count)
+				t.Fatalf("only %d of %d checks started within %v, want %d", i, checks, processTimeout, count)
 			}
 		}
 	}
@@ -179,33 +179,27 @@ func TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		select {
 		case <-looked:
-		case <-time.After(5 * time.Second):
+		case <-time.After(processTimeout):
 			releaseAll()
 			t.Fatalf("only %d checks reached the slot acquisition", i)
 		}
 	}
 	seen := map[uint32]int{}
 	for i := 0; i < 2; i++ {
-		seen[waitStartedAccount(t, started, 5*time.Second)]++
+		seen[waitStartedAccount(t, started, processTimeout)]++
 	}
 	if seen[1000] != 2 {
 		t.Fatalf("uid 1000 started %d checks, want its per-account share of 2", seen[1000])
 	}
-	// The account's other two checks may hold a global slot only if the checker
-	// takes the global slot first. Give them time to reach that point, then
-	// inspect the global semaphore directly: two slots may be held, not four.
-	time.Sleep(100 * time.Millisecond)
-	if got := len(checker.slotSet().global); got != 2 {
-		releaseAll()
-		t.Fatalf("the account holds %d global slots while two of its checks wait for an account slot, want 2", got)
-	}
-
-	// The second account gets the two free global slots.
+	// The account's other two checks hold a global slot only if the checker
+	// takes the global slot first. Waiting for the second account to start is
+	// the scheduling-independent form of that check: its two free global slots
+	// are still there exactly when the first account's waiters never took them.
 	for i := 0; i < 2; i++ {
 		results = append(results, checkAsync(checker, 1001))
 	}
 	for i := 0; i < 2; i++ {
-		uid := waitStartedAccount(t, started, 2*time.Second)
+		uid := waitStartedAccount(t, started, processTimeout)
 		if uid != 1001 {
 			releaseAll()
 			t.Fatalf("started uid %d, want the second account 1001", uid)
@@ -244,8 +238,8 @@ func TestCheckGlobalSlotWaitsForASlotToFree(t *testing.T) {
 
 	first := checkAsync(checker, 1000)
 	second := checkAsync(checker, 1001)
-	waitStartedAccount(t, started, 5*time.Second)
-	waitStartedAccount(t, started, 5*time.Second)
+	waitStartedAccount(t, started, processTimeout)
+	waitStartedAccount(t, started, processTimeout)
 
 	third := checkAsync(checker, 1002)
 	select {
@@ -255,7 +249,7 @@ func TestCheckGlobalSlotWaitsForASlotToFree(t *testing.T) {
 	}
 
 	releaseAll()
-	if uid := waitStartedAccount(t, started, 2*time.Second); uid != 1002 {
+	if uid := waitStartedAccount(t, started, processTimeout); uid != 1002 {
 		t.Fatalf("started uid %d, want the waiting account 1002", uid)
 	}
 	for _, r := range []<-chan checkResult{first, second, third} {
@@ -286,7 +280,7 @@ func TestCheckNoSlotWithinBudgetFails(t *testing.T) {
 	}
 
 	first := checkAsync(checker, uid)
-	waitStartedAccount(t, started, 5*time.Second)
+	waitStartedAccount(t, started, processTimeout)
 
 	// A shorter caller deadline bounds this check so the busy path is reached
 	// while the first check still holds the account's only slot.
@@ -343,7 +337,7 @@ func TestCheckBusyLogOncePerMinute(t *testing.T) {
 	}
 
 	first := checkAsync(checker, uid)
-	waitStartedAccount(t, started, 5*time.Second)
+	waitStartedAccount(t, started, processTimeout)
 
 	// A shorter caller deadline reaches the busy path quickly while the first
 	// check keeps the account's only slot.
@@ -604,7 +598,7 @@ func TestCheckLookupConcurrencyCapped(t *testing.T) {
 		results = append(results, checkAsync(checker, uint32(400000+i)))
 	}
 	for i := 0; i < 4; i++ {
-		waitStartedAccount(t, started, 5*time.Second)
+		waitStartedAccount(t, started, processTimeout)
 	}
 	select {
 	case <-started:

@@ -215,7 +215,7 @@ func startStalledRegistration(t *testing.T, name string) (*stalledRegistration, 
 
 	select {
 	case <-r.stream.sendStarted:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the registration_complete event was not sent")
 	}
 
@@ -301,7 +301,7 @@ func TestRegisterEndsStreamWhenEventBacklogExceedsLimit(t *testing.T) {
 		if got := detail.GetMessage(); got != want {
 			t.Fatalf("message = %q, want %q", got, want)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Register did not end after the event backlog exceeded its limit")
 	}
 	if got := r.tb.sessions.ReleaseCount(); got != 1 {
@@ -325,7 +325,7 @@ func TestRegisterOverflowLogNamesTheAgent(t *testing.T) {
 		if err == nil {
 			t.Fatal("Register returned nil, want quota_exceeded")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Register did not end after the event backlog exceeded its limit")
 	}
 

@@ -61,7 +61,7 @@ func localClient(t *testing.T, sock string) localpb.LocalClient {
 
 func statusAt(t *testing.T, sock string) (*localpb.StatusResponse, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return localClient(t, sock).Status(ctx, &localpb.StatusRequest{})
 }
@@ -106,7 +106,7 @@ func TestRunDataUnavailableEntersDiagnosticsAndRecovers(t *testing.T) {
 		t.Errorf("diagnostics Status returned agents or peers: %+v", resp)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	_, err := localClient(t, sock).ListAgents(ctx, &localpb.ListAgentsRequest{})
 	cancel()
 	if detail := errorDetailOf(t, err); detail.GetCode() != localpb.ErrorCode_ERROR_CODE_BROKER_DEGRADED {
@@ -121,7 +121,7 @@ func TestRunDataUnavailableEntersDiagnosticsAndRecovers(t *testing.T) {
 	}
 	waitForStatus(t, sock, func(s *localpb.StatusResponse) bool { return s.GetDegraded() == nil })
 
-	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), eventTimeout)
 	_, err = localClient(t, sock).ListBrokers(ctx, &localpb.ListBrokersRequest{})
 	cancel()
 	if err != nil {
@@ -201,7 +201,7 @@ func TestRunListenFailureEntersLocalOnly(t *testing.T) {
 		t.Fatalf("level = %v, want local_only", resp.GetDegraded().GetLevel())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	_, err := localClient(t, sock).CreatePairingKey(ctx, &localpb.CreatePairingKeyRequest{})
 	cancel()
 	if detail := errorDetailOf(t, err); detail.GetCode() != localpb.ErrorCode_ERROR_CODE_BROKER_DEGRADED {

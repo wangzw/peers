@@ -8,7 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -26,7 +25,7 @@ func callTestListAgents(t *testing.T, client localpb.LocalClient, agentID ...str
 	if len(agentID) > 0 {
 		id = agentID[0]
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return client.ListAgents(ctx, &localpb.ListAgentsRequest{AgentId: id})
 }
@@ -34,7 +33,7 @@ func callTestListAgents(t *testing.T, client localpb.LocalClient, agentID ...str
 // callTestListBrokers performs one ListBrokers on client.
 func callTestListBrokers(t *testing.T, client localpb.LocalClient) (*localpb.ListBrokersResponse, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return client.ListBrokers(ctx, &localpb.ListBrokersRequest{})
 }
@@ -50,7 +49,7 @@ func callTestListBrokers(t *testing.T, client localpb.LocalClient) (*localpb.Lis
 // depends on scheduling, and macOS runners hit it intermittently.
 func rejectedRegister(t *testing.T, client localpb.LocalClient, f *fakesession.Fake) error {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	stream, err := client.Register(ctx)
 	if err != nil {
@@ -138,7 +137,7 @@ func TestOtherConnectionsUnaffected(t *testing.T) {
 
 	y := tb.newClient(t)
 	stream := startRegistrationAt(t, y, f.ConfigDir(), f.SocketPath())
-	stream.complete(3 * time.Second)
+	stream.complete(eventTimeout)
 	id := mustAgentID(t, f.SocketPath())
 	before, ok := tb.b.lookupAgent(id)
 	if !ok {

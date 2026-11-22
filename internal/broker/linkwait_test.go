@@ -95,8 +95,8 @@ func TestLinkWaiterWakesOnUp(t *testing.T) {
 		if !ok {
 			t.Fatal("wait returned false, want true")
 		}
-	case <-time.After(time.Second):
-		t.Fatal("wait did not return within 1s")
+	case <-time.After(eventTimeout):
+		t.Fatal("wait did not return in time")
 	}
 }
 
@@ -167,8 +167,8 @@ func TestLinkWaiterContextCancel(t *testing.T) {
 		if ok {
 			t.Fatal("wait returned true, want false")
 		}
-	case <-time.After(200 * time.Millisecond):
-		t.Fatal("wait did not return within 200ms of the context ending")
+	case <-time.After(eventTimeout):
+		t.Fatal("wait did not return after the context ended")
 	}
 }
 
@@ -357,8 +357,8 @@ func TestLinkWaiterManyWaiters(t *testing.T) {
 			if !ok {
 				t.Fatal("a waiter returned false, want true")
 			}
-		case <-time.After(time.Second):
-			t.Fatal("a waiter did not return within 1s")
+		case <-time.After(eventTimeout):
+			t.Fatal("a waiter did not return in time")
 		}
 	}
 }

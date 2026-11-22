@@ -20,7 +20,7 @@ import (
 // instead of the whole run.
 func topicCallContext(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -31,7 +31,7 @@ func registerTopicAgent(t *testing.T, tb *testBroker, name string) (string, *reg
 	t.Helper()
 	fake := fakesession.New(t, fakesession.Options{Name: name})
 	rs := startRegistration(t, tb, fake)
-	return rs.complete(3 * time.Second).GetAgentId(), rs
+	return rs.complete(eventTimeout).GetAgentId(), rs
 }
 
 // topicErrorDetail returns the gRPC code, the wire error code and the message

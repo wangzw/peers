@@ -43,7 +43,7 @@ func TestRunPassesProtocolVersions(t *testing.T) {
 		if got != 4 {
 			t.Fatalf("assembler saw LinkProtocolVersion %d, want 4", got)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the assembler did not run")
 	}
 

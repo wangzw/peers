@@ -221,7 +221,7 @@ func TestRegisterCompletes(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
 	rs := startRegistration(t, tb, fake)
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentId() != string(mustAgentID(t, fake.SocketPath())) {
 		t.Fatalf("agent_id = %q, want the ID of %q", complete.GetAgentId(), fake.SocketPath())
 	}
@@ -240,7 +240,7 @@ func TestRegisterIntroducesAgentBeforeComplete(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "joiner"})
 	rs := startRegistration(t, tb, fake)
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 
 	if err := tb.topics.Join(AgentID(complete.GetAgentId()), "t1"); err != nil {
 		t.Fatalf("Join right after registration_complete: %v, want nil", err)
@@ -258,7 +258,7 @@ func TestRegisterHoldsOneAcquire(t *testing.T) {
 		tb := newTestBroker(t)
 		fake := fakesession.New(t, fakesession.Options{Name: "holder"})
 		rs := startRegistration(t, tb, fake)
-		rs.complete(3 * time.Second)
+		rs.complete(eventTimeout)
 
 		uids := tb.sessions.AcquiredUIDs()
 		if len(uids) != 1 {
@@ -280,7 +280,7 @@ func TestRegisterHoldsOneAcquire(t *testing.T) {
 		fake := fakesession.New(t, fakesession.Options{Name: "homeless"})
 		rs := startRegistration(t, tb, fake)
 
-		err := rs.closeErr(3 * time.Second)
+		err := rs.closeErr(eventTimeout)
 		if status.Code(err) != codes.Internal {
 			t.Fatalf("register error = %v (code %v), want Internal", err, status.Code(err))
 		}
@@ -292,7 +292,7 @@ func TestRegisterNormalizesName(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: " API Worker "})
 	rs := startRegistration(t, tb, fake)
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentAddress() != "api-worker@hostA" {
 		t.Fatalf("agent_address = %q, want api-worker@hostA", complete.GetAgentAddress())
 	}
@@ -304,7 +304,7 @@ func TestRegisterAutoJoinFromConfig(t *testing.T) {
 
 	fake := fakesession.New(t, fakesession.Options{Name: "manual"})
 	rs := startRegistration(t, tb, fake)
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAutoJoin() {
 		t.Fatal("auto_join = true, want false")
 	}
@@ -314,7 +314,7 @@ func TestRegisterEmptySocketPathReportsAtOnce(t *testing.T) {
 	tb := newTestBroker(t)
 	rs := startRegistrationAt(t, tb.client, shortTempDir(t), "")
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("reason = %v, want socket_path_missing", reason)
 	}
 }
@@ -331,7 +331,7 @@ func TestRegisterInvalidSocketPathWaits(t *testing.T) {
 			rs.expectNoEvent(300 * time.Millisecond)
 
 			tb.clock.Advance(10 * time.Second)
-			if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+			if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 				t.Fatalf("reason = %v, want session_record_not_found", reason)
 			}
 
@@ -356,12 +356,12 @@ func TestRegisterWaitsThenReportsMissingRecord(t *testing.T) {
 		return tb.lockedWaitingCount() == 1
 	})
 	tb.clock.Advance(10 * time.Second)
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 		t.Fatalf("reason = %v, want session_record_not_found", reason)
 	}
 
 	fakesession.New(t, fakesession.Options{ConfigDir: dir, SocketPath: socketPath, Name: "late"})
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentAddress() != "late@hostA" {
 		t.Fatalf("agent_address = %q, want late@hostA", complete.GetAgentAddress())
 	}
@@ -378,7 +378,7 @@ func TestRegisterUnusableName(t *testing.T) {
 				return tb.lockedWaitingCount() == 1
 			})
 			tb.clock.Advance(10 * time.Second)
-			if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE {
+			if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE {
 				t.Fatalf("reason = %v, want name_unusable", reason)
 			}
 			if calls := tb.topics.Calls(); len(calls) != 0 {
@@ -386,7 +386,7 @@ func TestRegisterUnusableName(t *testing.T) {
 			}
 
 			fake.SetName("ab")
-			complete := rs.complete(3 * time.Second)
+			complete := rs.complete(eventTimeout)
 			if complete.GetAgentAddress() != "ab@hostA" {
 				t.Fatalf("agent_address = %q, want ab@hostA", complete.GetAgentAddress())
 			}
@@ -416,7 +416,7 @@ func TestRegisterUnusableNameDetail(t *testing.T) {
 				return tb.lockedWaitingCount() == 1
 			})
 			tb.clock.Advance(10 * time.Second)
-			problem := rs.problemEvent(3 * time.Second)
+			problem := rs.problemEvent(eventTimeout)
 			if problem.GetReason() != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE {
 				t.Fatalf("reason = %v, want name_unusable", problem.GetReason())
 			}
@@ -477,7 +477,7 @@ func TestRegisterWaitTimerCarriesFirstAttemptReason(t *testing.T) {
 
 	select {
 	case <-blocked.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first attempt did not reach the registry lookup")
 	}
 
@@ -486,7 +486,7 @@ func TestRegisterWaitTimerCarriesFirstAttemptReason(t *testing.T) {
 	tb.clock.Advance(10 * time.Second)
 	close(blocked.release)
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE {
 		t.Fatalf("reason = %v, want name_unusable", reason)
 	}
 }
@@ -507,7 +507,7 @@ func TestRegisterSocketNotOwned(t *testing.T) {
 		return tb.lockedWaitingCount() == 1
 	})
 	tb.clock.Advance(10 * time.Second)
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
 		t.Fatalf("reason = %v, want socket_not_owned", reason)
 	}
 }
@@ -523,9 +523,9 @@ func TestRegisterSameSocketSharesAgent(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "shared"})
 
 	first := startRegistration(t, tb, fake)
-	firstComplete := first.complete(3 * time.Second)
+	firstComplete := first.complete(eventTimeout)
 	second := startRegistrationAt(t, tb.newClient(t), fake.ConfigDir(), fake.SocketPath())
-	secondComplete := second.complete(3 * time.Second)
+	secondComplete := second.complete(eventTimeout)
 
 	if firstComplete.GetAgentId() != secondComplete.GetAgentId() {
 		t.Fatalf("agent ids differ: %q and %q", firstComplete.GetAgentId(), secondComplete.GetAgentId())
@@ -551,8 +551,8 @@ func TestRegisterSameSocketSharesAgent(t *testing.T) {
 	second.cancel()
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
-		t.Fatal("no topic call within 3s after the last connection closed")
+	case <-time.After(eventTimeout):
+		t.Fatal("no topic call after the last connection closed")
 	}
 	waitForReg(t, "the agent to be unregistered", func() bool {
 		return tb.lockedAgentCount() == 0
@@ -569,7 +569,7 @@ func TestReRegisterGetsSameID(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "again"})
 
 	first := startRegistration(t, tb, fake)
-	firstComplete := first.complete(3 * time.Second)
+	firstComplete := first.complete(eventTimeout)
 	id := AgentID(firstComplete.GetAgentId())
 
 	if err := tb.topics.Join(id, "t1"); err != nil {
@@ -584,7 +584,7 @@ func TestReRegisterGetsSameID(t *testing.T) {
 	}
 
 	second := startRegistration(t, tb, fake)
-	secondComplete := second.complete(3 * time.Second)
+	secondComplete := second.complete(eventTimeout)
 	if secondComplete.GetAgentId() != string(id) {
 		t.Fatalf("agent_id after re-registration = %q, want %q", secondComplete.GetAgentId(), id)
 	}
@@ -597,7 +597,7 @@ func TestRegisterIgnoresLaterUpstreamFrames(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "first"})
 	rs := startRegistration(t, tb, fake)
-	firstComplete := rs.complete(3 * time.Second)
+	firstComplete := rs.complete(eventTimeout)
 
 	if err := rs.stream.Send(&localpb.RegisterRequest{
 		InboxSocketPath: "/tmp/another.sock",
@@ -609,7 +609,7 @@ func TestRegisterIgnoresLaterUpstreamFrames(t *testing.T) {
 	fake.SetStatus("busy")
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the status change did not reach the topic table")
 	}
 
@@ -634,7 +634,7 @@ func TestRegisterHeadlessSession(t *testing.T) {
 	})
 	rs := startRegistration(t, tb, fake)
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentAddress() != "headless@hostA" {
 		t.Fatalf("agent_address = %q, want headless@hostA", complete.GetAgentAddress())
 	}
@@ -647,7 +647,7 @@ func TestBrokerKeepsRunningWithEmptyTable(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "transient"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	rs.cancel()
 
 	waitForReg(t, "the agent table to empty", func() bool {
@@ -683,7 +683,7 @@ func TestConcurrentRegisterAndDisconnect(t *testing.T) {
 		streams[i] = startRegistration(t, tb, fake)
 	}
 	for _, rs := range streams {
-		rs.complete(3 * time.Second)
+		rs.complete(eventTimeout)
 	}
 
 	id := mustAgentID(t, fake.SocketPath())

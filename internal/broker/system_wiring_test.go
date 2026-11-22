@@ -399,7 +399,7 @@ func TestSystemStopDoesNotLogHelperExitAsError(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 	defer release()
-	lookupCtx, cancelLookup := context.WithTimeout(ctx, 3*time.Second)
+	lookupCtx, cancelLookup := context.WithTimeout(ctx, eventTimeout)
 	_, lookupErr := backend.Lookup(lookupCtx, "/no/such/dir", "/no/such/dir/inbox.sock")
 	cancelLookup()
 	if lookupErr != nil && !errors.Is(lookupErr, inbox.ErrNoRecord) {
@@ -409,7 +409,7 @@ func TestSystemStopDoesNotLogHelperExitAsError(t *testing.T) {
 	var exit func()
 	select {
 	case exit = <-exits:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the in-process helper did not start")
 	}
 
@@ -472,7 +472,7 @@ func TestConfigWiringUsesAssemblyAccess(t *testing.T) {
 		tb := newTestBroker(t, func(d *Deps) {
 			newWiringComponents(t, d.Config, d, &Assembly{Access: denied}, nil)
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 		_, err := tb.client.SetConfig(ctx, &localpb.SetConfigRequest{Key: "broker.alias", Value: "build-box"})
 		wantErrorDetail(t, err, localpb.ErrorCode_ERROR_CODE_PERMISSION_DENIED)
@@ -482,7 +482,7 @@ func TestConfigWiringUsesAssemblyAccess(t *testing.T) {
 		tb := newTestBroker(t, func(d *Deps) {
 			newWiringComponents(t, d.Config, d, &Assembly{}, nil)
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 		resp, err := tb.client.GetConfig(ctx, &localpb.GetConfigRequest{Key: "broker.alias"})
 		if err != nil {
@@ -539,7 +539,7 @@ func TestSystemRegisterAcquiresCallerAccount(t *testing.T) {
 	}
 
 	tb.clock.Advance(10 * time.Second)
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED {
 		t.Fatalf("reason = %v, want socket_not_owned", reason)
 	}
 }
@@ -624,7 +624,7 @@ func TestSystemDeliveryUsesTargetAgentBackend(t *testing.T) {
 	targetFake := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	sender := registerListAgent(t, tb, senderFake)
 	rs := startRegistrationAt(t, tb.newClient(t), targetFake.ConfigDir(), targetFake.SocketPath())
-	target := AgentID(rs.complete(3 * time.Second).GetAgentId())
+	target := AgentID(rs.complete(eventTimeout).GetAgentId())
 	joinListTopics(t, tb, sender, "t1")
 	joinListTopics(t, tb, target, "t1")
 
@@ -633,7 +633,7 @@ func TestSystemDeliveryUsesTargetAgentBackend(t *testing.T) {
 		t.Fatal("target agent disappeared from the table")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if _, err := tb.client.Send(ctx, &localpb.SendRequest{
 		AgentId:   string(sender),
@@ -775,7 +775,7 @@ func TestBlockedConfigDirCheckDoesNotHoldBrokerLock(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "other"})
 	other := tb.newClient(t)
 	rs := startRegistrationAt(t, other, fake.ConfigDir(), fake.SocketPath())
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	// The blocked check itself is abandoned after the named timeout and
 	// reported as a failure.

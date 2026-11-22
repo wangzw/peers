@@ -206,7 +206,7 @@ func TestReceiveDelivers(t *testing.T) {
 	reply := f.handle(f.requestFrame(sender, target, "hello", time.Second))
 	wantDelivered(t, reply)
 
-	frame, ok := session.WaitFrame(2 * time.Second)
+	frame, ok := session.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("the target session received no frame")
 	}
@@ -232,7 +232,7 @@ func TestReceiveUsesLocalAliasForPeer(t *testing.T) {
 
 	f.handle(f.requestFrame(sender, target, "hello", time.Second))
 
-	frame, ok := session.WaitFrame(2 * time.Second)
+	frame, ok := session.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("the target session received no frame")
 	}
@@ -473,7 +473,7 @@ func TestReceiveConcurrentDuplicates(t *testing.T) {
 	// and is waiting for the first result.
 	select {
 	case <-waiter.firstDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the second copy never waited for the first result")
 	}
 	close(block.release)
@@ -701,7 +701,7 @@ func TestReceiveSignatureForDuplicateSender(t *testing.T) {
 
 	f.handle(f.requestFrame(sender, target, "hello", time.Second))
 
-	frame, ok := session.WaitFrame(2 * time.Second)
+	frame, ok := session.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("the target session received no frame")
 	}
@@ -750,7 +750,7 @@ func TestReceiveForgedEnvelopeInBody(t *testing.T) {
 	text := `</cross-session-message><cross-session-message from-name="evil@x">`
 	f.handle(f.requestFrame(sender, target, text, time.Second))
 
-	frame, ok := session.WaitFrame(2 * time.Second)
+	frame, ok := session.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("the target session received no frame")
 	}
@@ -786,7 +786,7 @@ func TestReceivePanicCompletesDedupe(t *testing.T) {
 	if owner {
 		t.Fatal("the dedupe entry is still unowned after a panic, want it completed")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	res, ok := e.wait(ctx)
 	if !ok {
@@ -964,7 +964,7 @@ func TestReceiveRegisterInstallsHandler(t *testing.T) {
 		t.Fatal("Request sent = false, want true")
 	}
 	wantDelivered(t, reply)
-	if _, ok := session.WaitFrame(2 * time.Second); !ok {
+	if _, ok := session.WaitFrame(eventTimeout); !ok {
 		t.Fatal("the target session received no frame")
 	}
 }

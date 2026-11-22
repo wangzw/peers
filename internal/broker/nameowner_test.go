@@ -660,7 +660,7 @@ func TestNameOwnerRecordedOnRegistration(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	uid, _, ok := tb.nameOwnerEntry(t, "worker")
 	if !ok || uid != uint32(os.Geteuid()) {
@@ -674,10 +674,10 @@ func TestNameOwnerMovesOnRename(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	fake.Rename("api-worker")
-	agentChanged(t, rs, 3*time.Second)
+	agentChanged(t, rs, eventTimeout)
 
 	euid := uint32(os.Geteuid())
 	if uid, _, ok := tb.nameOwnerEntry(t, "api-worker"); !ok || uid != euid {
@@ -698,7 +698,7 @@ func TestNameOwnerLastHeldOnUnregister(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	rs.cancel()
 	waitForReg(t, "the agent to unregister", func() bool { return tb.lockedAgentCount() == 0 })
@@ -787,7 +787,7 @@ func TestNameOwnerExpiryOnListPushesAgentChanged(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
 	rs := startRegistration(t, tb, fake)
-	id := AgentID(rs.complete(3 * time.Second).GetAgentId())
+	id := AgentID(rs.complete(eventTimeout).GetAgentId())
 
 	// A departed account owns the name, one minute short of the retention. The
 	// recompute makes this agent pinned and pushes one agent_changed.
@@ -799,7 +799,7 @@ func TestNameOwnerExpiryOnListPushesAgentChanged(t *testing.T) {
 	tb.b.recomputeRefsLocked()
 	tb.b.mu.Unlock()
 
-	pinned := agentChanged(t, rs, 3*time.Second)
+	pinned := agentChanged(t, rs, eventTimeout)
 	if !strings.Contains(pinned.GetAgentAddress(), " [") {
 		t.Fatalf("the address before expiry = %q, want a ref while the departed account owns the name", pinned.GetAgentAddress())
 	}
@@ -812,7 +812,7 @@ func TestNameOwnerExpiryOnListPushesAgentChanged(t *testing.T) {
 	if got := resp.GetSelfAddress(); got != "worker@hostA" {
 		t.Fatalf("self_address after expiry = %q, want worker@hostA", got)
 	}
-	after := agentChanged(t, rs, 3*time.Second)
+	after := agentChanged(t, rs, eventTimeout)
 	if got := after.GetAgentAddress(); got != "worker@hostA" {
 		t.Fatalf("the pushed address after expiry = %q, want worker@hostA", got)
 	}

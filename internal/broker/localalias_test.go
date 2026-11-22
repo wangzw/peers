@@ -37,11 +37,11 @@ func TestLocalAliasChangedPushesNewAddress(t *testing.T) {
 	sessionB := fakesession.New(t, fakesession.Options{Name: "b"})
 
 	a1 := startRegistration(t, tb, sessionA)
-	a1.complete(3 * time.Second)
+	a1.complete(eventTimeout)
 	a2 := startRegistrationAt(t, tb.newClient(t), sessionA.ConfigDir(), sessionA.SocketPath())
-	a2.complete(3 * time.Second)
+	a2.complete(eventTimeout)
 	b1 := startRegistration(t, tb, sessionB)
-	b1.complete(3 * time.Second)
+	b1.complete(eventTimeout)
 
 	topicsBefore := len(tb.topics.AgentChangedCalls())
 
@@ -50,7 +50,7 @@ func TestLocalAliasChangedPushesNewAddress(t *testing.T) {
 
 	agentA := string(mustAgentID(t, sessionA.SocketPath()))
 	for _, rs := range []*regStream{a1, a2} {
-		changed := localAliasNextChanged(t, rs, 3*time.Second)
+		changed := localAliasNextChanged(t, rs, eventTimeout)
 		if changed.GetAgentId() != agentA {
 			t.Fatalf("agent_id = %q, want %q", changed.GetAgentId(), agentA)
 		}
@@ -58,7 +58,7 @@ func TestLocalAliasChangedPushesNewAddress(t *testing.T) {
 			t.Fatalf("agent_address = %q, want %q", changed.GetAgentAddress(), "a@hostZ")
 		}
 	}
-	changed := localAliasNextChanged(t, b1, 3*time.Second)
+	changed := localAliasNextChanged(t, b1, eventTimeout)
 	if changed.GetAgentAddress() != "b@hostZ" {
 		t.Fatalf("agent_address = %q, want %q", changed.GetAgentAddress(), "b@hostZ")
 	}
@@ -69,11 +69,11 @@ func TestLocalAliasChangedPushesNewAddress(t *testing.T) {
 	setLocalAlias(t, tb, "hostY")
 	tb.b.localAliasChanged()
 	for _, rs := range []*regStream{a1, a2} {
-		if got := localAliasNextChanged(t, rs, 3*time.Second).GetAgentAddress(); got != "a@hostY" {
+		if got := localAliasNextChanged(t, rs, eventTimeout).GetAgentAddress(); got != "a@hostY" {
 			t.Fatalf("agent_address after the barrier change = %q, want %q", got, "a@hostY")
 		}
 	}
-	if got := localAliasNextChanged(t, b1, 3*time.Second).GetAgentAddress(); got != "b@hostY" {
+	if got := localAliasNextChanged(t, b1, eventTimeout).GetAgentAddress(); got != "b@hostY" {
 		t.Fatalf("agent_address after the barrier change = %q, want %q", got, "b@hostY")
 	}
 
@@ -97,7 +97,7 @@ func TestLocalAliasChangedSkipsWaiting(t *testing.T) {
 	// this connection, its agent_changed would arrive before the completion.
 	fakesession.New(t, fakesession.Options{ConfigDir: dir, SocketPath: socketPath, Name: "late"})
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if got := complete.GetAgentAddress(); got != "late@hostZ" {
 		t.Fatalf("agent_address = %q, want late@hostZ", got)
 	}
@@ -113,11 +113,11 @@ func TestLocalAliasChangedUpdatesLastAddress(t *testing.T) {
 	tb := newTestBroker(t)
 	first := fakesession.New(t, fakesession.Options{Name: "a"})
 	rs := startRegistration(t, tb, first)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	setLocalAlias(t, tb, "hostZ")
 	tb.b.localAliasChanged()
-	if changed := localAliasNextChanged(t, rs, 3*time.Second); changed.GetAgentAddress() != "a@hostZ" {
+	if changed := localAliasNextChanged(t, rs, eventTimeout); changed.GetAgentAddress() != "a@hostZ" {
 		t.Fatalf("agent_address = %q, want a@hostZ", changed.GetAgentAddress())
 	}
 
@@ -127,11 +127,11 @@ func TestLocalAliasChangedUpdatesLastAddress(t *testing.T) {
 	// to push, and the stream delivers in order, so receiving that event first
 	// proves the registration stayed quiet.
 	second := fakesession.New(t, fakesession.Options{Name: "b"})
-	startRegistration(t, tb, second).complete(3 * time.Second)
+	startRegistration(t, tb, second).complete(eventTimeout)
 
 	setLocalAlias(t, tb, "hostY")
 	tb.b.localAliasChanged()
-	if changed := localAliasNextChanged(t, rs, 3*time.Second); changed.GetAgentAddress() != "a@hostY" {
+	if changed := localAliasNextChanged(t, rs, eventTimeout); changed.GetAgentAddress() != "a@hostY" {
 		t.Fatalf("agent_address = %q, want a@hostY", changed.GetAgentAddress())
 	}
 }
@@ -142,7 +142,7 @@ func TestLocalAliasChangedKeepsPrevName(t *testing.T) {
 	tb := newTestBroker(t)
 	session := fakesession.New(t, fakesession.Options{Name: "a"})
 	rs := startRegistration(t, tb, session)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	id := mustAgentID(t, session.SocketPath())
 	setAgentState(t, tb.b, id, "a", "busy", "old")
@@ -150,7 +150,7 @@ func TestLocalAliasChangedKeepsPrevName(t *testing.T) {
 	setLocalAlias(t, tb, "hostZ")
 	tb.b.localAliasChanged()
 
-	changed := localAliasNextChanged(t, rs, 3*time.Second)
+	changed := localAliasNextChanged(t, rs, eventTimeout)
 	if changed.GetAgentAddress() != "a@hostZ" {
 		t.Fatalf("agent_address = %q, want %q", changed.GetAgentAddress(), "a@hostZ")
 	}

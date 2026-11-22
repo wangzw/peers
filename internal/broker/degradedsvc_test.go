@@ -63,7 +63,7 @@ func TestDegradedServiceHelloAndStatus(t *testing.T) {
 	}
 	path, _, _ := startTestDegradedService(t, state)
 	client, _ := degradedClient(t, path)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	hello, err := client.Hello(ctx, &localpb.HelloRequest{ProtocolVersion: localpb.ProtocolVersion})
@@ -96,7 +96,7 @@ func TestDegradedServiceRefusesOtherCalls(t *testing.T) {
 	}
 	path, _, _ := startTestDegradedService(t, state)
 	client, _ := degradedClient(t, path)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	_, err := client.ListAgents(ctx, &localpb.ListAgentsRequest{})
@@ -122,7 +122,7 @@ func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 	}
 	path, _, _ := startTestDegradedService(t, state)
 	client, _ := degradedClient(t, path)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	stream, err := client.Register(ctx)
@@ -166,7 +166,7 @@ func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 	select {
 	case err := <-recvDone:
 		_ = err
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Register stream did not end after CloseSend")
 	}
 }
@@ -178,7 +178,7 @@ func TestDegradedServiceStopEndsConnections(t *testing.T) {
 	state := &localpb.DegradedState{Level: localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY, Reason: "degraded"}
 	path, _, svc := startTestDegradedService(t, state)
 	client, cc := degradedClient(t, path)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	if _, err := client.Hello(ctx, &localpb.HelloRequest{ProtocolVersion: localpb.ProtocolVersion}); err != nil {
@@ -207,7 +207,7 @@ func TestDegradedServiceStopEndsConnections(t *testing.T) {
 		if err == nil {
 			t.Fatal("the Register stream continued after Stop")
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the Register stream did not end after Stop")
 	}
 
@@ -227,7 +227,7 @@ func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 
 	// A connection is accepted while the degraded service runs.
 	client, _ := degradedClient(t, path)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if _, err := client.Hello(ctx, &localpb.HelloRequest{ProtocolVersion: localpb.ProtocolVersion}); err != nil {
 		t.Fatalf("Hello before Stop: %v", err)
@@ -257,7 +257,7 @@ func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 		_ = c.Close()
 	case err := <-acceptErr:
 		t.Fatalf("accept after Stop: %v", err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the original listener did not accept after Stop")
 	}
 }
@@ -273,7 +273,7 @@ func TestDegradedServiceEnforcesLimits(t *testing.T) {
 	}
 	path, _, _ := startTestDegradedService(t, state)
 	client, _ := degradedClient(t, path)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	for i := 0; i < 2; i++ {

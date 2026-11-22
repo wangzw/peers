@@ -17,10 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// poolSyncTimeout bounds waits for the pool's background work. Three seconds
-// leaves room for a scheduler hiccup without letting a broken pool hang a test.
-const poolSyncTimeout = 3 * time.Second
-
 // The regular pool tests use only fakes, so these limits never come from a
 // real process or a real wait; they describe the pool's configured behaviour.
 const (
@@ -317,7 +313,7 @@ func (h *poolHarness) watchCount(conn *poolFakeConn, dir string) int {
 
 func poolWaitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(poolSyncTimeout)
+	deadline := time.Now().Add(processTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -333,7 +329,7 @@ func (h *poolHarness) nextOffer(t *testing.T) chan time.Time {
 	select {
 	case ch := <-h.offers:
 		return ch
-	case <-time.After(poolSyncTimeout):
+	case <-time.After(processTimeout):
 		t.Fatal("timed out waiting for a respawn timer")
 		return nil
 	}
@@ -833,13 +829,13 @@ func TestPoolCloseWaitsForSpawnInProgress(t *testing.T) {
 	}()
 	select {
 	case <-closed:
-	case <-time.After(poolSyncTimeout):
+	case <-time.After(processTimeout):
 		t.Fatal("Close did not return after cancelling the in-progress spawn")
 	}
 	select {
 	case err := <-lookupDone:
 		t.Logf("Lookup returned after Close: %v", err)
-	case <-time.After(poolSyncTimeout):
+	case <-time.After(processTimeout):
 		t.Fatal("Lookup did not return after Close")
 	}
 

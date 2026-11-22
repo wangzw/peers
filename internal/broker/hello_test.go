@@ -5,7 +5,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -17,7 +16,7 @@ import (
 // callTestHello performs one Hello on client with version v.
 func callTestHello(t *testing.T, client localpb.LocalClient, v uint32) (*localpb.HelloResponse, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return client.Hello(ctx, &localpb.HelloRequest{ProtocolVersion: v})
 }

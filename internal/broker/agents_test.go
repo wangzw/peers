@@ -134,13 +134,13 @@ func TestSameNameRegistrationPushesSiblingAddress(t *testing.T) {
 	tb := newTestBroker(t)
 	first := fakesession.New(t, fakesession.Options{Name: "w"})
 	firstStream := startRegistration(t, tb, first)
-	firstStream.complete(3 * time.Second)
+	firstStream.complete(eventTimeout)
 
 	second := fakesession.New(t, fakesession.Options{Name: "w"})
 	secondStream := startRegistration(t, tb, second)
-	secondStream.complete(3 * time.Second)
+	secondStream.complete(eventTimeout)
 
-	event := nextAgentChanged(t, firstStream, 3*time.Second)
+	event := nextAgentChanged(t, firstStream, eventTimeout)
 	snap, ok := tb.b.lookupAgent(mustAgentID(t, first.SocketPath()))
 	if !ok {
 		t.Fatal("the first agent left the table")
@@ -160,17 +160,17 @@ func TestSameNameUnregistrationPushesSiblingAddress(t *testing.T) {
 	tb := newTestBroker(t)
 	first := fakesession.New(t, fakesession.Options{Name: "w"})
 	firstStream := startRegistration(t, tb, first)
-	firstStream.complete(3 * time.Second)
+	firstStream.complete(eventTimeout)
 
 	second := fakesession.New(t, fakesession.Options{Name: "w"})
 	secondStream := startRegistration(t, tb, second)
-	secondStream.complete(3 * time.Second)
+	secondStream.complete(eventTimeout)
 
 	// Consume the change the second registration caused.
-	nextAgentChanged(t, firstStream, 3*time.Second)
+	nextAgentChanged(t, firstStream, eventTimeout)
 
 	secondStream.cancel()
-	event := nextAgentChanged(t, firstStream, 3*time.Second)
+	event := nextAgentChanged(t, firstStream, eventTimeout)
 	if event.GetAgentAddress() != "w@hostA" {
 		t.Fatalf("agent_changed address after the sibling left = %q, want w@hostA", event.GetAgentAddress())
 	}
@@ -182,9 +182,9 @@ func TestLookupAndAllAgents(t *testing.T) {
 	two := fakesession.New(t, fakesession.Options{Name: "two"})
 
 	streamOne := startRegistration(t, tb, one)
-	streamOne.complete(3 * time.Second)
+	streamOne.complete(eventTimeout)
 	streamTwo := startRegistration(t, tb, two)
-	streamTwo.complete(3 * time.Second)
+	streamTwo.complete(eventTimeout)
 
 	idOne := mustAgentID(t, one.SocketPath())
 	idTwo := mustAgentID(t, two.SocketPath())
@@ -225,7 +225,7 @@ func TestOnUnregisterCalledOutsideLock(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "leaver"})
 	stream := startRegistration(t, tb, fake)
-	stream.complete(3 * time.Second)
+	stream.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	called := make(chan AgentID, 1)
@@ -241,8 +241,8 @@ func TestOnUnregisterCalledOutsideLock(t *testing.T) {
 		if got != id {
 			t.Fatalf("onUnregister got %s, want %s", got, id)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("onUnregister was not called within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatal("onUnregister was not called in time")
 	}
 }
 
@@ -256,7 +256,7 @@ func TestAgentForChecksAccount(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "mine"})
 	stream := startRegistration(t, tb, fake)
-	stream.complete(3 * time.Second)
+	stream.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	self := regCallerContext(uint32(os.Geteuid()))
@@ -283,7 +283,7 @@ func TestRefreshAgentsCallsHookInOrder(t *testing.T) {
 	for _, name := range []string{"a", "b", "c"} {
 		fake := fakesession.New(t, fakesession.Options{Name: name})
 		stream := startRegistration(t, tb, fake)
-		stream.complete(3 * time.Second)
+		stream.complete(eventTimeout)
 		ids = append(ids, mustAgentID(t, fake.SocketPath()))
 	}
 

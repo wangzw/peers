@@ -810,9 +810,17 @@ func TestWaitProcessGoneReturnsAfterTheProcessExits(t *testing.T) {
 	}
 	pid := cmd.Process.Pid
 	done := make(chan error, 1)
-	go func() { done <- waitProcessGone(pid, 10*time.Second) }()
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		done <- waitProcessGone(pid, processExitWait)
+	}()
 
-	time.Sleep(2 * processExitPollInterval)
+	// Wait until the polling goroutine is running, then kill the child. Unlike
+	// a fixed sleep this is synchronisation: the poll either sees the child
+	// alive and sleeps, or starts after the kill and reports it gone on its
+	// first check, and both are correct.
+	<-started
 	if err := procsig.SendSignal(pid, syscall.SIGKILL); err != nil {
 		t.Fatalf("kill the child: %v", err)
 	}

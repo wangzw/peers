@@ -72,14 +72,12 @@ func (r *fakeRunner) Close() { r.order.add("Close") }
 
 // runWaitBound bounds every wait for Run to reach its next lifecycle step or
 // to return. It is a liveness bound, not a latency budget: it fires only when
-// Run is stuck, so a slow but correct startup must not trip it.
-//
-// The system form resolves broker.local_socket_group before it binds anything,
-// and the account database bounds one lookup at accountdb.LookupBound, so that
-// single step may legitimately take that long on a host whose NSS source is
-// slow. Ten seconds is that bound plus three for the rest of startup and for
-// scheduling delay on a loaded host.
-const runWaitBound = 10 * time.Second
+// Run is stuck, so a slow but correct startup must not trip it. It shares the
+// package fallback: the system form resolves broker.local_socket_group before
+// it binds anything, and one account-database lookup may take
+// accountdb.LookupBound on a host whose NSS source is slow, which the fallback
+// covers with room for the rest of startup and scheduling delay under load.
+const runWaitBound = eventTimeout
 
 // TestRunWaitBoundCoversAccountLookup checks the invariant behind runWaitBound:
 // a Run test must not give up on startup while the account database is still
@@ -312,7 +310,7 @@ func helloAt(t *testing.T, sock string, version uint32) (*localpb.HelloResponse,
 		t.Fatalf("grpc.NewClient: %v", err)
 	}
 	defer func() { _ = cc.Close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return localpb.NewLocalClient(cc).Hello(ctx, &localpb.HelloRequest{ProtocolVersion: version})
 }
@@ -376,7 +374,7 @@ func TestRunWritesOKAfterSocketBound(t *testing.T) {
 		t.Fatalf("Hello after ok: %v", err)
 	}
 
-	if err := rt.readyR.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+	if err := rt.readyR.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
 	if _, err := rt.reader.ReadString('\n'); !errors.Is(err, io.EOF) {
@@ -618,7 +616,7 @@ func TestRunAssemblersRunAfterLoadBeforeNew(t *testing.T) {
 	var b *Broker
 	select {
 	case b = <-captured:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the component Start was not called")
 	}
 	if !sawLoad {
@@ -757,7 +755,7 @@ func TestRunPassesLinkProtocolVersion(t *testing.T) {
 					if got != version {
 						t.Errorf("assembler %d saw LinkProtocolVersion %d, want %d", i, got, version)
 					}
-				case <-time.After(3 * time.Second):
+				case <-time.After(eventTimeout):
 					t.Fatal("an assembler did not run")
 				}
 			}
@@ -844,7 +842,7 @@ func TestRunPostReadyAfterOK(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("AfterReady was not called")
 	}
 	list := order.list()
@@ -875,7 +873,7 @@ func TestRunRebindsMissingSocket(t *testing.T) {
 	rt.ticks <- time.Now()
 	select {
 	case <-rt.checks:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the periodic check did not run")
 	}
 
@@ -1008,7 +1006,7 @@ func TestRunLogLevelFollowsConfig(t *testing.T) {
 	var b *Broker
 	select {
 	case b = <-captured:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the component Start was not called")
 	}
 	rt.cfg.setValue("log.level", config.Value{Kind: config.KindString, String: "debug"})

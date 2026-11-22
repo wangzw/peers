@@ -213,7 +213,7 @@ func TestUsernameForCoalescesConcurrentLookups(t *testing.T) {
 	close(gate)
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the lookup never started")
 	}
 	// Give every worker time to reach the cache while the first lookup is held.
@@ -296,7 +296,7 @@ func newCredClient(t *testing.T, path string) *grpc.ClientConn {
 
 func callHello(t *testing.T, cc *grpc.ClientConn) error {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	_, err := localpb.NewLocalClient(cc).Hello(ctx, &localpb.HelloRequest{ProtocolVersion: localpb.ProtocolVersion})
 	return err
@@ -323,7 +323,7 @@ func TestCallerFromPeerCred(t *testing.T) {
 		if call.caller.Username == "" {
 			t.Error("Username is empty")
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("Hello was not called")
 	}
 }
@@ -358,7 +358,7 @@ func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 		if got, want := c.UID, uint32(os.Geteuid()); got != want {
 			t.Errorf("rejected UID = %d, want %d", got, want)
 		}
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("onReject was not called")
 	}
 }
@@ -412,7 +412,7 @@ func TestAuthInfoSharedPerConnection(t *testing.T) {
 		select {
 		case info := <-srv.auths:
 			return info
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatal("Hello did not report AuthInfo")
 			return nil
 		}
@@ -601,7 +601,7 @@ func TestUsernameLookupConcurrencyIsBounded(t *testing.T) {
 	for i := 0; i < lookupgate.Concurrency; i++ {
 		select {
 		case <-started:
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			close(release)
 			wg.Wait()
 			t.Fatalf("only %d lookups started, want %d", i, lookupgate.Concurrency)
@@ -681,7 +681,7 @@ func TestRealAccountCacheSurvivesUnknownRotation(t *testing.T) {
 		d.AllowCaller = allowEveryCaller
 		d.ReadPeerCred = func(net.Conn) (Caller, error) { return Caller{UID: realUID}, nil }
 	})
-	if err := helloOnce(tb.sock, 3*time.Second); err != nil {
+	if err := helloOnce(tb.sock, eventTimeout); err != nil {
 		t.Fatalf("cached real account: %v, want acceptance on the fast path", err)
 	}
 }
@@ -736,12 +736,12 @@ func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 	// Two connections take the two global slots and then block in the lookup.
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {
-		go func() { results <- helloOnce(tb.sock, 10*time.Second) }()
+		go func() { results <- helloOnce(tb.sock, eventTimeout) }()
 	}
 	for i := 0; i < 2; i++ {
 		select {
 		case <-lookupStarted:
-		case <-time.After(5 * time.Second):
+		case <-time.After(eventTimeout):
 			releaseLookups()
 			t.Fatalf("only %d lookups started, want 2", i)
 		}
@@ -749,7 +749,7 @@ func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 
 	// The third connection finds the global slots taken before it looks up its
 	// account, so it is refused promptly while the lookup queue stays blocked.
-	if err := helloOnce(tb.sock, 3*time.Second); status.Code(err) != codes.Unavailable {
+	if err := helloOnce(tb.sock, eventTimeout); status.Code(err) != codes.Unavailable {
 		releaseLookups()
 		t.Fatalf("third connection: err = %v (code %v), want the handshake refused while the lookup queue is blocked", err, status.Code(err))
 	}
@@ -827,12 +827,12 @@ func TestHandshakeCachedRealAccountSkipsLookupWait(t *testing.T) {
 
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {
-		go func() { results <- helloOnce(tb.sock, 10*time.Second) }()
+		go func() { results <- helloOnce(tb.sock, eventTimeout) }()
 	}
 	for i := 0; i < 2; i++ {
 		select {
 		case <-started:
-		case <-time.After(5 * time.Second):
+		case <-time.After(eventTimeout):
 			releaseLookups()
 			t.Fatalf("only %d lookups started, want 2", i)
 		}
@@ -845,7 +845,7 @@ func TestHandshakeCachedRealAccountSkipsLookupWait(t *testing.T) {
 	// The expired cached account must take the fast path, not join the full
 	// lookup queue.
 	useReal.Store(true)
-	if err := helloOnce(tb.sock, 3*time.Second); err != nil {
+	if err := helloOnce(tb.sock, eventTimeout); err != nil {
 		releaseLookups()
 		t.Fatalf("cached real account: %v, want it accepted while the lookup queue is full", err)
 	}
@@ -917,7 +917,7 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 
 	results := make(chan error, connections)
 	for i := 0; i < connections; i++ {
-		go func() { results <- helloOnce(tb.sock, 10*time.Second) }()
+		go func() { results <- helloOnce(tb.sock, eventTimeout) }()
 	}
 
 	// Wait for the queue to fill, recording its peak so a bound that is
@@ -952,7 +952,7 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 				t.Fatalf("refused connection error = %v (code %v), want code %v", err, status.Code(err), codes.Unavailable)
 			}
 			refused++
-		case <-time.After(3 * time.Second):
+		case <-time.After(eventTimeout):
 			releaseLookups()
 			t.Fatalf("only %d of %d connections past the bound were refused", refused, connections-wantWaiters)
 		}
@@ -960,7 +960,7 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 
 	// A uid cached as a real account connects while every wait slot is taken.
 	useReal.Store(true)
-	if err := helloOnce(tb.sock, 3*time.Second); err != nil {
+	if err := helloOnce(tb.sock, eventTimeout); err != nil {
 		releaseLookups()
 		t.Fatalf("cached real account: %v, want it accepted while the lookup wait is full", err)
 	}
@@ -975,7 +975,7 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 			} else {
 				accepted++
 			}
-		case <-time.After(10 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("only %d of %d admitted connections finished", accepted, connections-refused)
 		}
 	}
@@ -1019,7 +1019,7 @@ func TestHandshakeLookupTimeoutReleasesGlobalSlot(t *testing.T) {
 		d.ReadPeerCred = func(net.Conn) (Caller, error) { return Caller{UID: 1000}, nil }
 	})
 
-	if err := helloOnce(tb.sock, 3*time.Second); status.Code(err) != codes.Unavailable {
+	if err := helloOnce(tb.sock, eventTimeout); status.Code(err) != codes.Unavailable {
 		t.Fatalf("connection whose lookup timed out: err = %v (code %v), want the handshake refused", err, status.Code(err))
 	}
 	if got := lookups.Load(); got != 0 {
@@ -1032,7 +1032,7 @@ func TestHandshakeLookupTimeoutReleasesGlobalSlot(t *testing.T) {
 		release()
 	}
 	held = nil
-	if err := helloOnce(tb.sock, 3*time.Second); err != nil {
+	if err := helloOnce(tb.sock, eventTimeout); err != nil {
 		t.Fatalf("connection after a timed-out lookup: %v, want it accepted", err)
 	}
 }
@@ -1127,7 +1127,7 @@ func TestBrokerAndHelperShareLookupGate(t *testing.T) {
 	for i := 0; i < lookupgate.Concurrency; i++ {
 		select {
 		case <-started:
-		case <-time.After(5 * time.Second):
+		case <-time.After(eventTimeout):
 			releaseAll()
 			t.Fatalf("only %d helper lookups started, want %d", i, lookupgate.Concurrency)
 		}
@@ -1148,7 +1148,7 @@ func TestBrokerAndHelperShareLookupGate(t *testing.T) {
 	releaseAll()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the broker lookup did not finish after the helper released the gate")
 	}
 	for i := 0; i < lookupgate.Concurrency; i++ {

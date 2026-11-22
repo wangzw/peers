@@ -394,7 +394,7 @@ func TestClientWatchStopNoLateCallbacks(t *testing.T) {
 
 func clientWaitForPids(t *testing.T, mu *sync.Mutex, pids *[]int, want int) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(processTimeout)
 	for {
 		mu.Lock()
 		n := len(*pids)

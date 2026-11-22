@@ -43,15 +43,15 @@ func waitConnectHandlerDone(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Connect handler did not return within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatal("Connect handler did not return in time")
 	}
 }
 
 // callTestConnect performs one Connect on the test Broker.
 func callTestConnect(t *testing.T, tb *testBroker, req *localpb.ConnectRequest) (*localpb.ConnectResponse, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return tb.client.Connect(ctx, req)
 }
@@ -393,23 +393,23 @@ func TestConnectCancellationReachesPairing(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("Connect did not reach pairing within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatal("Connect did not reach pairing in time")
 	}
 	cancel()
 
 	select {
 	case <-returned:
-	case <-time.After(3 * time.Second):
-		t.Fatal("pairing Connect did not return within 3s of cancellation; the handler did not pass the request context")
+	case <-time.After(eventTimeout):
+		t.Fatal("pairing Connect did not return after cancellation; the handler did not pass the request context")
 	}
 	select {
 	case err := <-errc:
 		if status.Code(err) != codes.Canceled {
 			t.Fatalf("gRPC code = %v, want Canceled", status.Code(err))
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("client Connect did not return within 3s of cancellation")
+	case <-time.After(eventTimeout):
+		t.Fatal("client Connect did not return after cancellation")
 	}
 	waitConnectHandlerDone(t, handlerDone)
 	if events := connectAuditEvents(tb); len(events) != 0 {

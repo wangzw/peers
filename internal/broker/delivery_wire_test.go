@@ -319,7 +319,7 @@ func TestDeliveryAssemblerRegistersBeforeListen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encodeDeliverRequest: %v", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	reply, sent, err := remote.Request(ctx, ourFP, frame)
 	if err != nil {
@@ -388,7 +388,7 @@ func TestUnregisterForgetsTargetBuckets(t *testing.T) {
 
 	fake := fakesession.New(t, fakesession.Options{Name: "leaver"})
 	stream := startRegistration(t, tb, fake)
-	stream.complete(3 * time.Second)
+	stream.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	peer := fakenetPeer(20)

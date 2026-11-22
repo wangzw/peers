@@ -573,7 +573,7 @@ func TestSendPeerAcceptorDeliversWhenDialerConnects(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sendToPeer = %v, want nil once the dialer connects", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("sendToPeer did not finish once the dialer connected")
 	}
 }

@@ -19,8 +19,8 @@ import (
 )
 
 // accessCheckIdentityBound bounds the wait for an access-check child to switch
-// to the account.
-const accessCheckIdentityBound = 3 * time.Second
+// to the account. It shares the package fallback for a wait on a helper child.
+const accessCheckIdentityBound = processTimeout
 
 // killProbeRole is the TestMain role that asks the kernel whether the probe's
 // own account may signal a process; exit 0 means the kernel answered EPERM.

@@ -94,13 +94,13 @@ func TestRenameUpdatesAddressAndPrevName(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 	drainNotify(tb.topics.notify)
 
 	fake.Rename("api-v2")
 
-	event := agentChanged(t, rs, 3*time.Second)
+	event := agentChanged(t, rs, eventTimeout)
 	if event.GetAgentAddress() != "api-v2@hostA" {
 		t.Fatalf("agent_address = %q, want api-v2@hostA", event.GetAgentAddress())
 	}
@@ -124,12 +124,12 @@ func TestPrevNameExpiresAfterTenMinutes(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 	drainNotify(tb.topics.notify)
 
 	fake.Rename("api-v2")
-	agentChanged(t, rs, 3*time.Second)
+	agentChanged(t, rs, eventTimeout)
 
 	tb.clock.Advance(10*time.Minute - time.Nanosecond)
 	if snap, ok := tb.b.lookupAgent(id); !ok || snap.PrevName != "api-worker" {
@@ -138,7 +138,7 @@ func TestPrevNameExpiresAfterTenMinutes(t *testing.T) {
 	}
 
 	tb.clock.Advance(time.Nanosecond)
-	event := agentChanged(t, rs, 3*time.Second)
+	event := agentChanged(t, rs, eventTimeout)
 	if event.GetPreviousName() != "" {
 		t.Fatalf("previous_name after expiry = %q, want empty", event.GetPreviousName())
 	}
@@ -156,15 +156,15 @@ func TestSecondRenameRestartsPrevNameTimer(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "a"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	fake.Rename("b")
-	agentChanged(t, rs, 3*time.Second)
+	agentChanged(t, rs, eventTimeout)
 	tb.clock.Advance(5 * time.Minute)
 
 	fake.Rename("c")
-	event := agentChanged(t, rs, 3*time.Second)
+	event := agentChanged(t, rs, eventTimeout)
 	if event.GetPreviousName() != "b" {
 		t.Fatalf("previous_name = %q, want b", event.GetPreviousName())
 	}
@@ -178,7 +178,7 @@ func TestSecondRenameRestartsPrevNameTimer(t *testing.T) {
 	rs.expectNoEvent(200 * time.Millisecond)
 
 	tb.clock.Advance(5 * time.Minute)
-	if event := agentChanged(t, rs, 3*time.Second); event.GetPreviousName() != "" {
+	if event := agentChanged(t, rs, eventTimeout); event.GetPreviousName() != "" {
 		t.Fatalf("previous_name after the second timer expired = %q, want empty", event.GetPreviousName())
 	}
 }
@@ -189,7 +189,7 @@ func TestIDAndRefStableAcrossRenameAndClear(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	if err := tb.topics.Join(id, "t1"); err != nil {
@@ -200,7 +200,7 @@ func TestIDAndRefStableAcrossRenameAndClear(t *testing.T) {
 	tb.b.mu.Unlock()
 
 	fake.Rename("worker2")
-	agentChanged(t, rs, 3*time.Second)
+	agentChanged(t, rs, eventTimeout)
 	drainNotify(tb.topics.notify)
 
 	fake.SetSessionID("after-clear")
@@ -242,7 +242,7 @@ func TestStatusChangeReachesTopic(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "status"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 	drainNotify(tb.topics.notify)
 
@@ -277,7 +277,7 @@ func TestRecordRemovedUnregisters(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "gone"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 	if err := tb.topics.Join(id, "t1"); err != nil {
 		t.Fatalf("Join: %v", err)
@@ -285,7 +285,7 @@ func TestRecordRemovedUnregisters(t *testing.T) {
 
 	fake.RemoveRecord()
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 		t.Fatalf("reason = %v, want session_record_not_found", reason)
 	}
 	if calls := tb.topics.LeaveAllCalls(); len(calls) != 1 || calls[0].Agent != id {
@@ -297,7 +297,7 @@ func TestRecordRemovedUnregisters(t *testing.T) {
 
 	fake.RestoreRecord()
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentId() != string(id) {
 		t.Fatalf("agent_id after recovery = %q, want %q", complete.GetAgentId(), id)
 	}
@@ -307,11 +307,11 @@ func TestRenameToUnusableRevokes(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "ok"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	fake.Rename("a@b")
 
-	problem := rs.problemEvent(3 * time.Second)
+	problem := rs.problemEvent(eventTimeout)
 	if problem.GetReason() != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_NAME_UNUSABLE {
 		t.Fatalf("reason = %v, want name_unusable", problem.GetReason())
 	}
@@ -324,7 +324,7 @@ func TestRenameToUnusableRevokes(t *testing.T) {
 
 	fake.Rename("ab")
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentAddress() != "ab@hostA" {
 		t.Fatalf("agent_address after recovery = %q, want ab@hostA", complete.GetAgentAddress())
 	}
@@ -335,7 +335,7 @@ func TestSocketPathChangeUnregisters(t *testing.T) {
 		tb := newTestBroker(t)
 		fake := fakesession.New(t, fakesession.Options{Name: "mover"})
 		rs := startRegistration(t, tb, fake)
-		rs.complete(3 * time.Second)
+		rs.complete(eventTimeout)
 		id := mustAgentID(t, fake.SocketPath())
 		if err := tb.topics.Join(id, "t1"); err != nil {
 			t.Fatalf("Join: %v", err)
@@ -344,7 +344,7 @@ func TestSocketPathChangeUnregisters(t *testing.T) {
 		newPath := filepath.Join(shortTempDir(t), "m.sock")
 		rewriteRecordSocket(t, fake.RecordPath(), newPath)
 
-		if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+		if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 			t.Fatalf("reason = %v, want session_record_not_found", reason)
 		}
 		if calls := tb.topics.LeaveAllCalls(); len(calls) != 1 {
@@ -370,7 +370,7 @@ func TestSocketPathChangeUnregisters(t *testing.T) {
 			Name:       "mover",
 		})
 		fresh := startRegistration(t, tb, rebound)
-		complete := fresh.complete(3 * time.Second)
+		complete := fresh.complete(eventTimeout)
 		if want := mustAgentID(t, newPath); complete.GetAgentId() != string(want) {
 			t.Fatalf("agent_id at the new path = %q, want %q", complete.GetAgentId(), want)
 		}
@@ -380,11 +380,11 @@ func TestSocketPathChangeUnregisters(t *testing.T) {
 		tb := newTestBroker(t)
 		fake := fakesession.New(t, fakesession.Options{Name: "emptied"})
 		rs := startRegistration(t, tb, fake)
-		rs.complete(3 * time.Second)
+		rs.complete(eventTimeout)
 
 		rewriteRecordSocket(t, fake.RecordPath(), "")
 
-		if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+		if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 			t.Fatalf("reason = %v, want session_record_not_found", reason)
 		}
 		if n := tb.lockedAgentCount(); n != 0 {
@@ -404,7 +404,7 @@ func TestPartialRecordKeepsAgent(t *testing.T) {
 	})
 	fake := fakesession.New(t, fakesession.Options{Name: "partial"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 	drainNotify(tb.topics.notify)
 
@@ -447,7 +447,7 @@ func TestRefreshAgentsWithoutEvents(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.Sessions = &fakeSessions{noWatch: true} })
 	fake := fakesession.New(t, fakesession.Options{Name: "x1"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	fake.Rename("x2")
@@ -466,7 +466,7 @@ func TestRereadAgent(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.Sessions = &fakeSessions{noWatch: true} })
 	fake := fakesession.New(t, fakesession.Options{Name: "x1"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	fake.Rename("x3")
@@ -497,9 +497,9 @@ func TestRenameChangesSiblingRefs(t *testing.T) {
 	second := fakesession.New(t, fakesession.Options{Name: "w"})
 
 	firstStream := startRegistration(t, tb, first)
-	firstStream.complete(3 * time.Second)
+	firstStream.complete(eventTimeout)
 	secondStream := startRegistration(t, tb, second)
-	secondStream.complete(3 * time.Second)
+	secondStream.complete(eventTimeout)
 
 	firstSnap, ok := tb.b.lookupAgent(mustAgentID(t, first.SocketPath()))
 	if !ok {
@@ -518,20 +518,20 @@ func TestRenameChangesSiblingRefs(t *testing.T) {
 
 	// The second registration added a ref to the first agent's address, so the
 	// first stream already carries the matching agent_changed.
-	if event := agentChanged(t, firstStream, 3*time.Second); event.GetAgentAddress() != firstSnap.Address {
+	if event := agentChanged(t, firstStream, eventTimeout); event.GetAgentAddress() != firstSnap.Address {
 		t.Fatalf("agent_changed at the second registration = %q, want %q",
 			event.GetAgentAddress(), firstSnap.Address)
 	}
 
 	first.Rename("v")
 
-	event := agentChanged(t, firstStream, 3*time.Second)
+	event := agentChanged(t, firstStream, eventTimeout)
 	if event.GetAgentAddress() != "v@hostA" || event.GetPreviousName() != "w" {
 		t.Fatalf("renamed event = address %q previous %q, want v@hostA and w",
 			event.GetAgentAddress(), event.GetPreviousName())
 	}
 
-	sibling := agentChanged(t, secondStream, 3*time.Second)
+	sibling := agentChanged(t, secondStream, eventTimeout)
 	if sibling.GetAgentAddress() != "w@hostA" {
 		t.Fatalf("sibling address = %q, want w@hostA after the other session was renamed",
 			sibling.GetAgentAddress())
@@ -545,7 +545,7 @@ func TestConcurrentRenamesAndDisconnect(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "racing"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	id := mustAgentID(t, fake.SocketPath())
 
 	started := make(chan struct{})
@@ -565,7 +565,7 @@ func TestConcurrentRenamesAndDisconnect(t *testing.T) {
 	}()
 
 	<-started
-	agentChanged(t, rs, 3*time.Second)
+	agentChanged(t, rs, eventTimeout)
 	rs.cancel()
 	close(release)
 	<-done

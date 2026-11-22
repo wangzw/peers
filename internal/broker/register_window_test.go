@@ -162,7 +162,7 @@ func TestSameKeyRegistrationKeepsItsWatch(t *testing.T) {
 	})
 	fake := fakesession.New(t, fakesession.Options{Name: "one-watch"})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	if calls := gate.callCount(); calls != 1 {
 		t.Fatalf("Watch calls = %d, want 1: the connection's watch should pass to the agent", calls)
@@ -182,7 +182,7 @@ func TestStatusDuringFirstAgentWatchDoesNotPanic(t *testing.T) {
 	})
 	rs := startRegistrationAt(t, tb.client, "", fake.SocketPath())
 
-	gate.waitSecond(t, 3*time.Second)
+	gate.waitSecond(t, eventTimeout)
 
 	resp, err := tb.client.Status(context.Background(), &localpb.StatusRequest{})
 	if err != nil {
@@ -193,7 +193,7 @@ func TestStatusDuringFirstAgentWatchDoesNotPanic(t *testing.T) {
 	}
 
 	close(gate.release)
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentAddress() != "windowed@hostA" {
 		t.Fatalf("agent_address = %q, want windowed@hostA", complete.GetAgentAddress())
 	}
@@ -222,7 +222,7 @@ func TestCancelDuringFirstAgentWatchReleasesEverything(t *testing.T) {
 	})
 
 	fakesession.New(t, fakesession.Options{ConfigDir: dir, SocketPath: socketPath, Name: "abandoned"})
-	gate.waitSecond(t, 3*time.Second)
+	gate.waitSecond(t, eventTimeout)
 
 	rs.cancel()
 	waitForReg(t, "the stream to release its backend", func() bool {
@@ -252,7 +252,7 @@ func TestStatusChangeDuringAgentWatchCreationIsNotLost(t *testing.T) {
 	// while the record reports the resolved directory. The two keys differ, so
 	// the agent's watch is created with a second Watch call.
 	rs := startRegistrationAt(t, tb.client, "", fake.SocketPath())
-	gate.waitSecond(t, 3*time.Second)
+	gate.waitSecond(t, eventTimeout)
 
 	// The second Watch is blocked, so Broker.mu is free while the agent is not
 	// yet in the table. The change is handled by the event loop and, without a
@@ -264,7 +264,7 @@ func TestStatusChangeDuringAgentWatchCreationIsNotLost(t *testing.T) {
 	})
 
 	close(gate.release)
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	id := AgentID(complete.GetAgentId())
 
 	waitForReg(t, "the agent to carry the new status", func() bool {
@@ -297,7 +297,7 @@ func TestRegisterWaitHasLowerBound(t *testing.T) {
 	}
 
 	tb.clock.Advance(time.Nanosecond)
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 		t.Fatalf("reason = %v, want session_record_not_found", reason)
 	}
 }

@@ -229,7 +229,7 @@ func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 	}
 
 	held := startRegistrationAt(t, tb.client, "", "")
-	if got := held.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := held.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("held registration reason = %v, want socket_path_missing", got)
 	}
 
@@ -243,7 +243,7 @@ func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 
 	// Ending the held stream returns the slot.
 	held.cancel()
-	nextCtx, nextCancel := context.WithTimeout(context.Background(), 3*time.Second)
+	nextCtx, nextCancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer nextCancel()
 	next, err := tb.client.Register(nextCtx)
 	if err != nil {
@@ -264,7 +264,7 @@ func TestRegisterLimitRefusesExtraStream(t *testing.T) {
 
 	firstConn := newCredClient(t, tb.sock)
 	first := startRegistrationAt(t, localpb.NewLocalClient(firstConn), "", "")
-	if got := first.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := first.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("first registration reason = %v, want socket_path_missing", got)
 	}
 	// The second registration uses another connection: the limit is per
@@ -272,11 +272,11 @@ func TestRegisterLimitRefusesExtraStream(t *testing.T) {
 	secondConn := newCredClient(t, tb.sock)
 	secondClient := localpb.NewLocalClient(secondConn)
 	second := startRegistrationAt(t, secondClient, "", "")
-	if got := second.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := second.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("second registration reason = %v, want socket_path_missing", got)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	stream, err := secondClient.Register(ctx)
 	if err != nil {
@@ -430,13 +430,13 @@ func TestUnknownUIDsShareRegisterQuota(t *testing.T) {
 
 	firstConn := newCredClient(t, tb.sock)
 	first := startRegistrationAt(t, localpb.NewLocalClient(firstConn), "", "")
-	if got := first.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := first.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("first registration reason = %v, want socket_path_missing", got)
 	}
 	secondConn := newCredClient(t, tb.sock)
 	secondClient := localpb.NewLocalClient(secondConn)
 	second := startRegistrationAt(t, secondClient, "", "")
-	if got := second.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := second.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("second registration reason = %v, want socket_path_missing", got)
 	}
 
@@ -468,7 +468,7 @@ func TestRegisterSlotReturnsAfterStreamEnds(t *testing.T) {
 	uid := uint32(os.Geteuid())
 
 	held := startRegistrationAt(t, tb.client, "", "")
-	if got := held.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := held.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("held registration reason = %v, want socket_path_missing", got)
 	}
 	held.cancel()
@@ -478,7 +478,7 @@ func TestRegisterSlotReturnsAfterStreamEnds(t *testing.T) {
 		return err == nil && tb.b.registers.count(key) == 0
 	})
 	next := startRegistrationAt(t, tb.client, "", "")
-	if got := next.problem(3 * time.Second); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
+	if got := next.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("registration after the held one ended = %v, want socket_path_missing", got)
 	}
 }

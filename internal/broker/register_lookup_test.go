@@ -160,7 +160,7 @@ func TestRegisterReportsAccountHelperFailure(t *testing.T) {
 	})
 	tb.clock.Advance(10 * time.Second)
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED {
 		t.Fatalf("reason = %v, want account_helper_failed", reason)
 	}
 }
@@ -183,7 +183,7 @@ func TestRegisterReportsAccountHelperTimeout(t *testing.T) {
 	})
 	tb.clock.Advance(10 * time.Second)
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED {
 		t.Fatalf("reason = %v, want account_helper_failed", reason)
 	}
 }
@@ -281,7 +281,7 @@ func TestRegisterKeepsUnreadableRecordAsMissing(t *testing.T) {
 	})
 	tb.clock.Advance(10 * time.Second)
 
-	if reason := rs.problem(3 * time.Second); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
+	if reason := rs.problem(eventTimeout); reason != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND {
 		t.Fatalf("reason = %v, want session_record_not_found", reason)
 	}
 }
@@ -317,7 +317,7 @@ func TestRegisterKeepsRetryRequestedAtAttemptEnd(t *testing.T) {
 
 	select {
 	case <-gate.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first attempt did not reach the pause")
 	}
 
@@ -328,13 +328,13 @@ func TestRegisterKeepsRetryRequestedAtAttemptEnd(t *testing.T) {
 	tb.b.events.push(uid, watchKeyFor(uid, dir).dir, fake.PID())
 	select {
 	case <-busy:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the registry event did not reach the running attempt")
 	}
 
 	close(gate.release)
 
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 	if complete.GetAgentAddress() != "late@hostA" {
 		t.Fatalf("agent_address = %q, want late@hostA", complete.GetAgentAddress())
 	}
@@ -356,7 +356,7 @@ func TestRegisterKeepsChangeMadeDuringLookup(t *testing.T) {
 
 	select {
 	case <-blocked.started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first lookup did not complete within the deadline")
 	}
 
@@ -366,7 +366,7 @@ func TestRegisterKeepsChangeMadeDuringLookup(t *testing.T) {
 	})
 	close(blocked.release)
 
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 	waitForReg(t, "the agent to pick up the status change", func() bool {
 		snap, ok := tb.b.lookupAgent(mustAgentID(t, fake.SocketPath()))
 		return ok && snap.Session.Status == "busy"

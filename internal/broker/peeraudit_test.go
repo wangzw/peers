@@ -63,7 +63,7 @@ func auditRegister(t *testing.T, tb *testBroker, name string) (id, address strin
 			t.Fatalf("registration did not complete: %v", r.resp)
 		}
 		return complete.GetAgentId(), complete.GetAgentAddress()
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("timed out waiting for registration_complete")
 		return "", ""
 	}

@@ -44,7 +44,7 @@ func (c *manualClock) AfterFunc(d time.Duration, f func()) Timer {
 // nextTimer waits for the timer at index n and returns it.
 func (c *manualClock) nextTimer(t *testing.T, n int) *manualTimer {
 	t.Helper()
-	deadline := time.After(3 * time.Second)
+	deadline := time.After(eventTimeout)
 	for {
 		c.mu.Lock()
 		if len(c.timers) > n {

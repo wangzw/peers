@@ -32,7 +32,7 @@ func pairkeyCalls(p *fakePairing) []string {
 // callCreatePairingKey performs one call on the test Broker's default client.
 func callCreatePairingKey(t *testing.T, tb *testBroker, req *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	return tb.client.CreatePairingKey(ctx, req)
 }

@@ -71,7 +71,7 @@ func TestSessionProtocolWarnOnce(t *testing.T) {
 		Extra: map[string]any{"peerProtocol": 2},
 	})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	logs := sessionProtocolLogs(t, tb)
 	if len(logs) != 1 {
@@ -90,7 +90,7 @@ func TestSessionProtocolWarnOnce(t *testing.T) {
 	fake.Rename("proto-renamed")
 	select {
 	case <-tb.topics.notify:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the rename did not reach the topic table")
 	}
 
@@ -115,7 +115,7 @@ func TestSessionProtocolWarnOnChange(t *testing.T) {
 		Extra: map[string]any{"peerProtocol": 2},
 	})
 	rs := startRegistration(t, tb, fake)
-	rs.complete(3 * time.Second)
+	rs.complete(eventTimeout)
 
 	if logs := sessionProtocolLogs(t, tb); len(logs) != 1 {
 		t.Fatalf("%s records = %d, want 1: %v", sessionProtocolEvent, len(logs), tb.logLines(t))
@@ -149,7 +149,7 @@ func TestSessionProtocolNoWarn(t *testing.T) {
 			tb := newTestBroker(t)
 			fake := fakesession.New(t, fakesession.Options{Name: "quiet", Extra: tc.extra})
 			rs := startRegistration(t, tb, fake)
-			rs.complete(3 * time.Second)
+			rs.complete(eventTimeout)
 
 			if logs := sessionProtocolLogs(t, tb); len(logs) != 0 {
 				t.Fatalf("%s records = %d, want none: %v", sessionProtocolEvent, len(logs), tb.logLines(t))
@@ -167,7 +167,7 @@ func TestSessionProtocolDoesNotBlockRegistration(t *testing.T) {
 		Extra: map[string]any{"peerProtocol": 2},
 	})
 	rs := startRegistration(t, tb, fake)
-	complete := rs.complete(3 * time.Second)
+	complete := rs.complete(eventTimeout)
 
 	id := mustAgentID(t, fake.SocketPath())
 	if complete.GetAgentId() != string(id) {

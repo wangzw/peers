@@ -93,7 +93,7 @@ func (s *serveSide) recv() *helperpb.HelperMessage {
 			s.t.Fatalf("reading message: %v", r.err)
 		}
 		return r.msg
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		s.t.Fatal("timed out waiting for a helper message")
 		return nil
 	}
@@ -104,7 +104,7 @@ func (s *serveSide) waitDone() error {
 	select {
 	case err := <-s.done:
 		return err
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		s.t.Fatal("Serve did not return")
 		return nil
 	}
@@ -186,7 +186,7 @@ func stoppedCount(f *fakeOps, configDir string) int {
 
 func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(processTimeout)
 	for time.Now().Before(deadline) {
 		if cond() {
 			return
@@ -463,7 +463,7 @@ func TestServeEOFCleansUp(t *testing.T) {
 	}
 	select {
 	case <-canceled:
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 		t.Fatal("in-flight delivery was not canceled")
 	}
 	if got := stoppedCount(ops, "/c"); got != 1 {

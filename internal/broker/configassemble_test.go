@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -90,7 +89,7 @@ func TestConfigWiringAddsInterceptors(t *testing.T) {
 		t.Fatalf("Assemble added %d server options, want 2", got)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	_, err := tb.client.SetConfig(ctx, &localpb.SetConfigRequest{Key: "broker.alias", Value: "build-box"})
 	wantErrorDetail(t, err, localpb.ErrorCode_ERROR_CODE_PERMISSION_DENIED)
@@ -122,7 +121,7 @@ func TestConfigWiringDefaultsToAllowAll(t *testing.T) {
 		newWiringComponents(t, d.Config, d, &Assembly{}, nil)
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 
 	// Status only filters on denial, so the default checker must be exercised
@@ -329,7 +328,7 @@ func TestLocalServerEndToEndOverBufconn(t *testing.T) {
 		cfg, client := newWiringServer(t, checker)
 		cfg.Audit(config.Event{Event: config.EventConfigSet, Key: "broker.alias", Actor: "w@hostA"})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 
 		resp, err := client.SetConfig(ctx, &localpb.SetConfigRequest{Key: "broker.alias", Value: "build-box"})
@@ -368,7 +367,7 @@ func TestLocalServerEndToEndOverBufconn(t *testing.T) {
 		cfg, client := newWiringServer(t, checker)
 		cfg.Audit(config.Event{Event: config.EventConfigSet, Key: "broker.alias"})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 		defer cancel()
 
 		_, err := client.SetConfig(ctx, &localpb.SetConfigRequest{Key: "broker.alias", Value: "build-box"})

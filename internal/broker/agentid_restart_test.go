@@ -2,7 +2,6 @@ package broker
 
 import (
 	"testing"
-	"time"
 
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
@@ -17,7 +16,7 @@ func TestAgentIDStableAcrossRestartReq037(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "stable"})
 
 	firstReg := startRegistration(t, first, session)
-	id1 := firstReg.complete(3 * time.Second).GetAgentId()
+	id1 := firstReg.complete(eventTimeout).GetAgentId()
 	if id1 == "" {
 		t.Fatal("the first Broker returned an empty agent id")
 	}
@@ -26,7 +25,7 @@ func TestAgentIDStableAcrossRestartReq037(t *testing.T) {
 
 	second := newTestBroker(t)
 	secondReg := startRegistration(t, second, session)
-	id2 := secondReg.complete(3 * time.Second).GetAgentId()
+	id2 := secondReg.complete(eventTimeout).GetAgentId()
 
 	if id2 != id1 {
 		t.Fatalf("agent id after the Broker restart = %q, want %q", id2, id1)
@@ -37,7 +36,7 @@ func TestAgentIDStableAcrossRestartReq037(t *testing.T) {
 
 	other := fakesession.New(t, fakesession.Options{Name: "other"})
 	otherReg := startRegistration(t, second, other)
-	otherID := otherReg.complete(3 * time.Second).GetAgentId()
+	otherID := otherReg.complete(eventTimeout).GetAgentId()
 	if otherID == id1 {
 		t.Fatalf("a different session got the same agent id %q", otherID)
 	}

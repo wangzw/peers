@@ -268,7 +268,7 @@ func TestSendLocalSignatureUsesLocalAlias(t *testing.T) {
 	if err := f.delivery.Send(context.Background(), caller, "frontend@lab-a", "hi"); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	frame, ok := fs.WaitFrame(time.Second)
+	frame, ok := fs.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("the target session recorded no frame")
 	}
@@ -322,7 +322,7 @@ func TestSendTooLargeBoundary(t *testing.T) {
 		if err := f.delivery.Send(context.Background(), caller, "frontend@hostA", text); err != nil {
 			t.Fatalf("Send at the limit: %v", err)
 		}
-		if _, ok := fs.WaitFrame(3 * time.Second); !ok {
+		if _, ok := fs.WaitFrame(eventTimeout); !ok {
 			t.Fatal("the boundary message did not reach the target")
 		}
 
@@ -548,7 +548,7 @@ func TestSendLocalRefRequiredWhenDuplicate(t *testing.T) {
 	if frames := firstSession.Frames(); len(frames) != 0 {
 		t.Fatalf("the other duplicate recorded %d frames, want 0", len(frames))
 	}
-	if _, ok := secondSession.WaitFrame(time.Second); !ok {
+	if _, ok := secondSession.WaitFrame(eventTimeout); !ok {
 		t.Fatal("the addressed duplicate recorded no frame")
 	}
 
@@ -582,7 +582,7 @@ func TestSendLogsWithoutBody(t *testing.T) {
 	if err := f.delivery.Send(context.Background(), caller, "frontend@hostA", body); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
-	if _, ok := fs.WaitFrame(time.Second); !ok {
+	if _, ok := fs.WaitFrame(eventTimeout); !ok {
 		t.Fatal("the target session recorded no frame")
 	}
 

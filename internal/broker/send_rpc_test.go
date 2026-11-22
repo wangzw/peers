@@ -6,7 +6,6 @@ import (
 	"io"
 	"log/slog"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc/status"
 
@@ -135,7 +134,7 @@ func TestSendRPCLocalEndToEnd(t *testing.T) {
 		t.Fatal("Send returned a nil response")
 	}
 
-	frame, ok := targetFake.WaitFrame(3 * time.Second)
+	frame, ok := targetFake.WaitFrame(eventTimeout)
 	if !ok {
 		t.Fatal("target session received no frame")
 	}
