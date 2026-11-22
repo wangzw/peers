@@ -115,15 +115,7 @@ func getentLookupUID(uid uint32) (User, error) {
 			return u, nil
 		}
 	}
-	if errors.Is(err, ErrNotFound) {
-		return User{}, ErrNotFound
-	}
-	warnFallback("uid "+id, err)
-	u, fallbackErr := osUserLookupUID(uid)
-	if fallbackErr == nil {
-		return u, nil
-	}
-	return User{}, unavailableAfterFallback(err, fallbackErr)
+	return lookupResult("uid "+id, err, func() (User, error) { return osUserLookupUID(uid) })
 }
 
 func getentLookupName(name string) (User, error) {
@@ -142,15 +134,7 @@ func getentLookupName(name string) (User, error) {
 			return u, nil
 		}
 	}
-	if errors.Is(err, ErrNotFound) {
-		return User{}, ErrNotFound
-	}
-	warnFallback("name "+name, err)
-	u, fallbackErr := osUserLookupName(name)
-	if fallbackErr == nil {
-		return u, nil
-	}
-	return User{}, unavailableAfterFallback(err, fallbackErr)
+	return lookupResult("name "+name, err, func() (User, error) { return osUserLookupName(name) })
 }
 
 func getentLookupGroup(name string) (uint32, error) {
@@ -169,15 +153,7 @@ func getentLookupGroup(name string) (uint32, error) {
 			return gid, nil
 		}
 	}
-	if errors.Is(err, ErrNotFound) {
-		return 0, ErrNotFound
-	}
-	warnFallback("group "+name, err)
-	gid, fallbackErr := osUserLookupGroup(name)
-	if fallbackErr == nil {
-		return gid, nil
-	}
-	return 0, unavailableAfterFallback(err, fallbackErr)
+	return lookupResult("group "+name, err, func() (uint32, error) { return osUserLookupGroup(name) })
 }
 
 func getentGroupIDs(u User) ([]uint32, error) {
@@ -203,6 +179,22 @@ func getentGroupIDs(u User) ([]uint32, error) {
 		return ids, nil
 	}
 	return nil, fmt.Errorf("%w: %w", errUnavailable, err)
+}
+
+// lookupResult handles the tail shared by every getent lookup: a missing entry
+// is ErrNotFound, any other failure is logged and retried with fallback, and
+// the original transient failure wins when the fallback has no entry either.
+func lookupResult[T any](request string, err error, fallback func() (T, error)) (T, error) {
+	var zero T
+	if errors.Is(err, ErrNotFound) {
+		return zero, ErrNotFound
+	}
+	warnFallback(request, err)
+	value, fallbackErr := fallback()
+	if fallbackErr == nil {
+		return value, nil
+	}
+	return zero, unavailableAfterFallback(err, fallbackErr)
 }
 
 // unavailableAfterFallback reports the original transient failure when the
