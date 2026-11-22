@@ -285,7 +285,7 @@ func (p *brokerProc) lastStderrLine(prefix string) string {
 }
 
 // stop is the cleanup registered by the start helpers: terminate a still
-// running Broker with SIGTERM and fall back to SIGKILL after three seconds.
+// running Broker with SIGTERM and fall back to SIGKILL after processTimeout.
 func (p *brokerProc) stop() {
 	select {
 	case <-p.exited:
@@ -297,7 +297,7 @@ func (p *brokerProc) stop() {
 	select {
 	case <-p.exited:
 		return
-	case <-time.After(3 * time.Second):
+	case <-time.After(processTimeout):
 	}
 	_ = p.cmd.Process.Kill()
 	// WaitDelay bounds the wait for the child's pipes; a process that still

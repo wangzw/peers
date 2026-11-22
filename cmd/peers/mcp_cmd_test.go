@@ -61,16 +61,16 @@ func TestMCPContextCancelledBySignalContext(t *testing.T) {
 
 	select {
 	case <-cancelled:
-	case <-time.After(3 * time.Second):
-		t.Fatal("runMCP did not observe the context cancellation")
+	case <-time.After(processTimeout):
+		t.Fatalf("runMCP did not observe the context cancellation within %s", processTimeout)
 	}
 	select {
 	case code := <-done:
 		if code != exitOK {
 			t.Fatalf("run returned %d, want %d", code, exitOK)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("run did not return after the context was cancelled")
+	case <-time.After(processTimeout):
+		t.Fatalf("run did not return within %s after the context was cancelled", processTimeout)
 	}
 }
 
