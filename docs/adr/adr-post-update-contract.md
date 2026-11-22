@@ -1,51 +1,51 @@
-# 旧二进制调用新二进制的更新后契约
+# Keep a post-update contract between the old and new binaries
 
-## 背景
+## Context
 
-服务定义包含启动 Broker 的命令与参数，格式随版本变化。执行升级的是正在运行的旧二进制，它只认识自己版本的格式，按自己的格式重写只会把旧格式写回服务定义，新版本要求的启动方式因此无法生效。
+The service definition contains the command and arguments that start the Broker, and their format changes across versions. The upgrade is performed by the running old binary, which knows only its own version's format; rewriting it in its own format only writes the old format back into the service definition, so the startup method the new version requires cannot take effect.
 
-替换二进制之后必须能够确认服务定义已经是新版本要求的格式，否则更新不能算完成。更新失败时还要保留可以继续运行的旧版本，不能只换掉二进制就重启。
+After replacing the binary it must be possible to confirm that the service definition is already in the format the new version requires; otherwise the update cannot count as complete. On a failed update, a runnable old version must also be kept, not merely the binary swapped and restarted.
 
-## 考虑过的选项
+## Options Considered
 
-### 由正在运行的旧二进制重写服务定义
+### Have the running old binary rewrite the service definition
 
-旧二进制在替换二进制之前按自己的格式重写服务定义。
+The old binary rewrites the service definition in its own format before replacing the binary.
 
-**否决**：旧二进制只懂旧格式，格式变化后写回的是旧格式，新版本的启动方式不会生效。
+**Rejected**: the old binary understands only the old format, so after a format change it writes the old format back, and the new version's startup method does not take effect.
 
-### 由新二进制在启动时自行重写服务定义
+### Have the new binary rewrite the service definition itself at startup
 
-新二进制被服务管理器拉起后，在启动流程中重写服务定义。
+The new binary, once started by the service manager, rewrites the service definition during startup.
 
-**否决**：Broker 的启动阶段不应修改服务定义；手工启动的 Broker 也会走到这段逻辑；启动失败发生在重写之前，调用方无法据此决定是否回滚。
+**Rejected**: the Broker's startup phase should not modify the service definition; a manually started Broker also reaches this logic; a startup failure happens before the rewrite, so the caller cannot use it to decide whether to roll back.
 
-### 更新后由终端命令重新执行 `service install`
+### Re-run `service install` from the terminal command after the update
 
-替换二进制后，由发起更新的终端命令重新安装服务。
+After replacing the binary, the terminal command that started the update reinstalls the service.
 
-**否决**：会话内发起的升级没有终端；调用方无法确认这一步的结果，也无法在它失败时回滚。
+**Rejected**: an upgrade started from a session has no terminal; the caller cannot confirm the result of this step, nor roll back when it fails.
 
-### 旧二进制调用新二进制的固定隐藏子命令
+### The old binary invokes a fixed hidden subcommand of the new binary
 
-旧二进制在换完二进制之后、重启之前，调用新二进制的一个固定隐藏子命令；由新二进制按自己的格式重写服务定义并让服务管理器重新读取。
+After swapping the binary and before restarting, the old binary invokes a fixed hidden subcommand of the new binary; the new binary rewrites the service definition in its own format and has the service manager reload it.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-采用旧二进制调用、新二进制负责格式的分工。子命令名与参数是跨版本的契约，一经发布不再更改：后续版本只能给这个调用新增可选参数，不能新增必填参数，也不能改变已有参数的含义；新二进制必须忽略它不认识的选项，不能让更早的调用方失败。新增的选项必须写成 `--name=value`：解析时先丢弃不认识的选项名，分开写成 `--name value` 会让值留下来，被当成意外的位置参数，这次调用因此失败。
+Adopt the division in which the old binary invokes and the new binary owns the format. The subcommand name and arguments are a cross-version contract and do not change once released: later versions may only add optional arguments to this invocation, and may not add required arguments or change the meaning of existing arguments; the new binary must ignore options it does not recognize and must not fail an earlier caller. A new option must be written as `--name=value`: parsing first discards unrecognized option names, whereas writing it separately as `--name value` leaves the value behind, which is taken as an unexpected positional argument and fails the call.
 
-子命令只重写服务定义并让服务管理器重新读取，不启动、不重启 Broker；重写失败时，新二进制把它替换掉的服务定义恢复成调用前的样子，调用方随即把二进制回滚为旧版本。新二进制不提供该子命令时，调用方视为没有更新后步骤，更新继续；将来删掉该子命令的版本不会让更早的更新路径卡住。
+The subcommand only rewrites the service definition and has the service manager reload it; it does not start or restart the Broker. On a failed rewrite, the new binary restores the service definition it replaced to the state before the call, and the caller then rolls the binary back to the old version. When the new binary does not provide the subcommand, the caller treats it as having no post-update step and the update continues; a future version that removes the subcommand will not strand an earlier update path.
 
-## 后果
+## Consequences
 
-- 从 0.4.0 起，每个版本都必须实现该隐藏子命令；命令名与参数冻结，不能改名或改参数。
-- 服务定义的格式可以随版本变化，旧版本的更新路径仍能按新版本的格式完成重写。
-- 每次更新多一次进程启动和一次服务管理器重新读取，两者都计入更新后步骤的时限。
-- 第一段失败时整次更新失败并回滚二进制，即使新二进制本身可用。
-- 具备相应权限的账户可以直接调用该隐藏子命令重写服务定义，权限与执行 `service install` 同档。
+- From 0.4.0 on, every version must implement this hidden subcommand; the command name and arguments are frozen and cannot be renamed or changed.
+- The service definition's format may change across versions, and an old version's update path can still complete the rewrite in the new version's format.
+- Each update adds one process start and one service manager reload, both of which count toward the post-update step's time limit.
+- When the first stage fails, the whole update fails and the binary rolls back, even if the new binary itself is usable.
+- An account with the corresponding permission can invoke this hidden subcommand directly to rewrite the service definition, with permission at the same level as running `service install`.
 
-## 失效条件
+## Invalidation Conditions
 
-服务定义的格式不再由二进制生成，或更新改由系统包管理器分发与升级时，本决策不再适用。
+When the service definition's format is no longer generated by the binary, or the update is instead distributed and upgraded by a system package manager, this decision no longer applies.

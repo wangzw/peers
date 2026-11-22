@@ -1,41 +1,41 @@
-# 管理操作以调用方对配置文件的权限为准
+# Gate management operations on the caller's permission on the configuration file
 
-## 背景
+## Context
 
-系统级 [Broker](../glossary.md) 服务本机多个账户下的 Agent。修改配置、生成配对密钥、发起配对和解除配对会改变整个 Broker 的状态，影响它名下的所有账户；列出与发送只涉及调用方自己的 Agent。Broker 的配置本来就是一个文件，谁能读、谁能改由操作系统的文件权限决定。经工具操作 Broker 是为了方便，不应让一个账户做到它直接改文件做不到的事。
+The system [Broker](../glossary.md) serves agents under several accounts on one host. Changing configuration, generating pairing keys, initiating pairing and unpairing change the whole Broker's state and affect every account under it; listing and sending involve only the caller's own agents. A Broker's configuration is a file, and who may read it and who may change it is decided by the operating system's file permissions. Operating a Broker through tools is for convenience and should not let an account do what it could not do by changing the file directly.
 
-## 考虑过的选项
+## Options Considered
 
-### 被服务的账户都可以做管理操作
+### Every served account can perform management operations
 
-凡是能使用该 Broker 的账户，都可以修改配置、配对和解除配对。
+Every account that can use the Broker can change configuration, pair and unpair.
 
-**否决**：系统级 Broker 之下，任何一个账户都能让整台主机与陌生主机配对，或改动其他账户所依赖的配置。
+**Rejected**: under a system Broker, any account could pair the whole host with an unknown host or change configuration that other accounts depend on.
 
-### 在配置中另设管理员名单
+### Set up a separate administrator list in the configuration
 
-配置里列出可以做管理操作的账户，Broker 据此判定。
+The configuration lists the accounts that can perform management operations, and the Broker judges by it.
 
-**否决**：谁能改配置已经由文件权限规定，再设一份名单是同一件事的第二种表达，两处可能不一致；名单本身存放在配置文件里，能改文件的账户仍然可以把自己加进去。
+**Rejected**: who can change the configuration is already decided by file permissions; a second list is a second expression of the same thing, and the two can disagree. The list itself lives in the configuration file, so an account that can change the file can still add itself to it.
 
-### 以调用方对配置文件的读写权限为准
+### Judge by the caller's read and write permission on the configuration file
 
-Broker 以内核提供的、本机 socket 另一端进程的凭据（进程凭据）确定调用方的账户，不采信调用方的陈述。调用方账户对该 Broker 的配置文件有写权限时，才可以修改配置、生成配对密钥、发起配对和解除配对；有读权限时，才可以读取配置、查看全部 Agent 的状态和审计日志。登记、列出、加入与退出 topic、发送消息不要求任何文件权限。权限是否具备，由一个以调用方账户身份运行的进程对配置文件做实际的访问检查得出。
+The Broker determines the caller's account from the process credentials that the kernel provides for the process at the other end of the local socket (process credentials), and does not trust the caller's statement. Only when the caller's account has write permission on the Broker's configuration file can it change configuration, generate pairing keys, initiate pairing and unpair; only with read permission can it read configuration, view every agent's status and view the audit log. Registering, listing, joining and leaving topics, and sending messages require no file permission. Whether the permission is held is determined by an actual access check of the configuration file by a process running under the caller's account.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-对 Broker 的管理操作以调用方账户对该 Broker 配置文件的访问权限为准：有写权限才能修改配置、生成配对密钥、发起配对和解除配对，有读权限才能读取配置。调用方的账户取自内核提供的进程凭据。不改变 Broker 状态、只涉及调用方自己的 Agent 的操作不要求文件权限。
+A management operation on a Broker is gated by the caller account's access permission on the Broker's configuration file: write permission is needed to change configuration, generate pairing keys, initiate pairing and unpair, and read permission is needed to read configuration. The caller's account comes from the process credentials the kernel provides. Operations that do not change the Broker's state and involve only the caller's own agents require no file permission.
 
-## 后果
+## Consequences
 
-经工具能做的事不超出该账户直接操作文件能做的事。管理员用操作系统已有的手段委托管理：把配置文件的写权限授予某个组，该组的账户即可经工具管理 Broker。用户级 Broker 的配置文件属于本账户，这条规则在其上自然满足，用户级 Broker 不做判定。
+What can be done through the tools does not exceed what the account can do by operating the file directly. An administrator delegates management with the means the operating system already provides: grant write permission on the configuration file to a group, and accounts in that group can manage the Broker through the tools. A user Broker's configuration file belongs to the account, so this rule is satisfied naturally for it, and a user Broker makes no judgment.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 权限只有读与写两级，不能只允许某个账户配对而不允许它改配置。
-- 生成配对密钥、发起配对和解除配对并不写配置文件，也按配置文件的写权限判定，文件权限在这里是管理权的代称。
-- 识别出的是进程的账户，不是人，也不是模型：同一账户下的任何进程都能以该账户的权限操作，受到提示注入的模型发起的调用与用户本人的调用无从区分。
-- 判定依赖操作系统提供进程凭据，调用方的附属组取自账户数据库，可能与调用进程实际携带的组不同。
-- 系统级 Broker 不能自己根据权限位推算，每次判定都要派生一个以调用方账户的有效身份检查的进程，多一次进程派生的开销。
+- There are only the two levels of read and write: it is not possible to allow an account to pair but not to change configuration.
+- Generating a pairing key, initiating pairing and unpairing do not write the configuration file, yet they are judged by write permission on the configuration file; file permission here stands for management authority.
+- What is identified is the process's account, not a person and not a model: any process under the same account can operate with that account's permission, and a call started by a model under prompt injection cannot be told apart from the user's own call.
+- The judgment depends on the operating system providing process credentials, and the caller's supplementary groups come from the account database and may differ from the groups the calling process actually carries.
+- A system Broker cannot work it out from the permission bits by itself; every judgment has to fork a process that checks under the caller account's effective identity, at the cost of one more process fork.

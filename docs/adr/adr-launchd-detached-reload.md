@@ -1,46 +1,46 @@
-# macOS 的重新加载由脱离任务的辅助进程分两段完成
+# Reload on macOS in two stages through a detached helper process
 
-## 背景
+## Context
 
-更新在 Broker 进程内执行，服务定义换好之后要由服务管理器重新读取。Linux 的 `daemon-reload` 不停止正在运行的进程，可以在应答之前同步完成。macOS 的 `bootout` 会停掉正在处理这条更新请求的 Broker，而新二进制作为 Broker 的子进程也在同一个 launchd 任务里，会被一起停掉；同步重新加载因此会中断应答，`bootstrap` 也没有机会执行。
+The update runs inside the Broker process, and after the service definition is swapped the service manager has to reload it. Linux's `daemon-reload` does not stop a running process and can complete synchronously before the reply. macOS's `bootout` stops the Broker that is handling this update request, and the new binary, as a child process of the Broker, is in the same launchd job and is stopped with it; a synchronous reload would therefore interrupt the reply, and `bootstrap` would have no chance to run.
 
-重新加载又必须发生：不重新加载，launchd 继续按旧的 `ProgramArguments` 启动 Broker，新版本的启动方式不会生效。
+The reload must still happen: without it, launchd keeps starting the Broker with the old `ProgramArguments`, and the new version's startup method does not take effect.
 
-## 考虑过的选项
+## Options Considered
 
-### 同步执行 `bootout` 与 `bootstrap`
+### Run `bootout` and `bootstrap` synchronously
 
-重写 plist 之后、发出应答之前直接重新加载。
+Reload directly after rewriting the plist and before sending the reply.
 
-**否决**：`bootout` 停掉正在处理请求的 Broker 及其子进程，调用方收不到应答，`bootstrap` 也不会执行。
+**Rejected**: `bootout` stops the Broker handling the request and its child processes, so the caller gets no reply and `bootstrap` does not run either.
 
-### 只执行 `bootstrap`，不停掉已加载的任务
+### Run only `bootstrap` without stopping the loaded job
 
-**否决**：同一个标签已经加载时，`bootstrap` 不会用新的 plist 替换它，新的 `ProgramArguments` 不会生效。
+**Rejected**: when the same label is already loaded, `bootstrap` does not replace it with the new plist, and the new `ProgramArguments` does not take effect.
 
-### 由用户或终端命令在更新后手动重新加载
+### Have the user or a terminal command reload manually after the update
 
-**否决**：会话内发起的升级没有终端；重新加载的结果无人确认，更新可能在服务仍运行旧定义时报告成功。
+**Rejected**: an upgrade started from a session has no terminal; no one confirms the reload's result, and the update may report success while the service still runs the old definition.
 
-### 由脱离当前任务的辅助进程在 Broker 退出后重新加载
+### Have a helper process detached from the current job reload after the Broker exits
 
-新二进制在应答之前写好 plist 并启动一个不属于该 launchd 任务的辅助进程。Broker 退出后，辅助进程先 `bootout` 再 `bootstrap`，新定义由此生效。
+The new binary writes the plist and starts a helper process that is not part of the launchd job before sending the reply. After the Broker exits, the helper process runs `bootout` and then `bootstrap`, so the new definition takes effect.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-macOS 的重新加载分两段完成。第一段在应答之前同步执行：新二进制重写 plist，并启动辅助进程。第二段在应答之后：辅助进程等发起更新的 Broker 退出，再重新加载服务定义。
+The macOS reload is done in two stages. The first stage runs synchronously before the reply: the new binary rewrites the plist and starts the helper process. The second stage runs after the reply: the helper process waits for the Broker that started the update to exit, then reloads the service definition.
 
-辅助进程在两种情况下放弃重新加载，只记录原因：Broker 超过时限仍未退出，更新可能已经回滚；plist 指向的可执行文件已经不是启动辅助进程的那个新二进制，说明二进制已经被回滚。两种情况都意味着 `bootout` 会停掉一个正在服务旧版本的 Broker。
+The helper process gives up the reload in two cases and only records the reason: the Broker has not exited within the time limit, so the update may already have rolled back; or the executable the plist points at is no longer the new binary that started the helper, meaning the binary has already been rolled back. Either case means `bootout` would stop a Broker that is serving the old version.
 
-## 后果
+## Consequences
 
-- macOS 上先 `bootout` 再 `bootstrap` 会短暂卸载服务；`bootstrap` 失败时服务保持卸载状态，需要按日志与审计记录人工处理。
-- 第二段失败发生在成功应答之后，无法再返回给调用方，只能写日志与审计；`peers update` 等待新版本时超时，并给出日志位置。
-- 每次更新多一个脱离任务的进程，它的生命周期不受服务管理器管理。
-- Linux 不需要辅助进程，第一段同步完成重新读取。
+- On macOS, `bootout` followed by `bootstrap` briefly unloads the service; when `bootstrap` fails the service stays unloaded and has to be handled by hand according to the log and audit records.
+- A second-stage failure happens after the successful reply and can no longer be returned to the caller, only written to the log and audit; `peers update` times out while waiting for the new version and gives the log location.
+- Each update adds a detached process whose lifetime the service manager does not manage.
+- Linux needs no helper process; the first stage completes the reload synchronously.
 
-## 失效条件
+## Invalidation Conditions
 
-launchd 提供不停止任务的重新加载方式，或部署不再使用 launchd 时，本决策需要重新评估。
+When launchd provides a reload method that does not stop the job, or the deployment no longer uses launchd, this decision has to be re-evaluated.

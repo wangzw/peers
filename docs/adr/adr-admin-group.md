@@ -1,74 +1,74 @@
-# 系统级 Broker 的管理组委托
+# Delegate system Broker administration to a group
 
-## 背景
+## Context
 
-系统级 Broker 以 root 运行，服务本机多个账户。需要配置文件写权限的操作，包括生成配对密钥、修改配置、发起配对与更新 Broker，原本只能由 root 执行。生产环境不用 root 承担日常管理，管理员需要一个普通账户就能完成这些操作，用法与 docker 组相近。
+The system Broker runs as root and serves several accounts on one host. Operations that need write permission on the configuration file, including generating pairing keys, changing configuration, initiating pairing and updating the Broker, could originally be performed only by root. Production environments do not use root for day-to-day management; administrators need an ordinary account to complete these operations, with usage similar to the docker group.
 
-管理组不是 root：组内账户能做的，必须是管理员本来就能通过手工编辑配置文件做到的事。Broker 以 root 运行，任何让组内账户借它执行任意代码、写任意文件或取得 root 能力的配置项，都会把管理组变成事实上的 root。提权核对因此是采纳这个决定的前提。
+The admin group is not root: what accounts in the group can do must be what an administrator could already do by editing the configuration file by hand. The Broker runs as root, so any configuration item that lets an account in the group use it to execute arbitrary code, write arbitrary files or gain root capability would turn the admin group into de facto root. The privilege-escalation review is therefore a precondition for adopting this decision.
 
-## 考虑过的选项
+## Options Considered
 
-### 只写文档，让管理员自行对配置文件 chgrp 与 chmod
+### Write documentation only and let administrators chgrp and chmod the configuration file themselves
 
-安装不建组，文档说明把配置文件交给某个组。
+Installation creates no group, and the documentation explains how to hand the configuration file to a group.
 
-**未采纳**：它与本决策兼容，已有安装仍然需要这一步。新安装的默认状态保持只有 root 可写，“安装时提供管理组”没有实现。
+**Not adopted**: it is compatible with this decision, and an existing installation still needs this step. The default state of a new installation stays writable only by root, and "provide an admin group at install time" is not implemented.
 
-### 安装时建组并授权
+### Create and authorize a group at install time
 
-系统级服务安装时创建一个管理组，新生成的配置文件以该组为属组、授予组读写权限；安装脚本询问是否把执行安装的账户加入该组。
+The system service installation creates an admin group, the newly generated configuration file takes the group as its owning group and is granted group read and write permission, and the install script asks whether to add the account running the install to the group.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-### sudoers 规则
+### A sudoers rule
 
-为管理组写一条 sudo 规则，允许它执行 `peers` 的特定子命令。
+Write a sudo rule for the admin group that allows it to run specific subcommands of `peers`.
 
-**否决**：sudoers 规则把命令的执行交给 root，管理组成员实际取得的是以 root 运行 `peers` 的能力。配置文件权限模型不再生效，授权也无法限定在 Broker 当前使用的配置文件上。
+**Rejected**: a sudoers rule hands command execution to root, and members of the admin group in effect gain the ability to run `peers` as root. The configuration file permission model no longer applies, and the authorization cannot be limited to the configuration file the Broker currently uses.
 
-### 本机接口另设特权令牌
+### A separate privileged token on the local interface
 
-管理操作凭一个令牌通过本机接口鉴权，与文件权限无关。
+Management operations are authenticated through a token over the local interface, independent of file permissions.
 
-**否决**：令牌需要发放、保管与撤销，配置文件的文件权限不再是唯一依据。它与 [ADR-management-by-config-file-permission](adr-management-by-config-file-permission.md) 冲突。
+**Rejected**: the token has to be issued, kept and revoked, and the configuration file's file permissions are no longer the only basis. It conflicts with [ADR-management-by-config-file-permission](adr-management-by-config-file-permission.md).
 
-## 决策
+## Decision
 
-采纳安装时建组并授权。管理组默认名为 `peers`，可由 `service install --system --admin-group <名称>` 指定；组不存在时创建，已存在时沿用，不改它的成员，沿用前按下面的规则核对成员。新生成的系统级配置文件以 root 为属主、管理组为属组，权限 `0660`；已存在的配置文件内容、属组与权限都不动，安装输出给出交给管理组的命令。发布包的安装脚本在 `--system` 时询问是否把执行安装的账户加入管理组，默认不加入；`--join-admin-group` 直接加入，`--no-admin-group` 跳过。
+Adopt creating and authorizing a group at install time. The admin group is named `peers` by default and can be specified with `service install --system --admin-group <name>`; if the group does not exist it is created, and if it exists it is reused without changing its members, with the members checked against the rules below before reuse. A newly generated system configuration file takes root as its owner and the admin group as its owning group, with mode `0660`; an existing configuration file's contents, owning group and mode are left untouched, and the install output gives the commands that hand it to the admin group. The release package's install script, under `--system`, asks whether to add the account running the install to the admin group, and does not add it by default; `--join-admin-group` adds it directly, and `--no-admin-group` skips it.
 
-沿用已有组时，gid 为 0 的组一律拒绝，因为该组就是 root 的组，组内账户会连带取得配置文件权限。同时满足下列条件时也拒绝安装：组已存在且不是本次创建；`/var/lib/peers/admin-group` 没有记录这个组名，即不是以前的 peers 安装创建的；这次将生成新的配置文件；管理员没有用 `--admin-group` 显式指定组名；该组列出了成员。这些成员会在管理员不知情时取得系统级 Broker 的管理权，显式指定组名即视为管理员确认他们，因此不再另作询问。拒绝发生在写任何文件之前，与建组失败一样不留下配置文件。
+When an existing group is reused, a group with gid 0 is always refused, because that group is root's group and accounts in it would also gain permission on the configuration file. Installation is also refused when all of the following hold: the group already exists and was not created this time; `/var/lib/peers/admin-group` does not record this group name, meaning it was not created by a previous peers installation; a new configuration file is about to be generated; the administrator did not explicitly specify the group name with `--admin-group`; and the group lists members. Those members would gain management authority over the system Broker without the administrator knowing, and explicitly specifying the group name is treated as the administrator confirming them, so no further question is asked. The refusal happens before any file is written and, like a failure to create the group, leaves no configuration file.
 
-成员包括账户数据库列出的附属成员，以及以该组为主组的账户；macOS 上还包括 `NestedGroups` 列出的嵌套组，嵌套组里的账户同样能取得配置文件权限。读取成员失败时按拒绝处理，不把读不到的组当作没有成员。管理员用 `--admin-group` 显式指定组名，或这次沿用已有配置文件时，安装不做这项核对，也不读取成员，重装因此不会被账户数据库的故障挡住。
+Membership includes the supplementary members the account database lists and accounts whose primary group is this group; on macOS it also includes nested groups listed in `NestedGroups`, and accounts in a nested group likewise gain permission on the configuration file. A failure to read membership is treated as a refusal, and a group that cannot be read is not treated as having no members. When the administrator explicitly specifies the group name with `--admin-group`, or when an existing configuration file is reused this time, installation skips this check and does not read membership, so a reinstall is not blocked by a failure of the account database.
 
-无论组是新建还是沿用，安装汇总都列出 `admin group:` 一行，写明组名与来源：`peers (created)`、`peers (existing)`、`peers (existing, members: alice, bob)` 或 `peers (existing, no members listed)`。只写 `existing` 表示这次跳过了成员读取。
+Whether the group is new or reused, the install summary lists an `admin group:` line stating the group name and its source: `peers (created)`, `peers (existing)`, `peers (existing, members: alice, bob)` or `peers (existing, no members listed)`. `existing` alone means membership reading was skipped this time.
 
-管理组等同于“可以手工编辑配置文件”。
+The admin group is equivalent to "can edit the configuration file by hand".
 
-### 提权核对的结论
+### Conclusions of the privilege-escalation review
 
-逐项核对配置项后，只有低端口一条路径使管理组成员取得超出编辑配置文件的能力，按下列规则消除：
+After reviewing each configuration item, only the low-port path gives an admin group member a capability beyond editing the configuration file, and it is eliminated by the rules below:
 
-- `broker.listen` 的端口小于 1024 时，只有在配置文件只有 root 可写时才生效，即属组与其他人都没有写权限，访问控制列表里也没有额外的写授权。经本机接口把 `broker.listen` 设为低端口而调用方不是 root 的，返回 `permission_denied`，说明低端口需要 root 修改，并且配置文件只能由 root 写。配置文件可被组或其他人写入时，热加载不采用新的低端口，保留旧值，记 Warn 级运行日志并写审计；启动时同样的条件下拒绝启动，退出码沿用配置非法时的取值。用户级 Broker 不受影响，普通账户本来不能绑定低端口。管理员收紧配置文件权限之后，文件中已有的低端口取值会被采用，而它可能由能写该文件的其他账户写入；Broker 因此不改写这个值，而是在拒绝时写出文件中 `broker.listen` 的当前取值，供 root 核对后再收紧权限。
-- 写配置文件的路径以 `O_NOFOLLOW` 打开，配置文件是符号链接时写入失败、原文件不变。这条规则依赖一个硬前提：配置目录 `/etc/peers` 以 root 为属主，组不可写。
-- 直接编辑配置文件触发的重载没有账户归属：审计记录只标明来源是文件，`account` 与 `actor` 为空；经本机接口的修改记录调用方账户。这是已知边界，不改变实现。
+- When `broker.listen`'s port is below 1024, it takes effect only when the configuration file is writable only by root, that is, neither the owning group nor others has write permission and the access control list grants no extra write authorization. When `broker.listen` is set to a low port through the local interface and the caller is not root, the call returns `permission_denied`, explaining that a low port requires root to change and the configuration file must be writable only by root. When the configuration file is writable by a group or others, a hot reload does not adopt the new low port, keeps the old value, writes a Warn-level run log and writes an audit record; at startup the same condition refuses to start, with the exit code that an invalid configuration uses. A user Broker is unaffected, since an ordinary account cannot bind a low port anyway. After the administrator tightens the configuration file's permissions, a low-port value already in the file is adopted, and it may have been written by another account that could write the file; the Broker therefore does not rewrite this value, but on refusal writes the current value of `broker.listen` in the file, for root to check before tightening the permissions.
+- The path that writes the configuration file is opened with `O_NOFOLLOW`; when the configuration file is a symbolic link, the write fails and the original file is unchanged. This rule rests on a hard premise: the configuration directory `/etc/peers` is owned by root and not writable by the group.
+- A reload triggered by editing the configuration file directly has no account attribution: the audit record states only that the source is a file, with `account` and `actor` empty; a change through the local interface records the caller's account. This is a known boundary and does not change the implementation.
 
-其余配置项没有提权路径。管理组因此不能取得以 root 执行代码的能力，也不能写任意文件。系统级的 `agent-peer update` 后来改为由 Broker 自己下载、校验并替换二进制（[adr-self-update](adr-self-update.md)），管理组的写权限因此也允许更新系统级二进制，信任范围相应扩大到这个动作；成员仍不能指定来源、版本或降级，也不能写配置文件以外的文件。
+The other configuration items have no privilege-escalation path. The admin group therefore cannot gain the ability to execute code as root or write arbitrary files. The `agent-peer update` command for the system installation was later changed so that the Broker downloads, verifies and replaces the binary itself ([adr-self-update](adr-self-update.md)); the admin group's write permission therefore also allows updating the system installation's binary, and the trust scope widens to that action accordingly. Members still cannot specify the source or version, or request a downgrade, and cannot write files other than the configuration file.
 
-与 docker 组的区别：docker 组的成员能让 docker 以 root 运行任意代码，组权限等同 root；本组只能读写一个配置文件，低端口这条路径按上面的规则消除后，成员不能借 Broker 执行任意代码，也不能写配置文件以外的文件。
+Difference from the docker group: members of the docker group can make docker run arbitrary code as root, so the group permission equals root; this group can only read and write one configuration file, and once the low-port path is eliminated by the rules above, members cannot use the Broker to execute arbitrary code or write files other than the configuration file.
 
-## 后果
+## Consequences
 
-管理组成员不经 root 或 sudo 即可执行需要配置文件读写权限的操作，审计记录的是该账户。系统级安装的默认安全边界从“只有 root 能管理”变为“root 与配置文件的属组能管理”。
+An admin group member can perform operations that need read and write permission on the configuration file without root or sudo, and the audit records that account. The default security boundary of a system installation changes from "only root can manage" to "root and the configuration file's owning group can manage".
 
-**接受的代价：**
+**Costs accepted:**
 
-- 配置文件对管理组可写，组内任何账户都能修改全部配置项，包括对外地址、监听地址与公开开关。这些修改与管理员手工编辑文件的效果相同。
-- 沿用已有组时的成员核对依赖平台的账户与组查询：查询不枚举的账户看不到。查询失败时安装拒绝，不会把读不到的组当作没有成员。
-- 管理员收紧配置文件权限之前，组内账户写入的低端口取值在收紧之后会被采用。Broker 在拒绝时写出该取值，但不会记录哪个账户写入了它，root 需要据此核对。
-- 提权核对依赖“端口小于 1024 需要 root”这一约束；新增配置项或改变某个键的含义时，需要重新核对它是否让组内账户取得 root 能力或写任意文件。
-- 直接编辑配置文件触发的变更在审计中没有账户归属，只能追溯到文件。
-- 已有安装不会自动迁移：配置文件的属组与权限保持原样，管理员需要按安装输出给出的命令手工授权。
+- The configuration file is writable by the admin group, so any account in the group can change every configuration item, including the advertised address, the listen address and the public switch. These changes have the same effect as the administrator editing the file by hand.
+- The member check on reusing an existing group depends on the platform's account and group lookup: accounts the lookup does not enumerate are not seen. When the lookup fails, installation refuses, and a group that cannot be read is not treated as having no members.
+- Before the administrator tightens the configuration file's permissions, a low-port value written by an account in the group is adopted after the tightening. The Broker writes that value out on refusal but does not record which account wrote it, and root has to check against it accordingly.
+- The privilege-escalation review depends on the constraint that "a port below 1024 requires root"; when a configuration item is added or a key's meaning changes, it has to be reviewed again to see whether it gives an account in the group root capability or the ability to write arbitrary files.
+- A change triggered by editing the configuration file directly has no account attribution in the audit and can be traced only to the file.
+- An existing installation is not migrated automatically: the configuration file's owning group and permissions stay as they are, and the administrator has to authorize by hand with the commands the install output gives.
 
-## 失效条件
+## Invalidation Conditions
 
-管理组不再等同于“可以手工编辑配置文件”时，例如某个配置项让组内账户执行任意代码或写配置文件以外的任意文件，本决策不再成立，需要重新设计授权方式。系统级 Broker 改为不以 root 运行，且管理操作的权限前提不再是配置文件的文件权限时，同理。
+When the admin group is no longer equivalent to "can edit the configuration file by hand", for example when some configuration item lets an account in the group execute arbitrary code or write any file other than the configuration file, this decision no longer holds and the authorization method has to be redesigned. The same applies when the system Broker changes to not run as root and the permission premise of management operations is no longer the configuration file's file permissions.

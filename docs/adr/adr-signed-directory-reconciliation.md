@@ -1,54 +1,54 @@
-# 公开信息以签名记录逐跳对账传播
+# Propagate public information as signed records through hop-by-hop reconciliation
 
-## 背景
+## Context
 
-用户要连接一个 [Broker](../glossary.md)，先得知道它存在以及怎么连。系统没有注册中心，Broker 之间只有逐对建立的链路。公开 Broker 的名片和公开 topic 的声明要让整个连通网络知道，途中经手的 Broker 不应能改动它们。Agent 与成员名单属于更敏感的信息，只应发给已连接的对端。
+To connect to a [Broker](../glossary.md), a user first has to know that it exists and how to connect to it. The system has no registry; Brokers have only links established pairwise. The broker card of a public Broker and a public topic's declaration have to become known across the whole connected network, and the Brokers that handle them along the way must not be able to alter them. Rosters and agent information are more sensitive and should be sent only to peers that are already connected.
 
-## 考虑过的选项
+## Options Considered
 
-### 只传播一跳
+### Propagate only one hop
 
-Broker 只把自己直连对端的信息告诉其他对端，不再往下传。
+A Broker tells its other peers only about the peers it is directly linked with, and passes nothing further.
 
-**否决**：公开就成了只对一部分 Broker 公开，具体是哪些取决于链路恰好怎么连。公开的 Broker 应当在整个连通网络内可见。
+**Rejected**: public then becomes public to only some Brokers, and which ones depends on how the links happen to be connected. A public Broker should be visible across the whole connected network.
 
-### 流言式传播
+### Gossip-style propagation
 
-收到新信息的 Broker 随机挑选若干对端转发，传若干轮后停止（[REF-epidemic-algorithms](../references.md)）。
+A Broker that receives new information randomly picks several peers and forwards it, for some rounds and then stops ([REF-epidemic-algorithms](../references.md)).
 
-**否决**：不保证每个 Broker 最终都收到。网络规模小，信息变化少，不需要用可靠性换取传播速度。
+**Rejected**: it does not guarantee that every Broker eventually receives it. The network is small and information changes little, so there is no need to trade reliability for propagation speed.
 
-### 随名片传播成员名单
+### Propagate the roster with the card
 
-把 Agent 的信息与名片一起传播，使没有链路的 Broker 也能看到别处的 Agent。
+Propagate agent information together with the card, so that Brokers with no link can also see agents elsewhere.
 
-**否决**：Agent 信息只应发给已连接的对端。
+**Rejected**: agent information should be sent only to peers that are already connected.
 
-### 传播在线状态
+### Propagate online status
 
-在 Broker 之间传播并探测彼此是否在线。
+Propagate and probe whether each other is online between Brokers.
 
-**否决**：是否已连接是每个 Broker 自己的本地事实，是否可直达由名片有无对外地址说明，都不需要全网一致。
+**Rejected**: whether a link is established is each Broker's own local fact, and whether a Broker is directly reachable is stated by whether its card has an advertised address; neither needs to agree across the network.
 
-### 签名记录加逐跳对账
+### Signed records with hop-by-hop reconciliation
 
-公开的信息以发布者签名、带版本号和到期时间的记录表示，发布者定期续签。Broker 之间在链路上两两对账，缺的和旧的互相补齐，并把新接受的记录继续交给其他对端。撤回以发布一条版本更高的签名记录来表示。对账与撤回记录的做法取自 REF-epidemic-algorithms 中的反熵与死亡证明（death certificate）。
+Public information is represented as records signed by the publisher with a version number and an expiry time, and the publisher re-signs them periodically. Brokers reconcile pairwise over their links, filling in the missing and updating the older from each other, and pass newly accepted records on to their other peers. A withdrawal is represented by publishing a signed record with a higher version. The reconciliation and withdrawal approach is taken from anti-entropy and the death certificate in REF-epidemic-algorithms.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-名片与公开 topic 的声明以发布者签名、带版本号与到期时间的记录表示，在链路上逐跳对账，传遍整个连通网络；发布者定期续签，撤回以一条版本更高的签名记录表示。成员名单与在线状态不随记录传播。
+A card and a public topic's declaration are represented as records signed by the publisher with a version number and an expiry time, reconciled hop by hop over links and spread across the whole connected network; the publisher re-signs periodically, and a withdrawal is represented by a signed record with a higher version. The roster and online status do not propagate with the records.
 
-## 后果
+## Consequences
 
-公开 Broker 与公开 topic 在连通网络内最终处处可见，途中经手的 Broker 不能篡改或伪造。发布者离线超过有效期后，记录自行消失。
+Public Brokers and public topics eventually become visible everywhere in the connected network, and the Brokers that handle them along the way cannot tamper with or forge them. Once a publisher has been offline longer than the validity period, its records disappear on their own.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 公开 Broker 的对外地址对连通网络内的所有 Broker 可见，包括用户并不认识的。
-- 撤回不是立即生效的全网删除：各 Broker 要把撤回记录保留到它自己到期，撤回传到之前旧记录仍然可见。
-- 到期判断依赖各 Broker 的本地时钟，时钟偏差使同一条记录在各处消失的时刻不同。版本号也取自发布者的时钟，发布者必须保证自己签发的版本号只增不减，时钟回拨时不能直接取当前时间。
-- 签名只证明记录出自它所载的发布者，不证明发布者可信。任何对端都能造出大量签名有效的记录，名录的容量因此必须按来源链路和发布者分别设限，否则一个对端就能占满全网的名录。按来源链路计数的限额在第二跳之后记在转发记录的链路上：一个对端造出的大量记录经其他 Broker 转来，会占满那条链路的限额，使经它转来的合法新记录被拒；同一标识的替换不受数量限额约束，但每个 Broker 对它至多每 60 秒接受一次，持续高频重签的发布者只能以这个速度传播。被替换间隔挡下的新版本的标识被记为待补取，现有版本接受满 60 秒时补取一次，合法的连续变更因此至多延后一个替换间隔。撤回同样如此：现有版本在撤回签发之前已被接受，它接受满 60 秒的时刻不晚于撤回签发后 60 秒，到期立即补取，撤回在直接收到它的 Broker 上于签发后 60 秒内生效。撤回逐跳传播，每一跳的等待都不超过一个替换间隔，第二跳及更远还要再加上前面各跳的传播延迟，因此撤回不是在签发后 60 秒内全网同时生效，离发布者越远生效越晚。
-- 每个 Broker 都保存全网的公开记录，记录数随公开 Broker 与公开 topic 的数量增长。
-- 名片只是线索：名片所载地址是否真能连上，对方是否愿意配对，都不在保证之内。
+- A public Broker's advertised address is visible to every Broker in the connected network, including those the user does not know.
+- A withdrawal is not an immediate network-wide deletion: each Broker keeps the withdrawal record until it expires on its own, and the old record stays visible until the withdrawal reaches that Broker.
+- Expiry is judged by each Broker's local clock, so clock skew makes the same record disappear at different times in different places. The version number also comes from the publisher's clock, and the publisher must ensure that the version numbers it issues only increase; it cannot simply take the current time when the clock goes backwards.
+- A signature proves only that a record was issued by the publisher it carries, not that the publisher is trustworthy. Any peer can produce a large number of validly signed records, so directory capacity must be limited both per source link and per publisher; otherwise one peer could fill the whole network's directory. The per-source-link limit is counted on the link that carries a forwarded record after the second hop: a large number of records produced by one peer and relayed through another Broker will fill that link's limit, causing legitimate new records relayed through it to be refused. Replacing a record with the same identifier is not subject to the count limit, but each Broker accepts it at most once every 60 seconds, so a publisher that keeps re-signing at a high rate can propagate only at that rate. The identifier of a new version held back by the replacement interval is recorded as pending refetch, and it is fetched once when the existing version has been accepted for a full 60 seconds, so legitimate consecutive changes are delayed by at most one replacement interval. The same holds for withdrawals: the existing version was accepted before the withdrawal was signed, its 60-second acceptance moment is no later than 60 seconds after the withdrawal was signed, it is fetched immediately on expiry, and the withdrawal takes effect on the Broker that receives it directly within 60 seconds of signing. A withdrawal propagates hop by hop, and each hop waits no longer than one replacement interval; the second hop and beyond add the propagation delay of the preceding hops, so a withdrawal does not take effect network-wide within 60 seconds of signing, and it takes effect later the farther it is from the publisher.
+- Every Broker stores the whole network's public records, and the record count grows with the number of public Brokers and public topics.
+- A card is only a hint: whether the address a card carries is actually reachable, and whether the other side is willing to pair, are not guaranteed.

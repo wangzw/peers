@@ -1,86 +1,86 @@
-# 自我更新从本项目 GitHub 正式发布安装
+# Install self-updates from this project's GitHub releases
 
-## 背景
+## Context
 
-用户要求 peers 能发现并安装自己的新版本：Broker 周期检查是否有新的正式发布版本，用户在终端看到提示后执行更新命令完成安装（`REQ-update-001` 至 `REQ-update-006`）。更新还可以从会话中发起：MCP 工具 `update_broker` 经本机接口让 Broker 执行升级，Claude Code 对该工具调用的确认是这次升级的人工确认（`REQ-update-008`）。
+The user requires peers to discover and install a new version of itself: the Broker periodically checks whether a new official release exists, and the user runs the update command after seeing a hint in the terminal to complete the installation (`REQ-update-001` to `REQ-update-006`). An update can also be started from a session: the MCP tool `update_broker` makes the Broker perform the upgrade through the local interface, and Claude Code's confirmation of that tool call is the human confirmation for this upgrade (`REQ-update-008`).
 
-系统级安装以服务方式运行，日常管理由管理组的普通账户承担，不取得 root（`REQ-broker-config-043`）。更新程序要下载并执行一段新代码，是系统里权限最高的一次外部输入。项目在 GitHub 上发布，发布产物是各平台的 `tar.gz` 安装包与一份 `checksums.txt`，当前没有发布签名。
+A system installation runs as a service, and day-to-day management is carried out by an ordinary account in the admin group without gaining root (`REQ-broker-config-043`). The updater downloads and runs a piece of new code, the most privileged external input in the system. The project publishes on GitHub, and the release artifacts are per-platform `tar.gz` installers and a `checksums.txt`, with no release signature at present.
 
-更新必须由用户决定，不能静默替换正在运行的进程。安装包和校验和都来自外部，来源、命名、校验和上限因此都是决定的一部分。版本只在正式发布之间比较，预发布和草稿不参与。
+The update must be decided by the user and must not silently replace a running process. Both the installer and the checksum come from outside, so the source, the naming, the checksum and the size limit are part of the decision. Versions are compared only between official releases; pre-releases and drafts do not take part.
 
-## 考虑过的选项
+## Options Considered
 
-### 静默安装
+### Silent install
 
-Broker 发现新版本后直接下载、校验并替换二进制，用户无需参与。
+After the Broker finds a new version it downloads, verifies and replaces the binary directly, with no user involvement.
 
-**否决**：与 `REQ-update-004` 要求的用户确认冲突；替换正在运行的进程失败时用户没有机会保留现状，下载来源被攻破时也没有人工判断的环节。
+**Rejected**: it conflicts with the user confirmation that `REQ-update-004` requires; when replacing the running process fails, the user has no chance to keep the status quo, and when the download source is compromised there is no human judgment in the loop.
 
-### 只提示版本，由用户手工下载安装
+### Show only the version and let the user download and install by hand
 
-Broker 与终端命令只显示新版本号，安装仍按 README 的步骤手工完成。
+The Broker and the terminal command show only the new version number, and installation is still done by hand following the README steps.
 
-**否决**：`REQ-update-004` 要求命令自动下载、校验并替换二进制，只提示不能满足。
+**Rejected**: `REQ-update-004` requires the command to download, verify and replace the binary automatically, and showing only the version does not satisfy it.
 
-### 经系统包管理器分发与升级
+### Distribute and upgrade through a system package manager
 
-由 Homebrew、apt 等包管理器安装和升级，peers 不自己下载。
+Install and upgrade through Homebrew, apt or another package manager, with peers not downloading by itself.
 
-**未采纳**：它与本决策兼容，但要求为每个包管理器维护打包与发布流程，当前范围不需要。它可以在不取代本决策的情况下加入。
+**Not adopted**: it is compatible with this decision, but it requires maintaining packaging and release processes for each package manager, which the present scope does not need. It can be added without replacing this decision.
 
-### 发布签名与校验
+### Release signing and verification
 
-发布时用项目持有的密钥签名，更新程序先验证签名再安装。
+Sign at release time with a key held by the project, and have the updater verify the signature before installing.
 
-**未采纳**：需要一套签名密钥的保管与发布流程，现有发布没有签名。它与本决策兼容，可以在不取代本决策的情况下加入；加入的观察条件见失效条件。
+**Not adopted**: it requires a process for keeping and publishing a signing key, and the current release has no signature. It is compatible with this decision and can be added without replacing it; the observable condition for adding it is in Invalidation Conditions.
 
-### 只允许在终端发起更新
+### Allow updates to be started only in the terminal
 
-会话中只显示更新提示，升级必须在终端执行。
+A session shows only an update hint, and the upgrade must be run in the terminal.
 
-**否决**：用户要求在会话中驱动升级；工具调用仍经 Claude Code 的人工确认，终端不是唯一能取得确认的地方。
+**Rejected**: the user requires driving the upgrade from a session; a tool call still goes through Claude Code's human confirmation, and the terminal is not the only place to obtain confirmation.
 
-### 从本项目 GitHub 正式发布下载并校验 SHA-256
+### Download from this project's official GitHub releases and verify SHA-256
 
-只访问写死的仓库 `wangzw/peers`，从最新正式发布的 assets 取安装包和 `checksums.txt`，用 SHA-256 比对后替换二进制。
+Access only the hard-coded repository `wangzw/peers`, take the installer and `checksums.txt` from the latest official release's assets, and replace the binary after comparing with SHA-256.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-自我更新的唯一来源是本项目仓库 `wangzw/peers` 的 GitHub 正式发布，访问一律走 HTTPS。
+The only source of self-updates is the official GitHub releases of this project's repository `wangzw/peers`, and access always uses HTTPS.
 
-版本信息取自 GitHub REST API 的 `GET /repos/wangzw/peers/releases/latest`（[REF-github-rest-api](../references.md)），该接口只返回最新的正式发布版本，不含预发布和草稿。查询是否有新版本用 `releases/latest`，安装时按用户确认过的 tag 经 `GET /repos/wangzw/peers/releases/tags/<tag>` 拉取该版本，避免用户确认之后 latest 变化而安装成另一个版本。安装包与 `checksums.txt` 取自该 release 的 assets，经 `browser_download_url` 下载。安装包的名字必须恰好是 `peers_<版本>_<GOOS>_<GOARCH>.tar.gz`。
+Version information comes from the GitHub REST API's `GET /repos/wangzw/peers/releases/latest` ([REF-github-rest-api](../references.md)), which returns only the latest official release and no pre-release or draft. Checking for a new version uses `releases/latest`; installing fetches the tag the user confirmed through `GET /repos/wangzw/peers/releases/tags/<tag>`, so that a change of latest after the user's confirmation does not install a different version. The installer and `checksums.txt` are taken from that release's assets and downloaded through `browser_download_url`. The installer's name must be exactly `peers_<version>_<GOOS>_<GOARCH>.tar.gz`.
 
-下载内容用 SHA-256 与 `checksums.txt` 中对应的一行比对，不一致即失败。`checksums.txt` 与安装包各自设下载大小上限，其中 `checksums.txt` 的上限更小，并按行扫描；这些上限都写成具名常量。解压时只取名为 `peers` 的普通文件，拒绝路径穿越与符号链接。新二进制先在临时位置运行 `--version`，输出必须恰好是 `peers <版本>`，然后才替换目标。替换在目标所在目录内写临时文件，保持原二进制的模式与属主，`fsync` 后 `rename`，不保留旧版本。
+Downloaded content is compared by SHA-256 against the matching line in `checksums.txt`, and a mismatch fails. `checksums.txt` and the installer each have a download size limit, the `checksums.txt` limit smaller and scanned by line; these limits are written as named constants. Extraction takes only the regular file named `peers` and rejects path traversal and symbolic links. The new binary is first run with `--version` in a temporary location, and the output must be exactly `peers <version>`, only after which the target is replaced. Replacement writes a temporary file in the target's directory, keeps the original binary's mode and owner, `fsync`s and `rename`s, and keeps no old version.
 
-发布暂无签名，更新程序提供的信任程度与用户手工下载相同。发布签名与校验不在本决策的范围内。
+Releases have no signature yet, so the updater provides the same level of trust as a manual download by the user. Release signing and verification are outside this decision's scope.
 
-### 委托升级
+### Delegated upgrade
 
-以服务方式运行的系统级与用户级 Broker 自己执行升级：Broker 取本项目最新的正式发布版本，下载、校验并替换自己的二进制，回复调用方后正常退出，由服务管理器以新二进制重新启动。终端命令在系统级安装上请求 Broker 执行，不再在本地替换二进制。
+A system or user Broker running as a service performs the upgrade itself: the Broker takes this project's latest official release version, downloads, verifies and replaces its own binary, replies to the caller and exits normally, and the service manager restarts it with the new binary. The terminal command asks the Broker to perform it on a system installation and no longer replaces the binary locally.
 
-发起升级需要对 Broker 的配置文件有写权限，与修改配置同档。管理组的成员因此可以不取得 root 就让以 root 运行的 Broker 替换自己的二进制，信任程度与 root 自己执行 `peers update` 相同；这条路径不给他们超出编辑配置文件的权限。升级只取本项目最新的正式发布版本：调用方不能指定来源、版本，也不能要求降级。
+Starting an upgrade requires write permission on the Broker's configuration file, at the same level as changing configuration. A member of the admin group can therefore make a Broker running as root replace its own binary without gaining root, with the same level of trust as root running `peers update` itself; this path gives them no permission beyond editing the configuration file. The upgrade takes only this project's latest official release version: the caller cannot specify the source or version, or request a downgrade.
 
-发布暂未签名，这条路径的信任依赖 GitHub 的 HTTPS 与 `checksums.txt` 的校验和。
+Releases are not signed yet, and this path's trust depends on GitHub's HTTPS and the checksums in `checksums.txt`.
 
-会话中经 MCP 工具 `update_broker` 发起升级时，Claude Code 对该工具调用的确认是升级前的最后一道人工确认。该工具默认不放行，不加入自动批准的名单：加入之后，模型可以在没有人工确认的情况下让以 root 运行的 Broker 安装新版本。
+When an upgrade is started from a session through the MCP tool `update_broker`, Claude Code's confirmation of that tool call is the last human confirmation before the upgrade. The tool is not allowed by default and is not added to the auto-approve list: once added, the model could make a Broker running as root install a new version without human confirmation.
 
-## 后果
+## Consequences
 
-更新只依赖本项目自己的发布渠道，不引入第三方分发或包管理器。没有新的密钥需要保管，发布流程不变。安装包的错误命名、缺失的校验和、过大的下载或含异常路径的归档都在替换之前失败，目标二进制保持不变（`REQ-update-005`）。
+Updating relies only on this project's own release channel and introduces no third-party distribution or package manager. No new key has to be kept, and the release process is unchanged. A wrongly named installer, a missing checksum, an oversized download or an archive with an abnormal path all fail before replacement, and the target binary is unchanged (`REQ-update-005`).
 
-**接受的代价：**
+**Costs accepted:**
 
-- GitHub 不可用、账户或发布资产被攻破时，SHA-256 不能提供独立于该账户的信任；信任程度与用户手工下载相同。发布作业所用的第三方 action 或缓存被攻破时效果相同，都能替换以 root 安装的二进制；项目以 action 按提交固定、发布作业不用缓存来缩小这条路径。
-- 只认一种安装包命名；改变发布产物的命名方式会使旧版本的更新程序无法安装新版本。
-- 安装包的下载上限使超过该大小的安装包被拒绝，即使它本身合法。
-- 替换要求目标目录可写；用户级安装的终端更新因此要求执行账户对该目录有写权限（`REQ-update-006`）。
-- 管理组的成员可以让以 root 运行的 Broker 替换自己的二进制，信任程度与 root 自己执行更新相同。在发布签名之前，攻破本项目的 GitHub 账户或发布流水线即可借这条路径替换以 root 运行的二进制。
-- 会话中的 Agent 可以发起升级；是否执行取决于用户对工具调用的确认，把它加入自动批准的名单会取消这道确认。
-- 更新完成后 Broker 重启，已打开的会话自动恢复与它的连接；会话中的 MCP 服务进程仍是旧版本，要重连 MCP 服务或重开会话才用上新版本。
-- 非发布构建，例如 `dev` 与 `e2e` 版本，不参与检查和更新。
+- When GitHub is unavailable or the account or release assets are compromised, SHA-256 cannot provide trust independent of that account; the level of trust is the same as a manual download by the user. The same applies when a third-party action or cache used by the release job is compromised, either of which can replace a binary installed as root; the project narrows this path by pinning actions to commits and not using a cache in the release job.
+- Only one installer naming is recognized; changing the naming of release artifacts would prevent the old version's updater from installing a new version.
+- The installer's download limit refuses an installer larger than that, even when it is otherwise legitimate.
+- The replacement requires the target directory to be writable; a terminal update of a user installation therefore requires the account running it to have write permission on that directory (`REQ-update-006`).
+- A member of the admin group can make a Broker running as root replace its own binary, with the same level of trust as root running the update itself. Before release signing exists, compromising this project's GitHub account or release pipeline is enough to replace a binary installed as root through this path.
+- An agent in a session can start an upgrade; whether it runs depends on the user's confirmation of the tool call, and adding it to the auto-approve list would cancel that confirmation.
+- After the update completes, the Broker restarts, and open sessions automatically recover their connection to it; the MCP server process in a session is still the old version, and the new version is only used after reconnecting the MCP server or reopening the session.
+- Non-release builds, such as the `dev` and `e2e` versions, do not take part in checking and updating.
 
-## 失效条件
+## Invalidation Conditions
 
-发布开始携带签名时，本决策改为要求先验证签名再安装。项目的发布迁移到 GitHub Releases 以外的渠道，或不再按 `peers_<版本>_<GOOS>_<GOARCH>.tar.gz` 命名产物时，写死的仓库、接口与命名前提不再成立，本决策需要重新评估。Claude Code 不再对带 `destructiveHint` 的工具默认要求确认时，会话中的升级失去最后一道人工确认，委托升级需要重新评估。
+When releases start carrying a signature, this decision changes to require verifying the signature before installing. When the project's releases move to a channel other than GitHub Releases, or no longer name artifacts `peers_<version>_<GOOS>_<GOARCH>.tar.gz`, the hard-coded repository, interface and naming premises no longer hold, and this decision has to be re-evaluated. When Claude Code no longer requires confirmation by default for tools carrying `destructiveHint`, a session upgrade loses its last human confirmation, and delegated upgrade has to be re-evaluated.

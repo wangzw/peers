@@ -1,45 +1,45 @@
-# Broker 配置经工具读写，确认交给 Claude Code
+# Read and write Broker configuration through tools and leave confirmation to Claude Code
 
-## 背景
+## Context
 
-用户在会话中工作时需要查看和调整 [Broker](../glossary.md) 的配置、生成配对密钥、发起配对。其中一部分操作影响安全：把 Broker 设为公开、与一台新的主机配对。会话中的模型可能受到提示注入的诱导。Claude Code 允许模型在会话中修改它自己的配置，并以按工具授权的权限确认来约束。一个账户能否读写 Broker 的配置由文件权限决定（[ADR-management-by-config-file-permission](adr-management-by-config-file-permission.md)）；在有写权限的账户下，模型本来就能以文件操作直接改动 Broker 的配置文件。
+While working in a session, a user needs to view and adjust a [Broker](../glossary.md)'s configuration, generate pairing keys and initiate pairing. Some of these operations affect security: making a Broker public, and pairing with a new host. The model in a session can be induced by prompt injection. Claude Code lets the model change its own configuration in a session and constrains that with per-tool permission confirmation. Whether an account can read and write a Broker's configuration is decided by file permissions ([ADR-management-by-config-file-permission](adr-management-by-config-file-permission.md)); under an account with write permission, the model could already change the Broker's configuration file directly with file operations.
 
-## 考虑过的选项
+## Options Considered
 
-### 配置只能经文件或终端命令修改
+### Configuration can be changed only through files or terminal commands
 
-工具只提供读取，一切修改由用户在终端完成。
+The tools provide only reading, and all changes are made by the user in the terminal.
 
-**否决**：用户每次调整都要离开会话。模型既然可以在权限确认之下修改 Claude Code 自身的配置，对 Broker 的配置采用更严的做法理由并不充分。
+**Rejected**: the user has to leave the session for every adjustment. Since the model can change Claude Code's own configuration under permission confirmation, there is not enough reason to take a stricter approach for the Broker's configuration.
 
-### Broker 自设确认
+### The Broker sets up its own confirmation
 
-修改配置、生成配对密钥和发起配对先进入待批准状态，返回一个确认码，用户在终端另行确认后才生效，与 Claude Code 的权限设置无关。
+Changing configuration, generating a pairing key and initiating pairing first enter a pending-approval state and return a confirmation code, and they take effect only after the user confirms separately in the terminal, independent of Claude Code's permission settings.
 
-**否决**：在 Claude Code 的权限机制之外再设一套确认，用户要在两处分别授权，每次操作多一步离开会话的动作。
+**Rejected**: setting up a second confirmation outside Claude Code's permission mechanism makes the user authorize in two places, and every operation adds a step of leaving the session.
 
-### 区分收紧与放宽
+### Distinguish tightening from loosening
 
-收紧安全的修改直接生效，放宽安全的修改需要确认。
+A change that tightens security takes effect directly, and a change that loosens security needs confirmation.
 
-**否决**：确认交给 Claude Code 之后，Broker 无从得知用户是否确认过，无法据此区别对待。
+**Rejected**: once confirmation is left to Claude Code, the Broker cannot know whether the user confirmed and cannot treat them differently on that basis.
 
-### 读写分设工具，确认交给 Claude Code
+### Separate tools for reading and writing, with confirmation left to Claude Code
 
-读取配置与修改配置是两个工具，生成配对密钥是独立的工具；没有副作用的工具声明为只读（[REF-mcp](../references.md)）。每次调用是否需要用户确认由所在会话的 Claude Code 权限设置决定。这一确认与文件权限的判定各自独立，两者都通过，操作才执行。Broker 把每次配置变更、配对和链路事件写入审计日志。
+Reading configuration and changing configuration are two tools, and generating a pairing key is a separate tool; tools with no side effects are declared read-only ([REF-mcp](../references.md)). Whether each call needs user confirmation is decided by the Claude Code permission settings of the session it is made in. This confirmation and the file-permission decision are independent, and the operation runs only when both pass. The Broker writes every configuration change, pairing and link event to the audit log.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 的配置由 Agent 经工具读取和修改，读与写分设工具并标注只读属性；预置静态密钥除外，它只能在配置文件中设置，经工具读取时只给出是否已设置（[ADR-static-pairing-key](adr-static-pairing-key.md)）。用户确认完全交给 Claude Code 的权限机制，Broker 不另设确认。调用方账户是否有权做这项操作另由文件权限判定，与用户确认各自独立。Broker 负责审计。
+A Broker's configuration is read and changed by an agent through tools, with separate tools for reading and writing marked with the read-only attribute; the pre-provisioned static key is the exception, set only in the configuration file and reported through the tools only as whether it is set ([ADR-static-pairing-key](adr-static-pairing-key.md)). User confirmation is left entirely to Claude Code's permission mechanism, and the Broker sets up no confirmation of its own. Whether the caller's account may perform the operation is decided separately by file permissions, independent of user confirmation. The Broker is responsible for auditing.
 
-## 后果
+## Consequences
 
-有相应文件权限的用户可以在会话中完成配对和配置调整。用户可以只放行只读工具，或对生成配对密钥与修改配置分别授权。Broker 不需要待批准状态和确认码。
+A user with the corresponding file permissions can complete pairing and configuration adjustments in a session. The user can allow only the read-only tools, or authorize generating a pairing key and changing configuration separately. The Broker needs no pending-approval state and no confirmation code.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 用户把修改配置、生成配对密钥或发起配对的工具加入自动批准名单，或以跳过权限确认的模式运行会话时，这些操作没有任何确认，受到提示注入的模型可以放宽安全设置或与陌生主机配对。
-- 审计日志是事后依据，只能发现问题，不能阻止问题；它与配置文件一样可以被对它有写权限的账户下的进程改写，包括会话中的模型发起的文件操作。
-- 在有写权限的账户之内，Broker 的安全设置的保护强度取决于每个会话各自的权限设置，没有统一的下限。
+- When the user adds the tools for changing configuration, generating a pairing key or initiating pairing to the auto-approve list, or runs the session with permission confirmation skipped, these operations have no confirmation at all, and a model under prompt injection can loosen security settings or pair with an unknown host.
+- The audit log is after-the-fact evidence: it can reveal a problem but cannot stop it; like the configuration file, it can be rewritten by a process under an account that has write permission to it, including file operations started by the model in a session.
+- Within an account that has write permission, the protection strength of the Broker's security settings depends on each session's own permission settings, with no uniform lower bound.

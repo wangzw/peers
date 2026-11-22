@@ -1,33 +1,33 @@
-# Broker 默认不公开
+# Keep Brokers private by default
 
-## 背景
+## Context
 
-名录能把一个 [Broker](../glossary.md) 的指纹、别名和对外地址传给与它没有链路的 Broker。用户与一台主机配对，只表示信任那一台主机，不表示愿意让那台主机的其他对端也知道自己。对外地址指向 Broker 所在的主机，这台主机可能是用户的个人机器。
+The directory can pass a [Broker](../glossary.md)'s fingerprint, alias and advertised address to Brokers that have no link with it. Pairing with a host means trusting that host only; it does not mean being willing to let that host's other peers learn about this one. The advertised address points at the host the Broker runs on, and that host may be the user's personal machine.
 
-## 考虑过的选项
+## Options Considered
 
-### 默认公开
+### Public by default
 
-Broker 默认发布名片，不愿公开的另行关闭。
+A Broker publishes its broker card by default, and one that does not want to be public turns it off.
 
-**否决**：用户不知情时，主机的地址就会随着一次配对传播到整个连通网络。
+**Rejected**: without the user knowing, the host's address propagates to the whole connected network with a single pairing.
 
-### 默认不公开，明确配置后才公开
+### Private by default, public only after explicit configuration
 
-Broker 默认不发布名片，用户明确把它设为公开后才发布。不公开的 Broker 照样接收其他 Broker 的名片。
+A Broker does not publish its card by default and publishes it only after the user explicitly makes it public. A private Broker still receives other Brokers' cards.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 默认不公开，只有用户明确把它设为公开后才发布名片。不公开的 Broker 的信息不由它的对端传给其他 Broker。
+A Broker is private by default and publishes its card only after the user explicitly makes it public. A private Broker's information is not passed on to other Brokers by its peers.
 
-## 后果
+## Consequences
 
-是否让连通网络知道自己，是每个 Broker 的用户做出的明确选择。不公开的 Broker 仍然能发现公开 Broker。
+Whether the connected network knows about it is an explicit choice made by each Broker's user. A private Broker can still discover public Brokers.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 新安装的 Broker 不会被任何人发现。想被找到，要么设为公开，要么由用户在系统之外把对外地址告诉对方。
-- 不公开的 Broker 不能把 topic 声明为公开：声明要由声明方签名才能防伪造，签名会带出它的指纹。
-- 不公开不等于隐藏。它的对端知道它的指纹和别名，向它发起配对的对端还知道它的对外地址；能连到它监听端口的主机能看到它的证书。
+- A newly installed Broker is found by no one. To be found, it must either be made public or have its advertised address communicated outside the system to the other side by the user.
+- A private Broker cannot declare a topic public: the declaration must be signed by the declarer to prevent forgery, and the signature carries its fingerprint.
+- Private is not hidden. Its peers know its fingerprint and alias, and a peer that initiates pairing with it also knows its advertised address; a host that can reach its listen port can see its certificate.
