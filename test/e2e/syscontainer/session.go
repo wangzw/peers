@@ -163,13 +163,16 @@ func (s *Session) Call(t *testing.T, tool string, args map[string]any) (text str
 
 // PollCall invokes a tool from inside a wait. The call is bounded by
 // harness.ToolPollBound(tool), the tool's handler bound plus the update hint and
-// a margin, and, when the wait has less time left, by the time left until
-// deadline, so a stalled call never outlives the wait that made it. A deadline
-// that has already passed makes no call and returns an error.
+// a margin, and runs that bound in full: it is not shortened when the wait has
+// less time left, because a call cut short by the window would report a healthy
+// Broker as unobservable on a loaded runner. A stalled call can therefore
+// outlast the wait that made it by up to one poll bound. A deadline that has
+// already passed makes no call and returns an error.
 //
 // A transport or protocol failure is returned as an error and logged with the
 // session, the tool, the elapsed time and the error instead of failing the
-// test, so the wait can poll again. The result has the same shape as Call's.
+// test, so the wait can poll again; a call that reaches its poll bound carries
+// the harness stall marker. The result has the same shape as Call's.
 func (s *Session) PollCall(t *testing.T, deadline time.Time, tool string, args map[string]any) (text string, isError bool, err error) {
 	t.Helper()
 	return pollCallWithin(s.Account, tool, deadline, harness.ToolPollBound(tool), func(ctx context.Context) (*mcp.CallToolResult, error) {

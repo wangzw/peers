@@ -198,7 +198,8 @@ func TestEventuallyReportsStateFromLastCallWithTimeLeft(t *testing.T) {
 // TestEventuallyPollLiftsBoundAndPassesDeadline checks the two things a poll
 // callback depends on: the wait is not shorter than ToolCallWaitBound even when
 // the caller asks for less, and every call receives the deadline the wait
-// enforces so PollCall can clamp to it.
+// enforces so PollCall can tell whether the window still has time to start a
+// sample.
 func TestEventuallyPollLiftsBoundAndPassesDeadline(t *testing.T) {
 	tb := &recordTB{}
 	var deadlines []time.Time

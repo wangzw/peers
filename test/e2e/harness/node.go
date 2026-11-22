@@ -315,7 +315,7 @@ func (o *OracleClient) ListBrokersWithin(t testing.TB, deadline time.Time, callB
 	resp, err := o.oracle.ListBrokers(ctx)
 	if err != nil {
 		if isCallTimeout(err) {
-			return nil, nil, fmt.Errorf("%sthe call reached its %s poll bound: %w", stallStatePrefix, callBound, err)
+			return nil, nil, StallError(callBound, err)
 		}
 		return nil, nil, err
 	}
@@ -633,10 +633,15 @@ func (s *Session) PollCallWithin(t testing.TB, deadline time.Time, pollBound tim
 		// The call reached its own bound, so the sample tells the wait that
 		// the Broker stopped answering. The marker lets Unobservable report it
 		// as a stall without a second error type.
-		return result, fmt.Errorf("%sthe call reached its %s poll bound: %w", stallStatePrefix, pollBound, err)
+		return result, StallError(pollBound, err)
 	}
 	return result, err
 }
+
+// IsCallTimeout reports whether err is a call that ran out of time rather than
+// one that failed for another reason. It is the exported form of isCallTimeout,
+// for a test package that makes its own poll-bounded call.
+func IsCallTimeout(err error) bool { return isCallTimeout(err) }
 
 // isCallTimeout reports whether err is a call that ran out of time rather than
 // one that failed for another reason. A context deadline surfaces either

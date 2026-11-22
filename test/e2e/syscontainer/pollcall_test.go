@@ -58,64 +58,93 @@ func TestPollCallWithinDeadlinePassedMakesNoCall(t *testing.T) {
 	}
 }
 
-// TestPollCallWithinClampsToShortestBound checks that one call is bounded by
-// the smaller of the poll bound and the time the wait has left. In both cases
-// the call is cut at the bound, the timeout is returned as an error instead of
-// failing the test, and the failure is logged with the session, the tool, the
-// elapsed time and the error.
-func TestPollCallWithinClampsToShortestBound(t *testing.T) {
+// TestPollCallWithinRunsItsFullBoundLateInTheWait reproduces the truncation a
+// call suffered when it was clamped to the time the wait had left: a healthy
+// call that starts near the end of a short wait was cut off below its own poll
+// bound and reported as a failure. The call here answers inside the poll bound
+// but after the wait's remaining time, so it must run to completion and
+// succeed. The old clamping cut it at the wait and returned the context error.
+func TestPollCallWithinRunsItsFullBoundLateInTheWait(t *testing.T) {
+	const (
+		waitLeft  = 100 * time.Millisecond
+		pollBound = 500 * time.Millisecond
+		callTime  = 300 * time.Millisecond
+	)
+	answerAfter := func(ctx context.Context) (*mcp.CallToolResult, error) {
+		select {
+		case <-time.After(callTime):
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{&mcp.TextContent{Text: "answered"}},
+			}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	var logs logRecorder
+	start := time.Now()
+	text, isError, err := pollCallWithin("alice", "list_agents", time.Now().Add(waitLeft), pollBound, answerAfter, logs.logf)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("a call that answers inside its poll bound failed after %s: %v", elapsed, err)
+	}
+	if text != "answered" || isError {
+		t.Errorf("pollCallWithin returned (%q, %v), want (\"answered\", false)", text, isError)
+	}
+	if elapsed < callTime {
+		t.Fatalf("the call returned after %s, want it to run its %s answer; the wait's remaining time cut it short", elapsed, callTime)
+	}
+	if len(logs.lines) != 0 {
+		t.Errorf("pollCallWithin logged %q for a successful call", logs.lines)
+	}
+}
+
+// TestPollCallWithinMarksItsOwnTimeoutAsAStall checks that a call cut by its
+// poll bound runs that bound in full even when the wait has less time left,
+// returns a stall-marked error that still wraps context.DeadlineExceeded, and
+// logs the failure with the session, the tool, the elapsed time and the error.
+// The stall marker is what lets a wait or consistency window tell a Broker that
+// stopped answering from a retryable failure.
+func TestPollCallWithinMarksItsOwnTimeoutAsAStall(t *testing.T) {
+	const (
+		waitLeft  = 40 * time.Millisecond
+		pollBound = 120 * time.Millisecond
+	)
 	waitForContext := func(ctx context.Context) (*mcp.CallToolResult, error) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
-	cases := []struct {
-		name      string
-		deadline  time.Duration
-		pollBound time.Duration
-		wantBound time.Duration
-	}{
-		{
-			name:      "poll bound is shorter than the wait",
-			deadline:  time.Minute,
-			pollBound: 50 * time.Millisecond,
-			wantBound: 50 * time.Millisecond,
-		},
-		{
-			name:      "the wait is shorter than the poll bound",
-			deadline:  100 * time.Millisecond,
-			pollBound: harness.ToolCallPollBound,
-			wantBound: 100 * time.Millisecond,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var logs logRecorder
-			start := time.Now()
-			text, isError, err := pollCallWithin("alice", "list_agents", time.Now().Add(tc.deadline), tc.pollBound, waitForContext, logs.logf)
-			elapsed := time.Since(start)
+	var logs logRecorder
+	start := time.Now()
+	text, isError, err := pollCallWithin("alice", "list_agents", time.Now().Add(waitLeft), pollBound, waitForContext, logs.logf)
+	elapsed := time.Since(start)
 
-			if err == nil {
-				t.Fatal("pollCallWithin returned no error for a call that timed out")
-			}
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Errorf("error %v does not wrap context.DeadlineExceeded", err)
-			}
-			if text != "" || isError {
-				t.Errorf("pollCallWithin returned (%q, %v), want (\"\", false)", text, isError)
-			}
-			if elapsed > tc.wantBound+time.Second {
-				t.Errorf("call took %s, want about the %s bound", elapsed, tc.wantBound)
-			}
-			if len(logs.lines) != 1 {
-				t.Fatalf("pollCallWithin logged %d lines, want 1: %q", len(logs.lines), logs.lines)
-			}
-			line := logs.lines[0]
-			for _, want := range []string{"alice", "list_agents", "failed after", "context deadline exceeded"} {
-				if !strings.Contains(line, want) {
-					t.Errorf("log line %q does not contain %q", line, want)
-				}
-			}
-		})
+	if err == nil {
+		t.Fatal("pollCallWithin returned no error for a call that timed out")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error %v does not wrap context.DeadlineExceeded", err)
+	}
+	if !strings.HasPrefix(err.Error(), "[stalled] ") {
+		t.Errorf("error %q does not carry the stall marker", err)
+	}
+	if !strings.Contains(err.Error(), "reached its 120ms poll bound") {
+		t.Errorf("error %q does not name the poll bound the call reached", err)
+	}
+	if text != "" || isError {
+		t.Errorf("pollCallWithin returned (%q, %v), want (\"\", false)", text, isError)
+	}
+	if elapsed < pollBound {
+		t.Fatalf("the call returned after %s, want the full %s poll bound; the wait's remaining time cut it short", elapsed, pollBound)
+	}
+	if len(logs.lines) != 1 {
+		t.Fatalf("pollCallWithin logged %d lines, want 1: %q", len(logs.lines), logs.lines)
+	}
+	line := logs.lines[0]
+	for _, want := range []string{"alice", "list_agents", "failed after", "context deadline exceeded"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log line %q does not contain %q", line, want)
+		}
 	}
 }
 

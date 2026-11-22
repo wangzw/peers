@@ -821,9 +821,10 @@ func randomHex6() string {
 // delegating the polling to harness.Eventually. It is for a filesystem, socket
 // or process condition that makes no tool call. A condition that calls a tool
 // uses harness.EventuallyPoll with Session.PollCall instead: the callback
-// receives the wait's deadline, so each call is bounded and clamped to the time
-// the wait has left. Longer non-tool waits use harness.Eventually with the sum
-// of the relevant timers plus the fallback.
+// receives the wait's deadline, so each call runs its own poll bound in full
+// rather than being cut short when the wait has little time left. Longer
+// non-tool waits use harness.Eventually with the sum of the relevant timers
+// plus the fallback.
 func WaitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	harness.Eventually(t, harness.EventTimeout, what, func() (bool, string) {

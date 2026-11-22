@@ -34,8 +34,8 @@ const minWaitCallChecks = 100
 // sessionCallBound, sixty seconds, and fails the test on a transport error, so
 // a callback that uses it turns one stalled MCP call into a failed wait
 // instead of retrying it. A callback makes poll-bounded calls with
-// Session.PollCall or Session.PollCallWithin, which the deadline the wait
-// passes in bounds and clamps to the time the wait has left.
+// Session.PollCall or Session.PollCallWithin, which takes the deadline the
+// wait passes in and runs each call's own poll bound in full.
 //
 // The callback's direct calls are checked, and so is one level of indirection:
 // a call to a function in the same directory whose own body makes a direct

@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -245,6 +246,14 @@ const stallStatePrefix = "[stalled] "
 // answering.
 func StallState(reason string) string {
 	return stallStatePrefix + reason
+}
+
+// StallError reports a call that reached its own poll bound: it wraps err and
+// carries the stall marker, so a helper that reports the error as a state, here
+// or in another test package, reaches Unobservable as a stall rather than as a
+// retryable failure.
+func StallError(pollBound time.Duration, err error) error {
+	return fmt.Errorf("%sthe call reached its %s poll bound: %w", stallStatePrefix, pollBound, err)
 }
 
 // topicTimeoutText is the product's text for a Broker call that ran out of
