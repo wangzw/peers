@@ -4,7 +4,7 @@ This documentation set describes the behavior peers must have as seen from outsi
 
 ## Index
 
-- [System overview](overview.md): what the system is, which capabilities it offers, and the overall scope boundary
+- [System Overview](overview.md): what the system is, which capabilities it offers, and the overall scope boundary
 - [Glossary](../glossary.md): project-agreed terms, shared by every document type
 - [References](../references.md): public external sources cited by the documentation
 

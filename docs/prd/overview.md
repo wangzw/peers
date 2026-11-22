@@ -1,47 +1,47 @@
-# 系统概览
+# System Overview
 
-## 系统是什么
+## What the System Is
 
-peers 让运行在不同主机上的 Claude Code 会话互相发现并发送文本消息。会话启用本系统的工具后登记到本机的一个 [Broker](../glossary.md)，成为 Agent。用户让两台主机上的 Broker 配对，配对后两边同在一个 topic 里的 Agent 即可互相看见、互发消息。
+peers lets Claude Code sessions running on different hosts discover each other and send text messages. A session that enables this system's tools registers with a [Broker](../glossary.md) on its host and becomes an agent. The user pairs the Brokers on two hosts, and after pairing, agents on both sides that share a topic can see each other and exchange messages.
 
-Broker 按部署形态分为系统级与用户级。系统级 Broker 以特权身份作为系统服务运行，一台主机至多一个，服务本机多个账户下的 Agent。用户级 Broker 以普通账户运行，只服务这个账户下的 Agent，通常安装为服务，随登录启动并持续运行，也可以由用户在终端手动启动；MCP 服务进程只连接 Broker，不启动任何 Broker。每个 Broker 实例有自己的身份、对端和配置，在网络中是各自独立的 Broker；同一个账户下至多运行一个实例。
+By deployment form, a Broker is either a system Broker or a user Broker. A system Broker runs with privileges as a system service, at most one per host, and serves agents under several accounts on that host. A user Broker runs under an ordinary account and serves only that account's agents; it is usually installed as a service, starts at login and keeps running, and the user can also start it manually in a terminal. The MCP server process only connects to a Broker and never starts one. Each Broker instance has its own identity, peers and configuration and is an independent Broker on the network; an account runs at most one instance.
 
-消息以 Claude Code 会话间消息的方式进入接收方会话（[REF-claude-code-cross-session-messaging](../references.md)）：空闲的会话收到后自行开始处理，忙碌的会话在当前工作的间隙读到。接收方会话的入站控制与权限确认照常生效。
+Messages enter the receiving session as Claude Code cross-session messages ([REF-claude-code-cross-session-messaging](../references.md)): an idle session starts processing a message on its own, and a busy session reads it in a gap in its current work. The receiving session's inbound controls and permission confirmation apply as usual.
 
-## 能力
+## Capabilities
 
-Agent 加入 topic 后，可以列出同 topic 的在线 Agent，并向其中任何一个发送点对点消息。topic 同时决定可见性和通信许可，不在任何 topic 里的 Agent 对其他 Agent 不可见。
+Once an agent joins a topic, it can list the online agents in the same topic and send a point-to-point message to any of them. A topic decides both visibility and permission to communicate; an agent in no topic is invisible to other agents.
 
-用户凭配对密钥让两个 Broker 配对，配对是 Broker 之间建立链路的唯一途径；链路由拨号方建立，并在断开后由它重新建立。Broker 可以设为公开，使连通网络内的其他 Broker 能发现它。Broker 的配置可以在会话中读取和修改，变更留有审计记录；能否读取和修改，取决于会话所属的账户对该 Broker 的配置文件有没有读写权限。
+The user pairs two Brokers with a pairing key; pairing is the only way to establish a link between Brokers; the link is established by the dialer and re-established by it after a disconnect. A Broker can be made public so that other Brokers in the connected network can discover it. A Broker's configuration can be read and modified in a session, and changes leave an audit record; whether they can be read and modified depends on whether the session's account has read and write permission on the Broker's configuration file.
 
-Broker 按配置的间隔检查本项目在 GitHub 上有没有新的正式发布版本。有可用版本时，终端状态输出与会话中的第一次工具结果给出提示；用户在终端执行更新命令，确认后自动下载、校验并替换二进制，已安装为服务的随之重启。
+At the configured interval, a Broker checks whether this project has a new official release on GitHub. When one is available, the terminal status output and the first tool result in a session show a hint; the user runs the update command in the terminal, and after confirmation it automatically downloads, verifies and replaces the binary, and restarts a service that was installed as one.
 
-## 范围边界
+## Scope Boundary
 
-系统负责本机 Agent 的登记与命名、topic 成员关系、Broker 之间的配对与加密的链路、公开 Broker 与公开 topic 的发现、点对点文本消息的同步投递、Broker 的两种部署形态及其服务范围、Broker 配置的读写与审计、Broker 自身正式发布版本的通知与终端更新。
+The system is responsible for registering and naming local agents, topic membership, pairing between Brokers and encrypted links, discovery of public Brokers and public topics, synchronous point-to-point text message delivery, the two deployment forms of a Broker and the service scope of each, reading, writing and auditing of Broker configuration, and notification of and terminal updates to the Broker's own official releases.
 
-### 范围外
+### Out of Scope
 
-- 经第三个 Broker 转发消息。两个 Broker 之间没有链路时不能通信，两台主机都位于 NAT 之后时不能互通。
-- 集中式注册中心。
-- 消息的缓存、持久化、离线补发和异步投递。发送失败由发送方 Agent 决定是否重发。
-- 送达之后的状态回报。接收方是否阅读、是否处理、是否回复，由接收方 Agent 自行决定，回复是另一条消息。
-- 群发。向多个 Agent 发送由调用方逐个调用完成。
-- 文件、会话历史与上下文的传递。消息只含纯文本。
-- 发送限速与消息循环检测，由 Claude Code 接收方的入站控制承担。
-- 与外部 A2A Agent 的互通（[REF-a2a](../references.md)）。
-- 原生 Windows。
-- 替换或修改 Claude Code 自带的同机会话间消息能力。两者并存：未登记为 Agent 的本机会话只能经 Claude Code 自带的能力通信。
-- 同一账户下运行多个 Broker 实例。
-- 文件权限之外另设的管理员名单或角色。
-- 未经用户确认的自动安装。版本检查自动进行，安装由用户在终端确认，或由用户显式传入跳过询问的参数。
-- 经系统包管理器分发与升级。
+- Forwarding messages through a third Broker. Two Brokers cannot communicate without a link between them, and two hosts both behind NAT cannot reach each other.
+- A centralized registry.
+- Caching, persisting, offline redelivery and asynchronous delivery of messages. On a failed send, the sending agent decides whether to resend.
+- Status reporting after delivery. Whether the receiver reads, processes or replies to a message is up to the receiving agent, and a reply is another message.
+- Broadcast. Sending to several agents is done by the caller making one call per agent.
+- Transfer of files, session history and context. A message carries plain text only.
+- Send rate limiting and message loop detection, which the receiving side's inbound controls in Claude Code handle.
+- Interoperability with external A2A agents ([REF-a2a](../references.md)).
+- Native Windows.
+- Replacing or modifying Claude Code's built-in same-host cross-session messaging. Both coexist: a local session that is not registered as an agent can communicate only through Claude Code's built-in capability.
+- Running several Broker instances under one account.
+- An administrator list or roles set up outside file permissions.
+- Installation without user confirmation. The version check runs automatically; installation is confirmed by the user in the terminal, or by a parameter the user explicitly passes to skip the question.
+- Distribution and upgrades through a system package manager.
 
-## 参与者
+## Actors
 
-| 参与者 | 权限 |
+| Actor | Authority |
 |---|---|
-| 用户 | 主机上以某个操作系统账户运行 Claude Code 会话的人。经 Claude Code 的权限确认批准或拒绝 Agent 发起的操作。账户对 Broker 的配置文件有写权限时，可以决定是否配对、是否公开 Broker；有读权限时，可以在本机查看 Broker 的全部状态和审计日志。 |
-| 管理员 | 安装并运行系统级 Broker 的人。以文件权限决定哪些账户可以使用它，哪些账户可以读取或修改它的配置。 |
-| Agent | 已登记的 Claude Code 会话，由会话中的模型经工具操作。加入和退出 topic、列出 Agent、topic 与 Broker、发送消息对每个 Agent 开放；读取配置、修改配置、生成配对密钥、发起配对和解除配对以所属账户对配置文件的读写权限为前提。每次工具调用另受所在会话的权限设置约束。 |
-| 对端 Broker | 已配对的另一个 Broker。可以与本 Broker 交换共同 topic 的成员名单、名片、公开 topic 声明和消息，不能读取或修改本 Broker 的配置。 |
+| User | The person running Claude Code sessions on the host under some operating-system account. Approves or rejects operations an agent initiates through Claude Code's permission confirmation. When the account has write permission on the Broker's configuration file, the user decides whether to pair and whether to make the Broker public; with read permission, the user can view the Broker's full status and audit log on the host. |
+| Administrator | The person who installs and runs the system Broker. Decides by file permission which accounts may use it and which accounts may read or modify its configuration. |
+| agent | A registered Claude Code session, operated by the model in the session through tools. Joining and leaving topics, listing agents, topics and Brokers, and sending messages are open to every agent; reading configuration, modifying configuration, generating pairing keys, initiating pairing and unpairing require the owning account's read and write permission on the configuration file. Each tool call is further subject to the permission settings of its session. |
+| Peer Broker | Another Broker that has been paired. It can exchange with this Broker the rosters of shared topics, cards, public topic declarations and messages, and cannot read or modify this Broker's configuration. |
