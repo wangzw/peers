@@ -22,7 +22,8 @@ var testBinary string
 
 // waitDelay bounds how long Wait waits for the child's I/O pipes after the
 // process has exited, so a grandchild that inherited one of them cannot hang
-// the test harness. It is also the backstop after the SIGKILL fallback in stop.
+// the test harness. It is an os/exec pipe backstop, not a wait for the process
+// to exit; stop waits for that exit event with processTimeout.
 const waitDelay = 3 * time.Second
 
 // processTimeout is the package-wide fallback for a wait on an event produced
@@ -300,12 +301,13 @@ func (p *brokerProc) stop() {
 	case <-time.After(processTimeout):
 	}
 	_ = p.cmd.Process.Kill()
-	// WaitDelay bounds the wait for the child's pipes; a process that still
-	// refuses to exit after SIGKILL is reported instead of being signalled
-	// again by pid.
+	// cmd.WaitDelay closes the child's pipes and lets Wait return after a
+	// bounded delay, so the exit event is waited for with processTimeout rather
+	// than waitDelay: racing the same instant would turn a loaded runner's
+	// delayed reap into a false failure.
 	select {
 	case <-p.exited:
-	case <-time.After(waitDelay):
+	case <-time.After(processTimeout):
 		p.t.Errorf("broker process %d did not exit after SIGKILL", p.cmd.Process.Pid)
 	}
 }
