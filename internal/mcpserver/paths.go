@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -62,24 +63,15 @@ func runtimeDirCandidates(euid int) []string {
 	if euid == 0 {
 		return paths
 	}
-	if preferred, err := preferredRuntimeDir(euid); err == nil && !containsPath(paths, preferred) {
+	if preferred, err := preferredRuntimeDir(euid); err == nil && !slices.Contains(paths, preferred) {
 		paths = append(paths, preferred)
 	}
 	if base, err := fallbackRuntimeBase(euid); err == nil {
-		if fallback := filepath.Join(base, "peers"); !containsPath(paths, fallback) {
+		if fallback := filepath.Join(base, "peers"); !slices.Contains(paths, fallback) {
 			paths = append(paths, fallback)
 		}
 	}
 	return paths
-}
-
-func containsPath(paths []string, path string) bool {
-	for _, p := range paths {
-		if p == path {
-			return true
-		}
-	}
-	return false
 }
 
 // userSocketCandidates returns the local socket of every runtime directory the
@@ -88,9 +80,14 @@ func userSocketCandidates(euid int) []string {
 	dirs := runtimeDirCandidates(euid)
 	sockets := make([]string, 0, len(dirs))
 	for _, dir := range dirs {
-		sockets = append(sockets, filepath.Join(dir, "broker.sock"))
+		sockets = append(sockets, socketPath(dir))
 	}
 	return sockets
+}
+
+// socketPath returns the local Broker socket inside dir.
+func socketPath(dir string) string {
+	return filepath.Join(dir, "broker.sock")
 }
 
 // runtimeDirOccupied reports whether another account has taken path. A path
@@ -195,10 +192,10 @@ func systemRuntimeDir(goos string) string {
 
 // userSocketPath is the local socket of the Broker that runs as the account euid.
 func userSocketPath(euid int) string {
-	return filepath.Join(runtimeDir(euid), "broker.sock")
+	return socketPath(runtimeDir(euid))
 }
 
 // systemSocketPath is the local socket of the system Broker, which runs as root.
 func systemSocketPath() string {
-	return filepath.Join(runtimeDir(0), "broker.sock")
+	return socketPath(runtimeDir(0))
 }
