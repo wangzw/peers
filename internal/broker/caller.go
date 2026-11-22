@@ -100,6 +100,15 @@ var (
 	localTotalConnLimit = maxLocalConnectionsTotal
 )
 
+// newLocalAccountLimits builds the connection and registration limits shared by
+// the full and the diagnostics-only local service.
+func newLocalAccountLimits(log *slog.Logger) (conns, registers *accountLimit) {
+	conns = newAccountLimit(localConnLimit, EvLocalConnectionLimitReached, log)
+	conns.totalLimit = localTotalConnLimit
+	registers = newAccountLimit(localRegisterLimit, EvRegisterLimitReached, log)
+	return conns, registers
+}
+
 // unknownAccountKey is the account key shared by every uid with no account
 // database entry. A normal account may own a subuid range, so a rootless
 // container can connect from tens of thousands of uids that resolve to no

@@ -62,13 +62,7 @@ func (b *Broker) ApplyUpdate(ctx context.Context, _ *localpb.ApplyUpdateRequest)
 	}()
 
 	current := b.deps.Version
-	latest := b.deps.LatestRelease
-	if latest == nil {
-		latest = update.Latest
-	}
-	lookupCtx, cancel := context.WithTimeout(ctx, updateCheckRequestTimeout)
-	defer cancel()
-	release, err := latest(lookupCtx, b.deps.UpdateHTTPClient, b.deps.UpdateAPI)
+	release, err := b.lookupLatestRelease(ctx)
 	if err != nil {
 		b.auditUpdateFailed(caller.Username, "looking up the latest release: "+err.Error())
 		return nil, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,

@@ -59,9 +59,7 @@ func startDegradedService(
 	if readPeerCred == nil {
 		readPeerCred = ReadPeerCred
 	}
-	conns := newAccountLimit(localConnLimit, EvLocalConnectionLimitReached, log)
-	conns.totalLimit = localTotalConnLimit
-	registers := newAccountLimit(localRegisterLimit, EvRegisterLimitReached, log)
+	conns, registers := newLocalAccountLimits(log)
 	creds := newPeerCredCreds(readPeerCred, allow, func(c Caller) {
 		log.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
 	}, conns)
@@ -198,14 +196,7 @@ func (s *degradedService) Register(stream localpb.Local_RegisterServer) error {
 	if d := s.currentState(); d != nil {
 		detail = d.Reason
 	}
-	if err := stream.Send(&localpb.RegisterResponse{
-		Event: &localpb.RegisterResponse_NotRegistered{
-			NotRegistered: &localpb.RegistrationProblem{
-				Reason: localpb.NotRegisteredReason_NOT_REGISTERED_REASON_BROKER_DEGRADED,
-				Detail: detail,
-			},
-		},
-	}); err != nil {
+	if err := stream.Send(notRegisteredResponse(localpb.NotRegisteredReason_NOT_REGISTERED_REASON_BROKER_DEGRADED, detail)); err != nil {
 		return err
 	}
 	for {

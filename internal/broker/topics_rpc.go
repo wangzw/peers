@@ -47,6 +47,18 @@ func invalidTopicNameError() *Error {
 	return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, invalidTopicNameMessage)
 }
 
+// checkTopicChange validates a topic name and the account's change rate for a
+// Join or Leave. It returns the client error, or nil when the change may run.
+func (b *Broker) checkTopicChange(a *agent, name string) *Error {
+	if topic.ValidateName(name) != nil {
+		return invalidTopicNameError()
+	}
+	if !b.topicRate.allow(a.caller.UID, b.deps.Clock.Now()) {
+		return topicQuotaExceededError("Too many topic changes. Try again in a moment.")
+	}
+	return nil
+}
+
 // topicTableError maps the errors TopicTable.Join and Leave may return. An
 // unrecognized error is returned unchanged so toStatus maps it to internal.
 func topicTableError(err error, id AgentID) error {
@@ -105,11 +117,8 @@ func (b *Broker) JoinTopic(ctx context.Context, req *localpb.JoinTopicRequest) (
 	}
 
 	name := req.GetName()
-	if topic.ValidateName(name) != nil {
-		return nil, toStatus(invalidTopicNameError())
-	}
-	if !b.topicRate.allow(a.caller.UID, b.deps.Clock.Now()) {
-		return nil, toStatus(topicQuotaExceededError("Too many topic changes. Try again in a moment."))
+	if err := b.checkTopicChange(a, name); err != nil {
+		return nil, toStatus(err)
 	}
 
 	declared := false
@@ -161,11 +170,8 @@ func (b *Broker) LeaveTopic(ctx context.Context, req *localpb.LeaveTopicRequest)
 	}
 
 	name := req.GetName()
-	if topic.ValidateName(name) != nil {
-		return nil, toStatus(invalidTopicNameError())
-	}
-	if !b.topicRate.allow(a.caller.UID, b.deps.Clock.Now()) {
-		return nil, toStatus(topicQuotaExceededError("Too many topic changes. Try again in a moment."))
+	if err := b.checkTopicChange(a, name); err != nil {
+		return nil, toStatus(err)
 	}
 
 	if err := b.deps.Topics.Leave(a.id, name); err != nil {

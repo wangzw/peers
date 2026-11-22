@@ -66,7 +66,7 @@ func (b *Broker) setDegraded(state *localpb.DegradedState) (changed bool) {
 		b.degraded = nil
 		return oldStep != "" || oldReason != ""
 	}
-	b.degraded = proto.Clone(state).(*localpb.DegradedState)
+	b.degraded = cloneDegraded(state)
 	return oldStep != state.Step || oldReason != state.Reason
 }
 
@@ -78,7 +78,7 @@ func (b *Broker) degradedState() *localpb.DegradedState {
 	if b.degraded == nil {
 		return nil
 	}
-	return proto.Clone(b.degraded).(*localpb.DegradedState)
+	return cloneDegraded(b.degraded)
 }
 
 // startupFailure is one failed startup step. Run classifies it into a
@@ -182,11 +182,15 @@ func dataFix(kind dataKind, paths config.PathSet, system bool) string {
 	if target == "" {
 		target = "the data directory and the audit log"
 	}
-	restart := "peers service restart"
+	return "check the owner and permissions of " + target + ", then run " + restartCommand(system) + "; otherwise the Broker retries every minute"
+}
+
+// restartCommand is the command that restarts the Broker at this level.
+func restartCommand(system bool) string {
 	if system {
-		restart = "sudo " + restart
+		return "sudo peers service restart"
 	}
-	return "check the owner and permissions of " + target + ", then run " + restart + "; otherwise the Broker retries every minute"
+	return "peers service restart"
 }
 
 // listenFix returns the repair hint for a listen bind failure. The low-port
@@ -213,10 +217,7 @@ func listenFix(err error, paths config.PathSet, system bool) string {
 }
 
 func genericFix(step string, paths config.PathSet, system bool) string {
-	restart := "peers service restart"
-	if system {
-		restart = "sudo " + restart
-	}
+	restart := restartCommand(system)
 	switch step {
 	case "config":
 		if paths.ConfigFile != "" {

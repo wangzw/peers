@@ -206,11 +206,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	// system paths and the accounts on this host, so this check stays before
 	// the account lock and the configuration load.
 	if opts.System {
-		geteuid := baseDeps.Geteuid
-		if geteuid == nil {
-			geteuid = os.Geteuid
-		}
-		if euid := geteuid(); euid != 0 {
+		if euid := effectiveGeteuid(baseDeps)(); euid != 0 {
 			err := fmt.Errorf("%w: --system requires root (euid %d)", ErrNotRoot, euid)
 			writeFailure(err)
 			return err
@@ -267,11 +263,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 			b          *Broker
 		)
 
-		stopComponents := func(comps []Component) {
-			for i := len(comps) - 1; i >= 0; i-- {
-				comps[i].Stop()
-			}
-		}
 		cleanup := func() {
 			if d.Delivery != nil {
 				d.Delivery.stop()
@@ -376,15 +367,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		var applySocketPerms func() error
 		if opts.System {
 			applySocketPerms = func() error {
-				g, err := cfg.Get("broker.local_socket_group")
-				if err != nil {
-					return err
-				}
-				m, err := cfg.Get("broker.local_socket_mode")
-				if err != nil {
-					return err
-				}
-				return applyLocalSocketPerms(sockPath, paths.RuntimeDir, g.String, m.String)
+				return applySocketPermsFor(cfg, sockPath, paths.RuntimeDir)
 			}
 			cfg.Validate("broker.local_socket_group", validateSocketGroup)
 			if err := checkSocketGroupAtStartup(cfg); err != nil {
@@ -490,11 +473,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 				// Tell the components that forward broker.listen what is bound, so
 				// a change delivered before their AfterReady is reconciled against
 				// it.
-				for _, c := range started {
-					if r, ok := c.(listenBoundReporter); ok {
-						r.listenBound(v.String)
-					}
-				}
+				notifyListenBound(started, v.String)
 			}
 		}
 
@@ -609,11 +588,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 					// suppression is being lifted is therefore either handled
 					// by the subscription or seen by this read; the component's
 					// bound-address check makes the two paths idempotent.
-					for _, c := range started {
-						if r, ok := c.(listenBoundReporter); ok {
-							r.listenBound(addr)
-						}
-					}
+					notifyListenBound(started, addr)
 					suppressListenRebind(started, false)
 					if opts.Listen == "" {
 						if opts.afterUnsuppress != nil {
@@ -688,9 +663,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 				asm.Runner.Close()
 			}
 			b.Stop()
-			for i := len(started) - 1; i >= 0; i-- {
-				started[i].Stop()
-			}
+			stopComponents(started)
 			_ = sock.Close(true)
 			liveCfg.Close()
 			lock.Release()
@@ -718,11 +691,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 
 		// Step 14: run until cancellation, checking the lock and the local socket
 		// once per tick.
-		tick := opts.checkTick
-		if tick == nil {
-			ticker := time.NewTicker(time.Minute)
+		tick, ticker := checkTicks(opts.checkTick)
+		if ticker != nil {
 			defer ticker.Stop()
-			tick = ticker.C
 		}
 		refresher := &runtimeTimestampRefresher{}
 		for {
@@ -753,11 +724,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 						deps.Logger.Info(EvLocalSocketRebound, "socket", sockPath)
 					}
 				}
-				touch := opts.touchLock
-				if touch == nil {
-					touch = func(l *AccountLock, now time.Time) error { return l.Touch(now) }
-				}
-				refresher.refresh(lock, lockPath, paths.RuntimeDir, sockPath, deps.Clock.Now(), touch, deps.Logger)
+				refresher.refresh(lock, lockPath, paths.RuntimeDir, sockPath, deps.Clock.Now(), touchLockFunc(opts.touchLock), deps.Logger)
 				if opts.afterCheck != nil {
 					opts.afterCheck()
 				}
@@ -801,10 +768,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 
 	startDiagService := func(ln net.Listener) (*degradedService, error) {
-		geteuid := baseDeps.Geteuid
-		if geteuid == nil {
-			geteuid = os.Geteuid
-		}
+		geteuid := effectiveGeteuid(baseDeps)
 		readPeerCred := baseDeps.ReadPeerCred
 		allow := func(c Caller) bool { return c.UID == uint32(geteuid()) }
 		if opts.System {
@@ -921,11 +885,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 
 	watch := startConfigDirWatch(diagPaths.ConfigFile, deps.Logger)
-	tick := opts.checkTick
-	if tick == nil {
-		ticker := time.NewTicker(time.Minute)
+	tick, ticker := checkTicks(opts.checkTick)
+	if ticker != nil {
 		defer ticker.Stop()
-		tick = ticker.C
 	}
 	refresher := &runtimeTimestampRefresher{}
 	for {
@@ -945,11 +907,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 				return ErrLockLost
 			}
 			rebindDiagSocket()
-			touch := opts.touchLock
-			if touch == nil {
-				touch = func(l *AccountLock, now time.Time) error { return l.Touch(now) }
-			}
-			refresher.refresh(lock, lockPath, diagPaths.RuntimeDir, deriveSockPath(diagPaths), deps.Clock.Now(), touch, deps.Logger)
+			refresher.refresh(lock, lockPath, diagPaths.RuntimeDir, deriveSockPath(diagPaths), deps.Clock.Now(), touchLockFunc(opts.touchLock), deps.Logger)
 		case <-watch.events:
 		}
 
@@ -985,6 +943,52 @@ func applySocketPermsFor(cfg ConfigSource, sockPath, runtimeDir string) error {
 		return err
 	}
 	return applyLocalSocketPerms(sockPath, runtimeDir, group.String, mode.String)
+}
+
+// effectiveGeteuid returns the geteuid the run uses: the injected one, or
+// os.Geteuid.
+func effectiveGeteuid(d Deps) func() int {
+	if d.Geteuid != nil {
+		return d.Geteuid
+	}
+	return os.Geteuid
+}
+
+// stopComponents stops comps in reverse order.
+func stopComponents(comps []Component) {
+	for i := len(comps) - 1; i >= 0; i-- {
+		comps[i].Stop()
+	}
+}
+
+// notifyListenBound reports the bound address to every component that forwards
+// broker.listen.
+func notifyListenBound(components []Component, address string) {
+	for _, c := range components {
+		if r, ok := c.(listenBoundReporter); ok {
+			r.listenBound(address)
+		}
+	}
+}
+
+// checkTicks returns the periodic-check channel: ch when given, otherwise a
+// one-minute ticker. The ticker is returned so the caller can stop it; it is
+// nil when ch was given.
+func checkTicks(ch <-chan time.Time) (<-chan time.Time, *time.Ticker) {
+	if ch != nil {
+		return ch, nil
+	}
+	t := time.NewTicker(time.Minute)
+	return t.C, t
+}
+
+// touchLockFunc returns the lock-touch function the periodic refresh uses: the
+// injected one, or AccountLock.Touch.
+func touchLockFunc(fn func(*AccountLock, time.Time) error) func(*AccountLock, time.Time) error {
+	if fn != nil {
+		return fn
+	}
+	return func(l *AccountLock, now time.Time) error { return l.Touch(now) }
 }
 
 // suppressListenRebind toggles the config component's own broker.listen

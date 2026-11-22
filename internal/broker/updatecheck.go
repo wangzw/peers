@@ -80,13 +80,7 @@ func (b *Broker) checkForUpdate(ctx context.Context) {
 	if !b.updateCheckEnabled() {
 		return
 	}
-	latest := b.deps.LatestRelease
-	if latest == nil {
-		latest = update.Latest
-	}
-	checkCtx, cancel := context.WithTimeout(ctx, updateCheckRequestTimeout)
-	defer cancel()
-	release, err := latest(checkCtx, b.deps.UpdateHTTPClient, b.deps.UpdateAPI)
+	release, err := b.lookupLatestRelease(ctx)
 	if err != nil {
 		b.log.Debug(EvUpdateCheckFailed, "error", err.Error())
 		return
@@ -96,6 +90,18 @@ func (b *Broker) checkForUpdate(ctx context.Context) {
 		return
 	}
 	b.setAvailableUpdate(release.Version, release.URL)
+}
+
+// lookupLatestRelease looks up the newest formal release within the update
+// request timeout, using the injected lookup when one is set.
+func (b *Broker) lookupLatestRelease(ctx context.Context) (update.Release, error) {
+	latest := b.deps.LatestRelease
+	if latest == nil {
+		latest = update.Latest
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, updateCheckRequestTimeout)
+	defer cancel()
+	return latest(lookupCtx, b.deps.UpdateHTTPClient, b.deps.UpdateAPI)
 }
 
 // updateCheckEnabled reads update.check. A missing or unreadable value keeps

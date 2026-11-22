@@ -132,9 +132,7 @@ func New(deps Deps) (*Broker, error) {
 	logReject := func(c Caller) {
 		deps.Logger.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
 	}
-	conns := newAccountLimit(localConnLimit, EvLocalConnectionLimitReached, deps.Logger)
-	conns.totalLimit = localTotalConnLimit
-	registers := newAccountLimit(localRegisterLimit, EvRegisterLimitReached, deps.Logger)
+	conns, registers := newLocalAccountLimits(deps.Logger)
 	peerCreds := newPeerCredCreds(deps.ReadPeerCred, allow, logReject, conns)
 
 	// The peer credentials are the server's credentials. A caller-supplied
