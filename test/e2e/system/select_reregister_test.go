@@ -32,16 +32,17 @@ const (
 	srSystemSocket = "/run/peers/broker.sock"
 	// srSystemService is the systemd unit of the system Broker.
 	srSystemService = "peers.service"
-	// srLaunchBudget bounds the reconnect when the user Broker is started
-	// after a selection round that probed a stale system socket. That
-	// round first waits mcpserver.SystemRetryDeadline; the next reconnect waits
-	// at most mcpserver.ConnBackoffCap. The margin covers the dial, Hello and
-	// registration: SystemRetryDeadline + ConnBackoffCap + 5s.
+	// srLaunchBudget is the reconnect deadline after a selection round that
+	// probed a stale system socket: mcpserver.SystemRetryDeadline for that round
+	// plus mcpserver.ConnBackoffCap for the next reconnect, with a small margin
+	// for the dial, Hello and registration. The waits that use it add
+	// harness.EventTimeout as the fallback a scheduling delay needs.
 	srLaunchBudget = mcpserver.SystemRetryDeadline + mcpserver.ConnBackoffCap + 5*time.Second
-	// srRestartBudget is systemd's RestartSec=5 plus three seconds. The wait
-	// that uses it polls a tool through EventuallyPoll, which lifts the value
-	// to ToolCallWaitBound (fourteen seconds).
-	srRestartBudget = 8 * time.Second
+	// srRestartBudget is systemd's RestartSec=5 plus a small margin. A wait that
+	// uses it adds harness.EventTimeout, and its list_agents waits also cover
+	// ListAgentsWaitBound: one stalled list_agents call can run for
+	// ListAgentsPollBound before the wait sees it again.
+	srRestartBudget = 5*time.Second + 3*time.Second
 	// statusClientRole is the TestMain role that reads an agent ID as the
 	// account that owns the Broker.
 	statusClientRole = "status-client"
@@ -104,7 +105,7 @@ func srWriteAccountConfig(t *testing.T, account, content string) {
 // srWaitRegistered waits until the session has registered with its Broker.
 func srWaitRegistered(t *testing.T, s *syscontainer.Session, what string) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.ToolCallWaitBound, "session "+what+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+what+" to register", func(deadline time.Time) (bool, string) {
 		_, isError, err := s.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -346,7 +347,7 @@ func TestReregisterUserBrokerReq037(t *testing.T) {
 		t.Fatalf("killing peer's user Broker %d: %v", userBroker.PID, err)
 	}
 
-	harness.EventuallyPoll(t, srLaunchBudget, "s1 reports that no Broker is available", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, srLaunchBudget+harness.EventTimeout, "s1 reports that no Broker is available", func(deadline time.Time) (bool, string) {
 		text, isError, err := s1.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -370,7 +371,7 @@ func TestReregisterUserBrokerReq037(t *testing.T) {
 	// The user starts the Broker again in a terminal. The session reconnects to
 	// it without reconnecting the MCP server process.
 	syscontainer.StartUserBroker(t, "peer", "--listen", ":17444")
-	harness.EventuallyPoll(t, srLaunchBudget, "s1 registers again with the restarted user Broker", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, srLaunchBudget+harness.EventTimeout, "s1 registers again with the restarted user Broker", func(deadline time.Time) (bool, string) {
 		_, isError, err := s1.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -444,7 +445,7 @@ func TestReregisterSystemBrokerReq037(t *testing.T) {
 	}
 
 	var newPID int
-	harness.EventuallyPoll(t, srRestartBudget, "systemd restarts the system Broker and s3 registers again", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, max(srRestartBudget+harness.EventTimeout, harness.ListAgentsWaitBound), "systemd restarts the system Broker and s3 registers again", func(deadline time.Time) (bool, string) {
 		pid, err := srMainPID()
 		if err != nil {
 			return false, err.Error()

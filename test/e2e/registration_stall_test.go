@@ -22,12 +22,13 @@ import (
 // that is not a tool call: waiting for the session's Register stream.
 const registrationStallSetupBound = harness.EventTimeout
 
-// TestRegistrationListAgentsAbandonsAStalledCall constrains the harness's poll
-// bound: the fake Broker accepts the session's registration and then never
-// answers ListAgents. A list_agents call made through a wait must give up at
-// ToolCallPollBound and report a retryable state. When the call used the
-// harness's sixty-second call bound instead, one stalled call outlived the wait
-// and failed the test from inside it with a transport error.
+// TestRegistrationListAgentsAbandonsAStalledCall constrains list_agents' own
+// poll bound: the fake Broker accepts the session's registration and then never
+// answers ListAgents. The handler bounds its Broker RPC at listAgentsRPCTimeout,
+// so the call returns a retryable tool error at that bound, well inside
+// ListAgentsPollBound. When the call used the harness's sixty-second call bound
+// instead, one stalled call outlived the wait and failed the test from inside
+// it with a transport error.
 func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
@@ -55,7 +56,7 @@ func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	s.CallUntilOK(t, harness.ToolCallWaitBound, "send_message", map[string]any{"to": "someone@test", "message": "hi"})
 
 	start := time.Now()
-	_, state := registrationListAgentsInWait(t, s, start.Add(harness.ToolCallPollBound), nil)
+	_, state := registrationListAgentsInWait(t, s, start.Add(harness.ListAgentsPollBound), nil)
 	elapsed := time.Since(start)
 
 	if state == "" {
@@ -64,22 +65,23 @@ func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	if !strings.Contains(state, "deadline exceeded") {
 		t.Fatalf("the stalled call did not report its bound: %s", state)
 	}
-	if limit := 2 * harness.ToolCallPollBound; elapsed > limit {
+	// The handler's own bound returns the call before the harness poll bound,
+	// which is the accepted cost of deriving that bound from the handler: the
+	// call runs out its own bound and reports it.
+	if limit := harness.ListAgentsPollBound; elapsed > limit {
 		t.Fatalf("the stalled call returned after %s, want at most %s: %s", elapsed, limit, state)
 	}
 }
 
 // TestWaitRegisteredToleratesASlowUpdateCheck checks the poll bound against the
-// update hint and against a short caller bound. The hint runs inside the same
-// tools/call after the handler and may spend almost updateStatusTimeout, three
-// seconds, querying the Broker; with a poll bound equal to that timeout every
-// call would be cut off while the hint was answering. The fake Broker here
-// spends 2.9 seconds in UpdateStatus and another second in ListAgents, so the
-// call lasts more than three seconds but stays well inside ToolCallPollBound.
-// The test passes the project-wide three-second wait bound on purpose: a wait
-// with a short bound must lift it to ToolCallWaitBound, or PollCall clamps the
-// first call to the time the wait has left and the call is cut before its hint
-// finishes. WaitRegistered must still pass.
+// update hint. The hint runs inside the same tools/call after the handler and
+// may spend almost updateStatusTimeout, three seconds, querying the Broker;
+// with a poll bound equal to that timeout every call would be cut off while the
+// hint was answering. The fake Broker here spends 2.9 seconds in UpdateStatus
+// and another second in ListAgents, so the call lasts more than three seconds
+// but stays well inside ListAgentsPollBound. The test passes the project-wide
+// EventTimeout; WaitRegistered lifts it to ListAgentsWaitBound so one slow call
+// still leaves a second poll. WaitRegistered must pass.
 func TestWaitRegisteredToleratesASlowUpdateCheck(t *testing.T) {
 	const (
 		updateCheckDelay = 2900 * time.Millisecond
@@ -103,7 +105,7 @@ func TestWaitRegisteredToleratesASlowUpdateCheck(t *testing.T) {
 	if elapsed < handlerDelay+updateCheckDelay {
 		t.Fatalf("WaitRegistered returned after %s, want at least the %s update check and %s handler delays; the call did not exercise the hint", elapsed, updateCheckDelay, handlerDelay)
 	}
-	t.Logf("WaitRegistered passed after %s with a %s update check and a three-second caller bound", elapsed, updateCheckDelay)
+	t.Logf("WaitRegistered passed after %s with a %s update check and the project-wide wait bound", elapsed, updateCheckDelay)
 }
 
 // TestWaitRegisteredRetriesAStalledCall checks that one stalled list_agents call

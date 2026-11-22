@@ -957,7 +957,7 @@ func selfUpdateWaitUserBrokerVersion(t *testing.T, account, want string) {
 func selfUpdateWaitSession(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 
-	harness.EventuallyPoll(t, selfUpdateRestartBound, "the session of "+session.Account+" to reach its Broker", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session of "+session.Account+" to reach its Broker", func(deadline time.Time) (bool, string) {
 		text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()

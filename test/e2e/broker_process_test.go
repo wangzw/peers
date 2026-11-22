@@ -22,11 +22,15 @@ import (
 )
 
 // Broker process timing. brokerReadyBound is the harness readiness bound plus
-// three seconds. brokerRecoverBound is the MCP server's longest connection
-// backoff (5s) plus the same margin.
+// three seconds; brokerRecoverBound is the MCP server's longest connection
+// backoff (5s) plus the same margin. Both are the product timers a wait must
+// outlast, so the wait constants add harness.EventTimeout as the fallback and
+// also cover one list_agents poll, which alone can run for ListAgentsPollBound.
 const (
 	brokerReadyBound   = 13 * time.Second
 	brokerRecoverBound = 5*time.Second + brokerReadyBound
+	brokerReadyWait    = max(brokerReadyBound+harness.EventTimeout, harness.ListAgentsWaitBound)
+	brokerRecoverWait  = max(brokerRecoverBound+harness.EventTimeout, harness.ListAgentsWaitBound)
 
 	// brokerDefaultListen is broker.listen's default value.
 	brokerDefaultListen = ":17443"
@@ -58,7 +62,7 @@ func TestBrokerProcessLocal(t *testing.T) {
 			return true, ""
 		})
 
-		harness.EventuallyPoll(t, brokerReadyBound, "list_agents names both ways to start a Broker", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, brokerReadyWait, "list_agents names both ways to start a Broker", func(deadline time.Time) (bool, string) {
 			r, err := session.PollCall(t, deadline, "list_agents", nil)
 			if err != nil {
 				return false, err.Error()
@@ -86,7 +90,7 @@ func TestBrokerProcessLocal(t *testing.T) {
 		if !start.Running {
 			t.Fatalf("the explicit Broker did not start: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
 		}
-		harness.EventuallyPoll(t, brokerRecoverBound, "list_agents succeeds after the Broker starts", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, brokerRecoverWait, "list_agents succeeds after the Broker starts", func(deadline time.Time) (bool, string) {
 			r, err := session.PollCall(t, deadline, "list_agents", nil)
 			if err != nil {
 				return false, err.Error()
@@ -147,7 +151,7 @@ func TestBrokerProcessLocal(t *testing.T) {
 		for i := range sessions {
 			sessions[i] = host.StartSession(t, harness.SessionSpec{Name: fmt.Sprintf("worker-%d", i), StartMCP: true})
 		}
-		harness.EventuallyPoll(t, brokerReadyBound, "the five sessions register on the one Broker", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, brokerReadyWait, "the five sessions register on the one Broker", func(deadline time.Time) (bool, string) {
 			for i, session := range sessions {
 				r, err := session.PollCall(t, deadline, "list_agents", nil)
 				if err != nil {
@@ -334,7 +338,7 @@ func TestBrokerProcessInContainer(t *testing.T) {
 			t.Fatalf("the MCP server exposes %d tools, want 13: %v", len(tools), tools)
 		}
 
-		harness.EventuallyPoll(t, brokerReadyBound, "list_agents names the ways to start a Broker", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, brokerReadyWait, "list_agents names the ways to start a Broker", func(deadline time.Time) (bool, string) {
 			r, err := session.PollCall(t, deadline, "list_agents", nil)
 			if err != nil {
 				return false, err.Error()
@@ -371,7 +375,7 @@ func TestBrokerProcessInContainer(t *testing.T) {
 			t.Fatalf("the explicit Broker did not start: exit code %d: %s", brokerStart.ExitCode, strings.TrimSpace(brokerStart.StderrLast))
 		}
 
-		harness.EventuallyPoll(t, brokerRecoverBound, "list_agents succeeds after the Broker starts", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, brokerRecoverWait, "list_agents succeeds after the Broker starts", func(deadline time.Time) (bool, string) {
 			r, err := session.PollCall(t, deadline, "list_agents", nil)
 			if err != nil {
 				return false, err.Error()
@@ -585,7 +589,7 @@ func bpJoinTopic(t *testing.T, session *harness.Session, topic string) {
 func bpSelfAddress(t *testing.T, session *harness.Session) string {
 	t.Helper()
 	var address string
-	harness.EventuallyPoll(t, brokerReadyBound, "the session reports its address", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, brokerReadyWait, "the session reports its address", func(deadline time.Time) (bool, string) {
 		out, state := bpListAgentsPoll(t, deadline, session)
 		if state != "" {
 			return false, state
@@ -602,7 +606,7 @@ func bpSelfAddress(t *testing.T, session *harness.Session) string {
 // bpWaitVisible waits until observer lists an agent at address.
 func bpWaitVisible(t *testing.T, observer *harness.Session, address string) {
 	t.Helper()
-	harness.EventuallyPoll(t, brokerReadyBound, "the agent "+address+" is visible", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, brokerReadyWait, "the agent "+address+" is visible", func(deadline time.Time) (bool, string) {
 		out, state := bpListAgentsPoll(t, deadline, observer)
 		if state != "" {
 			return false, state
@@ -711,7 +715,7 @@ func TestLocalOracleReconnectsAfterBrokerRestart(t *testing.T) {
 	if start := host.StartBroker(t, harness.BrokerSpec{}); !start.Running {
 		t.Fatalf("the Broker did not restart: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
 	}
-	harness.Eventually(t, brokerRecoverBound, "the same Oracle client reconnects", func() (bool, string) {
+	harness.Eventually(t, brokerRecoverWait, "the same Oracle client reconnects", func() (bool, string) {
 		if _, err := oracle.GetConfigRaw(""); err != nil {
 			return false, err.Error()
 		}

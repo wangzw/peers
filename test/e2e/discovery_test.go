@@ -165,17 +165,16 @@ func discAgent(t *testing.T, d *discNode, name, workdir string) *harness.Session
 // read-only or idempotent tool polls with Session.PollCallWithin, so a
 // transport error is retried; any other tool is a side effect and goes through
 // Session.CallUntilOK, which fails on a transport error instead of repeating a
-// call the server may already have applied. A topic tool spends
-// topicRPCTimeout inside the handler before the update hint runs, so it polls
-// with harness.TopicCallPollBound and the wait gets harness.TopicCallWaitBound.
+// call the server may already have applied. Each tool polls with its own
+// harness.ToolPollBound, and the wait uses at least harness.ToolWaitBound(tool).
 func discCallOK(t *testing.T, s *harness.Session, tool string, args map[string]any, bound time.Duration) harness.Result {
 	t.Helper()
 	if !pollableTool(tool) {
 		return s.CallUntilOK(t, bound, tool, args)
 	}
-	pollBound, waitBound := harness.ToolCallPollBound, bound
-	if brokerTopicTool(tool) {
-		pollBound, waitBound = harness.TopicCallPollBound, harness.TopicCallWaitBound
+	pollBound, waitBound := harness.ToolPollBound(tool), bound
+	if want := harness.ToolWaitBound(tool); waitBound < want {
+		waitBound = want
 	}
 	var result harness.Result
 	harness.EventuallyPoll(t, waitBound, "calling "+tool, func(deadline time.Time) (bool, string) {

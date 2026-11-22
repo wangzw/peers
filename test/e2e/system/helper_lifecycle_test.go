@@ -14,10 +14,16 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// helperLifecycleBound bounds the wait for an account helper to exit and for a
-// killed helper to be replaced. The pool respawns after its one-second minimum
-// backoff, which leaves room inside this bound.
-const helperLifecycleBound = 3 * time.Second
+// helperLifecycleBound is the product timer: the pool respawns after its
+// one-second minimum backoff, and the small margin covers the process exit and
+// the registry watch. A wait adds harness.EventTimeout as the fallback, and a
+// wait that polls list_agents also covers ListAgentsWaitBound because one
+// stalled poll can run for ListAgentsPollBound.
+const (
+	helperLifecycleBound    = 3 * time.Second
+	helperLifecycleWait     = helperLifecycleBound + harness.EventTimeout
+	helperLifecycleListWait = max(helperLifecycleWait, harness.ListAgentsWaitBound)
+)
 
 // TestSystemAccountHelperLifecycle checks the per-account helper process of the
 // system Broker. It must exit once the account has no session, and a helper
@@ -40,7 +46,7 @@ func TestSystemAccountHelperLifecycle(t *testing.T) {
 	// Ending the session ends its Register stream, which releases the
 	// account's backend and watch; nothing then keeps the helper alive.
 	closeSession(t, first)
-	harness.Eventually(t, helperLifecycleBound, "other's account helper to exit after the session ends",
+	harness.Eventually(t, helperLifecycleWait, "other's account helper to exit after the session ends",
 		func() (bool, string) {
 			helpers := accountHelpers(otherUID)
 			return len(helpers) == 0, fmt.Sprintf("helper processes = %v", helpers)
@@ -63,7 +69,7 @@ func TestSystemAccountHelperLifecycle(t *testing.T) {
 	t.Logf("the account helper %d was replaced by %d", killed.PID, rebuilt.PID)
 
 	second.Fake.Rename("renamed")
-	harness.EventuallyPoll(t, helperLifecycleBound, "the renamed session to reach list_agents",
+	harness.EventuallyPoll(t, helperLifecycleListWait, "the renamed session to reach list_agents",
 		func(deadline time.Time) (bool, string) {
 			out, state := e2eSysListAgentsPoll(t, deadline, second, nil)
 			if state != "" {
@@ -93,7 +99,7 @@ func accountHelpers(uid uint32) []syscontainer.ProcInfo {
 func waitAccountHelper(t *testing.T, uid uint32, excludePID int) syscontainer.ProcInfo {
 	t.Helper()
 	var helper syscontainer.ProcInfo
-	harness.Eventually(t, helperLifecycleBound, "the account helper of other",
+	harness.Eventually(t, helperLifecycleWait, "the account helper of other",
 		func() (bool, string) {
 			helpers := accountHelpers(uid)
 			for _, proc := range helpers {

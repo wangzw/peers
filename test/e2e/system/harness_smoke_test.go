@@ -257,7 +257,7 @@ func TestHarnessSystemService(t *testing.T) {
 // Broker. Registration happens in the background after the MCP handshake.
 func waitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.ToolCallWaitBound, "session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		_, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()

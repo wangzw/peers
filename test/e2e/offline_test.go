@@ -132,7 +132,7 @@ func TestBrokerOffline(t *testing.T) {
 		// A new Agent on B joining the shared topic reaches A's roster.
 		b2 := lkSession(t, bNode, "b2")
 		defer b2.End(t)
-		harness.EventuallyPoll(t, offlineWaitBound, "A sees the new agent on the offline B", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "A sees the new agent on the offline B", func(deadline time.Time) (bool, string) {
 			out, state := pollDecode[mcpserver.ListAgentsOut](t, deadline, a1, "list_agents", map[string]any{})
 			if state != "" {
 				return false, state
@@ -212,8 +212,11 @@ func TestBrokerOffline(t *testing.T) {
 		harness.Eventually(t, offlineWaitBound, "broker.offline reads false after the file edit", func() (bool, string) {
 			return ctGetConfig(t, bNode, "broker.offline") == "false", "value is " + ctGetConfig(t, bNode, "broker.offline")
 		})
-		harness.EventuallyPoll(t, offlineWaitBound, "the reply succeeds after the file edit", func(deadline time.Time) (bool, string) {
-			r, err := a1.PollCallWithin(t, deadline, offlineWaitBound, "send_message",
+		// send_message's handler may spend sendMessageRPCTimeout before its
+		// update hint runs, so the wait and the poll use its own bound rather
+		// than the package fallback.
+		harness.EventuallyPoll(t, harness.ToolWaitBound("send_message"), "the reply succeeds after the file edit", func(deadline time.Time) (bool, string) {
+			r, err := a1.PollCallWithin(t, deadline, harness.SendMessagePollBound, "send_message",
 				map[string]any{"to": "b1@hostB.peer", "message": "after the file edit"})
 			if err != nil {
 				return false, err.Error()
@@ -504,7 +507,7 @@ func offFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut,
 // offWaitAgent waits until the session lists an agent called name.
 func offWaitAgent(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, offlineWaitBound, "the session lists "+name, func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session lists "+name, func(deadline time.Time) (bool, string) {
 		out, state := pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", map[string]any{})
 		if state != "" {
 			return false, state

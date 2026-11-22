@@ -52,7 +52,7 @@ const (
 	// publishes the key.
 	caPairingBound = 90 * time.Second
 
-	// caLinkBound covers registration and the topic roster crossing the link.
+	// caLinkBound covers the topic roster crossing the link.
 	caLinkBound = 30 * time.Second
 
 	// caMarkerBound bounds a wait for the other role's marker.
@@ -169,11 +169,11 @@ func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 	caWaitRegistered(t, other)
 	caJoin(t, other, caTopic)
 
-	caWaitNamed(t, root, caLinkBound, "twin", 2)
+	caWaitNamed(t, root, "twin", 2)
 
 	// The first registrant keeps the address it had before the other account
 	// arrived. Before the fix this poll ends with a ref in the owner's address.
-	harness.EventuallyPoll(t, caLinkBound, "the owner's address carries no ref", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the owner's address carries no ref", func(deadline time.Time) (bool, string) {
 		out, state := sysPollDecode[caListOut](t, deadline, peer, "list_agents", map[string]any{})
 		if state != "" {
 			return false, state
@@ -188,7 +188,7 @@ func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 		return true, ""
 	})
 
-	harness.EventuallyPoll(t, caLinkBound, "the later account's address carries a twelve-character ref", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the later account's address carries a twelve-character ref", func(deadline time.Time) (bool, string) {
 		out, state := sysPollDecode[caListOut](t, deadline, other, "list_agents", map[string]any{})
 		if state != "" {
 			return false, state
@@ -203,7 +203,7 @@ func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 		return true, ""
 	})
 
-	caRequireLocalRoster(t, caWaitNamed(t, root, caLinkBound, "twin", 2), "twin", "peer", "other")
+	caRequireLocalRoster(t, caWaitNamed(t, root, "twin", 2), "twin", "peer", "other")
 
 	syscontainer.PairAwait(t, caImpObserved, caMarkerBound)
 	syscontainer.PairWrite(t, caImpDone, []byte("done\n"))
@@ -213,7 +213,7 @@ func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 func caImpersonationOnHostB(t *testing.T, sender *syscontainer.Session) {
 	t.Helper()
 
-	caRequirePeerRoster(t, caWaitNamed(t, sender, caLinkBound, "twin", 2), "twin", "peer", "other")
+	caRequirePeerRoster(t, caWaitNamed(t, sender, "twin", 2), "twin", "peer", "other")
 	syscontainer.PairWrite(t, caImpObserved, []byte("observed\n"))
 	syscontainer.PairAwait(t, caImpDone, caMarkerBound)
 }
@@ -231,13 +231,13 @@ func caInterceptionOnHostA(t *testing.T, root *syscontainer.Session) {
 	caWaitRegistered(t, other)
 	caJoin(t, other, caTopic)
 
-	caWaitNamed(t, root, caLinkBound, "worker", 2)
+	caWaitNamed(t, root, "worker", 2)
 	// Let the peer observe both entries before the owner leaves, so its own
 	// assertion does not race the removal.
 	syscontainer.PairAwait(t, caWorkersSeen, caMarkerBound)
 
 	closeSession(t, peer)
-	remaining := caWaitSingle(t, root, caRemoveBound, "worker")
+	remaining := caWaitSingle(t, root, "worker")
 	syscontainer.PairWrite(t, caOwnerLeft, []byte(remaining.Address+"\n"))
 
 	// The bare name belongs to the departed account, so only that account may
@@ -266,7 +266,7 @@ func caInterceptionOnHostA(t *testing.T, root *syscontainer.Session) {
 func caInterceptionOnHostB(t *testing.T, sender *syscontainer.Session) {
 	t.Helper()
 
-	caWaitNamed(t, sender, caLinkBound, "worker", 2)
+	caWaitNamed(t, sender, "worker", 2)
 	syscontainer.PairWrite(t, caWorkersSeen, []byte("seen\n"))
 	ownerAddress := string(syscontainer.PairAwait(t, caOwnerLeft, caMarkerBound))
 	_, ref, _ := caSplitAddress(strings.TrimSpace(ownerAddress))
@@ -274,7 +274,7 @@ func caInterceptionOnHostB(t *testing.T, sender *syscontainer.Session) {
 		t.Fatalf("host A announced the holding account as %q, want its full twelve-character ref line", ownerAddress)
 	}
 
-	remaining := caWaitSingle(t, sender, caRemoveBound, "worker")
+	remaining := caWaitSingle(t, sender, "worker")
 	_, _, alias := caSplitAddress(remaining.Address)
 	if alias == "" {
 		t.Fatalf("the remaining address %q carries no alias", remaining.Address)
@@ -344,7 +344,7 @@ func caReadPairing(t *testing.T, data []byte) (address, key string) {
 // caWaitRegistered waits until the MCP server has registered the session.
 func caWaitRegistered(t *testing.T, s *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, caLinkBound, "session "+s.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+s.Account+" to register", func(deadline time.Time) (bool, string) {
 		_, state := sysPollDecode[caListOut](t, deadline, s, "list_agents", map[string]any{})
 		return state == "", state
 	})
@@ -365,11 +365,13 @@ func caJoin(t *testing.T, s *syscontainer.Session, topic string) {
 	})
 }
 
-// caWaitNamed waits until the listing shows exactly want agents named name.
-func caWaitNamed(t *testing.T, s *syscontainer.Session, bound time.Duration, name string, want int) caListOut {
+// caWaitNamed waits until want agents named name are listed. The bound is
+// derived from list_agents, the tool it polls, so a caller cannot pass a
+// shorter one.
+func caWaitNamed(t *testing.T, s *syscontainer.Session, name string, want int) caListOut {
 	t.Helper()
 	var last caListOut
-	harness.EventuallyPoll(t, bound, fmt.Sprintf("%d agents named %q are listed", want, name), func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, fmt.Sprintf("%d agents named %q are listed", want, name), func(deadline time.Time) (bool, string) {
 		out, state := sysPollDecode[caListOut](t, deadline, s, "list_agents", map[string]any{})
 		if state != "" {
 			return false, state
@@ -384,9 +386,9 @@ func caWaitNamed(t *testing.T, s *syscontainer.Session, bound time.Duration, nam
 }
 
 // caWaitSingle waits until exactly one agent named name remains and returns it.
-func caWaitSingle(t *testing.T, s *syscontainer.Session, bound time.Duration, name string) caAgentEntry {
+func caWaitSingle(t *testing.T, s *syscontainer.Session, name string) caAgentEntry {
 	t.Helper()
-	out := caWaitNamed(t, s, bound, name, 1)
+	out := caWaitNamed(t, s, name, 1)
 	return caNamed(out, name)[0]
 }
 

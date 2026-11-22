@@ -84,28 +84,28 @@ func TestAliases(t *testing.T) {
 		// test/e2e/system, which can run a system Broker as root. This
 		// user Broker takes the hostname label and the account: alice is
 		// the account running it, and the domain is dropped.
-		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", alWaitBound)
+		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 
 		// broker.advertise changes what is shown to peers, never the alias.
 		alRestart(t, c, "hostA", alConfig("broker:\n  advertise: a.example:443\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
 		alWaitConnected(t, yNode, "hostA.alice", alRelinkBound)
-		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", alWaitBound)
+		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 
 		// The listen port does not enter the alias.
 		alRestart(t, c, "hostA", alConfig("broker:\n  listen: \":17444\"\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
 		alWaitConnected(t, yNode, "hostA.alice", alRelinkBound)
-		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", alWaitBound)
+		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 
 		// Without a listener the alias is unchanged too.
 		alRestart(t, c, "hostA", alConfig("broker:\n  listen: \"\"\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
 		alWaitConnected(t, yNode, "hostA.alice", alRelinkBound)
-		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", alWaitBound)
+		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 	})
 
 	t.Run("REQ-broker-pairing-003 configured alias", func(t *testing.T) {
@@ -118,7 +118,7 @@ func TestAliases(t *testing.T) {
 		if !strings.HasSuffix(self, "@build-box") {
 			t.Fatalf("self_address = %q, want it to end with @build-box", self)
 		}
-		alWaitAgentSuffix(t, y1, "x1", "@build-box", alWaitBound)
+		alWaitAgentSuffix(t, y1, "x1", "@build-box", harness.ListAgentsWaitBound)
 	})
 
 	t.Run("REQ-broker-pairing-001 fingerprint stable", func(t *testing.T) {
@@ -295,7 +295,7 @@ func TestAliases(t *testing.T) {
 		b1 = alSession(t, bNode, "b1")
 
 		var bAddr string
-		harness.EventuallyPoll(t, alRelinkBound, "A keeps C under @hostC and gives B a local alias", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "A keeps C under @hostC and gives B a local alias", func(deadline time.Time) (bool, string) {
 			out, state := alListAgentsPoll(t, deadline, a1)
 			if state != "" {
 				return false, state
@@ -456,7 +456,7 @@ func TestLongHostnameAlias(t *testing.T) {
 	alConnect(t, opX, alShownAddress(t, c, "hostB", key.Addresses), key.Key).MustOK(t)
 	alWaitConnected(t, yNode, "abcdefghijklmnopqrs.peer", alRelinkBound)
 
-	alWaitAgentSuffix(t, y1, "x1", "@abcdefghijklmnopqrs.peer", alWaitBound)
+	alWaitAgentSuffix(t, y1, "x1", "@abcdefghijklmnopqrs.peer", harness.ListAgentsWaitBound)
 	if self := alSelfAddress(t, x1, "x1"); !strings.HasSuffix(self, "@abcdefghijklmnopqrs.peer") {
 		t.Fatalf("self_address = %q, want it to end with @abcdefghijklmnopqrs.peer", self)
 	}
@@ -694,7 +694,7 @@ func alSelfAddress(t *testing.T, s *harness.Session, name string) string {
 func alWaitRemoteAgents(t *testing.T, s *harness.Session, firstName, secondName string) (string, string) {
 	t.Helper()
 	var first, second string
-	harness.EventuallyPoll(t, alRelinkBound, "both remote agents are listed", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "both remote agents are listed", func(deadline time.Time) (bool, string) {
 		r, err := s.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()

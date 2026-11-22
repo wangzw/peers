@@ -49,7 +49,7 @@ func TestLocalRegistration(t *testing.T) {
 		ghost := host.StartSession(t, harness.SessionSpec{Name: "ghost", Workdir: workspace})
 		defer ghost.End(t)
 
-		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "a session with no MCP server process stays out of the list", nil, func(deadline time.Time) harness.Observation {
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "a session with no MCP server process stays out of the list", nil, func(deadline time.Time) harness.Observation {
 			out, state := registrationListAgentsInWait(t, api, deadline, nil)
 			if state != "" {
 				return harness.Unobservable(state)
@@ -92,7 +92,7 @@ func TestLocalRegistration(t *testing.T) {
 		registrationWaitRegistered(t, observer, "observer")
 
 		refs := map[string]bool{}
-		registrationEventually(t, harness.ToolCallWaitBound, "both agents named twin carry a ref", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "both agents named twin carry a ref", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
 				return false, state
@@ -116,7 +116,7 @@ func TestLocalRegistration(t *testing.T) {
 
 		// A lone twin no longer needs the ref.
 		second.End(t)
-		registrationEventually(t, harness.ToolCallWaitBound, "the remaining twin carries no ref", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "the remaining twin carries no ref", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
 				return false, state
@@ -152,7 +152,7 @@ func TestLocalRegistration(t *testing.T) {
 			first.Fake().SocketPath():  true,
 			second.Fake().SocketPath(): true,
 		}
-		registrationEventually(t, harness.ToolCallWaitBound, "the twin refs are the prefixes of their agent IDs", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "the twin refs are the prefixes of their agent IDs", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
 				return false, state
@@ -180,7 +180,7 @@ func TestLocalRegistration(t *testing.T) {
 		odd := registrationSession(t, host, "a<b", workspace)
 		defer odd.End(t)
 		var refBefore string
-		registrationEventually(t, harness.ToolCallWaitBound, "the cleaned name ab carries a ref", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "the cleaned name ab carries a ref", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
 				return false, state
@@ -197,7 +197,7 @@ func TestLocalRegistration(t *testing.T) {
 
 		odd.Fake().Rename("c<d")
 		odd.Fake().SetSessionID("after-clear")
-		registrationEventually(t, harness.ToolCallWaitBound, "the ref survives a rename and a conversation clear", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "the ref survives a rename and a conversation clear", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
 				return false, state
@@ -228,7 +228,7 @@ func TestLocalRegistration(t *testing.T) {
 		registrationJoin(t, b, "t2")
 
 		want := []string{"github.com/org/repo", "t1", "t2"}
-		registrationEventually(t, harness.ToolCallWaitBound, "b's shared topics are the intersection", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "b's shared topics are the intersection", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, a, deadline, nil)
 			if state != "" {
 				return false, state
@@ -287,7 +287,7 @@ func TestLocalRegistration(t *testing.T) {
 		})
 
 		at.Fake().SetName("ab")
-		registrationEventually(t, harness.ToolCallWaitBound, "the renamed session receives registration complete on the same connection", func(deadline time.Time) (bool, string) {
+		registrationEventually(t, harness.ListAgentsWaitBound, "the renamed session receives registration complete on the same connection", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, at, deadline, nil)
 			if state != "" {
 				return false, state
@@ -325,7 +325,7 @@ func TestLocalRegistration(t *testing.T) {
 
 		// The extra process registers through the same inbox socket, so it
 		// shares the main session's agent ID and must not add a second entry.
-		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "the extra MCP process does not become a second agent", nil, func(deadline time.Time) harness.Observation {
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "the extra MCP process does not become a second agent", nil, func(deadline time.Time) harness.Observation {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
 				return harness.Unobservable(state)
@@ -403,7 +403,7 @@ func registrationWorkspace(t *testing.T) string {
 func registrationWaitRegistered(t *testing.T, s *harness.Session, name string) mcpserver.ListAgentsOut {
 	t.Helper()
 	var out mcpserver.ListAgentsOut
-	registrationEventually(t, harness.ToolCallWaitBound, "the session is registered and lists itself", func(deadline time.Time) (bool, string) {
+	registrationEventually(t, harness.ListAgentsWaitBound, "the session is registered and lists itself", func(deadline time.Time) (bool, string) {
 		var state string
 		out, state = registrationListAgentsInWait(t, s, deadline, nil)
 		if state != "" {
@@ -439,7 +439,7 @@ func registrationRejected(t *testing.T, s, observer *harness.Session, name, deta
 		}
 		return true, ""
 	})
-	harness.ConsistentlyPoll(t, 500*time.Millisecond, harness.ToolCallPollBound, fmt.Sprintf("no agent is listed for the unusable name %q", name), nil, func(deadline time.Time) harness.Observation {
+	harness.ConsistentlyPoll(t, 500*time.Millisecond, harness.ListAgentsPollBound, fmt.Sprintf("no agent is listed for the unusable name %q", name), nil, func(deadline time.Time) harness.Observation {
 		out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 		if state != "" {
 			return harness.Unobservable(state)
@@ -465,7 +465,7 @@ func registrationListAgents(t *testing.T, s *harness.Session, args map[string]an
 }
 
 // registrationListAgentsInWait calls list_agents from inside an Eventually. The
-// call is bounded by ToolCallPollBound and by the time the wait has left, not
+// call is bounded by ListAgentsPollBound and by the time the wait has left, not
 // by the harness's sixty-second call bound, so one stalled call costs a poll of
 // the wait instead of outliving it. A tool error or a transport failure is
 // returned as a state string so the wait retries it instead of failing the test
@@ -480,9 +480,10 @@ func registrationListAgentsInWait(t *testing.T, s *harness.Session, deadline tim
 }
 
 // registrationEventually runs harness.Eventually and hands the condition the
-// wait's deadline, so every tool call it makes is clamped to the time the wait
-// has left. A wait that makes such a call uses at least
-// harness.ToolCallWaitBound, or one stall consumes the whole wait.
+// wait's deadline, so every tool call it makes is bounded by the tool's own
+// poll bound, not clamped to the time the wait has left. A wait that polls
+// list_agents uses at least harness.ListAgentsWaitBound, or one stall consumes
+// the whole wait.
 func registrationEventually(t *testing.T, bound time.Duration, what string, cond func(deadline time.Time) (bool, string)) {
 	t.Helper()
 	deadline := time.Now().Add(bound)
@@ -506,7 +507,7 @@ func registrationDecodeListAgents(t *testing.T, r harness.Result) (mcpserver.Lis
 // registrationJoin joins name, retrying while the session is still
 // registering. join_topic's handler may spend topicRPCTimeout, ten seconds, in
 // the Broker RPC before the update hint runs, so the poll uses
-// harness.TopicCallPollBound rather than the default ToolCallPollBound.
+// harness.TopicCallPollBound rather than the list_agents bound.
 func registrationJoin(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	registrationEventually(t, harness.TopicCallWaitBound, "join_topic "+name+" succeeds", func(deadline time.Time) (bool, string) {

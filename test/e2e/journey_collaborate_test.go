@@ -56,7 +56,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 
 	// Step 3: the automatic topic makes the other session visible, under the
 	// alias each Broker uses for its peer.
-	harness.EventuallyPoll(t, harness.EventTimeout, "api-worker sees frontend in the shared default topic", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "api-worker sees frontend in the shared default topic", func(deadline time.Time) (bool, string) {
 		out, state := collabListAgentsPoll(t, deadline, api)
 		if state != "" {
 			return false, state
@@ -134,7 +134,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 
 		// The negative check is a short observation: the directory is already
 		// synchronised, so one second without an entry is the intended result.
-		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "api-worker does not see frontend2 before it joins", nil, func(deadline time.Time) harness.Observation {
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "api-worker does not see frontend2 before it joins", nil, func(deadline time.Time) harness.Observation {
 			out, state := collabListAgentsPoll(t, deadline, api)
 			if state != "" {
 				return harness.Unobservable(state)
@@ -146,7 +146,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 		})
 
 		collabJoin(t, frontend2, collabTopic)
-		harness.EventuallyPoll(t, harness.EventTimeout, "frontend2 appears after joining the repository topic", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "frontend2 appears after joining the repository topic", func(deadline time.Time) (bool, string) {
 			out, state := collabListAgentsPoll(t, deadline, api)
 			if state != "" {
 				return false, state
@@ -227,7 +227,7 @@ func collabConnect(t *testing.T, session *harness.Session, address, key string) 
 // collabWaitRegistered waits until the session is registered and lists itself.
 func collabWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.EventTimeout, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
 		out, state := collabListAgentsPoll(t, deadline, session)
 		if state != "" {
 			return false, state

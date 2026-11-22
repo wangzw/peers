@@ -125,7 +125,7 @@ func TestREQBrokerConfig018_TwoAccountsShareSystemBroker(t *testing.T) {
 // server has registered the session with the Broker.
 func e2eSysWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.ToolCallWaitBound, "session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		_, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -146,7 +146,7 @@ func e2eSysJoinTopic(t *testing.T, session *syscontainer.Session, topic string) 
 func e2eSysSelfAddress(t *testing.T, session *syscontainer.Session) string {
 	t.Helper()
 	var address string
-	harness.EventuallyPoll(t, harness.ToolCallWaitBound, "session "+session.Account+" to report its address", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+session.Account+" to report its address", func(deadline time.Time) (bool, string) {
 		out, state := e2eSysListAgentsPoll(t, deadline, session, nil)
 		if state != "" {
 			return false, state
@@ -164,7 +164,7 @@ func e2eSysSelfAddress(t *testing.T, session *syscontainer.Session) string {
 // share topic.
 func e2eSysWaitVisible(t *testing.T, observer *syscontainer.Session, topic, address string) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.ToolCallWaitBound, "agent "+address+" to be visible to "+observer.Account, func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "agent "+address+" to be visible to "+observer.Account, func(deadline time.Time) (bool, string) {
 		out, state := e2eSysListAgentsPoll(t, deadline, observer, map[string]any{"topic": topic})
 		if state != "" {
 			return false, state

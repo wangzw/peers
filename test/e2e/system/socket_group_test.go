@@ -32,13 +32,11 @@ const (
 	sgUsersGID = 2001
 	// sgOtherUID is the uid of other in the system image.
 	sgOtherUID = 2000
-	// sgNoBrokerBudget is the fallback for the first failed selection and tool
-	// call when no Broker may serve the account; no retry timer is involved.
-	sgNoBrokerBudget = harness.EventTimeout
-	// sgRegisterBudget bounds the reconnect after the user starts a Broker:
-	// mcpserver.ConnBackoffCap is the longest wait, and the margin covers the
-	// dial, Hello and registration.
-	sgRegisterBudget = mcpserver.ConnBackoffCap + 5*time.Second
+	// sgRegisterBudget is the reconnect deadline after the user starts a Broker:
+	// mcpserver.ConnBackoffCap is the longest wait, and harness.EventTimeout is
+	// the fallback for the dial, Hello and registration. The wait that uses it
+	// also covers ListAgentsWaitBound because it polls list_agents.
+	sgRegisterBudget = mcpserver.ConnBackoffCap + harness.EventTimeout
 )
 
 // TestREQBrokerConfig027_GroupRestrictsUse checks that the group and mode of
@@ -72,7 +70,7 @@ func TestREQBrokerConfig027_GroupRestrictsUse(t *testing.T) {
 	if len(mcpBefore) == 0 {
 		t.Fatal("other has no MCP server process after charlie started")
 	}
-	harness.EventuallyPoll(t, sgNoBrokerBudget, "other's session reports that no Broker is available", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "other's session reports that no Broker is available", func(deadline time.Time) (bool, string) {
 		text, isError, err := c.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -88,7 +86,7 @@ func TestREQBrokerConfig027_GroupRestrictsUse(t *testing.T) {
 		return true, ""
 	})
 	syscontainer.StartUserBroker(t, "other")
-	harness.EventuallyPoll(t, sgRegisterBudget, "charlie registers on the Broker the user started", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, max(sgRegisterBudget, harness.ListAgentsWaitBound), "charlie registers on the Broker the user started", func(deadline time.Time) (bool, string) {
 		_, isError, err := c.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -327,7 +325,7 @@ func sgMCPPIDs(t *testing.T, account string) []int {
 // poll call gets its own bound.
 func sgWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.EventTimeout, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()

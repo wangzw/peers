@@ -225,7 +225,9 @@ func TestDegradedRun(t *testing.T) {
 			{"send_message", map[string]any{"to": "nobody@hostA.peer", "message": "while degraded"}},
 			{"get_config", nil},
 		} {
-			harness.EventuallyPoll(t, 10*time.Second, "the session reports "+call.tool+" as degraded", func(deadline time.Time) (bool, string) {
+			// Each tool has its own poll bound; deriving the wait from call.tool
+			// keeps send_message's larger bound from being cut off by the wait.
+			harness.EventuallyPoll(t, harness.ToolWaitBound(call.tool), "the session reports "+call.tool+" as degraded", func(deadline time.Time) (bool, string) {
 				r, err := session.PollCall(t, deadline, call.tool, call.args)
 				if err != nil {
 					return false, err.Error()
@@ -270,7 +272,7 @@ func TestDegradedRun(t *testing.T) {
 
 		// The same session reconnects after the degraded service closed its
 		// connections; its next call succeeds.
-		harness.EventuallyPoll(t, 30*time.Second, "the same session lists agents after recovery", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the same session lists agents after recovery", func(deadline time.Time) (bool, string) {
 			r, err := session.PollCall(t, deadline, "list_agents", nil)
 			if err != nil {
 				return false, err.Error()

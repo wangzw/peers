@@ -273,7 +273,7 @@ func TestLinks(t *testing.T) {
 			}
 			return true, ""
 		})
-		harness.EventuallyPoll(t, lkWaitBound, "B's session disappears from A's list", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "B's session disappears from A's list", func(deadline time.Time) (bool, string) {
 			out, state := lkListAgentsPoll(t, deadline, a1)
 			if state != "" {
 				return false, state

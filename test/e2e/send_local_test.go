@@ -86,7 +86,7 @@ func TestM1SameHostRoundTrip(t *testing.T) {
 
 	// Discovery: alpha lists beta under the alias of their shared Broker and
 	// under the default topic both joined automatically.
-	harness.EventuallyPoll(t, slWaitBound, "alpha discovers beta in the default topic", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "alpha discovers beta in the default topic", func(deadline time.Time) (bool, string) {
 		out, state := slListAgentsPoll(t, deadline, alpha, nil)
 		if state != "" {
 			return false, state
@@ -151,7 +151,7 @@ func TestLocalSend(t *testing.T) {
 
 		// Both twins are listed with their disambiguation refs.
 		var addresses []string
-		harness.EventuallyPoll(t, slWaitBound, "the caller lists both twins with refs", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the caller lists both twins with refs", func(deadline time.Time) (bool, string) {
 			out, state := slListAgentsPoll(t, deadline, caller, nil)
 			if state != "" {
 				return false, state
@@ -560,7 +560,7 @@ func slPlain(t *testing.T) string {
 func slWaitRegistered(t *testing.T, s *harness.Session, name string) mcpserver.ListAgentsOut {
 	t.Helper()
 	var out mcpserver.ListAgentsOut
-	harness.EventuallyPoll(t, slWaitBound, "the session "+name+" is registered and lists itself", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session "+name+" is registered and lists itself", func(deadline time.Time) (bool, string) {
 		var state string
 		out, state = slListAgentsPoll(t, deadline, s, nil)
 		if state != "" {
@@ -604,7 +604,7 @@ func slJoin(t *testing.T, s *harness.Session, name string) {
 // right after both sessions register can still see the target as invisible.
 func slWaitVisible(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, slWaitBound, "the agent "+name+" is visible", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the agent "+name+" is visible", func(deadline time.Time) (bool, string) {
 		out, state := slListAgentsPoll(t, deadline, observer, nil)
 		if state != "" {
 			return false, state

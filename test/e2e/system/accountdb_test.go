@@ -27,10 +27,6 @@ const (
 	adShareGID   = 2101
 	adSocketPath = "/run/peers/broker.sock"
 	adConfigPath = "/etc/peers/config.yaml"
-	// adRegisterBound is the fallback for a local registration event; a local
-	// Broker registers well inside it. The foreign-session test's longer bound
-	// covers a different wait: the Broker's own 10-second registration timeout.
-	adRegisterBound = harness.EventTimeout
 )
 
 // TestSystemAccountsFromExtrausers checks that the system Broker resolves
@@ -141,7 +137,7 @@ func adSocketModeGID(t *testing.T, path string) (os.FileMode, uint32) {
 // adWaitRegistered waits until the session has registered with its Broker.
 func adWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, adRegisterBound, "the session "+session.Account+" to register",
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session "+session.Account+" to register",
 		func(deadline time.Time) (bool, string) {
 			text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 			if err != nil {

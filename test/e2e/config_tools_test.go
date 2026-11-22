@@ -189,7 +189,7 @@ func TestConfigTools(t *testing.T) {
 		topicsJoin(t, b1, "t")
 		topicsJoin(t, a1, "t")
 		selfB := alSelfAddress(t, b1, "b1")
-		alWaitAgentSuffix(t, a1, "b1", "@"+aliasB, ctRelinkBound)
+		alWaitAgentSuffix(t, a1, "b1", "@"+aliasB, harness.ListAgentsWaitBound)
 
 		beforeCall := time.Now()
 		out := ctDecodeSetConfig(t, ctSetConfig(t, b1, "broker.alias", "build-box"))
@@ -229,7 +229,7 @@ func TestConfigTools(t *testing.T) {
 		}
 
 		// The peer sees the new alias on the running agent.
-		alWaitAgentSuffix(t, a1, "b1", "@build-box", ctWaitBound)
+		alWaitAgentSuffix(t, a1, "b1", "@build-box", harness.ListAgentsWaitBound)
 	})
 
 	t.Run("AliasTooLong", func(t *testing.T) {

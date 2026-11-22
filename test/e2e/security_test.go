@@ -191,7 +191,7 @@ func TestLinkEncrypted(t *testing.T) {
 
 		// Both sessions must be visible to each other before a message can be
 		// addressed; this also proves the name travelled over the link.
-		harness.EventuallyPoll(t, secWaitBound, "the two sessions see each other", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the two sessions see each other", func(deadline time.Time) (bool, string) {
 			out, state := secListAgentsPoll(t, deadline, a1)
 			if state != "" {
 				return false, state
@@ -310,7 +310,7 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 		// a periodic sync can leak on any later round. The reads are poll
 		// calls: a transport failure is an inconclusive sample and is retried,
 		// and only an answer can show a leak.
-		harness.ConsistentlyPoll(t, secLeakWindow, harness.ToolCallPollBound, "hostB never learns the private topic name or member", nil, func(deadline time.Time) harness.Observation {
+		harness.ConsistentlyPoll(t, secLeakWindow, harness.ListAgentsPollBound, "hostB never learns the private topic name or member", nil, func(deadline time.Time) harness.Observation {
 			for name, session := range map[string]*harness.Session{"operator": opB, "session": observer} {
 				for _, tool := range secReadOnlyTools(name) {
 					r, err := session.PollCall(t, deadline, tool, nil)
@@ -357,7 +357,7 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 		assertQuiet(t)
 
 		secJoin(t, observer, secretTopic)
-		harness.EventuallyPoll(t, secWaitBound, "hostB sees the member after joining the topic", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "hostB sees the member after joining the topic", func(deadline time.Time) (bool, string) {
 			out, state := secListAgentsPoll(t, deadline, observer)
 			if state != "" {
 				return false, state
@@ -551,7 +551,7 @@ func secOperator(t *testing.T, node *harness.Node) *harness.Session {
 // secWaitRegistered waits until the session is registered and lists itself.
 func secWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, secWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
 		out, state := secListAgentsPoll(t, deadline, session)
 		if state != "" {
 			return false, state

@@ -232,7 +232,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 		pairJoin(t, sb, "t")
 		pairJoin(t, sc, "t")
 
-		harness.EventuallyPoll(t, harness.EventTimeout, "a1 sees b1@macbook and c1@macbook-2", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "a1 sees b1@macbook and c1@macbook-2", func(deadline time.Time) (bool, string) {
 			out, state := pairListAgentsPoll(t, deadline, sa)
 			if state != "" {
 				return false, state
@@ -371,7 +371,7 @@ func pairOperator(t *testing.T, node *harness.Node, workdir string) *harness.Ses
 // pairWaitRegistered waits until the session is registered and lists itself.
 func pairWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.EventTimeout, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
 		out, state := pairListAgentsPoll(t, deadline, session)
 		if state != "" {
 			return false, state

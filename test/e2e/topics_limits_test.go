@@ -84,7 +84,7 @@ func TestTopicRosterBounds(t *testing.T) {
 	fenceName := "fence-" + token + "-00f000"
 	f.SendRosterDeltaBatch(t, "t2", 1, 0x00f000, "fence-"+token+"-")
 
-	harness.EventuallyPoll(t, secWaitBound, "the fence member becomes visible to the observer", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the fence member becomes visible to the observer", func(deadline time.Time) (bool, string) {
 		out, state := topicsListAgentsPoll(t, deadline, observer, map[string]any{"name": fenceName})
 		if state != "" {
 			return false, state

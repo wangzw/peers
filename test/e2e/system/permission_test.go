@@ -592,7 +592,7 @@ func permNonEmptyLines(s string) []string {
 // poll call gets its own bound.
 func permWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, harness.EventTimeout, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()

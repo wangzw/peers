@@ -11,10 +11,10 @@ import (
 
 // pollDecode calls tool from inside a wait and decodes its structured result
 // into T. A transport or tool failure is returned as the state string the wait
-// callback reports, so the wait can poll again. join_topic, leave_topic and
-// list_topics are polled with harness.TopicCallPollBound because each makes a
-// Broker RPC bounded by topicRPCTimeout before the update hint runs; every
-// other tool uses the default harness.ToolCallPollBound.
+// callback reports, so the wait can poll again. The call is bounded by
+// harness.ToolPollBound(tool): each tool's handler bound plus the update hint
+// and a margin, so a topic tool, list_agents and a management tool each get
+// their own bound instead of one unified value.
 //
 // A topic tool that returns the product's topic RPC timeout error did not
 // answer: its call stayed inside topicRPCTimeout and never reached the poll
@@ -23,11 +23,7 @@ import (
 func pollDecode[T any](t *testing.T, deadline time.Time, s *harness.Session, tool string, args map[string]any) (T, string) {
 	t.Helper()
 	var zero T
-	pollBound := harness.ToolCallPollBound
-	if brokerTopicTool(tool) {
-		pollBound = harness.TopicCallPollBound
-	}
-	r, err := s.PollCallWithin(t, deadline, pollBound, tool, args)
+	r, err := s.PollCallWithin(t, deadline, harness.ToolPollBound(tool), tool, args)
 	if err != nil {
 		return zero, err.Error()
 	}

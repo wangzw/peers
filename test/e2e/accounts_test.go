@@ -36,7 +36,7 @@ func TestOtherAccountRejected(t *testing.T) {
 
 	owner := host.StartSession(t, harness.SessionSpec{Name: "owner", StartMCP: true})
 	defer owner.End(t)
-	harness.EventuallyPoll(t, harness.EventTimeout, "the owner session is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the owner session is registered", func(deadline time.Time) (bool, string) {
 		out, state := accountsListAgentsPoll(t, deadline, owner)
 		if state != "" {
 			return false, state
@@ -141,7 +141,7 @@ func TestOtherAccountRejected(t *testing.T) {
 		// window is one second, twenty polls, which leaves room for a
 		// registration that was still in flight after the command stopped the
 		// MCP server process.
-		harness.ConsistentlyPoll(t, 1*time.Second, harness.ToolCallPollBound, "the intruder stays off the peer Broker", nil, func(deadline time.Time) harness.Observation {
+		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "the intruder stays off the peer Broker", nil, func(deadline time.Time) harness.Observation {
 			status, detail := host.Oracle().Status(t)
 			if detail != nil {
 				return harness.Observed(false, detail.GetMessage())

@@ -24,6 +24,11 @@ func TestMirroredProductTimersMatch(t *testing.T) {
 		name string
 		want time.Duration
 	}{
+		{"internal/mcpserver/state.go", "handlerRPCTimeout", handlerRPCTimeoutMirror},
+		{"internal/mcpserver/handlers_messaging.go", "listAgentsRPCTimeout", listAgentsRPCTimeoutMirror},
+		{"internal/mcpserver/handlers_messaging.go", "sendMessageRPCTimeout", sendMessageRPCTimeoutMirror},
+		{"internal/mcpserver/handlers_brokers.go", "connectBrokerRPCTimeout", connectBrokerRPCTimeoutMirror},
+		{"internal/mcpserver/handlers_update.go", "updateBrokerRPCTimeout", updateBrokerRPCTimeoutMirror},
 		{"internal/mcpserver/topics.go", "topicRPCTimeout", topicRPCTimeoutMirror},
 		{"internal/mcpserver/updatehint.go", "updateStatusTimeout", updateHintTimeoutMirror},
 	} {
@@ -35,6 +40,59 @@ func TestMirroredProductTimersMatch(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("%s: %s = %s, but the harness mirror is %s", tc.file, tc.name, got, tc.want)
 		}
+	}
+}
+
+// TestToolPollBoundsDeriveFromHandlerBound checks that every tool's poll bound
+// is derived from its handler bound by adding the update hint and one margin.
+// A tool missing from ToolPollBound would fall back to ToolCallPollBound and
+// could cut a healthy call, so each of the thirteen tools is named here with
+// the mirror its handler uses.
+func TestToolPollBoundsDeriveFromHandlerBound(t *testing.T) {
+	margin := updateHintTimeoutMirror + pollBoundMargin
+	tools := []struct {
+		name    string
+		handler time.Duration
+	}{
+		{"list_agents", listAgentsRPCTimeoutMirror},
+		{"send_message", sendMessageRPCTimeoutMirror},
+		{"connect_broker", connectBrokerRPCTimeoutMirror},
+		{"update_broker", updateBrokerRPCTimeoutMirror},
+		{"list_topics", topicRPCTimeoutMirror},
+		{"join_topic", topicRPCTimeoutMirror},
+		{"leave_topic", topicRPCTimeoutMirror},
+		{"get_config", handlerRPCTimeoutMirror},
+		{"set_config", handlerRPCTimeoutMirror},
+		{"set_broker_online", handlerRPCTimeoutMirror},
+		{"list_brokers", handlerRPCTimeoutMirror},
+		{"disconnect_broker", handlerRPCTimeoutMirror},
+		{"create_pairing_key", handlerRPCTimeoutMirror},
+	}
+	for _, tc := range tools {
+		got := ToolPollBound(tc.name)
+		want := tc.handler + margin
+		if got != want {
+			t.Errorf("ToolPollBound(%q) = %s, want the handler bound %s plus the update hint %s and margin %s",
+				tc.name, got, tc.handler, updateHintTimeoutMirror, pollBoundMargin)
+		}
+		// The bound must outlast the handler and the hint it runs with, or a
+		// healthy call would be cut and reported as a stall.
+		if got <= tc.handler+updateHintTimeoutMirror {
+			t.Errorf("ToolPollBound(%q) = %s does not exceed its handler %s plus the update hint %s",
+				tc.name, got, tc.handler, updateHintTimeoutMirror)
+		}
+		if wait := ToolWaitBound(tc.name); wait != 2*got {
+			t.Errorf("ToolWaitBound(%q) = %s, want two poll bounds %s", tc.name, wait, 2*got)
+		}
+	}
+	if got := ToolPollBound("no_such_tool"); got != ToolCallPollBound {
+		t.Errorf("ToolPollBound(%q) = %s, want the fallback %s", "no_such_tool", got, ToolCallPollBound)
+	}
+	// list_agents is the tool whose handler bound grew past the old unified
+	// value, so pin it explicitly: a mapping back to ToolCallPollBound would
+	// reintroduce the flake this table guards against.
+	if ListAgentsPollBound <= ToolCallPollBound {
+		t.Errorf("ListAgentsPollBound = %s is not above the fallback %s", ListAgentsPollBound, ToolCallPollBound)
 	}
 }
 

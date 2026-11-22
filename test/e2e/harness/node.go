@@ -46,50 +46,131 @@ const oracleBound = EventTimeout
 // still returns its error result.
 const sessionCallBound = 60 * time.Second
 
-// ToolCallPollBound bounds one MCP tool call made from inside a test wait. The
-// bound must cover more than the tool's own work: the update-hint middleware
-// runs inside the same tools/call after the handler and queries the Broker with
-// updateStatusTimeout, three seconds (internal/mcpserver/updatehint.go:21). A
-// call bounded at three seconds would therefore be cut off while the hint was
-// still being answered, and because a timed-out query is retried by the next
-// call, a loaded Broker would fail every poll of the wait. The seven seconds
-// are a three-second handler budget plus the three-second hint and a second of
-// margin. The three-second handler budget is what every handler except the
-// topic tools uses; a topic handler bounds one Broker RPC at topicRPCTimeout,
-// ten seconds (internal/mcpserver/topics.go:16), so a topic tool call polled
-// from a wait uses TopicCallPollBound instead. The bound stays far below
-// sessionCallBound, so a stalled call cannot turn a bounded wait into a
-// sixty-second hang.
+// Each product handler bounds its Broker RPC with an unexported constant in
+// internal/mcpserver. The e2e package cannot read those constants, so each one
+// is repeated here as a mirror and TestMirroredProductTimersMatch fails when a
+// mirror drifts from the product. Every poll bound below is derived from a
+// mirror, so a product change reaches the harness through one edit.
+const (
+	// handlerRPCTimeoutMirror mirrors internal/mcpserver/state.go's
+	// handlerRPCTimeout. It bounds one Broker RPC of a tool whose Broker side
+	// does no network I/O and runs no timer: get_config, set_config,
+	// set_broker_online, list_brokers, disconnect_broker and create_pairing_key.
+	handlerRPCTimeoutMirror = 10 * time.Second
+	// listAgentsRPCTimeoutMirror mirrors internal/mcpserver/handlers_messaging.go's
+	// listAgentsRPCTimeout. The Broker refreshes every session it knows with a
+	// one-second sessionCallTimeout, so the handler allows about twenty.
+	listAgentsRPCTimeoutMirror = 20 * time.Second
+	// sendMessageRPCTimeoutMirror mirrors sendMessageRPCTimeout: the Broker
+	// reports the result within send.request_timeout plus a ten-second margin.
+	sendMessageRPCTimeoutMirror = 30 * time.Second
+	// connectBrokerRPCTimeoutMirror mirrors connectBrokerRPCTimeout: dialing,
+	// the pairing handshake and the link Hello, plus a five-second margin.
+	connectBrokerRPCTimeoutMirror = 30 * time.Second
+	// updateBrokerRPCTimeoutMirror mirrors updateBrokerRPCTimeout: the version
+	// lookup, the preflight checks, the download and the post-update step.
+	updateBrokerRPCTimeoutMirror = 4 * time.Minute
+	// topicRPCTimeoutMirror mirrors internal/mcpserver/topics.go's
+	// topicRPCTimeout, which bounds every Broker call one topic tool makes,
+	// list_topics included.
+	topicRPCTimeoutMirror = 10 * time.Second
+	// updateHintTimeoutMirror mirrors internal/mcpserver/updatehint.go's
+	// updateStatusTimeout, the Broker query the update hint runs inside the same
+	// tools/call after the handler returns.
+	updateHintTimeoutMirror = 3 * time.Second
+)
+
+// pollBoundMargin covers one MCP round trip and the poll interval
+// (PollInterval, 50ms), so a call that answers close to its handler bound is
+// not cut off by scheduling noise.
+const pollBoundMargin = time.Second
+
+// The poll bounds bound one MCP tool call made from inside a test wait. Each is
+// the tool's handler bound plus the update hint that runs inside the same
+// tools/call after the handler and one margin: the call must be allowed to run
+// as long as the product itself allows, or a healthy handler on a loaded
+// Broker would be cut off and reported as a stall. A call that reaches its own
+// poll bound is a stall and fails the window; the rule is kept for every tool.
+const (
+	// HandlerRPCPollBound bounds one call of a tool whose handler makes one
+	// Broker RPC bounded at handlerRPCTimeout.
+	HandlerRPCPollBound = handlerRPCTimeoutMirror + updateHintTimeoutMirror + pollBoundMargin
+	// ListAgentsPollBound bounds one list_agents call, whose handler may refresh
+	// every known session for up to listAgentsRPCTimeout.
+	ListAgentsPollBound = listAgentsRPCTimeoutMirror + updateHintTimeoutMirror + pollBoundMargin
+	// SendMessagePollBound bounds one send_message call.
+	SendMessagePollBound = sendMessageRPCTimeoutMirror + updateHintTimeoutMirror + pollBoundMargin
+	// ConnectBrokerPollBound bounds one connect_broker call.
+	ConnectBrokerPollBound = connectBrokerRPCTimeoutMirror + updateHintTimeoutMirror + pollBoundMargin
+	// UpdateBrokerPollBound bounds one update_broker call. The handler's own
+	// bound is four minutes, so a wait that brings a stalled update back under
+	// observation must allow for it; no e2e wait polls update_broker today.
+	UpdateBrokerPollBound = updateBrokerRPCTimeoutMirror + updateHintTimeoutMirror + pollBoundMargin
+	// TopicCallPollBound bounds one topic tool call: the handler may spend
+	// topicRPCTimeout before the update hint runs.
+	TopicCallPollBound = topicRPCTimeoutMirror + updateHintTimeoutMirror + pollBoundMargin
+)
+
+// ListAgentsRPCTimeout is the handler bound of one list_agents Broker RPC, the
+// product's listAgentsRPCTimeout in internal/mcpserver. A stalled list_agents
+// call ends here, before the harness poll bound, and this bound does not depend
+// on the runner's scheduling; a test that measures the stall can assert the call
+// ran for at least this long.
+const ListAgentsRPCTimeout = listAgentsRPCTimeoutMirror
+
+// ToolCallPollBound is the fallback for a call that no product handler bounds:
+// a direct local-interface read in a short negative window, and an MCP tool
+// that has no handler bound (no current tool is such a tool, because every one
+// of the thirteen has a handler bound above). ToolPollBound returns a tool's
+// own bound and never this value for a known tool, so this constant is not the
+// bound of any tool call. Seven seconds is short on purpose: the local socket
+// answers from memory, so a call that needs longer is not answering, and a
+// stalled read must not outlast a negative window that is only a few seconds
+// long.
 const ToolCallPollBound = 7 * time.Second
 
-// topicRPCTimeoutMirror mirrors internal/mcpserver/topics.go's unexported
-// topicRPCTimeout, which bounds every Broker call one topic tool makes,
-// list_topics included. The e2e package cannot read the unexported constant,
-// so the value is repeated here and must be kept in step with it.
-const topicRPCTimeoutMirror = 10 * time.Second
+// ToolPollBound returns the single-call bound for one MCP tool made from inside
+// a test wait. The bound is the tool's handler bound plus the update hint and
+// one margin, so a call that uses its handler's full time still answers before
+// the harness cuts it. A name that is not a known tool returns
+// ToolCallPollBound.
+func ToolPollBound(tool string) time.Duration {
+	switch tool {
+	case "list_agents":
+		return ListAgentsPollBound
+	case "send_message":
+		return SendMessagePollBound
+	case "connect_broker":
+		return ConnectBrokerPollBound
+	case "update_broker":
+		return UpdateBrokerPollBound
+	case "list_topics", "join_topic", "leave_topic":
+		return TopicCallPollBound
+	case "get_config", "set_config", "set_broker_online", "list_brokers", "disconnect_broker", "create_pairing_key":
+		return HandlerRPCPollBound
+	}
+	return ToolCallPollBound
+}
 
-// updateHintTimeoutMirror mirrors internal/mcpserver/updatehint.go's
-// updateStatusTimeout, the Broker query the update hint runs inside the same
-// tools/call after the handler returns.
-const updateHintTimeoutMirror = 3 * time.Second
+// ToolWaitBound returns the shortest total bound a wait that polls tool should
+// use: two poll bounds, so one stalled call leaves a second poll to observe the
+// state the first could not. A shorter wait still makes the call at its full
+// poll bound, so a stalled call can outlast the wait by up to one poll bound
+// and then ends it instead of being retried.
+func ToolWaitBound(tool string) time.Duration {
+	return 2 * ToolPollBound(tool)
+}
 
-// TopicCallPollBound bounds one topic tool call made from inside a test wait.
-// The handler may spend topicRPCTimeout before the update hint runs, and the
-// hint adds updateHintTimeoutMirror inside the same tools/call. The extra
-// second covers one MCP round trip and the poll interval (PollInterval,
-// 50ms), so a call that answers close to its bound is not cut off by
-// scheduling noise.
-const TopicCallPollBound = topicRPCTimeoutMirror + updateHintTimeoutMirror + time.Second
-
-// ToolCallWaitBound is the shortest total bound an Eventually that makes a
-// poll-bounded call should use: two poll bounds, so one stalled call leaves a
-// second poll to observe the state the first could not. A shorter wait still
-// makes the call at its full poll bound, so a stalled call can outlast the wait
-// by up to one poll bound and then ends it instead of being retried.
+// ToolCallWaitBound is ToolWaitBound for a call with no product handler bound,
+// the same fallback ToolCallPollBound serves.
 const ToolCallWaitBound = 2 * ToolCallPollBound
 
-// TopicCallWaitBound is ToolCallWaitBound for a wait that polls a topic tool:
-// two TopicCallPollBounds, so one slow join or leave leaves a second poll.
+// ListAgentsWaitBound is ToolWaitBound for list_agents, whose handler bound is
+// larger than the fallback.
+const ListAgentsWaitBound = 2 * ListAgentsPollBound
+
+// TopicCallWaitBound is ToolWaitBound for a wait that polls a topic tool: two
+// TopicCallPollBounds, so one slow join or leave leaves a second poll.
 const TopicCallWaitBound = 2 * TopicCallPollBound
 
 // LocalOptions configures a node that runs its processes directly on the
@@ -512,13 +593,13 @@ func (s *Session) CallErrWithin(bound time.Duration, tool string, args map[strin
 	return s.impl.callErrWithin(bound, tool, args)
 }
 
-// PollCall invokes a tool from inside a wait. The call is bounded by
-// ToolCallPollBound, and a call that reaches that bound is marked as a stall
-// rather than reported as an unobservable sample. The bound does not shrink
-// when the wait has less time left, so a slow call near the end of a window is
-// not cut short by the window; a stalled call can therefore outlast its window
-// by up to one poll bound. A transport or protocol failure is returned as an
-// error instead of failing the test, so the wait can poll again.
+// PollCall invokes a tool from inside a wait. The call is bounded by the
+// tool's own ToolPollBound, and a call that reaches that bound is marked as a
+// stall rather than reported as an unobservable sample. The bound does not
+// shrink when the wait has less time left, so a slow call near the end of a
+// window is not cut short by the window; a stalled call can therefore outlast
+// its window by up to one poll bound. A transport or protocol failure is
+// returned as an error instead of failing the test, so the wait can poll again.
 //
 // Every failure is logged with the session, the tool and how long the call
 // took. A wait that recovers on its next poll would otherwise pass silently;
@@ -527,12 +608,11 @@ func (s *Session) CallErrWithin(bound time.Duration, tool string, args map[strin
 // stalled leaves what evidence it produces; later failures add only the line.
 func (s *Session) PollCall(t testing.TB, deadline time.Time, tool string, args map[string]any) (Result, error) {
 	t.Helper()
-	return s.PollCallWithin(t, deadline, ToolCallPollBound, tool, args)
+	return s.PollCallWithin(t, deadline, ToolPollBound(tool), tool, args)
 }
 
 // PollCallWithin is PollCall with a bound chosen by the caller instead of
-// ToolCallPollBound. A topic tool uses TopicCallPollBound: its handler may spend
-// topicRPCTimeout before the update hint runs. Every call runs its own pollBound
+// ToolPollBound. Every call runs its own pollBound
 // in full; the bound is not shortened when the wait has less time left, because
 // a call cut short by the window would report a healthy Broker as unobservable
 // on a loaded runner. The window therefore overruns by at most one pollBound

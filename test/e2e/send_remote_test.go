@@ -326,7 +326,7 @@ func TestRemoteSendFaults(t *testing.T) {
 		defer duplicate.End(t)
 
 		var ref string
-		harness.EventuallyPoll(t, srWaitBound, "b1's address carries its ref", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "b1's address carries its ref", func(deadline time.Time) (bool, string) {
 			out, state := srListAgentsPoll(t, deadline, b1)
 			if state != "" {
 				return false, state
@@ -568,7 +568,7 @@ func srSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 // srWaitRegistered waits until the session lists itself under name.
 func srWaitRegistered(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, srWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
 		out, state := srListAgentsPoll(t, deadline, s)
 		if state != "" {
 			return false, state

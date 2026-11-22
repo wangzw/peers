@@ -353,7 +353,7 @@ func termAdminRequireDenied(t *testing.T, what, text string) {
 // with its Broker.
 func termAdminWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, termAdminCallWait, "the session of "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session of "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()

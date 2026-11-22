@@ -26,14 +26,13 @@ const (
 	aliasSysTopic = "alias"
 	// aliasSysAliceConfig is the user Broker's configuration file.
 	aliasSysAliceConfig = "/home/alice/.peers/config.yaml"
-	// aliasSysRelinkBound bounds the user Broker's redial after a
-	// restart: link.reconnect_max is 2s and the link is up the moment the
-	// system Broker lists alice's agent again, so 2s + 1s covers it.
-	// No product timer is longer, so this is the whole wait.
+	// aliasSysRelinkBound is the product timer for the user Broker's redial
+	// after a restart: link.reconnect_max is 2s and the link is up the moment
+	// the system Broker lists alice's agent again, so 2s + 1s covers it.
+	// aliasSysRelinkWait adds harness.EventTimeout as the fallback for a frame
+	// wait; a wait that polls list_agents uses ListAgentsWaitBound instead.
 	aliasSysRelinkBound = 3 * time.Second
-	// aliasSysRecoverBound is the fallback for one observation after the link
-	// is up. The observation is event driven and no product timer governs it.
-	aliasSysRecoverBound = harness.EventTimeout
+	aliasSysRelinkWait  = aliasSysRelinkBound + harness.EventTimeout
 )
 
 // TestREQBrokerPairing002_DefaultAliasHostAndAccount covers both forms of
@@ -86,9 +85,9 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 	}
 
 	// The system Broker: the hostname's first label alone.
-	aliasSysWaitSuffix(t, aliceSession, "x1", "@"+aliasSysSystemAlias, aliasSysRelinkBound)
+	aliasSysWaitSuffix(t, aliceSession, "x1", "@"+aliasSysSystemAlias)
 	// The user Broker: the first label and the account.
-	aliasSysWaitSuffix(t, rootSession, "a1", "@"+aliasSysUserAlias, aliasSysRelinkBound)
+	aliasSysWaitSuffix(t, rootSession, "a1", "@"+aliasSysUserAlias)
 	aliasSysRequireSelf(t, aliceSession, "a1", "@"+aliasSysUserAlias)
 
 	// A message crosses the two Brokers by the addresses their default aliases
@@ -98,9 +97,9 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 	if text, isError := aliceSession.Call(t, "send_message", map[string]any{"to": rootSelf, "message": "alias-ping"}); isError {
 		t.Fatalf("send_message from alice to root: %s", text)
 	}
-	ping, ok := rootSession.Fake.WaitFrame(aliasSysRelinkBound)
+	ping, ok := rootSession.Fake.WaitFrame(aliasSysRelinkWait)
 	if !ok {
-		t.Fatalf("root's session did not receive the message within %s", aliasSysRelinkBound)
+		t.Fatalf("root's session did not receive the message within %s", aliasSysRelinkWait)
 	}
 	if ping.FromName != aliceSelf {
 		t.Fatalf("the message is signed %q, want alice's address %q", ping.FromName, aliceSelf)
@@ -111,9 +110,9 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 	if text, isError := rootSession.Call(t, "send_message", map[string]any{"to": ping.FromName, "message": "alias-pong"}); isError {
 		t.Fatalf("send_message from root to alice: %s", text)
 	}
-	pong, ok := aliceSession.Fake.WaitFrame(aliasSysRelinkBound)
+	pong, ok := aliceSession.Fake.WaitFrame(aliasSysRelinkWait)
 	if !ok {
-		t.Fatalf("alice's session did not receive the reply within %s", aliasSysRelinkBound)
+		t.Fatalf("alice's session did not receive the reply within %s", aliasSysRelinkWait)
 	}
 	if pong.FromName != rootSelf {
 		t.Fatalf("the reply is signed %q, want root's address %q", pong.FromName, rootSelf)
@@ -153,19 +152,20 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 			e2eSysWaitRegistered(t, aliceSession)
 			e2eSysJoinTopic(t, aliceSession, aliasSysTopic)
 
-			aliasSysWaitSuffix(t, rootSession, "a1", "@"+aliasSysUserAlias, aliasSysRelinkBound)
+			aliasSysWaitSuffix(t, rootSession, "a1", "@"+aliasSysUserAlias)
 			aliasSysRequireSelf(t, aliceSession, "a1", "@"+aliasSysUserAlias)
 			// The system alias is untouched by the user restart.
-			aliasSysWaitSuffix(t, aliceSession, "x1", "@"+aliasSysSystemAlias, aliasSysRecoverBound)
+			aliasSysWaitSuffix(t, aliceSession, "x1", "@"+aliasSysSystemAlias)
 		})
 	}
 }
 
 // aliasSysWaitSuffix waits until session lists an agent named name whose
-// address ends with suffix.
-func aliasSysWaitSuffix(t *testing.T, session *syscontainer.Session, name, suffix string, bound time.Duration) {
+// address ends with suffix. The wait derives its bound from list_agents, the
+// tool it polls, so a caller cannot pass a shorter one.
+func aliasSysWaitSuffix(t *testing.T, session *syscontainer.Session, name, suffix string) {
 	t.Helper()
-	harness.EventuallyPoll(t, bound, "the address of "+name+" seen by "+session.Account+" ends with "+suffix, func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the address of "+name+" seen by "+session.Account+" ends with "+suffix, func(deadline time.Time) (bool, string) {
 		out, state := e2eSysListAgentsPoll(t, deadline, session, map[string]any{"topic": aliasSysTopic})
 		if state != "" {
 			return false, state

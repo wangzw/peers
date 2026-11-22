@@ -48,17 +48,16 @@ func journeyNodeAddr(c *harness.Cluster, node string) string {
 // idempotent tool polls with Session.PollCallWithin, so a transport error is
 // retried; any other tool is a side effect and goes through
 // Session.CallUntilOK, which fails on a transport error instead of repeating a
-// call the server may already have applied. A topic tool spends
-// topicRPCTimeout inside the handler before the update hint runs, so it polls
-// with harness.TopicCallPollBound and the wait gets harness.TopicCallWaitBound.
+// call the server may already have applied. Each tool polls with its own
+// harness.ToolPollBound, and the wait uses at least harness.ToolWaitBound(tool).
 func journeyCallOK(t *testing.T, session *harness.Session, tool string, args map[string]any, bound time.Duration) harness.Result {
 	t.Helper()
 	if !pollableTool(tool) {
 		return session.CallUntilOK(t, bound, tool, args)
 	}
-	pollBound, waitBound := harness.ToolCallPollBound, bound
-	if brokerTopicTool(tool) {
-		pollBound, waitBound = harness.TopicCallPollBound, harness.TopicCallWaitBound
+	pollBound, waitBound := harness.ToolPollBound(tool), bound
+	if want := harness.ToolWaitBound(tool); waitBound < want {
+		waitBound = want
 	}
 	var result harness.Result
 	harness.EventuallyPoll(t, waitBound, "calling "+tool, func(deadline time.Time) (bool, string) {
@@ -235,7 +234,7 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 		// each other. Step 7: list_agents shows A's Agent.
 		journeyCallOK(t, scout, "join_topic", map[string]any{"name": "infra-help"}, harness.EventTimeout)
 		var target string
-		harness.EventuallyPoll(t, discBound(1), "C sees A's Agent in infra-help", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, max(discBound(1), harness.ListAgentsWaitBound), "C sees A's Agent in infra-help", func(deadline time.Time) (bool, string) {
 			out, state := pairListAgentsPoll(t, deadline, scout)
 			if state != "" {
 				return false, state
@@ -280,7 +279,7 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 		// The reverse view: A accepted C's connection and sees its Agent.
 		journeyWaitPeer(t, infra, "hostC.peer", "acceptor", discBound(1))
 		var scoutAddr string
-		harness.EventuallyPoll(t, discBound(1), "A sees scout in infra-help", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, max(discBound(1), harness.ListAgentsWaitBound), "A sees scout in infra-help", func(deadline time.Time) (bool, string) {
 			out, state := pairListAgentsPoll(t, deadline, infra)
 			if state != "" {
 				return false, state
