@@ -677,6 +677,61 @@ func TestRecordListFetchesOwnHigherVersionAtOnce(t *testing.T) {
 	}
 }
 
+// TestRecordListDefersExpiredOwnRecordAcceptedFromLink checks that the
+// replacement window also applies to a record published by the local Broker
+// once it came back from a link: such a record carries an acceptance instant
+// even though the store skips rememberAccepted for it. When it has expired and
+// a peer lists its identifier while the window is open, the fetch must wait for
+// the window to end rather than run at once.
+func TestRecordListDefersExpiredOwnRecordAcceptedFromLink(t *testing.T) {
+	net := newFakeNet()
+	b := newReconcileNode(t, net, 1)
+	p := newReconcileNode(t, net, 2)
+
+	net.Connect(p.fp, b.fp)
+	net.Settle(t)
+
+	clk := refetchClock(t, b)
+	// B's own card, short-lived so it expires while the replacement window is
+	// still open.
+	v1 := mustSignRecord(t, 1, recKindCard, "", 1, dirTestNow().Add(2*time.Second), recTestCard("self"))
+	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
+
+	held, ok := reconcileLookup(b, v1.id)
+	if !ok {
+		t.Fatalf("B does not hold its own record after accepting it from a link")
+	}
+	if held.source.IsZero() || held.acceptedAt.IsZero() {
+		t.Fatalf("own record accepted from a link has source=%v acceptedAt=%v, want both non-zero",
+			held.source, held.acceptedAt)
+	}
+
+	clk.Advance(3 * time.Second) // v1 has expired, its window is still open
+
+	v2 := mustSignRecord(t, 1, recKindCard, "", 2, dirTestNow().Add(recordTTL), recTestCard("self"))
+	reconcileInject(t, p, v2)
+	clearReconcileSent(b.ep)
+
+	b.d.handleRecordList(p.fp, reconcileListPayload(t, v2.recordVersion()))
+	b.d.inflight.Wait()
+	net.Settle(t)
+	if got := reconcileFrames(b.ep, p.fp, directorypb.KindRecordRequest); got != 0 {
+		t.Fatalf("B requested the expired own record %d times inside the window, want 0", got)
+	}
+	if got := refetchHeldVersion(b, v1.id); got != 1 {
+		t.Fatalf("held version = %d inside the window, want the expired v1 to stay", got)
+	}
+
+	clk.WaitTimers(t, 1)
+	clk.Advance(directoryReplaceInterval() - 3*time.Second)
+	reconcileAwait(t, net, "B to fetch the expired own record once its window ends", func() bool {
+		return refetchHeldVersion(b, v1.id) == 2
+	})
+	if got := refetchRequestsFor(t, b.ep, p.fp, v1.id); got != 1 {
+		t.Fatalf("B refetched the identifier %d times, want exactly 1", got)
+	}
+}
+
 func TestRequestHandlerReturnsHeldOnly(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)

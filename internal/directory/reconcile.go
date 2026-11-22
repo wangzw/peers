@@ -55,10 +55,7 @@ func (d *Directory) registerReconcile() {
 // merge into that peer's pending set, and the fetch loop sends them when the
 // outstanding request finishes. Records is never sent here.
 func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
-	d.mu.RLock()
-	live := !d.closed && d.up[peer]
-	d.mu.RUnlock()
-	if !live {
+	if !d.linkUp(peer) {
 		return
 	}
 
@@ -84,29 +81,22 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 		if !ok {
 			continue
 		}
-		held, ok := d.st.get(id)
-		if !ok || isExpired(held.expires, now) {
-			// The record may have expired and been purged, but the store still
-			// remembers when the identifier was accepted from a link. Fetching
-			// before that interval ends would only be dropped again.
-			if at, seen := d.st.replaceNotBefore(id); seen && now.Before(at.Add(replaceInterval)) {
-				if deferred == nil {
-					deferred = make(map[recordID]time.Time)
-				}
-				deferred[id] = at.Add(replaceInterval)
+		held, heldOK := d.st.get(id)
+		if live := heldOK && !isExpired(held.expires, now); live {
+			switch {
+			case item.GetVersion() == held.version:
+				continue
+			case item.GetVersion() < held.version:
+				tellBack = append(tellBack, held.recordVersion())
 				continue
 			}
-			fetchIDs = append(fetchIDs, id)
-			continue
-		}
-		switch {
-		case item.GetVersion() > held.version:
-			// A record published by the local Broker is exempt: a peer returning
-			// a higher version only raises the issued version, so it is fetched
-			// at once as the store allows it to replace.
+			// The held version is older and still live. A record published by
+			// the local Broker is exempt: a peer returning a higher version
+			// only raises the issued version, so it is fetched at once as the
+			// store allows it to replace. Any other record whose held version
+			// was accepted from a link less than the replacement interval ago
+			// is deferred until that interval ends.
 			if id.publisher != d.st.self && !held.acceptedAt.IsZero() && now.Before(held.acceptedAt.Add(replaceInterval)) {
-				// The held version cannot be replaced yet. Remember the
-				// identifier so it is fetched once the window ends.
 				if deferred == nil {
 					deferred = make(map[recordID]time.Time)
 				}
@@ -114,9 +104,23 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 				continue
 			}
 			fetchIDs = append(fetchIDs, id)
-		case item.GetVersion() < held.version:
-			tellBack = append(tellBack, held.recordVersion())
+			continue
 		}
+		// The local record is missing or expired, so the peer's version is
+		// worth fetching, unless the identifier was accepted from a link less
+		// than the replacement interval ago. The store remembers that instant
+		// even after the record expires and is purged, and fetching before the
+		// interval ends would only be dropped again. This applies to a record
+		// published by the local Broker too: a version that came back from a
+		// link carries an acceptance instant like any other.
+		if at, seen := d.st.replaceNotBefore(id); seen && now.Before(at.Add(replaceInterval)) {
+			if deferred == nil {
+				deferred = make(map[recordID]time.Time)
+			}
+			deferred[id] = at.Add(replaceInterval)
+			continue
+		}
+		fetchIDs = append(fetchIDs, id)
 	}
 	d.mu.RUnlock()
 
@@ -139,10 +143,7 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 // truncation or an oversized frame. A frame from a peer whose link is not
 // established gets an empty answer.
 func (d *Directory) handleRecordRequest(_ context.Context, peer Fingerprint, payload []byte) (uint32, []byte) {
-	d.mu.RLock()
-	live := !d.closed && d.up[peer]
-	d.mu.RUnlock()
-	if !live {
+	if !d.linkUp(peer) {
 		return directorypb.KindRecords, nil
 	}
 
@@ -229,10 +230,7 @@ func splitRecords(recs []*directorypb.Record, budget int) [][]*directorypb.Recor
 // reply that did not fit in one frame, so their records are accepted only if
 // this direction requested them and their accept window is still open.
 func (d *Directory) handleRecordsState(peer Fingerprint, payload []byte) {
-	d.mu.RLock()
-	live := !d.closed && d.up[peer]
-	d.mu.RUnlock()
-	if !live {
+	if !d.linkUp(peer) {
 		return
 	}
 	var recs directorypb.Records
@@ -259,10 +257,7 @@ type cardEvent struct {
 // write at once. The records are parsed outside the lock; the acceptance and the
 // bookkeeping run under one write lock.
 func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
-	d.mu.RLock()
-	live := !d.closed && d.up[peer]
-	d.mu.RUnlock()
-	if !live {
+	if !d.linkUp(peer) {
 		return
 	}
 

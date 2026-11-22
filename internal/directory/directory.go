@@ -241,29 +241,48 @@ func (d *Directory) broadcast(vs []*directorypb.RecordVersion, except Fingerprin
 		return bytes.Compare(peers[i][:], peers[j][:]) < 0
 	})
 
-	payload, err := proto.Marshal(&directorypb.RecordList{Records: vs})
-	if err != nil {
-		d.log.Error("encode record list", "error", err)
+	payload, ok := d.marshalRecordList(vs)
+	if !ok {
 		return
 	}
 	for _, peer := range peers {
-		if err := d.links.Send(peer, directorypb.KindRecordList, payload); err != nil {
-			d.log.Debug("send record list failed", "peer", peer.String(), "error", err)
-		}
+		d.sendRecordListPayload(peer, payload)
 	}
 }
 
-// sendList sends one RecordList frame to peer. A send on a link that just went
-// down is ignored with a debug log.
+// sendList sends one RecordList frame to peer.
 func (d *Directory) sendList(peer Fingerprint, vs []*directorypb.RecordVersion) {
+	payload, ok := d.marshalRecordList(vs)
+	if !ok {
+		return
+	}
+	d.sendRecordListPayload(peer, payload)
+}
+
+// marshalRecordList encodes vs as a RecordList payload. It logs and reports
+// false when the frame cannot be encoded.
+func (d *Directory) marshalRecordList(vs []*directorypb.RecordVersion) ([]byte, bool) {
 	payload, err := proto.Marshal(&directorypb.RecordList{Records: vs})
 	if err != nil {
 		d.log.Error("encode record list", "error", err)
-		return
+		return nil, false
 	}
+	return payload, true
+}
+
+// sendRecordListPayload sends an encoded RecordList frame to peer. A send on a
+// link that just went down is ignored with a debug log.
+func (d *Directory) sendRecordListPayload(peer Fingerprint, payload []byte) {
 	if err := d.links.Send(peer, directorypb.KindRecordList, payload); err != nil {
 		d.log.Debug("send record list failed", "peer", peer.String(), "error", err)
 	}
+}
+
+// linkUp reports whether peer's link is established and the directory is open.
+func (d *Directory) linkUp(peer Fingerprint) bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return !d.closed && d.up[peer]
 }
 
 // afterPersistLock is a test seam invoked each time persistIfDirty holds
@@ -306,6 +325,13 @@ func (d *Directory) persistIfDirty() {
 		d.mu.Unlock()
 		d.log.Error("persist directory file failed", "error", err)
 	}
+}
+
+// commitOwn persists a pending change and broadcasts freshly signed local
+// versions to every established peer. The caller must have released d.mu.
+func (d *Directory) commitOwn(vs []*directorypb.RecordVersion) {
+	d.persistIfDirty()
+	d.broadcast(vs, Fingerprint{})
 }
 
 // persistDue reports whether a maintenance pass may write the directory now. It

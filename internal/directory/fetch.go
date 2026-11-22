@@ -98,22 +98,14 @@ func (d *Directory) scheduleFetch(peer Fingerprint, ids []recordID) {
 		d.mu.Unlock()
 		return
 	}
-	pr := d.recon[peer]
-	if pr == nil {
-		pr = newPeerReconcile()
-		d.recon[peer] = pr
-	}
+	pr := d.reconcileForLocked(peer)
 	for _, id := range ids {
-		if _, ok := pr.inflight[id]; ok {
+		if !enqueuePendingLocked(pr, id, limit) {
+			if len(pr.pending) >= limit {
+				break
+			}
 			continue
 		}
-		if _, ok := pr.pending[id]; ok {
-			continue
-		}
-		if len(pr.pending) >= limit {
-			break
-		}
-		pr.pending[id] = struct{}{}
 		// The identifier is being fetched now, so its deferred entry is moot.
 		clearRefetchLocked(pr, id)
 	}
@@ -141,6 +133,34 @@ func (d *Directory) startFetchLocked(pr *peerReconcile) bool {
 	return true
 }
 
+// reconcileForLocked returns peer's reconcile state, creating an empty one when
+// the peer has none. The caller must hold d.mu.
+func (d *Directory) reconcileForLocked(peer Fingerprint) *peerReconcile {
+	pr := d.recon[peer]
+	if pr == nil {
+		pr = newPeerReconcile()
+		d.recon[peer] = pr
+	}
+	return pr
+}
+
+// enqueuePendingLocked adds id to pr's pending set unless it is already in
+// flight or pending or the queue already holds limit identifiers. It reports
+// whether id was added. The caller must hold d.mu.
+func enqueuePendingLocked(pr *peerReconcile, id recordID, limit int) bool {
+	if _, ok := pr.inflight[id]; ok {
+		return false
+	}
+	if _, ok := pr.pending[id]; ok {
+		return false
+	}
+	if len(pr.pending) >= limit {
+		return false
+	}
+	pr.pending[id] = struct{}{}
+	return true
+}
+
 // noteRefetch records identifiers whose replacement the interval held back so
 // that each is fetched once when its window ends. An identifier already
 // recorded keeps the earlier deadline, and the set holds at most
@@ -159,11 +179,7 @@ func (d *Directory) noteRefetch(peer Fingerprint, deadlines map[recordID]time.Ti
 		d.mu.Unlock()
 		return
 	}
-	pr := d.recon[peer]
-	if pr == nil {
-		pr = newPeerReconcile()
-		d.recon[peer] = pr
-	}
+	pr := d.reconcileForLocked(peer)
 	start := false
 	for id, deadline := range deadlines {
 		if d.noteRefetchLocked(pr, id, deadline, limit) {
@@ -303,17 +319,9 @@ func (d *Directory) refetchLoop(peer Fingerprint, pr *peerReconcile) {
 		start := false
 		if len(due) > 0 {
 			for _, id := range due {
-				if _, ok := pr.inflight[id]; ok {
-					continue
-				}
-				if _, ok := pr.pending[id]; ok {
-					continue
-				}
-				if len(pr.pending) >= limit {
-					// The queue is full; the next reconciliation pass retries.
-					continue
-				}
-				pr.pending[id] = struct{}{}
+				// An identifier that does not fit waits for the next
+				// reconciliation pass.
+				enqueuePendingLocked(pr, id, limit)
 			}
 			start = d.startFetchLocked(pr)
 		}
