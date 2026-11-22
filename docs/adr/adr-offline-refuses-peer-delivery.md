@@ -1,48 +1,48 @@
-# Broker 下线时拒绝对端的投递
+# Refuse peer delivery while the Broker is offline
 
-## 背景
+## Context
 
-[Broker](../glossary.md) 需要一种状态，让用户在不解除配对、不删除链路的情况下暂时不接收其他主机发来的消息。链路、成员关系与名录对账要继续工作，本机 Agent 之间的消息与发往对端的消息也不能停。消息投递是同步的，发送调用必须得到确定结果：成功表示已写入目标会话，写入不了要返回未送达。接收方对每条投递请求都要给出答复。
+A [Broker](../glossary.md) needs a state that lets the user stop receiving messages from other hosts for a while without unpairing or removing links. Links, membership and directory reconciliation must keep working, and neither messages between local agents nor messages sent to a peer may stop. Message delivery is synchronous, so a send call must get a definite result: success means the message was written to the target session, and a write that cannot happen returns not delivered. The receiver must answer every delivery request.
 
-## 考虑过的选项
+## Options Considered
 
-### 断开全部链路
+### Close every link
 
-下线时关闭与全部对端的链路。
+On going offline, close the links to every peer.
 
-**否决**：对端会按退避反复重连，名录对账与成员交换停止，与本状态要求链路照常相冲突。
+**Rejected**: Peers keep reconnecting with backoff, directory reconciliation and membership exchange stop, and this conflicts with the requirement that links keep working.
 
-### 改为不公开
+### Turn the Broker private
 
-下线时把 Broker 改为不公开。
+On going offline, make the Broker private.
 
-**否决**：不公开只影响名片的传播与公开 topic 的声明，已配对的对端照常投递，达不到拒绝的目的。
+**Rejected**: Being private affects only the propagation of the broker card and public topic declarations, and paired peers still deliver as before, so it does not achieve the refusal.
 
-### 同时拒绝本机消息
+### Refuse local messages as well
 
-下线时把本机 Agent 之间的消息也拒绝。
+On going offline, refuse messages between local agents too.
 
-**否决**：本机消息不经过任何链路，与暂时不接收其他主机的消息无关；拒绝它会使同一主机上的会话也无法协作。
+**Rejected**: Local messages cross no link and have nothing to do with a temporary stop on messages from other hosts; refusing them also keeps sessions on the same host from working together.
 
-### 静默丢弃对端的投递并返回成功
+### Silently drop peer deliveries and return success
 
-**否决**：成功表示消息已写入目标会话，静默丢弃会使发送方以为消息已送达，违反发送结果的约定。
+**Rejected**: Success means the message was written to the target session, and a silent drop makes the sender believe the message was delivered, violating the send-result contract.
 
-### 只拒绝对端的投递并以错误码告知
+### Refuse only peer deliveries and report an error code
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 增加一个保存在配置中的 `broker.offline` 布尔项。为真时，Broker 在收到对端的投递请求后、写去重表之前以 `broker_offline` 应答，说明含本机生效别名与拒绝原因，来源 Broker 为本 Broker；消息不进去重表，不写审计，以 Debug 级记一条运行日志。链路的建立与重新建立、topic 成员关系的交换、名录对账与新的配对都照常完成。本机 Agent 之间的发送与发往对端的发送不检查这一项。对端经发送结果中的 `broker_offline` 得知本 Broker 下线。
+The Broker adds a boolean `broker.offline` kept in configuration. When it is true, the Broker answers `broker_offline` after receiving a peer's delivery request and before writing the dedup table; the description carries this host's effective alias and the reason for the refusal, with this Broker as the source Broker. The message does not enter the dedup table, no audit is written, and one run log line is recorded at Debug level. Links are established and re-established, topic membership is exchanged, directory reconciliation and new pairings all complete as usual. Sends between local agents and sends to a peer do not check this item. A peer learns that this Broker is offline from `broker_offline` in the send result.
 
-## 后果
+## Consequences
 
-用户可以在保留链路与配对的情况下暂停接收其他主机的消息。发送方得到确定的拒绝，而不是超时或未知。
+The user can pause receiving messages from other hosts while keeping links and pairings. The sender gets a definite refusal rather than a timeout or an unknown result.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 下线一侧的 Agent 能发出消息，却收不到对方的回复；需要双向通信时先上线。
-- 链路状态、名录与 `list_brokers` 的结果不反映下线，对端只能从发送被拒得知；要知道对端是否下线，必须发一条消息。
-- 未升级的发送方把不认识的错误码按 `internal` 处理，只能从说明文字看出原因。
-- 下线不写审计，只在运行日志以 Debug 级记录；频繁的投递在被拒时不会留下审计记录。
+- Agents on the offline side can send messages but receive no reply from the other side; two-way communication requires going online first.
+- Link state, the directory and the result of `list_brokers` do not reflect going offline, and a peer learns it only from a refused send; finding out whether a peer is offline takes sending a message.
+- A sender that has not been upgraded treats an unknown error code as `internal` and can see the reason only from the description text.
+- Going offline writes no audit and leaves only a Debug-level run log line; frequent deliveries leave no audit record when refused.

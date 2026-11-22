@@ -1,52 +1,52 @@
-# 以加盐摘要比对共同的 topic
+# Compare shared topics by a salted digest
 
-## 背景
+## Context
 
-链路两端只应就双方都有成员的 [topic](../glossary.md) 交换成员名单，并且一方独有的不公开 topic 的名字不应让对方知道。默认 topic 的名字是仓库地址，容易猜到。链路的对端是用户配对过的 Broker，但可能已被攻破或本身恶意；回送收到的摘要集合不需要知道任何 topic 名，因此摘要本身不能成为对端取得本机成员名单的途径。
+The two ends of a link should exchange rosters only for the [topics](../glossary.md) where both have members, and the name of a private topic that only one side has should stay unknown to the other. A default topic's name is the repository address, which is easy to guess. A link's peer is a Broker the user paired, but it may be compromised or itself malicious; echoing back a received set of digests takes no topic name, so the digests themselves must not become a way for a peer to obtain a local roster.
 
-## 考虑过的选项
+## Options Considered
 
-### 交换 topic 名的明文
+### Exchange topic names in plain text
 
-双方直接互报自己有成员的 topic 名，取交集。
+The two sides report to each other the names of the topics where they have members and take the intersection.
 
-**否决**：一方独有的不公开 topic 的名字会直接交给对方。
+**Rejected**: a private topic one side alone holds would hand its name straight to the other side.
 
-### 交换固定的摘要
+### Exchange fixed digests
 
-双方互报 topic 名的摘要，摘要相同即名字相同。
+The two sides report digests of topic names, and equal digests mean equal names.
 
-**否决**：摘要不随链路变化，对端可以预先算好常见仓库地址的摘要并离线比对，也可以把在一条链路上得到的摘要拿到别的链路上重放。
+**Rejected**: the digests do not change with the link, so a peer can precompute digests of common repository addresses and compare them offline, and can replay digests obtained on one link on another.
 
-### 交换只对盐值与 topic 名求摘要的加盐摘要
+### Exchange a salted digest over only the salt and the topic name
 
-链路建立时双方协商一个盐值，对“盐值加 topic 名”求摘要后交换。
+When the link is established the two sides agree on a salt and exchange a digest over "salt plus topic name".
 
-**否决**：摘要不区分方向，对端把收到的摘要集合原样回送，就与本机为它算出的集合完全相同。本机因此为每个 topic 发出成员名单，对端还能在这些摘要下伪造成员，全程不需要知道任何 topic 名。
+**Rejected**: the digest does not distinguish direction, so a peer that echoes back the received digest set unchanged matches exactly the set the local side computed for it. The local side then sends a roster for every topic, and the peer can forge members under those digests without knowing any topic name at all.
 
-### 交换绑定发送方指纹的加盐摘要
+### Exchange a salted digest bound to the sender's fingerprint
 
-链路建立时双方协商一个盐值，对“盐值、发送方指纹与 topic 名”求摘要后交换。发送方指纹是发送方的证书指纹，也就是对端在链路上看到的同一个值。
+When the link is established the two sides agree on a salt and exchange a digest over the salt, the sender's fingerprint and the topic name. The sender's fingerprint is the sender's certificate fingerprint, the same value the peer sees on the link.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-### 隐私集合求交
+### Private set intersection
 
-双方以隐私集合求交的方式直接算出共同的 topic，不交换任何摘要。
+The two sides compute their shared topics directly by private set intersection and exchange no digest at all.
 
-**否决**：离线字典攻击不是本决策要挡的威胁。摘要只在一条链路的一次建立、一个方向上有效，对端本就可以用猜测的名字在线试探，这一点已列为接受的代价；隐私集合求交引入的密码学组件和复杂度换不来对已配对 Broker 的额外保护。
+**Rejected**: an offline dictionary attack is not the threat this decision guards against. A digest is valid only for one establishment of one link and in one direction, a peer can already probe guessed names online, which is listed as an accepted cost, and the cryptographic components and complexity that private set intersection introduces buy no extra protection against a paired Broker.
 
-## 决策
+## Decision
 
-采用每个 topic 两个方向的摘要，都是 `SHA-256(盐值 ‖ 发送方指纹 ‖ topic 名)`，`‖` 表示拼接。一方发出时用自己的指纹计算，比对收到的摘要时用对方的指纹计算本机同名的 topic；双方各自计算交集，只对交集中的 topic 交换成员名单。盐值固定 64 字节，指纹固定 32 字节，拼接没有歧义。
+Adopt two digests per topic, one for each direction, both `SHA-256(salt ‖ sender fingerprint ‖ topic name)`, where `‖` denotes concatenation. A side sending computes with its own fingerprint, and a side comparing received digests computes the local topic of the same name with the peer's fingerprint; each side computes the intersection on its own and exchanges rosters only for the topics in it. The salt is fixed at 64 bytes and the fingerprint at 32 bytes, so the concatenation is unambiguous.
 
-## 后果
+## Consequences
 
-对端从摘要得不出本方独有的 topic 名。摘要绑定本次链路协商的盐值与发送方指纹：不能预先计算，不能在别的链路上重放，一个方向上的摘要也不能在另一个方向上匹配。回送收到的摘要集合与本机为对方算出的集合没有交集，不会因此多出 topic，也不能在这些摘要下伪造成员。
+A peer cannot derive from a digest a topic name this side alone holds. A digest is bound to the salt agreed for this link and the sender's fingerprint: it cannot be precomputed, cannot be replayed on another link, and a digest for one direction cannot match in the other. A received digest set echoed back does not intersect the set the local side computed for the peer, so no topic is added and no member can be forged under those digests.
 
-摘要字段的含义改变，链路协议版本随之提升。本版本的 Broker 与 0.5.0 及更早版本不能建立链路，双方按现有的版本不兼容状态拒绝连接；接受方一侧的 `list_brokers` 显示版本不兼容并带对方版本，拨号方一侧只显示版本不兼容。
+The digest field's meaning changed and the link protocol version rose with it. A Broker of this version cannot establish a link with 0.5.0 or earlier, and each side refuses the connection as it does for the existing version-incompatible state; on the acceptor side `list_brokers` shows version incompatibility with the peer's version, while the dialer side shows only version incompatibility.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 不防针对具体名字的试探：对端可以让自己的 Agent 加入一个猜测的名字，再看摘要是否相符，从而确认本方是否有成员在其中。对端是配对过的 Broker，topic 名不作为机密对待，因此接受这一点。
-- 链路每次重建都要重新交换全部摘要和成员名单。
+- It does not prevent probing a specific name: a peer can have its own agent join a guessed name and see whether the digests match, confirming whether this side has a member in it. A peer is a paired Broker and a topic name is not treated as a secret, so this is accepted.
+- Every rebuild of a link re-exchanges all digests and rosters.

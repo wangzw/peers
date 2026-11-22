@@ -1,43 +1,43 @@
-# 链路上的消息体沿用 A2A 的 Message 结构
+# Reuse A2A's Message structure as the link message body
 
-## 背景
+## Context
 
-系统在 [Broker](../glossary.md) 之间传递的是一段纯文本，发送方和接收方都是 Claude Code 会话。Agent 之间的互操作已有开放协议 A2A（[REF-a2a](../references.md)），它定义了 Message 等数据结构以及基于 HTTP 的端点。首期的范围是让 Claude Code 会话跨主机通信，不包括与其他种类的 Agent 互通，但设计上要为以后与 A2A Agent 互通留出余地。链路上的消息格式在多个版本的 Broker 并存之后难以更换。
+What the system passes between [Brokers](../glossary.md) is plain text, and both the sender and the receiver are Claude Code sessions. Interoperation between agents already has an open protocol, A2A ([REF-a2a](../references.md)), which defines data structures such as Message and HTTP-based endpoints. The first phase's scope is cross-host communication between Claude Code sessions and excludes interoperation with other kinds of agents, but the design must leave room for interoperation with A2A agents later. A link message format is hard to replace once Brokers of several versions coexist.
 
-## 考虑过的选项
+## Options Considered
 
-### 提供标准的 A2A 端点
+### Provide the standard A2A endpoints
 
-Broker 实现 A2A 的 HTTP 端点，外部的 A2A Agent 可以直接接入。
+The Broker implements A2A's HTTP endpoints, and external A2A agents can connect directly.
 
-**未采纳**：超出了让 Claude Code 会话跨主机通信这一范围，端点、发现文档和任务语义都要实现并验证。这一选项与所采纳的方案不互斥。
+**Not adopted**: It exceeds the scope of cross-host communication between Claude Code sessions, since the endpoints, discovery documents and task semantics would all have to be implemented and verified. This option is not mutually exclusive with the adopted one.
 
-### 自定义消息体
+### A custom message body
 
-链路上投递请求的消息体直接是一个文本字段。
+The body of a link delivery request is a single text field.
 
-**否决**：对接 A2A 时，链路上的消息体要换一种结构，新旧版本的 Broker 之间需要转换。
+**Rejected**: On A2A interoperation the link message body would need a different structure, and Brokers of the old and new versions would need a conversion.
 
-### 只沿用 Message 的数据结构
+### Reuse only the Message data structure
 
-链路上投递请求的消息体是一个 A2A 的 Message，只含一个文本部分。系统不实现 A2A 的端点、发现和任务语义。
+The body of a link delivery request is an A2A Message with a single text part. The system implements none of A2A's endpoints, discovery or task semantics.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-链路上投递请求的消息体采用 A2A 的 Message 结构，只含一个文本部分；系统不实现 A2A 协议的其余部分。
+The body of a link delivery request uses A2A's Message structure with a single text part; the system implements no other part of the A2A protocol.
 
-## 后果
+## Consequences
 
-提供 A2A 端点时，链路上的消息体不必更换结构。
+When A2A endpoints are provided, the link message body does not need a different structure.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 系统不能与外部的 A2A Agent 互通，沿用数据结构不等于兼容协议。
-- 消息体比一个文本字段多出一层结构，其中只用到文本部分。
-- Message 结构随 A2A 的版本演进，系统固定在采用的版本上，对接时仍可能要适配。
+- The system cannot interoperate with external A2A agents, because reusing a data structure is not protocol compatibility.
+- The message body has one more layer than a text field, and only its text part is used.
+- The Message structure evolves with A2A versions, the system stays fixed on the version it adopted, and interoperation may still need adaptation.
 
-## 失效条件
+## Invalidation Conditions
 
-出现需要与不是 Claude Code 会话的 A2A Agent 互通的使用场景时，本决策中“不实现其余部分”对消息收发所需的端点与发现不再成立；这种互通限于消息的收发，回复是另一条消息，不涉及 A2A 的任务、流式与回推。
+This decision's "implement no other part" stops holding for the endpoints and discovery that message exchange needs, once a use case appears that calls for interoperation with A2A agents that are not Claude Code sessions; that interoperation is limited to exchanging messages, a reply is another message, and it involves none of A2A's tasks, streaming or push notifications.

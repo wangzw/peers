@@ -1,35 +1,35 @@
-# 默认 topic 取自项目声明或仓库地址
+# Derive the default topic from the project declaration or the repository address
 
-## 背景
+## Context
 
-Agent 不在任何 [topic](../glossary.md) 中时对其他 Agent 不可见。在同一个项目里工作的 Agent 是最常见的通信对象，它们分布在不同主机上，各自的工作区是同一个 git 仓库的副本。同一个仓库的远端地址有多种写法。
+An agent in no [topic](../glossary.md) is invisible to other agents. Agents working in the same project are the most common parties to communicate, they are spread across hosts, and each workspace is a copy of the same git repository. The same repository has several spellings of its remote address.
 
-## 考虑过的选项
+## Options Considered
 
-### 没有默认 topic
+### No default topic
 
-每个 Agent 登记后不在任何 topic 中，由用户要求它加入。
+After registering, each agent is in no topic, and the user asks it to join one.
 
-**否决**：同一个项目里的 Agent 每次启动都要先手动加入一次，双方还要事先约定名字，否则列表为空。
+**Rejected**: An agent in the same project would have to join by hand on every start, and both sides would have to agree on the name in advance, or the list stays empty.
 
-### 以仓库远端地址为默认 topic
+### Use the repository remote address as the default topic
 
-Agent 登记时自动加入以工作区 git 仓库 `origin` 地址规范化结果命名的 topic。项目可以在项目配置文件里声明 topic 列表以取代它，也可以关闭自动加入；Broker 配置中也可以整体关闭。
+On registration an agent joins automatically a topic named after the normalized result of the workspace git repository's `origin` address. A project can declare a topic list in the project configuration file to replace it, and can turn automatic joining off; it can also be turned off entirely in the Broker configuration.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Agent 登记时自动加入默认 topic：项目配置文件声明了 topic 列表时取该列表，否则取工作区 `origin` 地址的规范化结果，两者都没有时不加入。自动加入可以在 Broker 配置或项目配置文件中关闭，自动加入的 topic 不公开。
+On registration an agent joins its default topic automatically: the topic list the project configuration file declares when there is one, otherwise the normalized result of the workspace's `origin` address, and nothing when neither exists. Automatic joining can be turned off in the Broker configuration or the project configuration file, and an automatically joined topic is private.
 
-## 后果
+## Consequences
 
-两台已配对的主机上，同一仓库的两个 Agent 不经任何操作即互相可见。项目可以用项目配置文件把一个大仓库分成多个 topic，或让多个仓库共用一个 topic。
+On two paired hosts, two agents of the same repository are visible to each other with no action. A project can use the project configuration file to split one large repository into several topics, or to have several repositories share one topic.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 启用工具即意味着对同一仓库的远端 Agent 可见，不希望如此的用户必须主动关闭自动加入。
-- 默认 topic 的名字由仓库地址决定，能访问该仓库的人都能推出这个名字。
-- 派生仓库的 `origin` 与上游不同，两边的 Agent 默认不在同一个 topic 中。
-- 地址的规范化规则一经采用，改动它会使新旧版本的 Agent 落入不同的 topic。
-- 以本地路径为 `origin` 的仓库不能据此得到默认 topic：不同主机上相同的路径并不是同一个仓库。
+- Enabling the tools means being visible to remote agents of the same repository, and a user who does not want that must turn automatic joining off.
+- The default topic's name is determined by the repository address, and anyone who can reach the repository can derive it.
+- A fork's `origin` differs from the upstream, so the agents on the two sides are not in the same topic by default.
+- Once the address normalization rule is in use, changing it puts agents of the old and new versions into different topics.
+- A repository whose `origin` is a local path cannot derive a default topic this way: the same path on different hosts is not the same repository.

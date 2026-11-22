@@ -1,40 +1,40 @@
-# 发送同步完成，不缓存不补发
+# Deliver synchronously without buffering or resending
 
-## 背景
+## Context
 
-一次发送可能因为发送方的 [Broker](../glossary.md) 连不上接收方的 Broker 而失败，也可能因为接收方的 Broker 无法把消息写入目标会话而失败。写入失败多半是因为目标会话已经退出。Agent 之间的消息通常是当下的请求或告知，过后才到达的消息可能不再有意义。
+A send can fail because the sender's [Broker](../glossary.md) cannot reach the receiver's Broker, or because the receiver's Broker cannot write the message to the target session. A write usually fails because the target session has exited. A message between agents is usually a request or a notice for the moment, and a message that arrives later may no longer mean anything.
 
-## 考虑过的选项
+## Options Considered
 
-### 持久收件箱与出站队列
+### A persistent inbox and outbound queue
 
-接收方先把消息落盘再投递，发送方在对端离线时把消息放入按对端划分的持久队列，重连后按序补发；投递后在限定时间内没有终态结果则重投，失败时另发通知告知发送方。
+The receiver writes the message to disk before delivering it, the sender puts the message into a persistent queue per peer while the peer is offline and resends in order after reconnecting, and when no terminal result arrives within a set time after delivery the message is resent, with a separate notice to the sender on failure.
 
-**否决**：Broker 要有持久存储、重投状态机和失败通知，发送方得到结果的时间不确定。迟到的消息可能在错误的时间触发接收方的操作。
+**Rejected**: the Broker would need persistent storage, a resend state machine and failure notices, and the time for the sender to get a result is uncertain. A late message can trigger the receiver's action at the wrong time.
 
-### 短时排队
+### A short in-memory queue
 
-目标不在线时立即失败；链路中断时消息在内存中排队若干分钟，超时后通知发送方失败。
+Fail at once when the target is offline; when the link drops, queue the message in memory for several minutes and notify the sender of failure on timeout.
 
-**否决**：发送调用返回时结果仍然未定，仍然需要一条事后通知的途径，只是把持久队列换成了内存队列。
+**Rejected**: the result is still undetermined when the send call returns, and a later notice is still needed; only the persistent queue is replaced with an in-memory one.
 
-### 同步重试，失败即报错
+### Retry synchronously and return an error on failure
 
-发送调用在返回之前完成全部尝试。对端不可达时按固定次数重试；写入目标会话失败时重试少数几次；用尽后返回错误，系统不再处理这条消息。
+The send call makes every attempt before it returns. It retries a fixed number of times when the peer is unreachable and a few times when the write to the target session fails; once those are exhausted it returns an error and the system handles the message no further.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-发送全程同步：有限次重试之后，调用返回成功、未送达，或者在无法确定消息是否已写入时返回结果未知。系统不缓存、不持久化、不补发、不异步通知。
+Sending is synchronous throughout: after a bounded number of retries the call returns success, not delivered or an unknown result when it cannot tell whether the message was written. The system does not buffer, persist, resend or notify asynchronously.
 
-## 后果
+## Consequences
 
-Broker 不保存消息，没有收件箱、出站队列和失败通知。发送调用返回的结果就是最终结果，是否重发由发送方 Agent 决定。
+The Broker stores no messages and has no inbox, outbound queue or failure notice. The result the send call returns is final, and whether to resend is the sending agent's decision.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 对端短暂离线期间发出的消息会失败，不会在对端恢复后自动送达。
-- 发送调用在得到结果之前阻塞，最长为一次发送的总时限。
-- 投递请求已经发出而应答丢失时，发送方得不到确定的结果，只能得知消息可能已经送达；此时由 Agent 重发，可能使目标会话收到两份。
-- 一次调用内部的重试可能使接收方的 Broker 收到同一条消息多次，接收方必须按消息标识去重；去重记录只在内存中，接收方的 Broker 在重试间隙重启时可能重复写入。
+- A message sent while the peer is briefly offline fails and is not delivered automatically after the peer recovers.
+- The send call blocks until it gets a result, for at most one send's overall time limit.
+- When the delivery request has gone out and the reply is lost, the sender gets no definite result and learns only that the message may have been delivered; if the agent resends then, the target session may receive the message twice.
+- The retries within one call can make the receiving Broker receive the same message several times, and the receiver must deduplicate by message identifier; the deduplication record is in memory only, so the receiving Broker may write the message again if it restarts between retries.

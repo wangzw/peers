@@ -1,46 +1,46 @@
-# 写入 inbox socket 即算发送成功
+# Count a successful inbox socket write as sent
 
-## 背景
+## Context
 
-消息写入目标会话的 [inbox socket](../glossary.md) 之后，Claude Code 可能立即交给模型、因会话正忙而排队、留待用户批准，或者按入站策略丢弃（[REF-claude-code-cross-session-messaging](../references.md)）。发送方在消息中带上一个本机 socket 作为回复地址时，会话会向它回传这些状态，其中拒绝与过期可能在写入几分钟之后才发生（[REF-claude-code-socket-transport](../references.md)）。发送是同步调用，需要确定它在哪一刻返回、返回什么。
+After a message is written to the target session's [inbox socket](../glossary.md), Claude Code may hand it to the model at once, queue it because the session is busy, hold it for user approval or drop it under the inbound policy ([REF-claude-code-cross-session-messaging](../references.md)). When the sender includes a local socket in the message as a reply address, the session reports these states back to it, and a refusal or expiry may occur several minutes after the write ([REF-claude-code-socket-transport](../references.md)). Sending is a synchronous call, so the point at which it returns and what it returns must be settled.
 
-## 考虑过的选项
+## Options Considered
 
-### 等到终态再返回
+### Wait for the terminal state before returning
 
-发送调用一直等到会话回传已交付、被拒绝或已过期。
+The send call waits until the session reports the message delivered, refused or expired.
 
-**否决**：消息留待用户批准时，调用会阻塞到用户处理或过期为止，可达数分钟。
+**Rejected**: When a message is held for user approval, the call blocks until the user acts or the message expires, which can take minutes.
 
-### 短暂等待并返回首个状态
+### Wait briefly and return the first state
 
-写入后等待数秒，把收到的第一个状态返回给发送方，超时则返回状态未知，之后发生的变化不再通知。
+After the write, wait a few seconds and return the first state received to the sender; on timeout return an unknown state, and report no later change.
 
-**否决**：目标会话可能正在处理上一轮工作，短时间内得到的状态不代表消息最终如何处理。接收方的 Broker 还要为每条消息绑定一个接收状态的本机 socket。对方是否处理了消息属于上层语义，由对方 Agent 的回复来表达。
+**Rejected**: The target session may be working on a previous turn, so a state obtained shortly after the write does not show how the message was finally handled. The receiving Broker would also have to bind a local socket for each message to receive the state. Whether the other side handled the message is upper-layer semantics, expressed by the other agent's reply.
 
-### 为远端 Agent 绑定代理 inbox
+### Bind a proxy inbox for a remote agent
 
-接收方的 Broker 为每个远端 Agent 在本机绑定一个 socket，作为消息的回复地址，既接收回传的状态，也让目标会话能用 Claude Code 自带的发送工具直接回复。
+The receiving Broker binds a local socket for each remote agent, serving as the message's reply address, both receiving the reported states and letting the target session reply directly with Claude Code's built-in send tool.
 
-**否决**：Broker 要为每个远端 Agent 绑定并维护一个本机 socket，而回复可以由本系统的发送工具完成。
+**Rejected**: The Broker would bind and maintain a local socket for each remote agent, while a reply can be made with this system's send tool.
 
-### 写入成功即返回成功
+### Return success on a successful write
 
-消息写入目标会话的 inbox socket，发送调用即返回成功，不带回复地址，不接收任何回传的状态。回复是目标 Agent 主动发出的另一条消息。
+When the message is written to the target session's inbox socket, the send call returns success, carries no reply address and receives no reported state. A reply is another message the target agent sends on its own.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-消息写入目标会话的 inbox socket 即算发送成功。系统不处理会话回传的投递状态，不为远端 Agent 绑定任何本机 socket。
+A message written to the target session's inbox socket counts as sent. The system ignores the delivery state the session reports and binds no local socket for a remote agent.
 
-## 后果
+## Consequences
 
-发送成功的含义与 Claude Code 自带的会话间发送一致：消息到达了会话，不表示模型已读。接收方的 Broker 写入之后，除了去重记录外不再保留与这条消息有关的状态。
+A successful send means the same as with Claude Code's built-in cross-session send: the message reached the session, which does not mean the model read it. After the write, the receiving Broker keeps no state about the message beyond the deduplication record.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 发送方无法区分消息是已交给模型、留待用户批准，还是被入站策略丢弃。目标会话设为拒收时消息无声消失。
-- 接收端在读走帧之后还会按发送方限速和去重，被丢弃的消息不通知发送方：超出限速额度的消息，以及同一个 Agent 在 30 秒内向同一个会话连续发送的、内容完全相同的第二条消息，都在发送已经返回成功之后无声消失（[ADR-no-broker-rate-limiting](adr-no-broker-rate-limiting.md)）。
-- 发送方只能从对方的回复得知消息已被处理，对方可以不回复。
-- 目标会话收到的消息没有回复地址，模型必须改用本系统的发送工具，并以署名中的 Agent 地址为目标来回复；模型是否这样做取决于工具说明的效果，它的默认做法是用 Claude Code 自带的发送工具回复，而自带的工具到不了这类地址。
+- The sender cannot tell whether the message was handed to the model, held for user approval or dropped under the inbound policy. When the target session is set to refuse, the message disappears silently.
+- After reading a frame, the receiving side also applies per-sender rate limiting and deduplication, and a dropped message is not reported to the sender: a message over the rate limit and the second of two identical messages one agent sends to the same session within 30 seconds both disappear silently after the send has already returned success ([ADR-no-broker-rate-limiting](adr-no-broker-rate-limiting.md)).
+- The sender learns that the message was handled only from the other side's reply, and the other side may not reply.
+- A message the target session receives carries no reply address, so the model must use this system's send tool and address the reply to the agent address in the signature; whether the model does so depends on how the tool description works, and its default is to reply with Claude Code's built-in send tool, which cannot reach such an address.

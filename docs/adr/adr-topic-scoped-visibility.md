@@ -1,51 +1,51 @@
-# 以 topic 限定 Agent 的可见性
+# Scope agent visibility by topic
 
-## 背景
+## Context
 
-两个 [Broker](../glossary.md) 配对之后，各自主机上可能有多个会话在做互不相关的工作，其中有的涉及敏感的仓库。需要一条规则决定对端上的 Agent 能看见本机的哪些 Agent、能给哪些 Agent 发消息。配对本身是用户做出的信任决定，对端不是陌生人。
+After two [Brokers](../glossary.md) pair, each host may run several sessions doing unrelated work, some of it in sensitive repositories. A rule is needed to decide which local agents a peer's agents can see and which they can message. Pairing is itself a trust decision the user made, and a peer is not a stranger.
 
-## 考虑过的选项
+## Options Considered
 
-### 全部可见，逐个排除
+### Visible to all, excluded one by one
 
-已登记的每个 Agent 对所有已连接的对端可见，敏感的会话由用户逐个排除。
+Every registered agent is visible to all connected peers, and the user excludes sensitive sessions one by one.
 
-**否决**：安全取决于用户记得排除。两个毫不相干的会话互相可见也没有用处，Agent 之间没有通信的理由。
+**Rejected**: safety depends on the user remembering to exclude them. Two unrelated sessions being visible to each other serves no purpose, since the agents have no reason to communicate.
 
-### 逐个声明才可见
+### Visible only when declared one by one
 
-会话启动时显式声明自己对外可见。
+A session explicitly declares itself externally visible at startup.
 
-**否决**：它只决定是否可见，不决定对谁可见，也不提供通信的理由，声明过的全部 Agent 仍然彼此可见。
+**Rejected**: that decides only whether an agent is visible, not to whom, and it gives no reason to communicate; every declared agent is still visible to every other.
 
-### 按对端区分可见性
+### Distinguish visibility by peer
 
-为每个 Agent 指定它对哪些对端可见。
+Specify for each agent which peers it is visible to.
 
-**否决**：可见性与主机绑定，而需要通信的理由通常是共同的工作，不是共同的主机。每个 Agent 都要维护一份对端名单。
+**Rejected**: visibility would be tied to hosts, while the usual reason to communicate is shared work, not a shared host. Every agent would maintain its own peer list.
 
-### 以技能标签筛选
+### Filter by skill tags
 
-成员名单中带上每个 Agent 的技能标签，供调用方筛选。
+The roster carries each agent's skill tags for the caller to filter on.
 
-**否决**：标签只帮助筛选，不限制可见性；标签的来源也没有确定的依据。
+**Rejected**: tags only help filtering and do not limit visibility; their source also has no definite basis.
 
-### 以 topic 限定
+### Limit by topic
 
-Agent 加入以名字标识的 topic，两个 Agent 至少同在一个 topic 时才互相可见、才能互发消息。知道名字即可加入，没有管理员、邀请和审批。topic 默认不公开。
+An agent joins a topic identified by name, and two agents are visible to each other and can message each other only when they share at least one topic. Knowing the name is enough to join, with no administrator, invitation or approval. A topic is private by default.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-以 topic 作为可见性与通信许可的唯一范围。不在任何 topic 中的 Agent 对其他 Agent 不可见。加入 topic 只需知道名字。
+A topic is the sole scope of visibility and communication permission. An agent in no topic is invisible to other agents. Joining a topic takes only knowing its name.
 
-## 后果
+## Consequences
 
-可见性由共同的工作范围决定，与主机无关：同一台主机上的两个 Agent 和不同主机上的两个 Agent 适用同一条规则。这条规则同时决定能否看见与能否发送，跨主机时由链路两端各自检查。成员名单按 topic 组织，不含技能标签。
+Visibility follows shared work, not the host: two agents on one host and two agents on different hosts fall under the same rule. The same rule decides both whether one agent can see another and whether it can send to it, and across hosts each end of the link checks it. The roster is organized by topic and carries no skill tags.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 不公开的 topic 的保密只靠名字不易猜中，名字泄露即等于公开，没有办法把已加入的成员移出。
-- Agent 加入一个 topic，就对所有在该 topic 有成员的已连接对端可见，不能只对其中一部分对端可见。
-- topic 不是广播频道，向 topic 内全部成员发送要由调用方逐个调用。
+- A private topic's secrecy rests only on its name being hard to guess, a leaked name makes it public, and there is no way to remove a member that has joined.
+- An agent that joins a topic is visible to every connected peer that has a member in that topic and cannot be visible to only some of them.
+- A topic is not a broadcast channel, so sending to every member of a topic takes a separate call from the caller for each.

@@ -1,35 +1,35 @@
-# 写入 inbox socket 时不出示认证令牌
+# Present no authentication token when writing to the inbox socket
 
-## 背景
+## Context
 
-Claude Code 允许向 [inbox socket](../glossary.md) 写入的程序在首行出示目标会话的认证令牌；在 macOS 与 Linux 上这一行是可选的（[REF-claude-code-cross-session-messaging](../references.md)）。出示令牌的发送方被归入某个权限类别。未出示令牌的发送方，若能由进程关系确认是目标会话自己的子进程，仍被视为可信；两者都不满足的按未声明权限类别处理：普通会话直接接收，以跳过权限确认的模式运行的会话在未设置入站策略时把消息留待用户批准。向会话写入的 Broker 能够读到目标会话的令牌。本系统写入的消息来自其他 Agent，其中包括其他主机上的。
+Claude Code lets a process writing to the [inbox socket](../glossary.md) present the target session's authentication token on the first line; on macOS and Linux that line is optional ([REF-claude-code-cross-session-messaging](../references.md)). A sender that presents the token falls into some permission category. A sender that does not present the token is still trusted when its process relationship shows it is a child of the target session itself; a sender that meets neither condition is treated as an undeclared permission category: an ordinary session accepts it directly, while a session running with permission confirmation skipped holds the message for user approval when no inbound policy is set. The Broker writing to a session can read the target session's token. The messages this system writes come from other agents, including agents on other hosts.
 
-## 考虑过的选项
+## Options Considered
 
-### 出示目标会话的令牌
+### Present the target session's token
 
-Broker 读取目标会话的令牌并在写入时出示。依赖的库默认这样做（[REF-claude-code-socket-transport](../references.md)）。
+The Broker reads the target session's token and presents it on the write. The library it depends on does this by default ([REF-claude-code-socket-transport](../references.md)).
 
-**否决**：远端 Agent 的消息会以本机可信程序的身份进入会话，以跳过权限确认的模式运行的会话不再把它留待用户批准。来自其他主机的文本对本机会话是不可信输入，不应享有本机程序的待遇。
+**Rejected**: A remote agent's message would enter the session as a trusted local program, and a session running with permission confirmation skipped would no longer hold it for user approval. Text from another host is untrusted input to the local session and does not deserve a local program's treatment.
 
-### 不出示令牌
+### Present no token
 
-写入时不发送认证行，由目标会话的入站控制按未声明权限类别的发送方处理。
+Send no authentication line on the write, and let the target session's inbound controls treat the sender as an undeclared permission category.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 向 inbox socket 写入时不出示认证令牌，不读取会话的令牌文件。
+The Broker presents no authentication token when writing to the inbox socket and does not read the session's token file.
 
-## 后果
+## Consequences
 
-本系统投递的消息受目标会话入站控制的完整约束，用户为会话设定的接收、留待批准或拒收的入站策略对本系统同样有效。
+Messages this system delivers are subject in full to the target session's inbound controls, and the accept, hold-for-approval or refuse inbound policy the user sets for a session applies to this system as well.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 以跳过权限确认的模式运行、又未设置入站策略的会话，每条消息都要用户批准，无人值守时消息在等待期满后被丢弃。
-- 原生 Windows 的 inbox 连接强制要求认证行，本决策使系统无法在原生 Windows 上投递。
-- 依赖的库默认出示令牌，调用时必须显式关闭；遗漏即违反本决策，且不会有任何报错。
-- 只是不出示令牌还不够：Broker 进程若是某个会话的后代，Claude Code 会由进程关系把它写入的消息视为该会话自己的子进程所发，入站控制随之被绕过。Broker 因此不得是任何会话的后代进程：用户级 Broker 由用户级的服务管理机制启动，或由用户在会话之外的终端启动；系统级 Broker 作为系统服务运行，它用来投递的进程也不在任何会话的进程树内。
-- Broker 启动时沿父进程链读取各祖先的环境变量与本账户的会话注册表，以确认自己不在会话的进程树内。用 `setsid` 或两次 fork 把进程挂到 init 下再启动时，祖先链里已经没有会话，这项检查发现不了；这样的进程是否仍被 Claude Code 视为会话的子进程，取决于 Claude Code 的判定方式。
+- A session running with permission confirmation skipped and no inbound policy set requires user approval for every message, and unattended messages are dropped when the hold period expires.
+- A native Windows inbox connection requires the authentication line, so this decision keeps the system from delivering on native Windows.
+- The library it depends on presents the token by default, so it must be explicitly disabled at the call site; omitting that violates this decision and raises no error.
+- Presenting no token is not enough on its own: when the Broker process is a descendant of some session, Claude Code treats the messages it writes as sent by that session's own child process and inbound controls are bypassed. The Broker must therefore not be a descendant of any session: a user Broker starts from the user service management mechanism or from a terminal the user runs outside any session; a system Broker runs as a system service, and the process it delivers through is outside every session's process tree.
+- At startup the Broker walks the parent process chain, reading each ancestor's environment variables and this account's session registry, to confirm that it is not inside a session's process tree. When the process is reparented under init with `setsid` or a double fork before it starts, the ancestor chain no longer contains a session, and this check cannot find it; whether Claude Code still treats such a process as a session's child depends on how Claude Code decides.

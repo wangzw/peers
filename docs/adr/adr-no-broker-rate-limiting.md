@@ -1,49 +1,49 @@
-# Broker 不限速，不检测消息循环
+# Do not rate-limit or detect message loops in the Broker
 
-## 背景
+## Context
 
-两个 Agent 可能互相不停地回复，消耗双方的模型用量。Claude Code 在接收端对会话间消息按发送方限速，丢弃短时间内的重复消息，并限制待处理消息的排队数量；它自带的会话间发送工具在目标会话的 inbox 容量已满时拒绝发送，此外不另设发送频率的限制（[REF-claude-code-cross-session-messaging](../references.md)）。本系统的消息经 [inbox socket](../glossary.md) 进入会话，接收端的这些机制对它同样生效。
+Two agents can keep replying to each other and consume both sides' model usage. On the receiving side Claude Code rate-limits cross-session messages per sender, drops duplicate messages within a short interval and caps the number of pending messages queued; its built-in cross-session send tool refuses to send when the target session's inbox is full, and it imposes no other send-rate limit ([REF-claude-code-cross-session-messaging](../references.md)). Messages from this system enter a session through the [inbox socket](../glossary.md), so these receiving-side mechanisms apply to them as well.
 
-在 Claude Code v2.1.327 上观测到的接收端规则如下，数值可由 Claude Code 远程调整：
+The receiving-side rules observed on Claude Code v2.1.327 are as follows, and Claude Code can adjust the numbers remotely:
 
-- 发送方的识别：帧里有回复地址时以回复地址识别，没有时以写入进程的进程号识别。
-- 限速：每个发送方一个令牌桶，容量 30，每秒补充 0.5 个。
-- 去重：同一发送方在 30 秒内发来与上一条内容完全相同的消息时，后一条被丢弃，不通知发送方。
-- 排队：未处理的会话间消息至多 50 条。
-- 循环检测：Claude Code 自带的消息在署名包装里记录经过的路径，循环检测依赖这一记录。
+- Identifying the sender: by the reply address when the frame has one, otherwise by the process id of the writing process.
+- Rate limiting: one token bucket per sender, with capacity 30, refilling 0.5 per second.
+- Deduplication: when the same sender sends a message identical to its previous one within 30 seconds, the later one is dropped without notifying the sender.
+- Queueing: at most 50 unprocessed cross-session messages.
+- Loop detection: Claude Code's own messages record the path they have traveled in the signature wrapper, and loop detection relies on that record.
 
-这些规则按写入进程识别发送方，而 Broker 投递的消息都经同一个写入进程进入会话，接收端因此分不清它们来自哪个已配对的对端。已配对的对端也可能失控或带有恶意：一个对端就能占满接收端为这个写入进程准备的令牌桶，使其他来源的消息在发送成功之后被丢弃。只有 Broker 知道每条投递来自哪个对端，按来源限额只能由 Broker 做。
+These rules identify the sender by the writing process, and every message the Broker delivers enters the session through the same writing process, so the receiving side cannot tell which paired peer they come from. A paired peer can also run out of control or be malicious: one peer can fill the token bucket the receiving side prepares for this writing process, so messages from other sources are dropped after their send returned success. Only the Broker knows which peer each delivery came from, so limiting by source can only be done by the Broker.
 
-## 考虑过的选项
+## Options Considered
 
-### Broker 按发送方限速并检测环路
+### Have the Broker rate-limit per sender and detect loops
 
-Broker 对每个本机 Agent 的发送频率设上限，消息携带跳数与调用链，超限或成环时拒绝。
+The Broker caps each local agent's send rate, messages carry a hop count and a call chain, and an over-limit or looping message is refused.
 
-**否决**：消息只经过一条链路，跳数没有意义；调用链检测拦不住两个 Agent 一来一回的对话，那并不成环。在发送端另设频率上限，会使本系统的发送行为与 Claude Code 自带的发送工具不一致，而接收端已经有限速。
+**Rejected**: A message crosses one link only, so a hop count means nothing; call-chain detection cannot stop two agents talking back and forth, which is not a loop. Adding a send-rate cap on the sending side would make this system's sending behave differently from Claude Code's built-in send tool, while the receiving side already rate-limits.
 
-### 不在 Broker 中限速
+### Do not rate-limit in the Broker
 
-Broker 不限制发送频率，不携带跳数与调用链。循环由接收端的入站控制约束，并在工具说明中要求模型不为致谢或确认而回复。
+The Broker imposes no send-rate limit and carries no hop count or call chain. The receiving side's inbound controls constrain loops, and the tool description asks the model not to reply merely to thank or acknowledge.
 
-**采纳**，见决策。
+**Adopted**; see Decision.
 
-## 决策
+## Decision
 
-Broker 不对发送限速，不检测消息循环，这两项由 Claude Code 接收端的入站控制承担。对对端发来的投递，Broker 按（对端，会话）限额，使一个对端不能耗尽接收端共用的额度，见 ADR-peer-resource-limits。
+The Broker does not rate-limit sends or detect message loops; Claude Code's receiving-side inbound controls carry both. For deliveries from a peer, the Broker limits by (peer, session), so one peer cannot exhaust the quota the receiving side shares, as recorded in ADR-peer-resource-limits.
 
-## 后果
+## Consequences
 
-链路上的消息不携带跳数和调用链。发送的限制与 Claude Code 自带的会话间发送一致。
+Messages on a link carry no hop count or call chain. Send limits match Claude Code's built-in cross-session send.
 
-**接受的代价：**
+**Costs accepted:**
 
-- 本系统写入的消息不带回复地址，接收端以写入进程识别发送方：经同一个用户级 Broker，或经系统级 Broker 的同一个账户辅助进程写入的全部消息，不论来自哪个 Agent，都属于同一个发送方，共用一个令牌桶。Broker 的入站限额让每个对端至多占去其中一部分，但多个对端合谋仍可耗尽这个令牌桶。
-- 同一个 Agent 在 30 秒内向同一个会话连续发送两条内容完全相同的消息时，后一条被接收端丢弃，而发送调用已经返回成功。署名不同则内容不同，不同 Agent 之间不会因此互相造成丢弃。
-- 本系统的消息不带经过路径的记录，Claude Code 自带的循环检测对它不起作用，系统对循环没有自己的防线，能约束循环的只有接收端的限速。
-- 接收端的这些规则与数值不是公开的承诺，Claude Code 调整之后系统的表现随之变化。
-- 模型是否遵守“不为致谢而回复”“不在短时间内重复发送相同内容”取决于工具说明的效果。
+- Messages this system writes carry no reply address, so the receiving side identifies the sender by the writing process: every message written through the same user Broker, or through the same account helper process of a system Broker, belongs to one sender regardless of which agent it came from, and shares one token bucket. The Broker's inbound limit lets each peer take at most a part of it, but several peers colluding can still exhaust the bucket.
+- When one agent sends two identical messages to the same session within 30 seconds, the receiving side drops the later one even though the send call already returned success. Different signatures make different content, so different agents do not cause each other's messages to be dropped this way.
+- Messages from this system carry no record of the path they traveled, so Claude Code's built-in loop detection does not act on them; the system has no loop defense of its own, and only the receiving side's rate limiting constrains loops.
+- These receiving-side rules and numbers are not a public commitment, and the system's behavior changes when Claude Code adjusts them.
+- Whether the model follows the request not to reply merely to thank and not to resend identical content within a short interval depends on how the tool description works.
 
-## 失效条件
+## Invalidation Conditions
 
-实测表明接收端的限速不足以止住两个 Agent 之间的往复，本决策即不再成立。单个对端挤占共享额度已由 Broker 的入站限额处理；限额的数值与 Claude Code 接收端的规则脱节时，需要重新评估这些数值。
+This decision stops holding once measurement shows the receiving side's rate limiting is not enough to stop two agents from going back and forth. The Broker's inbound limit already handles one peer squeezing the shared quota; when the limit's numbers fall out of step with Claude Code's receiving-side rules, those numbers need re-evaluation.
