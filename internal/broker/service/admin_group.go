@@ -194,11 +194,7 @@ func sortedMemberNames(members []string) []string {
 func groupMembersLinux(opts Options, name string) ([]string, error) {
 	out, err := opts.Run("getent", "group", name)
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
-			return nil, fmt.Errorf("cannot read the members of group %q: %w: %s", name, err, msg)
-		}
-		return nil, fmt.Errorf("cannot read the members of group %q: %w", name, err)
+		return nil, commandError(fmt.Sprintf("cannot read the members of group %q", name), out, err)
 	}
 	fields := strings.Split(strings.TrimSpace(string(out)), ":")
 	if len(fields) < 4 {
@@ -222,11 +218,7 @@ func groupMembersDarwin(opts Options, name string) ([]string, error) {
 	out, err := opts.Run("dscl", ".", "-read", "/Groups/"+name, "GroupMembership", "NestedGroups")
 	members, nested := parseDarwinGroupRecord(string(out))
 	if err != nil && !onlyMissingKeys(string(out)) {
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
-			return nil, fmt.Errorf("cannot read the members of group %q: %w: %s", name, err, msg)
-		}
-		return nil, fmt.Errorf("cannot read the members of group %q: %w", name, err)
+		return nil, commandError(fmt.Sprintf("cannot read the members of group %q", name), out, err)
 	}
 	members = append(members, resolveNestedGroupNames(opts, nested)...)
 	return sortedMemberNames(members), nil
@@ -311,11 +303,11 @@ func resolveNestedGroupNames(opts Options, guids []string) []string {
 	}
 	names := make([]string, 0, len(guids))
 	for _, guid := range guids {
-		if name := lookupGroupByGUID(opts, guid); name != "" {
-			names = append(names, name)
-			continue
+		name := lookupGroupByGUID(opts, guid)
+		if name == "" {
+			name = guid
 		}
-		names = append(names, guid)
+		names = append(names, name)
 	}
 	return names
 }
@@ -370,11 +362,7 @@ func lookupGroupLinux(opts Options, name string) (int, bool, error) {
 		if exitStatus(err) == 2 {
 			return 0, false, nil
 		}
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
-			return 0, false, fmt.Errorf("cannot look up group %q: %w: %s", name, err, msg)
-		}
-		return 0, false, fmt.Errorf("cannot look up group %q: %w", name, err)
+		return 0, false, commandError(fmt.Sprintf("cannot look up group %q", name), out, err)
 	}
 	fields := strings.Split(strings.TrimSpace(string(out)), ":")
 	if len(fields) < 3 {
@@ -423,10 +411,7 @@ func createAdminGroup(opts Options, res *Result, name string) error {
 	res.Commands = append(res.Commands, cmdline)
 	out, err := opts.Run(argv[0], argv[1:]...)
 	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-		}
-		return fmt.Errorf("cannot run %s: %w", cmdline, err)
+		return commandError("cannot run "+cmdline, out, err)
 	}
 	return nil
 }
