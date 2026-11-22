@@ -67,6 +67,12 @@ func peerMayServe(uid uint32) bool {
 	return uid == uint32(os.Geteuid()) || uid == 0
 }
 
+// dialUnixSocket opens a raw Unix socket connection bounded by probeTimeout.
+func dialUnixSocket(ctx context.Context, path string) (net.Conn, error) {
+	d := net.Dialer{Timeout: probeTimeout}
+	return d.DialContext(ctx, "unix", path)
+}
+
 // inspectSocket connects to the Unix socket at path, reads the account of the
 // process on the other end before sending anything, and closes the connection at
 // once. A connection is usable only when its peer may serve a Broker at all.
@@ -74,8 +80,7 @@ func peerMayServe(uid uint32) bool {
 // hides the difference between a missing socket, a refused one and one the
 // account may not use.
 func inspectSocket(ctx context.Context, path string) probeInfo {
-	d := net.Dialer{Timeout: probeTimeout}
-	conn, err := d.DialContext(ctx, "unix", path)
+	conn, err := dialUnixSocket(ctx, path)
 	if err != nil {
 		return probeInfo{Outcome: classifyDialError(err)}
 	}
@@ -140,8 +145,7 @@ func dialLocal(path string) (*grpc.ClientConn, localpb.LocalClient, error) {
 // Broker before the connection is handed to gRPC.
 func dialUnixChecked(ctx context.Context, address string) (net.Conn, error) {
 	path := unixPathFromAddress(address)
-	d := net.Dialer{Timeout: probeTimeout}
-	conn, err := d.DialContext(ctx, "unix", path)
+	conn, err := dialUnixSocket(ctx, path)
 	if err != nil {
 		return nil, err
 	}
