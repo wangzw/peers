@@ -417,8 +417,9 @@ func TestRunRegistration(t *testing.T) {
 			time.Sleep(2 * time.Millisecond)
 		}
 		st := run.st.Get()
-		if st.Phase != PhaseUnavailable || st.Detail != loopLostText {
-			t.Fatalf("status during the window = %+v, want PhaseUnavailable with %q", st, loopLostText)
+		wantDetail := "the Broker is unavailable: " + loopLostText + "; retrying in the background."
+		if st.Phase != PhaseUnavailable || st.Detail != wantDetail {
+			t.Fatalf("status during the window = %+v, want PhaseUnavailable with %q", st, wantDetail)
 		}
 		h := &handlers{st: run.st}
 		if _, err := h.preflight("list_agents", callGeneric, true); err == nil ||

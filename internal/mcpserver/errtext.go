@@ -34,8 +34,14 @@ const (
 // Texts shown to the model. The local-state texts are format strings; the rest
 // are used verbatim.
 const (
-	textStarting    = "the connection to the Broker is still being set up; retry shortly"
-	textUnavailable = "the Broker is unavailable: %s; retrying in the background"
+	textStarting = "the connection to the Broker is still being set up; retry shortly"
+	// textUnavailable is the whole sentence for a failed attempt at a user or
+	// test-named Broker, with the original error substituted. Building it where
+	// the failure is recorded keeps the model from seeing the unavailable
+	// statement twice with the socket path between the two.
+	textUnavailable = "the Broker is unavailable: %s; retrying in the background."
+	// textUnavailableNoReason stands in for a status that recorded no reason.
+	textUnavailableNoReason = "the Broker is unavailable; retrying in the background."
 	// textBrokerRefusedConnection replaces the unavailable text when the socket
 	// answered but the Broker closed the handshake. A connection limit at the
 	// handshake gives the client no ErrorDetail, so the text names only a
@@ -76,6 +82,38 @@ func systemBrokerText(isRoot bool) string {
 
 // textNoSystemBroker is the text for this account, chosen once at startup.
 var textNoSystemBroker = systemBrokerText(os.Geteuid() == 0)
+
+// textSystemBrokerUnresponsive replaces the no-Broker text when the system
+// Broker's socket is not missing or refusing connections but the attempt still
+// failed. The Broker is running, so the reader is not told to start it; the
+// original error is kept, the retry stays in the background, and a lasting
+// failure is sent to the administrator.
+const textSystemBrokerUnresponsive = "the system Broker is running but is not answering: %s; this session retries in the background, and if this persists, ask the administrator to check it."
+
+// textSystemBrokerUnreachable replaces the unresponsive text when the probe
+// could not reach the system Broker's socket at all, either because this
+// account may not connect or because the dial failed another way. It does not
+// claim the Broker is running, names the socket and the original error, and
+// keeps the retry in the background.
+const textSystemBrokerUnreachable = "cannot reach the system Broker at %s: %s; this session retries in the background."
+
+// unavailableText builds the text shown for a failed attempt at a user or
+// test-named Broker.
+func unavailableText(reason string) string {
+	return fmt.Sprintf(textUnavailable, reason)
+}
+
+// systemBrokerUnresponsiveText builds the text shown when the system Broker's
+// socket answered but the attempt failed.
+func systemBrokerUnresponsiveText(reason string) string {
+	return fmt.Sprintf(textSystemBrokerUnresponsive, reason)
+}
+
+// systemBrokerUnreachableText builds the text shown when the system Broker's
+// socket could not be reached at all.
+func systemBrokerUnreachableText(path, reason string) string {
+	return fmt.Sprintf(textSystemBrokerUnreachable, path, reason)
+}
 
 // errNoBroker is the selection result when no Broker socket answers. Its text
 // names the two ways to start a Broker, so the model can tell the user.

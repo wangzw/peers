@@ -31,10 +31,10 @@ type Options struct {
 	systemSocket string
 	readOrigin   originReader
 	after        func(time.Duration) <-chan time.Time
-	// probe replaces the loop's raw socket probe; nil means probeSocket. The
-	// loop uses it to tell a user Broker whose socket is gone from one
-	// whose socket still answers.
-	probe func(context.Context, string) probeResult
+	// probe replaces the loop's raw socket probe; nil means inspectSocket. The
+	// loop uses it to tell a user Broker whose socket is gone from one whose
+	// socket still answers, and to name the account that answered.
+	probe func(context.Context, string) probeInfo
 	// updateStatus replaces the Broker query made by the update hint; nil means
 	// brokerUpdateStatus. Tests use it to avoid a Broker.
 	updateStatus updateStatusSource
@@ -145,7 +145,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	probe := opts.probe
 	if probe == nil {
-		probe = probeSocket
+		probe = inspectSocket
 	}
 
 	sel := &selector{

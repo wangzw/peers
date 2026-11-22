@@ -18,7 +18,7 @@ import (
 // tests replace them with stubs so that no real Broker process is involved.
 type loopDeps struct {
 	selectTarget func(ctx context.Context) (target, error)
-	probe        func(ctx context.Context, path string) probeResult
+	probe        func(ctx context.Context, path string) probeInfo
 	dial         func(path string) (*grpc.ClientConn, localpb.LocalClient, error)
 	hello        func(ctx context.Context, c localpb.LocalClient, version uint32) (helloResult, error)
 	waitNotReady func(ctx context.Context, cc *grpc.ClientConn)
@@ -135,7 +135,7 @@ func loopOnce(ctx context.Context, d loopDeps, conn *loopConnBackoff) (stop bool
 		if errors.Is(err, errNoBroker) {
 			loopSetStatus(d.st, PhaseNoBroker, "", "", nil)
 		} else {
-			loopSetStatus(d.st, PhaseUnavailable, err.Error(), "", nil)
+			loopSetStatus(d.st, PhaseUnavailable, unavailableText(err.Error()), "", nil)
 		}
 		return !loopWait(ctx, d.after, conn.next())
 	}
@@ -147,8 +147,7 @@ func loopOnce(ctx context.Context, d loopDeps, conn *loopConnBackoff) (stop bool
 
 		cc, client, err := d.dial(t.Path)
 		if err != nil {
-			phase, detail := loopFailureStatus(ctx, d, t,
-				fmt.Sprintf("the Broker at %s is unavailable: %v", t.Path, err))
+			phase, detail := loopFailureStatus(ctx, d, t, err.Error())
 			loopSetStatus(d.st, phase, detail, "", nil)
 			if !loopReconnect(ctx, d, conn) {
 				return true
@@ -160,12 +159,13 @@ func loopOnce(ctx context.Context, d loopDeps, conn *loopConnBackoff) (stop bool
 		if err != nil {
 			// A refusal at the transport handshake closes the connection, so the
 			// ClientConn is no longer READY; a Broker that answered Hello with a
-			// status of its own leaves the connection usable. Probing tells a
-			// socket that is gone from one that answered, and the refusal text is
-			// used only for a closed handshake on an answering socket. Every other
-			// outcome keeps the phase and text it had before this loop could name
-			// a refusal, including the original error.
-			probe, probed := loopProbeResult(ctx, d, t)
+			// status of its own leaves the connection usable. Probing classifies
+			// the failure: only a socket answered by the account that may serve
+			// this Broker is reported as running but not answering, a socket
+			// served by another account is the same mismatch selection reports,
+			// and a socket that could not be reached at all keeps the original
+			// error without claiming the Broker is running.
+			probe, probed := loopProbeInfo(ctx, d, t)
 			// The connection state is what separates the two failure shapes.
 			// Only an answering socket plus a connection that is not READY
 			// identifies a Broker that closed the transport during the
@@ -177,14 +177,13 @@ func loopOnce(ctx context.Context, d loopDeps, conn *loopConnBackoff) (stop bool
 			closedDuringHandshake := cc.GetState() != connectivity.Ready
 			_ = cc.Close()
 			switch {
-			case probed && (probe == probeMissing || probe == probeRefused):
-				phase, text := loopNoBrokerStatus(t)
-				loopSetStatus(d.st, phase, text, "", nil)
-			case probed && probe == probeOK && closedDuringHandshake:
+			case probed && probe.Outcome == probeOK && closedDuringHandshake:
 				loopSetRejected(d.st, handshakeRejection(err))
+			case probed:
+				phase, text := loopProbeFailureStatus(t, probe, err.Error())
+				loopSetStatus(d.st, phase, text, "", nil)
 			default:
-				phase, detail := loopFailureStatusForTarget(t,
-					fmt.Sprintf("the Broker at %s is unavailable: %v", t.Path, err))
+				phase, detail := loopFailureStatusForTarget(t, err.Error())
 				loopSetStatus(d.st, phase, detail, "", nil)
 			}
 			if !loopReconnect(ctx, d, conn) {
@@ -284,15 +283,16 @@ func handshakeRejection(err error) brokerRejection {
 	return brokerRejection{detail: textBrokerRefusedConnection, code: localpb.ErrorCode_ERROR_CODE_INTERNAL}
 }
 
-// loopProbeResult probes the socket of a user or system target. The second
+// loopProbeInfo probes the socket of a user or system target and returns the
+// account of the process that answered it alongside the outcome. The second
 // result is false for a target kind that has no local socket to probe.
-func loopProbeResult(ctx context.Context, d loopDeps, t target) (probeResult, bool) {
+func loopProbeInfo(ctx context.Context, d loopDeps, t target) (probeInfo, bool) {
 	if t.Kind != kindUser && t.Kind != kindSystem {
-		return 0, false
+		return probeInfo{}, false
 	}
 	probe := d.probe
 	if probe == nil {
-		probe = probeSocket
+		probe = inspectSocket
 	}
 	return probe(ctx, t.Path), true
 }
@@ -308,47 +308,51 @@ func loopNoBrokerStatus(t target) (Phase, string) {
 	return PhaseNoBroker, ""
 }
 
-// loopGoneSocketStatus reports the no-Broker status when the socket of a user
-// or system target is missing or refuses connections.
-func loopGoneSocketStatus(ctx context.Context, d loopDeps, t target) (Phase, string, bool) {
-	probe, probed := loopProbeResult(ctx, d, t)
-	if !probed {
-		return 0, "", false
-	}
-	switch probe {
+// loopProbeFailureStatus chooses the phase and text for a failed attempt at t
+// from the probe of its socket. Only probeOK means the account that may serve
+// this Broker answered at this path, so only probeOK is reported as a running
+// Broker that is not answering. A socket served by another account is the peer
+// mismatch selection reports, named by peerMismatchError with the answering
+// account; it is not a running Broker. A probe that could not connect at all
+// (denied, or another failure) does not claim the Broker is running and keeps
+// the original error.
+func loopProbeFailureStatus(t target, info probeInfo, detail string) (Phase, string) {
+	switch info.Outcome {
 	case probeMissing, probeRefused:
-		phase, text := loopNoBrokerStatus(t)
-		return phase, text, true
+		return loopNoBrokerStatus(t)
+	case probeWrongPeer:
+		return PhaseUnavailable, peerMismatchError(t.Path, t.Kind, info.PeerUID).Error()
+	case probeOK:
+		if t.Kind == kindSystem {
+			return PhaseUnavailable, systemBrokerUnresponsiveText(detail)
+		}
+		return PhaseUnavailable, unavailableText(detail)
+	default: // probeDenied, probeOther
+		if t.Kind == kindSystem {
+			return PhaseUnavailable, systemBrokerUnreachableText(t.Path, detail)
+		}
+		return PhaseUnavailable, unavailableText(detail)
 	}
-	return 0, "", false
 }
 
-// loopFailureStatusForTarget chooses the phase for a failed attempt at t
-// without probing: a system Broker that was selected and now fails is reported
-// as no system Broker, so the user is sent to the administrator rather than to
-// a user Broker (REQ-broker-config-037, REQ-broker-config-038); every other
-// target is unavailable with the detail.
+// loopFailureStatusForTarget chooses the phase for a failed attempt at a target
+// whose socket was not probed. A release build probes every user and system
+// target, so only a test-named socket reaches it; the system branch is kept so
+// a caller that skips the probe still reports a selected system Broker as
+// running rather than absent.
 func loopFailureStatusForTarget(t target, detail string) (Phase, string) {
 	if t.Kind == kindSystem {
-		return PhaseNoBroker, textNoSystemBroker
+		return PhaseUnavailable, systemBrokerUnresponsiveText(detail)
 	}
-	return PhaseUnavailable, detail
+	return PhaseUnavailable, unavailableText(detail)
 }
 
-// loopFailureStatus chooses the phase for a failed attempt at t. A user
-// socket that is missing or refuses connections has no Broker listening, so it
-// is reported as no Broker with the same text as a session that never found
-// one; that includes a Broker killed without removing its socket. A socket
-// that answers and then fails is reported as unavailable. A system
-// Broker that was selected and now fails is reported as no system
-// Broker, so the user is sent to the administrator rather than to a user
-// Broker (REQ-broker-config-037, REQ-broker-config-038). A failed Hello is
-// handled separately in loopOnce: it probes once, distinguishes a served error
-// from a closed handshake, and only reports the refusal text for a closed
-// handshake on an answering socket.
+// loopFailureStatus chooses the phase for a failed attempt at t. It probes the
+// socket of a user or system target and classifies the failure from the probe
+// result; a target with no local socket keeps the unprobed text.
 func loopFailureStatus(ctx context.Context, d loopDeps, t target, detail string) (Phase, string) {
-	if phase, text, gone := loopGoneSocketStatus(ctx, d, t); gone {
-		return phase, text
+	if info, probed := loopProbeInfo(ctx, d, t); probed {
+		return loopProbeFailureStatus(t, info, detail)
 	}
 	return loopFailureStatusForTarget(t, detail)
 }

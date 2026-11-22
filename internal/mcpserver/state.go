@@ -18,7 +18,9 @@ type Phase int
 const (
 	// PhaseStarting means nothing has been tried yet.
 	PhaseStarting Phase = iota
-	// PhaseUnavailable means Broker selection or connection failed; Detail says why.
+	// PhaseUnavailable means Broker selection or connection failed; Detail is
+	// the whole text shown to the model, including the reason and the
+	// background retry.
 	PhaseUnavailable
 	// PhaseNoBroker means no Broker is available for this account; Detail is
 	// empty for the general text and holds the text for a system Broker when
@@ -142,7 +144,11 @@ func (h *handlers) preflight(tool string, kind callKind, needAgent bool) (Status
 	case PhaseStarting:
 		return st, toolError(phrase, textStarting, localpb.ErrorCode_ERROR_CODE_INTERNAL)
 	case PhaseUnavailable:
-		return st, toolError(phrase, fmt.Sprintf(textUnavailable, st.Detail), localpb.ErrorCode_ERROR_CODE_INTERNAL)
+		body := st.Detail
+		if body == "" {
+			body = textUnavailableNoReason
+		}
+		return st, toolError(phrase, body, localpb.ErrorCode_ERROR_CODE_INTERNAL)
 	case PhaseNoBroker:
 		body := st.Detail
 		if body == "" {

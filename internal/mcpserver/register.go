@@ -46,7 +46,7 @@ func runRegistration(ctx context.Context, c localpb.LocalClient, first *localpb.
 		// completion finishes must be told the connection is gone and
 		// reconnecting, not that registration is still in progress.
 		stopGeneration()
-		loopSetStatus(st, PhaseUnavailable, loopLostText, "", nil)
+		loopSetStatus(st, PhaseUnavailable, unavailableText(loopLostText), "", nil)
 		wg.Wait()
 	}()
 	defer cancel()

@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -221,7 +222,7 @@ func loopRetryPaused(t *testing.T, calls func() int, what string, clock *loopClo
 // replace the clock, onComplete, register or waitNotReady.
 func loopBaseDeps(st *statusStore, clock *loopClock) loopDeps {
 	return loopDeps{
-		probe:        probeSocket,
+		probe:        inspectSocket,
 		dial:         dialLocal,
 		hello:        hello,
 		waitNotReady: waitNotReady,
@@ -560,7 +561,7 @@ func TestRunLoop(t *testing.T) {
 		deps.selectTarget = func(context.Context) (target, error) {
 			return target{Path: path, Kind: kindUser}, nil
 		}
-		deps.probe = func(context.Context, string) probeResult { return probeMissing }
+		deps.probe = func(context.Context, string) probeInfo { return probeInfo{Outcome: probeMissing} }
 		loopStart(t, deps)
 
 		status := loopWaitStatus(t, st, "PhaseNoBroker", func(s Status) bool {
@@ -623,6 +624,161 @@ func TestRunLoop(t *testing.T) {
 		waits := loopWaitCount(t, clock, 1)
 		if waits[0] != 250*time.Millisecond {
 			t.Fatalf("first reconnect wait = %v, want 250ms", waits[0])
+		}
+	})
+
+	t.Run("a system Broker whose socket is gone or refusing keeps the no-Broker text", func(t *testing.T) {
+		// Only a socket that is missing or refuses connections means the system
+		// Broker is not running; an answering socket never sends the reader to
+		// start it.
+		for _, tc := range []struct {
+			name  string
+			probe probeResult
+		}{
+			{"missing", probeMissing},
+			{"refusing connections", probeRefused},
+		} {
+			probe := tc.probe
+			t.Run(tc.name, func(t *testing.T) {
+				path := fakelocal.SocketPath(t)
+
+				st := &statusStore{}
+				clock := newLoopClock()
+				deps := loopBaseDeps(st, clock)
+				deps.selectTarget = func(context.Context) (target, error) {
+					return target{Path: path, Kind: kindSystem}, nil
+				}
+				deps.probe = func(context.Context, string) probeInfo { return probeInfo{Outcome: probe} }
+				deps.hello = func(context.Context, localpb.LocalClient, uint32) (helloResult, error) {
+					return helloResult{}, errors.New("the socket did not answer")
+				}
+				loopStart(t, deps)
+
+				status := loopWaitStatus(t, st, "PhaseNoBroker", func(s Status) bool {
+					return s.Phase == PhaseNoBroker
+				})
+				if status.Detail != textNoSystemBroker {
+					t.Fatalf("Detail = %q, want %q", status.Detail, textNoSystemBroker)
+				}
+				h := &handlers{st: st}
+				_, err := h.preflight("list_agents", callGeneric, false)
+				if err == nil {
+					t.Fatal("preflight returned nil for a system socket that is gone")
+				}
+				want := "list_agents failed: " + textNoSystemBroker + " (code: internal)"
+				if got := err.Error(); got != want {
+					t.Fatalf("error = %q, want %q", got, want)
+				}
+				if strings.Contains(err.Error(), "running but is not answering") {
+					t.Fatalf("error = %q, want no running-Broker text", err)
+				}
+			})
+		}
+	})
+
+	t.Run("a system Broker that answers Hello with an error is reported as running", func(t *testing.T) {
+		// Hello returned a status of the Broker's own, so the connection stayed
+		// READY. The Broker is running, and the reader must not be sent to start
+		// it.
+		path := fakelocal.SocketPath(t)
+		const helloErr = "the Broker is busy"
+		helloRPCErr := status.Error(codes.Unavailable, helloErr)
+		fakelocal.Start(t, path, fakelocal.Handlers{
+			Hello: func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error) {
+				return nil, helloRPCErr
+			},
+		})
+		var selectCalls atomic.Int32
+
+		st := &statusStore{}
+		clock := newLoopClock()
+		deps := loopBaseDeps(st, clock)
+		deps.selectTarget = func(context.Context) (target, error) {
+			selectCalls.Add(1)
+			return target{Path: path, Kind: kindSystem}, nil
+		}
+		loopStart(t, deps)
+
+		snapshot := loopWaitStatus(t, st, "PhaseUnavailable", func(s Status) bool {
+			return s.Phase == PhaseUnavailable
+		})
+		want := "the system Broker is running but is not answering: " + helloRPCErr.Error() +
+			"; this session retries in the background, and if this persists, ask the administrator to check it."
+		if snapshot.Detail != want {
+			t.Fatalf("Detail = %q, want %q", snapshot.Detail, want)
+		}
+		h := &handlers{st: st}
+		_, err := h.preflight("list_agents", callGeneric, false)
+		if err == nil {
+			t.Fatal("preflight returned nil for an answering system Broker")
+		}
+		wantErr := "list_agents failed: " + want + " (code: internal)"
+		if got := err.Error(); got != wantErr {
+			t.Fatalf("error = %q, want %q", got, wantErr)
+		}
+		for _, unwanted := range []string{
+			"no Broker is available",
+			"ask the administrator to start it",
+			"the system Broker is unavailable",
+		} {
+			if strings.Contains(err.Error(), unwanted) {
+				t.Fatalf("error = %q, want no %q", err, unwanted)
+			}
+		}
+		if waits := loopWaitCount(t, clock, 1); waits[0] != 250*time.Millisecond {
+			t.Fatalf("first retry wait = %v, want 250ms", waits[0])
+		}
+		if got := selectCalls.Load(); got != 1 {
+			t.Errorf("selection ran %d times, want once while the same Broker is retried", got)
+		}
+	})
+
+	t.Run("a system Broker whose registration stream ends without an error is reported as running", func(t *testing.T) {
+		// The Register stream ended without an ErrorDetail while the socket
+		// still answers, so the Broker is running; the reader is not sent to
+		// start it.
+		path := fakelocal.SocketPath(t)
+		fakelocal.Start(t, path, fakelocal.Handlers{})
+		var selectCalls atomic.Int32
+
+		st := &statusStore{}
+		clock := newLoopClock()
+		deps := loopBaseDeps(st, clock)
+		deps.selectTarget = func(context.Context) (target, error) {
+			selectCalls.Add(1)
+			return target{Path: path, Kind: kindSystem}, nil
+		}
+		deps.register = func(context.Context, localpb.LocalClient, *localpb.RegisterRequest,
+			*statusStore, completeFunc, *slog.Logger) error {
+			return errors.New("the Register stream ended")
+		}
+		loopStart(t, deps)
+
+		snapshot := loopWaitStatus(t, st, "PhaseUnavailable", func(s Status) bool {
+			return s.Phase == PhaseUnavailable
+		})
+		want := "the system Broker is running but is not answering: " + loopLostText +
+			"; this session retries in the background, and if this persists, ask the administrator to check it."
+		if snapshot.Detail != want {
+			t.Fatalf("Detail = %q, want %q", snapshot.Detail, want)
+		}
+		h := &handlers{st: st}
+		_, err := h.preflight("list_agents", callGeneric, false)
+		if err == nil {
+			t.Fatal("preflight returned nil for an answering system Broker")
+		}
+		wantErr := "list_agents failed: " + want + " (code: internal)"
+		if got := err.Error(); got != wantErr {
+			t.Fatalf("error = %q, want %q", got, wantErr)
+		}
+		if strings.Contains(err.Error(), "ask the administrator to start it") {
+			t.Fatalf("error = %q, want no advice to start a running Broker", err)
+		}
+		if waits := loopWaitCount(t, clock, 1); waits[0] != 250*time.Millisecond {
+			t.Fatalf("first retry wait = %v, want 250ms", waits[0])
+		}
+		if got := selectCalls.Load(); got != 1 {
+			t.Errorf("selection ran %d times, want once while the same Broker is retried", got)
 		}
 	})
 
@@ -721,7 +877,7 @@ func TestRunLoop(t *testing.T) {
 		deps.selectTarget = func(context.Context) (target, error) {
 			return target{Path: path, Kind: kindUser}, nil
 		}
-		deps.probe = func(context.Context, string) probeResult { return probeRefused }
+		deps.probe = func(context.Context, string) probeInfo { return probeInfo{Outcome: probeRefused} }
 		loopStart(t, deps)
 
 		status := loopWaitStatus(t, st, "PhaseNoBroker", func(s Status) bool {
@@ -746,32 +902,87 @@ func TestRunLoop(t *testing.T) {
 		}
 	})
 
-	// A Hello failure only becomes the refusal text when the probe confirms a
-	// socket answers and the handshake itself was closed. A probe that reports
-	// another account serving the socket, a denied connection, or any other
-	// failure is not a refusal: the phase and text stay what they were before
-	// the refusal text existed, with the original error.
-	t.Run("a Hello failure without a confirmed socket keeps the unavailable text", func(t *testing.T) {
-		for _, tc := range []struct {
-			name  string
-			probe probeResult
+	// A Hello failure is classified by the probe. Only a socket answered by the
+	// account that may serve this Broker means the Broker is running but not
+	// answering; a socket served by another account is the peer mismatch
+	// selection reports, and a socket that could not be reached at all keeps
+	// the original error without claiming the Broker is running.
+	t.Run("a Hello failure is classified by what the probe found", func(t *testing.T) {
+		const (
+			helloErr = "the Broker rejected the handshake"
+			wrongUID = 4242
+		)
+		unavailable := "the Broker is unavailable: " + helloErr + "; retrying in the background."
+		cases := []struct {
+			name    string
+			kind    targetKind
+			probe   probeResult
+			peerUID uint32
+			want    func(path string) string
 		}{
-			{"the socket is served by another account", probeWrongPeer},
-			{"the account may not connect", probeDenied},
-			{"the probe failed another way", probeOther},
-		} {
-			probe := tc.probe
+			{
+				name:    "user socket served by another account",
+				kind:    kindUser,
+				probe:   probeWrongPeer,
+				peerUID: wrongUID,
+				want: func(path string) string {
+					return fmt.Sprintf("the user Broker socket %s is served by uid %d, not this account (%d)",
+						path, wrongUID, os.Geteuid())
+				},
+			},
+			{
+				name:  "user socket the account may not connect to",
+				kind:  kindUser,
+				probe: probeDenied,
+				want:  func(string) string { return unavailable },
+			},
+			{
+				name:  "user socket whose probe failed another way",
+				kind:  kindUser,
+				probe: probeOther,
+				want:  func(string) string { return unavailable },
+			},
+			{
+				name:    "system socket served by another account",
+				kind:    kindSystem,
+				probe:   probeWrongPeer,
+				peerUID: wrongUID,
+				want: func(path string) string {
+					return fmt.Sprintf("the system Broker socket %s is served by uid %d, not root", path, wrongUID)
+				},
+			},
+			{
+				name:  "system socket the account may not connect to",
+				kind:  kindSystem,
+				probe: probeDenied,
+				want: func(path string) string {
+					return fmt.Sprintf("cannot reach the system Broker at %s: %s; this session retries in the background.",
+						path, helloErr)
+				},
+			},
+			{
+				name:  "system socket whose probe failed another way",
+				kind:  kindSystem,
+				probe: probeOther,
+				want: func(path string) string {
+					return fmt.Sprintf("cannot reach the system Broker at %s: %s; this session retries in the background.",
+						path, helloErr)
+				},
+			},
+		}
+		for _, tc := range cases {
 			t.Run(tc.name, func(t *testing.T) {
 				path := fakelocal.SocketPath(t)
-				const helloErr = "the Broker rejected the handshake"
 
 				st := &statusStore{}
 				clock := newLoopClock()
 				deps := loopBaseDeps(st, clock)
 				deps.selectTarget = func(context.Context) (target, error) {
-					return target{Path: path, Kind: kindUser}, nil
+					return target{Path: path, Kind: tc.kind}, nil
 				}
-				deps.probe = func(context.Context, string) probeResult { return probe }
+				deps.probe = func(context.Context, string) probeInfo {
+					return probeInfo{Outcome: tc.probe, PeerUID: tc.peerUID, PeerKnown: tc.peerUID != 0}
+				}
 				deps.hello = func(context.Context, localpb.LocalClient, uint32) (helloResult, error) {
 					return helloResult{}, errors.New(helloErr)
 				}
@@ -780,7 +991,7 @@ func TestRunLoop(t *testing.T) {
 				status := loopWaitStatus(t, st, "PhaseUnavailable", func(s Status) bool {
 					return s.Phase == PhaseUnavailable
 				})
-				want := fmt.Sprintf("the Broker at %s is unavailable: %s", path, helloErr)
+				want := tc.want(path)
 				if status.Detail != want {
 					t.Fatalf("Detail = %q, want %q", status.Detail, want)
 				}
@@ -789,11 +1000,40 @@ func TestRunLoop(t *testing.T) {
 				if err == nil {
 					t.Fatal("preflight returned nil for a Hello failure")
 				}
-				if !strings.Contains(err.Error(), helloErr) {
-					t.Fatalf("error = %q, want it to carry the original error", err)
+				wantErr := "list_agents failed: " + want + " (code: internal)"
+				if got := err.Error(); got != wantErr {
+					t.Fatalf("error = %q, want %q", got, wantErr)
 				}
-				if strings.Contains(err.Error(), "refused this connection") {
-					t.Fatalf("error = %q, want no refusal text", err)
+				switch tc.probe {
+				case probeWrongPeer:
+					// The text names the account that answered, and a peer
+					// mismatch never claims the Broker is running.
+					if !strings.Contains(err.Error(), fmt.Sprintf("uid %d", wrongUID)) {
+						t.Fatalf("error = %q, want the answering account's uid", err)
+					}
+					if strings.Contains(err.Error(), "running but is not answering") {
+						t.Fatalf("error = %q, want no running-Broker claim for a peer mismatch", err)
+					}
+				case probeDenied, probeOther:
+					// The probe could not reach the socket at all, so the text
+					// must not claim the Broker is running.
+					if strings.Contains(err.Error(), "running but is not answering") {
+						t.Fatalf("error = %q, want no running-Broker claim", err)
+					}
+					if tc.kind == kindSystem {
+						for _, unwanted := range []string{"no Broker is available", "ask the administrator to start it"} {
+							if strings.Contains(err.Error(), unwanted) {
+								t.Fatalf("error = %q, want no %q", err, unwanted)
+							}
+						}
+					} else {
+						if got := strings.Count(err.Error(), "is unavailable"); got != 1 {
+							t.Fatalf("error = %q has %d \"is unavailable\" clauses, want 1", err, got)
+						}
+						if strings.Contains(err.Error(), "refused this connection") {
+							t.Fatalf("error = %q, want no refusal text", err)
+						}
+					}
 				}
 			})
 		}

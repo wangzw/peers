@@ -31,6 +31,7 @@ func newHandlers(st Status) *handlers {
 // answer a tool call.
 func TestPreflight(t *testing.T) {
 	const detail = "dial unix /run/peers/broker.sock: no such file or directory"
+	const unavailableDetail = "the Broker is unavailable: " + detail + "; retrying in the background."
 	const mismatchDetail = "the running Broker speaks local protocol version 2; this MCP server speaks version 1"
 	const remedy = "restart the Broker of this account with the same peers version as this MCP server; this session reconnects by itself"
 
@@ -51,20 +52,31 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: the connection to the Broker is still being set up; retry shortly (code: internal)",
 		},
 		{
+			// The status carries the whole sentence, so the reason appears
+			// once after a single statement that the Broker is unavailable.
 			name:   "unavailable generic",
-			status: Status{Phase: PhaseUnavailable, Detail: detail},
+			status: Status{Phase: PhaseUnavailable, Detail: unavailableDetail},
 			tool:   "list_agents",
 			kind:   callGeneric,
-			want:   "list_agents failed: the Broker is unavailable: " + detail + "; retrying in the background (code: internal)",
+			want:   "list_agents failed: " + unavailableDetail + " (code: internal)",
 		},
 		{
 			// REQ-agent-messaging-038, REQ-agent-messaging-027: a call rejected
 			// before reaching the Broker is not sent, never delivery unknown.
 			name:   "unavailable send",
-			status: Status{Phase: PhaseUnavailable, Detail: detail},
+			status: Status{Phase: PhaseUnavailable, Detail: unavailableDetail},
 			tool:   "send_message",
 			kind:   callSend,
-			want:   "Not sent: the Broker is unavailable: " + detail + "; retrying in the background (code: internal)",
+			want:   "Not sent: " + unavailableDetail + " (code: internal)",
+		},
+		{
+			// A status with no recorded reason still says the Broker is
+			// unavailable and that the session retries.
+			name:   "unavailable without a reason",
+			status: Status{Phase: PhaseUnavailable},
+			tool:   "list_agents",
+			kind:   callGeneric,
+			want:   "list_agents failed: the Broker is unavailable; retrying in the background. (code: internal)",
 		},
 		{
 			// REQ-broker-config-038: the text names both ways to start a Broker.
