@@ -15,16 +15,11 @@ import (
 func Uninstall(opts Options) (Result, error) {
 	var res Result
 
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return res, fmt.Errorf("cannot uninstall the service on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "uninstall the service"); err != nil {
+		return res, err
 	}
-	if opts.System && opts.EUID != 0 {
-		return res, errors.New("service remove --system must run as root")
-	}
-	if !opts.System && opts.EUID == 0 {
-		return res, errors.New("service remove without --system must not run as root; the user unit belongs to one account")
+	if err := checkRoot(opts, "remove"); err != nil {
+		return res, err
 	}
 
 	path, err := unitPath(opts)
@@ -99,12 +94,11 @@ func uninstallLinux(opts Options, path string, res *Result) (Result, error) {
 // uninstallDarwin boots the service out and removes its plist. A bootout
 // failure other than "not loaded" keeps the plist for a retry.
 func uninstallDarwin(opts Options, path string, res *Result) (Result, error) {
-	domain := ""
-	switch {
-	case opts.System:
+	var domain string
+	if opts.System {
 		domain = "system"
-	case launchctlDomainExists(opts, fmt.Sprintf("gui/%d", opts.UID)):
-		domain = fmt.Sprintf("gui/%d", opts.UID)
+	} else if gui := serviceDomain(false, opts.UID); launchctlDomainExists(opts, gui) {
+		domain = gui
 	}
 	res.Domain = domain
 

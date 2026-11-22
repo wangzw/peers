@@ -13,10 +13,8 @@ import (
 // file or plist could not be inspected; a failing service-manager query
 // counts as "not enabled or loaded", as Uninstall has always treated it.
 func Installed(opts Options) (bool, error) {
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return false, fmt.Errorf("cannot check for an installed service on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "check for an installed service"); err != nil {
+		return false, err
 	}
 
 	path, err := unitPath(opts)
@@ -38,11 +36,7 @@ func Installed(opts Options) (bool, error) {
 		// A missing domain answers the label query with an error, so asking
 		// the level's own domain directly gives the same answer as checking
 		// first whether the domain exists.
-		domain := "system"
-		if !opts.System {
-			domain = fmt.Sprintf("gui/%d", opts.UID)
-		}
-		return launchctlDomainLoaded(opts, domain), nil
+		return launchctlDomainLoaded(opts, serviceDomain(opts.System, opts.UID)), nil
 	}
 	return false, nil
 }
@@ -68,11 +62,7 @@ func systemctlReportsInstalled(opts Options) bool {
 		{"is-enabled", UnitName},
 		{"is-active", "--quiet", UnitName},
 	} {
-		argv := append([]string{}, args...)
-		if !opts.System {
-			argv = append([]string{"--user"}, argv...)
-		}
-		if _, err := opts.Run("systemctl", argv...); err == nil {
+		if _, err := opts.Run("systemctl", systemdArgs(opts, args...)...); err == nil {
 			return true
 		}
 	}
