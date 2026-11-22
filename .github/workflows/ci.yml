@@ -86,11 +86,40 @@ jobs:
       # a missing script fails this step rather than letting CI=true skip the
       # check.
       - name: Install the document standards checker
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           dir="$HOME/.claude/skills/document-standards"
+          commit="ada039cd0d4476ec12e9e49c8c213706e75258de"
           git init -q "$dir"
           git -C "$dir" remote add origin https://github.com/wangzw/document-standards.git
-          git -C "$dir" fetch -q --depth 1 origin ada039cd0d4476ec12e9e49c8c213706e75258de
+          # Authenticate the fetch with the job token so anonymous git rate
+          # limiting cannot turn it into a 403. The header is passed only
+          # through -c for this one fetch, so it reaches no config file, and
+          # the token stays in the environment: no set -x and no echo of a
+          # value, only the attempt number. GitHub masks GITHUB_TOKEN itself
+          # but not a string derived from it, so add-mask registers the
+          # header value too and GIT_TRACE would show *** instead.
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          delays=(5 15)
+          attempt=1
+          fetched=0
+          while [ "$attempt" -le 3 ]; do
+            if git -C "$dir" -c "http.extraheader=AUTHORIZATION: basic $auth" fetch -q --depth 1 origin "$commit"; then
+              fetched=1
+              break
+            fi
+            echo "fetch attempt $attempt of 3 failed"
+            if [ "$attempt" -lt 3 ]; then
+              sleep "${delays[$((attempt - 1))]}"
+            fi
+            attempt=$((attempt + 1))
+          done
+          if [ "$fetched" -ne 1 ]; then
+            echo "::error::could not fetch document-standards $commit after 3 attempts" >&2
+            exit 1
+          fi
           git -C "$dir" checkout -q FETCH_HEAD
           test -f "$dir/scripts/check_documents.py"
       # mermaid-cli renders through Chromium; puppeteer downloads one during
