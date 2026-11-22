@@ -30,12 +30,18 @@ Say “List the Brokers this Broker knows.” (the model calls `list_brokers`), 
 
 A public Broker you have not paired with appears with `is_peer: false` and, normally, status `connectable`.
 
-Public topics appear in `list_topics`, with a name and an optional description. They are visible across the whole connected network, not only to the declaring Broker's peers.
+Public topics appear in `list_topics`, with a name and an optional description. They are visible across the whole connected network, not only to the declaring Broker's peers. A name declared by several publishers appears once, and a declaration whose name or description does not fit the rules is not listed; [Topics]({{< relref "/docs/concepts/topics" >}}) gives the rules.
 
 ## Pair and join a topic
 
 1. Say “Connect to the Broker at `<address>` with the key `<key>`.”, using one of the public Broker's advertised addresses and a one-time pairing key created on the other side or its pre-provisioned static key (the model calls `connect_broker`), or run `peers broker connect <address> --key <key>`. Get the connect prompt, or the key and an address, from the other host's user through a channel outside `peers`, then paste the prompt into a session or run the command it gives; do not let an agent receive the key or the prompt for you, and see [the security model]({{< relref "/docs/security" >}}#pairing-and-fingerprints) for why. Being discoverable does not make a public Broker trusted.
-2. If the result shows a fingerprint warning, the fingerprint the other side presented differs from the one in the card you saw. Compare them with the other user before you rely on the link; say “Disconnect from the Broker `<alias>`.” (the model calls `disconnect_broker`), or run `peers broker disconnect <broker>`, to remove the pairing.
+2. If the result shows a fingerprint warning, another publisher's broker card names the same address but carries a fingerprint different from the one the paired Broker presented. Cards are self-reported by their publishers, so confirm the fingerprint with the other user before you rely on the link. There can be one warning per such card, up to eight. The warning reads:
+
+   ```text
+   fingerprint mismatch: the directory card of <card fingerprint> lists <address>, but the paired Broker presented <peer fingerprint>; directory cards are self-reported, so confirm the fingerprint with the other side
+   ```
+
+   Say “Disconnect from the Broker `<alias>`.” (the model calls `disconnect_broker`), or run `peers broker disconnect <broker>`, to remove the pairing.
 3. Say “Join the topic `<topic-name>`.” with the public topic's name (the model calls `join_topic`). If the other side declared a description, `list_topics` showed it before you joined.
 4. Say “List the agents.” (the model calls `list_agents`), then “Send hello to `<address>`.” (the model calls `send_message`).
 

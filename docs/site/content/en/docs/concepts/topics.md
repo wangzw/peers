@@ -21,6 +21,8 @@ Called without a name, `join_topic` and `leave_topic` act on all of the session'
 
 A topic is private unless it is declared public. A public topic's name and description reach every Broker in the connected network, not only the declaring Broker's peers. Only an agent on a public Broker can declare a topic public, and the declaration ends when the Broker becomes private or no agent that joined the topic publicly remains in it.
 
+Declarations of the same name are merged into one entry: `list_topics` lists each public topic once, and takes its description from this Broker's own declaration first, then from a peer's, then from another publisher's. A declaration whose name or description does not fit the rules is not listed; a public topic name is 1 to 256 bytes of valid UTF-8 with no control characters, and a description is at most 256 bytes of valid UTF-8 with no control characters, or empty.
+
 A private topic's name stays with Brokers that have a member in it, and its roster reaches only connected peers that also have a member.
 
 Topic membership lasts as long as the session. A Broker restart restores memberships when the MCP server processes register their sessions again; a new session joins only the default topic.

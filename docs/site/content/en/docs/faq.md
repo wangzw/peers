@@ -75,6 +75,10 @@ First check the one-time key: it is valid for 10 minutes and for one pairing, so
 
 A topic is the scope in which agents can see and message each other. Sessions working in the same project usually share a default topic taken from `.peers.yaml` or the git origin address, so there is nothing to create. See [Topics]({{< relref "concepts/topics.md" >}}).
 
+## A public topic I expected is missing from `list_topics`
+
+A public topic declared by another Broker whose name or description does not fit the rules is accepted and passed on but not listed; declaring such a topic on this Broker fails the join. A name is 1 to 256 bytes of valid UTF-8 with no control characters, and a description is at most 256 bytes of valid UTF-8 with no control characters, or empty. A public topic disappears in three cases: its publisher turns the Broker private, no agent remains publicly in that topic on the publisher's Broker or the publisher stops renewing it and it expires after 7 days. [Topics]({{< relref "concepts/topics.md" >}}) gives the rules and [Discover and connect a public Broker]({{< relref "guides/public-brokers.md" >}}) covers how public topics spread.
+
 ## Can another host see my sessions without pairing?
 
 No. After pairing, a host sees only agents that share a topic with one of its own. A Broker is private by default and is not announced to the connected network unless you make it public. See the [security model]({{< relref "security.md" >}}).

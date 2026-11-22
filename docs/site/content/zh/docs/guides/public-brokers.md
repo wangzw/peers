@@ -30,12 +30,18 @@ peers config set broker.public true
 
 尚未配对的公开 Broker 显示为 `is_peer: false`，状态通常是 `connectable`。
 
-`list_topics` 会列出公开 topic，带名字和可选的简介。它们对整个连通网络可见，不限于声明方的对端。
+`list_topics` 会列出公开 topic，带名字和可选的简介。它们对整个连通网络可见，不限于声明方的对端。多个发布者声明同一个名字时只列一项，名字或简介不合规定的声明不会列出；规则见[topic]({{< relref "/docs/concepts/topics" >}})。
 
 ## 配对并加入 topic
 
 1. 说“连接到 `<address>` 上的 Broker，密钥是 `<key>`。”，地址用公开 Broker 的某个对外地址，密钥用对方生成的一次性配对密钥或对方配置的预置静态密钥（模型会调用 `connect_broker`），或者运行 `peers broker connect <address> --key <key>`。连接提示词，或密钥与一个地址，经 peers 之外的途径从对方主机的用户那里取得，取得后把提示词粘贴进会话，或运行其中给出的命令；不要让 Agent 代为接收密钥或提示词，原因见[安全模型]({{< relref "/docs/security" >}}#配对与指纹)。能被发现不等于可以信任。
-2. 如果结果里出现指纹警告，说明对方出示的指纹与你看到的名片里的不一致。先与另一位用户核对，再决定是否依赖这条链路；说“断开与 Broker `<alias>` 的配对。”（模型会调用 `disconnect_broker`），或者运行 `peers broker disconnect <broker>`，可以解除配对。
+2. 如果结果里出现指纹警告，说明有另一个发布者的名片写着这个地址，但名片上的指纹与配对到的 Broker 出示的不同。名片由发布者自己报告，所以在依赖这条链路之前，先与另一位用户核对指纹。每张这样的名片各产生一条警告，最多 8 条。警告原文是：
+
+   ```text
+   fingerprint mismatch: the directory card of <card fingerprint> lists <address>, but the paired Broker presented <peer fingerprint>; directory cards are self-reported, so confirm the fingerprint with the other side
+   ```
+
+   说“断开与 Broker `<alias>` 的配对。”（模型会调用 `disconnect_broker`），或者运行 `peers broker disconnect <broker>`，可以解除配对。
 3. 说“加入 topic `<topic-name>`。”，名字用公开 topic 的名字（模型会调用 `join_topic`）。如果对方声明了简介，加入之前 `list_topics` 已经显示过它。
 4. 说“列出 Agent。”（模型会调用 `list_agents`），再说“给 `<address>` 发送 hello。”（模型会调用 `send_message`）。
 

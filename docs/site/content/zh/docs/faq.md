@@ -75,6 +75,10 @@ Claude Code v2.1.224 或更高版本。peers 怎样依赖 Claude Code，见[已�
 
 topic 是 Agent 之间可见与通信的范围。同一个项目里工作的会话通常共享一个默认 topic，它取自 `.peers.yaml` 或 git origin 地址，所以不需要自己创建。见[topic]({{< relref "concepts/topics.md" >}})。
 
+## 期望的公开 topic 没有出现在 `list_topics` 里
+
+其他 Broker 声明的公开 topic，名字或简介不合规定的，照常被接收、转发，但不会列出；在本 Broker 上声明这样的 topic，加入时会直接报错。名字为 1 至 256 字节、合法 UTF-8、不含控制字符；简介为至多 256 字节、合法 UTF-8、不含控制字符，可以为空。公开 topic 的消失有三种情形：发布方把 Broker 改为不公开；发布方上已没有 Agent 以公开方式留在该 topic 里；发布方停止续签，7 天后到期。规则见[topic]({{< relref "concepts/topics.md" >}})，公开 topic 的传播方式见[发现并连接公开 Broker]({{< relref "guides/public-brokers.md" >}})。
+
 ## 没有配对的主机能看到我的会话吗？
 
 看不到。配对之后，一台主机也只能看到与自己的 Agent 同处一个 topic 的 Agent。Broker 默认不公开，除非你把它设为公开，否则连通网络里不会有它的名片。见[安全模型]({{< relref "security.md" >}})。
