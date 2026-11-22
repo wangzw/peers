@@ -325,6 +325,10 @@ func (p *systemPeer) stop(t *testing.T) {
 	if err := sudo("kill", "-TERM", strconv.Itoa(p.pid)); err != nil {
 		t.Logf("stopping the peer Broker: %v", err)
 	}
+	// These are the failure-path escalation from SIGTERM to SIGKILL, not a wait
+	// a correct run depends on: if SIGTERM does not converge in ten seconds the
+	// process is killed, and if it still does not exit within five the test only
+	// logs it. Neither bound can fail the test, so their fixed intervals stay.
 	select {
 	case <-p.done:
 	case <-time.After(10 * time.Second):
@@ -427,6 +431,9 @@ func connectUserBroker(t *testing.T, socket, address, key, localAlias string) st
 func waitForLink(t *testing.T, socket, alias string, bound time.Duration) {
 	t.Helper()
 	waitFor(t, bound, "the link to "+alias+" to be connected", func() (bool, string) {
+		// One ListBrokers sample gets five seconds. A transport error is retried
+		// by the outer waitFor within bound, so a slow sample costs a retry
+		// rather than failing the wait.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		oracle, err := node.DialOracle(socket)

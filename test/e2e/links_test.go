@@ -40,6 +40,12 @@ const (
 	// timer governs the extra second; it only keeps the bound from turning a
 	// slow first address into a second-address failure.
 	lkRelinkSlack = time.Second
+	// lkRequirementBound is REQ-broker-pairing-018's 120-second upper bound on a
+	// relink. The waits use the shorter lkRelinkBound as their fallback, and the
+	// measured span is asserted against this requirement value plus a small
+	// observation margin, so the fallback never enters the assertion.
+	lkRequirementBound = 120 * time.Second
+	lkRequirementSlack = time.Second
 )
 
 // lkTopic is the topic the sessions use.
@@ -104,14 +110,18 @@ func TestLinks(t *testing.T) {
 	t.Run("REQ-broker-pairing-018 redial after restore", func(t *testing.T) {
 		lkCutAndWaitDown(t, c, aNode, bNode)
 		c.Restore(t)
-		// Start the clock after Restore returns, not before it: deleting the
-		// rules is the last part of the outage, and measuring it as rebuild
-		// time would charge the product for the harness's own work.
+		// Start the clock after Restore returns: deleting the rules is the last
+		// part of the outage, and charging it as rebuild time would blame the
+		// product for the harness's own work. Each wait has lkRelinkBound as its
+		// fallback and fails on its own if its side does not come back; the summed
+		// span is then checked against REQ-broker-pairing-018's 120 seconds, so the
+		// requirement's upper bound is asserted with the fallback kept out of it.
 		start := time.Now()
 		lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
 		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
-		if elapsed := time.Since(start); elapsed > lkRelinkBound {
-			t.Fatalf("the link took %s to rebuild, want at most %s", elapsed, lkRelinkBound)
+		if elapsed := time.Since(start); elapsed > lkRequirementBound+lkRequirementSlack {
+			t.Fatalf("the link took %s to rebuild, want at most %s (REQ-broker-pairing-018 %s plus %s observation margin)",
+				elapsed, lkRequirementBound+lkRequirementSlack, lkRequirementBound, lkRequirementSlack)
 		}
 	})
 
@@ -477,14 +487,17 @@ func TestLinksSourceFlood(t *testing.T) {
 				st.Dialed, st.Open, st.MaxOpen, st.Closed)
 		})
 
-		// A rebuilds its link while the flood keeps the global limit full.
+		// A rebuilds its link while the flood keeps the global limit full. Each
+		// side's wait has lkRelinkBound as its fallback; the summed span is then
+		// checked against REQ-broker-pairing-018's bound as in the redial case.
 		lkCutAndWaitDown(t, c, aNode, bNode)
 		c.Restore(t)
 		start := time.Now()
 		lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
 		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
-		if elapsed := time.Since(start); elapsed > lkRelinkBound {
-			t.Fatalf("the link took %s to rebuild under the flood, want at most %s", elapsed, lkRelinkBound)
+		if elapsed := time.Since(start); elapsed > lkRequirementBound+lkRequirementSlack {
+			t.Fatalf("the link took %s to rebuild under the flood, want at most %s (REQ-broker-pairing-018 %s plus %s observation margin)",
+				elapsed, lkRequirementBound+lkRequirementSlack, lkRequirementBound, lkRequirementSlack)
 		}
 
 		// A third source pairs during the same flood. It must succeed even

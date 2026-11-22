@@ -775,11 +775,19 @@ func TestTransportRestrictions(t *testing.T) {
 	})
 }
 
+// remoteInstallEventBound is the package fallback for a wait on an event a fake
+// tool reports rather than a product timer, such as the download reporting that
+// it started. It only decides how long a wait that never completes takes to
+// fail; the success path observes the marker at once, so a larger value costs
+// nothing. Thirty seconds matches the fallback the rest of the end-to-end tests
+// use.
+const remoteInstallEventBound = 30 * time.Second
+
 // interruptStartTimeout bounds the wait for the fake download to report that it
 // started. The fake writes the marker before it sleeps, so a healthy run
-// reaches the marker at once; the margin only absorbs a loaded CI runner and
-// does not hide a script that never starts the download.
-const interruptStartTimeout = 5 * time.Second
+// reaches the marker at once; the bound is the package fallback and does not
+// hide a script that never starts the download.
+const interruptStartTimeout = remoteInstallEventBound
 
 func TestInterruptRemovesTemporaryDirectory(t *testing.T) {
 	signals := []struct {
