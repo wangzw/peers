@@ -1,5 +1,6 @@
 ---
 title: 常见问题
+faq: true
 weight: 8
 description: "常见问题涵盖安装与卸载、配置文件、支持的平台、配对、topic、消息投递、权限管理和更新。"
 ---

@@ -1,0 +1,92 @@
+{{- /*
+  JSON-LD for the site, generated from the page rather than written into the
+  Markdown. The home page gets a SoftwareApplication, a page marked `faq: true`
+  gets a FAQPage built from its own headings and answers, and every docs page
+  gets a BreadcrumbList. The FAQ page is also a docs page, so it gets both.
+*/ -}}
+{{- $lang := .Site.Language.Locale | default .Site.Language.Lang -}}
+
+{{- if .IsHome -}}
+  {{- $app := dict
+    "@context" "https://schema.org"
+    "@type" "SoftwareApplication"
+    "name" "peers"
+    "description" .Site.Params.description
+    "url" .Permalink
+    "applicationCategory" "DeveloperApplication"
+    "operatingSystem" "Linux, macOS"
+    "license" "https://www.apache.org/licenses/LICENSE-2.0"
+    "downloadUrl" "https://github.com/wangzw/peers/releases/latest"
+    "offers" (dict "@type" "Offer" "price" "0" "priceCurrency" "USD")
+    "sameAs" "https://github.com/wangzw/peers"
+    "inLanguage" $lang
+    "author" (dict
+      "@type" "Person"
+      "@id" "https://zhanwei.wang/#person"
+      "name" "wangzw"
+      "url" "https://zhanwei.wang/en/"
+      "sameAs" (slice "https://github.com/wangzw"))
+  -}}
+  <script type="application/ld+json">{{ $app | jsonify | safeJS }}</script>
+{{- end -}}
+
+{{- if eq .Section "docs" -}}
+  {{- if .Params.faq -}}
+    {{- /* Each level-two heading is a question; its answer is the plain text
+           between that heading and the next one. */ -}}
+    {{- $questions := slice -}}
+    {{- $parts := split .Content "<h2" -}}
+    {{- range $i, $part := $parts -}}
+      {{- if gt $i 0 -}}
+        {{- $stripped := replaceRE "^[^>]*>" "" $part -}}
+        {{- $halves := split $stripped "</h2>" -}}
+        {{- $question := index $halves 0 | plainify | htmlUnescape | replaceRE "\\s+" " " | strings.TrimSpace -}}
+        {{- $answer := "" -}}
+        {{- if gt (len $halves) 1 -}}
+          {{- $answer = index $halves 1 | plainify | htmlUnescape | replaceRE "\\s+" " " | strings.TrimSpace -}}
+        {{- end -}}
+        {{- if and $question $answer -}}
+          {{- $questions = $questions | append (dict
+            "@type" "Question"
+            "name" $question
+            "acceptedAnswer" (dict "@type" "Answer" "text" $answer)) -}}
+        {{- end -}}
+      {{- end -}}
+    {{- end -}}
+    {{- if $questions -}}
+      {{- $faq := dict
+        "@context" "https://schema.org"
+        "@type" "FAQPage"
+        "inLanguage" $lang
+        "mainEntity" $questions
+      -}}
+      <script type="application/ld+json">{{ $faq | jsonify | safeJS }}</script>
+    {{- end -}}
+  {{- end -}}
+
+  {{- /* Breadcrumb trail from the home page down to this page. */ -}}
+  {{- $crumbs := slice -}}
+  {{- $ancestors := .Ancestors.Reverse -}}
+  {{- range $i, $p := $ancestors -}}
+    {{- $name := $p.LinkTitle | default $p.Title -}}
+    {{- if $p.IsHome -}}
+      {{- $name = site.Title -}}
+    {{- end -}}
+    {{- $crumbs = $crumbs | append (dict
+      "@type" "ListItem"
+      "position" (add $i 1)
+      "name" $name
+      "item" $p.Permalink) -}}
+  {{- end -}}
+  {{- $crumbs = $crumbs | append (dict
+    "@type" "ListItem"
+    "position" (add (len $ancestors) 1)
+    "name" (.LinkTitle | default .Title)
+    "item" .Permalink) -}}
+  {{- $breadcrumb := dict
+    "@context" "https://schema.org"
+    "@type" "BreadcrumbList"
+    "itemListElement" $crumbs
+  -}}
+  <script type="application/ld+json">{{ $breadcrumb | jsonify | safeJS }}</script>
+{{- end -}}

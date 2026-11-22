@@ -1,5 +1,6 @@
 ---
 title: FAQ
+faq: true
 weight: 8
 description: "Answers cover installation and uninstall, the configuration file, supported platforms, pairing, topics, message delivery, permissions and updates."
 ---
