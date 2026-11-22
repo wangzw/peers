@@ -148,11 +148,7 @@ func (s *server) handle(req *helperpb.HelperRequest) error {
 
 	switch op := req.GetOp().(type) {
 	case *helperpb.HelperRequest_Lookup:
-		switch s.beginRequest(id, true) {
-		case requestClosed:
-			return nil
-		case requestDuplicate:
-			s.respondDuplicate(id)
+		if !s.startRequest(id, true) {
 			return nil
 		}
 		go func() {
@@ -160,11 +156,7 @@ func (s *server) handle(req *helperpb.HelperRequest) error {
 			s.serveLookup(id, op.Lookup)
 		}()
 	case *helperpb.HelperRequest_Reread:
-		switch s.beginRequest(id, true) {
-		case requestClosed:
-			return nil
-		case requestDuplicate:
-			s.respondDuplicate(id)
+		if !s.startRequest(id, true) {
 			return nil
 		}
 		go func() {
@@ -178,11 +170,7 @@ func (s *server) handle(req *helperpb.HelperRequest) error {
 				errors.New("deliver timeout is missing or not positive"))
 			return nil
 		}
-		switch s.beginRequest(id, true) {
-		case requestClosed:
-			return nil
-		case requestDuplicate:
-			s.respondDuplicate(id)
+		if !s.startRequest(id, true) {
 			return nil
 		}
 		go func() {
@@ -190,29 +178,17 @@ func (s *server) handle(req *helperpb.HelperRequest) error {
 			s.serveDeliver(id, d)
 		}()
 	case *helperpb.HelperRequest_Watch:
-		switch s.beginRequest(id, false) {
-		case requestClosed:
-			return nil
-		case requestDuplicate:
-			s.respondDuplicate(id)
+		if !s.startRequest(id, false) {
 			return nil
 		}
 		s.serveWatch(id, op.Watch)
 	case *helperpb.HelperRequest_Unwatch:
-		switch s.beginRequest(id, false) {
-		case requestClosed:
-			return nil
-		case requestDuplicate:
-			s.respondDuplicate(id)
+		if !s.startRequest(id, false) {
 			return nil
 		}
 		s.serveUnwatch(id, op.Unwatch)
 	case *helperpb.HelperRequest_Cancel:
-		switch s.beginRequest(id, false) {
-		case requestClosed:
-			return nil
-		case requestDuplicate:
-			s.respondDuplicate(id)
+		if !s.startRequest(id, false) {
 			return nil
 		}
 		// Cancel carries no response of its own; release the id before acting.
@@ -220,6 +196,20 @@ func (s *server) handle(req *helperpb.HelperRequest) error {
 		s.serveCancel(op.Cancel)
 	}
 	return nil
+}
+
+// startRequest records id as in flight and reports whether the caller should
+// serve it. A request that arrived after cleanup started, or that repeats an id
+// still in flight, is answered here instead.
+func (s *server) startRequest(id uint64, async bool) bool {
+	switch s.beginRequest(id, async) {
+	case requestClosed:
+		return false
+	case requestDuplicate:
+		s.respondDuplicate(id)
+		return false
+	}
+	return true
 }
 
 func hasOperation(req *helperpb.HelperRequest) bool {
