@@ -1,28 +1,28 @@
-# peers 需求文档
+# peers requirements documentation
 
-本文档集描述 peers 从外部看必须具备的行为：不同主机上的 Claude Code 会话如何互相发现、互发消息，以及承载这些通信的 Broker 如何配对、发现和配置。
+This documentation set describes the behavior peers must have as seen from outside: how Claude Code sessions on different hosts discover each other and exchange messages, and how the Broker that carries these communications pairs, discovers and is configured.
 
-## 索引
+## Index
 
-- [系统概览](overview.md)：系统是什么，对外提供哪些能力，整体范围边界
-- [术语表](../glossary.md)：项目约定的术语，各类文档共用
-- [引用](../references.md)：文档引用的公开外部来源
+- [System overview](overview.md): what the system is, which capabilities it offers, and the overall scope boundary
+- [Glossary](../glossary.md): project-agreed terms, shared by every document type
+- [References](../references.md): public external sources cited by the documentation
 
-### 用户旅程
+### Journeys
 
-| 旅程 | 文档 |
+| Journey | Document |
 |---|---|
-| 两台主机首次配对 | [两台主机首次配对](journeys/journey-pair-brokers.md) |
-| 在同一个 topic 里跨主机协作 | [在同一个 topic 里跨主机协作](journeys/journey-collaborate-in-topic.md) |
-| 发现并连接公开 Broker | [发现并连接公开 Broker](journeys/journey-connect-public-broker.md) |
+| Two hosts pair for the first time | [Two hosts pair for the first time](journeys/journey-pair-brokers.md) |
+| Collaborate across hosts in one topic | [Collaborate across hosts in one topic](journeys/journey-collaborate-in-topic.md) |
+| Discover and connect to a public Broker | [Discover and connect to a public Broker](journeys/journey-connect-public-broker.md) |
 
-### 能力
+### Capabilities
 
-| 能力 | 文档 |
+| Capability | Document |
 |---|---|
-| Agent 消息 | [Agent 消息](features/prd-agent-messaging.md) |
+| Agent messaging | [Agent messaging](features/prd-agent-messaging.md) |
 | topic | [topic](features/prd-topics.md) |
-| Broker 配对与连接 | [Broker 配对与连接](features/prd-broker-pairing.md) |
-| Broker 发现 | [Broker 发现](features/prd-broker-discovery.md) |
-| Broker 配置、审计与运行 | [Broker 配置、审计与运行](features/prd-broker-config.md) |
-| 自动更新 | [自动更新](features/prd-update.md) |
+| Broker pairing and connection | [Broker pairing and connection](features/prd-broker-pairing.md) |
+| Broker discovery | [Broker discovery](features/prd-broker-discovery.md) |
+| Broker configuration, audit and operation | [Broker configuration, audit and operation](features/prd-broker-config.md) |
+| Automatic updates | [Automatic updates](features/prd-update.md) |
