@@ -81,6 +81,8 @@ A link has inbound limits of its own. One connection may queue at most 4096 stat
 
 A user Broker serves only its own account and rejects calls from other accounts. A system Broker serves the accounts allowed to use it, and accepts a registration only for an inbox socket owned by the calling account. Within one account there is no further separation.
 
+The local interface of a system Broker also bounds what one account can hold, so one account cannot exhaust the Broker or push other accounts out of it. Each account may hold at most 256 local connections and 256 registrations, and each connection may carry at most 64 concurrent streams. Across all accounts, the Broker accepts at most 4096 local connections at once. A check of a caller's permission to read or write the configuration file runs in a separate process; at most 8 such checks run at once, and at most 2 for one account. A uid that resolves to an account gets its own share of these limits; uids that resolve to no account, such as those a rootless container rotates through, share one quota among them. These values are constants and are not configurable.
+
 ## Update checks contact GitHub
 
 Each Broker checks GitHub for a newer formal release shortly after it starts, then every 24 hours by default. When `peers update` selects a Broker that runs as a service, that Broker performs the update, for the system installation as well as the user one. When no Broker is running, or the selected user Broker does not run as a service, the command performs the update itself.
