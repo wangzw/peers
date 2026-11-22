@@ -152,7 +152,7 @@ The write result's classification: a connection failure, or an error before any 
 
 ### Frame Size
 
-The receiver disconnects when a line exceeds 1 MiB without a newline (REF-claude-code-socket-transport). `FrameSize` applies to the body the same escaping as writing, then computes by the actual encoding: the signature-wrapped body is encoded as a JSON string, in which `<`, `>`, `&`, quotes, backslashes and control characters are counted at their escaped length and other characters at their UTF-8 byte count, plus the length of the frame's other fields. The result matches the byte count the dependent library actually writes. `broker` compares its result with the 1 000 000-byte cap.
+The receiver disconnects when a line exceeds 1 MiB without a newline ([REF-claude-code-socket-transport](../../references.md)). `FrameSize` applies to the body the same escaping as writing, then computes by the actual encoding: the signature-wrapped body is encoded as a JSON string, in which `<`, `>`, `&`, quotes, backslashes and control characters are counted at their escaped length and other characters at their UTF-8 byte count, plus the length of the frame's other fields. The result matches the byte count the dependent library actually writes. `broker` compares its result with the 1 000 000-byte cap.
 
 ## Error and Failure Semantics
 

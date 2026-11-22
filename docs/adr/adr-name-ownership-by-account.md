@@ -44,8 +44,6 @@ Derive the disambiguator from the account, a private salt and the socket path, s
 
 Adopt name ownership by account, with the address and signature formats unchanged.
 
-The user's chosen wording for this item is "use option 2, release a name after 7 days of idleness": adopt the second option, "own names by account, keeping the address format", and release a name after 7 idle days.
-
 - The system Broker records which account first registered each name. When registering or renaming to a name, if the name has no unexpired owner, it is recorded as the current account; if it has an unexpired owner, it is not changed.
 - An agent of the owning account carries no disambiguator in its address and signature when its name is unique under the owning account; a same-named agent of another account always takes the first 12 digits of the agent identifier, whether or not the name looks unique to peers.
 - When the name does not fit and the name part of the address must be shortened, the disambiguator is fixed to the first 12 digits of the agent identifier. When an address with a disambiguator is parsed, a shortened name matches only under this full identifier and only when the name in the address equals the name obtained by rendering the address at some legal alias length (1 to 24 bytes) for that agent; the alias length is chosen by the viewer, and the address a peer sees and uses to reply need not be rendered with the local current alias, so it is not required to equal the rendering under the local current view. An identifier shorter than 12 digits matches only an exactly identical name or the name-owning account's agent, and cannot use shortening to bypass ownership.
@@ -70,4 +68,4 @@ Once the owning account has registered a name, another account's agent keeps a 1
 
 ## Invalidation Conditions
 
-The decision's premise no longer holds when the address format changes to carry the account, or when ADR-agent-identity-by-inbox-socket is rewritten to allow a private derivation of the disambiguator.
+The decision's premise no longer holds when the address format changes to carry the account, or when [ADR-agent-identity-by-inbox-socket](adr-agent-identity-by-inbox-socket.md) is rewritten to allow a private derivation of the disambiguator.

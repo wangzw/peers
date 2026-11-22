@@ -212,7 +212,7 @@ Messages the system delivers MUST be subject to the target session's inbound con
 
 - **Acceptance**: When the target session's inbound policy is to refuse, the message does not enter that session; when the target session runs in a mode that skips permission confirmation and has no inbound policy set, the message waits for user approval.
 - **Status**: Implemented
-- **E2E test**: `test/e2e/send_local_test.go` `TestLocalSend/REQ-agent-messaging-021 system side`; `test/realsession/probes/inbound.sh` (run through `.github/workflows/real-session.yml` pushing `probe/inbound`)
+- **E2E test**: `test/realsession/probes/inbound.sh` (run through `.github/workflows/real-session.yml` pushing `probe/inbound`)
 
 ### REQ-agent-messaging-025
 

@@ -34,7 +34,7 @@ When the link is established the two sides agree on a salt and exchange a digest
 
 The two sides compute their shared topics directly by private set intersection and exchange no digest at all.
 
-**Rejected**: an offline dictionary attack is not the threat this decision guards against. A digest is valid only for one establishment of one link and in one direction, a peer can already probe guessed names online, which is listed as an accepted cost, and the cryptographic components and complexity that private set intersection introduces buy no extra protection against a paired Broker.
+**Not adopted**: it is compatible with the adopted digest exchange, and the decision does not need it at its present scope. An offline dictionary attack is not the threat this decision guards against: a digest is valid only for one establishment of one link and in one direction, a peer can already probe guessed names online, which is listed as an accepted cost, and the cryptographic components and complexity that private set intersection introduces buy no extra protection against a paired Broker.
 
 ## Decision
 

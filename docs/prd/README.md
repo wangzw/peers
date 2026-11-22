@@ -21,7 +21,7 @@ This documentation set describes the behavior peers must have as seen from outsi
 | Capability | Document |
 |---|---|
 | Agent messaging | [Agent messaging](features/prd-agent-messaging.md) |
-| topic | [topic](features/prd-topics.md) |
+| Topic | [Topic](features/prd-topics.md) |
 | Broker pairing and connection | [Broker pairing and connection](features/prd-broker-pairing.md) |
 | Broker discovery | [Broker discovery](features/prd-broker-discovery.md) |
 | Broker configuration, audit and operation | [Broker configuration, audit and operation](features/prd-broker-config.md) |

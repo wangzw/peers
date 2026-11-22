@@ -2,21 +2,21 @@
 
 ## Context
 
-The repository upstream of this project has changed to `wangzw/peers`, and the website has changed to <https://zhanwei.wang/peers/>. The user required the project name to be unified to peers in this version, in these words: "Rename the project to peers; the upstream is already done" and "You need to change the corresponding agent-peer wording, from the command-line name and the configuration file to the docs, and tell the site to change along." The name is therefore an external constraint: if the command line, installation paths, configuration files, service definitions and documentation keep the old name, they will disagree with the release channel and the website.
+The repository upstream of this project has changed to `wangzw/peers`, and the website has changed to <https://zhanwei.wang/peers/>. The project name is unified to peers in this version across the command line, the configuration files, the documentation and the website. The name is therefore an external constraint: if the command line, installation paths, configuration files, service definitions and documentation keep the old name, they will disagree with the release channel and the website.
 
-The user also ruled out compatibility. The installation layout, configuration files and protocol constants are not interchangeable between 0.3.0 and this version; keeping compatibility would leave the old name in paths, the protocol and the code, conflicting with the constraint of a unified name.
+Compatibility is ruled out as well. The installation layout, configuration files and protocol constants are not interchangeable between 0.3.0 and this version; keeping compatibility would leave the old name in paths, the protocol and the code, conflicting with the constraint of a unified name.
 
 ## Options Considered
 
 ### Keep agent-peer and do not rename
 
-**Rejected**: it disagrees with the names of the upstream repository, the website and the release artifacts, and the user explicitly required the rename.
+**Rejected**: it disagrees with the names of the upstream repository, the website and the release artifacts, and the name is an external constraint.
 
 ### Rename and keep compatibility with 0.3.0
 
 Migrate the old paths, old services and old admin group during installation, read the old project configuration file name, and keep the old protocol constants and pairing labels.
 
-**Rejected**: the user ruled out compatibility and ruled out upgrading from an old version. A compatibility layer would leave the old name in paths, the protocol and the code, and would require maintaining two sets of installation paths.
+**Rejected**: compatibility and upgrading from an old version are ruled out. A compatibility layer would leave the old name in paths, the protocol and the code, and would require maintaining two sets of installation paths.
 
 ### Rename without compatibility
 

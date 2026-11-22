@@ -1,4 +1,4 @@
-# topic
+# Topic
 
 ## Problem Statement
 
@@ -273,7 +273,7 @@ For a public topic with the same name, the description MUST be taken first from 
 
 ## Data Requirements
 
-topic membership is kept only in memory and not written to disk. A project's topic declarations are kept in the project configuration file and managed with the repository.
+Topic membership is kept only in memory and not written to disk. A project's topic declarations are kept in the project configuration file and managed with the repository.
 
 ## Assumptions and Dependencies
 

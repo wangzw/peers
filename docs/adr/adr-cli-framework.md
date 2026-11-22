@@ -6,9 +6,8 @@ The command line must meet these constraints:
 
 - Command names and grouping follow one rule and match the MCP tools and the glossary.
 - Help, usage, shell completion and man pages are generated from one command definition, and a new command is registered once.
-- Compatibility with old commands is not considered, and old spellings may stop working at once.
 
-Hand-written command dispatch, usage constants and option parsing cannot meet these constraints: the local Broker's operations are scattered across the top-level `broker`, `status`, `online`, `offline`, `audit` commands and the service uninstall subcommand, a peer is called `peer`, a pairing key is called `pairing-key`, and reading the whole configuration reuses one option. Help, usage and shell completion are therefore maintained separately, and a new command easily misses one of them.
+Hand-written command dispatch, usage constants and option parsing cannot meet the constraints on naming and on generation from one definition: the local Broker's operations are scattered across the top-level `broker`, `status`, `online`, `offline`, `audit` commands and the service uninstall subcommand, a peer is called `peer`, a pairing key is called `pairing-key`, and reading the whole configuration reuses one option. Help, usage and shell completion are therefore maintained separately, and a new command easily misses one of them.
 
 ## Options Considered
 
@@ -16,13 +15,13 @@ Hand-written command dispatch, usage constants and option parsing cannot meet th
 
 Continue using the existing dispatch and usage constants, changing only command names and help text.
 
-**Rejected**: help, usage, grouping and shell completion still have to be hand-written, and the user explicitly required introducing a third-party command-line tool; adding completion support would keep growing the hand-written usage constants.
+**Rejected**: help, usage, grouping and shell completion still have to be hand-written, and a third-party command-line library is introduced instead; adding completion support would keep growing the hand-written usage constants.
 
 ### Introduce a third-party framework and keep the old commands as aliases
 
 Reorder the commands with a third-party framework, keeping old spellings such as `status`, `peer` and `pairing-key` as aliases.
 
-**Rejected**: the user ruled out compatibility. Keeping aliases would put two sets of command names in help and completion at once, leave the grouping just as scattered, and keep the old names in scripts, tests and documentation for a long time.
+**Rejected**: keeping aliases would put two sets of command names in help and completion at once, leave the grouping just as scattered, and keep the old names in scripts, tests and documentation for a long time.
 
 ### Introduce cobra, reorder the commands as noun + verb, and keep no old command
 
@@ -34,7 +33,7 @@ cobra generates the command tree, help groups, usage and shell completion, as we
 
 Build the command line with cobra, which generates help, usage, grouping, shell completion and man pages. The command tree is organized as noun + verb, with `mcp` and `internal` hidden.
 
-Keep no old command and offer no aliases. The old top-level commands and nouns such as `peer` and `pairing-key` no longer exist.
+Compatibility with old commands is not considered: keep no old command and offer no aliases, so old spellings may stop working at once. The old top-level commands and nouns such as `peer` and `pairing-key` no longer exist.
 
 ## Consequences
 

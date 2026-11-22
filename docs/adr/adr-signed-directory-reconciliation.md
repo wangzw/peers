@@ -38,7 +38,13 @@ Public information is represented as records signed by the publisher with a vers
 
 ## Decision
 
-A card and a public topic's declaration are represented as records signed by the publisher with a version number and an expiry time, reconciled hop by hop over links and spread across the whole connected network; the publisher re-signs periodically, and a withdrawal is represented by a signed record with a higher version. The roster and online status do not propagate with the records.
+Adopt signed records reconciled hop by hop:
+
+- A card and a public topic's declaration are represented as records signed by the publisher with a version number and an expiry time.
+- The records are reconciled hop by hop over links and spread across the whole connected network.
+- The publisher re-signs periodically.
+- A withdrawal is represented by a signed record with a higher version.
+- The roster and online status do not propagate with the records.
 
 ## Consequences
 

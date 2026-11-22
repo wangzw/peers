@@ -30,7 +30,7 @@ The Broker imposes no send-rate limit and carries no hop count or call chain. Th
 
 ## Decision
 
-The Broker does not rate-limit sends or detect message loops; Claude Code's receiving-side inbound controls carry both. For deliveries from a peer, the Broker limits by (peer, session), so one peer cannot exhaust the quota the receiving side shares, as recorded in ADR-peer-resource-limits.
+The Broker does not rate-limit sends or detect message loops; Claude Code's receiving-side inbound controls carry both. For deliveries from a peer, the Broker limits by (peer, session), so one peer cannot exhaust the quota the receiving side shares, as recorded in [ADR-peer-resource-limits](adr-peer-resource-limits.md).
 
 ## Consequences
 

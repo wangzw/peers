@@ -107,9 +107,9 @@ A user whose account has read permission on the Broker's configuration file MUST
 
 A user MUST be able to view the Broker's status in the local terminal, including registered agents, each agent's topics, and all peers and their connection status. A user whose account has no read permission on the configuration file can see only agents under their own account, and peers and their connection status remain visible as usual.
 
-- **Acceptance**: Register two agents and have them join different topics, and after pairing with one peer disconnect the network; run the status command in the terminal as an account with read permission and the output lists these two agents and their topics and shows that peer as not connected. Run it on a system Broker as an account without read permission and the output contains only this account's own agents and likewise lists that peer and its connection status.
+- **Acceptance**: Register two agents and have them join different topics, and after pairing with one peer make that peer unreachable (for example, stop the peer Broker); run the status command in the terminal as an account with read permission and the output lists these two agents and their topics and shows that peer as not connected. Run it on a system Broker as an account without read permission and the output contains only this account's own agents and likewise lists that peer and its connection status.
 - **Status**: Implemented
-- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents` (an account without read permission sees only its own agents and sees the peer as not connected; a non-root account with read permission sees two agents and their topics, and after pairing with the peer stops the peer Broker instead of "disconnecting the network", and the peer is still listed and shown as not connected)
+- **E2E test**: `test/e2e/system/permission_test.go` `TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents` (an account without read permission sees only its own agents and sees the peer as not connected; a non-root account with read permission sees two agents and their topics, and the peer is still listed and shown as not connected)
 
 ### REQ-broker-config-011
 
