@@ -236,14 +236,7 @@ func (s *store) versions(now time.Time) []*directorypb.RecordVersion {
 	sortRecords(live)
 	out := make([]*directorypb.RecordVersion, 0, len(live))
 	for _, r := range live {
-		out = append(out, &directorypb.RecordVersion{
-			Id: &directorypb.RecordId{
-				Publisher: append([]byte(nil), r.id.publisher[:]...),
-				Kind:      r.id.kind,
-				Object:    r.id.object,
-			},
-			Version: r.version,
-		})
+		out = append(out, r.recordVersion())
 	}
 	return out
 }
@@ -362,6 +355,12 @@ func (s *store) uncount(r *storedRecord) {
 // revocation only withdraws the record it names.
 func countsTowardPublisher(r *storedRecord) bool {
 	return r.id.kind != directorypb.RecordKind_RECORD_KIND_BROKER_CARD && !r.isRevocation()
+}
+
+// liveRecord reports whether r is unexpired, is not a revocation and carries a
+// parsed body.
+func liveRecord(r *storedRecord, now time.Time) bool {
+	return r.body != nil && !r.isRevocation() && !isExpired(r.expires, now)
 }
 
 // raise raises highestIssued when r was published by the local Broker.

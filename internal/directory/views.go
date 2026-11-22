@@ -113,7 +113,7 @@ func (d *Directory) PublicTopics() []PublicTopic {
 	self := d.st.self
 	decls := make([]viewTopicRecord, 0, len(d.st.records))
 	for _, r := range d.st.records {
-		if isExpired(r.expires, now) || r.isRevocation() || r.body == nil {
+		if !liveRecord(r, now) {
 			continue
 		}
 		ann := r.body.GetTopicAnnouncement()
@@ -245,7 +245,7 @@ func (d *Directory) viewCards(now time.Time) []viewCardRecord {
 
 	out := make([]viewCardRecord, 0, len(d.st.records))
 	for _, r := range d.st.records {
-		if isExpired(r.expires, now) || r.isRevocation() || r.body == nil {
+		if !liveRecord(r, now) {
 			continue
 		}
 		card := r.body.GetBrokerCard()
