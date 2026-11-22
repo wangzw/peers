@@ -123,7 +123,7 @@ func TestFindBrokerWithDialRefusesForeignPeer(t *testing.T) {
 	}
 	defer func() { _ = cc.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), helloTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	_, err = client.Hello(ctx, &localpb.HelloRequest{ProtocolVersion: localpb.ProtocolVersion})
 	if err == nil {

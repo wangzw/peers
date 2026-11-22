@@ -176,9 +176,26 @@ func TestUpdateHintUnimplementedIsAFailedQuery(t *testing.T) {
 }
 
 func TestUpdateHintTimeoutIsSkipped(t *testing.T) {
+	// The query timeout is the product's bound on the stalled source. The test
+	// checks the deadline the product handed the source, not how fast anything
+	// ran: a source that sees the caller's much later deadline shows the query
+	// timeout was not applied, and it then returns instead of blocking there.
+	const queryTimeout = 20 * time.Millisecond
+	const deadlineBound = time.Second
 	var calls atomic.Int32
+	deadlines := make(chan time.Duration, 1)
 	source := func(ctx context.Context) (updateStatus, error) {
 		calls.Add(1)
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			deadlines <- -1
+			return updateStatus{}, errors.New("the update query context has no deadline")
+		}
+		remaining := time.Until(deadline)
+		deadlines <- remaining
+		if remaining > deadlineBound {
+			return updateStatus{}, errors.New("the update query timeout was not applied")
+		}
 		<-ctx.Done()
 		return updateStatus{}, ctx.Err()
 	}
@@ -187,12 +204,17 @@ func TestUpdateHintTimeoutIsSkipped(t *testing.T) {
 			return ListAgentsOut{Self: "me@host"}, nil
 		},
 	}
-	cs := connectHintClient(t, ts, source, 20*time.Millisecond)
+	cs := connectHintClient(t, ts, source, queryTimeout)
 
-	start := time.Now()
 	res := callTool(t, cs, "list_agents", nil)
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Errorf("tool call took %v, want the query timeout to bound it", elapsed)
+	var got time.Duration
+	select {
+	case got = <-deadlines:
+	default:
+		t.Fatal("update status source was not called")
+	}
+	if got < 0 || got > deadlineBound {
+		t.Fatalf("update query context deadline was %v away, want about the %s query timeout", got, queryTimeout)
 	}
 	texts := contentTexts(res)
 	if len(texts) != 1 {

@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
@@ -254,20 +255,41 @@ func TestHello(t *testing.T) {
 	})
 
 	t.Run("respects the caller context", func(t *testing.T) {
+		// The handler reports when it has started and then blocks until its
+		// context ends. Cancelling the caller's context after that point proves
+		// hello used it: a hello that kept only its own deadline would return
+		// DeadlineExceeded instead of Canceled, whatever the scheduling delay.
+		started := make(chan struct{})
 		_, conn := dialFakeConn(t, fakelocal.Handlers{
 			Hello: func(ctx context.Context, _ *localpb.HelloRequest) (*localpb.HelloResponse, error) {
+				close(started)
 				<-ctx.Done()
 				return nil, ctx.Err()
 			},
 		})
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		start := time.Now()
-		if _, err := hello(ctx, conn.c, localpb.ProtocolVersion); err == nil {
-			t.Fatal("hello returned nil, want an error")
+		done := make(chan error, 1)
+		go func() {
+			_, err := hello(ctx, conn.c, localpb.ProtocolVersion)
+			done <- err
+		}()
+		select {
+		case <-started:
+		case <-time.After(eventTimeout):
+			t.Fatalf("hello never reached the fake Broker within %s", eventTimeout)
 		}
-		if elapsed := time.Since(start); elapsed >= 2*time.Second {
-			t.Fatalf("hello took %v, want it to respect the 500ms caller deadline", elapsed)
+		cancel()
+		select {
+		case err := <-done:
+			if err == nil {
+				t.Fatal("hello returned nil, want an error")
+			}
+			if code := status.Code(err); code != codes.Canceled {
+				t.Fatalf("hello returned %v (code %s), want Canceled from the caller context", err, code)
+			}
+		case <-time.After(eventTimeout):
+			t.Fatalf("hello did not return within %s of the caller context being cancelled", eventTimeout)
 		}
 	})
 }

@@ -100,20 +100,41 @@ func TestDarwinFallbackBaseTimesOut(t *testing.T) {
 		resetFallbackBaseCache()
 	})
 	fallbackBaseProbeTimeout = 25 * time.Millisecond
+	// The probe deadline is the product's bound on getconf. Checking the value
+	// the product passed keeps the assertion independent of scheduling: a probe
+	// that received no deadline, or the caller's much later one, returns at once
+	// so the test reports it instead of blocking.
+	const deadlineBound = time.Second
+	deadlines := make(chan time.Duration, 1)
 	getconfOutput = func(ctx context.Context) ([]byte, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			deadlines <- -1
+			return nil, errors.New("the getconf context has no deadline")
+		}
+		remaining := time.Until(deadline)
+		deadlines <- remaining
+		if remaining > deadlineBound {
+			return nil, errors.New("the getconf probe timeout was not applied")
+		}
 		<-ctx.Done()
 		return nil, ctx.Err()
 	}
 
-	started := time.Now()
 	_, err := darwinFallbackBase(7002)
 	if err == nil {
 		t.Fatal("darwinFallbackBase succeeded with a stalled getconf")
 	}
+	var got time.Duration
+	select {
+	case got = <-deadlines:
+	default:
+		t.Fatal("getconf was not called")
+	}
+	if got < 0 || got > deadlineBound {
+		t.Fatalf("getconf context deadline was %v away, want about the %s probe timeout", got, fallbackBaseProbeTimeout)
+	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error = %v, want context.DeadlineExceeded", err)
-	}
-	if elapsed := time.Since(started); elapsed > time.Second {
-		t.Errorf("darwinFallbackBase took %v, want the bounded wait", elapsed)
 	}
 }

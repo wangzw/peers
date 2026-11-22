@@ -30,12 +30,12 @@ func loopTestLogger() *slog.Logger {
 // loopWaitLimit bounds every wait for an observable loop event. Each wait ends
 // on an event (a Register stream, a status change, or a fake-clock request),
 // not on elapsed time, so the bound is a safety net that turns a stuck loop
-// into a test failure rather than a hang. It is helloTimeout plus one second:
-// a Hello that hangs reaches helloTimeout, and the test must not reach its own
-// bound at the same moment, or a loaded runner fails both at once. The extra
-// second keeps the failure report about the loop instead of racing the
-// product's own timeout.
-const loopWaitLimit = helloTimeout + time.Second
+// into a test failure rather than a hang. It is helloTimeout plus the package
+// eventTimeout: a Hello that hangs reaches helloTimeout, and the test then has
+// the whole event fallback before its own bound, so a loaded runner cannot fail
+// both at once. The fallback keeps the failure report about the loop instead of
+// racing the product's own timeout.
+const loopWaitLimit = helloTimeout + eventTimeout
 
 // loopClock replaces time.After in the loop. Every wait is recorded, and the
 // test drives it with advance or autoAdvance. An advance that arrives before
