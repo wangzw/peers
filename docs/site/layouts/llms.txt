@@ -1,0 +1,66 @@
+{{- /*
+  llms.txt for the current language, following https://llmstxt.org/.
+
+  The page list is generated from the documentation section, so a new page
+  appears here without editing this file. Groups follow the sidebar order:
+  the top-level pages that come before the first subsection, then one group
+  per subsection in weight order, then the top-level pages that come after the
+  last subsection. Each line carries the page's front matter description; a
+  page without one fails the build, and the summary line comes from
+  site.Params.description.
+*/ -}}
+{{- $labels := site.Params.llms | default dict -}}
+{{- $docsLabel := index $labels "documentation" | default "Documentation" -}}
+{{- $additionalLabel := index $labels "additional" | default "More documentation" -}}
+{{- $moreLabel := index $labels "more" | default "More" -}}
+{{- $fullLabel := index $labels "full" | default "The full documentation as one plain-text file." -}}
+{{- $repoLabel := index $labels "repository" | default "peers on GitHub" -}}
+
+{{- $docs := site.GetPage "/docs" -}}
+{{- /* Split the top-level pages into those before the first subsection and
+       those after the last one, keeping the sidebar's weight order. */ -}}
+{{- $before := slice $docs -}}
+{{- $sections := slice -}}
+{{- $after := slice -}}
+{{- $seenSection := false -}}
+{{- range $docs.Pages.ByWeight -}}
+  {{- if .IsSection -}}
+    {{- $seenSection = true -}}
+    {{- $pages := slice . -}}
+    {{- range .Pages.ByWeight -}}
+      {{- $pages = $pages | append . -}}
+    {{- end -}}
+    {{- $sections = $sections | append (dict "title" (.LinkTitle | default .Title) "pages" $pages) -}}
+  {{- else if $seenSection -}}
+    {{- $after = $after | append . -}}
+  {{- else -}}
+    {{- $before = $before | append . -}}
+  {{- end -}}
+{{- end -}}
+
+{{- $groups := slice (dict "title" $docsLabel "pages" $before) -}}
+{{- range $sections -}}
+  {{- $groups = $groups | append . -}}
+{{- end -}}
+{{- if $after -}}
+  {{- $groups = $groups | append (dict "title" $additionalLabel "pages" $after) -}}
+{{- end -}}
+
+{{- $out := slice -}}
+{{- $out = $out | append (printf "# %s" site.Title) -}}
+{{- $out = $out | append (printf "> %s" site.Params.description) -}}
+{{- range $groups -}}
+  {{- $lines := slice -}}
+  {{- range .pages -}}
+    {{- if not .Description -}}
+      {{- errorf "llms.txt: page %q has no front matter description" .Path -}}
+    {{- end -}}
+    {{- $lines = $lines | append (printf "- [%s](%s): %s" .Title .Permalink .Description) -}}
+  {{- end -}}
+  {{- $out = $out | append (printf "## %s\n\n%s" .title (delimit $lines "\n")) -}}
+{{- end -}}
+{{- $links := slice -}}
+{{- $links = $links | append (printf "- [llms-full.txt](%sllms-full.txt): %s" site.Home.Permalink $fullLabel) -}}
+{{- $links = $links | append (printf "- [%s](https://github.com/wangzw/peers)" $repoLabel) -}}
+{{- $out = $out | append (printf "## %s\n\n%s" $moreLabel (delimit $links "\n")) -}}
+{{- delimit $out "\n\n" }}

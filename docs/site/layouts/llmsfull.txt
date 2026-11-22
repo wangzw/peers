@@ -1,0 +1,42 @@
+{{- /*
+  llms-full.txt for the current language, following https://llmstxt.org/.
+
+  Every documentation page of the language is concatenated in sidebar order:
+  each top-level page and subsection sorted together by weight. Each page
+  opens with its title, a Source line naming its absolute URL, then its body,
+  and pages are separated by a rule. RenderShortcodes expands the relref
+  shortcodes while keeping the rest of the body as Markdown, so code blocks
+  survive and no shortcode syntax is left behind. Site-relative links that
+  relref produces are rewritten to absolute URLs, and in-page anchors are
+  rewritten to the absolute URL of the page that contains them.
+*/ -}}
+{{- $base := urls.Parse site.BaseURL -}}
+{{- $prefix := $base.Path -}}
+{{- $origin := printf "%s://%s" $base.Scheme $base.Host -}}
+{{- $pattern := printf `\]\(%s` $prefix -}}
+{{- $replacement := printf "](%s%s" $origin $prefix -}}
+{{- $anchorPattern := `\]\(#([^)]+)\)` -}}
+
+{{- $docs := site.GetPage "/docs" -}}
+{{- $ordered := slice $docs -}}
+{{- range $docs.Pages.ByWeight -}}
+  {{- $ordered = $ordered | append . -}}
+  {{- if .IsSection -}}
+    {{- range .Pages.ByWeight -}}
+      {{- $ordered = $ordered | append . -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+
+{{- $blocks := slice -}}
+{{- range $ordered -}}
+  {{- $body := .RenderShortcodes -}}
+  {{- if $prefix -}}
+    {{- $body = replaceRE $pattern $replacement $body -}}
+  {{- end -}}
+  {{- $anchorReplacement := printf "](%s#$1)" .Permalink -}}
+  {{- $body = replaceRE $anchorPattern $anchorReplacement $body -}}
+  {{- $body = $body | strings.TrimSpace -}}
+  {{- $blocks = $blocks | append (printf "# %s\n\nSource: %s\n\n%s" .Title .Permalink $body) -}}
+{{- end -}}
+{{- delimit $blocks "\n\n---\n\n" }}

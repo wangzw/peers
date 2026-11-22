@@ -10,6 +10,30 @@ disableKinds:
   - taxonomy
   - term
 
+# llms.txt and llms-full.txt are generated for each language from the site's
+# pages by the templates in layouts/. They are plain text for models to read,
+# so they stay out of the sitemap and the navigation.
+outputFormats:
+  llms:
+    name: llms
+    baseName: llms
+    mediaType: text/plain
+    isPlainText: true
+    notAlternative: true
+  llmsfull:
+    name: llmsfull
+    baseName: llms-full
+    mediaType: text/plain
+    isPlainText: true
+    notAlternative: true
+
+outputs:
+  home:
+    - HTML
+    - RSS
+    - llms
+    - llmsfull
+
 module:
   imports:
     - path: github.com/imfing/hextra
@@ -81,6 +105,12 @@ languages:
       description: peers lets Claude Code sessions running on different hosts discover each other and exchange text messages.
       images:
         - images/social-card-en.png
+      llms:
+        documentation: Documentation
+        additional: More documentation
+        more: More
+        full: The full documentation as one plain-text file.
+        repository: peers on GitHub
     menus:
       main:
         - name: Documentation
@@ -109,6 +139,12 @@ languages:
       description: peers 让运行在不同主机上的 Claude Code 会话互相发现，并交换文本消息。
       images:
         - images/social-card-zh.png
+      llms:
+        documentation: 文档
+        additional: 更多文档
+        more: 更多
+        full: 全部文档合在一个纯文本文件里。
+        repository: GitHub 上的 peers
     menus:
       main:
         - name: 文档
