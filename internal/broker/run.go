@@ -480,7 +480,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		// Step 9: bind the local socket. Only the lock holder reaches this
 		// point. A diagnostics-only retry reuses the socket it already bound.
 		if sock == nil {
-			s, err := BindLocalSocket(sockPath, 0o600)
+			s, err := BindLocalSocket(sockPath, 0o600, d.Logger)
 			if err != nil {
 				return nil, failWith("local socket", fmt.Errorf("%w: %v", ErrRuntimeDir, err))
 			}
@@ -708,7 +708,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 					return ErrLockLost
 				}
 				if !sock.Present() {
-					ns, err := BindLocalSocket(sockPath, 0o600)
+					ns, err := BindLocalSocket(sockPath, 0o600, deps.Logger)
 					if err != nil {
 						deps.Logger.Warn(EvLocalSocketRebindFailed, "error", err)
 					} else {
@@ -826,7 +826,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 			}
 			return nil
 		}
-		s, err := BindLocalSocket(sockPath, 0o600)
+		s, err := BindLocalSocket(sockPath, 0o600, deps.Logger)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrRuntimeDir, err)
 		}
@@ -857,7 +857,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		if sockPath == "" {
 			return
 		}
-		s, err := BindLocalSocket(sockPath, 0o600)
+		s, err := BindLocalSocket(sockPath, 0o600, deps.Logger)
 		if err != nil {
 			deps.Logger.Warn(EvLocalSocketRebindFailed, "error", err)
 			return

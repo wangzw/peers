@@ -3,6 +3,8 @@ package broker
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -71,7 +73,7 @@ func TestBindLocalSocketReplacesStaleSocket(t *testing.T) {
 		t.Fatalf("stale socket was not left in place: %v", err)
 	}
 
-	sock, err := BindLocalSocket(path, 0o600)
+	sock, err := BindLocalSocket(path, 0o600, nil)
 	if err != nil {
 		t.Fatalf("BindLocalSocket: %v", err)
 	}
@@ -93,7 +95,7 @@ func TestBindLocalSocketRefusesRegularFile(t *testing.T) {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
-	if _, err := BindLocalSocket(path, 0o600); err == nil {
+	if _, err := BindLocalSocket(path, 0o600, nil); err == nil {
 		t.Fatal("BindLocalSocket succeeded over a regular file")
 	} else if !strings.Contains(err.Error(), "not a socket") {
 		t.Fatalf("BindLocalSocket error = %q, want it to say not a socket", err)
@@ -113,9 +115,46 @@ func TestBindLocalSocketRefusesRegularFile(t *testing.T) {
 	}
 }
 
+// TestBindLocalSocketReportsRetryLimit checks that a socket removed inside the
+// listen-to-chmod window on every attempt is reported after the full budget,
+// naming the failed attempts and logging each retry under its own event.
+func TestBindLocalSocketReportsRetryLimit(t *testing.T) {
+	path := shortSocketDir(t, "broker.sock")
+	var logs bytes.Buffer
+	var level slog.LevelVar
+	logger := NewLogger(&logs, &level)
+	defer swapAfterListen(func() { _ = os.Remove(path) })()
+
+	_, err := BindLocalSocket(path, 0o600, logger)
+	if err == nil {
+		t.Fatal("BindLocalSocket succeeded although every attempt lost its socket")
+	}
+	if want := fmt.Sprintf("after %d attempts", bindAttempts); !strings.Contains(err.Error(), want) {
+		t.Fatalf("BindLocalSocket error = %q, want it to say %q", err, want)
+	}
+	retries := 0
+	for _, rec := range decodeLogLines(t, logs.String()) {
+		switch rec["event"] {
+		case EvLocalSocketBindRetry:
+			retries++
+			if rec["socket"] != path {
+				t.Errorf("retry %d socket = %v, want %s", retries, rec["socket"], path)
+			}
+			if got, ok := rec["attempt"].(float64); !ok || int(got) != retries {
+				t.Errorf("retry %d attempt = %v, want %d", retries, rec["attempt"], retries)
+			}
+		case EvLocalSocketRebound:
+			t.Errorf("a bind that never succeeded logged %s", EvLocalSocketRebound)
+		}
+	}
+	if retries != bindAttempts-1 {
+		t.Errorf("retry records = %d, want %d", retries, bindAttempts-1)
+	}
+}
+
 func TestBindLocalSocketPermission(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
-	sock, err := BindLocalSocket(path, 0o600)
+	sock, err := BindLocalSocket(path, 0o600, nil)
 	if err != nil {
 		t.Fatalf("BindLocalSocket: %v", err)
 	}
@@ -132,14 +171,14 @@ func TestBindLocalSocketPermission(t *testing.T) {
 
 func TestLocalSocketCloseDoesNotRemoveReplacement(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
-	a, err := BindLocalSocket(path, 0o600)
+	a, err := BindLocalSocket(path, 0o600, nil)
 	if err != nil {
 		t.Fatalf("BindLocalSocket A: %v", err)
 	}
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("Remove A's socket: %v", err)
 	}
-	b, err := BindLocalSocket(path, 0o600)
+	b, err := BindLocalSocket(path, 0o600, nil)
 	if err != nil {
 		t.Fatalf("BindLocalSocket B: %v", err)
 	}
@@ -162,7 +201,7 @@ func TestLocalSocketCloseDoesNotRemoveReplacement(t *testing.T) {
 
 func TestLocalSocketPresent(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
-	sock, err := BindLocalSocket(path, 0o600)
+	sock, err := BindLocalSocket(path, 0o600, nil)
 	if err != nil {
 		t.Fatalf("BindLocalSocket: %v", err)
 	}

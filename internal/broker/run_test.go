@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -479,6 +480,75 @@ func TestRunSentinels(t *testing.T) {
 				t.Errorf("readiness line = %q, want %q", got, err.Error()+"\n")
 			}
 		})
+	}
+}
+
+// swapAfterListen installs hook as the package's listen/chmod test seam and
+// returns a function that restores the previous hook.
+func swapAfterListen(hook func()) func() {
+	prev := afterListen
+	afterListen = hook
+	return func() { afterListen = prev }
+}
+
+// waitForLocalSocketOrRunError waits until the local socket at sock accepts a
+// connection. When Run returns first, it fails with that error, so a startup
+// that gave up on the socket reports what it returned.
+func waitForLocalSocketOrRunError(t *testing.T, rt *runTest, sock string) {
+	t.Helper()
+	deadline := time.Now().Add(eventTimeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("unix", sock, 50*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		select {
+		case runErr := <-rt.done:
+			rt.waited = true
+			t.Fatalf("Run returned before the local socket answered: %v", runErr)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("the local socket %s did not answer", sock)
+}
+
+// TestRunRebindsSocketRemovedAfterListen checks that a full startup recovers
+// when the socket file is removed between ListenUnix and the chmod that
+// follows it.
+func TestRunRebindsSocketRemovedAfterListen(t *testing.T) {
+	rt := newRunTest(t)
+	sock := rt.socketPath()
+	var removed atomic.Bool
+	defer swapAfterListen(func() {
+		if !removed.Swap(true) {
+			_ = os.Remove(sock)
+		}
+	})()
+	rt.start()
+
+	waitForLocalSocketOrRunError(t, rt, sock)
+	if !removed.Load() {
+		t.Fatal("the test seam never removed the socket")
+	}
+	mode, gid := socketPerms(t, sock)
+	if mode != 0o600 {
+		t.Fatalf("socket mode = %04o, want 0600", mode)
+	}
+	if gid != uint32(os.Getegid()) {
+		t.Fatalf("socket group = %d, want the binding process's %d", gid, os.Getegid())
+	}
+	if !logsHaveEvent(t, rt.logs.String(), EvLocalSocketBindRetry) {
+		t.Errorf("the log has no %s event", EvLocalSocketBindRetry)
+	}
+	if !logsHaveEvent(t, rt.logs.String(), EvLocalSocketRebound) {
+		t.Errorf("the log has no %s event", EvLocalSocketRebound)
+	}
+
+	rt.cancel()
+	if err := rt.waitErr(); err != nil {
+		t.Fatalf("Run after cancel: %v", err)
 	}
 }
 

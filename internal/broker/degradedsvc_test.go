@@ -22,7 +22,7 @@ import (
 func startTestDegradedService(t *testing.T, state *localpb.DegradedState) (string, *LocalSocket, *degradedService) {
 	t.Helper()
 	path := shortSocketDir(t, "broker.sock")
-	sock, err := BindLocalSocket(path, 0o600)
+	sock, err := BindLocalSocket(path, 0o600, nil)
 	if err != nil {
 		t.Fatalf("BindLocalSocket: %v", err)
 	}

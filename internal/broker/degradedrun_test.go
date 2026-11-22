@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -780,6 +781,43 @@ func TestRunDiagnosticsRebindsRemovedSocket(t *testing.T) {
 	rt.ticks <- time.Now()
 	waitForAnswer(t, sock)
 
+	resp := waitForStatus(t, sock, func(s *localpb.StatusResponse) bool { return s.GetDegraded() != nil })
+	if resp.GetDegraded().GetLevel() != localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
+		t.Fatalf("level = %v, want diagnostics_only", resp.GetDegraded().GetLevel())
+	}
+
+	rt.cancel()
+	if err := rt.waitErr(); err != nil {
+		t.Fatalf("Run after cancel: %v", err)
+	}
+}
+
+// TestRunDiagnosticsRebindsSocketRemovedAfterListen checks that entering
+// diagnostics only recovers when the socket file is removed between ListenUnix
+// and the chmod that follows it.
+func TestRunDiagnosticsRebindsSocketRemovedAfterListen(t *testing.T) {
+	rt := newRunTest(t, func(rt *runTest) { rt.opts.AllowDegraded = true })
+	rt.cfg.setLoadErr(diagnosticsLoadErr(rt))
+	sock := rt.socketPath()
+	var removed atomic.Bool
+	defer swapAfterListen(func() {
+		if !removed.Swap(true) {
+			_ = os.Remove(sock)
+		}
+	})()
+	rt.start()
+
+	waitForLocalSocketOrRunError(t, rt, sock)
+	if !removed.Load() {
+		t.Fatal("the test seam never removed the socket")
+	}
+	mode, gid := socketPerms(t, sock)
+	if mode != 0o600 {
+		t.Fatalf("socket mode = %04o, want 0600", mode)
+	}
+	if gid != uint32(os.Getegid()) {
+		t.Fatalf("socket group = %d, want the binding process's %d", gid, os.Getegid())
+	}
 	resp := waitForStatus(t, sock, func(s *localpb.StatusResponse) bool { return s.GetDegraded() != nil })
 	if resp.GetDegraded().GetLevel() != localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
 		t.Fatalf("level = %v, want diagnostics_only", resp.GetDegraded().GetLevel())

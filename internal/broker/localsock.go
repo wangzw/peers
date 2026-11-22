@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"sync"
@@ -23,11 +24,35 @@ type LocalSocket struct {
 	closed bool
 }
 
+// afterListen runs after each successful ListenUnix and before the socket's
+// mode is set. It is a test seam for removing the socket inside that window:
+// production code never sets it, and the zero value does nothing.
+var afterListen = func() {}
+
+// bindAttempts bounds the retries BindLocalSocket makes when the socket file
+// disappears between its ListenUnix call and the chmod or lstat that follows.
+// That window holds only those two system calls, so one retry clears a race
+// with a single unlink; three leaves margin for a second unlucky removal while
+// a path that keeps losing its socket still fails quickly instead of looping.
+const bindAttempts = 3
+
+// attemptCountText describes how many bind attempts failed, for the error
+// returned once the attempts are spent.
+func attemptCountText(n int) string {
+	if n == 1 {
+		return "1 attempt"
+	}
+	return fmt.Sprintf("%d attempts", n)
+}
+
 // BindLocalSocket binds the local interface to path with file mode perm. A
 // stale socket left by a previous process is replaced; any other kind of file
 // at path is left alone and reported as an error. The caller must hold the
 // account lock, so that only the one running Broker ever tries this.
-func BindLocalSocket(path string, perm os.FileMode) (*LocalSocket, error) {
+func BindLocalSocket(path string, perm os.FileMode, logger *slog.Logger) (*LocalSocket, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	fi, err := os.Lstat(path)
 	switch {
 	case err == nil:
@@ -43,37 +68,57 @@ func BindLocalSocket(path string, perm os.FileMode) (*LocalSocket, error) {
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
 
-	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
-	if err != nil {
-		return nil, err
-	}
-	// The listener must never unlink the path on Close: by then another Broker
-	// may own a freshly bound socket there.
-	ln.SetUnlinkOnClose(false)
+	// retried records whether an attempt failed and gave way to another, so a
+	// bind that finally succeeds can report the recovery once.
+	retried := false
 
-	if err := os.Chmod(path, perm); err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("set mode %s: %w", path, err)
+	for attempt := 1; ; attempt++ {
+		ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+		if err != nil {
+			return nil, err
+		}
+		// The listener must never unlink the path on Close: by then another
+		// Broker may own a freshly bound socket there.
+		ln.SetUnlinkOnClose(false)
+		afterListen()
+
+		if err := os.Chmod(path, perm); err != nil {
+			_ = ln.Close()
+			if errors.Is(err, fs.ErrNotExist) && attempt < bindAttempts {
+				logger.Info(EvLocalSocketBindRetry, "socket", path, "attempt", attempt)
+				retried = true
+				continue
+			}
+			_ = os.Remove(path)
+			return nil, fmt.Errorf("cannot set mode on %s after %s: %w", path, attemptCountText(attempt), err)
+		}
+		fi, err := os.Lstat(path)
+		if err != nil {
+			_ = ln.Close()
+			if errors.Is(err, fs.ErrNotExist) && attempt < bindAttempts {
+				logger.Info(EvLocalSocketBindRetry, "socket", path, "attempt", attempt)
+				retried = true
+				continue
+			}
+			_ = os.Remove(path)
+			return nil, fmt.Errorf("cannot stat socket %s after %s: %w", path, attemptCountText(attempt), err)
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok {
+			_ = ln.Close()
+			_ = os.Remove(path)
+			return nil, fmt.Errorf("stat socket %s: missing file identity", path)
+		}
+		if retried {
+			logger.Info(EvLocalSocketRebound, "socket", path)
+		}
+		return &LocalSocket{
+			path: path,
+			ln:   ln,
+			dev:  uint64(st.Dev),
+			ino:  uint64(st.Ino),
+		}, nil
 	}
-	fi, err = os.Lstat(path)
-	if err != nil {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("stat socket %s: %w", path, err)
-	}
-	st, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		_ = ln.Close()
-		_ = os.Remove(path)
-		return nil, fmt.Errorf("stat socket %s: missing file identity", path)
-	}
-	return &LocalSocket{
-		path: path,
-		ln:   ln,
-		dev:  uint64(st.Dev),
-		ino:  uint64(st.Ino),
-	}, nil
 }
 
 // Listener returns the underlying listener so the caller can serve the local
