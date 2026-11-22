@@ -129,12 +129,18 @@ func validMemberName(name string) bool {
 	return true
 }
 
+// sortByBytes sorts s by the bytes of each key, ascending. Digests and
+// fingerprints both use this order so frames leave in a deterministic order.
+func sortByBytes[T ~[32]byte](s []T) {
+	slices.SortFunc(s, func(a, b T) int {
+		return bytes.Compare(a[:], b[:])
+	})
+}
+
 // digestsMsg builds a TopicDigests with the digests in ascending byte order.
 func digestsMsg(ds [][32]byte) *topicpb.TopicDigests {
 	sorted := slices.Clone(ds)
-	slices.SortFunc(sorted, func(a, b [32]byte) int {
-		return bytes.Compare(a[:], b[:])
-	})
+	sortByBytes(sorted)
 	out := &topicpb.TopicDigests{Digests: make([][]byte, len(sorted))}
 	for i, d := range sorted {
 		b := make([]byte, len(d))

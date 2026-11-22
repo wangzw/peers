@@ -1,10 +1,5 @@
 package topic
 
-import (
-	"bytes"
-	"sort"
-)
-
 // addLocal adds a local topic and both of its digests under this link's salt.
 func (ps *peerState) addLocal(name string) {
 	ps.indexLocal(name)
@@ -29,9 +24,7 @@ func (ps *peerState) localDigests() [][32]byte {
 	for _, d := range ps.send {
 		out = append(out, d)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return bytes.Compare(out[i][:], out[j][:]) < 0
-	})
+	sortByBytes(out)
 	return out
 }
 
@@ -73,9 +66,7 @@ func (ps *peerState) recompute() (entered [][32]byte) {
 		}
 	}
 	ps.shared = shared
-	sort.Slice(entered, func(i, j int) bool {
-		return bytes.Compare(entered[i][:], entered[j][:]) < 0
-	})
+	sortByBytes(entered)
 	return entered
 }
 

@@ -15,9 +15,7 @@ func publishSortedPeers(peers map[link.Fingerprint]*peerState) []link.Fingerprin
 	for p := range peers {
 		out = append(out, p)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return bytes.Compare(out[i][:], out[j][:]) < 0
-	})
+	sortByBytes(out)
 	return out
 }
 
@@ -47,8 +45,7 @@ func (r *Registry) Join(agent AgentID, name string) error {
 			ps.addLocal(name)
 			r.sendLatestLocked(peer, topicpb.KindTopicDigests, digestsMsg(ps.localDigests()))
 			for _, d := range ps.recompute() {
-				send, topicName := ps.sentDigest(d)
-				r.sendRosterLocked(peer, send, rosterMsg(send, r.local.members(topicName)))
+				r.sendRosterForLocked(peer, ps, d)
 			}
 			continue
 		}

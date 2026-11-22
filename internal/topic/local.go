@@ -116,12 +116,7 @@ func (lt *localTable) topicsOf(id AgentID) []string {
 	if a == nil {
 		return nil
 	}
-	names := make([]string, 0, len(a.topics))
-	for name := range a.topics {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return sortedKeys(a.topics)
 }
 
 // members returns the information of every agent in the topic name, ascending
@@ -143,8 +138,13 @@ func (lt *localTable) members(name string) []Member {
 
 // topicNames returns every topic that has members, ascending.
 func (lt *localTable) topicNames() []string {
-	names := make([]string, 0, len(lt.topics))
-	for name := range lt.topics {
+	return sortedKeys(lt.topics)
+}
+
+// sortedKeys returns the keys of m in ascending order.
+func sortedKeys[V any](m map[string]V) []string {
+	names := make([]string, 0, len(m))
+	for name := range m {
 		names = append(names, name)
 	}
 	sort.Strings(names)

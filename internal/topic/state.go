@@ -126,6 +126,13 @@ func (r *Registry) sendRosterLocked(peer link.Fingerprint, d [32]byte, m *topicp
 	r.deliverLatestKeyLocked(peer, digestKey(d), f)
 }
 
+// sendRosterForLocked sends the full roster of the local topic behind the
+// peer-direction digest d. Callers hold r.mu.Lock.
+func (r *Registry) sendRosterForLocked(peer link.Fingerprint, ps *peerState, d [32]byte) {
+	send, name := ps.sentDigest(d)
+	r.sendRosterLocked(peer, send, rosterMsg(send, r.local.members(name)))
+}
+
 // sendDeltaLocked queues a delta for digest d. If a frame for d is still
 // queued, replacing it with a delta could drop changes the queued frame carries
 // (another agent's change, or the snapshot a queued roster holds), so the

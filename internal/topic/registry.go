@@ -87,8 +87,7 @@ func (r *Registry) handleDigests(peer link.Fingerprint, f link.Frame) {
 	}
 	ps.setRemote(set)
 	for _, d := range ps.recompute() {
-		send, name := ps.sentDigest(d)
-		r.sendRosterLocked(peer, send, rosterMsg(send, r.local.members(name)))
+		r.sendRosterForLocked(peer, ps, d)
 	}
 }
 
@@ -125,25 +124,13 @@ func (r *Registry) handleRoster(peer link.Fingerprint, f link.Frame) {
 		r.frameDropped(peer, f, "too_many_members", &d)
 		return
 	}
-	members := make([]Member, 0, len(msg.Members))
-	dropped := 0
-	for _, p := range msg.Members {
-		m := memberFromWire(p)
-		if !validMemberEntry(m) {
-			dropped++
-			continue
-		}
-		m.Account = SanitizeAccountName(m.Account)
-		members = append(members, m)
-	}
+	members, dropped := membersFromWire(msg.Members)
 	if dropped > 0 {
 		r.membersDropped(peer, f, &d, dropped)
 	}
+	// A Roster replaces the entries under d, so the per-digest bound is the
+	// member limit already checked above; only the peer-wide total remains.
 	entries := entriesForRoster(members)
-	if len(entries) > maxInboundMembers {
-		r.frameDropped(peer, f, "roster_full", &d)
-		return
-	}
 	if ps.rosterTotalExcept(d)+len(entries) > maxPeerMembers {
 		r.frameDropped(peer, f, "peer_roster_full", &d)
 		return
@@ -184,27 +171,8 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 		r.frameDropped(peer, f, "too_many_members", &d)
 		return
 	}
-	dropped := 0
-	added := make([]Member, 0, len(msg.Added))
-	for _, p := range msg.Added {
-		m := memberFromWire(p)
-		if !validMemberEntry(m) {
-			dropped++
-			continue
-		}
-		m.Account = SanitizeAccountName(m.Account)
-		added = append(added, m)
-	}
-	changed := make([]Member, 0, len(msg.Changed))
-	for _, p := range msg.Changed {
-		m := memberFromWire(p)
-		if !validMemberEntry(m) {
-			dropped++
-			continue
-		}
-		m.Account = SanitizeAccountName(m.Account)
-		changed = append(changed, m)
-	}
+	added, droppedAdded := membersFromWire(msg.Added)
+	changed, droppedChanged := membersFromWire(msg.Changed)
 	removed := make([]memberKey, 0, len(msg.Removed))
 	for _, k := range msg.Removed {
 		if k == nil {
@@ -212,7 +180,7 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 		}
 		removed = append(removed, memberKey{Name: k.Name, Ref: k.Ref})
 	}
-	if dropped > 0 {
+	if dropped := droppedAdded + droppedChanged; dropped > 0 {
 		r.membersDropped(peer, f, &d, dropped)
 	}
 	cur := ps.rosters[d]
@@ -230,6 +198,23 @@ func (r *Registry) handleDelta(peer link.Fingerprint, f link.Frame) {
 		ps.rosters[d] = cur
 	}
 	applyDeltaInPlace(cur, added, removed, changed)
+}
+
+// membersFromWire converts inbound wire members, dropping the entries that
+// validMemberEntry rejects and returning how many were dropped. The account is
+// display-only, so an illegal one is sanitized rather than dropping the entry.
+func membersFromWire(list []*topicpb.Member) (members []Member, dropped int) {
+	members = make([]Member, 0, len(list))
+	for _, p := range list {
+		m := memberFromWire(p)
+		if !validMemberEntry(m) {
+			dropped++
+			continue
+		}
+		m.Account = SanitizeAccountName(m.Account)
+		members = append(members, m)
+	}
+	return members, dropped
 }
 
 // frameIgnored records an inbound frame that cannot be used: it arrived without

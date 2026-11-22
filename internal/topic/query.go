@@ -1,8 +1,6 @@
 package topic
 
 import (
-	"bytes"
-	"slices"
 	"sort"
 
 	"github.com/wangzw/peers/internal/link"
@@ -28,11 +26,7 @@ func visible(lt *localTable, peers map[link.Fingerprint]*peerState, local AgentI
 		if !ok {
 			return nil
 		}
-		for _, name := range querySortedTopics(la.topics) {
-			if _, ok := oa.topics[name]; ok {
-				shared = append(shared, name)
-			}
-		}
+		shared = sharedTopicNames(querySortedTopics(la.topics), oa.topics)
 	} else {
 		ps, ok := peers[other.Peer]
 		if !ok {
@@ -65,6 +59,8 @@ func visibleAgents(lt *localTable, peers map[link.Fingerprint]*peerState, local 
 
 	var out []VisibleAgent
 
+	localTopics := querySortedTopics(la.topics)
+
 	ids := make([]AgentID, 0, len(lt.agents))
 	for id := range lt.agents {
 		if id != local {
@@ -73,7 +69,7 @@ func visibleAgents(lt *localTable, peers map[link.Fingerprint]*peerState, local 
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	for _, id := range ids {
-		shared := visible(lt, peers, local, AgentRef{ID: id})
+		shared := sharedTopicNames(localTopics, lt.agents[id].topics)
 		if len(shared) == 0 {
 			continue
 		}
@@ -84,15 +80,11 @@ func visibleAgents(lt *localTable, peers map[link.Fingerprint]*peerState, local 
 		})
 	}
 
-	localTopics := querySortedTopics(la.topics)
-
 	fps := make([]link.Fingerprint, 0, len(peers))
 	for fp := range peers {
 		fps = append(fps, fp)
 	}
-	slices.SortFunc(fps, func(a, b link.Fingerprint) int {
-		return bytes.Compare(a[:], b[:])
-	})
+	sortByBytes(fps)
 
 	for _, fp := range fps {
 		ps := peers[fp]
@@ -209,10 +201,17 @@ func sharedNames(ps *peerState) []string {
 }
 
 func querySortedTopics(topics map[string]struct{}) []string {
-	names := make([]string, 0, len(topics))
-	for name := range topics {
-		names = append(names, name)
+	return sortedKeys(topics)
+}
+
+// sharedTopicNames returns the names in localTopics that other also has.
+// localTopics is ascending, so the result is too.
+func sharedTopicNames(localTopics []string, other map[string]struct{}) []string {
+	var shared []string
+	for _, name := range localTopics {
+		if _, ok := other[name]; ok {
+			shared = append(shared, name)
+		}
 	}
-	sort.Strings(names)
-	return names
+	return shared
 }
