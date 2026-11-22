@@ -691,8 +691,8 @@ func TestFakeLinkDropsFramesOfOldGeneration(t *testing.T) {
 	}
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
-		t.Fatal("first frame was not delivered within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("first frame was not delivered within %s", eventTimeout)
 	}
 
 	if err := a.Send(b.self, link.Frame{Kind: kind, Payload: []byte{2}}); err != nil {

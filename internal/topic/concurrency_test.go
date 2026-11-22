@@ -132,10 +132,10 @@ func TestCallbacksConcurrentWithOperations(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		buf := make([]byte, 1<<20)
 		n := runtime.Stack(buf, true)
-		t.Fatalf("concurrent operations did not finish within 3s:\n%s", buf[:n])
+		t.Fatalf("concurrent operations did not finish within %s:\n%s", eventTimeout, buf[:n])
 	}
 
 	flushAll(t, la, lb)
@@ -197,7 +197,7 @@ func TestOldConnectionFramesDoNotPolluteNewLink(t *testing.T) {
 	connect(la, lb, []byte("old-salt"))
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first frame never reached B's handler")
 	}
 
