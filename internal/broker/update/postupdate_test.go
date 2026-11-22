@@ -106,6 +106,97 @@ func TestInstallRunsPostUpdate(t *testing.T) {
 	assertNoRollbackFiles(t, filepath.Dir(target))
 }
 
+// injectUnitGuard replaces the two pre-step unit guard calls for one test and
+// restores them when it ends. It returns a pointer that reports whether
+// SaveMainUnit ran.
+func injectUnitGuard(t *testing.T, options func(bool) (service.Options, error), save func(service.Options) (service.SavedUnit, error)) *bool {
+	t.Helper()
+	previousOptions := postUpdateOptions
+	previousSave := saveMainUnit
+	t.Cleanup(func() {
+		postUpdateOptions = previousOptions
+		saveMainUnit = previousSave
+	})
+	saveCalled := new(bool)
+	postUpdateOptions = options
+	saveMainUnit = func(opts service.Options) (service.SavedUnit, error) {
+		*saveCalled = true
+		return save(opts)
+	}
+	return saveCalled
+}
+
+// assertUnitGuardFailure checks the shared contract of a pre-step unit guard
+// failure: the error names the guard, carries the cause, says the previous
+// binary was restored, and the step never started.
+func assertUnitGuardFailure(t *testing.T, err, cause error, marker, target string, original []byte, before os.FileInfo) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Install() = nil, want an error")
+	}
+	const prefix = "saving the service definition before the post-update step"
+	if !strings.HasPrefix(err.Error(), prefix) {
+		t.Errorf("error %q does not start with %q", err, prefix)
+	}
+	if !errors.Is(err, cause) {
+		t.Errorf("error %q does not carry the injected cause", err)
+	}
+	if !strings.Contains(err.Error(), "the previous binary was restored") {
+		t.Errorf("error %q does not say the binary was restored", err)
+	}
+	if _, statErr := os.Stat(marker); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the post-update step ran after the unit guard failed: %v", statErr)
+	}
+	assertUnchanged(t, target, original, before)
+	assertNoRollbackFiles(t, filepath.Dir(target))
+}
+
+// TestInstallRestoresWhenPostUpdateOptionsFails checks the first failure branch
+// of the pre-step unit guard: options for the level cannot be resolved, so the
+// previous binary comes back and the unit is not read.
+func TestInstallRestoresWhenPostUpdateOptionsFails(t *testing.T) {
+	unitGuardFixture(t)
+	const version = "0.2.0"
+	original := []byte("original binary")
+	target, before := newTarget(t, original, 0o750)
+	marker := filepath.Join(filepath.Dir(target), "post-update-ran")
+	script := postUpdateScript(version, marker, 0, "")
+
+	cause := errors.New("cannot locate the home directory")
+	saveCalled := injectUnitGuard(t,
+		func(bool) (service.Options, error) { return service.Options{}, cause },
+		func(service.Options) (service.SavedUnit, error) { return service.SavedUnit{}, nil })
+
+	err := Install(context.Background(), serveScript(t, target, version, script), "user")
+	assertUnitGuardFailure(t, err, cause, marker, target, original, before)
+	if *saveCalled {
+		t.Error("SaveMainUnit ran after PostUpdateOptions failed")
+	}
+}
+
+// TestInstallRestoresWhenSaveMainUnitFails checks the second failure branch: the
+// main unit cannot be read before the step, so the previous binary comes back
+// and the step never runs.
+func TestInstallRestoresWhenSaveMainUnitFails(t *testing.T) {
+	unitGuardFixture(t)
+	const version = "0.2.0"
+	original := []byte("original binary")
+	target, before := newTarget(t, original, 0o750)
+	marker := filepath.Join(filepath.Dir(target), "post-update-ran")
+	script := postUpdateScript(version, marker, 0, "")
+
+	cause := errors.New("cannot read the unit file")
+	saveCalled := injectUnitGuard(t,
+		func(bool) (service.Options, error) { return service.Options{}, nil },
+		func(service.Options) (service.SavedUnit, error) { return service.SavedUnit{}, cause })
+
+	err := Install(context.Background(), serveScript(t, target, version, script), "user")
+	assertUnitGuardFailure(t, err, cause, marker, target, original, before)
+	if !*saveCalled {
+		t.Error("SaveMainUnit did not run")
+	}
+}
+
 func TestInstallPostUpdateNotNeeded(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"

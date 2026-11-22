@@ -47,6 +47,14 @@ func checkLevel(level string) error {
 	return nil
 }
 
+// postUpdateOptions and saveMainUnit are package variables so a test can make
+// either pre-step unit guard fail. Production always calls the service package
+// directly; neither variable is exported.
+var (
+	postUpdateOptions = service.PostUpdateOptions
+	saveMainUnit      = service.SaveMainUnit
+)
+
 // Install installs o's release and then runs the new binary's hidden
 // post-update command at level, before anything restarts it. The previous
 // binary is kept beside the target and the main unit file is saved before the
@@ -76,10 +84,10 @@ func Install(ctx context.Context, o ApplyOptions, level string) error {
 	// its bytes first: the step may be killed before its own restore runs, and
 	// a reboot would then load the next version's definition with the previous
 	// binary.
-	serviceOpts, err := service.PostUpdateOptions(level == "system")
+	serviceOpts, err := postUpdateOptions(level == "system")
 	var savedUnit service.SavedUnit
 	if err == nil {
-		savedUnit, err = service.SaveMainUnit(serviceOpts)
+		savedUnit, err = saveMainUnit(serviceOpts)
 	}
 	if err != nil {
 		return restoreAfterStepSetupFailure(
