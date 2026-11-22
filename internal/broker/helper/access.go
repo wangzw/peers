@@ -303,11 +303,10 @@ func (c *AccessChecker) Check(ctx context.Context, uid uint32, path string, need
 	slots := c.slotSet()
 	entry, err := slots.acquireAccount(ctx, key)
 	if err != nil {
+		c.logBusy(log, key, uid)
 		if errors.Is(err, errAccessSlotTableFull) {
-			c.logBusy(log, key, uid)
 			return false, fmt.Errorf("cannot check access for uid %d: %w", uid, err)
 		}
-		c.logBusy(log, key, uid)
 		return false, fmt.Errorf("cannot check access for uid %d: %w within %s", uid, ErrNoCheckSlot, humanDuration(timeout))
 	}
 	// Release the exact entry the slot was taken from. Looking the key up again
@@ -482,10 +481,7 @@ func (c *AccessChecker) logUnknownAccount(log *slog.Logger, uid uint32) {
 // allowUnknownAccountLog reports whether the shared unknown-account record may
 // be written now, and records the time when it may.
 func (c *AccessChecker) allowUnknownAccountLog() bool {
-	now := time.Now
-	if c.now != nil {
-		now = c.now
-	}
+	now := c.nowFunc()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	t := now()
@@ -498,10 +494,7 @@ func (c *AccessChecker) allowUnknownAccountLog() bool {
 
 // allowLog applies the checker's clock and lock to one log throttle.
 func (c *AccessChecker) allowLog(t *logThrottle, key uint32) bool {
-	now := time.Now
-	if c.now != nil {
-		now = c.now
-	}
+	now := c.nowFunc()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return t.allow(key, now())
