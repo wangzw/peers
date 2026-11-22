@@ -1,7 +1,9 @@
 package update
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -46,6 +48,22 @@ func TestLatestRejectsAPIError(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Latest() error = %q, want it to contain %q", err, want)
 		}
+	}
+}
+
+func TestLatestRejectsOversizedResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte{'x'}, int(maxAPIBodySize)+1))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := Latest(context.Background(), srv.Client(), srv.URL)
+	if err == nil {
+		t.Fatal("Latest() error = nil, want an error for an oversized response")
+	}
+	want := fmt.Sprintf("response from %s/repos/wangzw/peers/releases/latest exceeds the %d-byte limit", srv.URL, maxAPIBodySize)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("Latest() error = %q, want it to contain %q", err, want)
 	}
 }
 

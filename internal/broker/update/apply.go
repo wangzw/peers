@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -21,9 +22,20 @@ import (
 )
 
 const (
-	// maxDownloadSize caps one downloaded file at 100 MiB. The archive and the
-	// checksum file share the cap.
+	// maxDownloadSize caps the release archive at 100 MiB.
 	maxDownloadSize int64 = 100 * 1024 * 1024
+
+	// maxChecksumsSize caps checksums.txt at 64 KiB. A release lists four
+	// platform archives, so the file is about 400 bytes: four lines of 64 hex
+	// digits, two spaces and an asset name under 60 bytes each. The cap leaves
+	// room for more platforms without letting the file grow into a memory
+	// concern.
+	maxChecksumsSize int64 = 64 * 1024
+
+	// maxChecksumsLineSize caps one checksums.txt line at 1 KiB. A released
+	// line is about 100 bytes; the cap bounds what scanning one line may
+	// allocate.
+	maxChecksumsLineSize = 1024
 
 	// binaryName is the only archive entry that is ever extracted.
 	binaryName = "peers"
@@ -103,11 +115,11 @@ func Apply(ctx context.Context, o ApplyOptions) error {
 	}
 
 	client := downloadClient(o.Client)
-	archive, err := download(ctx, client, archiveURL)
+	archive, err := download(ctx, client, archiveURL, maxDownloadSize)
 	if err != nil {
 		return err
 	}
-	checksums, err := download(ctx, client, checksumsURL)
+	checksums, err := download(ctx, client, checksumsURL, maxChecksumsSize)
 	if err != nil {
 		return err
 	}
@@ -218,17 +230,18 @@ func readAtMost(r io.Reader, max int64) ([]byte, error) {
 	return data, nil
 }
 
-// download fetches one asset, refusing anything above maxDownloadSize.
-func download(ctx context.Context, c *http.Client, url string) ([]byte, error) {
+// download fetches one asset, reading at most limit bytes and one more to
+// detect a file above it.
+func download(ctx context.Context, c *http.Client, url string, limit int64) ([]byte, error) {
 	resp, err := get(ctx, c, url)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := readAtMost(resp.Body, maxDownloadSize)
+	data, err := readAtMost(resp.Body, limit)
 	if errors.Is(err, errTooLarge) {
-		return nil, fmt.Errorf("download %s exceeds the %d-byte limit", url, maxDownloadSize)
+		return nil, fmt.Errorf("download %s exceeds the %d-byte limit", url, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %w", url, err)
@@ -237,12 +250,22 @@ func download(ctx context.Context, c *http.Client, url string) ([]byte, error) {
 }
 
 // expectedChecksum returns the SHA-256 recorded for name in checksums.txt.
-// More than one line for the same name is rejected, so a file cannot offer two
+// Lines are scanned one at a time, so the file is never copied whole. More
+// than one line for the same name is rejected, so a file cannot offer two
 // different answers for one archive.
 func expectedChecksum(checksums []byte, name string) ([]byte, error) {
 	var found []byte
-	for _, line := range strings.Split(string(checksums), "\n") {
-		fields := strings.Fields(line)
+	scanner := bufio.NewScanner(bytes.NewReader(checksums))
+	// The scanner's maximum token size counts the newline too, so a line of
+	// exactly maxChecksumsLineSize bytes needs one more byte of buffer to be
+	// read: with the cap at maxChecksumsLineSize that full line would fail with
+	// ErrTooLong. A line of maxChecksumsLineSize+1 bytes still cannot fit. A
+	// CRLF ending counts its \r in the same length, so a line of exactly
+	// maxChecksumsLineSize content bytes that ends in \r\n is rejected;
+	// rejecting is the safe direction.
+	scanner.Buffer(make([]byte, 0, 256), maxChecksumsLineSize+1)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
 		if len(fields) != 2 {
 			continue
 		}
@@ -258,6 +281,12 @@ func expectedChecksum(checksums []byte, name string) ([]byte, error) {
 			return nil, fmt.Errorf("%s has an invalid checksum for %s", checksumsAsset, name)
 		}
 		found = sum
+	}
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, fmt.Errorf("%s has a line longer than the %d-byte limit", checksumsAsset, maxChecksumsLineSize)
+		}
+		return nil, fmt.Errorf("cannot read %s: %w", checksumsAsset, err)
 	}
 	if found == nil {
 		return nil, fmt.Errorf("%s has no checksum for %s", checksumsAsset, name)

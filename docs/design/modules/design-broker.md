@@ -598,7 +598,7 @@ Update: <v> available (current <c>); run peers update
 1. 取 `os.Executable()` 的结果并解析符号链接，得到要替换的二进制路径。
 2. 在目标所在目录试建一个临时文件，检查写权限。没有写权限时，在任何下载请求之前失败，并提示用 `sudo`（`REQ-update-006`）。
 3. 查询最新正式发布版本。已经是最新版本时输出 `peers <c> is up to date`，以 0 退出。
-4. 下载本平台与架构的安装包和 `checksums.txt`，按 [ADR-self-update](../../adr/adr-self-update.md) 的规则校验、解压，并在临时位置运行新二进制的 `--version`。
+4. 下载本平台与架构的安装包和 `checksums.txt`，按 [ADR-self-update](../../adr/adr-self-update.md) 的规则校验、解压，并在临时位置运行新二进制的 `--version`。下载设有上限：安装包至多 100 MiB，`checksums.txt` 至多 64 KiB，按行扫描，单行至多 1 KiB；超过任一上限即失败。
 5. 在目标所在目录写临时文件，把模式和属主改成与原二进制相同，`fsync` 后 `rename` 到目标路径。不保留旧版本。
 6. 不启动、也不重启任何服务：服务可能被有意停掉。
 7. 输出 `The new binary takes effect the next time the Broker starts.`。

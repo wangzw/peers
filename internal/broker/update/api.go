@@ -80,9 +80,12 @@ func getJSON(ctx context.Context, c *http.Client, url string, v any) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIBodySize))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAPIBodySize+1))
 	if err != nil {
 		return fmt.Errorf("reading %s: %w", url, err)
+	}
+	if int64(len(body)) > maxAPIBodySize {
+		return fmt.Errorf("response from %s exceeds the %d-byte limit", url, maxAPIBodySize)
 	}
 	if err := json.Unmarshal(body, v); err != nil {
 		return fmt.Errorf("decoding %s: %w", url, err)

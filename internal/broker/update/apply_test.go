@@ -160,8 +160,7 @@ func TestApplyRejectsOversizedChecksums(t *testing.T) {
 	target, before := newTarget(t, original, 0o750)
 
 	oversized := func(w http.ResponseWriter) error {
-		w.Header().Set("Content-Length", strconv.FormatInt(maxDownloadSize+1, 10))
-		_, err := io.CopyN(w, zeroReader{}, maxDownloadSize+1)
+		_, err := w.Write(bytes.Repeat([]byte{'x'}, int(maxChecksumsSize)+1))
 		return err
 	}
 	srv := newFakeReleaseServer(t, fakeRelease{
@@ -175,10 +174,47 @@ func TestApplyRejectsOversizedChecksums(t *testing.T) {
 	if err == nil {
 		t.Fatal("Apply() = nil, want an error")
 	}
-	if !strings.Contains(err.Error(), "limit") {
-		t.Errorf("Apply() error = %v, want a size-limit error", err)
+	want := fmt.Sprintf("download %s/download/checksums exceeds the %d-byte limit", srv.URL, maxChecksumsSize)
+	if !strings.Contains(err.Error(), want) {
+		t.Errorf("Apply() error = %v, want it to contain %q", err, want)
 	}
 	assertUnchanged(t, target, original, before)
+}
+
+// TestExpectedChecksumAcceptsAFullLine checks the boundary the 1 KiB cap names:
+// a line of exactly maxChecksumsLineSize bytes is within the limit, so the
+// scanner must accept it even though reading it also consumes the newline.
+func TestExpectedChecksumAcceptsAFullLine(t *testing.T) {
+	const version = "0.2.0"
+	name := testArchiveName(version)
+	sum := strings.Repeat("a", 2*sha256.Size) // 64 hex digits decode to 32 bytes of 0xaa
+	line := sum + "  " + name
+	line += strings.Repeat(" ", maxChecksumsLineSize-len(line))
+	if len(line) != maxChecksumsLineSize {
+		t.Fatalf("the test line is %d bytes, want exactly %d", len(line), maxChecksumsLineSize)
+	}
+
+	got, err := expectedChecksum([]byte(line+"\n"), name)
+	if err != nil {
+		t.Fatalf("expectedChecksum() error = %v, want a full-length line to be accepted", err)
+	}
+	want := bytes.Repeat([]byte{0xaa}, sha256.Size)
+	if !bytes.Equal(got, want) {
+		t.Errorf("expectedChecksum() = %x, want %x", got, want)
+	}
+}
+
+func TestExpectedChecksumRejectsOverlongLine(t *testing.T) {
+	line := strings.Repeat("x", maxChecksumsLineSize+1)
+
+	_, err := expectedChecksum([]byte(line+"\n"), testArchiveName("0.2.0"))
+	if err == nil {
+		t.Fatal("expectedChecksum() = nil, want an error")
+	}
+	want := fmt.Sprintf("%s has a line longer than the %d-byte limit", checksumsAsset, maxChecksumsLineSize)
+	if err.Error() != want {
+		t.Errorf("expectedChecksum() error = %q, want %q", err, want)
+	}
 }
 
 func TestApplyRejectsReleaseMetadata(t *testing.T) {
