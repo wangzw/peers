@@ -98,10 +98,10 @@ func loopLinked(f *loopFixture, peer Fingerprint) bool {
 	return f.d.up[peer]
 }
 
-// loopWait polls cond until it holds, failing after three seconds.
+// loopWait polls cond until it holds, failing after eventTimeout.
 func loopWait(t *testing.T, desc string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for !cond() {
 		if !time.Now().Before(deadline) {
 			t.Fatalf("timed out waiting for %s", desc)
@@ -116,7 +116,7 @@ func loopWaitMaintained(t *testing.T, ch <-chan struct{}, desc string) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatalf("timed out waiting for %s", desc)
 	}
 }

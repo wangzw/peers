@@ -61,8 +61,11 @@ func TestRealClockUsesNow(t *testing.T) {
 		t.Fatalf("realClock{now: ...}.Now() = %v, want %v", got, fixed)
 	}
 
-	if delta := time.Since(realClock{}.Now()); delta < 0 || delta >= time.Second {
-		t.Fatalf("realClock{}.Now() is %v away from time.Now()", delta)
+	before := time.Now()
+	now := realClock{}.Now()
+	after := time.Now()
+	if now.Before(before) || now.After(after) {
+		t.Fatalf("realClock{}.Now() = %v is outside the window [%v, %v] measured around the call", now, before, after)
 	}
 
 	ch := realClock{}.NewTimer(time.Millisecond).C()

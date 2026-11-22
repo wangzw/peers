@@ -224,7 +224,7 @@ func TestRefetchNotLostWhenSetEmpties(t *testing.T) {
 
 	select {
 	case <-hookDone:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the refetch loop did not reach the empty-set hand-off")
 	}
 	// The late identifier must have a waiter and therefore a timer.
@@ -344,7 +344,7 @@ func TestRefetchWaiterLeavesOnLinkDown(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the deferred-refetch waiter stayed after the link went down")
 	}
 }

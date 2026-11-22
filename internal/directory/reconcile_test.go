@@ -87,10 +87,10 @@ func clearReconcileSent(ep *fakeLinks) {
 // fakeNet.Settle: Settle's Wait can run while a fetch goroutine spawned by an
 // already finished delivery performs its first Add on a zero counter, which the
 // race detector reports as WaitGroup misuse. Polling does not sleep, so the
-// three-second bound still applies.
+// eventTimeout bound still applies.
 func reconcileAwait(t *testing.T, net *fakeNet, desc string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		net.Settle(t)
 		if cond() {
@@ -692,7 +692,7 @@ func TestRequestHandlerReturnsHeldOnly(t *testing.T) {
 	reconcileInject(t, b, expired)
 
 	payload := reconcileRequestPayload(t, live.id.toProto(), expired.id.toProto(), missing.toProto())
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	kind, reply, sent, err := p.ep.Request(ctx, b.fp, directorypb.KindRecordRequest, payload)
 	if err != nil || !sent {
@@ -795,7 +795,7 @@ func TestReconcileCapsInflightFetchPerPeer(t *testing.T) {
 	b.d.handleRecordList(pfp, payload)
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("B never sent the record request")
 	}
 	for i := 0; i < 99; i++ {
@@ -835,18 +835,46 @@ func TestReconcileMergesDistinctIDsWhileFetching(t *testing.T) {
 	b.d.handleRecordList(pfp, reconcileListPayload(t, first.recordVersion()))
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		close(release)
 		t.Fatal("B never sent the first record request")
 	}
 
 	b.d.handleRecordList(pfp, reconcileListPayload(t, second.recordVersion()))
 
+	// The second identifier is merged into the pending set inside this call, and
+	// the in-flight loop is the only one that may send a request, so no second
+	// fetch can start before the first finishes. Assert that state directly, then
+	// hold the state unchanged for a window: the direct asserts catch a second
+	// identifier put in flight immediately, and the window catches a second loop
+	// that a missing running check would start after the first is under way.
+	// Waiting can only miss a defect, never invent one, so it does not make the
+	// test flaky.
+	assertOneFetch := func() {
+		b.d.mu.RLock()
+		pr := b.d.recon[pfp]
+		_, firstInflight := pr.inflight[first.id]
+		_, secondInflight := pr.inflight[second.id]
+		_, secondPending := pr.pending[second.id]
+		pendingLen := len(pr.pending)
+		b.d.mu.RUnlock()
+		if !firstInflight {
+			t.Fatal("B dropped the first fetch from the in-flight set")
+		}
+		if secondInflight {
+			t.Fatal("B put the second identifier in flight while one was in flight")
+		}
+		if !secondPending || pendingLen != 1 {
+			t.Fatalf("B holds %d pending identifiers (second queued: %v), want only the second", pendingLen, secondPending)
+		}
+	}
+	assertOneFetch()
 	select {
 	case <-started:
 		close(release)
 		t.Fatal("B started a second fetch while one was in flight")
 	case <-time.After(time.Second):
+		assertOneFetch()
 	}
 	close(release)
 	b.d.inflight.Wait()
@@ -929,7 +957,7 @@ func TestRequestedRecordWindowExpires(t *testing.T) {
 	b.d.handleRecordList(p.fp, reconcileListPayload(t, x.recordVersion()))
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("B never sent the record request")
 	}
 	b.d.inflight.Wait()
@@ -972,7 +1000,7 @@ func TestDisconnectClearsReconcileState(t *testing.T) {
 	b.d.handleRecordList(p.fp, reconcileListPayload(t, x.recordVersion()))
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		close(release)
 		t.Fatal("B never sent the record request")
 	}
@@ -1193,7 +1221,7 @@ func TestScheduleFetchCapsPendingAtMaxRecords(t *testing.T) {
 	b.d.handleRecordList(pfp, reconcileListPayload(t, first...))
 	select {
 	case <-started:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		close(release)
 		t.Fatal("B never sent the first record request")
 	}

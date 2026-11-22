@@ -88,7 +88,7 @@ func (c *fakeClock) Advance(d time.Duration) {
 }
 
 // WaitTimers blocks until at least n untriggered timers exist. It fails the
-// test after three seconds.
+// test after eventTimeout.
 func (c *fakeClock) WaitTimers(t *testing.T, n int) {
 	t.Helper()
 	c.mu.Lock()
@@ -96,7 +96,7 @@ func (c *fakeClock) WaitTimers(t *testing.T, n int) {
 
 	cond := c.condLocked()
 	timedOut := false
-	watchdog := time.AfterFunc(3*time.Second, func() {
+	watchdog := time.AfterFunc(eventTimeout, func() {
 		c.mu.Lock()
 		timedOut = true
 		cond.Broadcast()
@@ -403,10 +403,10 @@ func (n *fakeNet) busyLocked() bool {
 
 // Settle waits until the network is idle and the given wait groups have
 // finished. It repeats the round when new activity appeared during it and fails
-// the test after three seconds.
+// the test after eventTimeout.
 func (n *fakeNet) Settle(t *testing.T, inflight ...*sync.WaitGroup) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 
 	n.mu.Lock()
 	n.timedOut = false

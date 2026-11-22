@@ -81,7 +81,7 @@ func TestFakeClockFiresTimers(t *testing.T) {
 	c.Advance(time.Minute)
 	select {
 	case <-tm.C():
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("timer did not fire after 10m")
 	}
 }

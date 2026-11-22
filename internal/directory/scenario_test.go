@@ -108,7 +108,7 @@ func scenarioConnect(net *fakeNet, nodes ...*scenarioNode) {
 // once.
 func scenarioWait(t *testing.T, net *fakeNet, _ []*scenarioNode, desc string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		net.Settle(t)
 		if cond() {
