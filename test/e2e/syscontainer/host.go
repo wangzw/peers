@@ -57,7 +57,12 @@ type ProcInfo struct {
 	PID  int
 	PPID int
 	UID  uint32
+	// Args is the process's argv, as /proc/<pid>/cmdline reports it.
+	Args []string
 }
+
+// PeersBinary returns the path of the peers build the session helpers start.
+func PeersBinary() string { return peersBinary }
 
 // StartSystemBroker writes configYAML to the system configuration file when it
 // is non-empty, runs "peers service run --system" as root, and waits for
@@ -382,7 +387,7 @@ func Pids(words ...string) []ProcInfo {
 		if p.UID >= 0 {
 			uid = uint32(p.UID)
 		}
-		out = append(out, ProcInfo{PID: p.PID, PPID: p.PPID, UID: uid})
+		out = append(out, ProcInfo{PID: p.PID, PPID: p.PPID, UID: uid, Args: p.Args})
 	}
 	return out
 }

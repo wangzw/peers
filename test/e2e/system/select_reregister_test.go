@@ -231,19 +231,99 @@ func srBrokerProcs(t *testing.T, account string) []syscontainer.ProcInfo {
 	return out
 }
 
-// srMCPPIDs returns the account's MCP server pids, sorted. A pid set that stays
-// the same across recovery proves the session did not reconnect the service.
+// srProc is one process the MCP server selection inspects: its pid, its parent
+// pid, the real uid that owns it, and its argv.
+type srProc struct {
+	PID  int
+	PPID int
+	UID  uint32
+	Args []string
+}
+
+// srMCPPIDs returns the pids of the MCP server processes this test process
+// started for account, sorted. A pid set that stays the same across recovery
+// proves the session did not reconnect the service.
 func srMCPPIDs(t *testing.T, account string) []int {
 	t.Helper()
 	uid := syscontainer.AccountUID(t, account)
-	var out []int
+	var procs []srProc
 	for _, proc := range syscontainer.Pids("peers", "mcp") {
-		if proc.UID == uid {
-			out = append(out, proc.PID)
+		procs = append(procs, srProc{PID: proc.PID, PPID: proc.PPID, UID: proc.UID, Args: proc.Args})
+	}
+	return srSelectMCPPIDs(procs, uid, os.Getpid(), syscontainer.PeersBinary())
+}
+
+// srSelectMCPPIDs returns the pids among procs that are the MCP server one
+// session runs: the account's peers binary started as "peers mcp" by the
+// process that opened the session (launcher). A forked but not yet exec'd child
+// of that server inherits the server's argv and has the server, not launcher,
+// as its parent, so the parent check excludes it. The argv must match exactly,
+// which keeps a command line that merely mentions "peers mcp" out.
+func srSelectMCPPIDs(procs []srProc, uid uint32, launcher int, exe string) []int {
+	var out []int
+	for _, p := range procs {
+		if p.PPID != launcher || p.UID != uid {
+			continue
 		}
+		if len(p.Args) != 2 || p.Args[0] != exe || p.Args[1] != "mcp" {
+			continue
+		}
+		out = append(out, p.PID)
 	}
 	sort.Ints(out)
 	return out
+}
+
+// TestSrSelectMCPPIDs checks the filter that picks a session's MCP server from
+// the processes whose command line mentions peers and mcp. The account's server
+// is the child of the process that started it whose argv is exactly the peers
+// binary and "mcp". A forked but not yet exec'd child of that server, such as
+// the git child that reads the default topic, inherits the server's argv and
+// has the server as its parent, so it must not count: such a transient child
+// made the restart snapshot flaky. Another account's server, another
+// subcommand, a different binary path, an extra argument, a command line that
+// only mentions "peers mcp", and another session's server are excluded too.
+func TestSrSelectMCPPIDs(t *testing.T) {
+	const (
+		exe      = "/usr/local/bin/peers"
+		launcher = 1000
+		uid      = 2000
+	)
+	procs := []srProc{
+		{PID: 101, PPID: launcher, UID: uid, Args: []string{exe, "mcp"}},
+		{PID: 102, PPID: 101, UID: uid, Args: []string{exe, "mcp"}},
+		{PID: 103, PPID: launcher, UID: uid + 1, Args: []string{exe, "mcp"}},
+		{PID: 104, PPID: launcher, UID: uid, Args: []string{exe, "service", "run"}},
+		{PID: 105, PPID: launcher, UID: uid, Args: []string{"/tmp/peers", "mcp"}},
+		{PID: 106, PPID: launcher, UID: uid, Args: []string{exe, "mcp", "--verbose"}},
+		{PID: 107, PPID: launcher, UID: uid, Args: []string{"sh", "-c", "peers mcp"}},
+		{PID: 108, PPID: launcher + 1, UID: uid, Args: []string{exe, "mcp"}},
+	}
+	if got, want := srSelectMCPPIDs(procs, uid, launcher, exe), []int{101}; !slices.Equal(got, want) {
+		t.Fatalf("srSelectMCPPIDs = %v, want %v", got, want)
+	}
+}
+
+// TestSrSelectMCPPIDsReconnect checks that a server which reconnected under a
+// new pid is still selected, so the recovery assertion catches a real
+// reconnection rather than ignoring it.
+func TestSrSelectMCPPIDsReconnect(t *testing.T) {
+	const (
+		exe      = "/usr/local/bin/peers"
+		launcher = 1000
+		uid      = 2000
+	)
+	before := []srProc{{PID: 101, PPID: launcher, UID: uid, Args: []string{exe, "mcp"}}}
+	after := []srProc{
+		{PID: 109, PPID: launcher, UID: uid, Args: []string{exe, "mcp"}},
+		{PID: 110, PPID: 109, UID: uid, Args: []string{exe, "mcp"}},
+	}
+	if got, want := srSelectMCPPIDs(before, uid, launcher, exe), []int{101}; !slices.Equal(got, want) {
+		t.Fatalf("before = %v, want %v", got, want)
+	}
+	if got, want := srSelectMCPPIDs(after, uid, launcher, exe), []int{109}; !slices.Equal(got, want) {
+		t.Fatalf("after = %v, want %v", got, want)
+	}
 }
 
 // srMainPID returns the MainPID systemd reports for the system service.
