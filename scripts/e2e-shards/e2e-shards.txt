@@ -1,35 +1,54 @@
 # e2e-shards assigns every package under ./test/e2e/... and every top-level
-# test in the top-level test/e2e package to exactly one CI shard. The table is
-# read by scripts/e2e-shards, which also checks it against the packages and
-# tests the go tool reports.
+# test in every package to exactly one CI shard. The table is read by
+# scripts/e2e-shards, which also checks it against the packages and tests the
+# go tool reports.
 #
 # Format, one shard per line:
 #
 #   shard <name> <package> [<package>...] -- [<test>...]
 #
 # Packages before "--" are the packages the shard runs. Tests after "--" are
-# the top-level tests of the top-level test/e2e package that the shard runs;
-# every other test in a listed package runs in that shard as well. A shard
-# without a top-level test/e2e package needs no test list and runs every test
-# in its packages.
+# the top-level tests the shard runs from those packages. A package listed by
+# one shard runs all its tests, so it needs no test list. A package listed by
+# several shards is split by test name: each of those shards runs only the
+# tests its line names, and the coverage check fails unless every test of the
+# package is named by exactly one of them, so a test cannot silently drop out
+# of the gate.
 #
-# top-b is the catch-all shard: a new top-level test goes there unless it
-# belongs with the tests in another shard. The coverage check fails until the
-# new test is listed, so a test cannot silently drop out of the gate.
+# top-b is the catch-all shard for top-level tests: a new test of the top-level
+# test/e2e package goes there unless it belongs with the tests in another
+# shard.
 #
-# The split follows the slowest-test reports of CI runs 44946061099,
-# 44954331524, 44957914658, 44959458729 and 44962755194 on main. top-b was the
-# longest shard at 260-300 s, mostly from two waiting tests: TestCardRenewedDaily
-# (55.5-55.9 s) and TestLocalRegistration (34.4 s). Both drive local processes
-# rather than containers, so they now run in the system shard, where they
-# overlap with the system package's own 165-235 s and do not lengthen it. The
-# two top-level shards keep the remaining tests, all below 16.7 s, beside the
-# helper packages: top-b still runs those, whose slowest test (harness
-# TestBuildBinaryCachesAndInjectsVersion) took 32.9-36.3 s in the same reports.
-# Expected wall times after the move: top-a 226-247 s (unchanged), top-b
-# 170-210 s, system 199-264 s (unchanged).
+# The split follows the slowest-test report of CI run 45021559562 on main and a
+# local run of test/e2e/system on 2026-11-22 with -parallel 8. In that CI run
+# the shard jobs took top-a 277 s, top-b 212 s and system 307 s. Inside system
+# the top-level test/e2e package took 134.16 s and test/e2e/system took
+# 254.00 s, in parallel, so the system package was the critical path.
+#
+# test/e2e/system is now split between system and system-b by test name, with
+# the measured cost divided evenly: 50 tests totalling 412.02 s stay in system
+# and 49 tests totalling 412.09 s move to system-b. system also keeps the two
+# top-level tests TestCardRenewedDaily (98.75 s) and TestLocalRegistration
+# (35.09 s), which run beside its system tests; that top-level package took
+# 134.16 s. system-b runs only system tests. Both shards should land near half
+# the old 254 s system package, well under the critical path. top-b already
+# runs its copy of the top-level package at 164.40 s, so the split adds a shard
+# rather than loading about 127 s of container tests onto top-b. The 32 s
+# coverage check that run 45021559562 ran inside top-a now runs in the lint
+# job, which takes top-a to about 245 s.
+#
+# top-a's estimate includes TestLocalOracleReconnectsAfterBrokerRestart, added
+# after the previous rebalance and missing from its estimates; it took 3 s
+# locally. The remaining tests in the two top-level shards are all below 44 s
+# (top-b's TestLongHostnameAlias at 43.95 s), beside the helper packages top-b
+# runs: its harness package took 43.15 s, its slowest test
+# TestLocalBrokerStackIsAGoroutineDump 29.49 s. Expected wall times after the
+# split: top-a about 245 s, top-b about 212 s, system and system-b about
+# 160-200 s each.
 shard top-a ./test/e2e -- TestAliases TestBrokerOfflineDirectory TestBrokerProcessLocal TestCardFollowsAddressChange TestCardShowsConfiguredAddresses TestConfigTools TestContainerSessionFakeProxy TestDirectoryPerLinkLimit TestDirectoryRejectsTamperedCards TestDirectoryTotalLimitKeepsRenewals TestDirectoryUnknownAddressKind TestDiscoveryNoDialToCardHolder TestDiscoveryPrivateByDefault TestDiscoveryPublicWithoutListen TestDiscoveryRevokeWithin60s TestInfraCountersAndCapture TestInfraCutRestore TestInfraMITMRedirect TestInfraNoEgress TestInfraPortForward TestJourneyCollaborateInTopic TestJourneyConnectPublicBroker TestJourneyPairBrokers TestLinks TestLinksRestartWithTwoPeers TestLinksSourceFlood TestLocalOracleReconnectsAfterBrokerRestart TestLocalSend TestLocalTopics TestLocalVersionMismatchReq016 TestM1SameHostRoundTrip TestNoDialToCardAddress TestOtherAccountRejected TestPrivateTopicNamesStayHome TestPublicTopicFollowsLastMember TestPublicTopicRejectedOnPrivateBroker TestRegistrationListAgentsAbandonsAStalledCall TestWaitRegisteredRetriesAStalledCall
 
 shard top-b ./test/e2e ./test/e2e/cmd/e2e-node ./test/e2e/ctl ./test/e2e/fakepeer ./test/e2e/fakepeer/fakerec ./test/e2e/harness ./test/e2e/internal/pathcmp ./test/e2e/node ./test/e2e/syscontainer -- TestAdvertisedAddresses TestBrokerOffline TestBrokerProcessInContainer TestCardExpiresAfterSevenDays TestConfigToolAnnotations TestConfigToolsCluster TestDegradedRun TestDirectoryHoldsRapidRecordReplacement TestDirectoryMalformedDirectAddress TestDirectoryPublicTopicReceiveLimits TestDirectoryRejectsUnpairedSource TestDiscoveryCardReachesWholeNetwork TestDiscoveryPrivateBrokerLearnsCards TestEchoedTopicDigestsRevealNothing TestInfraBlock TestInfraFlatV6 TestInfraNAT TestInfraNoNetworkResidue TestInfraSingleNode TestLinkEncrypted TestLinkVersionMismatchAndRecovery TestLocalSessionChanges TestLocalVersionMismatchRecoveryReq016 TestLongHostnameAlias TestMITM TestPairingKeys TestPairingVersionMismatch TestPublicTopicExpiresWithDeclarer TestPublicTopicGoneWhenBrokerPrivate TestPublicTopicVisibleAcrossNetwork TestREQBrokerConfig069_RejectedConnectionsMergeBySource TestRegistrationRejectedRetriesAStalledCall TestRemoteSendFaults TestRemoteSendInboundQuota TestRemoteVisibility TestTopicChangeLimits TestTopicRosterBounds TestWaitRegisteredToleratesASlowUpdateCheck
 
-shard system ./test/e2e ./test/e2e/system -- TestCardRenewedDaily TestLocalRegistration
+shard system ./test/e2e ./test/e2e/system -- TestCardRenewedDaily TestLocalRegistration TestHarnessAlwaysFails TestHarnessInnerFailurePropagates TestHarnessNoEgress TestHarnessSystemBrokerAndSessions TestHarnessSystemService TestREQAgentMessaging048_CrossAccountInterception TestREQBrokerConfig009_AuditNeedsReadPermissionOnSystemBroker TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink TestREQBrokerConfig018_WriteRunsAsTargetAccount TestREQBrokerConfig020_ForeignSocketOwnerRejected TestREQBrokerConfig021_AccessCheckCannotBeForged TestREQBrokerConfig039_TerminalAdminCommands TestREQBrokerConfig041_UserInstallScript TestREQBrokerConfig042_RemoteInstallArchiveWithoutInstallScript TestREQBrokerConfig042_RemoteInstallChecksumMismatch TestREQBrokerConfig042_RemoteInstallTruncatedScript TestREQBrokerConfig042_RemoteInstallUnknownVersion TestREQBrokerConfig042_RemoteInstallUser TestREQBrokerConfig043_SystemInstallAdminGroup TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser TestREQBrokerConfig045_InstallScriptRootDoesNotAsk TestREQBrokerConfig048_InstallScriptSystemFlag TestREQBrokerConfig048_InstallScriptUserFlag TestREQBrokerConfig050_InstallScriptSystemSummary TestREQBrokerConfig050_InstallScriptUserSummary TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog TestREQUpdate004_ConfirmedUpdateRestartsUserService TestREQUpdate004_YesSkipsPrompt TestREQUpdate005_FailedUpdateKeepsBinaryAndService TestREQUpdate007_CLIWithUserBrokerUsesUserBroker TestREQUpdate007_CLIWithoutUserBrokerUsesSystemBroker TestREQUpdate007_RootUpdateUsesSystemBroker TestREQUpdate008_UpdateBrokerUnderSystemService TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree TestRemoteInstallServeTwoSuites TestReregisterSystemBrokerReq037 TestReregisterUserBrokerReq037 TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath TestServiceUnitsVerify TestSystemAccountHelperLifecycle TestSystemAccountsFromExtrausers TestSystemServiceInstallListenPortConflict TestSystemServiceStartsAndRestarts TestSystemServiceUninstall TestSystemServiceUnitsVerify TestSystemSocketGroupReappliedOnReload TestUninstallREQBrokerConfig051NoService TestUninstallREQBrokerConfig051UserLevel TestUninstallREQBrokerConfig054OtherAccountBroker
+
+shard system-b ./test/e2e/system -- TestHarnessAccountsAndBinary TestREQAgentMessaging047_CrossAccountImpersonation TestREQBrokerConfig010_StatusWithoutReadPermissionShowsOwnAgents TestREQBrokerConfig018_TwoAccountsShareSystemBroker TestREQBrokerConfig021_WriteNeedsConfigWritePermission TestREQBrokerConfig022_ReadNeedsConfigReadPermission TestREQBrokerConfig023_NoPermissionStillWorksOnSystemBroker TestREQBrokerConfig027_GroupRestrictsUse TestREQBrokerConfig040_SystemInstallWritesTemplate TestREQBrokerConfig040_UserInstallWritesTemplate TestREQBrokerConfig041_InstallScriptFilesRemovedByUninstall TestREQBrokerConfig041_SystemInstallScript TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory TestREQBrokerConfig042_RemoteInstallPinnedVersion TestREQBrokerConfig042_RemoteInstallSystem TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation TestREQBrokerConfig046_InstallScriptWithoutTerminal TestREQBrokerConfig047_InstallScriptUpgradePrompt TestREQBrokerConfig048_InstallScriptBothFlags TestREQBrokerConfig050_SystemServiceInstallPrintsSummary TestREQBrokerConfig050_UserServiceInstallPrintsSummary TestREQBrokerPairing002_DefaultAliasHostAndAccount TestREQUpdate001_PeriodicCheck TestREQUpdate002_StatusShowsAvailableVersion TestREQUpdate003_SessionHintOncePerSession TestREQUpdate004_RefusedUpdateChangesNothing TestREQUpdate006_UpdateRequiresWritePermission TestREQUpdate007_SudoWithUserBrokerUsesSystemBroker TestREQUpdate007_SystemUpdateByAdminGroup TestREQUpdate007_SystemUpdateRefusedOutsideAdminGroup TestREQUpdate007_TerminalBrokerWithInheritedServiceEnvironmentIsRefused TestREQUpdate007_TerminalSystemBrokerNeedsServiceManager TestREQUpdate008_UpdateBrokerAlreadyLatest TestREQUpdate008_UpdateBrokerRefusedOutsideAdminGroup TestREQUpdate008_UpdateBrokerUnderUserService TestREQUpdate009_UpdateRewritesServiceUnitInNewFormat TestREQUpdate010_UpdateWithoutPostUpdateStep TestREQUpdate011_FailedPostUpdateRollsBack TestSelectOrderReq026 TestServiceControl TestServiceInstall TestSystemServiceUninstallAfterUnitFileRemoved TestSystemSocketGroupUnknownRejected TestUninstallREQBrokerConfig051SystemLevel TestUninstallREQBrokerConfig051UnrecordedGroup TestUninstallREQBrokerConfig052NonRootSystemOnly TestUninstallREQBrokerConfig052TwoLevels TestUserServiceUninstall

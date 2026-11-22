@@ -14,10 +14,14 @@ jobs:
   lint:
     name: lint and generate
     runs-on: ubuntu-24.04
-    # The slowest of the last 30 main runs took 170 s. Empty module, build and
-    # golangci-lint caches add about 110 s, twice the 54 s measured on four
-    # cores; 1.5 times the total rounds up to 10 minutes.
-    timeout-minutes: 10
+    # The slowest of the last 30 main runs took 170 s. The shard coverage check
+    # below took 19 s in probe run 45025902666, whose job took 153 s against
+    # 115 s in baseline run 45021559562. With the module cache restored, empty
+    # build and golangci-lint caches add about 210 s measured on four cores,
+    # including the check compiling the end-to-end test packages. The resulting
+    # 399 s plus one stalled action download (282 s) comes to 681 s, past the
+    # 600 s a 10-minute limit allows, so the limit is 15 minutes.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -43,6 +47,21 @@ jobs:
         run: shellcheck --version
       - name: Run the lint and generation gates
         run: make lint proto-lint gen-check
+      # The shard table must cover every end-to-end package and top-level test
+      # exactly once, so a new test cannot silently drop out of the gate. This
+      # job is not on the end-to-end critical path, so the check runs here
+      # rather than in an e2e shard; a failure still fails the workflow.
+      #
+      # The default success() condition would skip this step behind a failing
+      # gate above, so a run that breaks both would report the lint failure
+      # only. It runs unless the job is cancelled, which reports both results
+      # in one run without spending the runner on a cancelled job.
+      - name: Check that the shard table covers every package and test
+        if: ${{ !cancelled() }}
+        run: |
+          dir="$(mktemp -d "$RUNNER_TEMP/e2e-shards.XXXXXX")"
+          go build -o "$dir/e2e-shards" ./scripts/e2e-shards
+          "$dir/e2e-shards" -check
 
   test:
     name: test (linux)
@@ -244,8 +263,10 @@ jobs:
       fail-fast: false
       matrix:
         # scripts/e2e-shards/e2e-shards.txt assigns every package and every
-        # top-level test to one of these shards.
-        shard: [top-a, top-b, system]
+        # top-level test to one of these shards. A package listed by several
+        # shards is split by test name, so the system shard and system-b each
+        # run part of test/e2e/system.
+        shard: [top-a, top-b, system, system-b]
     steps:
       # The cross-version update test builds the v0.4.0 release from its tag, so
       # the checkout needs the tags and the commits they point at.
@@ -257,22 +278,14 @@ jobs:
         with:
           go-version: "1.27"
           cache: true
-      # The check and the selection both call the shard tool, so build it once
-      # and reuse the binary. It goes into the runner's temporary directory
-      # rather than the checkout, and the following steps read its path from
-      # GITHUB_ENV.
+      # The selection calls the shard tool, so build it once and reuse the
+      # binary. It goes into the runner's temporary directory rather than the
+      # checkout, and the following step reads its path from GITHUB_ENV.
       - name: Build the shard tool
         run: |
           dir="$(mktemp -d "$RUNNER_TEMP/e2e-shards.XXXXXX")"
           go build -o "$dir/e2e-shards" ./scripts/e2e-shards
           echo "E2E_SHARDS=$dir/e2e-shards" >> "$GITHUB_ENV"
-      # The check fails when a package or a top-level test falls into no shard
-      # or into more than one, so a new test cannot silently drop out of the
-      # gate. One shard runs it because it examines the whole table.
-      - name: Check that the shard table covers every package and test
-        if: matrix.shard == 'top-a'
-        run: |
-          "$E2E_SHARDS" -check
       - name: Select the end-to-end shard
         run: |
           echo "E2E_PKGS=$("$E2E_SHARDS" -shard '${{ matrix.shard }}' -print packages)" >> "$GITHUB_ENV"

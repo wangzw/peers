@@ -48,11 +48,16 @@ func main() {
 		case "packages":
 			_, _ = fmt.Println(strings.Join(s.packages, " "))
 		case "run":
-			expanded, err := (realLister{}).packages(s.packages...)
+			l := realLister{}
+			expanded, err := expandShards(shards, l.packages)
 			if err != nil {
 				fail(err)
 			}
-			names, err := runNamesFor(shard{name: s.name, packages: expanded, tests: s.tests}, topPackage(expanded), (realLister{}).tests)
+			s, err := findShard(expanded, *name)
+			if err != nil {
+				fail(err)
+			}
+			names, err := runNamesFor(s, packageOwners(expanded), l.tests)
 			if err != nil {
 				fail(err)
 			}
@@ -151,33 +156,68 @@ func topPackage(pkgs []string) string {
 	return ""
 }
 
-// runNamesFor returns the top-level tests a shard's -run regex must select: the
-// declared tests of the top-level package plus every test of the shard's other
-// packages. A shard without the top-level package selects nothing, which means
-// it runs its packages unfiltered.
-func runNamesFor(s shard, top string, testsOf func(string) ([]string, error)) ([]string, error) {
-	hasTop := false
-	for _, p := range s.packages {
-		if p == top {
-			hasTop = true
+// expandShards replaces each shard's package patterns with the import paths
+// they name.
+func expandShards(shards []shard, packages func(...string) ([]string, error)) ([]shard, error) {
+	out := make([]shard, len(shards))
+	for i, s := range shards {
+		ps, err := packages(s.packages...)
+		if err != nil {
+			return nil, err
+		}
+		sort.Strings(ps)
+		out[i] = shard{name: s.name, packages: ps, tests: s.tests}
+	}
+	return out, nil
+}
+
+// packageOwners maps each package an expanded shard lists to the shards that
+// list it. A package listed by one shard runs all its tests; one listed by
+// several is split by test name.
+func packageOwners(shards []shard) map[string][]string {
+	owners := map[string][]string{}
+	for _, s := range shards {
+		for _, p := range s.packages {
+			owners[p] = append(owners[p], s.name)
 		}
 	}
-	if !hasTop {
-		if len(s.tests) > 0 {
-			return nil, fmt.Errorf("shard %s declares top-level tests but does not include the top-level test/e2e package", s.name)
-		}
-		return nil, nil
+	return owners
+}
+
+// runNamesFor returns the top-level tests a shard's -run regex must select. A
+// package the shard lists alone runs all its tests, so they are all named. A
+// package listed by several shards is split, so the shard runs only the tests
+// its table line names. Every named test must belong to one of the shard's
+// packages: a name that belongs to none would select nothing and silently drop
+// a test, so it is an error.
+func runNamesFor(s shard, owners map[string][]string, testsOf func(string) ([]string, error)) ([]string, error) {
+	declared := map[string]bool{}
+	for _, t := range s.tests {
+		declared[t] = true
 	}
+	found := map[string]bool{}
 	names := append([]string(nil), s.tests...)
 	for _, p := range s.packages {
-		if p == top {
-			continue
-		}
 		ts, err := testsOf(p)
 		if err != nil {
 			return nil, err
 		}
-		names = append(names, ts...)
+		for _, t := range ts {
+			if declared[t] {
+				found[t] = true
+			}
+		}
+		if len(owners[p]) == 1 {
+			names = append(names, ts...)
+		}
+	}
+	for _, t := range s.tests {
+		if !found[t] {
+			return nil, fmt.Errorf("shard %s declares %s, which is not a test of a package it includes", s.name, t)
+		}
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("shard %s selects no tests: every package it lists is split and its test list is empty", s.name)
 	}
 	return names, nil
 }
@@ -221,14 +261,9 @@ func runCheck(shards []shard) error {
 	}
 	sort.Strings(all)
 
-	expanded := make([]shard, len(shards))
-	for i, s := range shards {
-		ps, err := l.packages(s.packages...)
-		if err != nil {
-			return err
-		}
-		sort.Strings(ps)
-		expanded[i] = shard{name: s.name, packages: ps, tests: s.tests}
+	expanded, err := expandShards(shards, l.packages)
+	if err != nil {
+		return err
 	}
 
 	testsByPkg := map[string][]string{}
@@ -254,59 +289,39 @@ func runCheck(shards []shard) error {
 	if err := verify(expanded, all, testsByPkg); err != nil {
 		return err
 	}
+	total := 0
+	for _, p := range all {
+		total += len(testsByPkg[p])
+	}
 	_, _ = fmt.Printf("e2e-shards: ok: %d packages and %d top-level tests are assigned exactly once across %d shards\n",
-		len(all), len(testsByPkg[top]), len(expanded))
+		len(all), total, len(expanded))
 	return nil
 }
 
-// verify checks that every package and every test in the full set is selected
-// by exactly one shard. testsByPkg holds every test of every package.
+// verify checks that every package is listed by at least one shard and that
+// every test in the full set is selected by exactly one shard. testsByPkg holds
+// every test of every package. A package listed by one shard runs all its
+// tests; a package listed by several is split by test name, so leaving one of
+// its tests out of every shard's test list makes the check fail rather than
+// silently dropping the test from the gate.
 func verify(shards []shard, all []string, testsByPkg map[string][]string) error {
 	inAll := map[string]bool{}
 	for _, p := range all {
 		inAll[p] = true
 	}
-	top := topPackage(all)
-	if top == "" {
-		return fmt.Errorf("the package list has no top-level test/e2e package")
-	}
-	topTests := map[string]bool{}
-	for _, t := range testsByPkg[top] {
-		topTests[t] = true
-	}
+	owners := packageOwners(shards)
 
 	var packageErrs []string
-	owner := map[string][]string{}
 	for _, s := range shards {
-		hasTop := false
 		for _, p := range s.packages {
-			if p == top {
-				hasTop = true
-			}
 			if !inAll[p] {
 				packageErrs = append(packageErrs, fmt.Sprintf("package %s in shard %s is not under ./test/e2e/...", p, s.name))
-				continue
-			}
-			owner[p] = append(owner[p], s.name)
-		}
-		if len(s.tests) > 0 && !hasTop {
-			packageErrs = append(packageErrs, fmt.Sprintf("shard %s declares top-level tests but does not include %s", s.name, top))
-		}
-		for _, t := range s.tests {
-			if !topTests[t] {
-				packageErrs = append(packageErrs, fmt.Sprintf("shard %s declares %s, which is not a top-level test of %s", s.name, t, top))
 			}
 		}
 	}
 	for _, p := range all {
-		switch {
-		case len(owner[p]) == 0:
+		if len(owners[p]) == 0 {
 			packageErrs = append(packageErrs, fmt.Sprintf("package %s is assigned to no shard", p))
-		// The top-level package is split by test name, so several shards list
-		// it. Every other package belongs to exactly one shard; sharing one
-		// would run its tests twice.
-		case p != top && len(owner[p]) > 1:
-			packageErrs = append(packageErrs, fmt.Sprintf("package %s is assigned to %s", p, strings.Join(owner[p], ", ")))
 		}
 	}
 	if len(packageErrs) > 0 {
@@ -316,7 +331,7 @@ func verify(shards []shard, all []string, testsByPkg map[string][]string) error 
 	type testKey struct{ pkg, test string }
 	runs := map[testKey][]string{}
 	for _, s := range shards {
-		names, err := runNamesFor(s, top, func(pkg string) ([]string, error) {
+		names, err := runNamesFor(s, owners, func(pkg string) ([]string, error) {
 			return testsByPkg[pkg], nil
 		})
 		if err != nil {

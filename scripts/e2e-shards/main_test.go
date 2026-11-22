@@ -68,6 +68,33 @@ func TestRunRegex(t *testing.T) {
 	}
 }
 
+// TestRunRegexExcludesLongerNameFromSplitPackage guards the split path against
+// a prefix match: the package holds TestS1 and TestS10, the shard names only
+// TestS1, and the -run regex it produces must not also select TestS10.
+func TestRunRegexExcludesLongerNameFromSplitPackage(t *testing.T) {
+	const system = "example.com/peers/test/e2e/system"
+	owners := map[string][]string{system: {"system", "system-b"}}
+	names, err := runNamesFor(shard{name: "system", packages: []string{system}, tests: []string{"TestS1"}}, owners, func(string) ([]string, error) {
+		return []string{"TestS1", "TestS10"}, nil
+	})
+	if err != nil {
+		t.Fatalf("runNamesFor: %v", err)
+	}
+	if got, want := runRegex(names), "^(TestS1)$"; got != want {
+		t.Fatalf("runRegex = %q, want %q", got, want)
+	}
+	re := compile(names)
+	if re == nil {
+		t.Fatal("compile returned nil")
+	}
+	if !re.MatchString("TestS1") {
+		t.Error("run regex does not match TestS1")
+	}
+	if re.MatchString("TestS10") {
+		t.Error("run regex matches TestS10, which the shard did not name")
+	}
+}
+
 func TestVerifyAcceptsCompleteAssignment(t *testing.T) {
 	shards, all, tests := fixture()
 	if err := verify(shards, all, tests); err != nil {
@@ -127,18 +154,89 @@ func TestVerifyRejectsSharedHelperPackage(t *testing.T) {
 		"example.com/peers/test/e2e/system",
 		"example.com/peers/test/e2e/harness",
 	}
+	// Listing the harness in two shards splits it, so its tests must be named
+	// where they run. Neither shard names TestHelper, so it drops out.
 	err := verify(shards, all, tests)
-	if err == nil || !strings.Contains(err.Error(), "package example.com/peers/test/e2e/harness is assigned to top-b, system") {
-		t.Fatalf("verify error = %v, want a shared helper package", err)
+	if err == nil || !strings.Contains(err.Error(), "TestHelper is assigned to no shard") {
+		t.Fatalf("verify error = %v, want TestHelper assigned to no shard", err)
 	}
 }
 
-func TestRunNamesForWithoutTopPackage(t *testing.T) {
-	names, err := runNamesFor(shard{name: "system", packages: []string{"example.com/peers/test/e2e/system"}}, "example.com/peers/test/e2e", func(string) ([]string, error) {
-		t.Fatal("runNamesFor listed a package for a shard without the top-level package")
-		return nil, nil
+// splitFixture assigns the system package to two shards by test name, the way
+// a shard table splits a package to shorten the critical path.
+func splitFixture() ([]shard, []string, map[string][]string) {
+	const (
+		top    = "example.com/peers/test/e2e"
+		system = "example.com/peers/test/e2e/system"
+	)
+	shards := []shard{
+		{name: "top-a", packages: []string{top}, tests: []string{"TestA"}},
+		{name: "top-b", packages: []string{top}, tests: []string{"TestB"}},
+		{name: "system", packages: []string{system}, tests: []string{"TestS1"}},
+		{name: "system-b", packages: []string{system}, tests: []string{"TestS2"}},
+	}
+	all := []string{top, system}
+	tests := map[string][]string{
+		top:    {"TestA", "TestB"},
+		system: {"TestS1", "TestS2", "TestS3"},
+	}
+	return shards, all, tests
+}
+
+func TestVerifyAcceptsSplitPackage(t *testing.T) {
+	shards, all, tests := splitFixture()
+	tests["example.com/peers/test/e2e/system"] = []string{"TestS1", "TestS2"}
+	if err := verify(shards, all, tests); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+}
+
+func TestVerifyRejectsTestMissingFromSplitPackage(t *testing.T) {
+	shards, all, tests := splitFixture()
+	err := verify(shards, all, tests)
+	if err == nil || !strings.Contains(err.Error(), "TestS3 is assigned to no shard") {
+		t.Fatalf("verify error = %v, want an unassigned TestS3", err)
+	}
+}
+
+func TestRunNamesForWholePackage(t *testing.T) {
+	const system = "example.com/peers/test/e2e/system"
+	owners := map[string][]string{system: {"system"}}
+	names, err := runNamesFor(shard{name: "system", packages: []string{system}}, owners, func(pkg string) ([]string, error) {
+		if pkg != system {
+			t.Fatalf("runNamesFor listed %s", pkg)
+		}
+		return []string{"TestS1", "TestS2"}, nil
 	})
-	if err != nil || len(names) != 0 {
-		t.Fatalf("runNamesFor = %v, %v; want no names", names, err)
+	if err != nil {
+		t.Fatalf("runNamesFor: %v", err)
+	}
+	if got := strings.Join(names, " "); got != "TestS1 TestS2" {
+		t.Fatalf("names = %q, want TestS1 TestS2", got)
+	}
+}
+
+func TestRunNamesForSplitPackage(t *testing.T) {
+	const system = "example.com/peers/test/e2e/system"
+	owners := map[string][]string{system: {"system", "system-b"}}
+	names, err := runNamesFor(shard{name: "system", packages: []string{system}, tests: []string{"TestS1"}}, owners, func(string) ([]string, error) {
+		return []string{"TestS1", "TestS2"}, nil
+	})
+	if err != nil {
+		t.Fatalf("runNamesFor: %v", err)
+	}
+	if got := strings.Join(names, " "); got != "TestS1" {
+		t.Fatalf("names = %q, want only the declared TestS1", got)
+	}
+}
+
+func TestRunNamesForRejectsUnknownDeclaredTest(t *testing.T) {
+	const system = "example.com/peers/test/e2e/system"
+	owners := map[string][]string{system: {"system", "system-b"}}
+	_, err := runNamesFor(shard{name: "system", packages: []string{system}, tests: []string{"TestMissing"}}, owners, func(string) ([]string, error) {
+		return []string{"TestS1"}, nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "declares TestMissing") {
+		t.Fatalf("runNamesFor error = %v, want an unknown declared test", err)
 	}
 }
