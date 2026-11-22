@@ -491,12 +491,13 @@ func disconnect(a, b *fakeLink) {
 // It blocks on each link's condition variable until that link is idle, then
 // takes all their locks at once to confirm none of them is running; a frame
 // forwarded during the pass to a link checked earlier is therefore delivered
-// before flushAll returns. A timer wakes every waiter after 3 seconds so the
-// test fails rather than hanging.
+// before flushAll returns. The success path ends on the quiescence it confirms,
+// not on elapsed time; a timer that fires after the package eventTimeout wakes
+// every waiter only so a stuck drain fails instead of hanging.
 func flushAll(t *testing.T, ls ...*fakeLink) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
-	timer := time.AfterFunc(3*time.Second, func() {
+	deadline := time.Now().Add(eventTimeout)
+	timer := time.AfterFunc(eventTimeout, func() {
 		for _, l := range ls {
 			l.mu.Lock()
 			l.cond.Broadcast()
@@ -508,7 +509,7 @@ func flushAll(t *testing.T, ls ...*fakeLink) {
 	for {
 		for _, l := range ls {
 			if !l.waitIdle(deadline) {
-				t.Fatal("fakelink: queues did not drain within 3s")
+				t.Fatalf("fakelink: queues did not drain within %s", eventTimeout)
 			}
 		}
 		if allIdle(ls) {
