@@ -4,7 +4,7 @@ A cross-host communication system for agents. A host runs a Broker either as a s
 
 ## Language
 
-- **Documents under `docs/` are written in Chinese.** This covers the requirements, design documents, architecture decision records, glossary, references and roadmap.
+- **Documents under `docs/` are written in English.** This covers the requirements, design documents, architecture decision records, glossary, references and roadmap.
 - **The website under `docs/site/` is bilingual.** Every page exists in English under `docs/site/content/en/` and in Chinese under `docs/site/content/zh/`, and the rule above for documents under `docs/` does not apply to it. The two versions of a page say the same thing: the English page is written first and the Chinese page is its translation, with the same headings, code blocks and links. A change to one version changes the other in the same commit. Its configuration and layouts are written in English.
 - **Everything else is written in English.** This covers source code, identifiers, comments, log and error messages, MCP tool names and descriptions, tests, commit messages, `README.md`, this file, skills under `.claude/`, and configuration files.
 - When English text names a concept registered in `docs/glossary.md`, use that entry's English counterpart rather than a fresh translation.
@@ -16,7 +16,7 @@ A cross-host communication system for agents. A host runs a Broker either as a s
 - adr: docs/adr
 - glossary: docs/glossary.md
 - references: docs/references.md
-- language: zh-CN
+- language: en
 
 `docs/roadmap.md` records priorities and milestones and belongs to none of the documentation trees above. ADRs are part of the design: a design change that adopts, replaces or reverses a significant decision adds or revises the record under `docs/adr` in the same change.
 

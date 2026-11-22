@@ -40,7 +40,7 @@ See [Known limitations](https://zhanwei.wang/peers/docs/limitations/) for what p
 
 ## Development
 
-The build gates live in the Makefile. `make lint`, `make test` and `make docs-check` run on any supported platform. The end-to-end suite (`make e2e`) needs Linux and a working Docker daemon; pass the job count explicitly, for example `make e2e JOBS=4`. The requirements, design, architecture decision records and glossary are under [docs/](docs/), written in Chinese; start with the [system overview](docs/prd/overview.md) and the [architecture](docs/design/architecture.md).
+The build gates live in the Makefile. `make lint`, `make test` and `make docs-check` run on any supported platform. The end-to-end suite (`make e2e`) needs Linux and a working Docker daemon; pass the job count explicitly, for example `make e2e JOBS=4`. The requirements, design, architecture decision records and glossary are under [docs/](docs/), written in English; start with the [system overview](docs/prd/overview.md) and the [architecture](docs/design/architecture.md).
 
 ## License
 
