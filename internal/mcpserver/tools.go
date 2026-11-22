@@ -285,11 +285,7 @@ func newMCPServer(version string, ts toolSet, log *slog.Logger) *mcp.Server {
 // addTool registers one typed tool handler behind safe.
 func addTool[In, Out any](s *mcp.Server, log *slog.Logger, name, description string, readOnly bool,
 	h func(context.Context, In) (Out, error)) {
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        name,
-		Description: description,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly},
-	}, safe(name, log, h))
+	addAnnotatedTool(s, log, name, description, &mcp.ToolAnnotations{ReadOnlyHint: readOnly}, h)
 }
 
 // addDestructiveTool registers a tool that changes state in a way the tool
@@ -299,11 +295,8 @@ func addTool[In, Out any](s *mcp.Server, log *slog.Logger, name, description str
 func addDestructiveTool[In, Out any](s *mcp.Server, log *slog.Logger, name, description string,
 	h func(context.Context, In) (Out, error)) {
 	destructive := true
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        name,
-		Description: description,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive},
-	}, safe(name, log, h))
+	addAnnotatedTool(s, log, name, description,
+		&mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive}, h)
 }
 
 // addReversibleTool registers a tool that changes state but can undo the
@@ -313,11 +306,15 @@ func addDestructiveTool[In, Out any](s *mcp.Server, log *slog.Logger, name, desc
 func addReversibleTool[In, Out any](s *mcp.Server, log *slog.Logger, name, description string,
 	h func(context.Context, In) (Out, error)) {
 	destructive := false
-	mcp.AddTool(s, &mcp.Tool{
-		Name:        name,
-		Description: description,
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive},
-	}, safe(name, log, h))
+	addAnnotatedTool(s, log, name, description,
+		&mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive}, h)
+}
+
+// addAnnotatedTool registers one typed tool handler behind safe with the given
+// annotations.
+func addAnnotatedTool[In, Out any](s *mcp.Server, log *slog.Logger, name, description string,
+	ann *mcp.ToolAnnotations, h func(context.Context, In) (Out, error)) {
+	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, Annotations: ann}, safe(name, log, h))
 }
 
 // safe wraps a tool handler so that a panic becomes an ordinary tool error
