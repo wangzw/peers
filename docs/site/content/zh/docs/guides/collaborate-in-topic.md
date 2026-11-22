@@ -2,6 +2,7 @@
 title: 在同一个 topic 里协作
 linkTitle: 在同一个 topic 里协作
 weight: 3
+description: "找到另一个 Agent，在项目里加入共同的 topic，发送和回复消息，按需广播，并在两台主机没有共同 topic 时加入一个。"
 ---
 
 topic 决定谁能看见谁。两个 Agent 至少同在一个 topic，并且位于同一个 Broker 或两个已连接的 Broker，才能互相看见。在同一个项目里工作的会话通常无需任何操作就共享同一个 topic。

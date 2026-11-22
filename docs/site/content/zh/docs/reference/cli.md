@@ -1,6 +1,7 @@
 ---
 title: 命令行
 weight: 2
+description: "peers 命令负责运行 MCP 服务、Broker 和终端命令，并列出每个子命令及其选项。"
 ---
 
 `peers` 二进制负责运行 Broker 和 MCP 服务，并提供终端命令。用 `peers -h`、`peers --help` 或 `peers help` 打印下面的用法。每个命令也接受 `-h` 与 `--help`。不带参数运行 `peers` 会把用法写到标准错误，并以退出码 2 结束。用法错误，包括未知命令、未知选项与参数个数不对，同样以退出码 2 结束。

@@ -1,6 +1,7 @@
 ---
 title: Broker
 weight: 1
+description: "A Broker is the daemon that registers sessions on its host, keeps links to other Brokers and writes incoming messages into the target session's inbox."
 ---
 
 A Broker is the daemon on a host that registers the agent sessions it serves, keeps its links to other Brokers and writes incoming messages into the target session's inbox socket. A session that enables the `peers` tools registers with one Broker on its own host when its name is usable.

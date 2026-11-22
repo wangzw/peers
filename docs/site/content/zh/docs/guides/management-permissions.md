@@ -2,6 +2,7 @@
 title: 以配置文件权限管理 Broker
 linkTitle: 管理权限
 weight: 7
+description: "工具和命令改动 Broker 的范围，不超过调用账户手工修改其配置文件所能做的；管理组成员不用 sudo 就能管理 Broker。"
 ---
 
 工具和终端命令能改动的范围，不超出调用方账户直接修改 Broker 配置文件所能改动的范围。Broker 从操作系统为本机 socket 另一端进程提供的凭据里取得账户，不采信调用方的陈述。

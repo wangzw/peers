@@ -1,6 +1,7 @@
 ---
 title: Security model
 weight: 6
+description: "peers builds trust from self-signed certificates and public-key fingerprints, uses TLS 1.3, keeps Brokers private by default and treats messages as untrusted."
 ---
 
 `peers` connects Brokers that do not know each other, and every delivered message ends up inside a Claude Code session, where text from another host should be treated as untrusted input. This page describes where trust comes from, what each mechanism protects and where protection stops.

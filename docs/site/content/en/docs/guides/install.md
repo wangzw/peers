@@ -2,6 +2,7 @@
 title: Install
 linkTitle: Install
 weight: 1
+description: "Install peers at system or user level from the install script, release archive or manual setup, and cover shell completions, man pages and building from source."
 ---
 
 This guide covers the install level, installing a particular version, installing from the release archive, the install script's options, the installation output, install failures, manual installation and building from source. [Getting started]({{< relref "/docs/getting-started" >}}) gives the one-command installation; to keep an installation up to date with `peers update`, see [Update `peers`]({{< relref "update.md" >}}).

@@ -1,6 +1,7 @@
 ---
 title: Links
 weight: 5
+description: "A link is the single long-lived connection between two paired Brokers; the dialer opens and reopens it, and it carries messages in both directions."
 ---
 
 A link is the long-lived connection between two paired Brokers. Each pair has exactly one link, and it carries messages in both directions.

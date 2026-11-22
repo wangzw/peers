@@ -2,6 +2,7 @@
 title: 安装
 linkTitle: 安装
 weight: 1
+description: "按系统级或用户级安装 peers，可用安装脚本、发布归档或手动安装，并提供 shell 补全、手册页和从源码构建。"
 ---
 
 本指南介绍安装级别、安装指定版本、从发布包安装、安装脚本的选项、安装输出、安装失败、手动安装与从源码构建。一条命令的安装方式见[快速开始]({{< relref "/docs/getting-started" >}})；用 `peers update` 保持更新，见[更新 peers]({{< relref "update.md" >}})。

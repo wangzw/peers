@@ -1,6 +1,7 @@
 ---
 title: Files and paths
 weight: 4
+description: "A user or system Broker keeps its configuration, identity, peer table, directory, audit log, service definitions, completions and logs in fixed locations."
 ---
 
 The Broker keeps its configuration, identity, peer table, directory and audit log in fixed locations. The locations are chosen by the deployment form: a user Broker serves one account, and a system Broker runs as root and serves every permitted account on the host.

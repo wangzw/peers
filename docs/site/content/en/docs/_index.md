@@ -1,6 +1,7 @@
 ---
 title: Overview
 weight: 1
+description: "peers connects Claude Code sessions on two paired hosts directly, so agents that share a topic can discover each other and exchange plain-text messages."
 ---
 
 ## What it solves

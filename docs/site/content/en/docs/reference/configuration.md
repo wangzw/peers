@@ -1,9 +1,10 @@
 ---
 title: Configuration keys
 weight: 3
+description: "Each Broker form reads its own YAML configuration file where every key is optional, and each key is documented with its type, default and meaning."
 ---
 
-Both deployment forms read one YAML file: `~/.peers/config.yaml` for a user Broker and `/etc/peers/config.yaml` for a system Broker. A Broker runs normally without a file, and every key is optional: an absent key takes its default. See [The generated file](#the-generated-file) below for how `peers service install` creates it. The Broker watches the file, so a valid change takes effect while it runs, whether the change is written by hand, by `set_config` or by `peers config set`. The two keepalive keys are the exception: they are read when a listener or a link is created, so a change applies only to listeners or links established afterwards.
+Each deployment form reads its own YAML file: `~/.peers/config.yaml` for a user Broker and `/etc/peers/config.yaml` for a system Broker. A Broker runs normally without a file, and every key is optional: an absent key takes its default. See [The generated file](#the-generated-file) below for how `peers service install` creates it. The Broker watches the file, so a valid change takes effect while it runs, whether the change is written by hand, by `set_config` or by `peers config set`. The two keepalive keys are the exception: they are read when a listener or a link is created, so a change applies only to listeners or links established afterwards.
 
 ## The generated file
 

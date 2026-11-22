@@ -2,6 +2,7 @@
 title: 运行系统级 Broker
 linkTitle: 系统级 Broker
 weight: 6
+description: "系统级 Broker 以 root 身份运行，服务一台主机上多个账户的 Agent；用户级 Broker 只服务一个账户，每台主机最多一个系统级 Broker。"
 ---
 
 系统级 Broker 以 root 特权作为服务运行，服务一台主机上多个账户的 Agent。用户级 Broker 只服务一个账户。一台主机至多运行一个系统级 Broker。

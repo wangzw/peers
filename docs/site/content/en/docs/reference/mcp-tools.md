@@ -1,6 +1,7 @@
 ---
 title: MCP tools
 weight: 1
+description: "The MCP server peer exposes tools for agents, messages, topics, Brokers, configuration and updates, each with its parameters and config-file permission."
 ---
 
 This page lists the MCP tools that the model calls on your behalf. You ask for what you want in natural language; the tools are not slash commands, and typing `/` does not list them. Use `/mcp` to check that the `peer` server is connected.

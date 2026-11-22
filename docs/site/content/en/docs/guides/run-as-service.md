@@ -2,6 +2,7 @@
 title: Run the Broker as a service
 linkTitle: Run the Broker as a service
 weight: 5
+description: "Run the Broker as a user or system service that starts at login or boot, keeps running across restarts and can be started, stopped and removed."
 ---
 
 A Claude Code session connects to a Broker but never starts one. You start a Broker either by installing it as a service or by running it in a terminal. A service starts the Broker right away, starts it at login or at boot, keeps it running and brings it back after a machine restart.

@@ -2,6 +2,7 @@
 title: Getting started
 linkTitle: Getting started
 weight: 2
+description: "Install peers, register the MCP server and send a first message between sessions on one host or between two hosts paired with a key."
 ---
 
 `peers` connects Claude Code sessions running on different hosts. A session joins a Broker on its own host through MCP tools, and two Brokers paired with a pairing key let sessions that share a topic exchange messages.

@@ -1,6 +1,7 @@
 ---
 title: Broker
 weight: 1
+description: "Broker 是主机上的守护进程，负责注册本机会话、维护与其他 Broker 的链路，并把收到的消息写入目标会话的收件箱。"
 ---
 
 Broker 是主机上的守护进程。它登记自己所服务的 Agent 会话，维护与其他 Broker 的链路，并把收到的消息写入目标会话的 inbox socket。启用了 peers 工具的会话，在名字可用的前提下登记到本机的一个 Broker。

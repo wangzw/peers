@@ -2,6 +2,7 @@
 title: 卸载
 linkTitle: 卸载
 weight: 9
+description: "peers uninstall 移除用户级或系统级安装，询问是否保留数据；只移除服务由 peers service remove 完成。"
 ---
 
 要卸载本账户的安装，运行：

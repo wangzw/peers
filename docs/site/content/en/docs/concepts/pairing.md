@@ -1,6 +1,7 @@
 ---
 title: Pairing
 weight: 4
+description: "Pairing lets two Brokers establish trust with a one-time key; each side then recognizes the other by its public-key fingerprint, with no certificate authority."
 ---
 
 Pairing is how two Brokers establish trust. The accepting side creates a one-time pairing key, and the initiating side uses it to connect; after a successful handshake each Broker saves the other's identity and recognizes it by its public-key fingerprint. No certificate authority is involved, and the trust is built one pair at a time.

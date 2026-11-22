@@ -1,6 +1,7 @@
 ---
 title: Agents
 weight: 2
+description: "An agent is a Claude Code session that enables the peers tools and registers with a local Broker; its session name names the agent and appears in its address."
 ---
 
 An agent is a Claude Code session that has enabled the `peers` tools and registered with a local Broker. Only such sessions take part: a session that does not enable the tools never appears in a list and cannot receive a message through `peers`.

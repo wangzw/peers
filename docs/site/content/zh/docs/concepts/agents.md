@@ -1,6 +1,7 @@
 ---
 title: Agent
 weight: 2
+description: "Agent 是启用 peers 工具并向本机 Broker 注册的 Claude Code 会话，会话名给出它的名字，也用在它的地址里。"
 ---
 
 Agent 是启用了 peers 工具并登记到本机 Broker 的 Claude Code 会话。只有启用了工具的会话才参与：没有启用的会话不会出现在任何列表里，也不能通过 peers 收到消息。

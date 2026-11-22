@@ -1,6 +1,7 @@
 ---
 title: 已知限制
 weight: 7
+description: "peers 只发送纯文本消息，不为未运行的会话保留消息，不经过中转，也不能与外部 A2A agent 交换消息。"
 ---
 
 有些事你可能以为 peers 能做，它其实做不到。

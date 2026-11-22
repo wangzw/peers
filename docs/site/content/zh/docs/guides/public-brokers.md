@@ -2,6 +2,7 @@
 title: 发现并连接公开 Broker
 linkTitle: 连接公开 Broker
 weight: 4
+description: "公开 Broker 会发布写明指纹、别名和对外地址的名片，供其他主机发现；与它配对仍然需要配对密钥。"
 ---
 
 Broker 默认不公开。公开 Broker 会发布一张名片，写明它的指纹、别名和对外地址列表，名片会在连通网络内传播。在公开 Broker 上声明的公开 topic 也以同样的方式可见。与公开 Broker 配对仍然需要一个配对密钥。

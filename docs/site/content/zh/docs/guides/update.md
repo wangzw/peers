@@ -2,6 +2,7 @@
 title: 更新
 linkTitle: 更新
 weight: 8
+description: "peers 自动检查 GitHub 上的新版本，由你在终端或会话里安装更新；已打开的会话要用 /mcp 重连或重开，才会连到更新后的 Broker。"
 ---
 
 peers 会检查自己有没有新版本，由你在终端或会话里决定是否安装。检查是自动的；`peers update` 默认先请你确认，除非加 `--yes`；会话里 Claude Code 默认会请你确认 `update_broker` 调用。

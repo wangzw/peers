@@ -2,6 +2,7 @@
 title: Pair two hosts
 linkTitle: Pair two hosts
 weight: 2
+description: "Pair two Brokers by creating a one-time key on the accepting host, connecting from the other host and checking that the link is up."
 ---
 
 Pairing makes two Brokers trust each other by their fingerprints. It is the only way to connect two hosts, and it starts with a key that one side creates and both sides share.

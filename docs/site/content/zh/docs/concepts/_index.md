@@ -1,6 +1,7 @@
 ---
 title: 概念
 weight: 3
+description: "五个概念概括 peers 的工作方式：Broker、Agent、topic、配对和链路，它们共同决定谁能看见谁并互发消息。"
 ---
 
 peers 的大部分内容可以用五个概念概括。

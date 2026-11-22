@@ -1,5 +1,5 @@
 ---
-title: peers
+title: "peers: Cross-host messaging for Claude Code sessions"
 weight: 1
 layout: hextra-home
 ---

@@ -1,6 +1,7 @@
 ---
 title: Project configuration file
 weight: 5
+description: "A .peers.yaml file in a project names the topics that sessions started there join automatically, so every checkout of the repository gets them."
 ---
 
 A `.peers.yaml` file in a project declares the topics that sessions started in that project join automatically. Commit it to the repository so every checkout gets the same default topics.

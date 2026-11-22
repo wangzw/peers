@@ -2,6 +2,7 @@
 title: Update
 linkTitle: Update
 weight: 8
+description: "peers checks GitHub for new releases automatically, and you install an update from a terminal or a session; open sessions must reconnect with /mcp or reopen."
 ---
 
 `peers` checks for newer releases of itself, and you install them from a terminal or from a session when you choose to. The check is automatic; `peers update` asks for confirmation unless you pass `--yes`, and a session asks for your approval of the `update_broker` call.

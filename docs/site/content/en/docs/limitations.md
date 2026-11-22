@@ -1,6 +1,7 @@
 ---
 title: Known limitations
 weight: 7
+description: "peers sends plain-text messages only, stores nothing for a session that is not running, uses no relay and cannot talk to external A2A agents."
 ---
 
 Some things you might expect `peers` to do, it does not.

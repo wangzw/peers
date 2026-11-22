@@ -1,6 +1,7 @@
 ---
 title: 配置键
 weight: 3
+description: "两种 Broker 各读一个 YAML 配置文件，每个键都可省略，每个键的类型、默认值和含义都有说明。"
 ---
 
 两种部署形态各读一个 YAML 文件：用户级 Broker 读 `~/.peers/config.yaml`，系统级 Broker 读 `/etc/peers/config.yaml`。没有文件时 Broker 照常运行，每个键都可选，未出现的键取默认值。`peers service install` 如何生成这个文件，见下文[生成的配置文件](#生成的配置文件)一节。Broker 会监视该文件，所以无论是手工修改、经 `set_config` 修改，还是经 `peers config set` 修改，合法的改动都会在运行期间生效。两个保活键是例外：它们在建立监听或链路时读取，改动只对之后建立的监听或链路生效。

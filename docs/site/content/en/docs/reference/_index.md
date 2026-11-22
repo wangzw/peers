@@ -1,6 +1,7 @@
 ---
 title: Reference
 weight: 5
+description: "Reference pages list the MCP tools, terminal commands, configuration keys, files and paths, and the project configuration file."
 ---
 
 Look things up here: the tools a session calls, the terminal commands, every configuration key, the files the Broker uses and the project configuration file that selects default topics.

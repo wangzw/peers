@@ -1,6 +1,7 @@
 ---
 title: Topics
 weight: 3
+description: "A topic is a named scope of visibility: agents see each other and exchange messages only when they share a topic on the same or on connected Brokers."
 ---
 
 A topic is a named scope of visibility and permission to communicate. Two agents can see each other and exchange messages only when they share at least one topic and are registered on the same Broker or on two connected Brokers. An agent that belongs to no topic is invisible to every other agent.

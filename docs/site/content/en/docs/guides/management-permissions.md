@@ -2,6 +2,7 @@
 title: Manage a Broker by file permission
 linkTitle: Management permissions
 weight: 7
+description: "Tools and commands can change a Broker only as far as the caller could change its configuration file by hand; admin group members manage it without sudo."
 ---
 
 The tools and the terminal commands can change a Broker only as far as the calling account could change the Broker's configuration file by hand. The Broker takes the account from the process credentials the operating system reports for the local socket; it does not rely on what the caller says.

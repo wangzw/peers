@@ -1,6 +1,7 @@
 ---
 title: 项目配置文件
 weight: 5
+description: "项目里的 .peers.yaml 文件声明在该项目中启动的会话自动加入的 topic，仓库的每个检出都会得到相同的默认值。"
 ---
 
 项目里的 `.peers.yaml` 声明在该项目中启动的会话自动加入哪些 topic。把它提交到仓库，这样每个克隆都得到相同的默认 topic。

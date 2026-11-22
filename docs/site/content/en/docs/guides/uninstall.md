@@ -2,6 +2,7 @@
 title: Uninstall
 linkTitle: Uninstall
 weight: 9
+description: "peers uninstall removes a user or system installation, asks whether to keep the data and leaves removing only the service to peers service remove."
 ---
 
 To remove this account's installation, run:

@@ -2,6 +2,7 @@
 title: 把 Broker 安装为服务
 linkTitle: 把 Broker 安装为服务
 weight: 5
+description: "把 Broker 安装为用户级或系统级服务，让它随登录或开机启动、持续运行并在重启后恢复，还可以启动、停止和移除。"
 ---
 
 Claude Code 会话只连接 Broker，不会启动它。启动 Broker 有两种办法：安装为服务，或者在终端里运行。安装为服务后，它立刻启动，此后随登录或开机启动，持续运行，机器重启后也会恢复。

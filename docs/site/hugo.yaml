@@ -4,6 +4,11 @@ locale: en
 
 defaultContentLanguage: en
 defaultContentLanguageInSubdir: false
+# The site has no tags or categories. Disabling both kinds keeps empty
+# taxonomy pages out of the build, the sitemap and the search index.
+disableKinds:
+  - taxonomy
+  - term
 
 module:
   imports:
@@ -73,7 +78,7 @@ languages:
     weight: 1
     title: peers
     params:
-      description: Cross-host communication for agents.
+      description: peers lets Claude Code sessions running on different hosts discover each other and exchange text messages.
     menus:
       main:
         - name: Documentation
@@ -99,7 +104,7 @@ languages:
     weight: 2
     title: peers
     params:
-      description: agent 之间的跨主机通信。
+      description: peers 让运行在不同主机上的 Claude Code 会话互相发现，并交换文本消息。
     menus:
       main:
         - name: 文档

@@ -1,6 +1,7 @@
 ---
 title: topic
 weight: 3
+description: "topic 是命名的可见范围：Agent 只有在同一 Broker 或已连接的 Broker 上至少同处一个 topic 时才能互相看见并互发消息。"
 ---
 
 topic 是以名字标识的可见性与通信许可范围。两个 Agent 至少同在一个 topic，并且登记在同一个 Broker 或两个已连接的 Broker 上时，才能互相看见、互发消息。不属于任何 topic 的 Agent 对其他 Agent 不可见。

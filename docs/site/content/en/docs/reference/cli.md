@@ -1,6 +1,7 @@
 ---
 title: Command line
 weight: 2
+description: "The peers command runs the MCP server, the Broker and the terminal commands, and lists every subcommand with its options."
 ---
 
 The `peers` binary runs the Broker, the MCP server and the terminal commands. Run `peers -h`, `peers --help` or `peers help` to print the usage below. Every command also accepts `-h` and `--help`. Running `peers` with no arguments prints the usage to standard error and exits with code 2. A usage error, such as an unknown command, an unknown option or the wrong number of arguments, also exits with code 2.

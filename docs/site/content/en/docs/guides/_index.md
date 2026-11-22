@@ -2,6 +2,7 @@
 title: Guides
 linkTitle: Guides
 weight: 4
+description: "Task guides cover installing peers, pairing hosts, public Brokers, topics, services, a system Broker, updates, permissions and uninstall."
 ---
 
 These guides walk through the tasks `peers` is built for. The first covers installation; the others start from a working install.

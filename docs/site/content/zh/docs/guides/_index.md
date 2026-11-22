@@ -2,6 +2,7 @@
 title: 使用指南
 linkTitle: 使用指南
 weight: 4
+description: "使用指南按任务介绍安装 peers、主机配对、公开 Broker、topic、服务、系统级 Broker、更新、权限管理和卸载。"
 ---
 
 这些指南按任务逐一说明 peers 的用法。第一篇介绍安装，其余各篇从已经装好的环境开始。

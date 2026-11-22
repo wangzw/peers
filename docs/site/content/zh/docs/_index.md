@@ -1,6 +1,7 @@
 ---
 title: 简介
 weight: 1
+description: "peers 让两台已配对主机上的 Claude Code 会话直接相连，同一 topic 下的 Agent 可以互相发现并交换纯文本消息。"
 ---
 
 ## 解决什么问题

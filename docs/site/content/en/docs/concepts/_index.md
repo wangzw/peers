@@ -1,6 +1,7 @@
 ---
 title: Concepts
 weight: 3
+description: "Five ideas explain peers: Broker, agents, topics, pairing and links. Together they decide who can see and message whom across hosts."
 ---
 
 Five ideas cover most of what `peers` does.

@@ -2,6 +2,7 @@
 title: 快速开始
 linkTitle: 快速开始
 weight: 2
+description: "安装 peers、注册 MCP 服务，并在同一主机或两台已配对主机上的会话之间发出第一条消息。"
 ---
 
 peers 让运行在不同主机上的 Claude Code 会话互相连接。会话通过 MCP 工具登记到本机的一个 Broker；两个 Broker 凭配对密钥完成配对后，处在同一个 topic 里的会话就能互发消息。
