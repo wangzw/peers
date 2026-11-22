@@ -7,12 +7,16 @@ on:
 permissions:
   contents: read
 
+# Every timeout-minutes below is sized to cover a cold-cache run plus one
+# stalled action download (about 282 s as measured). Size any change to a limit
+# the same way.
 jobs:
   lint:
     name: lint and generate
     runs-on: ubuntu-24.04
-    # Median of the last five runs is 106 s; three times that rounded up to
-    # the next five minutes.
+    # The slowest of the last 30 main runs took 170 s. Empty module, build and
+    # golangci-lint caches add about 110 s, twice the 54 s measured on four
+    # cores; 1.5 times the total rounds up to 10 minutes.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -43,9 +47,10 @@ jobs:
   test:
     name: test (linux)
     runs-on: ubuntu-24.04
-    # Median of the last five runs is 180 s; three times that rounded up to
-    # the next five minutes.
-    timeout-minutes: 10
+    # A cold-cache run is estimated at 334 s, and one run stalled 282 s
+    # downloading an action. Together they come to 616 s, past the 600 s that a
+    # 10-minute limit allows, so the limit is 15 minutes.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -66,9 +71,11 @@ jobs:
   docs-check:
     name: documentation
     runs-on: ubuntu-24.04
-    # Median of the last five runs is 43 s; three times that rounded up to
-    # the next five minutes.
-    timeout-minutes: 5
+    # The slowest of the last 30 main runs took 186 s, 148 s of it downloading
+    # an action, and the npm install and the checker clone are cold every run.
+    # The old limit left only 114 s of headroom, so the worst case plus a fixed
+    # three-minute margin rounds up to 10 minutes.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -109,8 +116,8 @@ jobs:
   macos:
     name: test (macOS)
     runs-on: macos-latest
-    # Median of the last five runs is 207 s; three times that rounded up to
-    # the next five minutes.
+    # The slowest of the last 30 main runs took 345 s. Empty module and build
+    # caches add about 155 s; 1.5 times the total stays within 15 minutes.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -133,6 +140,8 @@ jobs:
   macos-service:
     name: service end-to-end
     runs-on: macos-latest
+    # The slowest of the last 30 main runs took 148 s; empty module and build
+    # caches leave it far below 40 minutes.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -197,7 +206,8 @@ jobs:
     name: end-to-end tests (${{ matrix.shard }})
     runs-on: ubuntu-24.04
     # E2E_TIMEOUT in the Makefile bounds the test binary; setup and cleanup
-    # need room beyond it.
+    # need room beyond it. The slowest of the last 30 main runs took 648 s, and
+    # empty module and build caches leave it far below 45 minutes.
     timeout-minutes: 45
     strategy:
       # A failing shard must not cancel the others: their results show whether
@@ -247,9 +257,11 @@ jobs:
   third-party-licenses:
     name: third-party licenses are current
     runs-on: ubuntu-24.04
-    # Median of the last five runs is 18 s; three times that rounded up to
-    # the next five minutes.
-    timeout-minutes: 5
+    # The slowest run spent 282 s downloading an action and was cancelled at
+    # the old 300 s limit. Empty module and build caches add about 90 s, and a
+    # fixed three-minute margin over the resulting 404 s rounds up to 10
+    # minutes.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -271,9 +283,11 @@ jobs:
   release-config:
     name: goreleaser config
     runs-on: ubuntu-24.04
-    # Median of the last five runs is 89 s; three times that rounded up to
-    # the next five minutes.
-    timeout-minutes: 5
+    # The slowest of the last 30 main runs took 131 s. Empty module and build
+    # caches add about 155 s, twice the 77 s measured on four cores, to the two
+    # four-platform goreleaser runs; 1.5 times the total rounds up to 10
+    # minutes.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -297,6 +311,8 @@ jobs:
   third-party-source:
     name: third-party sources match their upstreams
     runs-on: ubuntu-24.04
+    # The slowest of the last 30 main runs took 23 s. The check downloads the
+    # upstream modules, and a cold-cache run stays far below 10 minutes.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -312,6 +328,9 @@ jobs:
   vulncheck:
     name: vulnerability scan
     runs-on: ubuntu-24.04
+    # The slowest run took 175 s, 143 s of it setting up the job. Empty module
+    # and build caches and the govulncheck install add about 90 s; 1.5 times
+    # the total rounds up to 10 minutes.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
