@@ -219,11 +219,17 @@ func (s *selector) findAtLevel(ctx context.Context, system bool) (target, bool, 
 // probeSystemWithRetry probes the system socket. A refused connection is
 // retried for SystemRetryDeadline, because a service manager may be restarting
 // the Broker; a socket the account may not use, a missing socket and any other
-// failure are not retried.
+// failure are not retried. A socket answered by an account that may not serve
+// the system Broker is the same peer mismatch the first probe reports: a
+// restart is exactly when another account can take the socket, so the retry
+// ends at once instead of running out the deadline and reporting a missing
+// system Broker.
 func (s *selector) probeSystemWithRetry(ctx context.Context) (bool, error) {
-	switch s.probePath(ctx, s.systemSocket, kindSystem).Outcome {
+	switch r := s.probePath(ctx, s.systemSocket, kindSystem); r.Outcome {
 	case probeOK:
 		return true, nil
+	case probeWrongPeer:
+		return false, peerMismatchError(s.systemSocket, kindSystem, r.PeerUID)
 	case probeRefused:
 	default:
 		return false, nil
@@ -235,17 +241,33 @@ func (s *selector) probeSystemWithRetry(ctx context.Context) (bool, error) {
 			return false, err
 		}
 		waited += d
-		if s.probePath(ctx, s.systemSocket, kindSystem).Outcome == probeOK {
-			return true, nil
+		if ok, mismatch := s.probeSystemRetryStep(ctx); mismatch != nil || ok {
+			return ok, mismatch
 		}
 	}
 	if rest := SystemRetryDeadline - waited; rest > 0 {
 		if err := s.wait(ctx, rest); err != nil {
 			return false, err
 		}
-		if s.probePath(ctx, s.systemSocket, kindSystem).Outcome == probeOK {
-			return true, nil
+		if ok, mismatch := s.probeSystemRetryStep(ctx); mismatch != nil || ok {
+			return ok, mismatch
 		}
+	}
+	return false, nil
+}
+
+// probeSystemRetryStep probes the system socket once during a retry. A usable
+// socket is reported as ok; a socket answered by another account ends the
+// retry with the peer mismatch, which names the path and the answering
+// account; a socket still refusing connections, and every other outcome, keep
+// the retry going, as before.
+func (s *selector) probeSystemRetryStep(ctx context.Context) (ok bool, mismatch error) {
+	r := s.probePath(ctx, s.systemSocket, kindSystem)
+	switch r.Outcome {
+	case probeOK:
+		return true, nil
+	case probeWrongPeer:
+		return false, peerMismatchError(s.systemSocket, kindSystem, r.PeerUID)
 	}
 	return false, nil
 }
@@ -289,17 +311,32 @@ func peerAllowed(kind targetKind, uid uint32) bool {
 	}
 }
 
+// peerMismatch is the error for a socket served by an account that may not
+// serve the Broker at its path. It is a type so that the connection loop can
+// show the sentence as it stands: the text is already what the model should
+// read, unlike the other selection errors that the loop wraps in its
+// unavailable sentence.
+type peerMismatch struct {
+	path string
+	kind targetKind
+	uid  uint32
+}
+
+func (e *peerMismatch) Error() string {
+	switch e.kind {
+	case kindSystem:
+		return fmt.Sprintf("the system Broker socket %s is served by uid %d, not root", e.path, e.uid)
+	default:
+		return fmt.Sprintf("the user Broker socket %s is served by uid %d, not this account (%d)",
+			e.path, e.uid, os.Geteuid())
+	}
+}
+
 // peerMismatchError names a user or system socket and the account
 // that answered it. The text is shown to the model, so it must carry both
 // facts. A test-named socket builds its own message in the test build.
 func peerMismatchError(path string, kind targetKind, uid uint32) error {
-	switch kind {
-	case kindSystem:
-		return fmt.Errorf("the system Broker socket %s is served by uid %d, not root", path, uid)
-	default:
-		return fmt.Errorf("the user Broker socket %s is served by uid %d, not this account (%d)",
-			path, uid, os.Geteuid())
-	}
+	return &peerMismatch{path: path, kind: kind, uid: uid}
 }
 
 func (s *selector) afterFunc() func(time.Duration) <-chan time.Time {

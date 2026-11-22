@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -209,9 +210,11 @@ func TestSelectRejectsRootServedUserSocket(t *testing.T) {
 	}
 }
 
-// A system socket served by a non-root account is unusable, and with no
-// user Broker there is nothing to select.
-func TestFindNonRootSystemSocketFallsThrough(t *testing.T) {
+// A system socket served by a non-root account is unusable. With no user
+// Broker there is nothing to select, and the mismatch is reported rather than
+// falling through to the no-Broker text that sends the user to ask the
+// administrator to start a system Broker.
+func TestFindNonRootSystemSocketReportsMismatch(t *testing.T) {
 	userPath := fakelocal.SocketPath(t)
 	systemPath := filepath.Join(t.TempDir(), "system.sock")
 
@@ -228,8 +231,15 @@ func TestFindNonRootSystemSocketFallsThrough(t *testing.T) {
 	}
 
 	_, err := s.Find(context.Background())
-	if !errors.Is(err, errNoBroker) {
-		t.Fatalf("Find error = %v, want errNoBroker", err)
+	if err == nil {
+		t.Fatal("Find accepted a system socket served by a non-root account")
+	}
+	want := fmt.Sprintf("the system Broker socket %s is served by uid 1, not root", systemPath)
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+	if errors.Is(err, errNoBroker) {
+		t.Fatalf("error = %v, want the peer mismatch rather than errNoBroker", err)
 	}
 }
 
@@ -385,6 +395,56 @@ func TestFindSystemRefusedRetries(t *testing.T) {
 		4*time.Second,
 		2250*time.Millisecond,
 	)
+}
+
+// A system socket that refuses connections can be taken by another account
+// while the Broker restarts. That account may not serve the system Broker, so
+// the retry reports the same peer mismatch the first probe reports instead of
+// running out the retry deadline and telling the user to ask the administrator
+// to start a system Broker.
+func TestFindSystemRefusedThenWrongPeerReportsMismatch(t *testing.T) {
+	userPath := filepath.Join(t.TempDir(), "user.sock")
+	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	const foreign = uint32(4242)
+	after, waits := recordingAfter()
+
+	systemProbes := 0
+	s := &selector{
+		getenv:       func(string) string { return "" },
+		userSocket:   userPath,
+		systemSocket: systemPath,
+		probe: func(_ context.Context, path string) probeInfo {
+			if path != systemPath {
+				return probeInfo{Outcome: probeMissing}
+			}
+			systemProbes++
+			// The level's first probe and the retry's own first probe both
+			// see a refused socket; the retry then finds another account.
+			if systemProbes <= 2 {
+				return probeInfo{Outcome: probeRefused}
+			}
+			return probeInfo{Outcome: probeWrongPeer, PeerUID: foreign, PeerKnown: true}
+		},
+		after: after,
+	}
+
+	_, err := s.findForLevel(context.Background(), true, true)
+	if err == nil {
+		t.Fatal("findForLevel returned nil error for a system socket served by another account")
+	}
+	want := fmt.Sprintf("the system Broker socket %s is served by uid %d, not root", systemPath, foreign)
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err, want)
+	}
+	if errors.Is(err, errNoSystemBroker) {
+		t.Fatalf("error = %v, want the peer mismatch rather than a missing system Broker", err)
+	}
+	// The mismatch ends the retry at the first wait instead of after the whole
+	// deadline.
+	wantWaits(t, waits(), 250*time.Millisecond)
+	if systemProbes != 3 {
+		t.Fatalf("system socket probed %d times, want 3 (level, retry start, one retry)", systemProbes)
+	}
 }
 
 // REQ-broker-config-055: a command that names a level talks to that level's

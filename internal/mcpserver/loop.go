@@ -134,6 +134,14 @@ func loopOnce(ctx context.Context, d loopDeps, conn *loopConnBackoff) (stop bool
 		}
 		if errors.Is(err, errNoBroker) {
 			loopSetStatus(d.st, PhaseNoBroker, "", "", nil)
+		} else if mismatch, ok := peerMismatchOf(err); ok {
+			// The mismatch text already names the path and the answering
+			// account, the same sentence the reconnect phase shows. Wrapping it
+			// in the unavailable text would report one condition two ways. A
+			// system socket served by another account is reached only when no
+			// user Broker answered, so no usable Broker exists and the reader
+			// is still told how to start one (REQ-broker-config-038).
+			loopSetStatus(d.st, PhaseUnavailable, selectionMismatchText(mismatch), "", nil)
 		} else {
 			loopSetStatus(d.st, PhaseUnavailable, unavailableText(err.Error()), "", nil)
 		}
@@ -295,6 +303,29 @@ func loopProbeInfo(ctx context.Context, d loopDeps, t target) (probeInfo, bool) 
 		probe = inspectSocket
 	}
 	return probe(ctx, t.Path), true
+}
+
+// peerMismatchOf returns the peer mismatch err carries, if any.
+func peerMismatchOf(err error) (*peerMismatch, bool) {
+	var mismatch *peerMismatch
+	if errors.As(err, &mismatch) {
+		return mismatch, true
+	}
+	return nil, false
+}
+
+// selectionMismatchText is the status text for a peer mismatch found while
+// selecting a Broker. A system socket served by another account is reached only
+// when no user Broker answered, so no usable Broker exists and the sentence
+// errNoBroker carries, which tells the reader how to start one, follows the
+// mismatch. A user socket served by another account keeps the mismatch alone: a
+// system Broker may still be running, so the no-Broker sentence would send the
+// reader to start one that is not missing.
+func selectionMismatchText(m *peerMismatch) string {
+	if m.kind != kindSystem {
+		return m.Error()
+	}
+	return m.Error() + "; " + textNoBroker
 }
 
 // loopNoBrokerStatus is the no-Broker phase and text for a user or system

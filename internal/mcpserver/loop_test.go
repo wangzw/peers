@@ -550,6 +550,88 @@ func TestRunLoop(t *testing.T) {
 		stop()
 	})
 
+	t.Run("a peer mismatch at selection reads the same as at reconnection", func(t *testing.T) {
+		// A socket served by another account is one condition, whichever phase
+		// met it. Selection must show the sentence that names the path and the
+		// answering account, the same one the reconnect phase shows, without the
+		// generic unavailable wrapper.
+		path := fakelocal.SocketPath(t)
+		const wrongUID = 4242
+		wantDetail := peerMismatchError(path, kindUser, wrongUID).Error()
+
+		selecting := &statusStore{}
+		selectDeps := loopBaseDeps(selecting, newLoopClock())
+		selectDeps.selectTarget = func(context.Context) (target, error) {
+			return target{}, peerMismatchError(path, kindUser, wrongUID)
+		}
+		stopSelecting := loopStart(t, selectDeps)
+		selection := loopWaitStatus(t, selecting, "PhaseUnavailable", func(s Status) bool {
+			return s.Phase == PhaseUnavailable
+		})
+		stopSelecting()
+
+		reconnecting := &statusStore{}
+		reconnectDeps := loopBaseDeps(reconnecting, newLoopClock())
+		reconnectDeps.selectTarget = func(context.Context) (target, error) {
+			return target{Path: path, Kind: kindUser}, nil
+		}
+		reconnectDeps.probe = func(context.Context, string) probeInfo {
+			return probeInfo{Outcome: probeWrongPeer, PeerUID: wrongUID, PeerKnown: true}
+		}
+		reconnectDeps.hello = func(context.Context, localpb.LocalClient, uint32) (helloResult, error) {
+			return helloResult{}, errors.New("the Broker rejected the handshake")
+		}
+		loopStart(t, reconnectDeps)
+		reconnection := loopWaitStatus(t, reconnecting, "PhaseUnavailable", func(s Status) bool {
+			return s.Phase == PhaseUnavailable
+		})
+
+		if selection.Detail != wantDetail || reconnection.Detail != wantDetail {
+			t.Fatalf("selection Detail = %q, reconnection Detail = %q, want both %q",
+				selection.Detail, reconnection.Detail, wantDetail)
+		}
+		if strings.Contains(selection.Detail, "the Broker is unavailable") {
+			t.Fatalf("selection Detail = %q, want no unavailable wrapper", selection.Detail)
+		}
+	})
+
+	t.Run("a system peer mismatch at selection still says how to start a Broker", func(t *testing.T) {
+		// REQ-broker-config-038: the system socket is served by another account
+		// and no user Broker answered, so no usable Broker exists. The status
+		// keeps the mismatch sentence and adds the sentence that explains how to
+		// start a Broker.
+		path := fakelocal.SocketPath(t)
+		const wrongUID = 4242
+		wantMismatch := peerMismatchError(path, kindSystem, wrongUID).Error()
+
+		st := &statusStore{}
+		deps := loopBaseDeps(st, newLoopClock())
+		deps.selectTarget = func(context.Context) (target, error) {
+			return target{}, peerMismatchError(path, kindSystem, wrongUID)
+		}
+		stop := loopStart(t, deps)
+		status := loopWaitStatus(t, st, "PhaseUnavailable", func(s Status) bool {
+			return s.Phase == PhaseUnavailable
+		})
+		stop()
+
+		if !strings.Contains(status.Detail, wantMismatch) {
+			t.Fatalf("Detail = %q, want it to contain %q", status.Detail, wantMismatch)
+		}
+		if !strings.Contains(status.Detail, textNoBroker) {
+			t.Fatalf("Detail = %q, want the how-to-start text %q", status.Detail, textNoBroker)
+		}
+		h := &handlers{st: st}
+		_, err := h.preflight("list_agents", callGeneric, false)
+		if err == nil {
+			t.Fatal("preflight returned nil for a system peer mismatch at selection")
+		}
+		wantErr := "list_agents failed: " + status.Detail + " (code: internal)"
+		if got := err.Error(); got != wantErr {
+			t.Fatalf("error = %q, want %q", got, wantErr)
+		}
+	})
+
 	t.Run("a user Broker whose socket is gone reports no Broker", func(t *testing.T) {
 		// REQ-broker-config-037: the tool error is the same no-Broker text as a
 		// session that never found one.
