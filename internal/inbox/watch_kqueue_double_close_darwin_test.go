@@ -26,9 +26,11 @@ const (
 	// open across each round. A descriptor closed a second time can be
 	// recycled by a later open, and the sentinel check catches that.
 	kqueueDoubleCloseSentinels = 64
-	// kqueueDoubleCloseRoundWait bounds one round's RemoveAll + Close wait.
-	// The dispatch ruling allows up to three seconds per test wait.
-	kqueueDoubleCloseRoundWait = 3 * time.Second
+	// kqueueDoubleCloseRoundWait bounds one round's RemoveAll + Close wait. The
+	// success path selects on the goroutines finishing, so this only decides
+	// how long a stalled round takes to fail; it shares the package-wide
+	// fallback rather than a shorter value that load could exhaust.
+	kqueueDoubleCloseRoundWait = aWaitTimeout
 )
 
 // kqueueSentinel is one open file whose descriptor must survive a round.
