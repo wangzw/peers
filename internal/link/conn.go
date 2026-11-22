@@ -222,11 +222,8 @@ func (c *conn) recv(ctx context.Context) (*linkpb.Frame, error) {
 	}
 	c.unreadMu.Unlock()
 
-	select {
-	case f := <-c.in:
-		c.releaseReadPermit()
+	if f, ok := c.tryRecv(); ok {
 		return f, nil
-	default:
 	}
 	select {
 	case f := <-c.in:
@@ -237,13 +234,22 @@ func (c *conn) recv(ctx context.Context) (*linkpb.Frame, error) {
 	case <-c.closed:
 		// A frame may have been buffered before the reader noticed the
 		// transport error; deliver it before reporting the close.
-		select {
-		case f := <-c.in:
-			c.releaseReadPermit()
+		if f, ok := c.tryRecv(); ok {
 			return f, nil
-		default:
 		}
 		return nil, fmt.Errorf("%w: connection closed", ErrNotEstablished)
+	}
+}
+
+// tryRecv takes a buffered frame without blocking. It returns false when no
+// frame is queued.
+func (c *conn) tryRecv() (*linkpb.Frame, bool) {
+	select {
+	case f := <-c.in:
+		c.releaseReadPermit()
+		return f, true
+	default:
+		return nil, false
 	}
 }
 
