@@ -35,7 +35,7 @@ SITE_DIR ?= docs/site
 
 # Version whose released section in CHANGELOG.md the release notes check
 # extracts.
-RELEASE_NOTES_VERSION ?= v0.5.0
+RELEASE_NOTES_VERSION ?= v0.6.0
 
 # govulncheck version for the vulncheck target, the latest release when the
 # target was added.
