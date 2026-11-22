@@ -25,13 +25,27 @@ const discReconcile = time.Second
 // discSlack is the margin added to every derived wait, after the related
 // product timers: harness.EventTimeout is the tree's fallback for a wait no
 // product timer governs. The longest discovery chain, the revoke case's
-// discBound(3), discBound(2), one relink and two negative windows, stays under
-// the requirement's sixty seconds with this margin.
+// discBound(3), discBound(2), one relink and two discQuietBound windows, stays
+// under the requirement's sixty seconds with this margin.
 const discSlack = harness.EventTimeout
 
+// discQuietSlack is the margin added to a negative observation window. The
+// window must span more than one reconciliation pass so a pass inside it would
+// show a change the check watches for; it keeps a short margin because a
+// negative check pays its whole window, unlike a wait that returns when the
+// event arrives.
+const discQuietSlack = 3 * time.Second
+
 // discBound returns the wait for hops reconcile passes plus the shared slack.
+// A negative observation uses discQuietBound instead.
 func discBound(hops int) time.Duration {
 	return time.Duration(hops)*discReconcile + discSlack
+}
+
+// discQuietBound returns the observation window of a negative check spanning
+// hops reconcile passes plus the quiet margin.
+func discQuietBound(hops int) time.Duration {
+	return time.Duration(hops)*discReconcile + discQuietSlack
 }
 
 // discNode is one local host running a Broker for the discovery cases.
@@ -473,7 +487,7 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 	defer watcher.End(t)
 	harness.WaitRegistered(t, watcher, 3*time.Second)
 
-	window := discBound(2)
+	window := discQuietBound(2)
 	discAbsentConsistently(t, c, window, "C never learns A from a private Broker", []string{fpA}, a.alias, a.addr)
 	harness.ConsistentlyPoll(t, window, harness.TopicCallPollBound, "C never sees A's private topics", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
 		out, state := discListTopicsPoll(t, deadline, watcher)
@@ -676,7 +690,7 @@ func TestDiscoveryNoDialToCardHolder(t *testing.T) {
 	discSetPublic(t, a, true)
 	discWaitBroker(t, d, fpA, discBound(3), nil)
 
-	harness.Consistently(t, discBound(2), "D keeps A as a non-peer without dialing it", func() (bool, string) {
+	harness.Consistently(t, discQuietBound(2), "D keeps A as a non-peer without dialing it", func() (bool, string) {
 		brokers, state := discList(t, d)
 		if state != "" {
 			return false, state
@@ -849,8 +863,8 @@ func TestDiscoveryRevokeWithin60s(t *testing.T) {
 	d.start(t)
 	discWaitConnected(t, c, d.alias, localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
 
-	discAbsentConsistently(t, c, discBound(2), "C stays without A after D restarts", []string{fpA}, a.alias, a.addr)
-	discAbsentConsistently(t, d, discBound(1), "D drops the old card it held before restart", []string{fpA}, a.alias, a.addr)
+	discAbsentConsistently(t, c, discQuietBound(2), "C stays without A after D restarts", []string{fpA}, a.alias, a.addr)
+	discAbsentConsistently(t, d, discQuietBound(1), "D drops the old card it held before restart", []string{fpA}, a.alias, a.addr)
 }
 
 // TestPublicTopicVisibleAcrossNetwork checks that two public declarations on a
@@ -957,7 +971,7 @@ func TestPublicTopicRejectedOnPrivateBroker(t *testing.T) {
 	watcher := discAgent(t, b, "watcher", t.TempDir())
 	defer watcher.End(t)
 	harness.WaitRegistered(t, watcher, 3*time.Second)
-	harness.ConsistentlyPoll(t, discBound(1), harness.TopicCallPollBound, "B never sees the rejected declaration", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
+	harness.ConsistentlyPoll(t, discQuietBound(1), harness.TopicCallPollBound, "B never sees the rejected declaration", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
 		topics, state := discListTopicsPoll(t, deadline, watcher)
 		if state != "" {
 			return harness.Unobservable(state)

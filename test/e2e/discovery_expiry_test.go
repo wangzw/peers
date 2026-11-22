@@ -27,9 +27,18 @@ const (
 	// in these tests runs with; one propagation hop costs at most one interval.
 	dxReconcileInterval = time.Second
 
-	// dxPropagationBound bounds a card crossing two hops: twice the
-	// reconciliation interval plus the tree's EventTimeout margin.
+	// dxPropagationBound bounds a wait for a card crossing two hops: twice the
+	// reconciliation interval plus the tree's EventTimeout margin. A negative
+	// observation uses dxPropagationQuietWindow instead, because a negative
+	// check pays its whole window on every step.
 	dxPropagationBound = 2*dxReconcileInterval + harness.EventTimeout
+
+	// dxPropagationQuietWindow is the observation window of a negative check
+	// that watches a card across two hops. It must span more than one
+	// reconciliation interval so a maintenance pass at the new clock offset
+	// runs inside the window; it keeps the three-second margin instead of
+	// EventTimeout because the window is paid on every step of the check.
+	dxPropagationQuietWindow = 2*dxReconcileInterval + 3*time.Second
 
 	// dxExpiryBound bounds one Broker noticing an expired record: one
 	// reconciliation interval plus the tree's EventTimeout margin.
@@ -166,7 +175,7 @@ func TestCardRenewedDaily(t *testing.T) {
 	for step := 1; step <= 11; step++ {
 		offset := time.Duration(step) * 23 * time.Hour
 		dxSetClock(t, clock, offset)
-		harness.Consistently(t, dxPropagationBound,
+		harness.Consistently(t, dxPropagationQuietWindow,
 			fmt.Sprintf("C lists A after step %d (%s)", step, offset),
 			func() (bool, string) {
 				resp := dxListBrokers(t, cHost)
@@ -257,7 +266,7 @@ func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 			dxLimitCard(t, seed, 2, time.Now().Add(dxLimitRenewalAt), dxLimitRenewalTTL, addresses[seed]))
 	}
 	f.Records(t, renewed...)
-	harness.Consistently(t, dxPropagationBound, "the three cards stay live while their renewals arrive",
+	harness.Consistently(t, dxPropagationQuietWindow, "the three cards stay live while their renewals arrive",
 		func() (bool, string) {
 			return dxLimitCardsPresent(t, b, accepted)
 		})

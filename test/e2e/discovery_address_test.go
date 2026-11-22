@@ -23,9 +23,16 @@ const (
 	// one propagation hop costs at most one interval.
 	dadReconcileInterval = time.Second
 
-	// dadPropagationBound bounds a card crossing two hops: twice the
+	// dadPropagationBound bounds a wait for a card crossing two hops: twice the
 	// reconciliation interval plus the tree's EventTimeout margin.
 	dadPropagationBound = 2*dadReconcileInterval + harness.EventTimeout
+
+	// dadPropagationQuietWindow is the observation window of a negative check
+	// that watches a card across two hops. It must span more than one
+	// reconciliation interval so a maintenance pass would show a change it
+	// watches for; it keeps the three-second margin instead of EventTimeout
+	// because a negative check pays its whole window.
+	dadPropagationQuietWindow = 2*dadReconcileInterval + 3*time.Second
 
 	// dadReconnectMax is link.reconnect_max under harness.FastTimers.
 	dadReconnectMax = 400 * time.Millisecond
@@ -183,7 +190,7 @@ func TestNoDialToCardAddress(t *testing.T) {
 	aIP := c.Addr("hostA", "net")
 	_ = dadWaitCardAt(t, cNode, adAddr(c, "hostA", "net", adPort), dadPropagationBound)
 	count := c.SYNCounter(t, "hostC", harness.Outbound, aIP, dadPortNum)
-	harness.Consistently(t, dadPropagationBound,
+	harness.Consistently(t, dadPropagationQuietWindow,
 		"hostC sends no SYN to hostA's card address",
 		func() (bool, string) {
 			if n := count(); n != 0 {

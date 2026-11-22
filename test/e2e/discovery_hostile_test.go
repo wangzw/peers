@@ -152,7 +152,7 @@ func TestDirectoryRejectsTamperedCards(t *testing.T) {
 	}
 
 	for _, node := range []*discNode{b, c} {
-		hostileAbsent(t, node, discBound(2), node.name+" rejects the tampered and impersonated cards", fpTampered, fpImpersonated, fpClaimed)
+		hostileAbsent(t, node, discQuietBound(2), node.name+" rejects the tampered and impersonated cards", fpTampered, fpImpersonated, fpClaimed)
 	}
 }
 
@@ -175,7 +175,7 @@ func TestDirectoryRejectsUnpairedSource(t *testing.T) {
 	}
 
 	fp := hostileHexFingerprint(fakerec.PublisherOf(seed))
-	hostileAbsent(t, b, discBound(1), "B rejects records from an unpaired source", fp)
+	hostileAbsent(t, b, discQuietBound(1), "B rejects records from an unpaired source", fp)
 
 	f.Pair(t, b.addr, hostilePairKey(t, b))
 	f.WaitLinked(t, 3*time.Second)
@@ -221,7 +221,7 @@ func TestDirectoryPerLinkLimit(t *testing.T) {
 		}
 		return true, ""
 	})
-	harness.Consistently(t, discBound(1), "B keeps the first link at four records", func() (bool, string) {
+	harness.Consistently(t, discQuietBound(1), "B keeps the first link at four records", func() (bool, string) {
 		brokers, state := discList(t, b)
 		if state != "" {
 			return false, state
@@ -314,7 +314,7 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 		watcher := discAgent(t, b, "mal-watcher", t.TempDir())
 		defer watcher.End(t)
 		harness.WaitRegistered(t, watcher, 3*time.Second)
-		harness.ConsistentlyPoll(t, discBound(2), harness.TopicCallPollBound, "B never lists the malformed declarations", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
+		harness.ConsistentlyPoll(t, discQuietBound(2), harness.TopicCallPollBound, "B never lists the malformed declarations", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
 			out, state := discListTopicsPoll(t, deadline, watcher)
 			if state != "" {
 				return harness.Unobservable(state)
@@ -456,7 +456,7 @@ func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
 	// The second version arrives well inside the replacement interval.
 	f.Records(t, buildCard(2, "replace-two", "198.51.100.62:17443"))
 
-	harness.Consistently(t, discBound(2), "C receives only the first version", func() (bool, string) {
+	harness.Consistently(t, discQuietBound(2), "C receives only the first version", func() (bool, string) {
 		for _, version := range g.recordListVersions(t, fp, cardKind, "") {
 			if version != 1 {
 				return false, fmt.Sprintf("C received version %d", version)
@@ -464,7 +464,7 @@ func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
 		}
 		return true, ""
 	})
-	harness.Consistently(t, discBound(2), "B keeps the first version", func() (bool, string) {
+	harness.Consistently(t, discQuietBound(2), "B keeps the first version", func() (bool, string) {
 		brokers, state := discList(t, b)
 		if state != "" {
 			return false, state
