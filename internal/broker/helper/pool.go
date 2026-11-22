@@ -528,23 +528,11 @@ func (p *Pool) watchLive(st *helperState, live *liveHelper) {
 	defer p.children.done()
 	<-live.conn.Done()
 
-	st.mu.Lock()
-	if st.live != live {
+	watches, ok := detachLive(st, live)
+	if !ok {
 		// Closed by reclamation or by Pool.Close.
-		st.mu.Unlock()
 		return
 	}
-	st.live = nil
-	for _, e := range st.watches {
-		e.mu.Lock()
-		if e.conn == live.conn {
-			e.conn = nil
-			e.stop = nil
-		}
-		e.mu.Unlock()
-	}
-	watches := len(st.watches)
-	st.mu.Unlock()
 
 	err := live.wait()
 	if p.stoppingNow() {
@@ -571,10 +559,25 @@ func (p *Pool) watchLive(st *helperState, live *liveHelper) {
 // bad, the watches attached to it are detached and the respawn loop restores
 // them; with no watch registered, the next call starts a fresh helper.
 func (p *Pool) discardLive(st *helperState, live *liveHelper) {
-	st.mu.Lock()
-	if st.live != live {
-		st.mu.Unlock()
+	watches, ok := detachLive(st, live)
+	if !ok {
 		return
+	}
+	_ = live.conn.Close()
+	live.killAndWait()
+	if watches > 0 {
+		p.startRespawn(st)
+	}
+}
+
+// detachLive removes live from the account's state while it is still the
+// current child, and detaches every watch attached to its connection. It
+// reports how many watches remain, and false when live was already gone.
+func detachLive(st *helperState, live *liveHelper) (watches int, ok bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.live != live {
+		return 0, false
 	}
 	st.live = nil
 	for _, e := range st.watches {
@@ -585,14 +588,7 @@ func (p *Pool) discardLive(st *helperState, live *liveHelper) {
 		}
 		e.mu.Unlock()
 	}
-	watches := len(st.watches)
-	st.mu.Unlock()
-
-	_ = live.conn.Close()
-	live.killAndWait()
-	if watches > 0 {
-		p.startRespawn(st)
-	}
+	return len(st.watches), true
 }
 
 // startRespawn launches the account's respawn loop unless one already runs.
