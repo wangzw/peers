@@ -5,7 +5,7 @@ weight: 1
 
 ## 解决什么问题
 
-Claude Code 自带的跨会话消息只覆盖同一台主机上的会话。peers 把同样的能力扩展到多台主机：不同主机上的会话可以互相发现，并交换纯文本消息。
+Claude Code 自带的[跨会话消息](https://code.claude.com/docs/en/cross-session-messaging)直接覆盖同一台主机上的其他会话；会话连着 Remote Control 时，还能经 Anthropic 的服务器到达同一用户在其他机器上和云端的会话，而 Remote Control 需要用 claude.ai 账号登录。peers 让配对的两台主机直接连接：两台主机可以属于不同的人，消息在两个 Broker 之间直接传递，不经第三方服务器。不同主机上的会话可以互相发现，并交换纯文本消息。
 
 ## 怎么工作
 

@@ -5,7 +5,7 @@ weight: 1
 
 ## What it solves
 
-Claude Code's built-in cross-session messaging reaches sessions on one host. `peers` extends the same idea across hosts: sessions on different hosts discover each other and exchange plain-text messages.
+Claude Code's built-in [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging) reaches the other sessions on the same host directly. While a session is connected to Remote Control, it also reaches the same user's sessions on other machines and in the cloud through Anthropic's servers; Remote Control requires a claude.ai sign-in. `peers` connects two paired hosts directly: the hosts can belong to different people, and messages pass between their two Brokers without going through a third-party server. Sessions on different hosts discover each other and exchange plain-text messages.
 
 ## How it works
 

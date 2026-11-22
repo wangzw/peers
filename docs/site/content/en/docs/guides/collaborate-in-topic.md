@@ -40,7 +40,7 @@ The receiving Broker writes the message into the target session's inbox socket w
 
 ## Message every agent
 
-Saying “Send hello to every agent.” reaches only the sessions on this host: the model sends it with Claude Code's built-in session tools, not through `peers`, and then reminds you that `peers` can also notify agents on other hosts. To reach other hosts, ask for it: “Use peers to broadcast hello.” The model then calls `send_message` once for each agent that `list_agents` returns. A session without the built-in session tools does not fall back to `peers`; it tells you so and gives the same reminder.
+Saying “Send hello to every agent.” makes the model send it only to the sessions on this host, with Claude Code's built-in session tools rather than through `peers`, and then remind you that `peers` can also notify agents on other hosts. To reach other hosts, ask for it: “Use peers to broadcast hello.” The model then calls `send_message` once for each agent that `list_agents` returns. A session without the built-in session tools does not fall back to `peers`; it tells you so and gives the same reminder.
 
 ## When there is no shared topic
 
