@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"time"
 
 	"github.com/wangzw/peers/internal/inbox"
@@ -78,9 +77,5 @@ func (d *delivery) writeInbox(ctx context.Context, deadline time.Time, target ag
 // logInboxError records an inbox write failure that left nothing written. It
 // records neither the signature nor the message text.
 func (d *delivery) logInboxError(event string, target agentView) {
-	logger := d.deps.Log
-	if logger == nil {
-		logger = slog.Default()
-	}
-	logger.Error(event, "target", target.Name)
+	d.logger().Error(event, "target", target.Name)
 }

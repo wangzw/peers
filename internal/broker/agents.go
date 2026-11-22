@@ -3,7 +3,6 @@ package broker
 import (
 	"context"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -371,7 +370,7 @@ func (b *Broker) recomputeRefsLocked() {
 		// delivery accepts the shortened name only together with it. Use the
 		// longest alias so the decision holds for every viewer.
 		if pinned || addressNameTruncates(a.name, ref, maxAddressAlias(), needRef) {
-			ref = nonOwnerRef(id)
+			ref = shortID(id)
 		}
 		member := b.memberLocked(a, ref, pinned)
 		a.refPinned = pinned
@@ -406,28 +405,9 @@ func (b *Broker) memberLocked(a *agent, ref string, pinned bool) Member {
 		Ref:         ref,
 		Status:      topicStatus(a.status),
 		PrevName:    a.prevName,
-		Account:     topic.SanitizeAccountName(accountNameOf(a.caller)),
+		Account:     topic.SanitizeAccountName(callerAccount(a.caller)),
 		RefRequired: pinned,
 	}
-}
-
-// accountNameOf returns the account name shown for a caller. The peercred
-// handshake stores usernameFor(uid), which already falls back to the decimal
-// uid; an agent built without that handshake falls back the same way.
-func accountNameOf(c Caller) string {
-	if c.Username != "" {
-		return c.Username
-	}
-	return strconv.FormatUint(uint64(c.UID), 10)
-}
-
-// nonOwnerRef is the ref of an agent whose name belongs to another account: the
-// full 12-character prefix of its ID.
-func nonOwnerRef(id AgentID) string {
-	if len(id) < 12 {
-		return string(id)
-	}
-	return string(id[:12])
 }
 
 // unregisterLocked removes a from the table and clears its topic memberships.
@@ -607,6 +587,9 @@ func statusToProto(s string) localpb.AgentStatus {
 	}
 }
 
+// shortID returns the first 12 characters of id, or id itself when it is
+// shorter. It names an agent in a log field and gives an agent whose name
+// belongs to another account its full-prefix ref.
 func shortID(id AgentID) string {
 	if len(id) > 12 {
 		return string(id[:12])

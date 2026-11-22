@@ -84,7 +84,7 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 					SharedTopics: append([]string(nil), v.Shared...),
 					Status:       statusToProto(ag.status),
 					PreviousName: ag.prevName,
-					Account:      accountNameOf(ag.caller),
+					Account:      callerAccount(ag.caller),
 				},
 				alias: b.localAlias(),
 				name:  ag.name,

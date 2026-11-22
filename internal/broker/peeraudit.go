@@ -51,15 +51,11 @@ func pairingKeyCreatedEvent(actor config.Actor, expires time.Time) config.Event 
 // other side's identity was never confirmed.
 func connectEvent(actor config.Actor, address string, peer pairing.Peer, err error) (config.Event, bool) {
 	if err == nil {
-		alias := peer.LocalAlias
-		if alias == "" {
-			alias = peer.Alias
-		}
 		return config.Event{
 			Event:   config.EventPairingSucceeded,
 			Actor:   actor.Agent,
 			Account: actor.Account,
-			Peer:    &config.PeerRef{Fingerprint: peer.Fingerprint, Alias: alias},
+			Peer:    &config.PeerRef{Fingerprint: peer.Fingerprint, Alias: effectivePeerAlias(peer)},
 		}, true
 	}
 

@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -293,7 +292,7 @@ func resultLabel(res *deliverpb.DeliverResult) string {
 	case *deliverpb.DeliverResult_Delivered:
 		return "delivered"
 	case *deliverpb.DeliverResult_Error:
-		return strings.ToLower(strings.TrimPrefix(result.Error.GetCode().String(), "ERROR_CODE_"))
+		return errorCodeName(result.Error.GetCode())
 	default:
 		return "unknown"
 	}
@@ -303,10 +302,7 @@ func resultLabel(res *deliverpb.DeliverResult) string {
 // is set. It is the only line for that request, and it records no message text
 // (architecture.md:279).
 func (d *delivery) logDeliveryRefusedOffline(peer peerID, req deliverRequest) {
-	logger := d.deps.Log
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger := d.logger()
 	logger.Debug(EvDeliveryRefusedOffline,
 		"message_id", req.MessageID,
 		"sender", req.SenderName,
@@ -318,10 +314,7 @@ func (d *delivery) logDeliveryRefusedOffline(peer peerID, req deliverRequest) {
 // logDeliver records one delivery event. It records no message text
 // (architecture.md:279).
 func (d *delivery) logDeliver(peer peerID, req deliverRequest, result string, start time.Time) {
-	logger := d.deps.Log
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger := d.logger()
 	attrs := []any{
 		"message_id", req.MessageID,
 		"sender", req.SenderName,

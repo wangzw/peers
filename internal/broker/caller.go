@@ -109,8 +109,10 @@ var (
 // still connect.
 const unknownAccountKey = ^uint32(0)
 
-// callerAccount returns the name a caller error message uses: the resolved
-// account name, or the decimal uid when it has none.
+// callerAccount returns the name used for a caller in messages and in display:
+// the resolved account name, or the decimal uid when it has none. The peercred
+// handshake stores usernameFor(uid), which already falls back to the decimal
+// uid; an agent built without that handshake falls back the same way.
 func callerAccount(c Caller) string {
 	if c.Username != "" {
 		return c.Username

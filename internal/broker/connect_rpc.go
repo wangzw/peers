@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"strings"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
@@ -40,7 +39,7 @@ func (b *Broker) Connect(ctx context.Context, req *localpb.ConnectRequest) (*loc
 		e := connectError(address, req.GetLocalAlias(), err)
 		code := "canceled"
 		if e != nil {
-			code = connectCodeName(e.Code)
+			code = errorCodeName(e.Code)
 		}
 		// The pairing key is part of the request, never of the address or the
 		// error code, so it cannot reach this record.
@@ -57,10 +56,7 @@ func (b *Broker) Connect(ctx context.Context, req *localpb.ConnectRequest) (*loc
 	// nothing.
 	b.deps.PeerLinks.Kick(peer.Fingerprint)
 
-	alias := peer.LocalAlias
-	if alias == "" {
-		alias = peer.Alias
-	}
+	alias := effectivePeerAlias(peer)
 	b.log.Info(EvPeerPaired, "fingerprint", peer.Fingerprint.String(), "alias", alias, "role", "dialer")
 
 	resp := &localpb.ConnectResponse{
@@ -72,10 +68,4 @@ func (b *Broker) Connect(ctx context.Context, req *localpb.ConnectRequest) (*loc
 		resp.Warnings = b.deps.Warner.ConnectWarnings(peer)
 	}
 	return resp, nil
-}
-
-// connectCodeName renders a wire error code the way Error.Error does: the part
-// after ERROR_CODE_, lowercased.
-func connectCodeName(code localpb.ErrorCode) string {
-	return strings.ToLower(strings.TrimPrefix(code.String(), "ERROR_CODE_"))
 }

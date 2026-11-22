@@ -196,15 +196,21 @@ func (d *delivery) processContext(ctx context.Context) (context.Context, context
 	}
 }
 
+// logger returns the delivery's logger, falling back to the process default
+// when none was supplied.
+func (d *delivery) logger() *slog.Logger {
+	if d.deps.Log != nil {
+		return d.deps.Log
+	}
+	return slog.Default()
+}
+
 // logDeliveryRefusedOwner records a by-name delivery refused because the name
 // belongs to another account. matched uids are the visible same-name Agents of
 // other accounts, and from identifies the sender: a local Agent's ref or the
 // peer fingerprint. It records no message text.
 func (d *delivery) logDeliveryRefusedOwner(name string, ownerUID uint32, matchedUIDs []uint32, from string) {
-	logger := d.deps.Log
-	if logger == nil {
-		logger = slog.Default()
-	}
+	logger := d.logger()
 	logger.Info(EvDeliveryRefusedOwner,
 		"name", name,
 		"owner_uid", ownerUID,

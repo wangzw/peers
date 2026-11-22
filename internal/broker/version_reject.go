@@ -36,7 +36,5 @@ func versionStreamInterceptor(srv any, ss grpc.ServerStream, info *grpc.StreamSe
 // rejectedErr is the version_mismatch error of a rejected connection. Both
 // versions are the ones Hello recorded when it refused the connection.
 func rejectedErr(ai *callerAuthInfo) error {
-	return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH,
-		"local protocol version %d is not supported by this Broker (version %d); restart the Broker",
-		ai.rejectedClientVersion.Load(), ai.rejectedBrokerVersion.Load()))
+	return toStatus(versionMismatchError(ai.rejectedClientVersion.Load(), ai.rejectedBrokerVersion.Load()))
 }

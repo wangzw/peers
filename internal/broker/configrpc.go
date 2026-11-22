@@ -26,15 +26,21 @@ func (b *Broker) GetConfig(ctx context.Context, req *localpb.GetConfigRequest) (
 
 	v, err := cfg.Get(key)
 	if err != nil {
-		if errors.Is(err, config.ErrUnknownKey) {
-			return nil, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
-				"unknown configuration key %q", key))
-		}
-		return nil, toStatus(Errorf(configErrorCode(err), "%s", err.Error()))
+		return nil, toStatus(configValueError(key, err))
 	}
 	return &localpb.GetConfigResponse{Entries: []*localpb.ConfigEntry{
 		{Key: key, Value: toConfigValue(v)},
 	}}, nil
+}
+
+// configValueError maps a failed configuration read or write to a client error.
+// An unknown key names the key; every other failure keeps its own class.
+func configValueError(key string, err error) *Error {
+	if errors.Is(err, config.ErrUnknownKey) {
+		return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
+			"unknown configuration key %q", key)
+	}
+	return Errorf(configErrorCode(err), "%s", err.Error())
 }
 
 // SetConfig parses and applies one configuration change. The initiator is
@@ -57,11 +63,7 @@ func (b *Broker) SetConfig(ctx context.Context, req *localpb.SetConfigRequest) (
 
 	current, err := cfg.Get(key)
 	if err != nil {
-		if errors.Is(err, config.ErrUnknownKey) {
-			return nil, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
-				"unknown configuration key %q", key))
-		}
-		return nil, toStatus(Errorf(configErrorCode(err), "%s", err.Error()))
+		return nil, toStatus(configValueError(key, err))
 	}
 	if current.Kind == config.KindSecret {
 		return nil, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,

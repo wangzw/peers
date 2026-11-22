@@ -26,8 +26,13 @@ type Error struct {
 // lowercased, followed by the message, for example "not_registered: no session
 // record". An unknown numeric code renders as its decimal value.
 func (e *Error) Error() string {
-	name := strings.TrimPrefix(e.Code.String(), "ERROR_CODE_")
-	return strings.ToLower(name) + ": " + e.Message
+	return errorCodeName(e.Code) + ": " + e.Message
+}
+
+// errorCodeName renders a wire error code as the part of its enum name after
+// ERROR_CODE_, lowercased. An unknown numeric code renders as its decimal value.
+func errorCodeName(code localpb.ErrorCode) string {
+	return strings.ToLower(strings.TrimPrefix(code.String(), "ERROR_CODE_"))
 }
 
 // Errorf returns an *Error with a formatted message.

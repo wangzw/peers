@@ -158,23 +158,7 @@ func (s *degradedService) Hello(ctx context.Context, req *localpb.HelloRequest) 
 	if v == 0 {
 		v = localpb.ProtocolVersion
 	}
-	got := req.GetProtocolVersion()
-	if got == v {
-		return &localpb.HelloResponse{ProtocolVersion: v}, nil
-	}
-	caller, _ := CallerFrom(ctx)
-	s.log.Warn(EvHelloVersionMismatch,
-		"client_version", got,
-		"broker_version", v,
-		"uid", caller.UID,
-	)
-	if ai, ok := authInfoFrom(ctx); ok {
-		ai.rejectedClientVersion.Store(got)
-		ai.rejectedBrokerVersion.Store(v)
-		ai.rejected.Store(true)
-	}
-	return nil, toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH,
-		"local protocol version %d is not supported by this Broker (version %d); restart the Broker", got, v))
+	return answerHello(ctx, v, req.GetProtocolVersion(), s.log)
 }
 
 // Status reports only the current version and the failure while diagnostics

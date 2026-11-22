@@ -85,12 +85,19 @@ func peerStatusDetail(st PeerLinkStatus) string {
 	return detail
 }
 
+// effectivePeerAlias returns the alias this Broker uses for p: the local alias
+// pairing assigned when it differs from the peer's own, otherwise the peer's
+// own alias.
+func effectivePeerAlias(p pairing.Peer) string {
+	if p.LocalAlias != "" {
+		return p.LocalAlias
+	}
+	return p.Alias
+}
+
 // peerBrokerInfo turns one peer and its link state into a ListBrokers entry.
 func peerBrokerInfo(p pairing.Peer, st PeerLinkStatus, cardAddrs []config.AdvertisedAddr) *localpb.BrokerInfo {
-	alias := p.LocalAlias
-	if alias == "" {
-		alias = p.Alias
-	}
+	alias := effectivePeerAlias(p)
 	addrs := peerAddresses(p, cardAddrs)
 
 	status := localpb.BrokerStatus_BROKER_STATUS_NOT_DIRECTLY_REACHABLE
