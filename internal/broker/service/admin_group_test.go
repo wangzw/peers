@@ -79,7 +79,7 @@ func TestEnsureAdminGroupDarwinCreatesTheGroup(t *testing.T) {
 		switch name {
 		case "dscl":
 			if !created {
-				return []byte("No such key: PrimaryGroupID"), exitError(t, 1)
+				return []byte("<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)\n"), exitError(t, 1)
 			}
 			return []byte("PrimaryGroupID: 999\n"), nil
 		case "dseditgroup":
@@ -148,7 +148,7 @@ func TestEnsureAdminGroupDarwinNamesTheRequestedGroup(t *testing.T) {
 		cmds = append(cmds, strings.Join(append([]string{name}, args...), " "))
 		switch name {
 		case "dscl":
-			return []byte("No such key: PrimaryGroupID"), exitError(t, 1)
+			return []byte("<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)\n"), exitError(t, 1)
 		case "dseditgroup":
 			return nil, nil
 		}
@@ -234,10 +234,29 @@ func TestLookupGroupDarwin(t *testing.T) {
 		opts := baseOptions(t)
 		opts.GOOS = "darwin"
 		opts.GroupGID = nil
-		opts.Run = func(string, ...string) ([]byte, error) { return []byte("No such key"), exitError(t, 1) }
+		opts.Run = func(string, ...string) ([]byte, error) {
+			return []byte("<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)\n"), exitError(t, 1)
+		}
 		gid, exists, err := lookupGroup(opts, "nobody")
 		if err != nil || exists || gid != 0 {
 			t.Errorf("lookupGroup = (%d, %v, %v), want (0, false, nil)", gid, exists, err)
+		}
+	})
+
+	// A dscl failure that does not say the record is missing is a query
+	// failure. Reading it as an absent group made the installation run
+	// dseditgroup create and record the group as created by this run.
+	t.Run("query failure", func(t *testing.T) {
+		opts := baseOptions(t)
+		opts.GOOS = "darwin"
+		opts.GroupGID = nil
+		opts.Run = func(string, ...string) ([]byte, error) {
+			return []byte("<dscl_cmd> DS Error: -14162 (eDSPermissionError)\n"), exitError(t, 1)
+		}
+		_, _, err := lookupGroup(opts, "staff")
+		want := `cannot look up group "staff": exit status 1: <dscl_cmd> DS Error: -14162 (eDSPermissionError)`
+		if err == nil || err.Error() != want {
+			t.Errorf("lookupGroup error = %v, want %q", err, want)
 		}
 	})
 
@@ -250,6 +269,73 @@ func TestLookupGroupDarwin(t *testing.T) {
 			t.Errorf("lookupGroup error = %v, want the missing attribute", err)
 		}
 	})
+}
+
+// TestLookupGroupDarwinUsesRealDscl exercises lookupGroupDarwin against the
+// host's real directory service, so a macOS CI run proves how dscl reports a
+// missing record rather than trusting the stub. It pins the split this change
+// makes: an existing group is found, and a missing one is absent rather than a
+// query failure.
+func TestLookupGroupDarwinUsesRealDscl(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("dscl runs only on macOS")
+	}
+	opts := baseOptions(t)
+	opts.GOOS = "darwin"
+	opts.GroupGID = nil
+	opts.Run = func(name string, args ...string) ([]byte, error) {
+		return exec.Command(name, args...).CombinedOutput()
+	}
+
+	// staff exists on every macOS installation.
+	gid, exists, err := lookupGroup(opts, "staff")
+	if err != nil || !exists || gid <= 0 {
+		t.Fatalf("lookupGroup(staff) = (%d, %v, %v), want an existing group with a positive id", gid, exists, err)
+	}
+
+	// A record that does not exist is an absent group, and the lookup must not
+	// turn its dscl error into a query failure.
+	const missing = "peers-lookup-probe-nonexistent"
+	if _, exists, err := lookupGroup(opts, missing); err != nil || exists {
+		t.Fatalf("lookupGroup(%s) = (_, %v, %v), want an absent group and no error", missing, exists, err)
+	}
+}
+
+// TestInstallSystemDarwinFailsWhenTheGroupLookupFails reproduces the defect:
+// any nonzero dscl exit was read as an absent group, so a directory service
+// failure made the installation create the group and record it as created by
+// this run. Only eDSRecordNotFound means the group is absent.
+func TestInstallSystemDarwinFailsWhenTheGroupLookupFails(t *testing.T) {
+	opts := baseOptions(t)
+	opts.GOOS = "darwin"
+	opts.System = true
+	opts.EUID = 0
+	opts.GroupGID = nil
+	var cmds []string
+	opts.Run = func(name string, args ...string) ([]byte, error) {
+		cmds = append(cmds, strings.Join(append([]string{name}, args...), " "))
+		if name != "dscl" {
+			t.Errorf("ran %s, want nothing after the failed lookup", strings.Join(append([]string{name}, args...), " "))
+			return nil, nil
+		}
+		return []byte("<dscl_cmd> DS Error: -14162 (eDSPermissionError)\n"), exitError(t, 1)
+	}
+
+	res, err := Install(opts)
+	want := `cannot look up group "peers": exit status 1: <dscl_cmd> DS Error: -14162 (eDSPermissionError)`
+	if err == nil || err.Error() != want {
+		t.Fatalf("Install error = %v, want %q", err, want)
+	}
+	if wantCmds := []string{"dscl . -read /Groups/peers"}; !slices.Equal(cmds, wantCmds) {
+		t.Errorf("commands = %q, want %q", cmds, wantCmds)
+	}
+	if res.AdminGroupCreated {
+		t.Error("AdminGroupCreated = true for a group the lookup never found")
+	}
+	if _, statErr := os.Stat(filepath.Join(opts.Root, adminGroupRecordPath)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("the failed installation recorded the group: %v", statErr)
+	}
+	assertNoEntries(t, opts.Root)
 }
 
 // TestInstallSystemRefusesAnUnexplainedGroupWithMembers reproduces the security

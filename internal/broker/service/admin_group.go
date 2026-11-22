@@ -376,11 +376,22 @@ func lookupGroupLinux(opts Options, name string) (int, bool, error) {
 }
 
 // lookupGroupDarwin reads the group id from the directory service record.
-// dscl exits nonzero when the record does not exist.
+// Only a record dscl reports as missing (eDSRecordNotFound) is an absent
+// group. Every other nonzero exit, such as a directory service outage or a
+// permission error, is a query failure: reading it as an absent group would
+// make the installation create a group that may already exist and record it as
+// created by this run.
 func lookupGroupDarwin(opts Options, name string) (int, bool, error) {
 	out, err := opts.Run("dscl", ".", "-read", "/Groups/"+name)
-	if err != nil {
+	if recordNotFound(out) {
 		return 0, false, nil
+	}
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return 0, false, fmt.Errorf("cannot look up group %q: %w: %s", name, err, msg)
+		}
+		return 0, false, fmt.Errorf("cannot look up group %q: %w", name, err)
 	}
 	for _, line := range strings.Split(string(out), "\n") {
 		key, value, ok := strings.Cut(line, ":")
@@ -394,6 +405,15 @@ func lookupGroupDarwin(opts Options, name string) (int, bool, error) {
 		return gid, true, nil
 	}
 	return 0, false, fmt.Errorf("cannot read group %s: no PrimaryGroupID in output %q", name, strings.TrimSpace(string(out)))
+}
+
+// recordNotFound reports whether dscl said the record does not exist. dscl
+// prints "<dscl_cmd> DS Error: -14136 (eDSRecordNotFound)" for a missing
+// record, on stderr, which Run includes in its combined output. The note is
+// what identifies the missing record, so it is read whether or not dscl also
+// exits nonzero.
+func recordNotFound(out []byte) bool {
+	return strings.Contains(string(out), "eDSRecordNotFound")
 }
 
 // createAdminGroup creates a system group for administration.
