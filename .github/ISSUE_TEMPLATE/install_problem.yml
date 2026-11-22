@@ -1,0 +1,82 @@
+name: Install or update problem
+description: The install script, `peers service install` or `peers update` failed or left a broken state
+labels: ["install"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form when installing, updating or uninstalling fails. For other problems use "Bug report".
+  - type: dropdown
+    id: action
+    attributes:
+      label: What were you doing
+      options:
+        - One-command install (curl ... | sh)
+        - Install from the release archive (sh ./install.sh)
+        - peers service install
+        - peers update or the update_broker tool
+        - peers uninstall
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Command and options
+      description: The exact command line, including any install script options such as `--system`, `--user` or `--version`.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output and error message
+      description: The full output. Remove pairing keys, host names and addresses first.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation level
+      options:
+        - User installation (one account)
+        - System installation (every account on the host)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - amd64
+        - arm64
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Installed peers version, if any
+      description: Output of `peers --version`; leave empty when nothing is installed yet.
+  - type: input
+    id: claude-code
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Service log
+      description: |
+        `journalctl --user -u peers.service` (`journalctl -u peers.service` for the system service) on Linux, `~/Library/Logs/peers/broker.log` (`/var/log/peers/broker.log` for the system service) on macOS. **Remove pairing keys, host names and addresses before pasting.**
+      render: shell

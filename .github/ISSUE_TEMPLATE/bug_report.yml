@@ -1,0 +1,93 @@
+name: Bug report
+description: Report something that does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. If installing or updating failed, use "Install or update problem" instead. For a security problem, do not open a public issue; see the link on the issue chooser page.
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: A short description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, including the commands you ran or what you said to the session, and whether the problem involves one host or two paired hosts.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the exact error text or the output of `peers service status`.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: peers version
+      description: Output of `peers --version`. If the problem involves two hosts, give the version on both.
+      placeholder: peers 0.6.0
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: Installation
+      description: The installation the affected session connects to.
+      options:
+        - User installation (one account)
+        - System installation (every account on the host)
+        - Broker started by hand with `peers service run`
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Linux
+        - macOS
+    validations:
+      required: true
+  - type: dropdown
+    id: arch
+    attributes:
+      label: Architecture
+      options:
+        - amd64
+        - arm64
+    validations:
+      required: true
+  - type: input
+    id: claude-code
+    attributes:
+      label: Claude Code version
+      description: Output of `claude --version`. peers needs v2.1.224 or later.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        The Broker's run log and, if relevant, the audit log (`peers service audit`). The run log is in the systemd journal on Linux (`journalctl --user -u peers.service`, or `journalctl -u peers.service` for the system service) and in `~/Library/Logs/peers/broker.log` (`/var/log/peers/broker.log` for the system service) on macOS; a Broker run in a terminal logs to that terminal. See "Files and paths" in the documentation.
+        **Before pasting, remove pairing keys, host names, addresses and anything else you do not want public.**
+      render: shell
+    validations:
+      required: false
