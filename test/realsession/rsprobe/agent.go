@@ -23,7 +23,8 @@ import (
 
 const (
 	// inboxReadTimeout bounds how long a sender may take to write its line.
-	inboxReadTimeout = 5 * time.Second
+	// A loaded runner can delay the write, so it uses the package fallback.
+	inboxReadTimeout = eventTimeout
 	// controlReadTimeout bounds how long a control client may take to send its
 	// request line, keeping shutdown from waiting on an idle connection.
 	controlReadTimeout = 15 * time.Second

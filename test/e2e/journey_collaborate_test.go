@@ -40,8 +40,8 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	defer operatorB.End(t)
 	key := collabCreateKey(t, operatorA)
 	collabConnect(t, operatorB, key.Addresses[0], key.Key)
-	collabWaitPeer(t, hostA, "hostB.peer", localpb.PeerRole_PEER_ROLE_ACCEPTOR, 3*time.Second)
-	collabWaitPeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, 3*time.Second)
+	collabWaitPeer(t, hostA, "hostB.peer", localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
+	collabWaitPeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 
 	// Steps 1 and 2: both sessions work in a repository named by a different
 	// origin spelling; no project configuration exists.
@@ -56,7 +56,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 
 	// Step 3: the automatic topic makes the other session visible, under the
 	// alias each Broker uses for its peer.
-	harness.EventuallyPoll(t, 3*time.Second, "api-worker sees frontend in the shared default topic", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "api-worker sees frontend in the shared default topic", func(deadline time.Time) (bool, string) {
 		out, state := collabListAgentsPoll(t, deadline, api)
 		if state != "" {
 			return false, state
@@ -81,7 +81,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	const request = "API /v2/users changed"
 	r := api.Call(t, "send_message", map[string]any{"to": "frontend@hostB.peer", "message": request})
 	r.MustOK(t)
-	frame := frontend.WaitFrame(t, 3*time.Second)
+	frame := frontend.WaitFrame(t, harness.EventTimeout)
 	if frame.FromName != "api-worker@hostA.peer" {
 		t.Fatalf("the message is signed %q, want api-worker@hostA.peer", frame.FromName)
 	}
@@ -96,7 +96,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	const replyText = "thanks, the frontend is updated"
 	r = frontend.Call(t, "send_message", map[string]any{"to": frame.FromName, "message": replyText})
 	r.MustOK(t)
-	reply := api.WaitFrame(t, 3*time.Second)
+	reply := api.WaitFrame(t, harness.EventTimeout)
 	if reply.FromName != "frontend@hostB.peer" {
 		t.Fatalf("the reply is signed %q, want frontend@hostB.peer", reply.FromName)
 	}
@@ -114,7 +114,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 		if r.Elapsed < 900*time.Millisecond {
 			t.Fatalf("the send returned after %s, want the one-second busy delay to elapse first", r.Elapsed)
 		}
-		frame := frontend.WaitFrame(t, 3*time.Second)
+		frame := frontend.WaitFrame(t, harness.EventTimeout)
 		if frame.FromName != "api-worker@hostA.peer" {
 			t.Fatalf("the busy-target message is signed %q", frame.FromName)
 		}
@@ -146,7 +146,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 		})
 
 		collabJoin(t, frontend2, collabTopic)
-		harness.EventuallyPoll(t, 3*time.Second, "frontend2 appears after joining the repository topic", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.EventTimeout, "frontend2 appears after joining the repository topic", func(deadline time.Time) (bool, string) {
 			out, state := collabListAgentsPoll(t, deadline, api)
 			if state != "" {
 				return false, state
@@ -165,7 +165,7 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 		const joined = "after joining the topic"
 		r := api.Call(t, "send_message", map[string]any{"to": "frontend2@hostB.peer", "message": joined})
 		r.MustOK(t)
-		frame := frontend2.WaitFrame(t, 3*time.Second)
+		frame := frontend2.WaitFrame(t, harness.EventTimeout)
 		if frame.FromName != "api-worker@hostA.peer" {
 			t.Fatalf("the joined-topic message is signed %q", frame.FromName)
 		}
@@ -196,7 +196,7 @@ func collabSession(t *testing.T, node *harness.Node, name, workdir string) *harn
 func collabOperator(t *testing.T, node *harness.Node, workdir string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true, Workdir: workdir})
-	harness.WaitConnected(t, s, 3*time.Second)
+	harness.WaitConnected(t, s, harness.EventTimeout)
 	return s
 }
 
@@ -227,7 +227,7 @@ func collabConnect(t *testing.T, session *harness.Session, address, key string) 
 // collabWaitRegistered waits until the session is registered and lists itself.
 func collabWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
 		out, state := collabListAgentsPoll(t, deadline, session)
 		if state != "" {
 			return false, state

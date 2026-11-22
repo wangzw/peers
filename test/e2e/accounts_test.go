@@ -36,7 +36,7 @@ func TestOtherAccountRejected(t *testing.T) {
 
 	owner := host.StartSession(t, harness.SessionSpec{Name: "owner", StartMCP: true})
 	defer owner.End(t)
-	harness.EventuallyPoll(t, 3*time.Second, "the owner session is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the owner session is registered", func(deadline time.Time) (bool, string) {
 		out, state := accountsListAgentsPoll(t, deadline, owner)
 		if state != "" {
 			return false, state

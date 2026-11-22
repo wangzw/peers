@@ -29,13 +29,18 @@ const (
 	// agentRPCBound bounds one call of the local interface probe.
 	agentRPCBound = 10 * time.Second
 	// agentFrameBound bounds a session frame wait when the request sets none.
-	agentFrameBound = 3 * time.Second
+	// It waits for an event the test cannot force, so it uses the package
+	// fallback rather than a few seconds.
+	agentFrameBound = eventTimeout
 	// agentExecBound bounds one one-off command when the request sets none.
 	agentExecBound = 30 * time.Second
 	// agentBrokerStopBound is how long Close waits for the Broker to honour
 	// SIGTERM before killing it.
 	agentBrokerStopBound = 2 * time.Second
-	// agentDialBound bounds the TCP probes when the request sets none.
+	// agentDialBound bounds the TCP probes when the request sets none. This is
+	// not a wait for an event: a probe reports the address unreachable when its
+	// dial times out, so the bound is the probe's own conclusion and stays
+	// short. A caller that probes a blackhole passes its own timeout.
 	agentDialBound = 3 * time.Second
 	// agentConnAliveRead is the read deadline of the connection liveness probe.
 	agentConnAliveRead = 200 * time.Millisecond

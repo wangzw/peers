@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangzw/peers/test/e2e/harness"
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
@@ -54,9 +55,9 @@ const (
 	uninstallSudoersPath = "/etc/sudoers.d/peers-uninstall"
 	// uninstallPath includes /usr/local/bin, where the fake claude lives.
 	uninstallPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-	// uninstallPromptBound bounds the wait for the question to reach the
-	// terminal before the test types its answer.
-	uninstallPromptBound = 5 * time.Second
+	// uninstallPromptBound is the fallback for the wait for the question to
+	// reach the terminal before the test types its answer.
+	uninstallPromptBound = harness.EventTimeout
 )
 
 // uninstallFakeClaudeScript is the stand-in for Claude Code's CLI. Its

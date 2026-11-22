@@ -42,7 +42,7 @@ func vlStartBroker(t *testing.T, n *harness.Node, spec harness.BrokerSpec) harne
 func vlOperator(t *testing.T, n *harness.Node, name string) *harness.Session {
 	t.Helper()
 	s := n.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, NoSocketEnv: true})
-	harness.WaitConnected(t, s, 3*time.Second)
+	harness.WaitConnected(t, s, harness.EventTimeout)
 	return s
 }
 
@@ -223,7 +223,7 @@ func TestPairingVersionMismatch(t *testing.T) {
 
 	// The acceptor audits the rejection as version incompatible, without the
 	// peer's version, because it never looked up a key.
-	harness.Eventually(t, 3*time.Second, "B audits the version-incompatible pairing failure", func() (bool, string) {
+	harness.Eventually(t, harness.EventTimeout, "B audits the version-incompatible pairing failure", func() (bool, string) {
 		for _, event := range ctAudit(t, b, auditSince, 0) {
 			if event.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_PAIRING_FAILED &&
 				event.GetDetail() == "version incompatible" {

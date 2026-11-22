@@ -67,10 +67,10 @@ const (
 	// account can create it without root.
 	remoteInstallFakeClaudeDir = "/tmp/peers-e2e-fakeclaude"
 
-	// remoteInstallServiceBound bounds the wait for the installed service to
-	// report active. Install starts the service before it returns; the bound
-	// follows the e2e wait convention's three seconds.
-	remoteInstallServiceBound = 3 * time.Second
+	// remoteInstallServiceBound is the fallback for the wait for the installed
+	// service to report active. Install starts the service before it returns,
+	// so the success path answers at once.
+	remoteInstallServiceBound = harness.EventTimeout
 
 	// remoteInstallReleasePortEnv carries the fake release service's host port
 	// into the container. The host takes the port the kernel assigns and

@@ -20,12 +20,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// agentSocketBound bounds the wait for a node agent's control socket after
-// compose up returns. Compose starts the entrypoint as soon as the container
-// runs; binding a Unix socket is the first thing the node agent does, so the
-// project-wide three-second bound is enough. No product timer governs a
-// test-only process.
-const agentSocketBound = 3 * time.Second
+// agentSocketBound is the fallback for the wait for a node agent's control
+// socket after compose up returns. Compose starts the entrypoint as soon as the
+// container runs; binding a Unix socket is the first thing the node agent does,
+// so the success path answers at once. No product timer governs a test-only
+// process; the bound only decides how long a socket that never appears takes to
+// fail.
+const agentSocketBound = EventTimeout
 
 // Topology describes one compose project: which file to start, which services
 // it has, which network each service is addressed on, and what to do once the

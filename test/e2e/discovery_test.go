@@ -149,7 +149,7 @@ func discOperator(t *testing.T, d *discNode) *harness.Session {
 		NoSocketEnv: true,
 		Workdir:     t.TempDir(),
 	})
-	harness.WaitConnected(t, s, 3*time.Second)
+	harness.WaitConnected(t, s, harness.EventTimeout)
 	return s
 }
 
@@ -199,7 +199,7 @@ func discPair(t *testing.T, acceptor, dialer *discNode) mcpserver.ConnectBrokerO
 	creator := discOperator(t, acceptor)
 	defer creator.End(t)
 
-	r := discCallOK(t, creator, "create_pairing_key", nil, 3*time.Second)
+	r := discCallOK(t, creator, "create_pairing_key", nil, harness.EventTimeout)
 	key, err := harness.Decode[mcpserver.CreatePairingKeyOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding create_pairing_key on %s: %v", acceptor.name, err)
@@ -217,7 +217,7 @@ func discPair(t *testing.T, acceptor, dialer *discNode) mcpserver.ConnectBrokerO
 
 	op := discOperator(t, dialer)
 	defer op.End(t)
-	r = discCallOK(t, op, "connect_broker", map[string]any{"address": acceptor.addr, "key": key.Key}, 3*time.Second)
+	r = discCallOK(t, op, "connect_broker", map[string]any{"address": acceptor.addr, "key": key.Key}, harness.EventTimeout)
 	out, err := harness.Decode[mcpserver.ConnectBrokerOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding connect_broker on %s: %v", dialer.name, err)
@@ -311,11 +311,13 @@ func discWaitBroker(t *testing.T, d *discNode, fpHex string, bound time.Duration
 // discAbsentConsistently asserts over the whole window that d lists none of
 // the fingerprints, the alias and the address. The Oracle read is a poll call:
 // a transport error is an inconclusive sample and is retried, and a call that
-// spends the whole oracle bound does not answer is a hard failure.
+// reaches its own bound without answering is reported as a stall, which ends
+// the window. The window is only a few seconds long, so the call bound is the
+// short poll bound rather than the thirty-second fallback.
 func discAbsentConsistently(t *testing.T, d *discNode, window time.Duration, what string, fingerprints []string, alias, addr string) {
 	t.Helper()
-	harness.ConsistentlyPoll(t, window, harness.OracleCallBound, what, nil, func(deadline time.Time) harness.Observation {
-		brokers, detail, err := d.Oracle().ListBrokersWithin(t, deadline)
+	harness.ConsistentlyPoll(t, window, harness.ToolCallPollBound, what, nil, func(deadline time.Time) harness.Observation {
+		brokers, detail, err := d.Oracle().ListBrokersWithin(t, deadline, harness.ToolCallPollBound)
 		if err != nil {
 			return harness.Unobservable(err.Error())
 		}
@@ -351,7 +353,7 @@ func discSetPublic(t *testing.T, d *discNode, public bool) {
 	}
 	op := discOperator(t, d)
 	defer op.End(t)
-	r := discCallOK(t, op, "set_config", map[string]any{"key": "broker.public", "value": value}, 3*time.Second)
+	r := discCallOK(t, op, "set_config", map[string]any{"key": "broker.public", "value": value}, harness.EventTimeout)
 	out, err := harness.Decode[mcpserver.SetConfigOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding set_config on %s: %v", d.name, err)
@@ -366,7 +368,7 @@ func discPublicConfig(t *testing.T, d *discNode) string {
 	t.Helper()
 	op := discOperator(t, d)
 	defer op.End(t)
-	r := discCallOK(t, op, "get_config", map[string]any{"key": "broker.public"}, 3*time.Second)
+	r := discCallOK(t, op, "get_config", map[string]any{"key": "broker.public"}, harness.EventTimeout)
 	out, err := harness.Decode[mcpserver.GetConfigOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding get_config on %s: %v", d.name, err)
@@ -426,7 +428,7 @@ func discJoinOK(t *testing.T, s *harness.Session, name string, public bool, desc
 	if description != "" {
 		args["description"] = description
 	}
-	return discCallOK(t, s, "join_topic", args, 3*time.Second)
+	return discCallOK(t, s, "join_topic", args, harness.EventTimeout)
 }
 
 // discPublicTopic returns the public topic entry named name.
@@ -469,7 +471,7 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 	defer agent.End(t)
 
 	var privateTopics []string
-	harness.EventuallyPoll(t, 3*time.Second, "A's Agent joins its automatic topic", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "A's Agent joins its automatic topic", func(deadline time.Time) (bool, string) {
 		out, state := discListTopicsPoll(t, deadline, agent)
 		if state != "" {
 			return false, state
@@ -485,7 +487,7 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 
 	watcher := discAgent(t, c, "watcher", t.TempDir())
 	defer watcher.End(t)
-	harness.WaitRegistered(t, watcher, 3*time.Second)
+	harness.WaitRegistered(t, watcher, harness.EventTimeout)
 
 	window := discQuietBound(2)
 	discAbsentConsistently(t, c, window, "C never learns A from a private Broker", []string{fpA}, a.alias, a.addr)
@@ -644,7 +646,7 @@ func TestDiscoveryCardReachesWholeNetwork(t *testing.T) {
 	ws := a.Workspace(t, "git", "https://"+originTopic, "")
 	agent := discAgent(t, a, "config-agent", ws)
 	defer agent.End(t)
-	harness.EventuallyPoll(t, 3*time.Second, "the Agent joins its automatic topic", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the Agent joins its automatic topic", func(deadline time.Time) (bool, string) {
 		out, state := discListTopicsPoll(t, deadline, agent)
 		if state != "" {
 			return false, state
@@ -661,7 +663,7 @@ func discConfigValue(t *testing.T, d *discNode, key string) string {
 	t.Helper()
 	op := discOperator(t, d)
 	defer op.End(t)
-	r := discCallOK(t, op, "get_config", map[string]any{"key": key}, 3*time.Second)
+	r := discCallOK(t, op, "get_config", map[string]any{"key": key}, harness.EventTimeout)
 	out, err := harness.Decode[mcpserver.GetConfigOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding get_config on %s: %v", d.name, err)
@@ -944,7 +946,7 @@ func TestPublicTopicRejectedOnPrivateBroker(t *testing.T) {
 	// need the Agent identity and can succeed while the Broker is still
 	// registering, which would let the call below see not_registered instead of
 	// the rejection under test.
-	harness.WaitRegistered(t, agent, 3*time.Second)
+	harness.WaitRegistered(t, agent, harness.EventTimeout)
 	r := discJoinTopic(t, agent, "infra-help", true, "ask infra")
 	if !r.IsError {
 		t.Fatalf("a public join on a private Broker succeeded: %s", r.Text)
@@ -970,7 +972,7 @@ func TestPublicTopicRejectedOnPrivateBroker(t *testing.T) {
 
 	watcher := discAgent(t, b, "watcher", t.TempDir())
 	defer watcher.End(t)
-	harness.WaitRegistered(t, watcher, 3*time.Second)
+	harness.WaitRegistered(t, watcher, harness.EventTimeout)
 	harness.ConsistentlyPoll(t, discQuietBound(1), harness.TopicCallPollBound, "B never sees the rejected declaration", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
 		topics, state := discListTopicsPoll(t, deadline, watcher)
 		if state != "" {
@@ -1036,7 +1038,7 @@ func TestPublicTopicFollowsLastMember(t *testing.T) {
 	defer watcher.End(t)
 
 	discWaitPublicTopic(t, watcher, "infra-help", discBound(1))
-	discCallOK(t, agent, "leave_topic", map[string]any{"name": "infra-help"}, 3*time.Second)
+	discCallOK(t, agent, "leave_topic", map[string]any{"name": "infra-help"}, harness.EventTimeout)
 	discWaitPublicTopicGone(t, watcher, "infra-help", discBound(1))
 
 	discJoinOK(t, agent, "infra-help", true, "ask infra")

@@ -34,7 +34,7 @@ func hostilePairKey(t *testing.T, d *discNode) string {
 	t.Helper()
 	op := discOperator(t, d)
 	defer op.End(t)
-	r := discCallOK(t, op, "create_pairing_key", nil, 3*time.Second)
+	r := discCallOK(t, op, "create_pairing_key", nil, harness.EventTimeout)
 	key, err := harness.Decode[mcpserver.CreatePairingKeyOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding create_pairing_key on %s: %v", d.name, err)
@@ -121,7 +121,7 @@ func TestDirectoryRejectsTamperedCards(t *testing.T) {
 
 	f := startFakePeer(t)
 	f.Pair(t, b.addr, hostilePairKey(t, b))
-	f.WaitLinked(t, 3*time.Second)
+	f.WaitLinked(t, harness.EventTimeout)
 
 	const (
 		goodSeed         = "tamper-good"
@@ -178,7 +178,7 @@ func TestDirectoryRejectsUnpairedSource(t *testing.T) {
 	hostileAbsent(t, b, discQuietBound(1), "B rejects records from an unpaired source", fp)
 
 	f.Pair(t, b.addr, hostilePairKey(t, b))
-	f.WaitLinked(t, 3*time.Second)
+	f.WaitLinked(t, harness.EventTimeout)
 	f.Records(t, card)
 
 	discWaitBroker(t, b, fp, discBound(1), func(broker *localpb.BrokerInfo) string {
@@ -199,10 +199,10 @@ func TestDirectoryPerLinkLimit(t *testing.T) {
 
 	first := startFakePeer(t)
 	first.Pair(t, b.addr, hostilePairKey(t, b))
-	first.WaitLinked(t, 3*time.Second)
+	first.WaitLinked(t, harness.EventTimeout)
 	second := startFakePeer(t)
 	second.Pair(t, b.addr, hostilePairKey(t, b))
-	second.WaitLinked(t, 3*time.Second)
+	second.WaitLinked(t, harness.EventTimeout)
 
 	records := make([]*directorypb.Record, 0, 10)
 	for i := 0; i < 10; i++ {
@@ -279,13 +279,13 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 
 		f := startFakePeer(t)
 		f.Pair(t, b.addr, hostilePairKey(t, b))
-		f.WaitLinked(t, 3*time.Second)
+		f.WaitLinked(t, harness.EventTimeout)
 
 		// G observes the far Broker, so a record that reaches C through B is
 		// visible even though C's listing leaves it out too.
 		g := startFakePeer(t)
 		g.Pair(t, c.addr, hostilePairKey(t, c))
-		g.WaitLinked(t, 3*time.Second)
+		g.WaitLinked(t, harness.EventTimeout)
 
 		const topicKind = "RECORD_KIND_TOPIC_ANNOUNCEMENT"
 		longName := strings.Repeat("n", 300)
@@ -313,7 +313,7 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 
 		watcher := discAgent(t, b, "mal-watcher", t.TempDir())
 		defer watcher.End(t)
-		harness.WaitRegistered(t, watcher, 3*time.Second)
+		harness.WaitRegistered(t, watcher, harness.EventTimeout)
 		harness.ConsistentlyPoll(t, discQuietBound(2), harness.TopicCallPollBound, "B never lists the malformed declarations", watcher.LogBrokerStack, func(deadline time.Time) harness.Observation {
 			out, state := discListTopicsPoll(t, deadline, watcher)
 			if state != "" {
@@ -337,14 +337,14 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 
 		agent := discAgent(t, a, "pub-declarer", t.TempDir())
 		defer agent.End(t)
-		harness.WaitRegistered(t, agent, 3*time.Second)
+		harness.WaitRegistered(t, agent, harness.EventTimeout)
 		discJoinOK(t, agent, "pub-source-topic", true, "from the paired peer")
 
 		// The attacker pairs with A, so at B it is not a peer and its
 		// declaration falls into the lowest tier whatever version it claims.
 		f := startFakePeer(t)
 		f.Pair(t, a.addr, hostilePairKey(t, a))
-		f.WaitLinked(t, 3*time.Second)
+		f.WaitLinked(t, harness.EventTimeout)
 		f.Records(t, hostileBuild(t, fakerec.Spec{
 			Seed:        "pub-attacker",
 			Kind:        "topic",
@@ -355,7 +355,7 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 
 		watcher := discAgent(t, b, "pub-watcher", t.TempDir())
 		defer watcher.End(t)
-		harness.WaitRegistered(t, watcher, 3*time.Second)
+		harness.WaitRegistered(t, watcher, harness.EventTimeout)
 		agentID := hostileAgentID(t, b, "pub-watcher")
 
 		harness.Eventually(t, discBound(3), "B merges the peer and the attacker declaration", func() (bool, string) {
@@ -416,10 +416,10 @@ func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
 
 	f := startFakePeer(t)
 	f.Pair(t, b.addr, hostilePairKey(t, b))
-	f.WaitLinked(t, 3*time.Second)
+	f.WaitLinked(t, harness.EventTimeout)
 	g := startFakePeer(t)
 	g.Pair(t, c.addr, hostilePairKey(t, c))
-	g.WaitLinked(t, 3*time.Second)
+	g.WaitLinked(t, harness.EventTimeout)
 
 	const (
 		seed     = "replace-card"
@@ -492,7 +492,7 @@ func TestDirectoryMalformedDirectAddress(t *testing.T) {
 
 	f := startFakePeer(t)
 	f.Pair(t, b.addr, hostilePairKey(t, b))
-	f.WaitLinked(t, 3*time.Second)
+	f.WaitLinked(t, harness.EventTimeout)
 
 	const (
 		seed = "malformed-direct-address"
@@ -535,7 +535,7 @@ func TestDirectoryUnknownAddressKind(t *testing.T) {
 
 	f := startFakePeer(t)
 	f.Pair(t, b.addr, hostilePairKey(t, b))
-	f.WaitLinked(t, 3*time.Second)
+	f.WaitLinked(t, harness.EventTimeout)
 
 	const seed = "unknown-kind"
 	record := hostileBuild(t, fakerec.Spec{

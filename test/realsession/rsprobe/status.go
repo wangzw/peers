@@ -8,7 +8,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -17,7 +16,10 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-const statusTimeout = 3 * time.Second
+// statusTimeout bounds the Hello and Status calls to the local Broker. The
+// local socket answers at once; the bound is the package fallback and only
+// decides how long a Broker that never answers takes to fail.
+const statusTimeout = eventTimeout
 
 func init() {
 	register("status", cmdStatus)

@@ -15,8 +15,9 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// offlineWaitBound is how long a state change or a roster update may take.
-const offlineWaitBound = 5 * time.Second
+// offlineWaitBound is the fallback for a wait on a state change or a roster
+// update; no product timer governs those events.
+const offlineWaitBound = harness.EventTimeout
 
 // TestBrokerOffline covers the offline switch end to end: a peer's delivery is
 // refused, links and topic exchange continue, local and outgoing sends still

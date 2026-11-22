@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/wangzw/peers/test/e2e/harness"
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// updateFrameBound is the project-wide bound for a local message to reach the
-// receiver's session. The same host needs no link or retry delay.
-const updateFrameBound = 3 * time.Second
+// updateFrameBound is the fallback for a local message to reach the receiver's
+// session. The same host needs no link or retry delay, so the success path
+// answers at once.
+const updateFrameBound = harness.EventTimeout
 
 // TestREQUpdate001_PeriodicCheck covers REQ-update-001: a Broker running below
 // the latest release learns it within the first-check bound; with checking

@@ -63,6 +63,12 @@ const (
 	serviceStopBound = 20 * time.Second
 	// pollInterval separates two probes of launchd state.
 	pollInterval = 250 * time.Millisecond
+	// eventTimeout is the package fallback for an event the tests cannot force:
+	// a local-interface call answering, the uninstall prompt appearing, or a
+	// role subprocess printing its result. It only decides how long a wait that
+	// never completes takes to fail; the success path returns on the event, so
+	// a larger value costs nothing.
+	eventTimeout = 30 * time.Second
 )
 
 // pidPattern matches the "pid = <n>" line of launchctl print.
@@ -119,7 +125,7 @@ func runSystemPairKeyRole() int {
 	}
 	defer func() { _ = oracle.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	resp, err := oracle.CreatePairingKey(ctx)
 	if err != nil {
@@ -140,7 +146,7 @@ func runSystemUpdateStatusRole() int {
 	}
 	defer func() { _ = oracle.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	resp, err := oracle.UpdateStatus(ctx)
 	if err != nil {

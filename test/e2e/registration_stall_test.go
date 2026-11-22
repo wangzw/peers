@@ -18,9 +18,9 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// registrationStallSetupBound bounds the setup of the stall cases that is not a
-// tool call: waiting for the session's Register stream.
-const registrationStallSetupBound = 3 * time.Second
+// registrationStallSetupBound is the fallback for the setup of the stall cases
+// that is not a tool call: waiting for the session's Register stream.
+const registrationStallSetupBound = harness.EventTimeout
 
 // TestRegistrationListAgentsAbandonsAStalledCall constrains the harness's poll
 // bound: the fake Broker accepts the session's registration and then never
@@ -98,7 +98,7 @@ func TestWaitRegisteredToleratesASlowUpdateCheck(t *testing.T) {
 	s, _ := registrationStalledSession(t, srv, "slow-update", "slow-agent", "slow@test")
 
 	start := time.Now()
-	harness.WaitRegistered(t, s, 3*time.Second)
+	harness.WaitRegistered(t, s, harness.EventTimeout)
 	elapsed := time.Since(start)
 	if elapsed < handlerDelay+updateCheckDelay {
 		t.Fatalf("WaitRegistered returned after %s, want at least the %s update check and %s handler delays; the call did not exercise the hint", elapsed, updateCheckDelay, handlerDelay)

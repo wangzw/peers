@@ -20,7 +20,7 @@ import (
 // The user uninstall tests install a copy of the product that the test
 // account owns, because uninstall removes the binary the service started and
 // leaves a binary owned by another account in place.
-const uninstallPromptBound = 10 * time.Second
+const uninstallPromptBound = eventTimeout
 
 // pollBuffer collects a subprocess's output while the test polls it.
 type pollBuffer struct {

@@ -18,9 +18,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// testWaitBound is the project-wide bound for one test wait, three seconds. It
-// is a variable so a test can shorten it before starting a session.
-var testWaitBound = 3 * time.Second
+// testWaitBound is the fallback bound for one control-protocol call the
+// harness makes to a test process. The call answers a local request the test
+// itself caused, so only scheduling and a process or socket crossing set its
+// latency; the bound only decides how long a call that never answers takes to
+// fail. It is a variable so a test can shorten it before starting a session.
+var testWaitBound = EventTimeout
 
 // sessionStartBound bounds starting a session: launching the MCP server process
 // and completing the initialize handshake. It is the thirty-second startup
@@ -31,14 +34,12 @@ var testWaitBound = 3 * time.Second
 // the rest of the package ran about twenty percent slower.
 const sessionStartBound = 30 * time.Second
 
-// oracleBound bounds each OracleClient call. The local interface is a Unix
-// socket served in-process by the Broker, so it answers at once; no product
-// timer longer than the project-wide three-second bound governs it.
-const oracleBound = 3 * time.Second
-
-// OracleCallBound exposes oracleBound to a consistency window in test/e2e,
-// which names the bound each sample's Oracle call may take.
-const OracleCallBound = oracleBound
+// oracleBound bounds each OracleClient call made outside a consistency window.
+// The local interface is a Unix socket served in-process by the Broker, so it
+// answers at once; the bound is the project-wide fallback, and only decides how
+// long a call that never answers takes to fail. A consistency window passes a
+// bound of its own to ListBrokersWithin, short for a short negative window.
+const oracleBound = EventTimeout
 
 // sessionCallBound bounds one MCP tool call. It is larger than the default
 // send budget of 20 seconds so a send that is waiting for its own deadline
@@ -203,33 +204,37 @@ func (o *OracleClient) ListTopics(t testing.TB, agentID string) (*localpb.ListTo
 	return resp, nil
 }
 
-// ListBrokersWithin is ListBrokers for a consistency window. The call is
-// bounded by oracleBound or by the time left to deadline when that is shorter.
+// ListBrokersWithin is ListBrokers for a consistency window. callBound bounds
+// one call; zero means oracleBound. Every call runs its bound in full and is
+// not shortened when the window has less time left, because a call cut short by
+// the window would report a healthy Broker as unobservable on a loaded runner.
+// A short negative window passes a short bound (ToolCallPollBound) instead of
+// the fallback, so a stalled call does not outlast a window that is only a few
+// seconds long.
+//
 // A transport error is returned as err so the window can retry it as an
-// inconclusive sample, but a call that spends the full oracleBound without an
-// answer fails the test: the local socket answers at once, so that is
-// infrastructure trouble rather than a state the window can wait out.
-func (o *OracleClient) ListBrokersWithin(t testing.TB, deadline time.Time) (*localpb.ListBrokersResponse, *localpb.ErrorDetail, error) {
+// inconclusive sample. A call that reaches its bound returns a stall-marked
+// error: the local socket answers at once, so a call that stops answering is
+// evidence that the Broker is down, and ConsistentlyPoll ends the window on it
+// instead of letting an earlier conclusive sample pass.
+func (o *OracleClient) ListBrokersWithin(t testing.TB, deadline time.Time, callBound time.Duration) (*localpb.ListBrokersResponse, *localpb.ErrorDetail, error) {
 	t.Helper()
 	if o.remote != nil {
 		resp, detail := o.remote.listBrokers(t)
 		return resp, detail, nil
 	}
-	bound := oracleBound
-	if left := time.Until(deadline); left < bound {
-		if left <= 0 {
-			return nil, nil, fmt.Errorf("harness: Local.ListBrokers: no time left in the wait")
-		}
-		bound = left
+	if !time.Now().Before(deadline) {
+		return nil, nil, fmt.Errorf("harness: Local.ListBrokers: no time left in the wait")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	if callBound <= 0 {
+		callBound = oracleBound
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), callBound)
 	defer cancel()
-	start := time.Now()
 	resp, err := o.oracle.ListBrokers(ctx)
 	if err != nil {
-		if elapsed := time.Since(start); elapsed >= oracleBound {
-			t.Fatalf("harness: calling Local.ListBrokers did not answer within %s (took %s): %v", oracleBound, elapsed, err)
-			return nil, nil, nil
+		if isCallTimeout(err) {
+			return nil, nil, fmt.Errorf("%sthe call reached its %s poll bound: %w", stallStatePrefix, callBound, err)
 		}
 		return nil, nil, err
 	}

@@ -11,15 +11,14 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// containerFakeBound bounds each event wait for the fake proxy. The waits are
-// event-driven: a frame wait wakes when the fake records a frame, and the
-// connection wait wakes when the fake drops its last connection. Both are
-// reached while the node agent reads or closes a simulated session's socket,
-// and no product timer participates. The bound is therefore a safety net for
-// a handler that never reaches the event, not a scheduling allowance, and the
-// project-wide three seconds (no product timer plus the test-only control
-// round trip) remains enough.
-const containerFakeBound = 3 * time.Second
+// containerFakeBound is the fallback for each event wait for the fake proxy.
+// The waits are event-driven: a frame wait wakes when the fake records a
+// frame, and the connection wait wakes when the fake drops its last
+// connection. Both are reached while the node agent reads or closes a
+// simulated session's socket, and no product timer participates. The bound is
+// therefore a safety net for a handler that never reaches the event, not a
+// scheduling allowance; it uses the shared fallback rather than a few seconds.
+const containerFakeBound = harness.EventTimeout
 
 // containerInboxFrame is the frame the tests write into a container session's
 // inbox socket.

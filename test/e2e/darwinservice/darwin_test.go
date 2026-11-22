@@ -409,7 +409,7 @@ func connectUserBroker(t *testing.T, socket, address, key, localAlias string) st
 	}
 	defer func() { _ = oracle.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	resp, err := oracle.Connect(ctx, address, key, localAlias)
 	if err != nil {

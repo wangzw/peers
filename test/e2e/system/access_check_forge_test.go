@@ -32,10 +32,10 @@ const (
 	// forgeAttempts is how many configuration writes the test attempts while
 	// the attack loop runs.
 	forgeAttempts = 150
-	// forgeStartBound bounds the wait for the attack loop to write its ready
-	// file. The loop writes it before its first scan; three seconds covers
-	// starting the test binary as another account in a loaded container.
-	forgeStartBound = 3 * time.Second
+	// forgeStartBound is the fallback for the wait for the attack loop to write
+	// its ready file. The loop writes it before its first scan; the fallback
+	// covers starting the test binary as another account in a loaded container.
+	forgeStartBound = harness.EventTimeout
 	// forgeScanPause paces the attack loop. The loop runs in the unprivileged
 	// account's own process, where harness.Eventually is unavailable, so it
 	// sleeps between scans itself. The pause keeps a core free while still

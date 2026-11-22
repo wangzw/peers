@@ -14,9 +14,11 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// faultDialBound is the connection bound of a probe that is expected to
-// succeed; an internal network across one router answers well within it.
-const faultDialBound = 3 * time.Second
+// faultDialBound is the fallback for a probe that is expected to succeed and
+// for the state waits built on it. The probe crosses one router, so the
+// success path answers at once; the bound only decides how long a probe that
+// never answers takes to fail.
+const faultDialBound = harness.EventTimeout
 
 // faultFailBound is the bound of a probe that is expected to fail. A REJECT
 // answers at once, so one second is generous while keeping a silent DROP

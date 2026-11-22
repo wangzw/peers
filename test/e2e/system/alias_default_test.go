@@ -31,10 +31,9 @@ const (
 	// system Broker lists alice's agent again, so 2s + 1s covers it.
 	// No product timer is longer, so this is the whole wait.
 	aliasSysRelinkBound = 3 * time.Second
-	// aliasSysRecoverBound bounds one observation after the link is up. The
-	// observation is event driven; 3s is the project-wide bound for a wait no
-	// product timer governs.
-	aliasSysRecoverBound = 3 * time.Second
+	// aliasSysRecoverBound is the fallback for one observation after the link
+	// is up. The observation is event driven and no product timer governs it.
+	aliasSysRecoverBound = harness.EventTimeout
 )
 
 // TestREQBrokerPairing002_DefaultAliasHostAndAccount covers both forms of

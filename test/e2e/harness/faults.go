@@ -299,10 +299,9 @@ func (c *Cluster) counter(t testing.TB, node, chain, comment string, packets boo
 	return 0
 }
 
-// captureBound bounds tcpdump's startup and exit. Both are local process
-// operations with no product timer, so the project-wide three-second bound
-// applies.
-const captureBound = 3 * time.Second
+// captureBound is the fallback for tcpdump's startup and exit. Both are local
+// process operations with no product timer; the success path answers at once.
+const captureBound = EventTimeout
 
 // Capture starts tcpdump on node for TCP port and returns a function that
 // stops it and returns the pcap bytes. The capture file lives in the
@@ -381,11 +380,25 @@ func (c *Cluster) ReleasePort(t testing.TB, node, id string) {
 	}
 }
 
+// tcpProbeAnswerMargin is how much longer the control request may live than
+// the TCP probe it carries. A blackhole probe answers false only when its dial
+// times out; if the control request's deadline matched the probe, the request
+// could be cancelled as the answer is being written, surface as a control
+// error, and fail the test instead of reporting the address unreachable. Five
+// seconds is well above one round trip on the node agent's Unix socket and
+// matches the slack the control client gives a tool call.
+const tcpProbeAnswerMargin = 5 * time.Second
+
 // TCPReachable reports whether a TCP connection from node to addr succeeds
 // within timeout.
 func (c *Cluster) TCPReachable(t testing.TB, node, addr string, timeout time.Duration) bool {
 	t.Helper()
-	res, err := c.control(node).ProbeTCP(context.Background(), ctl.ProbeTCPRequest{
+	// Give the control request a deadline beyond the probe's own, so the probe
+	// answers before the request is cancelled. Without it the client applies
+	// its thirty-second default, which coincides with a thirty-second probe.
+	ctx, cancel := context.WithTimeout(context.Background(), timeout+tcpProbeAnswerMargin)
+	defer cancel()
+	res, err := c.control(node).ProbeTCP(ctx, ctl.ProbeTCPRequest{
 		Addr:      addr,
 		TimeoutMS: timeout.Milliseconds(),
 	})

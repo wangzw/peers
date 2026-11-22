@@ -46,7 +46,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 	if c.TCPReachable(t, "hostA", bLanb, time.Second) {
 		t.Fatalf("hostA reached hostB at %s; the two hosts must not be mutually reachable", bLanb)
 	}
-	if !c.TCPReachable(t, "hostB", aWan, 3*time.Second) {
+	if !c.TCPReachable(t, "hostB", aWan, harness.EventTimeout) {
 		t.Fatalf("hostB cannot reach hostA at %s; the displayed address would not work either", aWan)
 	}
 	// hostA and hostB are on different Docker networks, so the hostname shown
@@ -123,7 +123,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 
 	// Step 5 and 6: both sides list the other as a peer and report the link.
 	var bobView mcpserver.BrokerOut
-	harness.EventuallyPoll(t, 3*time.Second, "both Brokers report the established link", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "both Brokers report the established link", func(deadline time.Time) (bool, string) {
 		bobOut, state := pairListBrokersPoll(t, deadline, bob)
 		if state != "" {
 			return false, "bob: " + state
@@ -201,7 +201,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 
 		keyAB := pairCreateKey(t, opA)
 		pairConnect(t, opB, keyAB.Addresses[0], keyAB.Key)
-		pairWaitOraclePeer(t, hostA, "macbook", localpb.PeerRole_PEER_ROLE_ACCEPTOR, 3*time.Second)
+		pairWaitOraclePeer(t, hostA, "macbook", localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
 
 		keyC := pairCreateKey(t, opC)
 		r := opA.Call(t, "connect_broker", map[string]any{"address": keyC.Addresses[0], "key": keyC.Key})
@@ -218,7 +218,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 		}
 
 		pairConnectWithAlias(t, opA, keyC.Addresses[0], keyC.Key, "macbook-2", "macbook-2")
-		pairWaitOraclePeer(t, hostA, "macbook-2", localpb.PeerRole_PEER_ROLE_DIALER, 3*time.Second)
+		pairWaitOraclePeer(t, hostA, "macbook-2", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 
 		// Both peers' sessions are visible to a session on hostA, and each
 		// address carries the alias hostA uses for that peer.
@@ -232,7 +232,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 		pairJoin(t, sb, "t")
 		pairJoin(t, sc, "t")
 
-		harness.EventuallyPoll(t, 3*time.Second, "a1 sees b1@macbook and c1@macbook-2", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.EventTimeout, "a1 sees b1@macbook and c1@macbook-2", func(deadline time.Time) (bool, string) {
 			out, state := pairListAgentsPoll(t, deadline, sa)
 			if state != "" {
 				return false, state
@@ -284,7 +284,7 @@ func TestJourneyPairBrokers(t *testing.T) {
 		// reached hostA, so the key is still usable.
 		forwarded := net.JoinHostPort(c.Addr("router", "wan"), pairBrokerPort)
 		pairConnect(t, opB, forwarded, key.Key)
-		pairWaitOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, 3*time.Second)
+		pairWaitOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 	})
 
 	t.Run("network outage", func(t *testing.T) {
@@ -305,8 +305,8 @@ func TestJourneyPairBrokers(t *testing.T) {
 		defer opB.End(t)
 		key := pairCreateKey(t, opA)
 		pairConnect(t, opB, key.Addresses[0], key.Key)
-		pairWaitOraclePeer(t, hostA, "hostB.peer", localpb.PeerRole_PEER_ROLE_ACCEPTOR, 3*time.Second)
-		pairWaitOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, 3*time.Second)
+		pairWaitOraclePeer(t, hostA, "hostB.peer", localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
+		pairWaitOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 
 		c.Cut(t, "hostA", "hostB")
 		harness.Eventually(t, harness.EventTimeout, "both Brokers notice the cut", func() (bool, string) {
@@ -364,14 +364,14 @@ func pairSession(t *testing.T, node *harness.Node, name, workdir string) *harnes
 func pairOperator(t *testing.T, node *harness.Node, workdir string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true, Workdir: workdir})
-	harness.WaitConnected(t, s, 3*time.Second)
+	harness.WaitConnected(t, s, harness.EventTimeout)
 	return s
 }
 
 // pairWaitRegistered waits until the session is registered and lists itself.
 func pairWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
 		out, state := pairListAgentsPoll(t, deadline, session)
 		if state != "" {
 			return false, state

@@ -27,11 +27,10 @@ const (
 	adShareGID   = 2101
 	adSocketPath = "/run/peers/broker.sock"
 	adConfigPath = "/etc/peers/config.yaml"
-	// adRegisterBound follows the three-second wait bound most system tests
-	// use for a local event; a local Broker registers well inside it. The
-	// foreign-session test's 13-second bound covers a different wait: the
-	// Broker's own 10-second registration timeout.
-	adRegisterBound = 3 * time.Second
+	// adRegisterBound is the fallback for a local registration event; a local
+	// Broker registers well inside it. The foreign-session test's longer bound
+	// covers a different wait: the Broker's own 10-second registration timeout.
+	adRegisterBound = harness.EventTimeout
 )
 
 // TestSystemAccountsFromExtrausers checks that the system Broker resolves

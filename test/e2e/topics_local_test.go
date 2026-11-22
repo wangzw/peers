@@ -97,7 +97,7 @@ func TestLocalTopics(t *testing.T) {
 	t.Run("REQ-topics-006 no topic means invisible", func(t *testing.T) {
 		lonely := topicsSession(t, host, "lonely", topicsPlain(t))
 		defer lonely.End(t)
-		harness.EventuallyPoll(t, 3*time.Second, "the session with no topics is registered", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.EventTimeout, "the session with no topics is registered", func(deadline time.Time) (bool, string) {
 			out, state := topicsListPoll(t, deadline, lonely)
 			if state != "" {
 				return false, state
@@ -160,7 +160,7 @@ func TestLocalTopics(t *testing.T) {
 	t.Run("REQ-topics-018 non-git", func(t *testing.T) {
 		loner := topicsSession(t, host, "loner", topicsPlain(t))
 		defer loner.End(t)
-		harness.EventuallyPoll(t, 3*time.Second, "a session outside a git repository joins no topic", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.EventTimeout, "a session outside a git repository joins no topic", func(deadline time.Time) (bool, string) {
 			out, state := topicsListPoll(t, deadline, loner)
 			if state != "" {
 				return false, state
@@ -429,7 +429,7 @@ func topicsProject(t *testing.T, projectYAML, origin string) string {
 // topicsWaitRegistered waits until the session is registered.
 func topicsWaitRegistered(t *testing.T, s *harness.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the session is registered", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the session is registered", func(deadline time.Time) (bool, string) {
 		_, state := topicsListPoll(t, deadline, s)
 		if state != "" {
 			return false, state
@@ -593,7 +593,7 @@ func topicsLeaveDefault(t *testing.T, s *harness.Session) {
 // topicsWaitJoinedSet waits until the joined topics are exactly want.
 func topicsWaitJoinedSet(t *testing.T, s *harness.Session, want ...string) {
 	t.Helper()
-	topicsWaitJoinedSetWithin(t, s, 3*time.Second, want...)
+	topicsWaitJoinedSetWithin(t, s, harness.EventTimeout, want...)
 }
 
 // topicsWaitJoinedSetWithin waits until the joined topics are exactly want,
@@ -614,7 +614,7 @@ func topicsWaitJoinedSetWithin(t *testing.T, s *harness.Session, bound time.Dura
 // name.
 func topicsWaitVisible(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the agent "+name+" is visible", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the agent "+name+" is visible", func(deadline time.Time) (bool, string) {
 		out, state := topicsListAgentsPoll(t, deadline, observer, nil)
 		if state != "" {
 			return false, state
@@ -629,7 +629,7 @@ func topicsWaitVisible(t *testing.T, observer *harness.Session, name string) {
 // topicsWaitInvisible waits until observer no longer lists name.
 func topicsWaitInvisible(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the agent "+name+" is no longer visible", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the agent "+name+" is no longer visible", func(deadline time.Time) (bool, string) {
 		out, state := topicsListAgentsPoll(t, deadline, observer, nil)
 		if state != "" {
 			return false, state

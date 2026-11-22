@@ -61,9 +61,9 @@ func TestREQBrokerConfig018_TwoAccountsShareSystemBroker(t *testing.T) {
 	if text, isError := a.Call(t, "send_message", map[string]any{"to": bSelf, "message": "ping-018"}); isError {
 		t.Fatalf("send_message from peer to other reported an error: %s", text)
 	}
-	frame, ok := b.Fake.WaitFrame(3 * time.Second)
+	frame, ok := b.Fake.WaitFrame(harness.EventTimeout)
 	if !ok {
-		t.Fatalf("other's session did not receive the message within 3s")
+		t.Fatalf("other's session did not receive the message within the fallback")
 	}
 	if frame.FromName != aSelf {
 		t.Errorf("the message is signed %q, want peer's address %q", frame.FromName, aSelf)
@@ -75,9 +75,9 @@ func TestREQBrokerConfig018_TwoAccountsShareSystemBroker(t *testing.T) {
 	if text, isError := b.Call(t, "send_message", map[string]any{"to": frame.FromName, "message": "pong-018"}); isError {
 		t.Fatalf("send_message from other to peer reported an error: %s", text)
 	}
-	reply, ok := a.Fake.WaitFrame(3 * time.Second)
+	reply, ok := a.Fake.WaitFrame(harness.EventTimeout)
 	if !ok {
-		t.Fatalf("peer's session did not receive the reply within 3s")
+		t.Fatalf("peer's session did not receive the reply within the fallback")
 	}
 	if reply.FromName != bSelf {
 		t.Errorf("the reply is signed %q, want other's address %q", reply.FromName, bSelf)

@@ -74,7 +74,7 @@ func TestREQBrokerConfig023_NoPermissionStillWorksOnSystemBroker(t *testing.T) {
 		map[string]any{"to": to, "message": message}); isError {
 		t.Fatalf("send_message as other reported an error: %s", text)
 	}
-	frame, ok := peer.Fake.WaitFrame(3 * time.Second)
+	frame, ok := peer.Fake.WaitFrame(harness.EventTimeout)
 	if !ok {
 		t.Fatalf("peer received no message from other")
 	}
@@ -182,7 +182,7 @@ func TestREQBrokerConfig021_WriteNeedsConfigWritePermission(t *testing.T) {
 	if paired.Alias == "" {
 		t.Fatalf("connect_broker as root returned no peer alias: %s", text)
 	}
-	harness.EventuallyPoll(t, 3*time.Second, "the system Broker to report the paired peer as connected",
+	harness.EventuallyPoll(t, harness.EventTimeout, "the system Broker to report the paired peer as connected",
 		func(deadline time.Time) (bool, string) {
 			status, isPeer, ok, state := permBrokerStatusPoll(t, deadline, root, paired.Alias)
 			if state != "" {
@@ -592,7 +592,7 @@ func permNonEmptyLines(s string) []string {
 // poll call gets its own bound.
 func permWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -606,7 +606,7 @@ func permWaitRegistered(t *testing.T, session *syscontainer.Session) {
 // permWaitRegistered.
 func permWaitConnected(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the MCP server of "+session.Account+" to reach its Broker",
+	harness.EventuallyPoll(t, harness.EventTimeout, "the MCP server of "+session.Account+" to reach its Broker",
 		func(deadline time.Time) (bool, string) {
 			text, isError, err := session.PollCall(t, deadline, "list_brokers", map[string]any{})
 			if err != nil {

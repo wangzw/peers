@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,11 +24,29 @@ import (
 type fakeLocalServer struct {
 	localpb.UnimplementedLocalServer
 
-	mu           sync.Mutex
-	getConfigReq *localpb.GetConfigRequest
-	auditReq     *localpb.AuditRequest
-	getConfigErr error
-	events       []*localpb.AuditEvent
+	mu                    sync.Mutex
+	getConfigReq          *localpb.GetConfigRequest
+	auditReq              *localpb.AuditRequest
+	getConfigErr          error
+	events                []*localpb.AuditEvent
+	listBrokersCalls      int
+	blockListBrokersAfter int
+}
+
+// ListBrokers answers normally until blockListBrokersAfter calls have been
+// made, then hangs until ctx is done. It models a Broker that stops answering
+// partway through a consistency window.
+func (f *fakeLocalServer) ListBrokers(ctx context.Context, _ *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error) {
+	f.mu.Lock()
+	f.listBrokersCalls++
+	n := f.listBrokersCalls
+	blockAfter := f.blockListBrokersAfter
+	f.mu.Unlock()
+	if blockAfter > 0 && n > blockAfter {
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	return &localpb.ListBrokersResponse{}, nil
 }
 
 func (f *fakeLocalServer) GetConfig(_ context.Context, req *localpb.GetConfigRequest) (*localpb.GetConfigResponse, error) {
@@ -231,4 +250,50 @@ func TestOracleGetConfigAndAudit(t *testing.T) {
 			t.Errorf("ErrorDetail.Code = %v, want %v", detail.GetCode(), localpb.ErrorCode_ERROR_CODE_NOT_FOUND)
 		}
 	})
+}
+
+// TestListBrokersWithinStallsAtTheWindowEnd reproduces the truncated-Oracle
+// defect. A consistency window used to shorten each Oracle call to the time it
+// had left, so a call that hung late in the window was cut off below the call
+// bound and returned as an unobservable sample. The window then passed on an
+// earlier conclusive sample even though the Broker had stopped answering. The
+// call must run its own bound in full and report a stall, which ends the
+// window.
+func TestListBrokersWithinStallsAtTheWindowEnd(t *testing.T) {
+	const (
+		window    = 100 * time.Millisecond
+		callBound = 400 * time.Millisecond
+	)
+	// Answer the first call, so the window holds a conclusive sample before the
+	// hang: the old code passed on that sample when the hung call was cut short.
+	fake := &fakeLocalServer{blockListBrokersAfter: 1}
+	oracle := newFakeOracleClient(t, fake)
+	tb := &recordTB{}
+
+	start := time.Now()
+	msg := captureFatal(t, tb, func() {
+		ConsistentlyPoll(tb, window, callBound, "the Oracle window", nil, func(deadline time.Time) Observation {
+			if _, _, err := oracle.ListBrokersWithin(tb, deadline, callBound); err != nil {
+				return Unobservable(err.Error())
+			}
+			return Observed(true, "")
+		})
+	})
+	elapsed := time.Since(start)
+
+	if msg == "" {
+		t.Fatal("the window passed without reporting the Oracle stall")
+	}
+	for _, want := range []string{"could not be observed", "1 sample stalled", "reached its 400ms poll bound"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("failure %q does not contain %q", msg, want)
+		}
+	}
+	if elapsed < callBound {
+		t.Fatalf("the window returned after %s, want at least the %s call bound: the call was cut short by the window",
+			elapsed, callBound)
+	}
+	if logged := strings.Join(tb.logs, "\n"); !strings.Contains(logged, "=== harness STALL: the Oracle window") {
+		t.Errorf("the STALL marker was not logged:\n%s", logged)
+	}
 }

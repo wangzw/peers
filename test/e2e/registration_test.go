@@ -351,7 +351,7 @@ func TestLocalRegistration(t *testing.T) {
 		// still be the single main address.
 		r := main.Call(t, "send_message", map[string]any{"to": observerAddr, "message": "from the main session"})
 		r.MustOK(t)
-		frame := observer.WaitFrame(t, 3*time.Second)
+		frame := observer.WaitFrame(t, harness.EventTimeout)
 		if frame.FromName != mainAddr {
 			t.Fatalf("the message is signed %q, want %q", frame.FromName, mainAddr)
 		}

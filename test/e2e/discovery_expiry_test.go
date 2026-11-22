@@ -213,7 +213,7 @@ func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 
 	f := startFakePeer(t)
 	f.Pair(t, b.addr, hostilePairKey(t, b))
-	f.WaitLinked(t, 3*time.Second)
+	f.WaitLinked(t, harness.EventTimeout)
 
 	// Five valid cards from five publishers: three fit under the total limit.
 	originals := make([]*directorypb.Record, 0, 5)

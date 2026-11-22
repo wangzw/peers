@@ -201,7 +201,7 @@ func tlCreateKey(t *testing.T, node *harness.Node) string {
 	t.Helper()
 	op := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
 	defer op.End(t)
-	harness.WaitConnected(t, op, 3*time.Second)
+	harness.WaitConnected(t, op, harness.EventTimeout)
 	r := op.Call(t, "create_pairing_key", nil)
 	r.MustOK(t)
 	out, err := harness.Decode[mcpserver.CreatePairingKeyOut](string(r.Structured))

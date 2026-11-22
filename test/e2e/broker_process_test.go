@@ -192,7 +192,7 @@ func TestBrokerProcessLocal(t *testing.T) {
 		if kill.ExitCode != 0 {
 			t.Fatalf("stopping the Broker %d: exit code %d: %s", winner.PID, kill.ExitCode, strings.TrimSpace(kill.Stderr))
 		}
-		harness.Eventually(t, 3*time.Second, "the Broker exits after SIGTERM", func() (bool, string) {
+		harness.Eventually(t, harness.EventTimeout, "the Broker exits after SIGTERM", func() (bool, string) {
 			if n := len(bpLocalProcs(t, host, "broker")); n != 0 {
 				return false, fmt.Sprintf("%d Broker processes", n)
 			}
@@ -422,7 +422,7 @@ func TestBrokerProcessInContainer(t *testing.T) {
 		body := fmt.Sprintf("broker-log-body-%d", time.Now().UnixNano())
 		sent := sender.Call(t, "send_message", map[string]any{"to": targetAddress, "message": body})
 		sent.MustOK(t)
-		if frame := target.WaitFrame(t, 3*time.Second); !strings.Contains(frame.Content, body) {
+		if frame := target.WaitFrame(t, harness.EventTimeout); !strings.Contains(frame.Content, body) {
 			t.Fatalf("the delivered frame does not contain the sent body: %q", frame.Content)
 		}
 
@@ -486,7 +486,7 @@ func bpContainerProcs(t *testing.T, c *harness.Cluster, name, kind string) []bpP
 	client := ctl.Dial(filepath.Join(c.CTLDir(t, name), "ctl.sock"))
 	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), harness.EventTimeout)
 	defer cancel()
 	infos, err := client.Procs(ctx, ctl.ProcsRequest{Kind: kind})
 	if err != nil {

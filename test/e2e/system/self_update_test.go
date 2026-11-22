@@ -41,8 +41,9 @@ const (
 	// restarting. The same bound covers the MCP server's reconnect window after
 	// the Broker goes away.
 	selfUpdateRestartBound = 30 * time.Second
-	// selfUpdateAuditBound bounds the read of a local audit event.
-	selfUpdateAuditBound = 10 * time.Second
+	// selfUpdateAuditBound is the fallback for the wait for a local audit
+	// event; the Broker writes it right after applying the update.
+	selfUpdateAuditBound = harness.EventTimeout
 	// selfUpdateStatusRPCTimeout bounds one UpdateStatus call on a local
 	// socket. The Broker answers in milliseconds; the bound covers a loaded
 	// container without hiding a hung call.

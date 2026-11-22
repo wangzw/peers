@@ -17,10 +17,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// brokerStopBound bounds the wait for a Broker that was just signalled. The
-// Broker exits as soon as its context is cancelled on SIGTERM and has no drain
-// timer, so the project-wide three-second bound applies.
-const brokerStopBound = 3 * time.Second
+// brokerStopBound is the fallback for the wait for a Broker that was just
+// signalled. The Broker exits as soon as its context is cancelled on SIGTERM
+// and has no drain timer, so the success path answers at once.
+const brokerStopBound = EventTimeout
 
 // oracleRemote is the container node's half of OracleClient: the five local
 // interface RPCs travel over the control protocol to the node agent.

@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	// termAdminCallWait bounds one terminal command and its Broker round trip.
-	// The e2e wait convention (test/e2e/harness/wait.go) allows three seconds
-	// unless a product timer sets the bound.
-	termAdminCallWait = 3 * time.Second
+	// termAdminCallWait is the fallback for one terminal command and its Broker
+	// round trip. No product timer governs it; the success path answers at once,
+	// and the fallback only decides how long a command that never answers takes
+	// to fail.
+	termAdminCallWait = harness.EventTimeout
 
 	// termAdminMCPHandshakeWait and termAdminToolCallWait mirror the bounds the
 	// syscontainer package puts on one MCP handshake and one tool call
@@ -46,7 +47,7 @@ const (
 	// connected, and the wait for the pairing audit record. The connect call
 	// blocks for at most link.dial_timeout on its own dial, so it is counted at
 	// that bound rather than at termAdminCallWait. 3*termAdminCallWait +
-	// linkDialTimeout + termAdminLinkWait = 9s + 5s + 11s = 25s.
+	// linkDialTimeout + termAdminLinkWait = 90s + 5s + 11s = 106s.
 	termAdminConnectedWait = 3*termAdminCallWait + linkDialTimeout + termAdminLinkWait
 
 	// termAdminPairingWait bounds host B's wait for the pairing file. Host A may
@@ -56,7 +57,7 @@ const (
 	// request refused (one tool call), then creating the key and listing peers
 	// (two terminal commands). termAdminCallWait + termAdminMCPHandshakeWait +
 	// (termAdminCallWait + termAdminToolCallWait) + termAdminToolCallWait +
-	// 2*termAdminCallWait = 3s + 30s + 18s + 15s + 6s = 72s.
+	// 2*termAdminCallWait = 30s + 30s + 45s + 15s + 60s = 180s.
 	termAdminPairingWait = termAdminCallWait + termAdminMCPHandshakeWait +
 		(termAdminCallWait + termAdminToolCallWait) + termAdminToolCallWait +
 		2*termAdminCallWait
@@ -65,7 +66,7 @@ const (
 	// must cover everything host A does after writing the connected marker: the
 	// wait for host B to show connected, three config commands, the disconnect,
 	// the ordered audit wait, the refused config set and its read-back, and the
-	// audit scan. termAdminLinkWait + 8*termAdminCallWait = 11s + 24s = 35s.
+	// audit scan. termAdminLinkWait + 8*termAdminCallWait = 11s + 240s = 251s.
 	termAdminDoneWait = termAdminLinkWait + 8*termAdminCallWait
 
 	// termAdminSystemConfig is the system Broker's configuration file. A refused

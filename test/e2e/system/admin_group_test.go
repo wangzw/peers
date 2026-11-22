@@ -35,8 +35,8 @@ const (
 	agPeerListen = "127.0.0.1:17445"
 	// agServiceBound bounds the wait for the installed system Broker to answer.
 	agServiceBound = 10 * time.Second
-	// agAuditBound bounds the wait for an audit record to appear.
-	agAuditBound = 3 * time.Second
+	// agAuditBound is the fallback for the wait for an audit record to appear.
+	agAuditBound = harness.EventTimeout
 	// agDefaultPort is the port broker.listen defaults to.
 	agDefaultPort = 17443
 	// agPrivilegedPort and agRootOnlyPort are below 1024, so only root may

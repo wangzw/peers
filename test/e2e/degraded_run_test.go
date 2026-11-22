@@ -388,7 +388,7 @@ func TestDegradedRun(t *testing.T) {
 		localAddress := "local@" + slAlias(t, alphaOut.Self)
 		send := alpha.Call(t, "send_message", map[string]any{"to": localAddress, "message": "local only works"})
 		send.MustOK(t)
-		frame := local.WaitFrame(t, 3*time.Second)
+		frame := local.WaitFrame(t, harness.EventTimeout)
 		if body := slEnvelopeBody(t, frame.Content); body != "local only works" {
 			t.Fatalf("the delivered message is %q", body)
 		}

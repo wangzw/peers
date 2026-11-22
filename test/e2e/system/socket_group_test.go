@@ -32,9 +32,9 @@ const (
 	sgUsersGID = 2001
 	// sgOtherUID is the uid of other in the system image.
 	sgOtherUID = 2000
-	// sgNoBrokerBudget bounds the first failed selection and tool call when no
-	// Broker may serve the account; no retry timer is involved.
-	sgNoBrokerBudget = 10 * time.Second
+	// sgNoBrokerBudget is the fallback for the first failed selection and tool
+	// call when no Broker may serve the account; no retry timer is involved.
+	sgNoBrokerBudget = harness.EventTimeout
 	// sgRegisterBudget bounds the reconnect after the user starts a Broker:
 	// mcpserver.ConnBackoffCap is the longest wait, and the margin covers the
 	// dial, Hello and registration.
@@ -327,7 +327,7 @@ func sgMCPPIDs(t *testing.T, account string) []int {
 // poll call gets its own bound.
 func sgWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
+	harness.EventuallyPoll(t, harness.EventTimeout, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
 		text, isError, err := session.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
 			return false, err.Error()
@@ -341,7 +341,7 @@ func sgWaitRegistered(t *testing.T, session *syscontainer.Session) {
 // sgWaitRegistered.
 func sgWaitConnected(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
-	harness.EventuallyPoll(t, 3*time.Second, "the MCP server of "+session.Account+" to reach its Broker",
+	harness.EventuallyPoll(t, harness.EventTimeout, "the MCP server of "+session.Account+" to reach its Broker",
 		func(deadline time.Time) (bool, string) {
 			text, isError, err := session.PollCall(t, deadline, "list_brokers", map[string]any{})
 			if err != nil {

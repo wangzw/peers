@@ -78,7 +78,7 @@ func journeyCallOK(t *testing.T, session *harness.Session, tool string, args map
 // journeyCreateKey creates a one-time pairing key.
 func journeyCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
-	r := journeyCallOK(t, session, "create_pairing_key", nil, 3*time.Second)
+	r := journeyCallOK(t, session, "create_pairing_key", nil, harness.EventTimeout)
 	out, err := harness.Decode[mcpserver.CreatePairingKeyOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding create_pairing_key: %v", err)
@@ -89,7 +89,7 @@ func journeyCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePa
 // journeyConnect dials a Broker with a pairing key.
 func journeyConnect(t *testing.T, session *harness.Session, address, key string) mcpserver.ConnectBrokerOut {
 	t.Helper()
-	r := journeyCallOK(t, session, "connect_broker", map[string]any{"address": address, "key": key}, 3*time.Second)
+	r := journeyCallOK(t, session, "connect_broker", map[string]any{"address": address, "key": key}, harness.EventTimeout)
 	out, err := harness.Decode[mcpserver.ConnectBrokerOut](string(r.Structured))
 	if err != nil {
 		t.Fatalf("decoding connect_broker: %v", err)
@@ -168,7 +168,7 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 		// Precondition: A declares infra-help publicly.
 		journeyCallOK(t, infra, "join_topic", map[string]any{
 			"name": "infra-help", "public": true, "description": "ask infra",
-		}, 3*time.Second)
+		}, harness.EventTimeout)
 
 		// Step 1: C discovers A's card and its public topic.
 		var discovered mcpserver.BrokerOut
@@ -233,7 +233,7 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 
 		// Step 6: C joins the same topic, which makes the agents visible to
 		// each other. Step 7: list_agents shows A's Agent.
-		journeyCallOK(t, scout, "join_topic", map[string]any{"name": "infra-help"}, 3*time.Second)
+		journeyCallOK(t, scout, "join_topic", map[string]any{"name": "infra-help"}, harness.EventTimeout)
 		var target string
 		harness.EventuallyPoll(t, discBound(1), "C sees A's Agent in infra-help", func(deadline time.Time) (bool, string) {
 			out, state := pairListAgentsPoll(t, deadline, scout)
@@ -252,8 +252,8 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 
 		// Step 8: C sends a message and A's simulated session receives it.
 		const request = "can you look at the deploy?"
-		journeyCallOK(t, scout, "send_message", map[string]any{"to": target, "message": request}, 3*time.Second)
-		frame := infra.WaitFrame(t, 3*time.Second)
+		journeyCallOK(t, scout, "send_message", map[string]any{"to": target, "message": request}, harness.EventTimeout)
+		frame := infra.WaitFrame(t, harness.EventTimeout)
 		if frame.FromName != "scout@hostC.peer" {
 			t.Fatalf("the message is signed %q, want scout@hostC.peer", frame.FromName)
 		}
@@ -262,7 +262,7 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 		}
 
 		// Result: A is now C's peer, as the Broker it dialed.
-		harness.EventuallyPoll(t, 3*time.Second, "C lists A as its connected peer", func(deadline time.Time) (bool, string) {
+		harness.EventuallyPoll(t, harness.EventTimeout, "C lists A as its connected peer", func(deadline time.Time) (bool, string) {
 			out, state := pairListBrokersPoll(t, deadline, scout)
 			if state != "" {
 				return false, state
@@ -297,8 +297,8 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 
 		// The reverse message: A's Agent answers the request it received.
 		const reply = "yes, I am on it"
-		journeyCallOK(t, infra, "send_message", map[string]any{"to": scoutAddr, "message": reply}, 3*time.Second)
-		frame = scout.WaitFrame(t, 3*time.Second)
+		journeyCallOK(t, infra, "send_message", map[string]any{"to": scoutAddr, "message": reply}, harness.EventTimeout)
+		frame = scout.WaitFrame(t, harness.EventTimeout)
 		if frame.FromName != "infra-agent@hostA.peer" {
 			t.Fatalf("the reply is signed %q, want infra-agent@hostA.peer", frame.FromName)
 		}
@@ -407,7 +407,7 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			t.Fatalf("A paired with %q, want hostC.peer", connected.Alias)
 		}
 
-		journeyWaitPeer(t, operator, "hostC.peer", "dialer", 3*time.Second)
-		journeyWaitPeer(t, scout, "hostA.peer", "acceptor", 3*time.Second)
+		journeyWaitPeer(t, operator, "hostC.peer", "dialer", harness.EventTimeout)
+		journeyWaitPeer(t, scout, "hostA.peer", "acceptor", harness.EventTimeout)
 	})
 }

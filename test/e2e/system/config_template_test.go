@@ -24,14 +24,13 @@ import (
 // lists every key exactly once, keeps an existing file unchanged, and is picked
 // up without restarting the Broker after a manual edit or a set_config change.
 //
-// The waits follow the project rule: a wait that no product timer governs is
-// the three-second allowance; a wait governed by the configuration watcher's
-// debounce is that debounce plus the allowance. A wait that polls a tool uses
-// EventuallyPoll, which lifts these values to ToolCallWaitBound (fourteen
-// seconds) so one poll call gets its own bound; the three seconds are the
-// product-timer allowance the wait is written against.
+// The waits follow the project rule: a wait that no product timer governs uses
+// the project-wide EventTimeout fallback; a wait governed by the configuration
+// watcher's debounce is that debounce plus the fallback. A wait that polls a
+// tool uses EventuallyPoll, whose call bound is the larger ToolCallWaitBound,
+// so one poll call gets its own bound.
 const (
-	cteWaitBound = 3 * time.Second
+	cteWaitBound = harness.EventTimeout
 	// cteReloadDebounce mirrors internal/config's defaultWatchDebounce
 	// (internal/config/watch.go), the quiet period the configuration watcher
 	// waits before reloading a changed file.

@@ -35,8 +35,10 @@ const oneshotCallBound = 30 * time.Second
 
 // oneshotReadyBound bounds how long oneshot-session waits for the MCP server's
 // background connection loop to finish its first selection. A tool call made
-// immediately after the handshake can still see the loop's starting state.
-const oneshotReadyBound = 3 * time.Second
+// immediately after the handshake can still see the loop's starting state. It
+// is the fallback for an event the command cannot force, so it is generous; a
+// timeout is reported as an error rather than returned as a starting result.
+const oneshotReadyBound = 30 * time.Second
 
 // oneshotStartingText is the part of the starting-state tool error that tells
 // the loop has not classified the Broker yet.
@@ -189,8 +191,11 @@ func oneshotListAgents(ctx context.Context, session *node.Session) (node.ToolRes
 		if err != nil {
 			return node.ToolResult{}, err
 		}
-		if !result.IsError || !strings.Contains(result.Text, oneshotStartingText) || !time.Now().Before(deadline) {
+		if !result.IsError || !strings.Contains(result.Text, oneshotStartingText) {
 			return result, nil
+		}
+		if !time.Now().Before(deadline) {
+			return node.ToolResult{}, fmt.Errorf("e2e-node: oneshot-session: the MCP server stayed in its starting state for %s", oneshotReadyBound)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

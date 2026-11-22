@@ -22,10 +22,12 @@ import (
 const (
 	// agentReadyTimeout bounds a simulated Agent's startup. The Agent runs
 	// this test binary as its stub MCP server, so a subprocess cold start
-	// dominates the wait.
-	agentReadyTimeout = 10 * time.Second
-	// agentSendTimeout bounds the library client that writes one frame.
-	agentSendTimeout = 3 * time.Second
+	// dominates the wait; it uses the package fallback.
+	agentReadyTimeout = eventTimeout
+	// agentSendTimeout bounds the library client that writes one frame. A
+	// loaded runner can delay the write past a few seconds, so it uses the
+	// package fallback too.
+	agentSendTimeout = eventTimeout
 )
 
 // TestMain turns the test binary into the stand-in MCP server the simulated

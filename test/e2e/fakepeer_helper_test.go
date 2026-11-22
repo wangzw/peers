@@ -130,7 +130,7 @@ func startFakePeer(t *testing.T) *fakePeer {
 	go f.read(stdout)
 	t.Cleanup(f.close)
 
-	ready := f.waitEvent(t, "ready", 3*time.Second)
+	ready := f.waitEvent(t, "ready", harness.EventTimeout)
 	if ready.Fingerprint == "" {
 		t.Fatal("the fake peer's ready event carries no fingerprint")
 	}
@@ -237,7 +237,7 @@ func (f *fakePeer) Records(t *testing.T, records ...*directorypb.Record) {
 		})
 	}
 	f.send(t, map[string]any{"cmd": "records", "records": wire})
-	event := f.waitEvent(t, "records_set", 3*time.Second)
+	event := f.waitEvent(t, "records_set", harness.EventTimeout)
 	if event.Count != len(records) {
 		t.Fatalf("the fake peer set %d records, want %d", event.Count, len(records))
 	}
