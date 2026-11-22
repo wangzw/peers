@@ -250,16 +250,11 @@ func Install(opts Options) (Result, error) {
 	// only reports a startup_failed record written after this point.
 	installStart := time.Now()
 
-	switch opts.GOOS {
-	case "linux", "darwin":
-	default:
-		return res, fmt.Errorf("cannot install the service on platform %q", opts.GOOS)
+	if err := checkPlatform(opts, "install the service"); err != nil {
+		return res, err
 	}
-	if opts.System && opts.EUID != 0 {
-		return res, errors.New("service install --system must run as root")
-	}
-	if !opts.System && opts.EUID == 0 {
-		return res, errors.New("service install without --system must not run as root; the user unit belongs to one account")
+	if err := checkRoot(opts, "install"); err != nil {
+		return res, err
 	}
 	if !filepath.IsAbs(opts.Exe) {
 		return res, fmt.Errorf("cannot install the service: the executable %q is not an absolute path", opts.Exe)
@@ -413,16 +408,9 @@ func Install(opts Options) (Result, error) {
 	res.RunLog = logHint(opts)
 	res.AuditLog = auditLogPath(opts)
 
-	state, degraded, err := waitStatus(opts, deadline)
-	if err != nil {
-		// The service is running but does not answer Status. Leave it alone:
-		// disabling it would take down a Broker that is reachable.
-		return res, fmt.Errorf("cannot read the status of the running service: %w; %s", err, statusHint(opts))
-	}
-	if degraded {
-		return res, &DegradedError{State: state}
-	}
-	return res, nil
+	// A Broker that does not answer Status is left running: disabling it would
+	// take down a Broker that is reachable.
+	return res, checkDegraded(opts, deadline)
 }
 
 // unitPath returns the production path of the unit file or plist for opts.
@@ -518,10 +506,7 @@ func precheckListen(opts Options, domain string, res *Result) (listenCheck, erro
 	if addr == "" {
 		return listenCheck{}, nil
 	}
-	probe := opts.ListenProbe
-	if probe == nil {
-		probe = config.ProbeListen
-	}
+	probe := listenProbe(opts)
 	err = probe(addr)
 	if err == nil {
 		return listenCheck{addr: addr}, nil
@@ -1047,10 +1032,7 @@ func runLaunchctlCommand(opts Options, domain string, res *Result, verb string) 
 	res.Commands = append(res.Commands, cmdline)
 	out, err := opts.Run("launchctl", verb, target)
 	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-		}
-		return fmt.Errorf("cannot run %s: %w", cmdline, err)
+		return commandError("cannot run "+cmdline, out, err)
 	}
 	return nil
 }
@@ -1060,10 +1042,7 @@ func runLaunchctlCommand(opts Options, domain string, res *Result, verb string) 
 func serviceMainPID(opts Options, domain string) (int, bool) {
 	switch opts.GOOS {
 	case "linux":
-		args := []string{"show", "--property", "MainPID", "--value", UnitName}
-		if !opts.System {
-			args = append([]string{"--user"}, args...)
-		}
+		args := systemdArgs(opts, "show", "--property", "MainPID", "--value", UnitName)
 		out, err := opts.Run("systemctl", args...)
 		if err != nil {
 			return 0, false
@@ -1100,7 +1079,7 @@ func launchdDomain(opts Options) (string, error) {
 	if opts.System {
 		return "system", nil
 	}
-	gui := fmt.Sprintf("gui/%d", opts.UID)
+	gui := serviceDomain(false, opts.UID)
 	if launchctlDomainExists(opts, gui) {
 		return gui, nil
 	}
@@ -1142,11 +1121,7 @@ func runLaunchctl(opts Options, domain, plistPath string, plistExisted bool, che
 		return replaced, abandonLaunchd(opts, domain, plistPath, res, plistExisted, replaced, false, err)
 	}
 	if check.occupied {
-		probe := opts.ListenProbe
-		if probe == nil {
-			probe = config.ProbeListen
-		}
-		if err := waitListenReleased(probe, check.addr, deadline); err != nil {
+		if err := waitListenReleased(listenProbe(opts), check.addr, deadline); err != nil {
 			return replaced, abandonLaunchd(opts, domain, plistPath, res, plistExisted, replaced, true,
 				listenError(opts, configFilePath(opts), check.addr, err))
 		}
@@ -1165,10 +1140,7 @@ func runLaunchctl(opts Options, domain, plistPath string, plistExisted bool, che
 	if err == nil {
 		return replaced, nil
 	}
-	failure := fmt.Errorf("cannot run %s: %w", cmdline, err)
-	if msg := strings.TrimSpace(string(out)); msg != "" {
-		failure = fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-	}
+	failure := commandError("cannot run "+cmdline, out, err)
 	return replaced, abandonLaunchd(opts, domain, plistPath, res, plistExisted, replaced, true, failure)
 }
 
@@ -1359,10 +1331,7 @@ func bootoutService(opts Options, domain string, res *Result) error {
 	if exitStatus(err) == 3 {
 		return nil
 	}
-	if msg := strings.TrimSpace(string(out)); msg != "" {
-		return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-	}
-	return fmt.Errorf("cannot run %s: %w", cmdline, err)
+	return commandError("cannot run "+cmdline, out, err)
 }
 
 // exitStatus returns the exit code of a command error, or -1 when the error
@@ -1373,6 +1342,57 @@ func exitStatus(err error) int {
 		return exitErr.ExitCode()
 	}
 	return -1
+}
+
+// commandError names the command that failed in prefix and appends the output
+// it wrote, if any, so the message says both what failed and what the command
+// reported.
+func commandError(prefix string, out []byte, err error) error {
+	if msg := strings.TrimSpace(string(out)); msg != "" {
+		return fmt.Errorf("%s: %w: %s", prefix, err, msg)
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
+}
+
+// checkPlatform reports an error when the service commands do not run on
+// opts.GOOS.
+func checkPlatform(opts Options, action string) error {
+	switch opts.GOOS {
+	case "linux", "darwin":
+		return nil
+	}
+	return fmt.Errorf("cannot %s on platform %q", action, opts.GOOS)
+}
+
+// checkRoot enforces the rule that the system level runs as root and the user
+// level does not, so a user unit is never written where root would own it and
+// vice versa. command names the subcommand in the message.
+func checkRoot(opts Options, command string) error {
+	if opts.System && opts.EUID != 0 {
+		return fmt.Errorf("service %s --system must run as root", command)
+	}
+	if !opts.System && opts.EUID == 0 {
+		return fmt.Errorf("service %s without --system must not run as root; the user unit belongs to one account", command)
+	}
+	return nil
+}
+
+// systemdArgs prepends --user for the user level, so every systemctl and
+// journalctl call names the same unit or journal at the same level.
+func systemdArgs(opts Options, args ...string) []string {
+	if opts.System {
+		return args
+	}
+	return append([]string{"--user"}, args...)
+}
+
+// listenProbe returns the function that reports whether broker.listen can be
+// bound.
+func listenProbe(opts Options) func(string) error {
+	if opts.ListenProbe != nil {
+		return opts.ListenProbe
+	}
+	return config.ProbeListen
 }
 
 // waitReady waits until the Broker answering on this level's local socket is
@@ -1458,17 +1478,11 @@ func waitStatus(opts Options, deadline time.Time) (DegradedState, bool, error) {
 func serviceManagerState(opts Options, domain string) (string, error) {
 	switch opts.GOOS {
 	case "linux":
-		args := []string{"show", "-p", "ActiveState", "-p", "SubState", "-p", "ExecMainStatus", UnitName}
-		if !opts.System {
-			args = append([]string{"--user"}, args...)
-		}
+		args := systemdArgs(opts, "show", "-p", "ActiveState", "-p", "SubState", "-p", "ExecMainStatus", UnitName)
 		cmdline := strings.Join(append([]string{"systemctl"}, args...), " ")
 		out, err := opts.Run("systemctl", args...)
 		if err != nil {
-			if msg := strings.TrimSpace(string(out)); msg != "" {
-				return "", fmt.Errorf("%s: %w: %s", cmdline, err, msg)
-			}
-			return "", fmt.Errorf("%s: %w", cmdline, err)
+			return "", commandError(cmdline, out, err)
 		}
 		state := strings.Join(strings.Fields(string(out)), " ")
 		if state == "" {
@@ -1480,10 +1494,7 @@ func serviceManagerState(opts Options, domain string) (string, error) {
 		cmdline := "launchctl print " + target
 		out, err := opts.Run("launchctl", "print", target)
 		if err != nil {
-			if msg := strings.TrimSpace(string(out)); msg != "" {
-				return "", fmt.Errorf("%s: %w: %s", cmdline, err, msg)
-			}
-			return "", fmt.Errorf("%s: %w", cmdline, err)
+			return "", commandError(cmdline, out, err)
 		}
 		var parts []string
 		if m := launchdStatePattern.FindStringSubmatch(string(out)); m != nil {
@@ -1536,10 +1547,7 @@ func startupFailureReason(opts Options, since time.Time) string {
 		}
 		return lastStartupFailure(string(data), since)
 	}
-	args := []string{"-u", UnitName, "-n", "100", "--no-pager", "-o", "cat", "--since", "@" + strconv.FormatInt(since.Unix(), 10)}
-	if !opts.System {
-		args = append([]string{"--user"}, args...)
-	}
+	args := systemdArgs(opts, "-u", UnitName, "-n", "100", "--no-pager", "-o", "cat", "--since", "@"+strconv.FormatInt(since.Unix(), 10))
 	out, err := opts.Run("journalctl", args...)
 	if err != nil {
 		return ""
@@ -1817,18 +1825,12 @@ func runSystemctl(opts Options, res *Result) error {
 // runSystemctlCommand runs one systemctl command, records it and reports its
 // output on failure.
 func runSystemctlCommand(opts Options, res *Result, args ...string) error {
-	argv := append([]string{}, args...)
-	if !opts.System {
-		argv = append([]string{"--user"}, argv...)
-	}
+	argv := systemdArgs(opts, args...)
 	cmdline := strings.Join(append([]string{"systemctl"}, argv...), " ")
 	res.Commands = append(res.Commands, cmdline)
 	out, err := opts.Run("systemctl", argv...)
 	if err != nil {
-		if msg := strings.TrimSpace(string(out)); msg != "" {
-			return fmt.Errorf("cannot run %s: %w: %s", cmdline, err, msg)
-		}
-		return fmt.Errorf("cannot run %s: %w", cmdline, err)
+		return commandError("cannot run "+cmdline, out, err)
 	}
 	return nil
 }
