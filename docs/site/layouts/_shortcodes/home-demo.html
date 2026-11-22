@@ -15,9 +15,12 @@ It describes the enlarge control and is the fallback text inside the videos.
 @param {string} close The label of the close control.
 
 Both videos are 1458 x 918 px; the attributes keep the layout from shifting
-before the video loads.
+before the video loads. Both carry preload="none": the thumbnail shows a poster
+taken from the video's title card, chosen by page language, until autoplay
+begins, and the lightbox loads the video only when it opens and plays.
 */ -}}
 {{- $src := .Get "src" | default (printf "demo/demo-%s.mp4" .Page.Lang) -}}
+{{- $poster := printf "images/demo-poster-%s.jpg" .Page.Lang | relURL -}}
 {{- $alt := .Get "alt" -}}
 {{- $open := .Get "open" -}}
 {{- $close := .Get "close" -}}
@@ -25,12 +28,12 @@ before the video loads.
 {{- $descID := printf "home-demo-desc-%d" .Ordinal -}}
 <div class="home-demo">
   <button type="button" class="home-demo-thumb" aria-label="{{ $open }}" aria-haspopup="dialog" aria-describedby="{{ $descID }}">
-    <video class="home-demo-video" src="{{ $url }}" width="1458" height="918" muted loop playsinline preload="auto">{{ $alt }}</video>
+    <video class="home-demo-video" src="{{ $url }}" poster="{{ $poster }}" width="1458" height="918" muted loop playsinline preload="none">{{ $alt }}</video>
   </button>
   <p class="home-demo-description" id="{{ $descID }}">{{ $alt }}</p>
   <dialog class="home-demo-dialog" aria-label="{{ $open }}">
     <div class="home-demo-frame">
-      <video class="home-demo-full" src="{{ $url }}" width="1458" height="918" controls muted playsinline preload="metadata" aria-describedby="{{ $descID }}">{{ $alt }}</video>
+      <video class="home-demo-full" src="{{ $url }}" width="1458" height="918" controls muted playsinline preload="none" aria-describedby="{{ $descID }}">{{ $alt }}</video>
       <button type="button" class="home-demo-close">{{ $close }}</button>
     </div>
   </dialog>
