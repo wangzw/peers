@@ -132,19 +132,7 @@ func generateIdentity(dataDir string, now func() time.Time) (*identity, error) {
 		return nil, fmt.Errorf("%w: sync %s: %v", ErrIdentity, dataDir, err)
 	}
 
-	certPath := filepath.Join(dataDir, identityCertFileName)
-	if err := writeIdentityCertificate(dataDir, certPath, certDER); err != nil {
-		return nil, err
-	}
-
-	cert, err := parseIdentityCertificate(pem.EncodeToMemory(&pem.Block{
-		Type:  identityCertPEMType,
-		Bytes: certDER,
-	}))
-	if err != nil {
-		return nil, err
-	}
-	return newIdentity(priv, cert), nil
+	return installCertificate(dataDir, priv, certDER)
 }
 
 // generateCertificate issues a new self-signed certificate for an existing
@@ -154,6 +142,12 @@ func generateCertificate(dataDir string, priv ed25519.PrivateKey, now func() tim
 	if err != nil {
 		return nil, err
 	}
+	return installCertificate(dataDir, priv, certDER)
+}
+
+// installCertificate writes certDER as identity.crt and returns the in-memory
+// identity built from it.
+func installCertificate(dataDir string, priv ed25519.PrivateKey, certDER []byte) (*identity, error) {
 	certPath := filepath.Join(dataDir, identityCertFileName)
 	if err := writeIdentityCertificate(dataDir, certPath, certDER); err != nil {
 		return nil, err
@@ -371,62 +365,61 @@ func encodeIdentityPrivateKey(priv ed25519.PrivateKey) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: identityKeyPEMType, Bytes: der}), nil
 }
 
+// writeIdentityTempFile creates a temporary file in dir with the restricted
+// identity file mode and writes data to it. The caller owns the returned path
+// and must link or rename it into place, then remove it.
+func writeIdentityTempFile(dir, path string, data []byte) (string, error) {
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	remove := func() { _ = os.Remove(tmpPath) }
+
+	if err := tmp.Chmod(identityFileMode); err != nil {
+		_ = tmp.Close()
+		remove()
+		return "", err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		remove()
+		return "", err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		remove()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		remove()
+		return "", err
+	}
+	return tmpPath, nil
+}
+
 // writeIdentityFileExclusive writes data to a temporary file in dir, fsyncs it
 // and links it into place. Linking fails when path already exists, which keeps
 // the exclusive-create semantics of os.O_EXCL: two generators cannot both
 // install a key. The target never holds a partial file because only the link
 // makes it visible, and the temporary file is removed on every path.
 func writeIdentityFileExclusive(dir, path string, data []byte) error {
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	tmpPath, err := writeIdentityTempFile(dir, path, data)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-
-	if err := tmp.Chmod(identityFileMode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
 	return os.Link(tmpPath, path)
 }
 
 // writeIdentityFileAtomic writes data to a temporary file in dir, fsyncs it,
 // renames it over path and fsyncs the directory.
 func writeIdentityFileAtomic(dir, path string, data []byte) error {
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	tmpPath, err := writeIdentityTempFile(dir, path, data)
 	if err != nil {
 		return err
 	}
-	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-
-	if err := tmp.Chmod(identityFileMode); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
