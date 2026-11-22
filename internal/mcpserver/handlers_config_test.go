@@ -110,7 +110,7 @@ func TestGetConfig(t *testing.T) {
 			},
 		})
 
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 		defer cancel()
 		out, err := h.GetConfig(ctx, GetConfigIn{})
 		if err != nil {
@@ -156,7 +156,7 @@ func TestGetConfig(t *testing.T) {
 			},
 		})
 
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 		defer cancel()
 		_, err := h.GetConfig(ctx, GetConfigIn{Key: "broker.alias"})
 		if err == nil {
@@ -205,7 +205,7 @@ func TestSetBrokerOnline(t *testing.T) {
 				},
 			})
 
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 			defer cancel()
 			out, err := h.SetBrokerOnline(ctx, SetBrokerOnlineIn{Online: tc.online})
 			if err != nil {
@@ -240,7 +240,7 @@ func TestSetBrokerOnline(t *testing.T) {
 			},
 		})
 
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 		defer cancel()
 		_, err := h.SetBrokerOnline(ctx, SetBrokerOnlineIn{Online: false})
 		if err == nil {
@@ -273,7 +273,7 @@ func TestSetConfig(t *testing.T) {
 			},
 		})
 
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 		defer cancel()
 		out, err := h.SetConfig(ctx, SetConfigIn{Key: "link.keepalive_interval", Value: "15s"})
 		if err != nil {
@@ -327,7 +327,7 @@ func TestSetConfig(t *testing.T) {
 				},
 			})
 
-			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 			defer cancel()
 			_, err := h.SetConfig(ctx, SetConfigIn{Key: "k", Value: "v"})
 			if err == nil {
@@ -356,7 +356,7 @@ func TestSetConfig(t *testing.T) {
 			},
 		})
 
-		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), eventTimeout)
 		defer cancel()
 		_, err := h.SetConfig(ctx, SetConfigIn{Key: "broker.alias", Value: "b"})
 		if err == nil {

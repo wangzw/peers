@@ -148,7 +148,7 @@ func TestRunStatusSelectorError(t *testing.T) {
 func TestRunStatusUnreachable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.sock")
 	var got bytes.Buffer
-	err := within(t, 3*time.Second, func() error {
+	err := within(t, eventTimeout, func() error {
 		return RunStatus(t.Context(), fixedSelector(path), &got)
 	})
 	if err == nil {
@@ -982,8 +982,8 @@ func TestRunAuditCancel(t *testing.T) {
 
 	select {
 	case <-sent:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the Audit handler did not send its event within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("the Audit handler did not send its event within %s", eventTimeout)
 	}
 
 	cancel()
@@ -992,8 +992,8 @@ func TestRunAuditCancel(t *testing.T) {
 		// The cancellation is the point of the test; the error itself is
 		// the reported context error and is not asserted here.
 		_ = err
-	case <-time.After(3 * time.Second):
-		t.Fatal("RunAudit did not return within 3s after the context was cancelled")
+	case <-time.After(eventTimeout):
+		t.Fatalf("RunAudit did not return within %s after the context was cancelled", eventTimeout)
 	}
 }
 

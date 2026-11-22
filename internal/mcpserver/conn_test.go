@@ -141,10 +141,12 @@ func TestDialLocalRefusesForeignPeer(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cc.Close() })
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	if _, err := hello(ctx, c, localpb.ProtocolVersion); err == nil {
 		t.Fatal("hello succeeded on a connection served by another account")
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hello timed out instead of refusing the foreign peer: %v", err)
 	}
 }
 
@@ -297,7 +299,9 @@ func TestWaitNotReady(t *testing.T) {
 			t.Fatalf("hello: %v", err)
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// The context outlives the fallback below by far, so a timely return
+		// can only come from the Broker stopping, not from the context ending.
+		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 		defer cancel()
 
 		srv.Stop()
@@ -308,8 +312,11 @@ func TestWaitNotReady(t *testing.T) {
 		}()
 		select {
 		case <-done:
-		case <-time.After(2 * time.Second):
-			t.Fatal("waitNotReady did not return within 2s of the Broker stopping")
+			if ctx.Err() != nil {
+				t.Fatalf("waitNotReady returned on ctx ending (%v), want the Broker stopping", ctx.Err())
+			}
+		case <-time.After(eventTimeout):
+			t.Fatalf("waitNotReady did not return within %s of the Broker stopping", eventTimeout)
 		}
 	})
 }

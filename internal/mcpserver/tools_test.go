@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -148,7 +147,7 @@ func connectTestClient(t *testing.T, ts toolSet) *mcp.ClientSession {
 
 func callTool(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	res, err := cs.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
 	if err != nil {
@@ -159,7 +158,7 @@ func callTool(t *testing.T, cs *mcp.ClientSession, name string, args map[string]
 
 func listTools(t *testing.T, cs *mcp.ClientSession) map[string]*mcp.Tool {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	res, err := cs.ListTools(ctx, nil)
 	if err != nil {

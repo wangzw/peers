@@ -52,7 +52,7 @@ func startRunClient(t *testing.T, opts Options) *runHandle {
 	}()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	connectCtx, connectCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer connectCancel()
 	cs, err := client.Connect(connectCtx, clientTransport, nil)
 	if err != nil {
@@ -72,7 +72,7 @@ func (h *runHandle) stop(t *testing.T) {
 		h.cancel()
 		select {
 		case <-h.done:
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Error("Run did not return after the MCP client closed")
 		}
 	})
@@ -131,7 +131,7 @@ func runTestOptions(t *testing.T, clock *loopClock, env map[string]string) Optio
 // connection loop is in a backoff wait.
 func runNextRegister(t *testing.T, srv *fakelocal.Server, clock *loopClock) *fakelocal.RegisterConn {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		conn, err := srv.NextRegister(ctx)
@@ -159,7 +159,7 @@ func runWaitJoinTopic(t *testing.T, srv *fakelocal.Server, name string) *localpb
 // for name after the first skip requests and returns that request.
 func runWaitJoinTopicAfter(t *testing.T, srv *fakelocal.Server, name string, skip int) *localpb.JoinTopicRequest {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		reqs := topicsJoinRequests(srv)
 		for _, req := range reqs[min(skip, len(reqs)):] {
@@ -191,7 +191,7 @@ func runJoinTopicNames(srv *fakelocal.Server, skip int) []string {
 // registration_complete event has been applied.
 func runWaitRegistered(t *testing.T, cs *mcp.ClientSession) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		if res := callTool(t, cs, "list_agents", nil); !res.IsError {
 			return
@@ -218,17 +218,17 @@ func TestRunHandshakeWithoutBroker(t *testing.T) {
 		select {
 		case err := <-done:
 			_ = err
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Error("Run did not return at cleanup")
 		}
 	})
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil)
-	connectCtx, connectCancel := context.WithTimeout(context.Background(), time.Second)
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer connectCancel()
 	cs, err := client.Connect(connectCtx, clientTransport, nil)
 	if err != nil {
-		t.Fatalf("MCP handshake did not complete within 1s: %v", err)
+		t.Fatalf("MCP handshake did not complete within %s: %v", eventTimeout, err)
 	}
 	t.Cleanup(func() { _ = cs.Close() })
 
@@ -244,7 +244,7 @@ func TestRunHandshakeWithoutBroker(t *testing.T) {
 // set up" and asks the caller to retry.
 func runWaitUnavailableError(t *testing.T, cs *mcp.ClientSession) *mcp.CallToolResult {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for {
 		res := callTool(t, cs, "list_agents", nil)
 		if res.IsError && !strings.Contains(textContent(t, res), textStarting) {
@@ -537,7 +537,7 @@ func TestRunForgetsManualTopicsAcrossProcesses(t *testing.T) {
 
 	// Turning the session off: the first Run ends and the second starts over.
 	first.cancel()
-	if err := first.wait(t, 3*time.Second); err != nil {
+	if err := first.wait(t, eventTimeout); err != nil {
 		t.Fatalf("Run returned %v, want nil", err)
 	}
 	second := startRunClient(t, opts)
@@ -592,13 +592,13 @@ func TestRunCancelClosesRegisterStream(t *testing.T) {
 
 	conn := runNextRegister(t, srv, clock)
 	h.cancel()
-	if err := h.wait(t, 3*time.Second); err != nil {
+	if err := h.wait(t, eventTimeout); err != nil {
 		t.Fatalf("Run returned %v, want nil", err)
 	}
 	select {
 	case <-conn.Done():
-	case <-time.After(3 * time.Second):
-		t.Fatal("the Register stream was still open after Run returned")
+	case <-time.After(eventTimeout):
+		t.Fatalf("the Register stream was still open after Run returned (%s)", eventTimeout)
 	}
 }
 
@@ -666,7 +666,7 @@ func TestRunSendsInjectedProtocolVersion(t *testing.T) {
 	})
 	h := startRunClient(t, opts)
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	var text string
 	for time.Now().Before(deadline) {
 		res := callTool(t, h.cs, "list_agents", nil)
@@ -703,7 +703,7 @@ func TestRunReportsNoBroker(t *testing.T) {
 	opts := runTestOptions(t, clock, map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/s"})
 	h := startRunClient(t, opts)
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	var text string
 	for time.Now().Before(deadline) {
 		res := callTool(t, h.cs, "list_agents", nil)

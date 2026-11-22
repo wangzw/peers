@@ -65,7 +65,7 @@ func TestQueryUpdateStatus(t *testing.T) {
 	}})
 	cc := dialUpdateStatusServer(t, lis)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	got, err := queryUpdateStatus(ctx, cc)
 	if err != nil {
@@ -87,7 +87,7 @@ func TestQueryUpdateStatusNoAvailableVersion(t *testing.T) {
 	}})
 	cc := dialUpdateStatusServer(t, lis)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	got, err := queryUpdateStatus(ctx, cc)
 	if err != nil {
@@ -103,7 +103,7 @@ func TestQueryUpdateStatusUnimplemented(t *testing.T) {
 	lis := startUpdateStatusServer(t, nil)
 	cc := dialUpdateStatusServer(t, lis)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	_, err := queryUpdateStatus(ctx, cc)
 	if status.Code(err) != codes.Unimplemented {

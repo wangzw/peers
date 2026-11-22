@@ -401,24 +401,24 @@ func topicsRaceHandlers(client localpb.LocalClient, mem *topicMemory) *handlers 
 	return &handlers{st: st, topics: mem, log: topicsLogger()}
 }
 
-// waitClosed waits up to three seconds for done to be closed.
+// waitClosed waits up to eventTimeout for done to be closed.
 func waitClosed(t *testing.T, done <-chan struct{}, what string) {
 	t.Helper()
 	select {
 	case <-done:
-	case <-time.After(3 * time.Second):
-		t.Fatalf("%s did not finish within 3s", what)
+	case <-time.After(eventTimeout):
+		t.Fatalf("%s did not finish within %s", what, eventTimeout)
 	}
 }
 
-// waitErr waits up to three seconds for an error from a call goroutine.
+// waitErr waits up to eventTimeout for an error from a call goroutine.
 func waitErr(t *testing.T, done <-chan error, what string) error {
 	t.Helper()
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(3 * time.Second):
-		t.Fatalf("%s did not return within 3s", what)
+	case <-time.After(eventTimeout):
+		t.Fatalf("%s did not return within %s", what, eventTimeout)
 		return nil
 	}
 }
@@ -982,9 +982,9 @@ func TestRestorerRestoresTopicsAcrossSessionsSharingOneBucket(t *testing.T) {
 	}()
 	select {
 	case <-restored:
-	case <-time.After(10 * time.Second):
+	case <-time.After(eventTimeout):
 		stopDrive()
-		t.Fatal("the sessions did not finish restoring within 10s")
+		t.Fatalf("the sessions did not finish restoring within %s", eventTimeout)
 	}
 	stopDrive()
 	waitDrive()
@@ -1051,8 +1051,8 @@ func waitForRetriesOrStop(t *testing.T, enough, stopped <-chan struct{}, attempt
 	case <-enough:
 	case <-stopped:
 		t.Fatalf("the restore stopped after %d attempts, want it to keep retrying", attempts.Load())
-	case <-time.After(10 * time.Second):
-		t.Fatalf("the restore made no further attempts within 10s (after %d)", attempts.Load())
+	case <-time.After(eventTimeout):
+		t.Fatalf("the restore made no further attempts within %s (after %d)", eventTimeout, attempts.Load())
 	}
 }
 
@@ -1119,7 +1119,7 @@ func TestRestorerRetriesQuantityRefusalUntilASlotFrees(t *testing.T) {
 
 	select {
 	case <-stopped:
-	case <-time.After(10 * time.Second):
+	case <-time.After(eventTimeout):
 		stopDrive()
 		t.Fatal("the restore did not finish after a slot was freed")
 	}
@@ -1168,7 +1168,7 @@ func TestRestorerKeepsTopicWhenConnectionEndsDuringQuotaRetry(t *testing.T) {
 	cancel()
 	select {
 	case <-stopped:
-	case <-time.After(10 * time.Second):
+	case <-time.After(eventTimeout):
 		stopDrive()
 		t.Fatal("the restore kept retrying after the connection ended")
 	}
@@ -1219,7 +1219,7 @@ func TestRestorerRetryGoroutineExitsWhenConnectionEnds(t *testing.T) {
 	}()
 	select {
 	case <-exited:
-	case <-time.After(10 * time.Second):
+	case <-time.After(eventTimeout):
 		stopDrive()
 		t.Fatal("the retry goroutine did not exit after the connection ended")
 	}
@@ -1301,7 +1301,7 @@ func TestRestorerQuotaRefusalDoesNotBlockLaterTopics(t *testing.T) {
 	cancel()
 	select {
 	case <-stopped:
-	case <-time.After(3 * time.Second):
+	case <-time.After(eventTimeout):
 		stopDrive()
 		t.Fatal("the restore did not stop after the registration context ended")
 	}
@@ -1394,8 +1394,8 @@ func TestRestorerStopsRetryingAfterLeaveTopic(t *testing.T) {
 	}()
 	select {
 	case <-firstAttempt:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the restore did not attempt to join a within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("the restore did not attempt to join a within %s", eventTimeout)
 	}
 
 	// The restore is now waiting for its next pass; the leave lands meanwhile.
@@ -1481,8 +1481,8 @@ func TestRestorerStopsOnRevocationAndRestoresOnReRegister(t *testing.T) {
 	}
 	select {
 	case <-attempted:
-	case <-time.After(3 * time.Second):
-		t.Fatal("the restore did not attempt a join within 3s")
+	case <-time.After(eventTimeout):
+		t.Fatalf("the restore did not attempt a join within %s", eventTimeout)
 	}
 
 	// Revoke the registration on the stream and make the Broker refuse the live

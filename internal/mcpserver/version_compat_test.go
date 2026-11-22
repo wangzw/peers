@@ -83,7 +83,7 @@ func versionMismatchRejecter(hellos *atomic.Int64) fakelocal.Handlers {
 // list_agents answers that the Broker is still being set up.
 func versionWaitMismatch(t *testing.T, cs *mcp.ClientSession) string {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(eventTimeout)
 	for time.Now().Before(deadline) {
 		res := callTool(t, cs, "list_agents", nil)
 		text := textContent(t, res)
@@ -269,7 +269,7 @@ func TestMismatchRecoversAfterBrokerRestart(t *testing.T) {
 	version.Store(localpb.ProtocolVersion)
 	srv.Restart()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
 	conn, err := srv.NextRegister(ctx)
 	if err != nil {

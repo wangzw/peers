@@ -290,8 +290,16 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 		if err == nil {
 			t.Fatal("leave_topic returned no error after its context ended")
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("leave_topic kept waiting for the topic lock after its context ended")
+	case <-time.After(eventTimeout):
+		t.Fatalf("leave_topic kept waiting for the topic lock after its context ended (%s)", eventTimeout)
+	}
+	// The join still holds the lock, so leave_topic must not have taken it. If
+	// the join has already finished here, leave_topic ignored its context and
+	// queued behind the lock until the Broker answered instead of ending on it.
+	select {
+	case err := <-joinDone:
+		t.Fatalf("leave_topic took the topic lock while the join was still running (join_topic returned %v)", err)
+	default:
 	}
 
 	// A registration that ends while it waits for the lock returns too, so a
