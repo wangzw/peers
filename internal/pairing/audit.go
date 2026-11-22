@@ -52,8 +52,7 @@ func newPairingAuditEvent(kind config.EventKind, now time.Time, fp Fingerprint, 
 		Detail:   detail,
 		MergeKey: mergeKey,
 	}
-	var zero Fingerprint
-	if fp != zero {
+	if !fp.IsZero() {
 		e.Peer = &config.PeerRef{Fingerprint: [32]byte(fp), Alias: alias}
 	}
 	return e

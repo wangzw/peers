@@ -70,6 +70,17 @@ func sameEntry(a, b *peerEntry) bool {
 		a.lastConnected == b.lastConnected
 }
 
+// clonePeerMap returns a shallow copy of the table map. Entries are shared with
+// the source, so a caller that changes one must clone that entry before
+// storing it.
+func clonePeerMap(peers map[Fingerprint]*peerEntry) map[Fingerprint]*peerEntry {
+	out := make(map[Fingerprint]*peerEntry, len(peers)+1)
+	for fp, e := range peers {
+		out[fp] = e
+	}
+	return out
+}
+
 // effectiveAlias is the alias used to address this peer: the local alias when
 // one was assigned, otherwise the self-reported alias.
 func (e *peerEntry) effectiveAlias() string {
@@ -348,22 +359,11 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (replac
 			}
 		}
 	}
-	for otherFP, other := range t.peers {
-		if otherFP == e.fingerprint {
-			continue
-		}
-		if other.effectiveAlias() == eff {
-			return replaced, "", false, fmt.Errorf("%w: alias %q belongs to %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
-		}
-		if other.retiresAlias(eff) {
-			return replaced, "", false, fmt.Errorf("%w: alias %q was given up by %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
-		}
+	if err := t.checkAliasFreeLocked(eff, e.fingerprint); err != nil {
+		return replaced, "", false, err
 	}
 
-	next := make(map[Fingerprint]*peerEntry, len(t.peers)+1)
-	for fp, p := range t.peers {
-		next[fp] = p
-	}
+	next := clonePeerMap(t.peers)
 	entry := e.clone()
 	next[e.fingerprint] = &entry
 	if err := t.writeLocked(next); err != nil {
@@ -380,6 +380,24 @@ func (t *peerTable) putLocked(e peerEntry, token uint64, handshake bool) (replac
 	return replaced, entry.effectiveAlias(), frozen, nil
 }
 
+// checkAliasFreeLocked reports whether eff names no other peer: it is neither
+// another peer's effective alias nor an alias another peer gave up. It requires
+// t.mu to be held.
+func (t *peerTable) checkAliasFreeLocked(eff string, fp Fingerprint) error {
+	for otherFP, other := range t.peers {
+		if otherFP == fp {
+			continue
+		}
+		if other.effectiveAlias() == eff {
+			return fmt.Errorf("%w: alias %q belongs to %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
+		}
+		if other.retiresAlias(eff) {
+			return fmt.Errorf("%w: alias %q was given up by %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
+		}
+	}
+	return nil
+}
+
 // ensureReservationLocked makes token cover eff. When the effective alias
 // changed between reserving and committing, the token moves from the alias it
 // held to eff, provided eff is free. A token that is no longer reserved, or an
@@ -394,16 +412,8 @@ func (t *peerTable) ensureReservationLocked(eff string, token uint64, fp Fingerp
 	if eff == ownAlias {
 		return fmt.Errorf("%w: alias %q is the Broker's own alias", ErrNeedsLocalAlias, eff)
 	}
-	for otherFP, other := range t.peers {
-		if otherFP == fp {
-			continue
-		}
-		if other.effectiveAlias() == eff {
-			return fmt.Errorf("%w: alias %q belongs to %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
-		}
-		if other.retiresAlias(eff) {
-			return fmt.Errorf("%w: alias %q was given up by %s", ErrNeedsLocalAlias, eff, fingerprintHex(otherFP))
-		}
+	if err := t.checkAliasFreeLocked(eff, fp); err != nil {
+		return err
 	}
 	for otherToken, owner := range t.reserved[eff] {
 		if owner != fp && otherToken != token {
@@ -429,13 +439,8 @@ func (t *peerTable) remove(fp Fingerprint) (removed *peerEntry, existed bool, er
 	if !ok {
 		return nil, false, nil
 	}
-	next := make(map[Fingerprint]*peerEntry, len(t.peers))
-	for otherFP, p := range t.peers {
-		if otherFP == fp {
-			continue
-		}
-		next[otherFP] = p
-	}
+	next := clonePeerMap(t.peers)
+	delete(next, fp)
 	if err := t.writeLocked(next); err != nil {
 		return nil, true, err
 	}
@@ -849,14 +854,8 @@ func (t *peerTable) observeAlias(fp Fingerprint, alias string) (localAlias strin
 		return "", false, nil
 	}
 
-	updated := make(map[Fingerprint]*peerEntry, len(t.peers))
-	for otherFP, e := range t.peers {
-		if otherFP == fp {
-			updated[otherFP] = &next
-			continue
-		}
-		updated[otherFP] = e
-	}
+	updated := clonePeerMap(t.peers)
+	updated[fp] = &next
 	if err := t.writeLocked(updated); err != nil {
 		return "", false, err
 	}
@@ -908,14 +907,8 @@ func (t *peerTable) updateSource(fp Fingerprint, source AddressSource, addrs []c
 
 // replaceLocked persists next as the entry for fp. It requires t.mu to be held.
 func (t *peerTable) replaceLocked(fp Fingerprint, next *peerEntry) error {
-	updated := make(map[Fingerprint]*peerEntry, len(t.peers))
-	for otherFP, e := range t.peers {
-		if otherFP == fp {
-			updated[otherFP] = next
-			continue
-		}
-		updated[otherFP] = e
-	}
+	updated := clonePeerMap(t.peers)
+	updated[fp] = next
 	if err := t.writeLocked(updated); err != nil {
 		return err
 	}
@@ -974,10 +967,9 @@ func (p *Pairing) now() time.Time {
 	return time.Now()
 }
 
-// fingerprintHex renders a fingerprint as 64 lowercase hex characters without
-// depending on Fingerprint.String, which another file owns.
+// fingerprintHex renders a fingerprint as 64 lowercase hex characters.
 func fingerprintHex(fp Fingerprint) string {
-	return hex.EncodeToString(fp[:])
+	return fp.String()
 }
 
 // --- JSON encoding ---------------------------------------------------------
