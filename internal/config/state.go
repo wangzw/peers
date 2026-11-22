@@ -14,11 +14,16 @@ func (c *core) getLocked(key string) (Value, error) {
 	if !ok {
 		return Value{}, fmt.Errorf("%w: %s", ErrUnknownKey, key)
 	}
-	v := c.values[key]
+	return presentedValue(spec, c.values[key]), nil
+}
+
+// presentedValue returns the value a caller may see for a key. A secret key
+// exposes only whether it is set, so its text never leaves this package.
+func presentedValue(spec *keySpec, v Value) Value {
 	if spec.Secret {
-		return Value{Kind: KindSecret, SecretIsSet: v.String != ""}, nil
+		return Value{Kind: KindSecret, SecretIsSet: v.String != ""}
 	}
-	return copyValue(v), nil
+	return copyValue(v)
 }
 
 func (c *core) allLocked() []Entry {
@@ -26,13 +31,7 @@ func (c *core) allLocked() []Entry {
 	out := make([]Entry, 0, len(names))
 	for _, name := range names {
 		spec, _ := lookupKey(name)
-		v := c.values[name]
-		if spec.Secret {
-			v = Value{Kind: KindSecret, SecretIsSet: v.String != ""}
-		} else {
-			v = copyValue(v)
-		}
-		out = append(out, Entry{Key: name, Value: v})
+		out = append(out, Entry{Key: name, Value: presentedValue(spec, c.values[name])})
 	}
 	return out
 }
@@ -106,7 +105,7 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 		}
 		effective = parsed
 	}
-	inGroup := key == "broker.listen" || key == "broker.advertise" || key == "broker.advertise_extra"
+	inGroup := isAddressGroupKey(key)
 	var newAdvertised []AdvertisedAddr
 	if inGroup {
 		adv, err := c.buildAdvertised(candidate, effective, true)
@@ -222,8 +221,8 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 }
 
 func ptrValue(v Value) *Value {
-	copy := copyValue(v)
-	return &copy
+	out := copyValue(v)
+	return &out
 }
 
 func copyValues(in map[string]Value) map[string]Value {
@@ -422,10 +421,7 @@ func (c *core) reloadLocked() (configBytes, error) {
 	// reference to the live map would make every later comparison see the new
 	// value as old and skip the effective listen address and ticker updates.
 	values := copyValues(c.values)
-	group := []string{"broker.listen", "broker.advertise", "broker.advertise_extra"}
-	isGroup := func(name string) bool {
-		return name == "broker.listen" || name == "broker.advertise" || name == "broker.advertise_extra"
-	}
+	group := addressGroupKeys
 
 	if c.listenOverride {
 		c.noteIgnoredListen(doc)
@@ -575,7 +571,7 @@ func (c *core) reloadLocked() (configBytes, error) {
 	}
 
 	for _, name := range allKeyNames() {
-		if isGroup(name) || name == "broker.alias" || groupForKey(name) != nil {
+		if isAddressGroupKey(name) || name == "broker.alias" || groupForKey(name) != nil {
 			continue
 		}
 		if bad, ok := doc.invalid[name]; ok {

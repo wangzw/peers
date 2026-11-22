@@ -383,6 +383,21 @@ var crossKeyGroups = [][]string{
 	{"link.keepalive_interval", "link.keepalive_timeout"},
 }
 
+// addressGroupKeys are the keys that together determine the effective listen
+// address and the advertised address list. Set and reload judge them as one
+// group.
+var addressGroupKeys = []string{"broker.listen", "broker.advertise", "broker.advertise_extra"}
+
+// isAddressGroupKey reports whether key belongs to the address group.
+func isAddressGroupKey(name string) bool {
+	for _, key := range addressGroupKeys {
+		if key == name {
+			return true
+		}
+	}
+	return false
+}
+
 // groupForKey returns the cross-key group containing key, or nil when key has
 // no group. The returned slice must not be modified.
 func groupForKey(key string) []string {

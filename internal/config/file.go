@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sys/unix"
@@ -41,6 +42,15 @@ type configDocument struct {
 	// a document built by parseConfigFile during a reload leaves this field
 	// zero.
 	contentHash [32]byte
+}
+
+// asEmpty records that data held no YAML document and returns the document
+// carrying its leading comment and the exact parsed bytes.
+func (d configDocument) asEmpty(data []byte) configDocument {
+	d.empty = true
+	d.headComment = leadingComment(data)
+	d.raw = append([]byte(nil), data...)
+	return d
 }
 
 func emptyDocument() configDocument {
@@ -121,10 +131,7 @@ func parseConfigFile(data []byte) (configDocument, error) {
 	var parsed yaml.Node
 	err := dec.Decode(&parsed)
 	if errors.Is(err, io.EOF) {
-		doc.empty = true
-		doc.headComment = leadingComment(data)
-		doc.raw = append([]byte(nil), data...)
-		return doc, nil
+		return doc.asEmpty(data), nil
 	}
 	if err != nil {
 		return configDocument{}, fmt.Errorf("config file parse error: %w", err)
@@ -138,18 +145,12 @@ func parseConfigFile(data []byte) (configDocument, error) {
 	root := &parsed
 	if root.Kind == yaml.DocumentNode {
 		if len(root.Content) == 0 {
-			doc.empty = true
-			doc.headComment = leadingComment(data)
-			doc.raw = append([]byte(nil), data...)
-			return doc, nil
+			return doc.asEmpty(data), nil
 		}
 		root = root.Content[0]
 	}
 	if root == nil || root.Kind == 0 {
-		doc.empty = true
-		doc.headComment = leadingComment(data)
-		doc.raw = append([]byte(nil), data...)
-		return doc, nil
+		return doc.asEmpty(data), nil
 	}
 	// checkStructure runs before the top-level kind check so a document whose
 	// first node is an alias is refused as an anchor or alias, not as a
@@ -508,7 +509,7 @@ func (d *configDocument) setKey(key string, v Value) error {
 func encodeValueNode(spec *keySpec, v Value) *yaml.Node {
 	switch spec.Kind {
 	case keyBool:
-		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: boolText(v.Bool)}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(v.Bool)}
 	case keyInt:
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: fmt.Sprintf("%d", v.Int)}
 	case keyDuration:
@@ -522,13 +523,6 @@ func encodeValueNode(spec *keySpec, v Value) *yaml.Node {
 	default: // keyString, keySecret
 		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v.String}
 	}
-}
-
-func boolText(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
 }
 
 // encodeValueText encodes v as the YAML text that follows "<leaf>: " in a
