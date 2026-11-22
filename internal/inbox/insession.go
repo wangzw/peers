@@ -1,8 +1,8 @@
 package inbox
 
 import (
-	"bytes"
 	"os"
+	"strings"
 )
 
 // sessionEnvVar is the environment variable with which Claude Code marks the
@@ -92,7 +92,7 @@ func sessionRecordExists(configDir string, pid int) bool {
 func environmentHasSession(env []string) bool {
 	prefix := sessionEnvVar + "="
 	for _, entry := range env {
-		if len(entry) > len(prefix) && entry[:len(prefix)] == prefix {
+		if strings.HasPrefix(entry, prefix) && len(entry) > len(prefix) {
 			return true
 		}
 	}
@@ -103,19 +103,7 @@ func environmentHasSession(env []string) bool {
 // entries, such as the padding zeros the kernel places between the argument and
 // environment areas, are dropped.
 func parseNulList(data []byte) []string {
-	var entries []string
-	for len(data) > 0 {
-		end := bytes.IndexByte(data, 0)
-		if end < 0 {
-			entries = append(entries, string(data))
-			break
-		}
-		if end > 0 {
-			entries = append(entries, string(data[:end]))
-		}
-		data = data[end+1:]
-	}
-	return entries
+	return strings.FieldsFunc(string(data), func(r rune) bool { return r == 0 })
 }
 
 // parseProcargs2 returns the strings packed by the macOS kern.procargs2 sysctl.

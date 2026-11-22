@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 // maxRecordSize is the largest session registry record the package reads. It
@@ -71,16 +72,13 @@ func recordFile(configDir string, pid int) string {
 // parseRecordName accepts the canonical "<pid>.json" spelling only. It rejects
 // names such as "007.json" because strconv.Itoa would not reproduce them.
 func parseRecordName(name string) (int, bool) {
-	const suffix = ".json"
-	if len(name) <= len(suffix) || name[len(name)-len(suffix):] != suffix {
+	digits, ok := strings.CutSuffix(name, ".json")
+	if !ok || digits == "" {
 		return 0, false
 	}
-	digits := name[:len(name)-len(suffix)]
-	for i := 0; i < len(digits); i++ {
-		if digits[i] < '0' || digits[i] > '9' {
-			return 0, false
-		}
-	}
+	// Atoi rejects non-digits but accepts a sign and leading zeros, so pid <= 0
+	// rejects a negative value and the round trip through Itoa rejects "+7" and
+	// other spellings such as "007".
 	pid, err := strconv.Atoi(digits)
 	if err != nil || pid <= 0 || strconv.Itoa(pid) != digits {
 		return 0, false

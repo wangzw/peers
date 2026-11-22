@@ -83,12 +83,10 @@ func classifySendError(err error) error {
 	// The half-close failed after the line was written.
 	case strings.HasPrefix(msg, "ccsock: half-closing"):
 		return ErrUncertain
-	// A write-phase failure may have written some or all of the line.
+	// A write-phase failure, including one this switch does not name, may have
+	// written some or all of the line.
 	case strings.HasPrefix(msg, "ccsock: writing to"):
 		return ErrUncertain
-	case errors.As(err, &opErr):
-		return ErrUncertain
-	default:
-		return ErrUncertain
 	}
+	return ErrUncertain
 }

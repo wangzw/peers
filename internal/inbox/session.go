@@ -28,12 +28,13 @@ func Lookup(configDir, socketPath string) (Session, error) {
 	if socketPath == "" {
 		return Session{}, ErrNoRecord
 	}
-	entries, err := os.ReadDir(sessionsDir(dir))
+	sessions := sessionsDir(dir)
+	entries, err := os.ReadDir(sessions)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			return Session{}, ErrNoRecord
 		}
-		return Session{}, fmt.Errorf("cannot read the session registry %q: %w", sessionsDir(dir), err)
+		return Session{}, fmt.Errorf("cannot read the session registry %q: %w", sessions, err)
 	}
 
 	var (
@@ -46,7 +47,7 @@ func Lookup(configDir, socketPath string) (Session, error) {
 		if !ok {
 			continue
 		}
-		path := filepath.Join(sessionsDir(dir), entry.Name())
+		path := filepath.Join(sessions, entry.Name())
 		s, err := readRecord(path, pid)
 		if err != nil {
 			// A half-written, replaced or vanished record is skipped; one
