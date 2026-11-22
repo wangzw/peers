@@ -1,281 +1,281 @@
 # topic
 
-## 问题陈述
+## Problem Statement
 
-配对后的两台主机上可能各有多个会话在做互不相关的工作。Agent 需要一个范围来限定谁能看见自己、谁能给自己发消息，并且在同一个项目里工作的 Agent 应当不经额外操作就处在同一个范围内。
+After pairing, the two hosts may each have several sessions doing unrelated work. An agent needs a scope that limits who can see it and who can send it messages, and agents working in the same project should be in the same scope without extra action.
 
-## 范围
+## Scope
 
-本文档覆盖 [topic](../../glossary.md) 的加入与退出、可见性规则、topic 的公开与不公开、默认 topic 的确定。
+This document covers joining and leaving a [topic](../../glossary.md), the visibility rules, a topic being public or not, and how the default topic is determined.
 
-### 范围外
+### Out of Scope
 
-- topic 的管理员、邀请与审批。知道名字即可加入。
-- 向整个 topic 群发消息。
-- 按对端区分的可见性。一个 Agent 在某个 topic 里，就对所有已连接且在该 topic 有成员的对端可见。
+- topic administrators, invitations and approvals. Knowing the name is enough to join.
+- Broadcasting a message to an entire topic.
+- Visibility distinguished by peer. An agent in a topic is visible to every connected peer that has a member in that topic.
 
-## 参与者
+## Actors
 
-| 参与者 | 权限 |
+| Actor | Authority |
 |---|---|
-| Agent | 加入和退出 topic，把 topic 声明为公开，列出自己所在的 topic 和已知的公开 topic。 |
-| 用户 | 在项目配置文件里声明该项目的 topic，在 Broker 配置或项目配置文件里关闭自动加入。 |
+| agent | Joins and leaves topics, declares a topic public, lists the topics it is in and the known public topics. |
+| User | Declares the project's topics in the project configuration file, and turns auto-join off in the Broker configuration or the project configuration file. |
 
-## 功能需求
+## Functional Requirements
 
 ### REQ-topics-001
 
-Agent 必须能按名字加入一个 topic。
+An agent MUST be able to join a topic by name.
 
-- **验收**：Agent 以名字 `release` 加入后，列出自己所在的 topic，结果包含 `release`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-001 join`
+- **Acceptance**: After an agent joins under the name `release`, listing the topics it is in contains `release`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-001 join`
 
 ### REQ-topics-002
 
-加入 topic 不得要求任何其他 Agent 或用户的批准，加入一个此前无人加入的 topic 时同样必须成功。
+Joining a topic MUST NOT require approval from any other agent or the user, and joining a topic no one has joined before MUST likewise succeed.
 
-- **验收**：以一个此前无人使用的名字加入，调用成功；另一个 Agent 以同名加入，调用成功，且两者互相可见。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-002 join new name without approval`
+- **Acceptance**: Joining under a name no one has used before succeeds; another agent joining under the same name also succeeds, and the two see each other.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-002 join new name without approval`
 
 ### REQ-topics-003
 
-Agent 必须能退出一个已加入的 topic。
+An agent MUST be able to leave a topic it has joined.
 
-- **验收**：退出后，列出自己所在的 topic，结果不含该 topic；与它只有该 topic 这一个共同 topic 的 Agent，其列表中不再出现它。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-003 leave`
+- **Acceptance**: After leaving, listing the topics it is in does not contain that topic; in the list of an agent that shares only this topic with it, it no longer appears.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-003 leave`
 
 ### REQ-topics-004
 
-一个 Agent 必须能同时属于多个 topic。
+An agent MUST be able to belong to several topics at once.
 
-- **验收**：Agent 先后加入 `t1` 和 `t2`，列出自己所在的 topic，结果同时包含 `t1` 与 `t2`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-004 many topics`
+- **Acceptance**: An agent joins `t1` and then `t2`; listing the topics it is in contains both `t1` and `t2`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-004 many topics`
 
 ### REQ-topics-005
 
-两个 Agent 当且仅当至少同在一个 topic，并且位于同一个 Broker 或位于两个已连接的 Broker 时，互相可见。
+Two agents see each other if and only if they share at least one topic and are on the same Broker or on two connected Brokers.
 
-- **验收**：同在一个 topic 的两个 Agent 互相出现在对方的列表中；其中一个退出该 topic 且两者没有其他共同 topic 后，互相从对方的列表中消失；两者所在的 Broker 之间的链路断开后同样消失。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/visibility_remote_test.go` 的 `TestRemoteVisibility/REQ-topics-005 iff shared and connected`
+- **Acceptance**: Two agents in the same topic each appear in the other's list; once one leaves that topic and they share no other topic, they disappear from each other's lists; they likewise disappear after the link between their Brokers goes down.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/visibility_remote_test.go` `TestRemoteVisibility/REQ-topics-005 iff shared and connected`
 
 ### REQ-topics-006
 
-不属于任何 topic 的 Agent 不得出现在任何其他 Agent 的列表中。
+An agent that belongs to no topic MUST NOT appear in any other agent's list.
 
-- **验收**：一个已登记但未加入任何 topic 的 Agent，不出现在本机和对端任何 Agent 的列表中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-006 no topic means invisible`；`test/e2e/visibility_remote_test.go` 的 `TestRemoteVisibility/REQ-topics-006 no topic invisible`
+- **Acceptance**: An agent that is registered but has joined no topic does not appear in the list of any agent, local or remote.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-006 no topic means invisible`; `test/e2e/visibility_remote_test.go` `TestRemoteVisibility/REQ-topics-006 no topic invisible`
 
 ### REQ-topics-007
 
-不同 Broker 上名字相同的 topic 必须视为同一个 topic。
+Topics with the same name on different Brokers MUST be treated as the same topic.
 
-- **验收**：两台已连接的主机上各有一个 Agent 以相同的名字加入 topic，两者互相可见。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/visibility_remote_test.go` 的 `TestRemoteVisibility/REQ-topics-007 same name across brokers`
+- **Acceptance**: On two connected hosts, one agent each joins a topic under the same name, and the two see each other.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/visibility_remote_test.go` `TestRemoteVisibility/REQ-topics-007 same name across brokers`
 
 ### REQ-topics-008
 
-topic 在未声明为公开时必须是不公开的。
+A topic that is not declared public MUST be not public.
 
-- **验收**：Agent 加入一个新 topic 且未声明公开，其他 Broker 上列出公开 topic 的结果不含它。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryPrivateByDefault`
+- **Acceptance**: An agent joins a new topic without declaring it public, and the result of listing public topics on other Brokers does not contain it.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryPrivateByDefault`
 
 ### REQ-topics-009
 
-系统不得向没有该 topic 成员的 Broker 透露不公开 topic 的名字。
+The system MUST NOT reveal the name of a non-public topic to a Broker that has no member in that topic.
 
-- **验收**：主机 A 上有 Agent 加入不公开的 topic `secret-x`，已连接的主机 B 上没有 Agent 加入它；B 上任何工具的返回结果和 B 的日志中都不出现 `secret-x`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/security_test.go` 的 `TestPrivateTopicNamesStayHome/REQ-topics-009 private topic name`
+- **Acceptance**: On host A an agent joins the non-public topic `secret-x`, and on connected host B no agent has joined it; neither the return result of any tool on B nor B's log shows `secret-x`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/security_test.go` `TestPrivateTopicNamesStayHome/REQ-topics-009 private topic name`
 
 ### REQ-topics-010
 
-所在 Broker 为公开时，Agent 必须能在加入 topic 时把它声明为公开。声明可以附一段简介，也可以不附。
+When its Broker is public, an agent MUST be able to declare a topic public while joining it. The declaration may or may not carry a description.
 
-- **验收**：公开 Broker 上的 Agent 以公开方式加入 topic 并给出简介后，已连接的其他 Broker 上列出公开 topic 的结果包含该名字和简介；不给简介时，结果包含该名字，简介为空。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestPublicTopicVisibleAcrossNetwork`；`test/e2e/journey_public_broker_test.go` 的 `TestJourneyConnectPublicBroker/main`
+- **Acceptance**: After an agent on a public Broker publicly joins a topic and gives a description, the result of listing public topics on connected other Brokers contains the name and the description; without a description, the result contains the name with an empty description.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestPublicTopicVisibleAcrossNetwork`; `test/e2e/journey_public_broker_test.go` `TestJourneyConnectPublicBroker/main`
 
 ### REQ-topics-011
 
-公开 topic 的名字和简介必须对连通网络内所有 Broker 上的 Agent 可见，不限于声明方的对端。
+A public topic's name and description MUST be visible to agents on every Broker in the connected network, not only the declarer's peers.
 
-- **验收**：A 与 B 已连接，B 与 C 已连接，A 与 C 之间没有链路；A 上声明的公开 topic 出现在 C 上列出公开 topic 的结果中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestPublicTopicVisibleAcrossNetwork`；`test/e2e/journey_public_broker_test.go` 的 `TestJourneyConnectPublicBroker/main`
+- **Acceptance**: A is connected to B and B to C, with no link between A and C; a public topic declared on A appears in C's result of listing public topics.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestPublicTopicVisibleAcrossNetwork`; `test/e2e/journey_public_broker_test.go` `TestJourneyConnectPublicBroker/main`
 
 ### REQ-topics-012
 
-公开 topic 的声明必须遵守与名片相同的有效期和续签规则（`REQ-broker-discovery-007`、`REQ-broker-discovery-008`）。
+A public topic declaration MUST follow the same validity period and renewal rules as a card (`REQ-broker-discovery-007`, `REQ-broker-discovery-008`).
 
-- **验收**：声明方离线且不再续签，超过有效期后，其他 Broker 上列出公开 topic 的结果不含该 topic。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_expiry_test.go` 的 `TestPublicTopicExpiresWithDeclarer`
+- **Acceptance**: The declarer goes offline and no longer renews; past the validity period, other Brokers' result of listing public topics does not contain that topic.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_expiry_test.go` `TestPublicTopicExpiresWithDeclarer`
 
 ### REQ-topics-013
 
-Agent 必须能列出自己已加入的 topic 和本 Broker 已知的公开 topic。
+An agent MUST be able to list the topics it has joined and the public topics the local Broker knows.
 
-- **验收**：结果区分“已加入”和“公开但未加入”，分别与实际情况一致。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestPublicTopicVisibleAcrossNetwork`；`test/e2e/journey_public_broker_test.go` 的 `TestJourneyConnectPublicBroker/main`
+- **Acceptance**: The result distinguishes "joined" from "public but not joined", and each matches the actual situation.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestPublicTopicVisibleAcrossNetwork`; `test/e2e/journey_public_broker_test.go` `TestJourneyConnectPublicBroker/main`
 
 ### REQ-topics-014
 
-一个 topic 的成员名单不得发送给任何 Broker，但已连接且在该 topic 也有成员的对端除外。
+A topic's roster MUST NOT be sent to any Broker except a connected peer that also has a member in that topic.
 
-- **验收**：主机 A 上名为 `api-worker` 的 Agent 在 topic `t1` 中，已连接的主机 B 上没有 Agent 在 `t1` 中；B 上任何工具的返回结果和 B 的日志中都不出现 `api-worker`。B 上有 Agent 加入 `t1` 后，A 上的该 Agent 出现在它的列表中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/security_test.go` 的 `TestPrivateTopicNamesStayHome/REQ-topics-014 member list`；`test/e2e/security_test.go` 的 `TestEchoedTopicDigestsRevealNothing/REQ-topics-014 echoed digests`
+- **Acceptance**: On host A the agent named `api-worker` is in topic `t1`, and on connected host B no agent is in `t1`; neither the return result of any tool on B nor B's log shows `api-worker`. After an agent on B joins `t1`, this agent on A appears in its list.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/security_test.go` `TestPrivateTopicNamesStayHome/REQ-topics-014 member list`; `test/e2e/security_test.go` `TestEchoedTopicDigestsRevealNothing/REQ-topics-014 echoed digests`
 
 ### REQ-topics-015
 
-自动加入未关闭时，会话所在工作区的项目配置文件声明了 topic 列表的，Agent 登记后必须自动加入列表中的每个 topic。
+When auto-join is not turned off and the project configuration file of the session's workspace declares a topic list, an agent MUST automatically join every topic in the list after registration.
 
-- **验收**：项目配置文件声明 `t1` 与 `t2`，在该项目中启动的 Agent 未做任何加入操作，列出自己所在的 topic，结果恰为 `t1` 与 `t2`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-015 project topics`
+- **Acceptance**: The project configuration file declares `t1` and `t2`; an agent started in this project, without any join operation, lists the topics it is in and the result is exactly `t1` and `t2`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-015 project topics`
 
 ### REQ-topics-016
 
-自动加入未关闭时，项目配置文件没有声明 topic 列表，且会话的工作区是带有 `origin` 远端的 git 仓库的，Agent 登记后必须自动加入以该远端地址的规范化结果命名的 topic。
+When auto-join is not turned off, the project configuration file declares no topic list, and the session's workspace is a git repository with an `origin` remote, an agent MUST automatically join the topic named after the normalized result of that remote address after registration.
 
-- **验收**：在 `origin` 为 `https://github.com/org/repo` 的仓库中启动的 Agent，未做任何加入操作，所在的 topic 恰为 `github.com/org/repo`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-016 origin topic`
+- **Acceptance**: An agent started in a repository whose `origin` is `https://github.com/org/repo`, without any join operation, is in exactly the topic `github.com/org/repo`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-016 origin topic`
 
 ### REQ-topics-017
 
-同一个仓库的不同地址写法必须规范化为同一个 topic 名，形式为小写的主机名后接仓库路径，不含协议、用户信息、端口和 `.git` 后缀。
+Different spellings of one repository's address MUST normalize to the same topic name, in the form of the lowercase hostname followed by the repository path, with no protocol, user information, port or `.git` suffix.
 
-- **验收**：`git@github.com:org/repo.git`、`ssh://git@GitHub.com:22/org/repo.git` 与 `https://github.com/org/repo` 的规范化结果都是 `github.com/org/repo`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-017 spellings`
+- **Acceptance**: `git@github.com:org/repo.git`, `ssh://git@GitHub.com:22/org/repo.git` and `https://github.com/org/repo` all normalize to `github.com/org/repo`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-017 spellings`
 
 ### REQ-topics-018
 
-项目配置文件没有声明 topic 列表，且工作区不是带有 `origin` 远端的 git 仓库时，系统不得让 Agent 自动加入任何 topic。
+When the project configuration file declares no topic list and the workspace is not a git repository with an `origin` remote, the system MUST NOT auto-join the agent to any topic.
 
-- **验收**：在一个非 git 目录中启动的 Agent，所在的 topic 为空，且不出现在任何其他 Agent 的列表中。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-018 non-git`
+- **Acceptance**: An agent started in a non-git directory is in no topic and does not appear in any other agent's list.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-018 non-git`
 
 ### REQ-topics-019
 
-自动加入的 topic 必须是不公开的。
+An auto-joined topic MUST be not public.
 
-- **验收**：Agent 自动加入默认 topic 后，其他 Broker 上列出公开 topic 的结果不含它。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestDiscoveryPrivateByDefault`
+- **Acceptance**: After an agent auto-joins the default topic, other Brokers' result of listing public topics does not contain it.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestDiscoveryPrivateByDefault`
 
 ### REQ-topics-020
 
-Broker 配置中关闭自动加入后，该 Broker 上新登记的 Agent 不得自动加入任何 topic。
+After auto-join is turned off in the Broker configuration, an agent newly registered on that Broker MUST NOT auto-join any topic.
 
-- **验收**：关闭后在一个带 `origin` 的仓库中启动 Agent，其所在的 topic 为空。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-020 broker auto_join off`
+- **Acceptance**: After it is turned off, an agent started in a repository with `origin` is in no topic.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-020 broker auto_join off`
 
 ### REQ-topics-021
 
-项目配置文件中关闭自动加入后，在该项目中登记的 Agent 不得自动加入任何 topic。
+After auto-join is turned off in the project configuration file, an agent registered in that project MUST NOT auto-join any topic.
 
-- **验收**：项目配置文件关闭自动加入，Broker 配置保持开启；在该项目中启动的 Agent 所在的 topic 为空，在其他项目中启动的 Agent 仍自动加入其默认 topic。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-021 project auto_join off`
+- **Acceptance**: With auto-join turned off in the project configuration file and the Broker configuration left on, an agent started in this project is in no topic, and an agent started in another project still auto-joins its default topic.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-021 project auto_join off`
 
 ### REQ-topics-022
 
-Agent 的 topic 成员关系必须在所在会话结束时全部消失。Broker 重启后，各 Agent 的 topic 成员关系由 MCP 服务进程重新登记后恢复。
+An agent's topic membership MUST all disappear when its session ends. After a Broker restart, each agent's topic membership is restored once its MCP server process registers again.
 
-- **验收**：Agent 手动加入 `t1` 后结束会话；在同一工作区重新启动会话，新 Agent 所在的 topic 只有自动加入的那些，不含 `t1`。重启 Broker 后，重启前已加入 topic 的 Agent 在其 MCP 服务进程重新登记后恢复原来的成员关系。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/session_lifecycle_test.go` 的 `TestLocalSessionChanges/REQ-topics-022 membership ends with session and returns after broker restart`
+- **Acceptance**: After an agent manually joins `t1`, end the session; restart a session in the same workspace and the new agent is in only the auto-joined topics, not `t1`. After restarting the Broker, an agent that had joined topics before the restart restores its original membership once its MCP server process registers again.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/session_lifecycle_test.go` `TestLocalSessionChanges/REQ-topics-022 membership ends with session and returns after broker restart`
 
 ### REQ-topics-023
 
-所在 Broker 不公开时，把 topic 声明为公开的调用必须失败并说明需要先把 Broker 设为公开，Agent 不得因这次调用加入该 topic。
+When its Broker is not public, a call declaring a topic public MUST fail and state that the Broker must first be set public, and the agent MUST NOT join that topic because of this call.
 
-- **验收**：不公开的 Broker 上的 Agent 以公开方式加入 topic，调用返回错误；该 Agent 所在的 topic 不变，其他 Broker 上列出公开 topic 的结果不含该 topic。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestPublicTopicRejectedOnPrivateBroker`
+- **Acceptance**: An agent on a non-public Broker joins a topic publicly and the call returns an error; the agent's topics are unchanged, and other Brokers' result of listing public topics does not contain that topic.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestPublicTopicRejectedOnPrivateBroker`
 
 ### REQ-topics-024
 
-Broker 由公开改为不公开后，它此前的公开 topic 声明必须从连通网络内所有 Broker 上列出公开 topic 的结果中消失。
+After a Broker changes from public to not public, its previous public topic declarations MUST disappear from the result of listing public topics on every Broker in the connected network.
 
-- **验收**：A 与 B 已连接，B 与 C 已连接，A 与 C 之间没有链路；A 上的 Agent 以公开方式加入 `infra-help`，C 上列出公开 topic 的结果包含它；A 改为不公开后，在该 Agent 仍在 `infra-help` 中的情况下，C 上列出公开 topic 的结果不再包含 `infra-help`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestPublicTopicGoneWhenBrokerPrivate`
+- **Acceptance**: A is connected to B and B to C, with no link between A and C; an agent on A joins `infra-help` publicly and C's result of listing public topics contains it; after A changes to not public, while this agent is still in `infra-help`, C's result of listing public topics no longer contains `infra-help`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestPublicTopicGoneWhenBrokerPrivate`
 
 ### REQ-topics-025
 
-一个 Broker 上已没有以公开方式加入某个 topic 的 Agent 时，该 Broker 对这个 topic 的公开声明必须从连通网络内其他 Broker 列出公开 topic 的结果中消失。
+When a Broker no longer has any agent that joined a topic publicly, the Broker's public declaration of that topic MUST disappear from other Brokers' result of listing public topics in the connected network.
 
-- **验收**：A 与 B 已连接，A 上只有一个 Agent 以公开方式加入 `infra-help`，网络中没有其他 Broker 声明它；该 Agent 退出 `infra-help` 后，B 上列出公开 topic 的结果不再包含它；重新以公开方式加入后再次出现，结束该 Agent 的会话后再次消失。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_test.go` 的 `TestPublicTopicFollowsLastMember`
+- **Acceptance**: A is connected to B, only one agent on A joined `infra-help` publicly, and no other Broker in the network declares it; after this agent leaves `infra-help`, B's result of listing public topics no longer contains it; after it publicly joins again it reappears, and after ending this agent's session it disappears again.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_test.go` `TestPublicTopicFollowsLastMember`
 
 ### REQ-topics-026
 
-不带名字加入 topic 时，Agent 必须加入本会话的默认 topic。
+When joining a topic without a name, an agent MUST join its session's default topic.
 
-- **验收**：在 `origin` 为 `https://github.com/org/repo` 的仓库中启动的 Agent 先按名字退出 `github.com/org/repo`，再不带名字加入，列出自己所在的 topic，结果含 `github.com/org/repo`；项目配置文件声明 `t1` 与 `t2` 时，不带名字加入后结果含这两个。会话没有默认 topic 时，调用返回错误，说明本会话没有默认 topic。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-026 join default without name` 与 `TestLocalTopics/REQ-topics-026 join default with broker auto_join off`
+- **Acceptance**: An agent started in a repository whose `origin` is `https://github.com/org/repo` first leaves `github.com/org/repo` by name and then joins without a name; listing the topics it is in contains `github.com/org/repo`; when the project configuration file declares `t1` and `t2`, joining without a name makes the result contain both. When the session has no default topic, the call returns an error stating that the session has no default topic.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-026 join default without name` and `TestLocalTopics/REQ-topics-026 join default with broker auto_join off`
 
 ### REQ-topics-027
 
-不带名字退出 topic 时，Agent 必须退出本会话的默认 topic，此后在本会话内不得自动重新加入，新的会话照常自动加入。
+When leaving a topic without a name, an agent MUST leave its session's default topic, and afterward within this session MUST NOT automatically rejoin it, while a new session auto-joins as usual.
 
-- **验收**：在 `origin` 为 `https://github.com/org/repo` 的仓库中启动的 Agent 不带名字退出，列出自己所在的 topic，结果不含 `github.com/org/repo`；重启 Broker，MCP 服务进程重新登记后仍不含；在同一工作区新开一个会话，新 Agent 所在的 topic 含 `github.com/org/repo`。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_local_test.go` 的 `TestLocalTopics/REQ-topics-027 leave default without name`
+- **Acceptance**: An agent started in a repository whose `origin` is `https://github.com/org/repo` leaves without a name; listing the topics it is in does not contain `github.com/org/repo`; after restarting the Broker, once the MCP server process registers again it still does not; open a new session in the same workspace, and the new agent's topics contain `github.com/org/repo`.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_local_test.go` `TestLocalTopics/REQ-topics-027 leave default without name`
 
 ### REQ-topics-028
 
-本机有成员的 topic 数、每个 topic 的本机成员数，以及同一账户在短时间内变更 topic 的次数，都必须有上限；达到上限时系统必须拒绝超出的调用，说明稍后再试，并且不改变成员关系。系统级 Broker 还须把本机 topic 的预算按账户细分，使一个账户不能占满全部 topic。
+The number of topics with local members, the number of local members in each topic, and the number of topic changes one account makes in a short time MUST all have caps; when a cap is reached the system MUST reject the call that exceeds it, state to try again later, and not change membership. A system Broker MUST also break down the local topic budget by account, so that one account cannot take up every topic.
 
-- **验收**：本机已有 512 个有成员的 topic 时，加入第 513 个 topic 失败并说明数量已达上限；一个 topic 已有 4096 个本机成员时，再加入一个 Agent 失败；系统级 Broker 下一个账户已有 128 个有成员的 topic 时，该账户再加入一个新的 topic 失败，已在该账户某个 topic 中的 Agent 重复加入仍成功；同一账户连续变更 topic 超过 64 次后，调用失败并说明稍后再试，成员关系不变，等待一秒后再变更 4 次成功；另一个账户的变更不受影响。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_limits_test.go` 的 `TestTopicChangeLimits` 覆盖同一账户的 topic 变更限速、拒绝后成员关系不变与等待后恢复；本机 topic 数、每个 topic 的本机成员数以及系统级 Broker 的每账户上限由单元测试 `internal/topic/locallimit_test.go` 的 `TestJoinTopicCountLimit`、`TestJoinMemberLimit`、`internal/topic/linkstability_test.go` 的 `TestLinkStaysUpSharingTopicsToLimit`、`internal/broker/topics_rpc_test.go` 的 `TestJoinTopicQuotaExceeded`、`TestJoinTopicPerAccountLimit`、`TestUserBrokerHasNoPerAccountLimit` 与 `internal/broker/topicratelimit_test.go` 的 `TestJoinTopicRateLimited`、`TestLeaveTopicRateLimited` 覆盖
+- **Acceptance**: When the host already has 512 topics with members, joining the 513th topic fails and states that the limit has been reached; when a topic already has 4096 local members, joining one more agent fails; on a system Broker, when one account already has 128 topics with members, that account joining another new topic fails, while an agent already in one of the account's topics joining again still succeeds; after one account changes topics more than 64 times in a row, the call fails and states to try again later, membership is unchanged, and after waiting one second, 4 more changes succeed; another account's changes are unaffected.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_limits_test.go` `TestTopicChangeLimits` covers the rate limit on one account's topic changes, membership unchanged after a rejection, and recovery after waiting; the number of local topics, the number of local members per topic and the per-account cap of a system Broker are covered by the unit tests `TestJoinTopicCountLimit` and `TestJoinMemberLimit` in `internal/topic/locallimit_test.go`, `TestLinkStaysUpSharingTopicsToLimit` in `internal/topic/linkstability_test.go`, `TestJoinTopicQuotaExceeded`, `TestJoinTopicPerAccountLimit` and `TestUserBrokerHasNoPerAccountLimit` in `internal/broker/topics_rpc_test.go`, and `TestJoinTopicRateLimited` and `TestLeaveTopicRateLimited` in `internal/broker/topicratelimit_test.go`
 
 ### REQ-topics-029
 
-任何对端发来的成员名单都不得使本机为该对端保存的条目无限增长；名字或曾用名超过长度上限的成员条目必须不予保存。
+A roster sent by any peer MUST NOT make the entries this Broker keeps for that peer grow without bound; a member entry whose name or previous name exceeds the length cap MUST NOT be stored.
 
-- **验收**：已配对的对端在同一个共同 topic 下连发多帧成员名单，累计超过 4096 个新成员；本机为该对端保存的成员不超过 4096 个，名字为 129 字节的条目不出现在任何结果中；五个共同 topic 各有 4096 条成员时，第五个 topic 的名单被整帧丢弃，该对端保存的条目合计不超过 16384；对端随后发来一个可识别的成员，该成员可见，链路仍为已连接，Broker 日志记录名单帧与成员条目被丢弃。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/topics_limits_test.go` 的 `TestTopicRosterBounds` 覆盖对端批量名单的上限、129 字节名字的丢弃、拒绝后链路仍为已连接；累计条数的精确边界由单元测试 `internal/topic/rosterlimit_test.go` 的 `TestRosterDeltaCumulativeLimit`、`TestRosterMemberNameLength`、`TestPeerRosterCumulativeLimit` 覆盖
+- **Acceptance**: A paired peer sends several roster frames in a row under the same shared topic, accumulating more than 4096 new members; this Broker keeps no more than 4096 members for that peer, and an entry with a 129-byte name appears in no result; when five shared topics each have 4096 members, the fifth topic's roster is dropped as a whole frame, and the entries kept for that peer total no more than 16384; when the peer then sends one recognizable member, that member is visible, the link is still connected, and the Broker log records that the roster frame and member entries were dropped.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/topics_limits_test.go` `TestTopicRosterBounds` covers the cap on a peer's bulk roster, the dropping of a 129-byte name, and the link staying connected after a rejection; the exact boundary of the cumulative count is covered by the unit tests `TestRosterDeltaCumulativeLimit`, `TestRosterMemberNameLength` and `TestPeerRosterCumulativeLimit` in `internal/topic/rosterlimit_test.go`
 
 ### REQ-topics-030
 
-名字或简介不合规定的公开 topic 声明不得出现在列出公开 topic 的结果中。
+A public topic declaration with a nonconforming name or description MUST NOT appear in the result of listing public topics.
 
-- **验收**：经链路接受一条简介 60 KiB 的公开 topic 声明，以及名字含换行、名字 300 字节的两条声明；列出公开 topic 的结果不含它们，这三条记录仍被转发到与接收方相连的下一个 Broker。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryPublicTopicReceiveLimits/REQ-topics-030 malformed declarations are not listed`；单元测试 `internal/directory/views_test.go` 的 `TestPublicTopicsSkipsInvalidDeclarations`、`internal/directory/validate_test.go` 的 `TestValidPublicTopicName`
+- **Acceptance**: Accept over a link a public topic declaration with a 60 KiB description, a declaration whose name contains a newline, and a declaration whose name is 300 bytes; the result of listing public topics does not contain them, and all three records are still forwarded to the next Broker connected to the receiver.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryPublicTopicReceiveLimits/REQ-topics-030 malformed declarations are not listed`; unit tests `TestPublicTopicsSkipsInvalidDeclarations` in `internal/directory/views_test.go` and `TestValidPublicTopicName` in `internal/directory/validate_test.go`
 
 ### REQ-topics-031
 
-同名公开 topic 的简介必须优先取本 Broker 的声明，其次取对端的声明，结果须给出简介出自哪个 Broker 与该名字的有效声明数；远处的其他发布者不能靠把版本号设为最大值替换本机或对端给出的简介。
+For a public topic with the same name, the description MUST be taken first from this Broker's declaration, then from a peer's declaration, and the result MUST give which Broker the description came from and the number of valid declarations of that name; a distant other publisher cannot replace the description given by this Broker or a peer by setting the version number to the maximum value.
 
-- **验收**：本机声明 `x`（简介 A，版本 1），另一个非对端发布者声明 `x`（简介 B，版本 `math.MaxUint64`），列出公开 topic 的结果给出简介 A、发布者为本机、声明数为 2；对端与非对端同时声明同名 topic 时给出对端的简介，发布者为该对端；只有非对端声明时仍取版本号最高的声明。
-- **状态**：已实现
-- **端到端测试**：`test/e2e/discovery_hostile_test.go` 的 `TestDirectoryPublicTopicReceiveLimits/REQ-topics-031 peer description over a maximum version`；单元测试 `internal/directory/views_test.go` 的 `TestPublicTopicsPrefersSelfAndPeerDescriptions`、`internal/broker/topics_rpc_test.go` 的 `TestListTopicsReportsPublisher`
+- **Acceptance**: This Broker declares `x` (description A, version 1) and another non-peer publisher declares `x` (description B, version `math.MaxUint64`); the result of listing public topics gives description A, the publisher as this Broker, and a declaration count of 2; when a peer and a non-peer both declare the same-named topic, it gives the peer's description with the publisher as that peer; when only a non-peer declares it, it still takes the declaration with the highest version number.
+- **Status**: Implemented
+- **E2E test**: `test/e2e/discovery_hostile_test.go` `TestDirectoryPublicTopicReceiveLimits/REQ-topics-031 peer description over a maximum version`; unit tests `TestPublicTopicsPrefersSelfAndPeerDescriptions` in `internal/directory/views_test.go` and `TestListTopicsReportsPublisher` in `internal/broker/topics_rpc_test.go`
 
-## 数据需求
+## Data Requirements
 
-topic 成员关系只在内存中保留，不写入磁盘。项目的 topic 声明保存在项目配置文件里，随仓库管理。
+topic membership is kept only in memory and not written to disk. A project's topic declarations are kept in the project configuration file and managed with the repository.
 
-## 假设与依赖
+## Assumptions and Dependencies
 
-- 不公开 topic 的保密程度以名字不易猜中为限。一个对端可以让它自己的 Agent 以猜测的名字加入，从而得知本 Broker 上是否有成员在这个 topic 中。
-- 默认 topic 的名字由仓库地址决定，能访问同一仓库的人都能得出它。
+- The confidentiality of a non-public topic is limited to its name being hard to guess. A peer can have its own agent join under a guessed name and thereby learn whether this Broker has a member in that topic.
+- The default topic's name is decided by the repository address, and anyone who can access the same repository can derive it.
