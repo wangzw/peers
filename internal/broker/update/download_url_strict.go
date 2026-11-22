@@ -26,9 +26,7 @@ func strictCheckDownloadURL(raw string) error {
 // A caller's CheckRedirect is consulted first, and a nil one keeps the standard
 // ten-redirect limit.
 func strictDownloadClient(c *http.Client) *http.Client {
-	if c == nil {
-		c = http.DefaultClient
-	}
+	c = httpClient(c)
 	previous := c.CheckRedirect
 	wrapped := *c
 	wrapped.CheckRedirect = func(req *http.Request, via []*http.Request) error {

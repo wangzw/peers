@@ -71,13 +71,10 @@ func Apply(ctx context.Context, o ApplyOptions) error {
 	archiveName := fmt.Sprintf("%s_%s_%s_%s.tar.gz", binaryName, version, o.GOOS, o.GOARCH)
 	tag := "v" + version
 	var release struct {
-		TagName    string `json:"tag_name"`
-		Draft      bool   `json:"draft"`
-		Prerelease bool   `json:"prerelease"`
-		Assets     []struct {
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-		} `json:"assets"`
+		TagName    string         `json:"tag_name"`
+		Draft      bool           `json:"draft"`
+		Prerelease bool           `json:"prerelease"`
+		Assets     []releaseAsset `json:"assets"`
 	}
 	if err := getJSON(ctx, o.Client, releaseURL(o.API, "tags/"+tag), &release); err != nil {
 		return err
@@ -185,11 +182,14 @@ func Apply(ctx context.Context, o ApplyOptions) error {
 	return nil
 }
 
-// assetURLs returns the download URLs of the archive and the checksum file.
-func assetURLs(assets []struct {
+// releaseAsset is one downloadable file of a release.
+type releaseAsset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
-}, archiveName string) (archiveURL, checksumsURL string) {
+}
+
+// assetURLs returns the download URLs of the archive and the checksum file.
+func assetURLs(assets []releaseAsset, archiveName string) (archiveURL, checksumsURL string) {
 	for _, asset := range assets {
 		switch asset.Name {
 		case archiveName:
@@ -201,6 +201,23 @@ func assetURLs(assets []struct {
 	return archiveURL, checksumsURL
 }
 
+// errTooLarge reports that a bounded read found more data than its limit.
+var errTooLarge = errors.New("more data than allowed")
+
+// readAtMost reads r up to max bytes and fails with errTooLarge when r holds
+// more. It reads one byte past max so a body exactly at the limit still
+// succeeds.
+func readAtMost(r io.Reader, max int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, errTooLarge
+	}
+	return data, nil
+}
+
 // download fetches one asset, refusing anything above maxDownloadSize.
 func download(ctx context.Context, c *http.Client, url string) ([]byte, error) {
 	resp, err := get(ctx, c, url)
@@ -209,12 +226,12 @@ func download(ctx context.Context, c *http.Client, url string) ([]byte, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadSize+1))
+	data, err := readAtMost(resp.Body, maxDownloadSize)
+	if errors.Is(err, errTooLarge) {
+		return nil, fmt.Errorf("download %s exceeds the %d-byte limit", url, maxDownloadSize)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read %s: %w", url, err)
-	}
-	if int64(len(data)) > maxDownloadSize {
-		return nil, fmt.Errorf("download %s exceeds the %d-byte limit", url, maxDownloadSize)
 	}
 	return data, nil
 }
@@ -280,12 +297,12 @@ func extractBinary(archive []byte) ([]byte, error) {
 			if binary != nil {
 				return nil, fmt.Errorf("release archive contains more than one %s", binaryName)
 			}
-			data, err := io.ReadAll(io.LimitReader(tr, maxDownloadSize+1))
+			data, err := readAtMost(tr, maxDownloadSize)
+			if errors.Is(err, errTooLarge) {
+				return nil, fmt.Errorf("%s exceeds the %d-byte limit", binaryName, maxDownloadSize)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("cannot read %s from the release archive: %w", binaryName, err)
-			}
-			if int64(len(data)) > maxDownloadSize {
-				return nil, fmt.Errorf("%s exceeds the %d-byte limit", binaryName, maxDownloadSize)
 			}
 			binary = data
 		}

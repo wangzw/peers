@@ -39,6 +39,14 @@ type PostUpdateOptions struct {
 	Timeout time.Duration
 }
 
+// checkLevel requires level to name one of the two service levels.
+func checkLevel(level string) error {
+	if level != "system" && level != "user" {
+		return fmt.Errorf("service level %q is not system or user", level)
+	}
+	return nil
+}
+
 // Install installs o's release and then runs the new binary's hidden
 // post-update command at level, before anything restarts it. The previous
 // binary is kept beside the target and the main unit file is saved before the
@@ -47,8 +55,8 @@ type PostUpdateOptions struct {
 // here is what covers a step killed by its bound or by a canceled context,
 // because that step never reaches its own restore.
 func Install(ctx context.Context, o ApplyOptions, level string) error {
-	if level != "system" && level != "user" {
-		return fmt.Errorf("service level %q is not system or user", level)
+	if err := checkLevel(level); err != nil {
+		return err
 	}
 	backup, err := backupTarget(o.Target)
 	if err != nil {
@@ -60,7 +68,7 @@ func Install(ctx context.Context, o ApplyOptions, level string) error {
 		// hard link covers both cases and is a no-op when the target never
 		// changed, because the backup names the same inode.
 		if restoreErr := restoreTarget(backup, o.Target); restoreErr != nil {
-			return fmt.Errorf("%w; restoring the previous binary failed: %v", err, restoreErr)
+			return restoreFailure(err, restoreErr)
 		}
 		return err
 	}
@@ -69,11 +77,10 @@ func Install(ctx context.Context, o ApplyOptions, level string) error {
 	// a reboot would then load the next version's definition with the previous
 	// binary.
 	serviceOpts, err := service.PostUpdateOptions(level == "system")
-	if err != nil {
-		return restoreAfterStepSetupFailure(
-			fmt.Errorf("saving the service definition before the post-update step: %w", err), backup, o.Target)
+	var savedUnit service.SavedUnit
+	if err == nil {
+		savedUnit, err = service.SaveMainUnit(serviceOpts)
 	}
-	savedUnit, err := service.SaveMainUnit(serviceOpts)
 	if err != nil {
 		return restoreAfterStepSetupFailure(
 			fmt.Errorf("saving the service definition before the post-update step: %w", err), backup, o.Target)
@@ -88,12 +95,18 @@ func Install(ctx context.Context, o ApplyOptions, level string) error {
 	return nil
 }
 
+// restoreFailure reports cause along with why the previous binary could not be
+// put back.
+func restoreFailure(cause, restoreErr error) error {
+	return fmt.Errorf("%w; restoring the previous binary failed: %v", cause, restoreErr)
+}
+
 // restoreAfterStepSetupFailure restores the previous binary when the unit
 // guard could not be prepared. The post-update step did not run, so the unit
 // file is still the one the guard would have saved.
 func restoreAfterStepSetupFailure(cause error, backup, target string) error {
 	if err := restoreTarget(backup, target); err != nil {
-		return fmt.Errorf("%w; restoring the previous binary failed: %v", cause, err)
+		return restoreFailure(cause, err)
 	}
 	return fmt.Errorf("%w; the previous binary was restored", cause)
 }
@@ -114,9 +127,9 @@ func rollBackInstall(cause error, backup, target string, opts service.Options, s
 	case binaryErr == nil:
 		return fmt.Errorf("%w; the previous binary was restored, but the service definition could not be restored: %v", cause, unitErr)
 	case unitErr == nil:
-		return fmt.Errorf("%w; restoring the previous binary failed: %v; the service definition was restored", cause, binaryErr)
+		return fmt.Errorf("%w; the service definition was restored", restoreFailure(cause, binaryErr))
 	default:
-		return fmt.Errorf("%w; restoring the previous binary failed: %v; the service definition could not be restored: %v", cause, binaryErr, unitErr)
+		return fmt.Errorf("%w; the service definition could not be restored: %v", restoreFailure(cause, binaryErr), unitErr)
 	}
 }
 
@@ -137,8 +150,8 @@ func RunPostUpdate(ctx context.Context, o PostUpdateOptions) error {
 	if o.Binary == "" {
 		return errors.New("no binary to run the post-update step")
 	}
-	if o.Level != "system" && o.Level != "user" {
-		return fmt.Errorf("service level %q is not system or user", o.Level)
+	if err := checkLevel(o.Level); err != nil {
+		return err
 	}
 
 	runCtx, cancel := context.WithTimeout(ctx, postUpdateBound(o))
