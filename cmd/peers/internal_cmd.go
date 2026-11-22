@@ -48,24 +48,8 @@ func (a *app) addInternalCommands(root *cobra.Command) {
 		},
 	}
 	internal.AddCommand(
-		&cobra.Command{
-			Use:                "account-helper",
-			Short:              "Serve the account helper protocol over standard streams",
-			Hidden:             true,
-			DisableFlagParsing: true,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return commandResult(a.accountHelperCmd(cmd.Context(), args))
-			},
-		},
-		&cobra.Command{
-			Use:                "access-check",
-			Short:              "Answer one access check from standard input",
-			Hidden:             true,
-			DisableFlagParsing: true,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return commandResult(a.accessCheckCmd(cmd.Context(), args))
-			},
-		},
+		a.internalHelperCommand("account-helper", "Serve the account helper protocol over standard streams", a.accountHelperCmd),
+		a.internalHelperCommand("access-check", "Answer one access check from standard input", a.accessCheckCmd),
 		&cobra.Command{
 			Use:                "post-update",
 			Short:              "Rewrite the service definition after an update",
@@ -75,15 +59,7 @@ func (a *app) addInternalCommands(root *cobra.Command) {
 				return commandResult(a.postUpdateCmd(cmd.Context(), args))
 			},
 		},
-		&cobra.Command{
-			Use:                "launchd-reload",
-			Short:              "Reload the launchd service after an update",
-			Hidden:             true,
-			DisableFlagParsing: true,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return commandResult(a.launchdReloadCmd(cmd.Context(), args))
-			},
-		},
+		a.internalHelperCommand("launchd-reload", "Reload the launchd service after an update", a.launchdReloadCmd),
 	)
 	if addTestInternalCommands != nil {
 		addTestInternalCommands(internal, a)
@@ -91,31 +67,49 @@ func (a *app) addInternalCommands(root *cobra.Command) {
 	root.AddCommand(internal)
 }
 
+// internalHelperCommand builds one hidden helper subcommand. Flag parsing is
+// left to the command body, whose exit code becomes the error the framework
+// maps back to the same code.
+func (a *app) internalHelperCommand(use, short string, run func(context.Context, []string) int) *cobra.Command {
+	return &cobra.Command{
+		Use:                use,
+		Short:              short,
+		Hidden:             true,
+		DisableFlagParsing: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return commandResult(run(cmd.Context(), args))
+		},
+	}
+}
+
 // accountHelperCmd is the body of the hidden "internal account-helper"
 // subcommand. The system Broker launches it as an account it serves, and it
 // speaks the helper protocol over the process's own standard streams.
 func (a *app) accountHelperCmd(ctx context.Context, args []string) int {
-	if len(args) > 0 {
-		_, _ = fmt.Fprintf(a.stderr, "peers internal account-helper: unexpected argument %q\n", args[0])
-		return exitUsage
-	}
-	if err := runAccountHelperFn(ctx, a.stdin, a.stdout); err != nil {
-		_, _ = fmt.Fprintf(a.stderr, "peers internal account-helper: %s\n", err)
-		return exitFailure
-	}
-	return exitOK
+	return a.streamHelperCmd("account-helper", args, func() error {
+		return runAccountHelperFn(ctx, a.stdin, a.stdout)
+	})
 }
 
 // accessCheckCmd is the body of the hidden "internal access-check" subcommand.
 // The system Broker launches it as the calling account; it reads one request
 // from standard input, writes one response to standard output and exits.
 func (a *app) accessCheckCmd(_ context.Context, args []string) int {
+	return a.streamHelperCmd("access-check", args, func() error {
+		return runAccessCheckFn(a.stdin, a.stdout)
+	})
+}
+
+// streamHelperCmd is the body shared by the helper subcommands that serve a
+// request over the process's own standard streams. A stray argument is a usage
+// error; a failure of serve is the general failure code.
+func (a *app) streamHelperCmd(name string, args []string, serve func() error) int {
 	if len(args) > 0 {
-		_, _ = fmt.Fprintf(a.stderr, "peers internal access-check: unexpected argument %q\n", args[0])
+		_, _ = fmt.Fprintf(a.stderr, "peers internal %s: unexpected argument %q\n", name, args[0])
 		return exitUsage
 	}
-	if err := runAccessCheckFn(a.stdin, a.stdout); err != nil {
-		_, _ = fmt.Fprintf(a.stderr, "peers internal access-check: %s\n", err)
+	if err := serve(); err != nil {
+		_, _ = fmt.Fprintf(a.stderr, "peers internal %s: %s\n", name, err)
 		return exitFailure
 	}
 	return exitOK
