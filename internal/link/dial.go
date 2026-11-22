@@ -5,7 +5,6 @@ import (
 	"net"
 	"sync"
 
-	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/pairing"
 )
 
@@ -168,6 +167,19 @@ func (l *Link) dialLoop(ctx context.Context, rec *record, startWithBackoff bool)
 	}
 }
 
+// staleLocked reports whether this dial loop no longer owns rec: the peer was
+// dropped, another connection was installed, or the Link closed. The caller
+// must hold l.mu.
+func (l *Link) staleLocked(rec *record) bool {
+	return l.records[rec.fp] != rec || l.closed || rec.conn != nil
+}
+
+// recordLiveLocked reports whether rec still covers the peer with no connection
+// installed, so a dial result may update its state. The caller must hold l.mu.
+func (l *Link) recordLiveLocked(rec *record) bool {
+	return l.records[rec.fp] == rec && rec.conn == nil
+}
+
 // dialRound tries the candidates of fp once, in order, until one address
 // reaches a TLS connection whose certificate fingerprint is fp and the Hello
 // exchange succeeds. On success it runs the connection and returns only after
@@ -176,7 +188,7 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 	fp := rec.fp
 
 	l.mu.Lock()
-	if l.records[fp] != rec || l.closed || rec.conn != nil {
+	if l.staleLocked(rec) {
 		// A connection was installed by someone else, the peer was dropped, or
 		// the Link closed. This loop is stale.
 		l.mu.Unlock()
@@ -206,7 +218,7 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 		}
 
 		l.mu.Lock()
-		if l.records[fp] != rec || l.closed || rec.conn != nil {
+		if l.staleLocked(rec) {
 			l.mu.Unlock()
 			_ = tc.Close()
 			return roundRejected
@@ -224,34 +236,21 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 
 		salt, failure, peerVersion, handshakeErr := l.dialerHandshake(c)
 		if handshakeErr != nil || failure != FailNone {
-			reason := failure
-			if reason == FailNone {
-				reason = FailConnectionLost
-			}
-			c.closeAfterFailedHandshake(reason)
+			c.closeAfterFailedHandshake(failedHandshakeReason(failure))
 
 			if failure == FailNotAPeer {
 				l.mu.Lock()
-				if l.records[fp] == rec && rec.conn == nil {
+				if l.recordLiveLocked(rec) {
 					rec.phase = PhaseRejected
 					rec.lastFailure = FailNotAPeer
 				}
 				l.mu.Unlock()
-				l.settings.Audit(config.Event{
-					Time:  l.clock.Now(),
-					Event: config.EventRejectedByPeer,
-					Peer: &config.PeerRef{
-						Fingerprint: fp,
-						Alias:       l.peers.EffectiveAlias(fp),
-					},
-				})
-				l.logger.Warn("link: peer no longer treats this Broker as a peer",
-					"peer", fp.String())
+				l.auditPeerRejected(fp)
 				return roundRejected
 			}
 
 			l.mu.Lock()
-			if l.records[fp] == rec && rec.conn == nil {
+			if l.recordLiveLocked(rec) {
 				rec.lastFailure = failure
 				rec.peerVersion = peerVersion
 			}
@@ -270,7 +269,7 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 	}
 
 	l.mu.Lock()
-	if l.records[fp] == rec && rec.conn == nil {
+	if l.recordLiveLocked(rec) {
 		rec.lastFailure = FailUnreachable
 		rec.peerVersion = 0
 	}
@@ -286,7 +285,7 @@ func (l *Link) waitBackoff(ctx context.Context, rec *record, failures int) bool 
 	delay := backoffDelay(failures, l.settings.ReconnectMin(), l.settings.ReconnectMax())
 
 	l.mu.Lock()
-	if l.records[rec.fp] != rec || l.closed || rec.conn != nil {
+	if l.staleLocked(rec) {
 		// A new connection took over while this loop was finishing; it must not
 		// overwrite the state of an established link with a backoff.
 		l.mu.Unlock()

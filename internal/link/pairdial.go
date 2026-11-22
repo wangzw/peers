@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/pairing"
 )
 
@@ -50,11 +49,7 @@ func (l *Link) PairDial(ctx context.Context, address string, run func(pairing.Pa
 	c.role = pairing.RoleDialer
 	salt, failure, peerVersion, handshakeErr := l.dialerHandshake(c)
 	if handshakeErr != nil || failure != FailNone {
-		reason := failure
-		if reason == FailNone {
-			reason = FailConnectionLost
-		}
-		c.closeAfterFailedHandshake(reason)
+		c.closeAfterFailedHandshake(failedHandshakeReason(failure))
 
 		l.mu.Lock()
 		if !l.closed && l.dropGen[fp] == gen {
@@ -75,16 +70,7 @@ func (l *Link) PairDial(ctx context.Context, address string, run func(pairing.Pa
 		if failure == FailNotAPeer {
 			// pairing committed the peer, so PairDial still succeeds; the link
 			// stops redialing until the user pairs again.
-			l.settings.Audit(config.Event{
-				Time:  l.clock.Now(),
-				Event: config.EventRejectedByPeer,
-				Peer: &config.PeerRef{
-					Fingerprint: fp,
-					Alias:       l.peers.EffectiveAlias(fp),
-				},
-			})
-			l.logger.Warn("link: peer no longer treats this Broker as a peer",
-				"peer", fp.String())
+			l.auditPeerRejected(fp)
 			return nil
 		}
 

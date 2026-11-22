@@ -116,6 +116,21 @@ func (l *Link) rejectUnknown(c *conn, fp Fingerprint) {
 	l.settings.Audit(event)
 }
 
+// auditPeerRejected records that the peer no longer treats this Broker as a
+// peer: the audit event and the diagnostic warning.
+func (l *Link) auditPeerRejected(fp Fingerprint) {
+	l.settings.Audit(config.Event{
+		Time:  l.clock.Now(),
+		Event: config.EventRejectedByPeer,
+		Peer: &config.PeerRef{
+			Fingerprint: fp,
+			Alias:       l.peers.EffectiveAlias(fp),
+		},
+	})
+	l.logger.Warn("link: peer no longer treats this Broker as a peer",
+		"peer", fp.String())
+}
+
 // closeAfterFailedHandshake closes a connection whose dialer handshake failed.
 // The handshake itself may already have started a rejection linger that owns
 // the close; in that case this is a no-op.
@@ -124,6 +139,16 @@ func (c *conn) closeAfterFailedHandshake(reason FailReason) {
 		return
 	}
 	c.closeAsync(reason)
+}
+
+// failedHandshakeReason returns the reason to close a connection with after a
+// dialer handshake failure. A handshake that returned no failure reason still
+// lost the connection.
+func failedHandshakeReason(failure FailReason) FailReason {
+	if failure == FailNone {
+		return FailConnectionLost
+	}
+	return failure
 }
 
 // failFromReject maps a peer's reject reason to the local failure reason.
@@ -150,6 +175,12 @@ func (l *Link) noteHandshaking(fp Fingerprint) {
 	}
 }
 
+// logVersionMismatch records a protocol version mismatch with one peer.
+func (l *Link) logVersionMismatch(fp Fingerprint, peerVersion uint32) {
+	l.logger.Warn("link: protocol version mismatch", "peer", fp,
+		"local", l.protocolVersion, "peer_version", peerVersion)
+}
+
 // noteVersionFailure records a version mismatch on an existing record. The
 // accepting side stays in PhaseWaiting: it does not redial.
 func (l *Link) noteVersionFailure(fp Fingerprint, peerVersion uint32) {
@@ -159,6 +190,14 @@ func (l *Link) noteVersionFailure(fp Fingerprint, peerVersion uint32) {
 		rec.lastFailure = FailVersionIncompatible
 		rec.peerVersion = peerVersion
 	}
+}
+
+// joinSalt returns the pairing salt: the dialer's nonce followed by the
+// acceptor's.
+func joinSalt(dialerNonce, acceptorNonce []byte) []byte {
+	salt := make([]byte, 0, len(dialerNonce)+len(acceptorNonce))
+	salt = append(salt, dialerNonce...)
+	return append(salt, acceptorNonce...)
 }
 
 // serveInbound reads and judges the first frame of an accepted connection,
@@ -240,8 +279,7 @@ func (l *Link) serveInbound(c *conn, t *trackedConn) (<-chan struct{}, bool) {
 	}
 
 	if hello.GetProtocolVersion() != l.protocolVersion {
-		l.logger.Warn("link: protocol version mismatch", "peer", fp,
-			"local", l.protocolVersion, "peer_version", hello.GetProtocolVersion())
+		l.logVersionMismatch(fp, hello.GetProtocolVersion())
 		l.noteVersionFailure(fp, hello.GetProtocolVersion())
 		l.rejectAndLinger(c, linkpb.RejectReason_REJECT_REASON_PROTOCOL_VERSION_INCOMPATIBLE)
 		return nil, false
@@ -281,9 +319,7 @@ func (l *Link) serveInbound(c *conn, t *trackedConn) (<-chan struct{}, bool) {
 	}
 
 	// The salt is always the dialer's nonce followed by the acceptor's.
-	salt := make([]byte, 0, len(hello.GetNonce())+len(nonce))
-	salt = append(salt, hello.GetNonce()...)
-	salt = append(salt, nonce...)
+	salt := joinSalt(hello.GetNonce(), nonce)
 
 	c.role = pairing.RoleAcceptor
 	delivered, ok := l.install(fp, pairing.RoleAcceptor, c, salt, gen)
@@ -333,8 +369,7 @@ func (l *Link) dialerHandshake(c *conn) (salt []byte, failure FailReason, peerVe
 			return nil, FailProtocol, 0, decodeErr
 		}
 		if hello.GetProtocolVersion() != l.protocolVersion {
-			l.logger.Warn("link: protocol version mismatch", "peer", fp,
-				"local", l.protocolVersion, "peer_version", hello.GetProtocolVersion())
+			l.logVersionMismatch(fp, hello.GetProtocolVersion())
 			// Both roles send Reject when the versions differ. Go through the
 			// linger: SendMsg returns once the frame is buffered, not when it
 			// reaches the wire, so closing right away can drop the Reject.
@@ -346,10 +381,7 @@ func (l *Link) dialerHandshake(c *conn) (salt []byte, failure FailReason, peerVe
 		// notification so a later dial uses the fresh list.
 		l.peers.ObserveAlias(fp, hello.GetAlias())
 		l.peers.ObserveAcceptorAddresses(fp, addrsFromPB(hello.GetAdvertisedAddresses()))
-		salt := make([]byte, 0, len(nonce)+len(hello.GetNonce()))
-		salt = append(salt, nonce...)
-		salt = append(salt, hello.GetNonce()...)
-		return salt, FailNone, 0, nil
+		return joinSalt(nonce, hello.GetNonce()), FailNone, 0, nil
 
 	default:
 		return nil, FailProtocol, 0, fmt.Errorf("%w: unexpected handshake frame kind %d", errMalformed, f.GetKind())
