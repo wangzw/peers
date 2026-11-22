@@ -624,7 +624,7 @@ func TestREQBrokerDiscovery016_ReenumerateNotifies(t *testing.T) {
 		if len(got.new) != 1 || got.new[0].Addr != "192.0.2.20:17443" {
 			t.Errorf("notification new = %v, want [192.0.2.20:17443]", got.new)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("re-enumeration did not notify the advertised-address subscribers")
 	}
 

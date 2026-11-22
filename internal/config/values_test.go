@@ -191,7 +191,7 @@ func TestConfigSubscribeReceivesSetNotification(t *testing.T) {
 		if !v.Bool {
 			t.Fatalf("notification value = %+v", v)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("no notification arrived")
 	}
 }

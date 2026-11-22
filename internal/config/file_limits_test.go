@@ -113,8 +113,8 @@ func TestConfigFileRejectsExponentialAliases(t *testing.T) {
 		if !strings.Contains(err.Error(), "anchors and aliases are not supported") {
 			t.Fatalf("parseConfigFile error = %v, want it to name anchors and aliases", err)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("parseConfigFile did not return within 2s for a file with 30 levels of doubling aliases")
+	case <-time.After(eventTimeout):
+		t.Fatalf("parseConfigFile did not return within %s for a file with 30 levels of doubling aliases", eventTimeout)
 	}
 }
 

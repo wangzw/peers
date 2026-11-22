@@ -82,7 +82,7 @@ func assertTickerReplaced(t *testing.T, old *exitRecordingTicker, created func()
 	}
 	select {
 	case <-old.exited:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the old address ticker goroutine did not exit")
 	}
 	list := created()

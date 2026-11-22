@@ -27,7 +27,7 @@ func TestNotifierDeliversInOrder(t *testing.T) {
 			if v != want {
 				t.Fatalf("notification %d arrived as %d", want, v)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("notification %d did not arrive", want)
 		}
 	}
@@ -41,7 +41,7 @@ func TestNotifierRecoversFromPanic(t *testing.T) {
 	n.enqueue(func() { close(done) })
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the notifier stopped after a panicking callback")
 	}
 }
@@ -71,7 +71,7 @@ func TestNotifierCloseRunsCallbacksEnqueuedBeforeClose(t *testing.T) {
 
 	select {
 	case <-started:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the first callback never started")
 	}
 	closed := make(chan struct{})
@@ -84,7 +84,7 @@ func TestNotifierCloseRunsCallbacksEnqueuedBeforeClose(t *testing.T) {
 	// the callbacks behind it are then provably still in the queue.
 	select {
 	case <-closeMarked:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("close did not mark the notifier closed")
 	}
 
@@ -101,13 +101,13 @@ func TestNotifierCloseRunsCallbacksEnqueuedBeforeClose(t *testing.T) {
 			if got != want {
 				t.Fatalf("callback %d ran as %d, want submission order", want, got)
 			}
-		case <-time.After(2 * time.Second):
+		case <-time.After(eventTimeout):
 			t.Fatalf("callback %d enqueued before close never ran", want)
 		}
 	}
 	select {
 	case <-closed:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("close did not return after the queued callbacks ran")
 	}
 	select {

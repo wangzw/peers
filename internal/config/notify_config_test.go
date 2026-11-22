@@ -114,7 +114,7 @@ func ncDrain(t *testing.T, c *core) {
 	c.notify.enqueue(func() { close(done) })
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("the notification queue did not drain")
 	}
 }
@@ -124,7 +124,7 @@ func ncWaitKey(t *testing.T, ch <-chan ncKeyEvent) ncKeyEvent {
 	select {
 	case event := <-ch:
 		return event
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("no key notification arrived")
 		return ncKeyEvent{}
 	}
@@ -135,7 +135,7 @@ func ncWaitAdvertised(t *testing.T, ch <-chan ncAdvEvent) ncAdvEvent {
 	select {
 	case event := <-ch:
 		return event
-	case <-time.After(2 * time.Second):
+	case <-time.After(eventTimeout):
 		t.Fatal("no advertised-address notification arrived")
 		return ncAdvEvent{}
 	}
