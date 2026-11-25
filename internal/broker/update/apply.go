@@ -188,7 +188,7 @@ func Apply(ctx context.Context, o ApplyOptions) error {
 		return fmt.Errorf("replacing %s: %w", o.Target, err)
 	}
 	installed = true
-	if err := syncDir(filepath.Dir(o.Target)); err != nil {
+	if err := syncDirAfterReplace(filepath.Dir(o.Target)); err != nil {
 		return err
 	}
 	return nil
@@ -397,3 +397,7 @@ func syncDir(dir string) error {
 	}
 	return nil
 }
+
+// syncDirAfterReplace lets a test drive the sync failure that follows a
+// completed replacement.
+var syncDirAfterReplace = syncDir

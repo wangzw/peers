@@ -192,9 +192,10 @@ func RunPostUpdate(ctx context.Context, o PostUpdateOptions) error {
 	return fmt.Errorf("the post-update step failed: %w", err)
 }
 
-// backupTarget hard-links target to a fresh name beside it and returns that
-// name. A hard link keeps the old inode intact without copying the binary, and
-// it leaves target itself in place while the replacement is prepared.
+// backupTarget reserves a rollback name beside target and hard-links target to
+// it, returning the name. A hard link keeps the old inode intact without
+// copying the binary, and it leaves target itself in place while the
+// replacement is prepared.
 func backupTarget(target string) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(target), ".peers-rollback-*")
 	if err != nil {

@@ -2,6 +2,32 @@ package update
 
 import "testing"
 
+// TestIsReleaseVersion checks the exported predicate accepts formal versions
+// and rejects development, prerelease and non-canonical forms.
+func TestIsReleaseVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"0.2.0", true},
+		{"v0.2.0", true},
+		{"1.0.0", true},
+		{"0.1", false},
+		{"0.2.0-rc.1", false},
+		{"0.2.0+build.7", false},
+		{"dev", false},
+		{"e2e", false},
+		{"", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.version, func(t *testing.T) {
+			if got := IsReleaseVersion(tc.version); got != tc.want {
+				t.Errorf("IsReleaseVersion(%q) = %v, want %v", tc.version, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestNewer(t *testing.T) {
 	tests := []struct {
 		name      string
