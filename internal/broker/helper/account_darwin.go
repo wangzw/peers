@@ -8,20 +8,16 @@ import (
 	"syscall"
 )
 
-// accountChildIdentity hands the account identity to the child through the
-// environment instead of the credential. Darwin's setgroups and the static
-// initgroups list are capped at NGROUPS (16), so an account in more groups
-// cannot be expressed in syscall.Credential.Groups: the credential change would
-// fail with EINVAL before the helper started. The child starts as root and
-// switches itself in enterHelperAccount.
+// accountChildIdentity hands the identity to the child through the environment,
+// because Darwin's setgroups is capped at NGROUPS and the credential cannot
+// carry the full group table.
 func accountChildIdentity(cmd *exec.Cmd, acct Account) {
 	cmd.Env = append(cmd.Env, helperIdentityEnv(acct)...)
 }
 
-// enterHelperAccount switches a root-started account-helper to its account
-// before any protocol byte is served. It reuses the Darwin initgroups system
-// call the access check already depends on, so the kernel resolves the
-// account's groups through memberd instead of a static table.
+// enterHelperAccount switches the root-started account-helper to its account,
+// using the initgroups system call so the kernel resolves the groups through
+// memberd.
 func enterHelperAccount() error {
 	return enterHelperAccountFromEnv(helperIdentityOps{
 		geteuid:    os.Geteuid,
@@ -35,5 +31,4 @@ func enterHelperAccount() error {
 	})
 }
 
-// setParentDeathSignal is a no-op where the kernel has no parent death signal.
 func setParentDeathSignal(*syscall.SysProcAttr) {}

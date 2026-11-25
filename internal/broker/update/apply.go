@@ -22,41 +22,30 @@ import (
 )
 
 const (
-	// maxDownloadSize caps the release archive at 100 MiB.
 	maxDownloadSize int64 = 100 * 1024 * 1024
 
-	// maxChecksumsSize caps checksums.txt at 64 KiB. A release lists four
-	// platform archives, so the file is about 400 bytes: four lines of 64 hex
-	// digits, two spaces and an asset name under 60 bytes each. The cap leaves
-	// room for more platforms without letting the file grow into a memory
-	// concern.
 	maxChecksumsSize int64 = 64 * 1024
 
-	// maxChecksumsLineSize caps one checksums.txt line at 1 KiB. A released
-	// line is about 100 bytes; the cap bounds what scanning one line may
-	// allocate.
 	maxChecksumsLineSize = 1024
 
-	// binaryName is the only archive entry that is ever extracted.
 	binaryName = "peers"
 
-	// precheckTimeout bounds the staged binary's --version run.
 	precheckTimeout = 30 * time.Second
 )
 
 // ApplyOptions describes one release installation.
 type ApplyOptions struct {
-	Target       string // the binary to replace, with symlinks already resolved
-	Version      string // the version to install, without the v prefix
-	API          string
-	Client       *http.Client
-	GOOS, GOARCH string
+	Target       string       // the binary to replace, with symlinks already resolved
+	Version      string       // the version to install, without the v prefix
+	API          string       // the GitHub API base URL; empty means APIBase()
+	Client       *http.Client // the HTTP client; nil means http.DefaultClient
+	GOOS, GOARCH string       // target platform; both required, and Apply fails when either is empty
 }
 
 // Apply downloads the release archive for the target platform, verifies it
 // against checksums.txt, checks that the new binary reports the expected
-// version, and atomically replaces Target. The target file is left untouched
-// on every failure.
+// version, and atomically replaces Target. A failure before the rename leaves
+// Target untouched.
 func Apply(ctx context.Context, o ApplyOptions) error {
 	version := strings.TrimPrefix(o.Version, "v")
 	if !isReleaseVersion(version) {
@@ -137,8 +126,7 @@ func Apply(ctx context.Context, o ApplyOptions) error {
 		return err
 	}
 
-	// Stage the binary next to the target. The file that runs for the version
-	// check is the same file that is renamed into place, so a noexec system
+	// The staged file is the one renamed into place, so a noexec system
 	// temporary directory cannot break the preflight.
 	tmp, err := os.CreateTemp(filepath.Dir(o.Target), ".peers-update-*")
 	if err != nil {
@@ -194,13 +182,11 @@ func Apply(ctx context.Context, o ApplyOptions) error {
 	return nil
 }
 
-// releaseAsset is one downloadable file of a release.
 type releaseAsset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
 }
 
-// assetURLs returns the download URLs of the archive and the checksum file.
 func assetURLs(assets []releaseAsset, archiveName string) (archiveURL, checksumsURL string) {
 	for _, asset := range assets {
 		switch asset.Name {
@@ -213,12 +199,10 @@ func assetURLs(assets []releaseAsset, archiveName string) (archiveURL, checksums
 	return archiveURL, checksumsURL
 }
 
-// errTooLarge reports that a bounded read found more data than its limit.
 var errTooLarge = errors.New("more data than allowed")
 
-// readAtMost reads r up to max bytes and fails with errTooLarge when r holds
-// more. It reads one byte past max so a body exactly at the limit still
-// succeeds.
+// readAtMost reads r up to max bytes, reading one byte past max so a body
+// exactly at the limit still succeeds.
 func readAtMost(r io.Reader, max int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
@@ -230,8 +214,6 @@ func readAtMost(r io.Reader, max int64) ([]byte, error) {
 	return data, nil
 }
 
-// download fetches one asset, reading at most limit bytes and one more to
-// detect a file above it.
 func download(ctx context.Context, c *http.Client, url string, limit int64) ([]byte, error) {
 	resp, err := get(ctx, c, url)
 	if err != nil {
@@ -249,20 +231,11 @@ func download(ctx context.Context, c *http.Client, url string, limit int64) ([]b
 	return data, nil
 }
 
-// expectedChecksum returns the SHA-256 recorded for name in checksums.txt.
-// Lines are scanned one at a time, so the file is never copied whole. More
-// than one line for the same name is rejected, so a file cannot offer two
-// different answers for one archive.
 func expectedChecksum(checksums []byte, name string) ([]byte, error) {
 	var found []byte
 	scanner := bufio.NewScanner(bytes.NewReader(checksums))
-	// The scanner's maximum token size counts the newline too, so a line of
-	// exactly maxChecksumsLineSize bytes needs one more byte of buffer to be
-	// read: with the cap at maxChecksumsLineSize that full line would fail with
-	// ErrTooLong. A line of maxChecksumsLineSize+1 bytes still cannot fit. A
-	// CRLF ending counts its \r in the same length, so a line of exactly
-	// maxChecksumsLineSize content bytes that ends in \r\n is rejected;
-	// rejecting is the safe direction.
+	// The scanner's token limit counts the newline, so the buffer allows one
+	// byte more than maxChecksumsLineSize.
 	scanner.Buffer(make([]byte, 0, 256), maxChecksumsLineSize+1)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -294,8 +267,6 @@ func expectedChecksum(checksums []byte, name string) ([]byte, error) {
 	return found, nil
 }
 
-// extractBinary returns the regular file named peers from the archive.
-// Path traversal, symbolic links and hard links reject the whole archive.
 func extractBinary(archive []byte) ([]byte, error) {
 	gz, err := gzip.NewReader(bytes.NewReader(archive))
 	if err != nil {
@@ -342,7 +313,6 @@ func extractBinary(archive []byte) ([]byte, error) {
 	return binary, nil
 }
 
-// safeArchivePath reports whether a tar entry stays inside the archive root.
 func safeArchivePath(name string) bool {
 	if path.IsAbs(name) {
 		return false
@@ -351,9 +321,6 @@ func safeArchivePath(name string) bool {
 	return cleaned != ".." && !strings.HasPrefix(cleaned, "../")
 }
 
-// checkVersion runs the staged binary and requires it to report version
-// exactly, so an archive that passed the checksum but carries another build is
-// still rejected. The child gets a minimal environment and a bounded run time.
 func checkVersion(ctx context.Context, binary, version string) error {
 	ctx, cancel := context.WithTimeout(ctx, precheckTimeout)
 	defer cancel()
@@ -374,8 +341,6 @@ func checkVersion(ctx context.Context, binary, version string) error {
 	return nil
 }
 
-// precheckEnv is the minimal environment the version check passes to the
-// downloaded binary: PATH to resolve anything it runs, and HOME when set.
 func precheckEnv() []string {
 	env := []string{"PATH=" + os.Getenv("PATH")}
 	if home, ok := os.LookupEnv("HOME"); ok {
@@ -384,8 +349,6 @@ func precheckEnv() []string {
 	return env
 }
 
-// syncDir flushes the directory entry created by the rename so the replacement
-// survives a crash.
 func syncDir(dir string) error {
 	f, err := os.Open(dir)
 	if err != nil {
@@ -398,6 +361,4 @@ func syncDir(dir string) error {
 	return nil
 }
 
-// syncDirAfterReplace lets a test drive the sync failure that follows a
-// completed replacement.
 var syncDirAfterReplace = syncDir

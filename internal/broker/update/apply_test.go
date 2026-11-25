@@ -18,13 +18,14 @@ import (
 	"testing"
 )
 
+// TestApplyReplacesBinary checks that Apply replaces the target with the release
+// binary and preserves its mode and owner.
 func TestApplyReplacesBinary(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
 	target, before := newTarget(t, original, 0o750)
 
 	archive := releaseArchive(t, version)
-	// A checksums file lists every platform; only the matching line counts.
 	checksums := checksumsFor([]byte("another platform"), "peers_0.2.0_darwin_arm64.tar.gz") +
 		checksumsFor(archive, testArchiveName(version))
 	srv := newApplyServer(t, version, writeBytes(archive), checksums)
@@ -60,6 +61,8 @@ func TestApplyReplacesBinary(t *testing.T) {
 	}
 }
 
+// TestApplyFailureLeavesTargetUnchanged checks that every bad archive or
+// checksum leaves the target unchanged.
 func TestApplyFailureLeavesTargetUnchanged(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -67,8 +70,6 @@ func TestApplyFailureLeavesTargetUnchanged(t *testing.T) {
 	good := releaseArchive(t, version)
 	corrupt := []byte("this is not a gzip archive")
 	traversal := releaseArchive(t, version, tarEntry{name: "../escape", body: []byte("x")})
-	// Both link archives also carry a valid peers, so the failure can
-	// only come from the link entry.
 	symlink := tarGz(t,
 		tarEntry{name: binaryName, body: versionScript(version), mode: 0o755},
 		tarEntry{name: "peers-link", typeflag: tar.TypeSymlink, linkname: binaryName})
@@ -114,6 +115,8 @@ func TestApplyFailureLeavesTargetUnchanged(t *testing.T) {
 	}
 }
 
+// TestApplyRejectsOversizedDownload checks that a download above the size limit
+// is refused and the target is unchanged.
 func TestApplyRejectsOversizedDownload(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -136,6 +139,8 @@ func TestApplyRejectsOversizedDownload(t *testing.T) {
 	assertUnchanged(t, target, original, before)
 }
 
+// TestApplyRejectsOversizedExtraction checks that an extracted binary above the
+// size limit is refused and the target is unchanged.
 func TestApplyRejectsOversizedExtraction(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -154,6 +159,8 @@ func TestApplyRejectsOversizedExtraction(t *testing.T) {
 	assertUnchanged(t, target, original, before)
 }
 
+// TestApplyRejectsOversizedChecksums checks that a checksums file above the size
+// limit is refused and the target is unchanged.
 func TestApplyRejectsOversizedChecksums(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -181,9 +188,8 @@ func TestApplyRejectsOversizedChecksums(t *testing.T) {
 	assertUnchanged(t, target, original, before)
 }
 
-// TestExpectedChecksumAcceptsAFullLine checks the boundary the 1 KiB cap names:
-// a line of exactly maxChecksumsLineSize bytes is within the limit, so the
-// scanner must accept it even though reading it also consumes the newline.
+// TestExpectedChecksumAcceptsAFullLine checks that a checksums line of exactly
+// maxChecksumsLineSize bytes is accepted.
 func TestExpectedChecksumAcceptsAFullLine(t *testing.T) {
 	const version = "0.2.0"
 	name := testArchiveName(version)
@@ -204,6 +210,8 @@ func TestExpectedChecksumAcceptsAFullLine(t *testing.T) {
 	}
 }
 
+// TestExpectedChecksumRejectsOverlongLine checks that a checksums line above
+// maxChecksumsLineSize bytes is refused.
 func TestExpectedChecksumRejectsOverlongLine(t *testing.T) {
 	line := strings.Repeat("x", maxChecksumsLineSize+1)
 
@@ -217,6 +225,8 @@ func TestExpectedChecksumRejectsOverlongLine(t *testing.T) {
 	}
 }
 
+// TestApplyRejectsReleaseMetadata checks that a wrong tag, a draft or a
+// prerelease is refused and the target is unchanged.
 func TestApplyRejectsReleaseMetadata(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -258,6 +268,8 @@ func TestApplyRejectsReleaseMetadata(t *testing.T) {
 	}
 }
 
+// TestApplyRejectsNonReleaseVersion checks that a non-release version is refused
+// and the target stays unchanged.
 func TestApplyRejectsNonReleaseVersion(t *testing.T) {
 	for _, version := range []string{"0.2.0-rc.1", "dev", "0.1", "0.2.0+build.7"} {
 		t.Run(version, func(t *testing.T) {
@@ -278,6 +290,8 @@ func TestApplyRejectsNonReleaseVersion(t *testing.T) {
 	}
 }
 
+// TestApplyRejectsSymlinkTarget checks that a symbolic-link target is refused
+// and the file it points at is unchanged.
 func TestApplyRejectsSymlinkTarget(t *testing.T) {
 	original := []byte("original binary")
 	dir := t.TempDir()
@@ -311,9 +325,6 @@ func TestApplyRejectsSymlinkTarget(t *testing.T) {
 	}
 }
 
-// oversizedBinaryArchive builds an archive whose peers header claims one
-// byte over the download limit. The body is streamed through gzip, so the
-// archive itself stays small while the extracted file is too large.
 func oversizedBinaryArchive(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -335,7 +346,6 @@ func oversizedBinaryArchive(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
-// tarEntry describes one entry of a fake release archive.
 type tarEntry struct {
 	name     string
 	body     []byte
@@ -344,7 +354,6 @@ type tarEntry struct {
 	linkname string
 }
 
-// tarGz builds a tar.gz archive from entries.
 func tarGz(t *testing.T, entries ...tarEntry) []byte {
 	t.Helper()
 	var buf bytes.Buffer
@@ -381,14 +390,10 @@ func tarGz(t *testing.T, entries ...tarEntry) []byte {
 	return buf.Bytes()
 }
 
-// versionScript returns an executable that prints the version line the
-// preflight expects.
 func versionScript(version string) []byte {
 	return []byte("#!/bin/sh\necho \"peers " + version + "\"\n")
 }
 
-// releaseArchive builds a normal release archive whose staged binary reports
-// scriptVersion. Extra entries are appended after the binary.
 func releaseArchive(t *testing.T, scriptVersion string, extra ...tarEntry) []byte {
 	t.Helper()
 	entries := []tarEntry{
@@ -399,18 +404,15 @@ func releaseArchive(t *testing.T, scriptVersion string, extra ...tarEntry) []byt
 	return tarGz(t, entries...)
 }
 
-// checksumsFor renders one checksums.txt line.
 func checksumsFor(archive []byte, name string) string {
 	sum := sha256.Sum256(archive)
 	return fmt.Sprintf("%x  %s\n", sum, name)
 }
 
-// testArchiveName is the asset name Apply requests for linux/amd64.
 func testArchiveName(version string) string {
 	return fmt.Sprintf("%s_%s_linux_amd64.tar.gz", binaryName, version)
 }
 
-// writeBytes adapts a byte slice to the archive writer used by the fake API.
 func writeBytes(b []byte) func(http.ResponseWriter) error {
 	return func(w http.ResponseWriter) error {
 		_, err := w.Write(b)
@@ -418,7 +420,6 @@ func writeBytes(b []byte) func(http.ResponseWriter) error {
 	}
 }
 
-// fakeRelease describes the release metadata and assets a fake API serves.
 type fakeRelease struct {
 	version        string
 	tagName        string
@@ -428,7 +429,6 @@ type fakeRelease struct {
 	writeChecksums func(http.ResponseWriter) error
 }
 
-// newApplyServer serves a release whose metadata matches version.
 func newApplyServer(t *testing.T, version string, writeArchive func(http.ResponseWriter) error, checksums string) *httptest.Server {
 	t.Helper()
 	return newFakeReleaseServer(t, fakeRelease{
@@ -440,7 +440,7 @@ func newApplyServer(t *testing.T, version string, writeArchive func(http.Respons
 }
 
 // newFakeReleaseServer serves rel over TLS so the release build's https rule
-// holds. Its client trusts the test certificate.
+// holds.
 func newFakeReleaseServer(t *testing.T, rel fakeRelease) *httptest.Server {
 	t.Helper()
 	var srv *httptest.Server
@@ -473,7 +473,6 @@ func newFakeReleaseServer(t *testing.T, rel fakeRelease) *httptest.Server {
 	return srv
 }
 
-// testApplyOptions points Apply at the fake server for linux/amd64.
 func testApplyOptions(srv *httptest.Server, target, version string) ApplyOptions {
 	return ApplyOptions{
 		Target:  target,
@@ -485,8 +484,6 @@ func testApplyOptions(srv *httptest.Server, target, version string) ApplyOptions
 	}
 }
 
-// newTarget creates the binary Apply replaces and returns its initial bytes and
-// metadata.
 func newTarget(t *testing.T, content []byte, mode os.FileMode) (string, os.FileInfo) {
 	t.Helper()
 	target := filepath.Join(t.TempDir(), binaryName)
@@ -504,7 +501,6 @@ func newTarget(t *testing.T, content []byte, mode os.FileMode) (string, os.FileI
 	return target, info
 }
 
-// assertUnchanged checks that a failed Apply left the target as it was.
 func assertUnchanged(t *testing.T, target string, want []byte, before os.FileInfo) {
 	t.Helper()
 	got, err := os.ReadFile(target)
@@ -524,7 +520,6 @@ func assertUnchanged(t *testing.T, target string, want []byte, before os.FileInf
 	assertSameOwner(t, target, before)
 }
 
-// zeroReader yields zeros without allocating a buffer.
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) {

@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// writeFileUnder writes content to path under the test root and returns the
-// rooted path.
 func writeFileUnder(t *testing.T, root, path, content string) string {
 	t.Helper()
 	rootedPath := filepath.Join(root, path)
@@ -25,6 +23,8 @@ func writeFileUnder(t *testing.T, root, path, content string) string {
 	return rootedPath
 }
 
+// TestServiceBinaryReadsSystemdUnits checks that ServiceBinary returns the
+// ExecStart binary of user and system units, including unescaped systemd sigils.
 func TestServiceBinaryReadsSystemdUnits(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -83,6 +83,8 @@ func TestServiceBinaryReadsSystemdUnits(t *testing.T) {
 	}
 }
 
+// TestServiceBinaryReadsLaunchdPlists checks that ServiceBinary returns the
+// first ProgramArguments item of user and system plists.
 func TestServiceBinaryReadsLaunchdPlists(t *testing.T) {
 	cases := []struct {
 		name string
@@ -143,6 +145,8 @@ func TestServiceBinaryReadsLaunchdPlists(t *testing.T) {
 	}
 }
 
+// TestServiceBinaryWithoutDefinition checks that ServiceBinary reports no
+// definition when no unit file exists.
 func TestServiceBinaryWithoutDefinition(t *testing.T) {
 	opts := baseOptions(t)
 	got, ok, err := ServiceBinary(opts)
@@ -154,6 +158,8 @@ func TestServiceBinaryWithoutDefinition(t *testing.T) {
 	}
 }
 
+// TestServiceBinaryRejectsDefinitionWithoutProgram checks that ServiceBinary
+// rejects a unit without ExecStart.
 func TestServiceBinaryRejectsDefinitionWithoutProgram(t *testing.T) {
 	opts := baseOptions(t)
 	path, err := unitPath(opts)
@@ -166,6 +172,8 @@ func TestServiceBinaryRejectsDefinitionWithoutProgram(t *testing.T) {
 	}
 }
 
+// TestRemoveRuntimeDir checks that RemoveRuntimeDir removes the runtime
+// directory at each level and platform and reports nothing the second time.
 func TestRemoveRuntimeDir(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -237,6 +245,8 @@ func TestRemoveRuntimeDir(t *testing.T) {
 	}
 }
 
+// TestPurgeDataLinuxUser checks that a Linux user purge removes the data
+// directory and the systemd drop-in.
 func TestPurgeDataLinuxUser(t *testing.T) {
 	opts := baseOptions(t)
 	writeFileUnder(t, opts.Root, "/home/alice/.peers/config.yaml", "broker: {}\n")
@@ -259,6 +269,9 @@ func TestPurgeDataLinuxUser(t *testing.T) {
 	}
 }
 
+// TestPurgeDataLinuxSystem checks that a Linux system purge removes the
+// configuration, data, audit log, drop-in and empty log directory, and deletes
+// the recorded admin group.
 func TestPurgeDataLinuxSystem(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -316,6 +329,8 @@ func TestPurgeDataLinuxSystem(t *testing.T) {
 	}
 }
 
+// TestPurgeDataDarwinUser checks that a darwin user purge removes the data
+// directory and the log directory.
 func TestPurgeDataDarwinUser(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -333,6 +348,8 @@ func TestPurgeDataDarwinUser(t *testing.T) {
 	}
 }
 
+// TestPurgeDataDarwinSystem checks that a darwin system purge removes the
+// configuration, data and log directories and deletes the recorded admin group.
 func TestPurgeDataDarwinSystem(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -353,7 +370,7 @@ func TestPurgeDataDarwinSystem(t *testing.T) {
 		switch {
 		case name == "dscl" && slices.Equal(args, []string{".", "-list", "/Groups", "PrimaryGroupID"}):
 			// A second group must not share the configuration file's gid, or the
-			// lookup would resolve the owner to that group instead.
+			// lookup resolves the owner to that group.
 			return []byte("staff 1\nops " + strconv.Itoa(gid) + "\n"), nil
 		case name == "dscl" && slices.Equal(args, []string{".", "-list", "/Users", "PrimaryGroupID"}):
 			return []byte("root 0\n"), nil
@@ -376,6 +393,8 @@ func TestPurgeDataDarwinSystem(t *testing.T) {
 	}
 }
 
+// TestPurgeDataKeepsUnknownGroup checks that a system purge removes no group the
+// group database does not know.
 func TestPurgeDataKeepsUnknownGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -394,6 +413,8 @@ func TestPurgeDataKeepsUnknownGroup(t *testing.T) {
 	}
 }
 
+// TestPurgeDataKeepsAnUnrecordedGroupWhenConfigIsGone checks that a purge
+// without a record keeps the default group and reports why.
 func TestPurgeDataKeepsAnUnrecordedGroupWhenConfigIsGone(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -419,6 +440,9 @@ func TestPurgeDataKeepsAnUnrecordedGroupWhenConfigIsGone(t *testing.T) {
 	}
 }
 
+// TestOtherAccountBrokers checks that OtherAccountBrokers skips this account and
+// the accounts that do not answer and lists the rest's account names sorted by
+// uid.
 func TestOtherAccountBrokers(t *testing.T) {
 	opts := baseOptions(t)
 	for _, uid := range []int{1000, 2000, 3000, 4000} {
@@ -450,6 +474,8 @@ func TestOtherAccountBrokers(t *testing.T) {
 	}
 }
 
+// TestOtherAccountBrokersWithoutTemporaryDir checks that OtherAccountBrokers
+// returns an empty list and no error when /tmp does not exist.
 func TestOtherAccountBrokersWithoutTemporaryDir(t *testing.T) {
 	opts := baseOptions(t)
 	accounts, err := OtherAccountBrokers(opts)
@@ -461,7 +487,6 @@ func TestOtherAccountBrokersWithoutTemporaryDir(t *testing.T) {
 	}
 }
 
-// configGID returns the group id of the configuration file under the test root.
 func configGID(t *testing.T, opts Options, path string) int {
 	t.Helper()
 	info, err := os.Lstat(filepath.Join(opts.Root, path))
@@ -475,25 +500,18 @@ func configGID(t *testing.T, opts Options, path string) int {
 	return int(st.Gid)
 }
 
-// adminGroupRecord is where an installation records the group it created.
 const adminGroupRecord = "/var/lib/peers/admin-group"
 
-// purgeGroupOptions prepares a system purge whose configuration file is
-// owned by group "peers".
 func purgeGroupOptions(t *testing.T) (Options, int) {
 	t.Helper()
 	opts := baseOptions(t)
 	opts.System = true
 	opts.EUID = 0
-	// The purge tests drive the account list through Run, as production does.
 	opts.PrimaryGroupAccounts = nil
 	writeFileUnder(t, opts.Root, "/etc/peers/config.yaml", "broker: {}\n")
 	return opts, configGID(t, opts, "/etc/peers/config.yaml")
 }
 
-// purgeGroupRun answers the group database queries PurgeData makes. passwd is
-// the output of the account list; name is the group the configuration file
-// belongs to.
 func purgeGroupRun(cmds *[]string, gid int, name, passwd string) func(string, ...string) ([]byte, error) {
 	return func(command string, args ...string) ([]byte, error) {
 		*cmds = append(*cmds, strings.Join(append([]string{command}, args...), " "))
@@ -509,7 +527,6 @@ func purgeGroupRun(cmds *[]string, gid int, name, passwd string) func(string, ..
 	}
 }
 
-// groupKept reports whether removed carries a kept-group message naming name.
 func groupKept(removed []string, name string) bool {
 	for _, entry := range removed {
 		if strings.HasPrefix(entry, "kept group "+name+":") {
@@ -519,9 +536,8 @@ func groupKept(removed []string, name string) bool {
 	return false
 }
 
-// TestPurgeDataKeepsGroupWithoutInstallRecord covers group names the
-// configuration file of an installation that recorded none may belong to.
-// Without a record every name is kept, including the default group.
+// TestPurgeDataKeepsGroupWithoutInstallRecord checks that a purge without a
+// record keeps every candidate group, including the default.
 func TestPurgeDataKeepsGroupWithoutInstallRecord(t *testing.T) {
 	for _, name := range []string{"root", "wheel", "staff", "sudo", "broker-ops"} {
 		t.Run(name, func(t *testing.T) {
@@ -543,10 +559,8 @@ func TestPurgeDataKeepsGroupWithoutInstallRecord(t *testing.T) {
 	}
 }
 
-// TestPurgeDataSkipsAnUnrecordedAbsentGroup covers installations with no
-// admin-group record whose group is not in the group database: the group named
-// by the configuration file's gid, and the default group when no configuration
-// file is left. There is no group to keep, so purge reports nothing about it.
+// TestPurgeDataSkipsAnUnrecordedAbsentGroup checks that a purge without a record
+// says nothing about a group that does not exist.
 func TestPurgeDataSkipsAnUnrecordedAbsentGroup(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -589,6 +603,8 @@ func TestPurgeDataSkipsAnUnrecordedAbsentGroup(t *testing.T) {
 	}
 }
 
+// TestPurgeDataKeepsUnrecordedDefaultGroup checks that a purge without a record
+// keeps the default group and gives the missing-record reason.
 func TestPurgeDataKeepsUnrecordedDefaultGroup(t *testing.T) {
 	opts, gid := purgeGroupOptions(t)
 	var cmds []string
@@ -615,6 +631,8 @@ func TestPurgeDataKeepsUnrecordedDefaultGroup(t *testing.T) {
 	}
 }
 
+// TestPurgeDataKeepsGroupWhenRecordDiffers checks that a purge keeps the recorded
+// group when the configuration file belongs to another group.
 func TestPurgeDataKeepsGroupWhenRecordDiffers(t *testing.T) {
 	opts, gid := purgeGroupOptions(t)
 	writeFileUnder(t, opts.Root, adminGroupRecord, "peers\n")
@@ -633,6 +651,8 @@ func TestPurgeDataKeepsGroupWhenRecordDiffers(t *testing.T) {
 	}
 }
 
+// TestPurgeDataKeepsRootGroup checks that a purge keeps the recorded group when
+// its gid is 0.
 func TestPurgeDataKeepsRootGroup(t *testing.T) {
 	opts, gid := purgeGroupOptions(t)
 	writeFileUnder(t, opts.Root, adminGroupRecord, "wheel\n")
@@ -657,6 +677,8 @@ func TestPurgeDataKeepsRootGroup(t *testing.T) {
 	}
 }
 
+// TestPurgeDataKeepsPrimaryGroup checks that a purge keeps the recorded group
+// when it is an account's primary group.
 func TestPurgeDataKeepsPrimaryGroup(t *testing.T) {
 	opts, gid := purgeGroupOptions(t)
 	writeFileUnder(t, opts.Root, adminGroupRecord, "peers\n")
@@ -676,6 +698,8 @@ func TestPurgeDataKeepsPrimaryGroup(t *testing.T) {
 	}
 }
 
+// TestPurgeDataDeletesRecordedGroup checks that a purge deletes the recorded
+// group when every condition holds.
 func TestPurgeDataDeletesRecordedGroup(t *testing.T) {
 	opts, gid := purgeGroupOptions(t)
 	writeFileUnder(t, opts.Root, adminGroupRecord, "peers\n")
@@ -694,6 +718,8 @@ func TestPurgeDataDeletesRecordedGroup(t *testing.T) {
 	}
 }
 
+// TestPurgeDataRejectsRelativeHome checks that PurgeData rejects a relative home
+// directory before running a command.
 func TestPurgeDataRejectsRelativeHome(t *testing.T) {
 	opts := baseOptions(t)
 	opts.Home = "alice"
@@ -706,6 +732,8 @@ func TestPurgeDataRejectsRelativeHome(t *testing.T) {
 	}
 }
 
+// TestServiceBinaryStripsSystemdPrefixes checks that ServiceBinary strips the
+// systemd prefix characters from ExecStart.
 func TestServiceBinaryStripsSystemdPrefixes(t *testing.T) {
 	opts := baseOptions(t)
 	path, err := unitPath(opts)

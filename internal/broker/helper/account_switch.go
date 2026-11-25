@@ -7,17 +7,14 @@ import (
 	"strconv"
 )
 
-// The account-helper receives the identity it must switch to in its own
-// variables, separate from the access check's. The two hidden subcommands have
-// different jobs, so a child must never read an identity meant for the other.
-// The Broker constructs both environments itself.
+// The account-helper receives its identity in these variables, separate from
+// the access check's, so a child never reads an identity meant for the other
+// subcommand.
 const (
 	accountHelperUIDEnv = "PEERS_ACCOUNT_HELPER_UID"
 	accountHelperGIDEnv = "PEERS_ACCOUNT_HELPER_GID"
 )
 
-// helperIdentityEnv returns the environment entries that carry acct's identity
-// to an account-helper child that switches itself.
 func helperIdentityEnv(acct Account) []string {
 	return []string{
 		accountHelperUIDEnv + "=" + strconv.FormatUint(uint64(acct.UID), 10),
@@ -25,9 +22,6 @@ func helperIdentityEnv(acct Account) []string {
 	}
 }
 
-// helperIdentityOps is the identity switch the account-helper performs when it
-// starts as root. The fields are seams: Darwin supplies the syscall wrappers,
-// and the unit tests supply recorders.
 type helperIdentityOps struct {
 	geteuid    func() int
 	setgid     func(gid int) error
@@ -39,23 +33,12 @@ type helperIdentityOps struct {
 	getgroups  func() ([]int, error)
 }
 
-// enterHelperAccountFromEnv switches the process to the account named in the
-// environment. Without the identity variables the process is already the
-// account: that is how Linux starts the child (the credential is set before
-// exec) and how unit tests run it in process.
-//
-// A process that is not root must refuse to switch: only the Broker can hand it
-// an account identity, so an ordinary account cannot borrow another one. The
-// switch sets the real, effective and saved gid first, then the supplementary
-// groups, then the real, effective and saved uid. Only the primary group goes
-// into the static initgroups list; Darwin's list is capped at NGROUPS, and the
-// account uid as gmuid makes the kernel resolve the remaining groups through
-// memberd. That is why an account in more than NGROUPS groups still switches.
-//
-// After the switch the process must prove it dropped root: the four ids must
-// match, setuid(0) must fail, and, unless the account's primary group is 0, the
-// supplementary groups must not contain 0. The identity variables are cleared
-// once they have been consumed.
+// enterHelperAccountFromEnv switches to the account named in the environment,
+// and refuses when it did not start as root or the target uid is 0. The switch
+// runs gid, groups, uid in that order; afterwards the process must prove it
+// dropped root: all four ids match, setuid(0) fails, and no gid 0 remains
+// unless that is the primary group. The identity variables are cleared once
+// consumed.
 func enterHelperAccountFromEnv(ops helperIdentityOps) error {
 	uid, gid, present, err := lookupIdentityEnv(accountHelperUIDEnv, accountHelperGIDEnv)
 	if err != nil {
@@ -67,8 +50,6 @@ func enterHelperAccountFromEnv(ops helperIdentityOps) error {
 	if euid := ops.geteuid(); euid != 0 {
 		return fmt.Errorf("must start as root to switch to uid %d, running as uid %d", uid, euid)
 	}
-	// A helper that switches to uid 0 has not dropped root at all. The Broker
-	// never asks for it, so this is a defect in the caller or the environment.
 	if uid == 0 {
 		return errors.New("refusing to switch to uid 0: the account-helper must not keep root")
 	}
@@ -83,9 +64,6 @@ func enterHelperAccountFromEnv(ops helperIdentityOps) error {
 		return fmt.Errorf("setting uid %d: %w", uid, err)
 	}
 
-	// A switch that did not take must not keep serving while privileged. Check
-	// every half of the identity: a process that still holds root, or that
-	// ended up in the wrong group, is stopped here.
 	if got := ops.getuid(); got != int(uid) {
 		return fmt.Errorf("after the switch the real uid is %d, want %d", got, uid)
 	}
@@ -99,15 +77,14 @@ func enterHelperAccountFromEnv(ops helperIdentityOps) error {
 		return fmt.Errorf("after the switch the effective gid is %d, want %d", got, gid)
 	}
 
-	// The four ids can all read correctly while the process still holds root in
-	// a saved uid or a capability. Trying setuid(0) is how OpenSSH's
-	// permanently_set_uid catches that: if it succeeds, the drop did not take.
+	// Four matching ids can hide root kept in a saved uid or a capability; a
+	// successful setuid(0) catches that.
 	if err := ops.setuid(0); err == nil {
 		return errors.New("after the switch setuid(0) succeeded: the account-helper still holds root")
 	}
 
-	// The account's own primary group may be gid 0; any other group table that
-	// still contains 0 keeps access root has and the account must not.
+	// A primary group of 0 is legitimate; any other gid 0 in the table keeps
+	// root access the account must not have.
 	if gid != 0 {
 		groups, err := ops.getgroups()
 		if err != nil {
@@ -120,8 +97,6 @@ func enterHelperAccountFromEnv(ops helperIdentityOps) error {
 		}
 	}
 
-	// The identity has been consumed; do not leave it in the environment for
-	// anything this process later starts.
 	if err := os.Unsetenv(accountHelperUIDEnv); err != nil {
 		return fmt.Errorf("clearing %s: %w", accountHelperUIDEnv, err)
 	}

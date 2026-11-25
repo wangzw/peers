@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// TestServiceDomain pins the launchd domain of each level. The system daemon
-// lives in the system domain; a user agent lives in gui/<uid>, the domain the
-// install path bootstraps it into.
+// TestServiceDomain checks that serviceDomain returns the system domain for a
+// system service and gui/<uid> for a user one.
 func TestServiceDomain(t *testing.T) {
 	if got := serviceDomain(true, 501); got != "system" {
 		t.Errorf("serviceDomain(system) = %q, want system", got)
@@ -36,8 +35,6 @@ func TestMainPIDReportsTheServiceManagerPID(t *testing.T) {
 	}
 }
 
-// writeExecutable writes an executable stub, so a test can put a command on
-// PATH.
 func writeExecutable(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {

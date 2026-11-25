@@ -8,14 +8,9 @@ import (
 	"sync"
 )
 
-// maxHelperStderrLine bounds the bytes held for one unterminated stderr line,
-// so a helper that never writes a newline cannot grow the Broker's memory.
+// maxHelperStderrLine bounds the bytes held for one unterminated stderr line so a helper that never writes a newline cannot grow the Broker's memory.
 const maxHelperStderrLine = 64 << 10
 
-// helperStderr receives a helper child's standard error and logs it with the
-// account the child was started for. The Broker no longer inherits its own
-// stderr into helpers, so a helper cannot write to the Broker's terminal or
-// logs without its uid attached.
 type helperStderr struct {
 	log      *slog.Logger
 	uid      uint32
@@ -50,7 +45,6 @@ func (w *helperStderr) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// flush logs a last line that the child wrote without a trailing newline.
 func (w *helperStderr) flush() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -63,8 +57,7 @@ func (w *helperStderr) flush() {
 func (w *helperStderr) logLine(line string) {
 	level := slog.LevelWarn
 	if w.stopping != nil && w.stopping() && strings.Contains(line, "context canceled") {
-		// The helper's context ended with the Broker; this is the stop, not a
-		// helper failure.
+		// The helper's context ended with the Broker; this is the stop, not a failure.
 		level = slog.LevelDebug
 	}
 	w.log.Log(context.Background(), level, "account_helper_stderr",

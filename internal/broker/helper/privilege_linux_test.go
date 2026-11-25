@@ -15,9 +15,8 @@ import (
 	"testing"
 )
 
-// TestRootHelperReportsTargetIdentity exercises the default derivation
-// function with a real account other than root. Run it with sudo; without root
-// there is no account to drop to.
+// TestRootHelperReportsTargetIdentity checks that the helper reports the target
+// account's uid, gid and groups, and skips without root.
 func TestRootHelperReportsTargetIdentity(t *testing.T) {
 	requireRoot(t)
 	acct := accountByName(t, "nobody")
@@ -55,10 +54,8 @@ func TestRootHelperReportsTargetIdentity(t *testing.T) {
 	}
 }
 
-// TestRootAccessCheckUsesTargetCredentials checks that the default access-check
-// helper answers for the account it was started as: group members can read a
-// 0640 file owned by their group, non-members cannot, and 0757/0750 separate
-// "other" write access.
+// TestRootAccessCheckUsesTargetCredentials checks group and other permission
+// decisions made as the target account, and skips without root.
 func TestRootAccessCheckUsesTargetCredentials(t *testing.T) {
 	requireRoot(t)
 	nobody := accountByName(t, "nobody")
@@ -128,7 +125,6 @@ func accountByName(t *testing.T, name string) Account {
 	return acct
 }
 
-// accountOutsideGroup returns an account whose group list does not contain gid.
 func accountOutsideGroup(t *testing.T, gid uint32) (Account, bool) {
 	t.Helper()
 	for _, name := range []string{"daemon", "bin", "mail", "games", "man", "lp", "www-data"} {
@@ -151,7 +147,6 @@ func accountOutsideGroup(t *testing.T, gid uint32) (Account, bool) {
 	return Account{}, false
 }
 
-// rootTestDir makes a directory another account can traverse.
 func rootTestDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "peers-root-test-")
@@ -165,8 +160,6 @@ func rootTestDir(t *testing.T) string {
 	return dir
 }
 
-// writeOwnedFile creates path with an exact mode and owner. The process must be
-// root to give the file an owner or group other than its own.
 func writeOwnedFile(t *testing.T, dir, name string, mode os.FileMode, uid, gid int) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -182,9 +175,6 @@ func writeOwnedFile(t *testing.T, dir, name string, mode os.FileMode, uid, gid i
 	return path
 }
 
-// rootTestExecutable returns a copy of this test binary that another account
-// can execute. The go test build directory is not guaranteed to be traversable
-// by other accounts.
 func rootTestExecutable(t *testing.T) string {
 	t.Helper()
 	src, err := os.Executable()

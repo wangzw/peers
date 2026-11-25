@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestInstalledLinuxUserFileExists checks that an existing user unit file reports
+// installed without querying the service manager.
 func TestInstalledLinuxUserFileExists(t *testing.T) {
 	opts := baseOptions(t)
 	writeInstalledFile(t, opts, "/home/alice/.config/systemd/user/peers.service")
@@ -25,6 +27,8 @@ func TestInstalledLinuxUserFileExists(t *testing.T) {
 	}
 }
 
+// TestInstalledLinuxSystemFileExists checks that an existing system unit file
+// reports installed.
 func TestInstalledLinuxSystemFileExists(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -40,6 +44,8 @@ func TestInstalledLinuxSystemFileExists(t *testing.T) {
 	}
 }
 
+// TestInstalledLinuxUserStillEnabled checks that systemd still reporting the user
+// unit enabled makes it installed.
 func TestInstalledLinuxUserStillEnabled(t *testing.T) {
 	opts := baseOptions(t)
 	var cmds []string
@@ -61,6 +67,8 @@ func TestInstalledLinuxUserStillEnabled(t *testing.T) {
 	}
 }
 
+// TestInstalledLinuxSystemStillActive checks that a system unit still active
+// although not enabled counts as installed.
 func TestInstalledLinuxSystemStillActive(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -90,6 +98,8 @@ func TestInstalledLinuxSystemStillActive(t *testing.T) {
 	}
 }
 
+// TestInstalledLinuxNothingLeft checks that neither the file nor systemd
+// reporting the unit makes it not installed.
 func TestInstalledLinuxNothingLeft(t *testing.T) {
 	opts := baseOptions(t)
 	opts.Run = func(string, ...string) ([]byte, error) { return nil, exitError(t, 1) }
@@ -103,6 +113,8 @@ func TestInstalledLinuxNothingLeft(t *testing.T) {
 	}
 }
 
+// TestInstalledDarwinFileExists checks that an existing user plist reports
+// installed.
 func TestInstalledDarwinFileExists(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -120,6 +132,8 @@ func TestInstalledDarwinFileExists(t *testing.T) {
 	}
 }
 
+// TestInstalledDarwinStillLoaded checks that a job launchd still has loaded in
+// the gui domain counts as installed.
 func TestInstalledDarwinStillLoaded(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -148,6 +162,8 @@ func TestInstalledDarwinStillLoaded(t *testing.T) {
 	}
 }
 
+// TestInstalledDarwinNothingLeft checks that neither the plist nor a loaded job
+// makes it not installed.
 func TestInstalledDarwinNothingLeft(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -176,6 +192,8 @@ func TestInstalledDarwinNothingLeft(t *testing.T) {
 	}
 }
 
+// TestInstalledDarwinWithoutGUIDomain checks that a user installation in a
+// missing gui domain reports not installed.
 func TestInstalledDarwinWithoutGUIDomain(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -201,6 +219,8 @@ func TestInstalledDarwinWithoutGUIDomain(t *testing.T) {
 	}
 }
 
+// TestInstalledDarwinSystemStillLoaded checks that a loaded system daemon job
+// counts as installed.
 func TestInstalledDarwinSystemStillLoaded(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -227,10 +247,10 @@ func TestInstalledDarwinSystemStillLoaded(t *testing.T) {
 	}
 }
 
+// TestInstalledUnreadableState checks that a unit path that cannot be inspected
+// is an error rather than not installed.
 func TestInstalledUnreadableState(t *testing.T) {
 	opts := baseOptions(t)
-	// A regular file where a parent directory belongs makes the unit path
-	// impossible to inspect: the answer is unknown, not "not installed".
 	blocker := filepath.Join(opts.Root, "home/alice/.config")
 	if err := os.MkdirAll(filepath.Dir(blocker), 0o755); err != nil {
 		t.Fatal(err)
@@ -248,6 +268,8 @@ func TestInstalledUnreadableState(t *testing.T) {
 	}
 }
 
+// TestInstalledUnsupportedPlatform checks that an unsupported platform returns
+// the expected error.
 func TestInstalledUnsupportedPlatform(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "windows"
@@ -262,6 +284,8 @@ func TestInstalledUnsupportedPlatform(t *testing.T) {
 	}
 }
 
+// TestServiceFileExistsReportsInspectionFailure checks that an inspection
+// failure is reported as an error with the file absent.
 func TestServiceFileExistsReportsInspectionFailure(t *testing.T) {
 	opts := baseOptions(t)
 	blocker := filepath.Join(opts.Root, "home/alice/.config")
@@ -281,6 +305,8 @@ func TestServiceFileExistsReportsInspectionFailure(t *testing.T) {
 	}
 }
 
+// TestServiceFileExistsMissing checks that a missing file reports not present
+// without an error.
 func TestServiceFileExistsMissing(t *testing.T) {
 	opts := baseOptions(t)
 
@@ -293,6 +319,7 @@ func TestServiceFileExistsMissing(t *testing.T) {
 	}
 }
 
+// TestServiceFileExistsPresent checks that an existing file reports present.
 func TestServiceFileExistsPresent(t *testing.T) {
 	opts := baseOptions(t)
 	writeInstalledFile(t, opts, "/home/alice/.config/systemd/user/peers.service")

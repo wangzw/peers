@@ -12,17 +12,13 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// maxMessageSize bounds one framed message so that neither end of a pipe can
-// make the other allocate an arbitrary amount of memory.
+// maxMessageSize bounds one framed message so neither end of a pipe can make the other allocate an arbitrary amount of memory.
 const maxMessageSize = 4 << 20
 
-// errOversize reports that a message was not written because its encoded size
-// exceeds maxMessageSize. A peer would reject such a frame, so sending it can
-// only break the connection.
+// errOversize reports a message whose encoded size exceeds maxMessageSize; a peer would reject it, so sending it can only break the connection.
 var errOversize = errors.New("message exceeds the size limit")
 
-// msgWriter writes length-delimited protobuf messages to a pipe. It serializes
-// complete messages, so concurrent callers never interleave their bytes.
+// msgWriter writes length-delimited protobuf messages, holding mu so one message's bytes stay contiguous under concurrent callers.
 type msgWriter struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -32,10 +28,6 @@ func newMsgWriter(w io.Writer) *msgWriter {
 	return &msgWriter{w: w}
 }
 
-// write encodes msg and writes it with a single Write call. Holding the mutex
-// across that call keeps one message's bytes contiguous even when other
-// goroutines write concurrently. A message above maxMessageSize is refused
-// before any byte reaches the pipe.
 func (m *msgWriter) write(msg proto.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -57,7 +49,6 @@ func (m *msgWriter) write(msg proto.Message) error {
 	return nil
 }
 
-// msgReader reads length-delimited protobuf messages from a pipe.
 type msgReader struct {
 	r *bufio.Reader
 }
@@ -69,8 +60,7 @@ func newMsgReader(r io.Reader) *msgReader {
 	return &msgReader{r: bufio.NewReader(r)}
 }
 
-// read reads one message. It returns io.EOF when the stream ends at a message
-// boundary and io.ErrUnexpectedEOF when it ends in the middle of a message.
+// read returns io.EOF at a message boundary and io.ErrUnexpectedEOF in the middle of a message.
 func (m *msgReader) read(msg proto.Message) error {
 	opts := protodelim.UnmarshalOptions{MaxSize: maxMessageSize}
 	return opts.UnmarshalFrom(m.r, msg)

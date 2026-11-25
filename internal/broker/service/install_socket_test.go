@@ -7,11 +7,9 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestLocalSocketPathFollowsTheResolvedRuntimeDir pins the user deployment's
-// socket to the runtime directory the location rule resolves, including the
-// fallback location. A fixed /tmp/peers-<uid> would not find a Broker running
-// from the fallback directory, so the service install and removal would check
-// and clean the wrong place.
+// TestLocalSocketPathFollowsTheResolvedRuntimeDir checks that the user socket
+// follows the resolved runtime directory, including the fallback location, and
+// that the system sockets use the fixed system paths.
 func TestLocalSocketPathFollowsTheResolvedRuntimeDir(t *testing.T) {
 	old := runtimeDirFor
 	runtimeDirFor = func(euid int) string {
@@ -46,9 +44,8 @@ func TestLocalSocketPathFollowsTheResolvedRuntimeDir(t *testing.T) {
 	}
 }
 
-// TestRuntimeDirForFollowsConfig pins the production default: the service
-// resolves the runtime directory through the config rule, not a path of its
-// own.
+// TestRuntimeDirForFollowsConfig checks that the runtime directory resolves
+// through config.RuntimeDir.
 func TestRuntimeDirForFollowsConfig(t *testing.T) {
 	for _, euid := range []int{0, 1000, 4321} {
 		if got, want := runtimeDirFor(euid), config.RuntimeDir(euid); got != want {

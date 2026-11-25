@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// assertSameOwner checks that path and want have the same owner, which is what
-// a replacement must preserve.
 func assertSameOwner(t *testing.T, path string, want os.FileInfo) {
 	t.Helper()
 	got, err := os.Stat(path)

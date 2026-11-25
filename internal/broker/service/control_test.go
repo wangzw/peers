@@ -13,8 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// writeInstalledUnit writes the unit file or plist opts names, so Installed
-// accepts the level without querying the service manager.
 func writeInstalledUnit(t *testing.T, opts Options) string {
 	t.Helper()
 	path, err := unitPath(opts)
@@ -31,8 +29,6 @@ func writeInstalledUnit(t *testing.T, opts Options) string {
 	return path
 }
 
-// linuxControlOptions returns user Linux options whose StatusProbe
-// reports a healthy Broker. A test that exercises commands starts from these.
 func linuxControlOptions(t *testing.T) Options {
 	t.Helper()
 	opts := baseOptions(t)
@@ -42,6 +38,8 @@ func linuxControlOptions(t *testing.T) Options {
 	return opts
 }
 
+// TestStartLinuxUser checks that a user Linux start runs systemctl start and
+// reports the service ready at pid 4242.
 func TestStartLinuxUser(t *testing.T) {
 	opts := linuxControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -87,6 +85,8 @@ func TestStartLinuxUser(t *testing.T) {
 	}
 }
 
+// TestStartLinuxSystem checks that a system Linux start runs the system
+// systemctl start first and reports the service ready.
 func TestStartLinuxSystem(t *testing.T) {
 	opts := linuxControlOptions(t)
 	opts.System = true
@@ -120,6 +120,8 @@ func TestStartLinuxSystem(t *testing.T) {
 	}
 }
 
+// TestStopLinux checks that a Linux stop runs systemctl stop and reports the
+// same command.
 func TestStopLinux(t *testing.T) {
 	opts := linuxControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -139,6 +141,8 @@ func TestStopLinux(t *testing.T) {
 	}
 }
 
+// TestRestartLinux checks that a Linux restart runs systemctl restart and then
+// waits for the service to report ready.
 func TestRestartLinux(t *testing.T) {
 	opts := linuxControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -171,6 +175,8 @@ func TestRestartLinux(t *testing.T) {
 	}
 }
 
+// TestStartNotInstalled checks that Start at either level returns ErrNotInstalled
+// naming the level before running a start, stop or restart command.
 func TestStartNotInstalled(t *testing.T) {
 	for _, system := range []bool{false, true} {
 		t.Run(fmt.Sprintf("system=%t", system), func(t *testing.T) {
@@ -204,6 +210,8 @@ func TestStartNotInstalled(t *testing.T) {
 	}
 }
 
+// TestStopAndRestartNotInstalled checks that Stop and Restart return
+// ErrNotInstalled when no service is installed.
 func TestStopAndRestartNotInstalled(t *testing.T) {
 	for _, verb := range []string{"Stop", "Restart"} {
 		t.Run(verb, func(t *testing.T) {
@@ -222,6 +230,9 @@ func TestStopAndRestartNotInstalled(t *testing.T) {
 	}
 }
 
+// TestStartReadinessTimeoutKeepsTheServiceEnabled checks that a start whose
+// Broker never answers reports the startup_failed reason without stopping or
+// disabling the service.
 func TestStartReadinessTimeoutKeepsTheServiceEnabled(t *testing.T) {
 	opts := linuxControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -258,6 +269,8 @@ func TestStartReadinessTimeoutKeepsTheServiceEnabled(t *testing.T) {
 	}
 }
 
+// TestStartReportsDegraded checks that Start returns a *DegradedError carrying
+// the state together with a complete Result.
 func TestStartReportsDegraded(t *testing.T) {
 	opts := linuxControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -289,6 +302,8 @@ func TestStartReportsDegraded(t *testing.T) {
 	}
 }
 
+// TestStartReportsStatusProbeError checks that a failing status probe is retried
+// and reported with the matching status hint, not as a *DegradedError.
 func TestStartReportsStatusProbeError(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -307,8 +322,6 @@ func TestStartReportsStatusProbeError(t *testing.T) {
 				opts.UID = 0
 			}
 			writeInstalledUnit(t, opts)
-			// Leave room for one retry, so the test also proves the probe is
-			// retried within the remaining readiness time.
 			opts.ReadyTimeout = 150 * time.Millisecond
 			started := false
 			opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -348,7 +361,7 @@ func TestStartReportsStatusProbeError(t *testing.T) {
 }
 
 // TestStartAndRestartRetryTheStatusProbe checks that both commands retry a
-// Status call that fails once, as Install does, instead of failing the command.
+// Status call that fails once instead of failing the command.
 func TestStartAndRestartRetryTheStatusProbe(t *testing.T) {
 	for _, command := range []string{"start", "restart"} {
 		t.Run(command, func(t *testing.T) {
@@ -391,25 +404,16 @@ func TestStartAndRestartRetryTheStatusProbe(t *testing.T) {
 	}
 }
 
-// darwinFake stands in for launchctl. It tracks whether the job is loaded and
-// the pid launchd reports, so a test can drive start, stop and restart through
-// the same sequence launchd would see. stillLoadedPolls makes launchd's
-// asynchronous teardown visible: after a bootout, that many print probes still
-// report the job loaded before one reports it gone.
 type darwinFake struct {
-	t                 *testing.T
-	cmds              []string
-	loaded            bool
-	pid               int
-	bootstrapFailures int
-	bootstraps        int
-	stillLoadedPolls  int
-	// remainingLoadedPolls counts the still-loaded reports left after the most
-	// recent bootout.
+	t                    *testing.T
+	cmds                 []string
+	loaded               bool
+	pid                  int
+	bootstrapFailures    int
+	bootstraps           int
+	stillLoadedPolls     int
 	remainingLoadedPolls int
-	// unloadedAt is the index in cmds of the print probe that first reported the
-	// job gone after the most recent bootout, or -1 before it has.
-	unloadedAt int
+	unloadedAt           int
 }
 
 func (f *darwinFake) run(name string, args ...string) ([]byte, error) {
@@ -486,6 +490,8 @@ func darwinControlOptions(t *testing.T) (Options, *darwinFake) {
 	return opts, fake
 }
 
+// TestStartDarwinBootstrapsAnUnloadedService checks that a start of an unloaded
+// darwin service enables the label and bootstraps the plist.
 func TestStartDarwinBootstrapsAnUnloadedService(t *testing.T) {
 	opts, _ := darwinControlOptions(t)
 	plist := writeInstalledUnit(t, opts)
@@ -506,6 +512,8 @@ func TestStartDarwinBootstrapsAnUnloadedService(t *testing.T) {
 	}
 }
 
+// TestStartDarwinKickstartsALoadedService checks that a start of a loaded darwin
+// service kickstarts the job in place.
 func TestStartDarwinKickstartsALoadedService(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -525,6 +533,8 @@ func TestStartDarwinKickstartsALoadedService(t *testing.T) {
 	}
 }
 
+// TestStopDarwinWaitsForUnload checks that a darwin stop boots the job out,
+// leaves the enabled state alone and returns with the job unloaded.
 func TestStopDarwinWaitsForUnload(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -549,10 +559,8 @@ func TestStopDarwinWaitsForUnload(t *testing.T) {
 	}
 }
 
-// TestStopDarwinWaitsUntilLaunchdReportsUnloaded covers launchd's asynchronous
-// teardown: bootout returns while print still reports the job. Stop must keep
-// probing until launchd reports it gone instead of returning right after the
-// bootout.
+// TestStopDarwinWaitsUntilLaunchdReportsUnloaded checks that Stop keeps probing
+// until launchctl reports the job gone after bootout.
 func TestStopDarwinWaitsUntilLaunchdReportsUnloaded(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -576,10 +584,11 @@ func TestStopDarwinWaitsUntilLaunchdReportsUnloaded(t *testing.T) {
 	}
 }
 
+// TestStopDarwinIgnoresBootoutExitThree checks that Stop succeeds when bootout
+// reports exit 3 because the job was not loaded.
 func TestStopDarwinIgnoresBootoutExitThree(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	writeInstalledUnit(t, opts)
-	// The job is not loaded; launchctl bootout reports exit 3.
 	fake.loaded = false
 
 	res, err := Stop(opts)
@@ -591,6 +600,8 @@ func TestStopDarwinIgnoresBootoutExitThree(t *testing.T) {
 	}
 }
 
+// TestRestartDarwinReloadsThePlist checks that a darwin restart boots out, enables
+// and bootstraps the plist, leaving the job loaded at pid 4242.
 func TestRestartDarwinReloadsThePlist(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	plist := writeInstalledUnit(t, opts)
@@ -614,6 +625,9 @@ func TestRestartDarwinReloadsThePlist(t *testing.T) {
 	}
 }
 
+// TestRestartDarwinNotLoadedSkipsBootoutExitThree checks that a restart of an
+// unloaded darwin service ignores bootout's exit 3 and still enables and
+// bootstraps.
 func TestRestartDarwinNotLoadedSkipsBootoutExitThree(t *testing.T) {
 	opts, _ := darwinControlOptions(t)
 	plist := writeInstalledUnit(t, opts)
@@ -632,10 +646,8 @@ func TestRestartDarwinNotLoadedSkipsBootoutExitThree(t *testing.T) {
 	}
 }
 
-// TestRestartDarwinBootstrapsAfterLaunchdReportsUnloaded is the restart half of
-// the asynchronous teardown check: the bootstrap that loads the plist again
-// must come after launchctl has reported the old job gone, not right after the
-// bootout returned.
+// TestRestartDarwinBootstrapsAfterLaunchdReportsUnloaded checks that Restart
+// bootstraps only after launchctl reports the old job gone.
 func TestRestartDarwinBootstrapsAfterLaunchdReportsUnloaded(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	plist := writeInstalledUnit(t, opts)
@@ -666,10 +678,8 @@ func TestRestartDarwinBootstrapsAfterLaunchdReportsUnloaded(t *testing.T) {
 	}
 }
 
-// TestRestartDarwinRefusesAMissingPlist checks the case Installed accepts: the
-// job is loaded but its plist was deleted. A restart that booted the job out
-// first could not bootstrap the missing file, so it must refuse before running
-// any service-manager command and leave the running service alone.
+// TestRestartDarwinRefusesAMissingPlist checks that Restart refuses a loaded job
+// whose plist is missing before running any service-manager command.
 func TestRestartDarwinRefusesAMissingPlist(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	path := writeInstalledUnit(t, opts)
@@ -702,9 +712,8 @@ func TestRestartDarwinRefusesAMissingPlist(t *testing.T) {
 }
 
 // TestRestartDarwinReadinessFailureKeepsTheServiceEnabled checks that a restart
-// whose Broker never answers reports the startup_failed reason and leaves the
-// freshly loaded service enabled: restart is not an installation and must not
-// change the job's start-at-login state.
+// whose Broker never answers reports the startup_failed reason without disabling
+// the service.
 func TestRestartDarwinReadinessFailureKeepsTheServiceEnabled(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -717,8 +726,8 @@ func TestRestartDarwinReadinessFailureKeepsTheServiceEnabled(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		t.Fatalf("create log directory: %v", err)
 	}
-	// The Broker writes the record after the restart begins, as it does in
-	// production; a record written before Restart's own start time is ignored.
+	// The record is written after Restart begins, because one with an earlier
+	// time is ignored.
 	baseRun := fake.run
 	opts.Run = func(name string, args ...string) ([]byte, error) {
 		out, err := baseRun(name, args...)
@@ -749,6 +758,8 @@ func TestRestartDarwinReadinessFailureKeepsTheServiceEnabled(t *testing.T) {
 	}
 }
 
+// TestStartDarwinRetriesBootstrapExitFive checks that a bootstrap that fails with
+// exit 5 once is retried.
 func TestStartDarwinRetriesBootstrapExitFive(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	writeInstalledUnit(t, opts)
@@ -763,6 +774,9 @@ func TestStartDarwinRetriesBootstrapExitFive(t *testing.T) {
 	}
 }
 
+// TestRestartDarwinReportsDegradedWithTheFullResult checks that a degraded restart
+// returns a *DegradedError with the complete Result and leaves the service
+// enabled.
 func TestRestartDarwinReportsDegradedWithTheFullResult(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	plist := writeInstalledUnit(t, opts)
@@ -797,6 +811,8 @@ func TestRestartDarwinReportsDegradedWithTheFullResult(t *testing.T) {
 	}
 }
 
+// TestStartDarwinNotInstalled checks that a darwin start with no service returns
+// ErrNotInstalled before running a launchctl command.
 func TestStartDarwinNotInstalled(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	fake.loaded = false
@@ -811,9 +827,9 @@ func TestStartDarwinNotInstalled(t *testing.T) {
 	}
 }
 
-// TestStartAndRestartDarwinWithoutAGuiDomainReportTheGraphicalSession checks
-// that the commands that need a domain explain the control context instead of
-// the installation's advice, which stop's no-op wording already matches.
+// TestStartAndRestartDarwinWithoutAGuiDomainReportTheGraphicalSession checks that
+// Start and Restart without a gui domain report the missing graphical login
+// session instead of installation advice.
 func TestStartAndRestartDarwinWithoutAGuiDomainReportTheGraphicalSession(t *testing.T) {
 	verbs := []struct {
 		name string
@@ -855,9 +871,8 @@ func TestStartAndRestartDarwinWithoutAGuiDomainReportTheGraphicalSession(t *test
 	}
 }
 
-// TestStopAndRestartDarwinUnloadTimeoutAdvice checks that the unload timeout
-// tells the operator which command to retry instead of the installation's
-// advice.
+// TestStopAndRestartDarwinUnloadTimeoutAdvice checks that an unload timeout names
+// the command to retry instead of installation advice.
 func TestStopAndRestartDarwinUnloadTimeoutAdvice(t *testing.T) {
 	verbs := []struct {
 		name  string
@@ -898,13 +913,14 @@ func TestStopAndRestartDarwinUnloadTimeoutAdvice(t *testing.T) {
 	}
 }
 
+// TestStopDarwinWithoutAGuiDomainIsANoOp checks that Stop without a gui domain
+// runs no service-manager command and leaves the domain empty.
 func TestStopDarwinWithoutAGuiDomainIsANoOp(t *testing.T) {
 	opts, fake := darwinControlOptions(t)
 	opts.UID = 777
 	opts.EUID = 777
 	writeInstalledUnit(t, opts)
 
-	// No gui/777 domain exists; the test fake reports only gui/501.
 	res, err := Stop(opts)
 	if err != nil {
 		t.Fatalf("Stop: %v", err)

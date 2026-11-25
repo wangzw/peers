@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestAccountCommandOtherAccountGetsCredential covers the platforms that pass
-// the whole identity, group table included, to the kernel before exec.
+// TestAccountCommandOtherAccountGetsCredential checks that an account other
+// than the Broker's gets the full identity in the credential.
 func TestAccountCommandOtherAccountGetsCredential(t *testing.T) {
 	other := Account{
 		Name:   "other",

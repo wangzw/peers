@@ -16,17 +16,10 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// eventTimeout is the package-wide fallback for a wait on an event that is
-// expected to arrive but that the test cannot force, such as the post-update
-// step's marker appearing or Install returning after its context is canceled.
-// It only decides how long a wait that will never complete takes to fail: the
-// success path selects on the event itself and never spends this time, so a
-// larger value costs nothing. It matches the fallback the broker package uses.
+// eventTimeout is the fallback for a test wait on an event it cannot force, so
+// it only decides how long a never-completing wait takes to fail.
 const eventTimeout = 30 * time.Second
 
-// postUpdateScript returns a stand-in release binary. It answers the version
-// preflight, records the arguments of the hidden post-update command in
-// marker, writes notes to stderr, and exits with code.
 func postUpdateScript(version, marker string, code int, notes string) []byte {
 	stderr := ""
 	if notes != "" {
@@ -43,9 +36,8 @@ exit %d
 `, version, marker, stderr, code))
 }
 
-// postUpdateHangScript returns a stand-in release binary whose post-update
-// command never finishes on its own. exec keeps sleep the direct child, so the
-// timeout kills the process the test started.
+// postUpdateHangScript returns a binary whose step never finishes; exec makes
+// sleep the direct child so the timeout kills the process the test started.
 func postUpdateHangScript(version string) []byte {
 	return []byte(fmt.Sprintf(`#!/bin/sh
 if [ "$1" = "--version" ]; then
@@ -56,8 +48,6 @@ exec sleep 30
 `, version))
 }
 
-// serveScript stages script as the release binary of version and returns the
-// options that install it over target.
 func serveScript(t *testing.T, target, version string, script []byte) ApplyOptions {
 	t.Helper()
 	archive := tarGz(t, tarEntry{name: binaryName, body: script, mode: 0o755})
@@ -65,7 +55,6 @@ func serveScript(t *testing.T, target, version string, script []byte) ApplyOptio
 	return testApplyOptions(srv, target, version)
 }
 
-// postUpdateArgs reads the arguments the installed binary received.
 func postUpdateArgs(t *testing.T, marker string) string {
 	t.Helper()
 	data, err := os.ReadFile(marker)
@@ -75,7 +64,6 @@ func postUpdateArgs(t *testing.T, marker string) string {
 	return strings.TrimSpace(string(data))
 }
 
-// assertNoRollbackFiles checks that Install removed its rollback copy.
 func assertNoRollbackFiles(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -89,6 +77,8 @@ func assertNoRollbackFiles(t *testing.T, dir string) {
 	}
 }
 
+// TestInstallRunsPostUpdate checks that Install runs the post-update command
+// with the level and pid and leaves no rollback file.
 func TestInstallRunsPostUpdate(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -114,9 +104,6 @@ func TestInstallRunsPostUpdate(t *testing.T) {
 	assertNoRollbackFiles(t, filepath.Dir(target))
 }
 
-// injectUnitGuard replaces the two pre-step unit guard calls for one test and
-// restores them when it ends. It returns a pointer that reports whether
-// SaveMainUnit ran.
 func injectUnitGuard(t *testing.T, options func(bool) (service.Options, error), save func(service.Options) (service.SavedUnit, error)) *bool {
 	t.Helper()
 	previousOptions := postUpdateOptions
@@ -134,9 +121,6 @@ func injectUnitGuard(t *testing.T, options func(bool) (service.Options, error), 
 	return saveCalled
 }
 
-// assertUnitGuardFailure checks the shared contract of a pre-step unit guard
-// failure: the error names the guard, carries the cause, says the previous
-// binary was restored, and the step never started.
 func assertUnitGuardFailure(t *testing.T, err, cause error, marker, target string, original []byte, before os.FileInfo) {
 	t.Helper()
 	if err == nil {
@@ -159,9 +143,8 @@ func assertUnitGuardFailure(t *testing.T, err, cause error, marker, target strin
 	assertNoRollbackFiles(t, filepath.Dir(target))
 }
 
-// TestInstallRestoresWhenPostUpdateOptionsFails checks the first failure branch
-// of the pre-step unit guard: options for the level cannot be resolved, so the
-// previous binary comes back and the unit is not read.
+// TestInstallRestoresWhenPostUpdateOptionsFails checks that a unit options
+// failure restores the previous binary and skips the step.
 func TestInstallRestoresWhenPostUpdateOptionsFails(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -182,9 +165,8 @@ func TestInstallRestoresWhenPostUpdateOptionsFails(t *testing.T) {
 	}
 }
 
-// TestInstallRestoresWhenSaveMainUnitFails checks the second failure branch: the
-// main unit cannot be read before the step, so the previous binary comes back
-// and the step never runs.
+// TestInstallRestoresWhenSaveMainUnitFails checks that failing to read the main
+// unit restores the previous binary and skips the step.
 func TestInstallRestoresWhenSaveMainUnitFails(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -205,6 +187,8 @@ func TestInstallRestoresWhenSaveMainUnitFails(t *testing.T) {
 	}
 }
 
+// TestInstallPostUpdateNotNeeded checks that exit code 2 from the step still
+// installs the new binary.
 func TestInstallPostUpdateNotNeeded(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -217,7 +201,6 @@ func TestInstallPostUpdateNotNeeded(t *testing.T) {
 		t.Fatalf("Install() error = %v, want exit code 2 to continue", err)
 	}
 
-	// The step ran; only its exit code says there was nothing to do.
 	if got, want := postUpdateArgs(t, marker), fmt.Sprintf("internal post-update --level user --pid %d", os.Getpid()); got != want {
 		t.Errorf("post-update arguments = %q, want %q", got, want)
 	}
@@ -231,6 +214,8 @@ func TestInstallPostUpdateNotNeeded(t *testing.T) {
 	assertNoRollbackFiles(t, filepath.Dir(target))
 }
 
+// TestInstallPostUpdateFailureRollsBack checks that a failing step restores the
+// previous binary and reports its reason.
 func TestInstallPostUpdateFailureRollsBack(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -259,9 +244,8 @@ func TestInstallPostUpdateFailureRollsBack(t *testing.T) {
 	assertNoRollbackFiles(t, filepath.Dir(target))
 }
 
-// TestInstallRunsPostUpdateFromTheRootDirectory checks the step's working
-// directory: a system service has no meaningful working directory, so the
-// binary must not depend on one that an account may have removed.
+// TestInstallRunsPostUpdateFromTheRootDirectory checks that the step runs with
+// "/" as its working directory.
 func TestInstallRunsPostUpdateFromTheRootDirectory(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -289,10 +273,8 @@ exit 0
 	}
 }
 
-// TestRunPostUpdateUsesItsOwnBoundWithoutADeadline checks the production bound
-// when the caller's context has no deadline: the step must still be stopped,
-// because a hung binary cannot keep the previous version from coming back. The
-// short injected bound keeps the test quick.
+// TestRunPostUpdateUsesItsOwnBoundWithoutADeadline checks that the step is
+// stopped by its own bound when the caller's context has no deadline.
 func TestRunPostUpdateUsesItsOwnBoundWithoutADeadline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "peers")
 	if err := os.WriteFile(path, postUpdateHangScript("0.2.0"), 0o755); err != nil {
@@ -311,9 +293,8 @@ func TestRunPostUpdateUsesItsOwnBoundWithoutADeadline(t *testing.T) {
 	select {
 	case err = <-done:
 	case <-time.After(bound + 5*time.Second):
-		// The threshold is the assertion that the injected bound was used: it is
-		// far below the 30s default, so a step that ignored the injected bound
-		// still fails, while the margin absorbs process teardown under load.
+		// The threshold asserts the injected bound was used: it is far below the
+		// 30s default, so a step that ignored it still fails.
 		t.Fatalf("RunPostUpdate did not stop near the injected %v bound", bound)
 	}
 	if err == nil {
@@ -324,9 +305,11 @@ func TestRunPostUpdateUsesItsOwnBoundWithoutADeadline(t *testing.T) {
 	}
 }
 
-// TestPostUpdateBoundIsTheDocumentedThirtySeconds checks the default bound the
-// design names. A change to the constant without a design change fails here.
+// TestPostUpdateBoundIsTheDocumentedThirtySeconds checks that the default bound
+// is 30 seconds and a caller's timeout replaces it.
 func TestPostUpdateBoundIsTheDocumentedThirtySeconds(t *testing.T) {
+	// The default is duplicated here on purpose: changing the constant means
+	// changing the documented default too.
 	if got := postUpdateBound(PostUpdateOptions{}); got != 30*time.Second {
 		t.Errorf("the default post-update bound = %s, want 30s", got)
 	}
@@ -335,6 +318,8 @@ func TestPostUpdateBoundIsTheDocumentedThirtySeconds(t *testing.T) {
 	}
 }
 
+// TestInstallPostUpdateTimeoutRollsBack checks that a step stopped by the
+// caller's deadline restores the previous binary.
 func TestInstallPostUpdateTimeoutRollsBack(t *testing.T) {
 	unitGuardFixture(t)
 	const version = "0.2.0"
@@ -346,8 +331,7 @@ func TestInstallPostUpdateTimeoutRollsBack(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), callerDeadline)
 	defer cancel()
 	// The caller's deadline is the assertion: the step must be stopped by it, not
-	// by its own 30s bound. The threshold is that deadline plus a margin that
-	// stays below the default, so a step that ignored the deadline still fails.
+	// by its own 30s bound.
 	done := make(chan error, 1)
 	go func() { done <- Install(ctx, serveScript(t, target, version, script), "system") }()
 	var err error
@@ -370,10 +354,6 @@ func TestInstallPostUpdateTimeoutRollsBack(t *testing.T) {
 	assertNoRollbackFiles(t, filepath.Dir(target))
 }
 
-// postUpdateRewriteScript returns a stand-in release binary whose post-update
-// step writes content to unitPath and records that it ran in marker. hang makes
-// the step run until its bound or context stops it; otherwise it exits with
-// code.
 func postUpdateRewriteScript(version, unitPath, content, marker string, code int, hang bool) []byte {
 	tail := fmt.Sprintf("exit %d\n", code)
 	if hang {
@@ -390,11 +370,6 @@ printf 'ran\n' > '%s'
 `, version, content, unitPath, marker, tail))
 }
 
-// unitGuardFixture points the unit restore at a temporary user installation: the
-// account home and the user configuration directory live under one temporary
-// directory, and a stand-in systemctl records the commands a restore runs. It
-// returns the unit path that level's rewrite targets and a function that reads
-// the recorded commands.
 func unitGuardFixture(t *testing.T) (unitPath string, commands func() []string) {
 	t.Helper()
 	root := t.TempDir()
@@ -434,7 +409,6 @@ func unitGuardFixture(t *testing.T) (unitPath string, commands func() []string) 
 	}
 }
 
-// writeTestUnit writes a main unit file, creating its directory.
 func writeTestUnit(t *testing.T, path string, content []byte) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -445,8 +419,6 @@ func writeTestUnit(t *testing.T, path string, content []byte) {
 	}
 }
 
-// assertNoUnitTempFiles checks that the atomic rewrite left no temporary file
-// next to the unit.
 func assertNoUnitTempFiles(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -460,10 +432,8 @@ func assertNoUnitTempFiles(t *testing.T, dir string) {
 	}
 }
 
-// TestInstallPostUpdateTimeoutRestoresTheUnit checks the backstop the old
-// binary provides: the step is killed by its bound after it rewrote the unit,
-// so its own restore never runs, and the old binary must put the original bytes
-// back before it returns the failure.
+// TestInstallPostUpdateTimeoutRestoresTheUnit checks that a step stopped by the
+// caller's deadline after rewriting the unit lets the old binary restore the unit.
 func TestInstallPostUpdateTimeoutRestoresTheUnit(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -477,8 +447,6 @@ func TestInstallPostUpdateTimeoutRestoresTheUnit(t *testing.T) {
 	const callerDeadline = 2 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), callerDeadline)
 	defer cancel()
-	// The caller's deadline is the assertion, as in the rollback test above; the
-	// threshold stays below the step's 30s default.
 	done := make(chan error, 1)
 	go func() { done <- Install(ctx, serveScript(t, target, version, script), "user") }()
 	var err error
@@ -514,9 +482,8 @@ func TestInstallPostUpdateTimeoutRestoresTheUnit(t *testing.T) {
 	}
 }
 
-// TestInstallPostUpdateFailureRemovesANewUnit checks the file that did not
-// exist before the update: a failed step leaves the new definition behind, and
-// the restore removes it instead of recreating an empty one.
+// TestInstallPostUpdateFailureRemovesANewUnit checks that a failed step removes
+// a unit file it created.
 func TestInstallPostUpdateFailureRemovesANewUnit(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -543,9 +510,8 @@ func TestInstallPostUpdateFailureRemovesANewUnit(t *testing.T) {
 	assertNoUnitTempFiles(t, filepath.Dir(unit))
 }
 
-// TestInstallPostUpdateCancelRestoresTheUnit checks the second way the step
-// never restores itself: its context is canceled while it runs. The old binary
-// must restore the original bytes anyway.
+// TestInstallPostUpdateCancelRestoresTheUnit checks that canceling the step
+// makes the old binary restore the unit.
 func TestInstallPostUpdateCancelRestoresTheUnit(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")

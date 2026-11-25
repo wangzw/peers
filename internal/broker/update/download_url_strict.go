@@ -7,10 +7,8 @@ import (
 	"net/url"
 )
 
-// strictCheckDownloadURL requires a download URL to use https. Hosts are not
-// restricted: GitHub redirects assets to storage hosts, and the checksum still
-// verifies the content. Both build variants use it whenever the test override
-// is absent.
+// strictCheckDownloadURL requires an https URL; the host is not restricted
+// because GitHub redirects assets to storage hosts.
 func strictCheckDownloadURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -22,9 +20,9 @@ func strictCheckDownloadURL(raw string) error {
 	return nil
 }
 
-// strictDownloadClient returns a copy of c whose redirects must stay on https.
-// A caller's CheckRedirect is consulted first, and a nil one keeps the standard
-// ten-redirect limit.
+// strictDownloadClient returns a copy of c that rejects a redirect leaving
+// https; a caller's CheckRedirect runs first and nil keeps the ten-redirect
+// limit.
 func strictDownloadClient(c *http.Client) *http.Client {
 	c = httpClient(c)
 	previous := c.CheckRedirect

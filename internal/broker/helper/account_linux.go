@@ -5,9 +5,8 @@ import (
 	"syscall"
 )
 
-// accountChildIdentity hands the account identity to the kernel before exec.
-// Linux has no NGROUPS limit on setgroups, so the full group table travels in
-// the credential.
+// accountChildIdentity hands the full group table to the kernel before exec;
+// Linux's setgroups has no count limit.
 func accountChildIdentity(cmd *exec.Cmd, acct Account) {
 	cmd.SysProcAttr.Credential = &syscall.Credential{
 		Uid:    acct.UID,
@@ -16,8 +15,6 @@ func accountChildIdentity(cmd *exec.Cmd, acct Account) {
 	}
 }
 
-// enterHelperAccount is a no-op on Linux: the child is already the account when
-// it starts.
 func enterHelperAccount() error { return nil }
 
 // setParentDeathSignal makes the kernel kill the child when the Broker dies, so

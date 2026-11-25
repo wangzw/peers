@@ -14,16 +14,12 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// helperRun is one real account-helper child started by the recorder.
 type helperRun struct {
 	pid  int
 	proc *Process
 	wait chan error
 }
 
-// helperRecorder returns a PoolOptions.Start that runs the test binary as a
-// real account-helper child and records each child so a test can kill it or
-// wait for its exit.
 type helperRecorder struct {
 	mu   sync.Mutex
 	runs []*helperRun
@@ -72,8 +68,6 @@ func helperTestPool(t *testing.T, start func(context.Context, Account) (*Process
 	return pool
 }
 
-// lookupMissing runs one Lookup that the helper answers from the account's
-// filesystem; a missing record still proves the child is up and serving.
 func lookupMissing(t *testing.T, b *Backend) {
 	t.Helper()
 	_, err := b.Lookup(context.Background(), "/no/such/dir", "/no/such/dir/inbox.sock")
@@ -82,6 +76,7 @@ func lookupMissing(t *testing.T, b *Backend) {
 	}
 }
 
+// TestPoolHelperExitsWhenUnused checks that an unreferenced helper exits and a later use starts a new child.
 func TestPoolHelperExitsWhenUnused(t *testing.T) {
 	rec := &helperRecorder{}
 	pool := helperTestPool(t, rec.start(t))
@@ -123,6 +118,7 @@ func TestPoolHelperExitsWhenUnused(t *testing.T) {
 	}
 }
 
+// TestPoolDeliverInFlightOnCrashIsUncertain checks that a delivery in flight when the real helper is killed is uncertain.
 func TestPoolDeliverInFlightOnCrashIsUncertain(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{
 		ConfigDir: t.TempDir(),
@@ -171,13 +167,13 @@ func TestPoolDeliverInFlightOnCrashIsUncertain(t *testing.T) {
 	}
 }
 
+// TestPoolCloseTerminatesHelpers checks that Close reaps every live helper child and refuses later Acquires.
 func TestPoolCloseTerminatesHelpers(t *testing.T) {
 	rec := &helperRecorder{}
 	uid := uint32(os.Getuid())
 	pool := NewPool(PoolOptions{
 		Start: rec.start(t),
-		// Both accounts resolve to this process's account so the child's
-		// Ready identity matches; the point of the test is process lifetime.
+		// Both uids resolve to this account so the child's Ready identity matches; the test is about process lifetime.
 		Lookup: func(uint32) (Account, error) {
 			return LookupAccount(uid)
 		},

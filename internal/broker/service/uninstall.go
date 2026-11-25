@@ -7,11 +7,10 @@ import (
 	"os"
 )
 
-// Uninstall stops and removes the installed service. Configuration, identity
-// and audit logs are kept. The service is stopped before its definition is
-// removed, so a failed stop leaves a state a later uninstall can finish. When
-// nothing is installed it succeeds and reports Removed=false, so the command
-// can be repeated.
+// Uninstall stops and removes the installed service, keeping configuration,
+// identity and audit logs. It stops the service before removing its definition,
+// so a failed stop leaves a state a later uninstall can finish. When nothing is
+// installed it succeeds and reports Removed=false.
 func Uninstall(opts Options) (Result, error) {
 	var res Result
 
@@ -37,9 +36,8 @@ func Uninstall(opts Options) (Result, error) {
 	return res, nil
 }
 
-// uninstallLinux stops and disables the unit, removes its file and reloads the
-// unit database. A failure before the removal keeps the file; a reload failure
-// restores it, so a later uninstall can finish.
+// A reload failure restores the removed unit file, so a later uninstall can
+// finish.
 func uninstallLinux(opts Options, path string, res *Result) (Result, error) {
 	rootedPath := rooted(opts, path)
 	fileExists, err := serviceFileExists(opts, path)
@@ -61,7 +59,7 @@ func uninstallLinux(opts Options, path string, res *Result) (Result, error) {
 		return *res, nil
 	}
 
-	// Stop and disable first. If this fails, the unit file stays for a retry,
+	// Stop and disable first: if this fails the unit file stays for a retry,
 	// because the running process may still hold the account lock.
 	if err := runSystemctlCommand(opts, res, "disable", "--now", UnitName); err != nil {
 		return *res, err
@@ -91,8 +89,7 @@ func uninstallLinux(opts Options, path string, res *Result) (Result, error) {
 	return *res, nil
 }
 
-// uninstallDarwin boots the service out and removes its plist. A bootout
-// failure other than "not loaded" keeps the plist for a retry.
+// A bootout failure other than "not loaded" keeps the plist for a retry.
 func uninstallDarwin(opts Options, path string, res *Result) (Result, error) {
 	var domain string
 	if opts.System {
@@ -106,9 +103,6 @@ func uninstallDarwin(opts Options, path string, res *Result) (Result, error) {
 	if err != nil {
 		return *res, err
 	}
-	// Without a gui domain a user service cannot be loaded, so there is
-	// nothing to uninstall and no label to ask about. Answer here instead of
-	// letting the missing domain stand in for a missing service.
 	if !fileExists && (domain == "" || !launchctlDomainLoaded(opts, domain)) {
 		return *res, nil
 	}

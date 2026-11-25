@@ -4,6 +4,8 @@ package update
 
 import "testing"
 
+// TestAPIBaseUsesTestOverride checks that a peers_testenv build reads the
+// override and falls back to DefaultAPI without one.
 func TestAPIBaseUsesTestOverride(t *testing.T) {
 	t.Setenv(testAPIEnv, "http://127.0.0.1:18123")
 	if got, want := APIBase(), "http://127.0.0.1:18123"; got != want {
@@ -15,9 +17,8 @@ func TestAPIBaseUsesTestOverride(t *testing.T) {
 	}
 }
 
-// TestReleaseURLUsesTestOverrideWhenAPIEmpty proves that a caller which leaves
-// the base empty, as the Broker's periodic check does, still reaches the test
-// API in a test build.
+// TestReleaseURLUsesTestOverrideWhenAPIEmpty checks that an empty API base
+// reaches the test API in a test build.
 func TestReleaseURLUsesTestOverrideWhenAPIEmpty(t *testing.T) {
 	t.Setenv(testAPIEnv, "http://127.0.0.1:18123")
 	want := "http://127.0.0.1:18123/repos/wangzw/peers/releases/latest"

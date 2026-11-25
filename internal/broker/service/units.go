@@ -158,8 +158,6 @@ func LaunchDaemonPlist(exe string) (string, error) {
 	return fmt.Sprintf(launchDaemonTemplate, escapeXML(exe)), nil
 }
 
-// validatePath rejects paths that cannot be embedded safely in a service
-// definition: non-absolute paths and paths containing control characters.
 func validatePath(kind, path string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("cannot write the %s %q: the path must be absolute", kind, path)
@@ -172,10 +170,8 @@ func validatePath(kind, path string) error {
 	return nil
 }
 
-// systemdExecStart renders path for an ExecStart= line. Percent signs are
-// systemd specifiers and dollar signs start variables, so both are doubled.
-// Paths containing whitespace or characters with meaning to the command line
-// parser are quoted, with backslashes and double quotes escaped inside.
+// systemdExecStart renders path for an ExecStart= line, doubling percent signs
+// and dollar signs and quoting a path that needs it.
 func systemdExecStart(path string) (string, error) {
 	if err := validatePath("executable", path); err != nil {
 		return "", err
@@ -190,9 +186,8 @@ func systemdExecStart(path string) (string, error) {
 	return exec, nil
 }
 
-// escapeXML escapes the five characters that may not appear literally in XML
-// character data or attribute values. A single pass avoids escaping the
-// ampersands introduced by the other replacements.
+// escapeXML escapes the five XML metacharacters in a single pass, so the
+// ampersands it introduces are not escaped again.
 func escapeXML(s string) string {
 	return strings.NewReplacer(
 		"&", "&amp;",

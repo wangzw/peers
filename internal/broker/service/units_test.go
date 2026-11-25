@@ -16,6 +16,8 @@ const (
 	goldenLogPath = "/Users/alice/Library/Logs/peers/broker.log"
 )
 
+// TestUnitsMatchGolden checks that each rendered unit matches its golden file
+// byte for byte.
 func TestUnitsMatchGolden(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -50,10 +52,8 @@ func TestUnitsMatchGolden(t *testing.T) {
 	}
 }
 
-// TestSystemdSystemUnitResourceLimits checks that the system unit alone carries
-// the host-wide PID and descriptor caps; the user unit and the launchd daemon
-// keep no equivalent, because their limits would count processes or
-// descriptors belonging to the whole account or the whole host.
+// TestSystemdSystemUnitResourceLimits checks that only the system unit carries
+// the host-wide task and descriptor caps.
 func TestSystemdSystemUnitResourceLimits(t *testing.T) {
 	system, err := SystemdSystemUnit(goldenExe)
 	if err != nil {
@@ -82,6 +82,8 @@ func TestSystemdSystemUnitResourceLimits(t *testing.T) {
 	}
 }
 
+// TestSystemdExecStartEscaping checks that ExecStart doubles systemd specifiers
+// and shell variables and quotes a path that needs it.
 func TestSystemdExecStartEscaping(t *testing.T) {
 	cases := []struct {
 		exe  string
@@ -101,6 +103,8 @@ func TestSystemdExecStartEscaping(t *testing.T) {
 	}
 }
 
+// TestPlistEscaping checks that the plist escapes XML metacharacters and stays
+// well-formed.
 func TestPlistEscaping(t *testing.T) {
 	out, err := LaunchAgentPlist("/Users/a&b/bin/peers", "/tmp/peers.log")
 	if err != nil {
@@ -126,6 +130,8 @@ func TestPlistEscaping(t *testing.T) {
 	}
 }
 
+// TestUnitsRejectRelativeOrControlChars checks that every renderer rejects a
+// relative path and a control character.
 func TestUnitsRejectRelativeOrControlChars(t *testing.T) {
 	bad := []string{"peers", "/usr/bin/a\nb"}
 	for _, exe := range bad {
@@ -144,8 +150,7 @@ func TestUnitsRejectRelativeOrControlChars(t *testing.T) {
 	}
 }
 
-// TestPlistLint runs plutil on the generated plists. It is meaningful only on
-// macOS, where plutil is always installed; on other platforms it skips.
+// TestPlistLint checks that plutil accepts the generated plists on macOS.
 func TestPlistLint(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("plutil is only available on macOS")
@@ -188,8 +193,6 @@ func execStartLine(t *testing.T, unit string) string {
 	return ""
 }
 
-// assertEqualText reports the first differing line, standing in for a
-// line-oriented diff without adding a test dependency to go.mod.
 func assertEqualText(t *testing.T, got, want string) {
 	t.Helper()
 	if got == want {
@@ -213,7 +216,7 @@ func assertEqualText(t *testing.T, got, want string) {
 }
 
 // TestLaunchAgentPlistRejectsAnInvalidLogPath checks that the log path is
-// validated like the executable, since both are embedded in the plist.
+// validated like the executable and that the error names it.
 func TestLaunchAgentPlistRejectsAnInvalidLogPath(t *testing.T) {
 	for _, logPath := range []string{"relative.log", "/tmp/peers\n.log"} {
 		out, err := LaunchAgentPlist(goldenExe, logPath)

@@ -30,72 +30,38 @@ const (
 	launchDaemonDir  = "/Library/LaunchDaemons"
 	systemLogDir     = "/var/log/peers"
 
-	// lsofPath is where macOS keeps lsof. The occupant lookup uses the
-	// absolute path so it never depends on the caller's PATH.
-	lsofPath = "/usr/sbin/lsof"
-	// occupantCommandTimeout bounds one lsof run. The lookup is best effort and
-	// must not delay a failed installation.
+	// lsofPath is absolute so the occupant lookup does not depend on the
+	// caller's PATH.
+	lsofPath               = "/usr/sbin/lsof"
 	occupantCommandTimeout = 2 * time.Second
 
-	// readyBound bounds the wait for the local socket to answer after the
-	// service starts. It covers the Broker's own startup and launchd's default
-	// ThrottleInterval of 10 seconds, which launchd applies before relaunching
-	// a process that exited too quickly.
 	readyBound        = 20 * time.Second
 	readyPollInterval = 100 * time.Millisecond
-	// probeTimeout bounds one dial of the local socket.
-	probeTimeout = 500 * time.Millisecond
+	probeTimeout      = 500 * time.Millisecond
 
-	// serviceStopBound bounds one stop-and-replace sequence. On Linux the
-	// listen precheck stops the service and waits this long for broker.listen.
-	// On macOS the same budget covers the wait for launchd to finish tearing
-	// the old job down and the wait for broker.listen; the two waits share one
-	// deadline, so a slow unload does not add a second full budget. systemctl
-	// stop and launchctl bootout return while the Broker is still shutting
-	// down: systemd signals the process and launchd tears the job down
-	// asynchronously, and the Broker then closes its listeners. The bound
-	// covers launchd's exit timeout, the Broker's SIGTERM shutdown and
-	// launchd's 10-second ThrottleInterval, with the same margin readyBound
-	// leaves.
-	serviceStopBound = 20 * time.Second
-	// launchdUnloadPollInterval separates two launchctl print probes that wait
-	// for the old job to disappear.
+	serviceStopBound          = 20 * time.Second
 	launchdUnloadPollInterval = 100 * time.Millisecond
 	// bootstrapTransientExit is the exit status launchctl reports when bootstrap
 	// races the teardown of the same label.
 	bootstrapTransientExit = 5
-	// bootstrapRetryBound bounds the retries of a bootstrap that failed with
-	// bootstrapTransientExit. It starts after the unload wait, so it must not
-	// take the rest of serviceStopBound: when the old job takes nearly the
-	// whole stop budget to disappear, that deadline is already spent and the
-	// retry launchd still needs would fail at once. The separate bound states
-	// the worst case explicitly: serviceStopBound 20s + bootstrapRetryBound
-	// 10s + readyBound 20s = 50s for one reinstall, below the end-to-end
-	// reinstall bound of 75s. 10s is launchd's ThrottleInterval, the pause the
-	// stop budget's rationale already accounts for before the same label loads
-	// again.
-	bootstrapRetryBound = 10 * time.Second
-	// bootstrapRetryAttempts caps the retries of a bootstrap that failed with
-	// bootstrapTransientExit. bootstrapRetryBound normally stops the loop
-	// first; the cap only bounds a clock that advances slower than the sleep.
+	// bootstrapRetryBound is separate from the stop budget so a slow unload
+	// that used nearly all of it still leaves the retry time to run.
+	bootstrapRetryBound    = 10 * time.Second
 	bootstrapRetryAttempts = 100
 	bootstrapRetryInterval = 200 * time.Millisecond
 )
 
-// launchdPIDPattern matches the "pid = <n>" line of launchctl print.
 var launchdPIDPattern = regexp.MustCompile(`(?m)^\s*pid = (\d+)$`)
 
-// launchdStatePattern and launchdLastExitCodePattern match the two fields of
-// launchctl print that explain a service that did not start.
 var (
 	launchdStatePattern        = regexp.MustCompile(`(?m)^\s*state = (.+)$`)
 	launchdLastExitCodePattern = regexp.MustCompile(`(?m)^\s*last exit code = (.+)$`)
 )
 
-// Options is everything Install needs. DefaultOptions fills it from the running
-// process; tests fill it by hand and set Root to a temporary directory.
+// Options configures a service command at one deployment level. DefaultOptions
+// fills it from the running process.
 type Options struct {
-	System               bool
+	System               bool                                                                    // operate on the system Broker rather than the user Broker
 	GOOS                 string                                                                  // runtime.GOOS
 	EUID                 int                                                                     // os.Geteuid()
 	UID                  int                                                                     // os.Getuid(), used in the start hint
@@ -136,18 +102,13 @@ type Result struct {
 	ConfigPath string // configuration file for the install's level
 	ConfigNew  bool   // this run created the configuration file
 	AdminGroup string // system: group delegated administration; empty for the user installation
-	// AdminGroupCreated reports that this run created the administration
-	// group, as opposed to reusing one that already existed.
+	// AdminGroupCreated reports that this run created the administration group.
 	AdminGroupCreated bool
-	// AdminGroupMembers lists the members the account database reports for the
-	// administration group, sorted by name: supplementary members and, on
-	// macOS, nested groups, plus accounts whose primary group is the
-	// administration group. It is empty when the group was created by this run,
-	// lists no members, or was not queried.
+	// AdminGroupMembers lists the administration group's members sorted by
+	// name, including primary-group accounts and macOS nested groups; empty when
+	// the group was created, lists none, or was not queried.
 	AdminGroupMembers []string
 	// AdminGroupMembersQueried reports whether this run read the member list.
-	// Naming the group with --admin-group or keeping an existing configuration
-	// file settles the decision without it, so the list is not read.
 	AdminGroupMembersQueried bool
 	Commands                 []string // commands that changed state, in order
 	Domain                   string   // macOS: the launchd domain the service was loaded into or out of
@@ -167,10 +128,9 @@ func DefaultOptions(system bool) (Options, error) {
 	return defaultOptions(system, home)
 }
 
-// PostUpdateOptions fills the Options PostUpdate needs for the level a process
-// of this host runs at. The system installation needs no home directory, so a system
-// service whose environment has no HOME can still rewrite its definition; the
-// user installation reads the account home.
+// PostUpdateOptions fills the Options PostUpdate needs for a level on this host.
+// The system installation needs no home directory, so a system service whose
+// environment has no HOME can still rewrite its definition.
 func PostUpdateOptions(system bool) (Options, error) {
 	home := ""
 	if !system {
@@ -183,8 +143,6 @@ func PostUpdateOptions(system bool) (Options, error) {
 	return defaultOptions(system, home)
 }
 
-// defaultOptions builds the default Options for a level and an account home.
-// home is empty for the system installation, whose paths never use it.
 func defaultOptions(system bool, home string) (Options, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -246,8 +204,6 @@ func defaultOptions(system bool, home string) (Options, error) {
 // already done.
 func Install(opts Options) (Result, error) {
 	var res Result
-	// Records older than this describe an earlier run. The readiness timeout
-	// only reports a startup_failed record written after this point.
 	installStart := time.Now()
 
 	if err := checkPlatform(opts, "install the service"); err != nil {
@@ -284,8 +240,6 @@ func Install(opts Options) (Result, error) {
 		}
 	}
 
-	// The launchd domain decides both where the service is loaded and which
-	// instance counts as this service's own when a Broker is already answering.
 	domain := ""
 	if opts.GOOS == "darwin" {
 		var err error
@@ -299,8 +253,7 @@ func Install(opts Options) (Result, error) {
 	}
 
 	// The administration group is resolved before any file is written, so a
-	// group that cannot be created fails the installation without leaving a
-	// configuration file behind.
+	// failed group creation leaves no configuration file behind.
 	adminGID := -1
 	if opts.System {
 		gid, err := ensureAdminGroup(opts, &res)
@@ -310,23 +263,23 @@ func Install(opts Options) (Result, error) {
 		adminGID = gid
 		res.AdminGroup = adminGroupName(opts)
 		if res.AdminGroupCreated {
-			// Record the group before anything else: uninstall may only
-			// remove a group whose creation this installation recorded.
+			// Record the group before any later step: uninstall removes a group
+			// only when this record names it.
 			if err := recordAdminGroup(opts, res.AdminGroup); err != nil {
 				return res, err
 			}
 		}
 	}
 
-	// The configuration file comes first: the listen precheck reads it, and a
-	// failure later in the installation keeps it for the next run.
+	// The configuration file is written before the precheck, which reads
+	// broker.listen from it.
 	if err := createConfig(opts, &res, adminGID); err != nil {
 		return res, err
 	}
 
-	// macOS writes the plist before the precheck, so the replacement boots out
-	// and bootstraps the same definition. Linux writes the unit after the
-	// precheck, which there stops the service synchronously.
+	// macOS writes the plist before the precheck so the replacement boots out
+	// and bootstraps the same definition; Linux writes the unit after the
+	// precheck, which stops the service synchronously.
 	unit := ""
 	plistExisted := false
 	if opts.GOOS == "darwin" {
@@ -347,16 +300,11 @@ func Install(opts Options) (Result, error) {
 	}
 
 	// The address is checked before the service is registered or started, so an
-	// address that cannot be used fails the installation without leaving a
-	// service that restarts forever or a plist that launchd loads at the next
-	// login. The precheck identifies an occupant; only Linux stops the service
-	// here, because on macOS the replacement below boots it out once.
+	// unusable address fails the installation without leaving a service that
+	// restarts forever.
 	check, err := precheckListen(opts, domain, &res)
 	if err != nil {
 		if opts.GOOS == "darwin" && !plistExisted {
-			// The plist did not exist before this run, so removing it restores
-			// the state the operator had and leaves nothing to load at login. A
-			// pre-existing plist is left as it was.
 			if rmErr := os.Remove(rooted(opts, unit)); rmErr != nil && !errors.Is(rmErr, fs.ErrNotExist) {
 				return res, fmt.Errorf("%w; also could not remove %s: %v", err, unit, rmErr)
 			}
@@ -385,8 +333,8 @@ func Install(opts Options) (Result, error) {
 		replaced, err = runLaunchctl(opts, domain, unit, plistExisted, check, &res)
 	}
 	if err != nil {
-		// runLaunchctl has already removed the plist or disabled the label, so
-		// the generic cleanup is only for the Linux path.
+		// runLaunchctl has already cleaned up, so the generic cleanup is for
+		// Linux only.
 		if opts.GOOS == "darwin" {
 			return res, err
 		}
@@ -401,8 +349,6 @@ func Install(opts Options) (Result, error) {
 		return res, abandonInstall(opts, domain, &res, stopped, err)
 	}
 
-	// The service answers, so it is installed and running from here on. Fill
-	// what the summary prints even when the Broker turns out to be degraded.
 	res.Domain = domain
 	res.Binary = opts.Exe
 	res.RunLog = logHint(opts)
@@ -413,7 +359,6 @@ func Install(opts Options) (Result, error) {
 	return res, checkDegraded(opts, deadline)
 }
 
-// unitPath returns the production path of the unit file or plist for opts.
 func unitPath(opts Options) (string, error) {
 	switch {
 	case opts.GOOS == "linux" && !opts.System:
@@ -429,16 +374,11 @@ func unitPath(opts Options) (string, error) {
 	}
 }
 
-// runtimeDirFor names the runtime directory of one account. Production uses
-// config.RuntimeDir, so the service follows the same rule as the Broker and the
-// MCP server, including the fallback location. Tests replace it to pin that
-// localSocketPath follows the resolved directory rather than a fixed path.
 var runtimeDirFor = config.RuntimeDir
 
 // localSocketPath returns the local socket a running Broker of this deployment
-// level binds. It matches the runtime directory config picks for the level,
-// including the fallback location when another account has taken the preferred
-// directory. The runtime directory is keyed by the effective account.
+// level binds. It must follow config.RuntimeDir, including the fallback
+// location, or the service probes the wrong socket.
 func localSocketPath(opts Options) string {
 	if opts.System {
 		if opts.GOOS == "darwin" {
@@ -449,12 +389,6 @@ func localSocketPath(opts Options) string {
 	return filepath.Join(runtimeDirFor(opts.EUID), "broker.sock")
 }
 
-// checkExistingBroker refuses the installation when a Broker outside the
-// peers service already answers on this level's local socket. Replacing a
-// service-managed Broker is fine: the start step restarts it with the new
-// binary. The Broker is the service's own only when the pid the service
-// manager reports equals the socket's peer pid; a loaded unit alone proves
-// nothing about which process owns the socket.
 func checkExistingBroker(opts Options, domain string) error {
 	path := localSocketPath(opts)
 	brokerPID, answering := opts.Probe(path)
@@ -472,31 +406,12 @@ func checkExistingBroker(opts Options, domain string) error {
 	return fmt.Errorf("cannot install the service: a %s is already answering on %s and was not started by the peers service (service pid %d, socket peer pid %d); stop it before installing", level, path, servicePID, brokerPID)
 }
 
-// listenCheck is what the listen precheck learned about this install's address.
 type listenCheck struct {
-	addr     string // broker.listen this install would bind; empty when it does not listen
-	occupied bool   // this service's own Broker holds addr
-	stopped  bool   // the precheck stopped the service to free addr (Linux)
+	addr     string
+	occupied bool
+	stopped  bool
 }
 
-// precheckListen refuses the installation when the address this install's
-// configuration makes the Broker listen on cannot be bound. It reads the
-// effective broker.listen from the configuration file, including a template
-// this run just generated, and binds the address once through ListenProbe,
-// which releases it again. An empty value means the Broker does not listen and
-// passes without a probe.
-//
-// When the address is already in use, it first identifies the occupant. An
-// install is also a reinstall, so the occupant may be this service's own
-// running Broker; the service manager's main pid and the pid answering on the
-// local socket identify that case, the same comparison the pre-install check
-// and the update path use. Any other occupant fails the installation with the
-// running service untouched.
-//
-// On Linux the precheck then stops the service and waits for the address, and
-// reports that it stopped it. On macOS it stops nothing: the replacement boots
-// the old job out once, after bootout, and waiting for the address before that
-// would either boot it out twice or wait on a service that is still loaded.
 func precheckListen(opts Options, domain string, res *Result) (listenCheck, error) {
 	path := configFilePath(opts)
 	addr, err := config.ListenFromFile(rooted(opts, path))
@@ -520,14 +435,13 @@ func precheckListen(opts Options, domain string, res *Result) (listenCheck, erro
 
 	check := listenCheck{addr: addr, occupied: true}
 	if opts.GOOS != "linux" {
+		// On macOS the replacement below boots the old job out once; stopping
+		// or waiting for the address here would boot it out twice or wait on a
+		// service that is still loaded.
 		return check, nil
 	}
 
 	if err := runSystemctlCommand(opts, res, "stop", UnitName); err != nil {
-		// The stop failed, but a failed installation must still not leave the
-		// service enabled for the next boot or login. Stopping it again is best
-		// effort; the disable is what the error must report, because that is
-		// what keeps the service from starting automatically.
 		_, disableErr := stopAndDisable(opts, domain, res)
 		msg := fmt.Sprintf("cannot stop the existing service holding %q: %v", addr, err)
 		if disableErr != nil {
@@ -541,21 +455,12 @@ func precheckListen(opts Options, domain string, res *Result) (listenCheck, erro
 		return listenCheck{}, errors.New(msg)
 	}
 	if err := waitListenReleased(probe, addr, time.Now().Add(stopBound(opts))); err != nil {
-		// The service this install replaces was stopped and still holds the
-		// address: report the occupied address, say the existing service was
-		// stopped, and make sure it cannot start at boot.
 		return listenCheck{}, abandonInstall(opts, domain, res, true, listenError(opts, path, addr, err))
 	}
 	check.stopped = true
 	return check, nil
 }
 
-// serviceOwnsOccupiedAddress reports whether the process holding broker.listen
-// is this service's own running Broker. The service manager must report a
-// running main pid and the Broker answering on this level's local socket must
-// have that same pid. A Broker that could not bind broker.listen fails to
-// start, so a service that is merely restarting does not answer on the socket
-// and is not mistaken for the occupant.
 func serviceOwnsOccupiedAddress(opts Options, domain string) bool {
 	if opts.Probe == nil {
 		return false
@@ -568,10 +473,6 @@ func serviceOwnsOccupiedAddress(opts Options, domain string) bool {
 	return answering && brokerPID == servicePID
 }
 
-// waitListenReleased polls addr until it can be bound, returning the last probe
-// error when the deadline expires. The caller has already stopped or booted out
-// the service that owned the address; the wait covers the Broker's shutdown and
-// the service manager's asynchronous teardown.
 func waitListenReleased(probe func(string) error, addr string, deadline time.Time) error {
 	var last error
 	for {
@@ -586,7 +487,6 @@ func waitListenReleased(probe func(string) error, addr string, deadline time.Tim
 	}
 }
 
-// stopBound returns one stop-and-replace budget.
 func stopBound(opts Options) time.Duration {
 	if opts.StopTimeout > 0 {
 		return opts.StopTimeout
@@ -594,9 +494,6 @@ func stopBound(opts Options) time.Duration {
 	return serviceStopBound
 }
 
-// listenError explains why the installation cannot use this install's
-// broker.listen and what the operator can change. For an address that is in
-// use, it names the process holding the port when the platform can tell.
 func listenError(opts Options, path, addr string, err error) error {
 	advice := "change broker.listen to another port, or leave it empty to run without a TCP listener, and run service install again"
 	if errors.Is(err, syscall.EADDRINUSE) {
@@ -609,19 +506,14 @@ func listenError(opts Options, path, addr string, err error) error {
 	return fmt.Errorf("cannot bind broker.listen %q from %s: %w; %s", addr, path, err, advice)
 }
 
-// listenOccupant is the process that holds a listening TCP port, as far as the
-// platform can tell. path is empty when the executable could not be read.
 type listenOccupant struct {
 	pid  int
 	path string
 }
 
-// describe renders the occupant as one item of the already-in-use sentence.
-// The path is quoted, so a path with spaces, quotes or shell metacharacters
-// cannot change how the sentence reads. A " (deleted)" suffix that the kernel
-// adds to the exe link is kept outside the quotes: it says the running image no
-// longer exists at that path, and putting it inside the quotes would read as
-// part of the path.
+// describe renders the occupant as one item of the already-in-use sentence. The
+// path is quoted and the kernel's " (deleted)" suffix stays outside the quotes,
+// so it cannot be read as part of the path.
 func (o listenOccupant) describe() string {
 	switch {
 	case o.path != "":
@@ -637,9 +529,6 @@ func (o listenOccupant) describe() string {
 	return ""
 }
 
-// describeOccupants renders every occupant as the end of the already-in-use
-// sentence. More than one process can hold the same listening socket, and each
-// is named rather than picked by directory order.
 func describeOccupants(occupants []listenOccupant) string {
 	parts := make([]string, 0, len(occupants))
 	for _, o := range occupants {
@@ -657,7 +546,6 @@ func describeOccupants(occupants []listenOccupant) string {
 	}
 }
 
-// joinAnd joins items the way the user-facing text does: no Oxford comma.
 func joinAnd(parts []string) string {
 	if len(parts) == 1 {
 		return parts[0]
@@ -665,11 +553,6 @@ func joinAnd(parts []string) string {
 	return strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
 }
 
-// findListenOccupant identifies the processes listening on the TCP port in
-// addr. It returns nil when the address has no TCP port, the platform cannot
-// tell, or the lookup fails; the caller then keeps the plain message. The
-// lookup never fails an installation and is never treated as evidence about
-// which product the process belongs to.
 func findListenOccupant(opts Options, addr string) []listenOccupant {
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -679,9 +562,8 @@ func findListenOccupant(opts Options, addr string) []listenOccupant {
 	if err != nil || port <= 0 || port > 65535 {
 		return nil
 	}
-	// A host name cannot be compared with the kernel's numeric addresses, so it
-	// leaves want nil: every listener on the port is then a candidate, the
-	// conservative answer for a conflict.
+	// A host name cannot be compared with the kernel's numeric addresses, so
+	// every listener on the port is a candidate.
 	var want net.IP
 	if host != "" {
 		want = net.ParseIP(host)
@@ -699,11 +581,6 @@ func findListenOccupant(opts Options, addr string) []listenOccupant {
 	return nil
 }
 
-// occupantFromProc finds the pids and executables that listen on port by
-// matching the listening sockets in the kernel's TCP tables to processes' file
-// descriptors. want limits the match to the addresses that conflict with the
-// installer's own bind. procRoot is a parameter so a test can supply a
-// stand-in /proc tree.
 func occupantFromProc(procRoot string, want net.IP, port int) []listenOccupant {
 	inodes := make(map[string]bool)
 	for _, table := range []string{"tcp", "tcp6"} {
@@ -726,8 +603,8 @@ func occupantFromProc(procRoot string, want net.IP, port int) []listenOccupant {
 		fdDir := filepath.Join(procRoot, entry.Name(), "fd")
 		fds, err := os.ReadDir(fdDir)
 		if err != nil {
-			// Another account's process, or one that exited: its fds cannot be
-			// read, but that says nothing about the other candidates.
+			// An unreadable fd directory belongs to another account or an exited
+			// process and must not hide the other candidates.
 			continue
 		}
 		for _, fd := range fds {
@@ -761,8 +638,8 @@ func occupantFromProc(procRoot string, want net.IP, port int) []listenOccupant {
 
 // listeningInodes returns the inodes of the listening sockets in one
 // /proc/net/tcp table whose local address can explain an address-in-use error
-// for want and port. The table's local address field is HEXADDRESS:HEXPORT and
-// state 0A is TCP_LISTEN. want nil means any address.
+// for want and port. The local address field is HEXADDRESS:HEXPORT and state 0A
+// is TCP_LISTEN; want nil matches any address.
 func listeningInodes(tablePath string, want net.IP, port int) []string {
 	data, err := os.ReadFile(tablePath)
 	if err != nil {
@@ -792,9 +669,9 @@ func listeningInodes(tablePath string, want net.IP, port int) []string {
 	return inodes
 }
 
-// procAddress parses one /proc/net/tcp or tcp6 local address field. The kernel
-// writes each 32-bit word in host byte order, so every four bytes are reversed
-// before they form the IP.
+// procAddress parses one local address field of /proc/net/tcp or tcp6. The
+// kernel writes each 32-bit word in host byte order, so every four bytes are
+// reversed before they form the IP.
 func procAddress(field string) (net.IP, bool) {
 	raw, err := hex.DecodeString(field)
 	if err != nil {
@@ -817,11 +694,10 @@ func procAddress(field string) (net.IP, bool) {
 }
 
 // listenAddressConflicts reports whether a socket bound to local explains an
-// address-in-use error for a bind to want. A wildcard bind conflicts with every
-// socket on its port in any family, because Go binds a wildcard with a
-// dual-stack socket, so the rules are deliberately conservative: naming a
-// listener that is not the actual occupant is better than missing the one that
-// is. want nil matches every address.
+// address-in-use error for a bind to want. A wildcard request conflicts with
+// every socket on its port in any family, because Go binds a wildcard with a
+// dual-stack socket; naming a listener that is not the actual occupant is
+// better than missing the one that is.
 func listenAddressConflicts(local, want net.IP) bool {
 	if want == nil || want.IsUnspecified() {
 		return true
@@ -838,9 +714,6 @@ func listenAddressConflicts(local, want net.IP) bool {
 	return local.IsUnspecified() || local.Equal(want)
 }
 
-// occupantFromLsof uses lsof to find the pids listening on port on macOS, then
-// asks lsof for each process's executable. Both commands are best effort: any
-// failure means the caller falls back to what it could establish.
 func occupantFromLsof(opts Options, port int) []listenOccupant {
 	run := opts.RunOutput
 	if run == nil {
@@ -874,9 +747,6 @@ func occupantFromLsof(opts Options, port int) []listenOccupant {
 	return occupants
 }
 
-// lsofTextPath reads the executable path from `lsof -a -p <pid> -d txt -Fn`
-// field output: each open file starts with an f line and names its path on the
-// following n line.
 func lsofTextPath(out string) string {
 	for _, line := range strings.Split(out, "\n") {
 		if path, ok := strings.CutPrefix(line, "n"); ok && path != "" {
@@ -886,8 +756,6 @@ func lsofTextPath(out string) string {
 	return ""
 }
 
-// runOccupantCommand runs one occupant lookup command with a timeout, keeping
-// only its standard output.
 func runOccupantCommand(name string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), occupantCommandTimeout)
 	defer cancel()
@@ -898,9 +766,6 @@ func runOccupantCommand(name string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), err
 }
 
-// humanDuration renders d as the timeout lines read it, such as "20 seconds",
-// rather than as the time.Duration String method writes it. Any part of a
-// second rounds up, so a short timeout still reads as a whole second.
 func humanDuration(d time.Duration) string {
 	if d < time.Second {
 		return "1 second"
@@ -915,8 +780,6 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%d seconds", seconds)
 }
 
-// lsofPID reads every process id from lsof's table output, in the order they
-// appear, without duplicates.
 func lsofPID(out string) []int {
 	lines := strings.Split(out, "\n")
 	if len(lines) < 2 {
@@ -950,14 +813,6 @@ func lsofPID(out string) []int {
 	return pids
 }
 
-// abandonInstall handles a failed installation after the service definition
-// was written or an existing service was stopped. The unit or plist and the
-// configuration file are kept, so fixing the cause and running service install
-// again finds them. The service is disabled, so the failed installation never
-// leaves a Broker that starts at the next boot or login: a systemd unit must
-// not stay enabled, and a kept launchd plist must not stay loadable. stopped
-// reports that this install stopped the service that was already running, so
-// the error tells the operator what changed and how to restore it.
 func abandonInstall(opts Options, domain string, res *Result, stopped bool, cause error) error {
 	stopErr, disableErr := stopAndDisable(opts, domain, res)
 	msg := cause.Error()
@@ -981,14 +836,6 @@ func abandonInstall(opts Options, domain string, res *Result, stopped bool, caus
 	return errors.New(msg)
 }
 
-// stopAndDisable stops the service and makes sure it cannot start at the next
-// boot or login. It returns the stop error and the disable error separately:
-// macOS can fail to unload the job while still recording the label's disabled
-// state, which is what keeps launchd from loading it at login. Linux performs
-// both in one `systemctl disable --now`, which removes the enable symlink and
-// stops the unit, so the two errors are the same. The plist is kept so the user
-// has the service definition, and install re-enables the label before it
-// bootstraps again.
 func stopAndDisable(opts Options, domain string, res *Result) (stopErr, disableErr error) {
 	switch opts.GOOS {
 	case "linux":
@@ -1000,8 +847,6 @@ func stopAndDisable(opts Options, domain string, res *Result) (stopErr, disableE
 	return nil, nil
 }
 
-// recoveryCommand names the command that brings back a service this install
-// stopped before it failed.
 func recoveryCommand(opts Options, domain string) string {
 	switch opts.GOOS {
 	case "linux":
@@ -1024,8 +869,6 @@ func recoveryCommand(opts Options, domain string) string {
 	return ""
 }
 
-// runLaunchctlCommand runs one launchctl command on domain/label, records it
-// and reports its output on failure.
 func runLaunchctlCommand(opts Options, domain string, res *Result, verb string) error {
 	target := domain + "/" + Label
 	cmdline := "launchctl " + verb + " " + target
@@ -1037,8 +880,6 @@ func runLaunchctlCommand(opts Options, domain string, res *Result, verb string) 
 	return nil
 }
 
-// serviceMainPID returns the pid the service manager reports for the unit and
-// whether it reports a running one.
 func serviceMainPID(opts Options, domain string) (int, bool) {
 	switch opts.GOOS {
 	case "linux":
@@ -1070,11 +911,9 @@ func serviceMainPID(opts Options, domain string) (int, bool) {
 	return 0, false
 }
 
-// launchdDomain picks the launchd domain for a user service. launchd
-// exposes gui/<uid> only to an account with a graphical login session. Probe
-// 44498306091 showed that user/<uid> accepts print but rejects bootstrap with
-// exit 5, so installing there would leave a loaded-looking, stopped service;
-// the installation refuses before writing anything instead.
+// launchdDomain picks the launchd domain for a user service. launchd exposes
+// gui/<uid> only to an account with a graphical login session, and user/<uid>
+// rejects bootstrap with exit 5.
 func launchdDomain(opts Options) (string, error) {
 	if opts.System {
 		return "system", nil
@@ -1086,29 +925,13 @@ func launchdDomain(opts Options) (string, error) {
 	return "", fmt.Errorf("cannot start the service: launchd has no %s domain for uid %d; install the user service from a graphical login session, or use --system on a host without one", gui, opts.UID)
 }
 
-// launchctlDomainExists reports whether launchd knows the domain.
 func launchctlDomainExists(opts Options, domain string) bool {
 	_, err := opts.Run("launchctl", "print", domain)
 	return err == nil
 }
 
-// runLaunchctl replaces the loaded service, if any, with the freshly written
-// plist. It boots the old job out once before the bootstrap, waits for launchd
-// to unload it, waits for broker.listen to be released, enables the label and
-// bootstraps the plist, retrying a bootstrap that fails with exit 5. Every
-// failure removes a plist this run wrote or, when the plist existed before this
-// run, keeps it and disables the label, so a failed installation leaves nothing
-// that launchd starts at the next login. plistExisted is what the caller saw
-// before writing the plist, so a pre-existing file is never removed. It reports
-// whether an old service was loaded, so a later readiness failure can say what
-// was replaced.
-//
-// The unload wait does not depend on bootout's exit status: an unloaded service
-// makes the first launchctl print fail, so waiting costs almost nothing. The
-// one deadline shared by the unload wait and the address wait keeps those two
-// phases within one stop budget instead of adding a separate wait for each. The
-// bootstrap retries start after both phases and run on their own
-// bootstrapRetryBound.
+// runLaunchctl replaces the loaded service with the freshly written plist; the
+// old job is booted out once before the unload wait and the bootstrap.
 func runLaunchctl(opts Options, domain, plistPath string, plistExisted bool, check listenCheck, res *Result) (bool, error) {
 	replaced := launchctlDomainLoaded(opts, domain)
 	if err := bootoutService(opts, domain, res); err != nil {
@@ -1144,14 +967,6 @@ func runLaunchctl(opts Options, domain, plistPath string, plistExisted bool, che
 	return replaced, abandonLaunchd(opts, domain, plistPath, res, plistExisted, replaced, true, failure)
 }
 
-// abandonLaunchd cleans up a failed replacement. Only a plist this run wrote is
-// removed, which restores the state the operator had. A plist that existed
-// before the run is kept, whether or not its service was loaded, and its label
-// is disabled so launchd does not load it at the next login; the user can
-// recover with enable followed by bootstrap. A disable that fails is reported
-// as such instead of claiming the label is disabled. replaced reports that an
-// old service was loaded before this run and unloaded reports that it is gone,
-// so the error can say what happened to it.
 func abandonLaunchd(opts Options, domain, plistPath string, res *Result, plistExisted, replaced, unloaded bool, cause error) error {
 	msg := cause.Error()
 	var cleanupErr error
@@ -1196,12 +1011,6 @@ func abandonLaunchd(opts Options, domain, plistPath string, res *Result, plistEx
 	return errors.New(msg)
 }
 
-// bootstrapService loads the plist and retries while launchctl reports
-// bootstrapTransientExit, the status of a bootstrap that raced the old job's
-// teardown. The retry window is bootstrapRetryBound, independent of the stop
-// budget: it begins after the old job is gone, so an unload wait that used most
-// of the stop budget must not leave the retry without time. The attempt cap
-// only backstops a clock that advances slower than the sleep.
 func bootstrapService(opts Options, domain, plistPath string) ([]byte, error) {
 	bound := opts.BootstrapTimeout
 	if bound <= 0 {
@@ -1225,12 +1034,9 @@ func bootstrapService(opts Options, domain, plistPath string) ([]byte, error) {
 }
 
 // waitServiceUnloaded waits until launchd no longer knows the service in
-// domain. Only exit status 113 or the "Could not find service" message report
-// an unloaded service; any other print failure is transient or unrelated and is
-// retried until the deadline, because treating it as unloaded would bootstrap
-// over a job launchd still holds. tail ends the timeout message: the caller
-// names the command to retry, which differs between installation, stop and
-// restart.
+// domain. Only exit status 113 or the "Could not find service" message reports
+// an unloaded service; any other print failure is retried, because treating it
+// as unloaded would bootstrap over a job launchd still holds.
 func waitServiceUnloaded(opts Options, domain string, deadline time.Time, budget time.Duration, tail string) error {
 	target := domain + "/" + Label
 	var last string
@@ -1253,16 +1059,11 @@ func waitServiceUnloaded(opts Options, domain string, deadline time.Time, budget
 		domain, humanDuration(budget), detail, tail)
 }
 
-// unloadAdvice is the tail of waitServiceUnloaded's timeout message. It names
-// the bootout that unloads the job by hand and the command to run afterwards.
 func unloadAdvice(opts Options, domain, retry string) string {
 	target := domain + "/" + Label
 	return fmt.Sprintf("; unload it with `%s` and run %s again", privileged(opts, "launchctl bootout "+target), retry)
 }
 
-// launchdUnloaded reports whether launchctl print says the job is gone. launchd
-// reports an unknown job with exit status 113 and "Could not find service";
-// other failures do not prove the job is gone.
 func launchdUnloaded(err error, out []byte) bool {
 	if err == nil {
 		return false
@@ -1270,7 +1071,6 @@ func launchdUnloaded(err error, out []byte) bool {
 	return exitStatus(err) == 113 || strings.Contains(string(out), "Could not find service")
 }
 
-// launchctlDetail describes what a print probe reported, for a timeout message.
 func launchctlDetail(err error, out []byte) string {
 	if msg := strings.TrimSpace(string(out)); msg != "" {
 		return firstLine(msg)
@@ -1281,7 +1081,6 @@ func launchctlDetail(err error, out []byte) string {
 	return ""
 }
 
-// firstLine returns the first non-empty line of s, trimmed.
 func firstLine(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
@@ -1290,7 +1089,6 @@ func firstLine(s string) string {
 	return s
 }
 
-// installHint names the command that installs this level's service.
 func installHint(opts Options) string {
 	if opts.System {
 		return "sudo peers service install --system"
@@ -1298,7 +1096,6 @@ func installHint(opts Options) string {
 	return "peers service install"
 }
 
-// statusHint names the command that shows the status of this level's service.
 func statusHint(opts Options) string {
 	if opts.System {
 		return "check it with `peers service status --system`"
@@ -1306,8 +1103,6 @@ func statusHint(opts Options) string {
 	return "check it with `peers service status`"
 }
 
-// privileged prefixes cmd with sudo when the command belongs to a system
-// service.
 func privileged(opts Options, cmd string) string {
 	if opts.System {
 		return "sudo " + cmd
@@ -1315,11 +1110,9 @@ func privileged(opts Options, cmd string) string {
 	return cmd
 }
 
-// bootoutService unloads the service before a replacement or removal. launchctl
-// exits 3 with "No such process" when the service is not loaded (probe
-// 44498306091); that is the only bootout failure ignored. Any other failure is
-// returned, because the old service may still own the account lock or the
-// socket.
+// bootoutService unloads the service before a replacement or removal. Exit 3
+// means the service was not loaded; any other failure is returned, because the
+// old service may still own the account lock or the socket.
 func bootoutService(opts Options, domain string, res *Result) error {
 	target := domain + "/" + Label
 	cmdline := "launchctl bootout " + target
@@ -1334,8 +1127,6 @@ func bootoutService(opts Options, domain string, res *Result) error {
 	return commandError("cannot run "+cmdline, out, err)
 }
 
-// exitStatus returns the exit code of a command error, or -1 when the error
-// did not come from an exited process.
 func exitStatus(err error) int {
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
@@ -1344,9 +1135,6 @@ func exitStatus(err error) int {
 	return -1
 }
 
-// commandError names the command that failed in prefix and appends the output
-// it wrote, if any, so the message says both what failed and what the command
-// reported.
 func commandError(prefix string, out []byte, err error) error {
 	if msg := strings.TrimSpace(string(out)); msg != "" {
 		return fmt.Errorf("%s: %w: %s", prefix, err, msg)
@@ -1354,8 +1142,6 @@ func commandError(prefix string, out []byte, err error) error {
 	return fmt.Errorf("%s: %w", prefix, err)
 }
 
-// checkPlatform reports an error when the service commands do not run on
-// opts.GOOS.
 func checkPlatform(opts Options, action string) error {
 	switch opts.GOOS {
 	case "linux", "darwin":
@@ -1364,9 +1150,6 @@ func checkPlatform(opts Options, action string) error {
 	return fmt.Errorf("cannot %s on platform %q", action, opts.GOOS)
 }
 
-// checkRoot enforces the rule that the system level runs as root and the user
-// level does not, so a user unit is never written where root would own it and
-// vice versa. command names the subcommand in the message.
 func checkRoot(opts Options, command string) error {
 	if opts.System && opts.EUID != 0 {
 		return fmt.Errorf("service %s --system must run as root", command)
@@ -1377,8 +1160,6 @@ func checkRoot(opts Options, command string) error {
 	return nil
 }
 
-// systemdArgs prepends --user for the user level, so every systemctl and
-// journalctl call names the same unit or journal at the same level.
 func systemdArgs(opts Options, args ...string) []string {
 	if opts.System {
 		return args
@@ -1386,8 +1167,6 @@ func systemdArgs(opts Options, args ...string) []string {
 	return append([]string{"--user"}, args...)
 }
 
-// listenProbe returns the function that reports whether broker.listen can be
-// bound.
 func listenProbe(opts Options) func(string) error {
 	if opts.ListenProbe != nil {
 		return opts.ListenProbe
@@ -1396,13 +1175,8 @@ func listenProbe(opts Options) func(string) error {
 }
 
 // waitReady waits until the Broker answering on this level's local socket is
-// the service's own process. It applies the same test as the pre-install
-// check: the service manager's pid must equal the socket peer pid. An answer
-// from any other process is not readiness, because the service cannot take over
-// that process's account lock. A timeout reports the log location, since the
-// service manager owns the process and its standard error. On success it
-// returns the readiness deadline, which bounds the degraded-status check that
-// follows within the same wait.
+// the service's own process. The deadline it returns also bounds the
+// degraded-status check that follows.
 func waitReady(opts Options, domain string, since time.Time) (time.Time, error) {
 	bound := opts.ReadyTimeout
 	if bound <= 0 {
@@ -1428,16 +1202,10 @@ func waitReady(opts Options, domain string, since time.Time) (time.Time, error) 
 			if answering {
 				return deadline, fmt.Errorf("cannot use the Broker answering on %s: it is not the service's process (service pid %d, socket peer pid %d); stop it and check the service log: %s", path, servicePID, peerPID, logHint(opts))
 			}
-			// The precheck can pass and the Broker still fail to start; the
-			// service log records the cause. Include it so the timeout names
-			// the real problem instead of only the silent socket.
 			reason := startupFailureReason(opts, since)
 			if reason != "" {
 				return deadline, fmt.Errorf("cannot reach the Broker on %s within %s; check the service log: %s; its last startup_failed record says: %s", path, humanDuration(bound), logHint(opts), reason)
 			}
-			// No failure record was written after this install began. The
-			// service manager still knows whether the unit failed and with what
-			// exit code, which is the next best description of the cause.
 			state, stateErr := serviceManagerState(opts, domain)
 			if stateErr != nil {
 				return deadline, fmt.Errorf("cannot reach the Broker on %s within %s; check the service log: %s; the service manager state could not be read: %w", path, humanDuration(bound), logHint(opts), stateErr)
@@ -1448,10 +1216,6 @@ func waitReady(opts Options, domain string, since time.Time) (time.Time, error) 
 	}
 }
 
-// waitStatus asks the ready Broker for its status. A probe error means Status
-// could not be read yet, so it is retried until the readiness deadline; the
-// Broker answered on the socket a moment earlier and may still be serving the
-// call. The returned error is the last probe error.
 func waitStatus(opts Options, deadline time.Time) (DegradedState, bool, error) {
 	probe := opts.StatusProbe
 	if probe == nil {
@@ -1470,11 +1234,6 @@ func waitStatus(opts Options, deadline time.Time) (DegradedState, bool, error) {
 	}
 }
 
-// serviceManagerState returns the state and last exit status the service
-// manager reports for the unit or job, for a readiness timeout whose log has no
-// startup_failed record. It names the query in its own error and includes its
-// output, so a failing service manager does not turn into another silent
-// failure.
 func serviceManagerState(opts Options, domain string) (string, error) {
 	switch opts.GOOS {
 	case "linux":
@@ -1511,7 +1270,6 @@ func serviceManagerState(opts Options, domain string) (string, error) {
 	return "", fmt.Errorf("cannot read the service manager state on platform %q", opts.GOOS)
 }
 
-// logHint names where the service manager writes the Broker's standard error.
 func logHint(opts Options) string {
 	if path := logFile(opts); path != "" {
 		return path
@@ -1522,8 +1280,6 @@ func logHint(opts Options) string {
 	return "journalctl --user -u " + UnitName
 }
 
-// logFile returns the service log file macOS launchd writes, or an empty
-// string on a platform whose service manager reads the log from journald.
 func logFile(opts Options) string {
 	if opts.GOOS != "darwin" {
 		return ""
@@ -1534,11 +1290,6 @@ func logFile(opts Options) string {
 	return filepath.Join(opts.Home, "Library", "Logs", "peers", "broker.log")
 }
 
-// startupFailureReason returns the error of the last startup_failed record
-// written after since, or an empty string when there is none or the log cannot
-// be read. It never fails an installation: the record is only additional
-// context for a readiness timeout. Records from an earlier run describe a cause
-// that may no longer apply, so they are ignored.
 func startupFailureReason(opts Options, since time.Time) string {
 	if path := logFile(opts); path != "" {
 		data, err := readLogTail(rooted(opts, path))
@@ -1555,12 +1306,9 @@ func startupFailureReason(opts Options, since time.Time) string {
 	return lastStartupFailure(string(out), since)
 }
 
-// logTailBytes bounds how much of the service log startupFailureReason reads
-// from the end. The record that matters is the last one, and the log may hold
-// weeks of runtime records.
 const logTailBytes = 64 << 10
 
-// readLogTail returns at most the last logTailBytes of the file. A cut line at
+// readLogTail returns at most the last logTailBytes of the file; a cut line at
 // the start is harmless because lastStartupFailure ignores records it cannot
 // parse.
 func readLogTail(path string) ([]byte, error) {
@@ -1582,9 +1330,9 @@ func readLogTail(path string) ([]byte, error) {
 }
 
 // lastStartupFailure scans the log from the end and returns the error field of
-// the last startup_failed JSON record written at or after since. The Broker
-// writes the time field as RFC 3339 with nanoseconds; a record without a
-// parseable time cannot be shown to come from this installation and is ignored.
+// the last startup_failed JSON record written at or after since. A record
+// without a parseable RFC 3339 time cannot be shown to come from this
+// installation and is ignored.
 func lastStartupFailure(log string, since time.Time) string {
 	lines := strings.Split(log, "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -1612,7 +1360,6 @@ func lastStartupFailure(log string, since time.Time) string {
 	return ""
 }
 
-// configHome returns the base directory for user configuration.
 func configHome(opts Options) string {
 	if opts.XDGConfigHome != "" && filepath.IsAbs(opts.XDGConfigHome) {
 		return opts.XDGConfigHome
@@ -1620,7 +1367,6 @@ func configHome(opts Options) string {
 	return filepath.Join(opts.Home, ".config")
 }
 
-// rooted maps a production path under the test root prefix.
 func rooted(opts Options, path string) string {
 	if opts.Root == "" {
 		return path
@@ -1628,7 +1374,6 @@ func rooted(opts Options, path string) string {
 	return filepath.Join(opts.Root, path)
 }
 
-// writeUnit writes the unit file or plist and returns its production path.
 func writeUnit(opts Options) (string, error) {
 	path, err := unitPath(opts)
 	if err != nil {
@@ -1659,10 +1404,8 @@ func writeUnit(opts Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// launchd has no drop-in mechanism, so a variable an operator added to the
-	// plist is the only place a proxy setting can live. Keep that dictionary
-	// across a rewrite; an entry this binary's template generates wins over a
-	// kept entry of the same name.
+	// launchd has no drop-in mechanism, so keep a variable an operator added to
+	// the plist across a rewrite; a template entry of the same name wins.
 	if opts.GOOS == "darwin" {
 		env, err := plistEnvironment(rooted(opts, path))
 		if err != nil {
@@ -1676,9 +1419,9 @@ func writeUnit(opts Options) (string, error) {
 		case opts.GOOS == "darwin" && !opts.System && dir == filepath.Join(opts.Home, "Library", "Logs", "peers"):
 			mode = 0o700
 		case opts.GOOS == "darwin" && opts.System && dir == systemLogDir:
-			// launchd opens the daemon's log files itself, so their mode is not
-			// governed by the job's Umask. Keep accounts outside root's group out
-			// of the directory instead; 0750 makes the files unreachable.
+			// launchd opens the daemon's log files itself, so the job's Umask
+			// does not govern their mode; 0750 keeps accounts outside root's
+			// group out.
 			mode = 0o750
 		}
 		if err := os.MkdirAll(rooted(opts, dir), mode); err != nil {
@@ -1691,8 +1434,6 @@ func writeUnit(opts Options) (string, error) {
 	return path, nil
 }
 
-// configFilePath returns the production path of the configuration file for the
-// install's level.
 func configFilePath(opts Options) string {
 	if opts.System {
 		return systemConfigPath
@@ -1700,8 +1441,6 @@ func configFilePath(opts Options) string {
 	return filepath.Join(opts.Home, ".peers", "config.yaml")
 }
 
-// auditLogPath returns the production path of the audit log for the install's
-// level. It follows the same path table as configFilePath.
 func auditLogPath(opts Options) string {
 	if opts.System {
 		return filepath.Join(systemLogDir, "audit.log")
@@ -1709,14 +1448,6 @@ func auditLogPath(opts Options) string {
 	return filepath.Join(opts.Home, ".peers", "audit.log")
 }
 
-// createConfig creates the configuration file for the install's level if it is
-// absent and reports what happened in res. The file is created exclusively, so
-// an existing file is never modified: its content, group and permissions stay
-// as they are. The system file belongs to root and to the administration
-// group, mode 0660; the user file belongs to the installing account, mode
-// 0600. The content is the template the config package generates for the level.
-// adminGID is the administration group for the system installation and ignored
-// otherwise.
 func createConfig(opts Options, res *Result, adminGID int) error {
 	fileMode := fs.FileMode(0o600)
 	if opts.System {
@@ -1727,17 +1458,12 @@ func createConfig(opts Options, res *Result, adminGID int) error {
 	})
 }
 
-// createConfigWith implements createConfig; fileMode is the mode the new file
-// must end up with, and open lets a test force a write failure after the file
-// was created.
 func createConfigWith(opts Options, res *Result, adminGID int, fileMode fs.FileMode, open func(string) (*os.File, error)) error {
 	path := configFilePath(opts)
 	res.ConfigPath = path
 
 	dirMode := fs.FileMode(0o755)
 	if !opts.System {
-		// The user file lives in the account's data directory, which the
-		// config package keeps private to the account.
 		dirMode = 0o700
 	}
 	if err := os.MkdirAll(rooted(opts, filepath.Dir(path)), dirMode); err != nil {
@@ -1788,9 +1514,8 @@ func createConfigWith(opts Options, res *Result, adminGID int, fileMode fs.FileM
 }
 
 // setConfigOwner makes the system configuration file root-owned and gives it
-// the administration group. Options.Chown replaces the operation in a test; a
-// test that roots the filesystem and supplies no Chown cannot change ownership
-// without root, so the step is skipped there.
+// the administration group. A test that roots the filesystem and supplies no
+// Chown cannot change ownership without root, so the step is skipped there.
 func setConfigOwner(opts Options, path string, gid int) error {
 	if opts.Chown != nil {
 		return opts.Chown(path, 0, gid)
@@ -1801,8 +1526,6 @@ func setConfigOwner(opts Options, path string, gid int) error {
 	return os.Chown(path, 0, gid)
 }
 
-// setConfigMode sets the configuration file's permission bits, through
-// Options.Chmod when a test supplies it.
 func setConfigMode(opts Options, path string, mode fs.FileMode) error {
 	if opts.Chmod != nil {
 		return opts.Chmod(path, mode)
@@ -1810,9 +1533,6 @@ func setConfigMode(opts Options, path string, mode fs.FileMode) error {
 	return os.Chmod(path, mode)
 }
 
-// runSystemctl reloads the unit database, enables the unit and starts it.
-// restart also starts a unit that is not running yet, and replaces the process
-// when the unit was already running from an older binary.
 func runSystemctl(opts Options, res *Result) error {
 	for _, args := range [][]string{{"daemon-reload"}, {"enable", UnitName}, {"restart", UnitName}} {
 		if err := runSystemctlCommand(opts, res, args...); err != nil {
@@ -1822,8 +1542,6 @@ func runSystemctl(opts Options, res *Result) error {
 	return nil
 }
 
-// runSystemctlCommand runs one systemctl command, records it and reports its
-// output on failure.
 func runSystemctlCommand(opts Options, res *Result, args ...string) error {
 	argv := systemdArgs(opts, args...)
 	cmdline := strings.Join(append([]string{"systemctl"}, argv...), " ")
@@ -1835,14 +1553,13 @@ func runSystemctlCommand(opts Options, res *Result, args ...string) error {
 	return nil
 }
 
-// checkTempBinary refuses binaries under the temporary directory.
 func checkTempBinary(opts Options) error {
 	if opts.TempDir == "" {
 		return nil
 	}
 	rel, err := filepath.Rel(opts.TempDir, opts.Exe)
 	if err != nil {
-		return nil // different volumes: not under the temporary directory
+		return nil
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return nil
@@ -1850,10 +1567,7 @@ func checkTempBinary(opts Options) error {
 	return fmt.Errorf("cannot install a service for %q: it is inside the temporary directory %q", opts.Exe, opts.TempDir)
 }
 
-// checkSystemBinary verifies that the executable and every directory above it
-// are owned by root and unwritable by group or others. Install resolves the
-// executable first, so the check and the written unit name the same file. A
-// system service must execute a file no other account can replace.
+// checkSystemBinary checks the executable after Install resolved it, so the check and the written unit name the same file.
 func checkSystemBinary(opts Options) error {
 	for path := opts.Exe; ; {
 		uid, mode, err := opts.Owner(path)
@@ -1877,8 +1591,6 @@ func checkSystemBinary(opts Options) error {
 	return nil
 }
 
-// writeFileAtomic writes content to a temporary file in the target directory
-// and renames it over path, replacing any existing file.
 func writeFileAtomic(path, content string, mode fs.FileMode) error {
 	dir := filepath.Dir(path)
 	f, err := os.CreateTemp(dir, ".peers-install-*")

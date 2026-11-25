@@ -24,8 +24,6 @@ func accessTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// skipUnlessAccessChecksAreMeaningful skips permission-sensitive cases under
-// root, where access(2) allows everything.
 func skipUnlessAccessChecksAreMeaningful(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() == 0 {
@@ -33,7 +31,6 @@ func skipUnlessAccessChecksAreMeaningful(t *testing.T) {
 	}
 }
 
-// writeAccessTestFile creates a file with an exact mode, unaffected by umask.
 func writeAccessTestFile(t *testing.T, dir, name string, mode os.FileMode) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -46,7 +43,6 @@ func writeAccessTestFile(t *testing.T, dir, name string, mode os.FileMode) strin
 	return path
 }
 
-// runAccessCheck feeds one request to RunAccessCheck and decodes its response.
 func runAccessCheck(t *testing.T, req *helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, error) {
 	t.Helper()
 	var in bytes.Buffer
@@ -64,6 +60,8 @@ func runAccessCheck(t *testing.T, req *helperpb.AccessCheckRequest) (*helperpb.A
 	return &resp, nil
 }
 
+// TestRunAccessCheckReadWrite checks that read and write checks agree with the
+// file mode.
 func TestRunAccessCheckReadWrite(t *testing.T) {
 	skipUnlessAccessChecksAreMeaningful(t)
 
@@ -111,6 +109,8 @@ func TestRunAccessCheckReadWrite(t *testing.T) {
 	}
 }
 
+// TestRunAccessCheckMissingFileDenied checks that a missing file is a denial,
+// not a failed check.
 func TestRunAccessCheckMissingFileDenied(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.yaml")
 	resp, err := runAccessCheck(t, &helperpb.AccessCheckRequest{
@@ -130,8 +130,7 @@ func TestRunAccessCheckMissingFileDenied(t *testing.T) {
 }
 
 // TestRunAccessCheckPathTooLongIsError checks that a path the kernel refuses
-// for its length is reported as a failed check. Treating every non-nil error
-// as a denial would hide a broken check behind "not allowed".
+// for its length is a failed check, not a denial.
 func TestRunAccessCheckPathTooLongIsError(t *testing.T) {
 	resp, err := runAccessCheck(t, &helperpb.AccessCheckRequest{
 		ProtocolVersion: helperpb.ProtocolVersion,
@@ -149,6 +148,8 @@ func TestRunAccessCheckPathTooLongIsError(t *testing.T) {
 	}
 }
 
+// TestRunAccessCheckReportsUID checks that the response carries the process's
+// uid and the protocol version.
 func TestRunAccessCheckReportsUID(t *testing.T) {
 	resp, err := runAccessCheck(t, &helperpb.AccessCheckRequest{
 		ProtocolVersion: helperpb.ProtocolVersion,
@@ -166,6 +167,8 @@ func TestRunAccessCheckReportsUID(t *testing.T) {
 	}
 }
 
+// TestRunAccessCheckRejectsBadRequest checks that an unsupported protocol
+// version or an unspecified access is refused with an error.
 func TestRunAccessCheckRejectsBadRequest(t *testing.T) {
 	cases := []struct {
 		name string
@@ -207,6 +210,8 @@ func TestRunAccessCheckRejectsBadRequest(t *testing.T) {
 	}
 }
 
+// TestRunAccessCheckEmptyInputIsError checks that reading no request fails and
+// writes no response.
 func TestRunAccessCheckEmptyInputIsError(t *testing.T) {
 	var out bytes.Buffer
 	err := RunAccessCheck(bytes.NewReader(nil), &out)
@@ -218,7 +223,6 @@ func TestRunAccessCheckEmptyInputIsError(t *testing.T) {
 	}
 }
 
-// countingStart wraps a Start function and counts its calls.
 func countingStart(inner func(context.Context, Account) (*Process, error)) (func(context.Context, Account) (*Process, error), *atomic.Int32) {
 	var count atomic.Int32
 	return func(ctx context.Context, acct Account) (*Process, error) {
@@ -227,9 +231,6 @@ func countingStart(inner func(context.Context, Account) (*Process, error)) (func
 	}, &count
 }
 
-// pipeStart returns a Start function backed by in-memory pipes. The child side
-// reads one request and, when respond reports ok, writes the given response.
-// Kill closes the pipes and counts the calls; Wait always succeeds.
 func pipeStart(t *testing.T, respond func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool)) (func(context.Context, Account) (*Process, error), *atomic.Int32) {
 	t.Helper()
 	var kills atomic.Int32
@@ -263,6 +264,8 @@ func pipeStart(t *testing.T, respond func(*helperpb.AccessCheckRequest) (*helper
 	return start, &kills
 }
 
+// TestAccessCheckCommandExecsAsRootWithAccountIdentity checks that the command
+// execs as root with the account identity in the environment and no stderr.
 func TestAccessCheckCommandExecsAsRootWithAccountIdentity(t *testing.T) {
 	acct := Account{
 		Name:   "alice",
@@ -298,6 +301,8 @@ func TestAccessCheckCommandExecsAsRootWithAccountIdentity(t *testing.T) {
 	}
 }
 
+// TestCheckSpawnsEveryCall checks that each Check runs its own process and no
+// result is cached.
 func TestCheckSpawnsEveryCall(t *testing.T) {
 	skipUnlessAccessChecksAreMeaningful(t)
 
@@ -326,6 +331,8 @@ func TestCheckSpawnsEveryCall(t *testing.T) {
 	}
 }
 
+// TestCheckUnknownAccountDenied checks that a uid with no account entry is
+// denied without a process and logs access_check_unknown_account.
 func TestCheckUnknownAccountDenied(t *testing.T) {
 	var started atomic.Int32
 	var logBuf bytes.Buffer
@@ -355,6 +362,8 @@ func TestCheckUnknownAccountDenied(t *testing.T) {
 	}
 }
 
+// TestCheckUIDMismatchIsError checks that a result reported by another uid is
+// an error.
 func TestCheckUIDMismatchIsError(t *testing.T) {
 	uid := uint32(os.Getuid())
 	start, _ := pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
@@ -372,6 +381,8 @@ func TestCheckUIDMismatchIsError(t *testing.T) {
 	}
 }
 
+// TestCheckTimeout checks that a check gives up at its timeout and kills the
+// process.
 func TestCheckTimeout(t *testing.T) {
 	uid := uint32(os.Getuid())
 	start, kills := pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
@@ -406,6 +417,8 @@ func TestCheckTimeout(t *testing.T) {
 	}
 }
 
+// TestCheckRealProcess checks the real access-check subcommand against a
+// read-only file.
 func TestCheckRealProcess(t *testing.T) {
 	skipUnlessAccessChecksAreMeaningful(t)
 
@@ -430,6 +443,8 @@ func TestCheckRealProcess(t *testing.T) {
 	}
 }
 
+// TestCheckWithoutExecutableIsError checks that a checker with no Exe and no
+// Start fails.
 func TestCheckWithoutExecutableIsError(t *testing.T) {
 	checker := &AccessChecker{Logger: accessTestLogger()}
 	allowed, err := checker.Check(context.Background(), uint32(os.Getuid()), "/config.yaml", AccessRead)
@@ -439,8 +454,7 @@ func TestCheckWithoutExecutableIsError(t *testing.T) {
 }
 
 // TestCheckHelperReportedErrorIsError checks that an error the check process
-// reports is a failed check, not a denial. A caller that ignored the reported
-// error would turn a broken check into permission_denied.
+// reports is a failed check, not a denial.
 func TestCheckHelperReportedErrorIsError(t *testing.T) {
 	uid := uint32(os.Geteuid())
 	start, _ := pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
@@ -470,7 +484,7 @@ func TestCheckHelperReportedErrorIsError(t *testing.T) {
 }
 
 // TestCheckErrorIsNotAllowed checks that a response carrying an error is never
-// treated as an allow, even when its uid matches and its Allowed field is true.
+// an allow, even with Allowed true.
 func TestCheckErrorIsNotAllowed(t *testing.T) {
 	uid := uint32(os.Geteuid())
 	start, _ := pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
@@ -497,8 +511,8 @@ func TestCheckErrorIsNotAllowed(t *testing.T) {
 	}
 }
 
-// TestCheckLookupFailureIsError checks that an account lookup failure is
-// reported as a failed check and never spawns a check process.
+// TestCheckLookupFailureIsError checks that an account lookup failure fails the
+// check without spawning a process.
 func TestCheckLookupFailureIsError(t *testing.T) {
 	var started atomic.Int32
 	checker := &AccessChecker{
@@ -522,9 +536,6 @@ func TestCheckLookupFailureIsError(t *testing.T) {
 	}
 }
 
-// inProcessStart runs RunAccessCheck in the test process over pipes. The parent
-// side is exercised as it is with a child, but the check shares package state
-// with the test, so a test can replace accessCheckSyscall.
 func inProcessStart(t *testing.T) func(context.Context, Account) (*Process, error) {
 	t.Helper()
 	return func(context.Context, Account) (*Process, error) {
@@ -545,11 +556,8 @@ func inProcessStart(t *testing.T) func(context.Context, Account) (*Process, erro
 	}
 }
 
-// TestCheckFaccessat2RefusedIsError checks that a kernel or sandbox that
-// refuses faccessat2 fails the check instead of falling back to the permission
-// bits, which would ignore an access control list entry. ENOSYS and EPERM both
-// mean the syscall did not judge the path; the Broker reports either as
-// internal rather than as a denial.
+// TestCheckFaccessat2RefusedIsError checks that a kernel refusing faccessat2
+// makes the check fail instead of falling back to the permission bits.
 func TestCheckFaccessat2RefusedIsError(t *testing.T) {
 	cases := []struct {
 		name string
@@ -586,10 +594,8 @@ func TestCheckFaccessat2RefusedIsError(t *testing.T) {
 	}
 }
 
-// TestBecomeAccountSkipsTheCurrentIdentity covers the root access check on
-// macOS: the account database lists more groups than Darwin's NGROUPS limit, so
-// setgroups would fail even though the process is already root. A check for the
-// current effective identity must not touch the groups.
+// TestBecomeAccountSkipsTheCurrentIdentity checks that a check for the current
+// effective identity does not touch the group table.
 func TestBecomeAccountSkipsTheCurrentIdentity(t *testing.T) {
 	groups := make([]uint32, 64)
 	for i := range groups {
@@ -600,9 +606,8 @@ func TestBecomeAccountSkipsTheCurrentIdentity(t *testing.T) {
 	}
 }
 
-// TestBecomeAccountRejectsADifferentGID covers the other half of the skip
-// condition: an equal uid alone does not skip the switch. A non-root process
-// cannot change its groups, so the attempted switch reports an error.
+// TestBecomeAccountRejectsADifferentGID checks that an equal uid alone does not
+// skip the switch.
 func TestBecomeAccountRejectsADifferentGID(t *testing.T) {
 	skipUnlessAccessChecksAreMeaningful(t)
 	if err := becomeAccount(uint32(os.Geteuid()), uint32(os.Getegid())+1, nil); err == nil {

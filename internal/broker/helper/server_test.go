@@ -18,7 +18,6 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// serveSide drives one Serve call over two pipe pairs, playing the Broker.
 type serveSide struct {
 	t      *testing.T
 	ops    *fakeOps
@@ -196,6 +195,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// TestCurrentIdentityMatchesProcess checks that CurrentIdentity reports this process's ids and a sorted unique group list.
 func TestCurrentIdentityMatchesProcess(t *testing.T) {
 	got := CurrentIdentity()
 	if got.UID != uint32(os.Getuid()) {
@@ -211,6 +211,7 @@ func TestCurrentIdentityMatchesProcess(t *testing.T) {
 	}
 }
 
+// TestServeSendsReadyFirst checks that Serve writes the protocol version and the helper's identity as its first message.
 func TestServeSendsReadyFirst(t *testing.T) {
 	self := Identity{UID: 1234, GID: 5678, Groups: []uint32{3, 9}}
 	side := newServeSide(t, &fakeOps{}, self)
@@ -227,6 +228,7 @@ func TestServeSendsReadyFirst(t *testing.T) {
 	}
 }
 
+// TestServeLookupMapsNoRecord checks that a lookup with no record answers with the NO_RECORD error code.
 func TestServeLookupMapsNoRecord(t *testing.T) {
 	side := newServeSide(t, &fakeOps{}, Identity{UID: 1})
 	side.readReady()
@@ -242,6 +244,7 @@ func TestServeLookupMapsNoRecord(t *testing.T) {
 	}
 }
 
+// TestServeLookupReturnsSession checks that a lookup answers with the session record's fields.
 func TestServeLookupReturnsSession(t *testing.T) {
 	ops := &fakeOps{sessions: map[string]inbox.Session{
 		"/s": {ConfigDir: "/c", PID: 4242, Name: "a", Status: "busy", SocketPath: "/s"},
@@ -261,6 +264,7 @@ func TestServeLookupReturnsSession(t *testing.T) {
 	}
 }
 
+// TestServeDeliverErrorCodes checks that each delivery outcome maps to its wire error code, with Done for success.
 func TestServeDeliverErrorCodes(t *testing.T) {
 	errs := []error{nil, inbox.ErrNotWritten, inbox.ErrUncertain, inbox.ErrBadSignature, fmt.Errorf("x: %w", inbox.ErrUncertain)}
 	var mu sync.Mutex
@@ -302,6 +306,7 @@ func TestServeDeliverErrorCodes(t *testing.T) {
 	}
 }
 
+// TestServeConcurrentRequestsAnsweredById checks that a fast request is answered while a slow one is still running.
 func TestServeConcurrentRequestsAnsweredById(t *testing.T) {
 	release := make(chan struct{})
 	ops := &fakeOps{deliverFn: func(_ context.Context, _ inbox.Session, _, _, msgID string, _ time.Duration) error {
@@ -329,6 +334,7 @@ func TestServeConcurrentRequestsAnsweredById(t *testing.T) {
 	}
 }
 
+// TestServeCancelStopsDeliver checks that a cancel request ends the delivery with CANCELED and produces no second answer.
 func TestServeCancelStopsDeliver(t *testing.T) {
 	ops := &fakeOps{deliverFn: func(ctx context.Context, _ inbox.Session, _, _, _ string, _ time.Duration) error {
 		<-ctx.Done()
@@ -349,8 +355,6 @@ func TestServeCancelStopsDeliver(t *testing.T) {
 		t.Fatalf("response = %v, want CANCELED", resp)
 	}
 
-	// A follow-up request must be the next response: there is only one answer
-	// for id 5, not a second one from the cancel path.
 	side.send(lookupRequest(7, "/c", "/s"))
 	resp = responseOf(t, side.recv())
 	if resp.GetId() != 7 {
@@ -358,6 +362,7 @@ func TestServeCancelStopsDeliver(t *testing.T) {
 	}
 }
 
+// TestServeWatchEventsFollowStarted checks that WatchStarted is written before any event queued during the watch setup.
 func TestServeWatchEventsFollowStarted(t *testing.T) {
 	ops := &fakeOps{fireOnWatch: 42}
 	side := newServeSide(t, ops, Identity{UID: 1})
@@ -377,6 +382,7 @@ func TestServeWatchEventsFollowStarted(t *testing.T) {
 	}
 }
 
+// TestServeUnwatchStops checks that unwatch stops the callback, drops late events and refuses an unknown watch id.
 func TestServeUnwatchStops(t *testing.T) {
 	ops := &fakeOps{}
 	side := newServeSide(t, ops, Identity{UID: 1})
@@ -395,7 +401,6 @@ func TestServeUnwatchStops(t *testing.T) {
 		t.Fatalf("stop count = %d, want 1", got)
 	}
 
-	// A callback after unwatch must not write an event.
 	ops.fire("/c", 7)
 	side.send(lookupRequest(3, "/c", "/s"))
 	if resp := responseOf(t, side.recv()); resp.GetId() != 3 {
@@ -409,6 +414,7 @@ func TestServeUnwatchStops(t *testing.T) {
 	}
 }
 
+// TestServeDuplicateIdRejected checks that a request repeating an in-flight id is answered with BAD_REQUEST.
 func TestServeDuplicateIdRejected(t *testing.T) {
 	release := make(chan struct{})
 	ops := &fakeOps{deliverFn: func(_ context.Context, _ inbox.Session, _, _, msgID string, _ time.Duration) error {
@@ -436,6 +442,7 @@ func TestServeDuplicateIdRejected(t *testing.T) {
 	}
 }
 
+// TestServeEOFCleansUp checks that a clean EOF cancels in-flight deliveries, stops watches and returns nil.
 func TestServeEOFCleansUp(t *testing.T) {
 	canceled := make(chan struct{}, 1)
 	ops := &fakeOps{deliverFn: func(ctx context.Context, _ inbox.Session, _, _, _ string, _ time.Duration) error {
@@ -453,8 +460,6 @@ func TestServeEOFCleansUp(t *testing.T) {
 		t.Fatalf("response = %v, want WatchStarted", resp)
 	}
 
-	// The Broker went away: stop reading responses so cleanup's writes fail
-	// fast, then close the request pipe.
 	_ = side.respR.Close()
 	_ = side.reqW.Close()
 
@@ -471,6 +476,7 @@ func TestServeEOFCleansUp(t *testing.T) {
 	}
 }
 
+// TestServeTruncatedInputIsError checks that a message cut in half ends Serve with io.ErrUnexpectedEOF.
 func TestServeTruncatedInputIsError(t *testing.T) {
 	side := newServeSide(t, &fakeOps{}, Identity{UID: 1})
 	side.readReady()

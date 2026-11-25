@@ -11,11 +11,7 @@ import (
 // testRoleHooks lets a platform-specific test file add roles to TestMain.
 var testRoleHooks = map[string]func() int{}
 
-// TestMain lets this test binary act as a real helper child. Tests that need a
-// child either spawn os.Args[0] with PEERS_TEST_HELPER_ROLE set (see
-// testExecStart), or let the default derivation function run it with the real
-// "internal account-helper" / "internal access-check" arguments so that the
-// credential change in accountCommand is exercised too.
+// TestMain runs this test binary as a real helper child when a role is requested and otherwise runs the tests.
 func TestMain(m *testing.M) {
 	if role, extra, ok := helperRoleFromArgs(os.Args); ok {
 		os.Exit(runHelperRole(role, extra))
@@ -33,8 +29,6 @@ func TestMain(m *testing.M) {
 	}
 }
 
-// helperRoleFromArgs recognizes the real hidden subcommand form, which is what
-// accountCommand produces when a test sets Exe to this binary.
 func helperRoleFromArgs(args []string) (role string, extra []string, ok bool) {
 	if len(args) < 3 || args[1] != "internal" {
 		return "", nil, false
@@ -68,9 +62,7 @@ func runHelperRole(role string, extra []string) int {
 	}
 }
 
-// testExecStart returns a Start function for PoolOptions or AccessChecker that
-// runs the current test binary in the given role. The child gets a minimal
-// environment and no credential change, so it runs as the test process.
+// testExecStart returns a Start function that runs the current test binary in role as the test process, with a minimal environment and no credential change.
 func testExecStart(t *testing.T, role string) func(ctx context.Context, acct Account) (*Process, error) {
 	t.Helper()
 	home := t.TempDir()

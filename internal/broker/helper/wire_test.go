@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+// TestWireConcurrentWritesDoNotInterleave checks that concurrent writes of large messages stay whole and unsplit.
 func TestWireConcurrentWritesDoNotInterleave(t *testing.T) {
 	const (
 		writers   = 16
@@ -87,9 +88,8 @@ func TestWireConcurrentWritesDoNotInterleave(t *testing.T) {
 	}
 }
 
+// TestWireOversizeRejected checks that the reader rejects a message above the size limit.
 func TestWireOversizeRejected(t *testing.T) {
-	// The read side must reject a frame another peer sent without the local
-	// writer's limit, so encode it directly instead of through msgWriter.
 	var frame bytes.Buffer
 	if _, err := protodelim.MarshalTo(&frame, wrapperspb.Bytes(make([]byte, maxMessageSize+1))); err != nil {
 		t.Fatalf("marshal oversize frame: %v", err)
@@ -105,8 +105,6 @@ func TestWireOversizeRejected(t *testing.T) {
 	r := newMsgReader(pr)
 	var msg wrapperspb.BytesValue
 	err := r.read(&msg)
-	// The reader rejects the size prefix and stops before consuming the body,
-	// so close the read side to unblock the writer.
 	_ = pr.CloseWithError(err)
 
 	if err == nil {
@@ -117,8 +115,6 @@ func TestWireOversizeRejected(t *testing.T) {
 	}
 }
 
-// bytesMessageOfSize returns a wrapperspb.BytesValue whose encoded size, as
-// seen by the framing limit, is exactly size bytes.
 func bytesMessageOfSize(t *testing.T, size int) *wrapperspb.BytesValue {
 	t.Helper()
 	payload := size
@@ -135,6 +131,7 @@ func bytesMessageOfSize(t *testing.T, size int) *wrapperspb.BytesValue {
 	}
 }
 
+// TestWireMessageAtSizeLimitAccepted checks that a message exactly at the size limit round-trips.
 func TestWireMessageAtSizeLimitAccepted(t *testing.T) {
 	msg := bytesMessageOfSize(t, maxMessageSize)
 
@@ -152,6 +149,7 @@ func TestWireMessageAtSizeLimitAccepted(t *testing.T) {
 	}
 }
 
+// TestWireMessageOverLimitNotWritten checks that an oversize message is refused before any byte is written.
 func TestWireMessageOverLimitNotWritten(t *testing.T) {
 	msg := bytesMessageOfSize(t, maxMessageSize+1)
 
@@ -165,6 +163,7 @@ func TestWireMessageOverLimitNotWritten(t *testing.T) {
 	}
 }
 
+// TestWireTruncatedMessage checks the io.ErrUnexpectedEOF and io.EOF outcomes at a truncated and an empty stream.
 func TestWireTruncatedMessage(t *testing.T) {
 	var buf bytes.Buffer
 	if _, err := protodelim.MarshalTo(&buf, wrapperspb.Bytes(bytes.Repeat([]byte{'x'}, 1024))); err != nil {

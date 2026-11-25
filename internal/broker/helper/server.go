@@ -14,8 +14,11 @@ import (
 
 // Identity is the credential the helper process runs with, reported in Ready.
 type Identity struct {
-	UID    uint32
-	GID    uint32
+	// UID is the process's real user id.
+	UID uint32
+	// GID is the process's real group id.
+	GID uint32
+	// Groups is the process's sorted, unique supplementary group list.
 	Groups []uint32
 }
 
@@ -35,18 +38,14 @@ func CurrentIdentity() Identity {
 	}
 }
 
-// serveWatch is one watch the helper holds on behalf of the Broker.
 type serveWatch struct {
 	configDir string
 	stop      func()
-	// started is set once WatchStarted has been written. Until then events are
-	// queued in pending, because the Broker drops events for a watch id it has
-	// not learned yet.
+	// started is set once WatchStarted has been written; until then events queue in pending because the Broker drops a watch id it has not learned yet.
 	started bool
 	pending []int64
 }
 
-// server is one account helper connection.
 type server struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -198,9 +197,6 @@ func (s *server) handle(req *helperpb.HelperRequest) error {
 	return nil
 }
 
-// startRequest records id as in flight and reports whether the caller should
-// serve it. A request that arrived after cleanup started, or that repeats an id
-// still in flight, is answered here instead.
 func (s *server) startRequest(id uint64, async bool) bool {
 	switch s.beginRequest(id, async) {
 	case requestClosed:
@@ -227,15 +223,14 @@ func hasOperation(req *helperpb.HelperRequest) bool {
 
 type requestStart int
 
+// Outcomes of beginRequest.
 const (
 	requestStarted requestStart = iota
 	requestDuplicate
 	requestClosed
 )
 
-// beginRequest records id as in flight. The closed check, the duplicate check
-// and, for asynchronous requests, the WaitGroup increment all happen under mu,
-// so cleanup can set closed and start waiting without racing a new request.
+// beginRequest records id as in flight; the closed and duplicate checks and the WaitGroup increment all happen under mu so cleanup cannot race a new request.
 func (s *server) beginRequest(id uint64, async bool) requestStart {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -354,8 +349,7 @@ func (s *server) serveWatch(id uint64, req *helperpb.WatchRequest) {
 	}
 	entry.stop = stop
 	entry.started = true
-	// Write WatchStarted under mu so no event can reach the Broker before it
-	// knows the watch id; events queued while ops.Watch ran go out after it.
+	// Write WatchStarted under mu so no event reaches the Broker before it knows the watch id; events queued during ops.Watch go out after it.
 	s.respondWatchStarted(id, watchID)
 	pending := entry.pending
 	entry.pending = nil
@@ -394,8 +388,6 @@ func (s *server) serveCancel(req *helperpb.CancelRequest) {
 	}
 }
 
-// cleanup cancels in-flight deliveries, stops every watch, and waits for the
-// handler goroutines to finish.
 func (s *server) cleanup() {
 	s.mu.Lock()
 	if s.closed {
@@ -472,16 +464,13 @@ func (s *server) writeMessage(msg *helperpb.HelperMessage) {
 	}
 }
 
-// noteWriteError reports the first write failure to Serve. Subsequent failures
-// are discarded: the connection is gone either way.
 func (s *server) noteWriteError(err error) {
 	s.failOnce.Do(func() {
 		s.failCh <- err
 	})
 }
 
-// errorCode maps an inbox outcome to the wire error code. errors.Is is used
-// throughout so wrapped sentinels keep their meaning.
+// errorCode maps an inbox outcome to the wire error code, using errors.Is so wrapped sentinels keep their meaning.
 func errorCode(err error) helperpb.HelperErrorCode {
 	switch {
 	case errors.Is(err, inbox.ErrNoRecord):
@@ -526,9 +515,7 @@ func toProtoSession(s inbox.Session) *helperpb.Session {
 
 // RunAccountHelper is the body of `peers internal account-helper`.
 func RunAccountHelper(ctx context.Context, stdin io.Reader, stdout io.Writer) error {
-	// Switch identity before serving and before CurrentIdentity reads it. A
-	// failed switch returns an error, and the command exits nonzero without
-	// serving as root.
+	// Switch identity before serving and before CurrentIdentity reads it; a failed switch exits nonzero without serving as root.
 	if err := enterHelperAccount(); err != nil {
 		return err
 	}

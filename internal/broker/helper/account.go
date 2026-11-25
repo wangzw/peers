@@ -14,11 +14,17 @@ import (
 
 // Account is one entry of the account database.
 type Account struct {
-	Name   string
-	UID    uint32
-	GID    uint32   // primary group
-	Groups []uint32 // supplementary groups, including GID, as the account database lists them
-	Home   string
+	// Name is the account name.
+	Name string
+	// UID is the account's uid.
+	UID uint32
+	// GID is the account's primary group.
+	GID uint32
+	// Groups is the supplementary group table, including GID, as the account
+	// database lists it.
+	Groups []uint32
+	// Home is the account's home directory.
+	Home string
 }
 
 // ErrNoAccount reports that the account database has no entry for the uid.
@@ -31,7 +37,9 @@ var (
 	groupIDsFromDB  = accountdb.GroupIDs
 )
 
-// LookupAccount reads the account database afresh on every call.
+// LookupAccount reads the account database afresh and returns its entry for
+// uid. It returns an error wrapping ErrNoAccount when the uid has no entry,
+// and another error when the lookup itself failed.
 func LookupAccount(uid uint32) (Account, error) {
 	u, err := lookupUIDFromDB(uid)
 	if err != nil {
@@ -58,7 +66,6 @@ func LookupAccount(uid uint32) (Account, error) {
 	}, nil
 }
 
-// parseID converts a decimal group or user id handed over in the environment.
 func parseID(s string) (uint32, error) {
 	v, err := strconv.ParseUint(s, 10, 32)
 	if err != nil {
@@ -67,14 +74,10 @@ func parseID(s string) (uint32, error) {
 	return uint32(v), nil
 }
 
-// lookupIdentityEnv reads the account uid and gid from the variables named by
-// uidEnv and gidEnv. present reports whether uidEnv is set at all: when it is
-// absent the child already runs as the account (the Linux child started through
-// the credential, or an in-process caller) and nothing has to be read.
-//
-// Both hidden subcommands use this function, each with its own pair of
-// variables: access-check and the account-helper receive different privileges
-// and must not accept an identity meant for the other.
+// lookupIdentityEnv reads the uid and gid from the named variables. An absent
+// uid variable means the child already runs as the account; each hidden
+// subcommand uses its own pair, so one cannot accept an identity meant for the
+// other.
 func lookupIdentityEnv(uidEnv, gidEnv string) (uid, gid uint32, present bool, err error) {
 	uidValue, ok := os.LookupEnv(uidEnv)
 	if !ok {
@@ -96,10 +99,6 @@ func lookupIdentityEnv(uidEnv, gidEnv string) (uid, gid uint32, present bool, er
 	return uid, gid, true, nil
 }
 
-// accountCommand returns a command that runs exe with args as acct. The
-// account-helper needs the account's full identity, including its saved uid.
-// How the child receives that identity is platform-specific: see
-// accountChildIdentity.
 func accountCommand(exe string, args []string, acct Account) *exec.Cmd {
 	cmd := commandFor(exe, args, acct)
 	cmd.Stderr = os.Stderr
@@ -109,12 +108,9 @@ func accountCommand(exe string, args []string, acct Account) *exec.Cmd {
 	return cmd
 }
 
-// accessCheckCommand returns a command that runs exe's access-check subcommand.
-// It execs as root and carries the account identity in the environment: the
-// child drops only its effective identity, so the account that is being checked
-// never owns the process or its pipes. Its stderr is left nil, which connects
-// it to /dev/null; the framed response on stdout is the only output it needs,
-// and discarding stderr removes a channel for injecting Broker log lines.
+// accessCheckCommand runs the access-check subcommand as root with the account
+// identity in the environment; its stderr stays nil so the child cannot write
+// into the Broker's log.
 func accessCheckCommand(exe string, acct Account) *exec.Cmd {
 	cmd := commandFor(exe, []string{"internal", "access-check"}, acct)
 	cmd.Env = append(cmd.Env,
@@ -125,9 +121,6 @@ func accessCheckCommand(exe string, acct Account) *exec.Cmd {
 	return cmd
 }
 
-// commandFor builds the environment and process attributes shared by the
-// helper children. It does not change credentials; callers decide whether the
-// child execs as the Broker or as an account.
 func commandFor(exe string, args []string, acct Account) *exec.Cmd {
 	cmd := &exec.Cmd{
 		Path: exe,
@@ -145,7 +138,6 @@ func commandFor(exe string, args []string, acct Account) *exec.Cmd {
 	return cmd
 }
 
-// joinIDs renders a group id list for the environment, comma separated.
 func joinIDs(ids []uint32) string {
 	var b strings.Builder
 	for i, id := range ids {

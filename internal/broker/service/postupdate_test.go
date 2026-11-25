@@ -18,17 +18,12 @@ import (
 	"github.com/wangzw/peers/internal/procsig"
 )
 
-// processExitWait is the package-wide fallback for the wait for
-// waitProcessGone to notice a SIGKILLed child. It only decides how long a wait
-// that will never complete takes to fail: the success path observes the child
-// disappearing and never spends this time, so a larger value costs nothing.
-// Thirty seconds is far above the worst normal latency under load; it is not a
-// claim that a child should take that long.
+// processExitWait only decides how long a wait that will never complete takes
+// to fail; the success path never spends this time.
 const processExitWait = 30 * time.Second
 
-// TestPostUpdateLinuxRewritesTheUnit checks both levels: the main unit is
-// replaced with this binary's format, a drop-in beside it is left untouched,
-// and the only command run is daemon-reload. The Broker is not restarted.
+// TestPostUpdateLinuxRewritesTheUnit checks that the main unit is replaced, a
+// drop-in is left untouched, and the only command run is daemon-reload.
 func TestPostUpdateLinuxRewritesTheUnit(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -100,10 +95,9 @@ func TestPostUpdateLinuxRewritesTheUnit(t *testing.T) {
 	}
 }
 
-// TestPostUpdateLinuxRestoresTheUnitWhenDaemonReloadFails checks the first
-// phase's rollback of the service definition: the unit this run replaced is
-// written back and the unit database is reloaded again, so the binary rollback
-// that follows does not leave systemd holding the next version's format.
+// TestPostUpdateLinuxRestoresTheUnitWhenDaemonReloadFails checks that a failed
+// daemon-reload writes the previous unit back and reloads the unit database
+// again.
 func TestPostUpdateLinuxRestoresTheUnitWhenDaemonReloadFails(t *testing.T) {
 	opts := baseOptions(t)
 	const oldUnit = "old unit\n"
@@ -145,9 +139,8 @@ func TestPostUpdateLinuxRestoresTheUnitWhenDaemonReloadFails(t *testing.T) {
 	}
 }
 
-// TestPostUpdateLinuxRemovesANewUnitWhenDaemonReloadFails checks the restore of
-// a definition this run created: there was no old main unit, so the failed run
-// leaves none behind.
+// TestPostUpdateLinuxRemovesANewUnitWhenDaemonReloadFails checks that a failed
+// run leaves no unit behind when there was none before.
 func TestPostUpdateLinuxRemovesANewUnitWhenDaemonReloadFails(t *testing.T) {
 	opts := baseOptions(t)
 	unitFile := filepath.Join(opts.Root, "home/alice/.config/systemd/user/"+UnitName)
@@ -172,10 +165,8 @@ func TestPostUpdateLinuxRemovesANewUnitWhenDaemonReloadFails(t *testing.T) {
 	}
 }
 
-// TestPostUpdateLinuxReportsAndAuditsAFailedRestore checks the restore's own
-// failure: the file is back but the second daemon-reload failed, so the error
-// names that separately from the original failure and an update_failed record
-// says the unit and the service manager may disagree.
+// TestPostUpdateLinuxReportsAndAuditsAFailedRestore checks that a failed restore
+// is named separately in the error and recorded as update_failed.
 func TestPostUpdateLinuxReportsAndAuditsAFailedRestore(t *testing.T) {
 	opts := baseOptions(t)
 	const oldUnit = "old unit\n"
@@ -213,12 +204,8 @@ func TestPostUpdateLinuxReportsAndAuditsAFailedRestore(t *testing.T) {
 	}
 }
 
-// TestPostUpdateLaunchdRewritesThePlistAndStartsADetachedHelper checks both
-// levels: the plist is replaced with this binary's format, and the reload is
-// deferred to a helper that runs in its own session with its standard streams
-// on the post-update log and an explicitly opened /dev/null as standard input.
-// Nothing is booted out synchronously, because that would stop the job that
-// runs the Broker and this process.
+// TestPostUpdateLaunchdRewritesThePlistAndStartsADetachedHelper checks that the
+// plist is replaced and the reload is deferred to a detached helper.
 func TestPostUpdateLaunchdRewritesThePlistAndStartsADetachedHelper(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -333,10 +320,8 @@ func TestPostUpdateLaunchdRewritesThePlistAndStartsADetachedHelper(t *testing.T)
 	}
 }
 
-// TestPostUpdateLaunchdPreservesEnvironmentVariables checks that a rewrite
-// keeps the EnvironmentVariables an operator added to the plist. launchd has no
-// drop-in mechanism, so this dictionary is the only place a proxy setting can
-// live across an update.
+// TestPostUpdateLaunchdPreservesEnvironmentVariables checks that a rewrite keeps
+// the EnvironmentVariables an operator added to the plist.
 func TestPostUpdateLaunchdPreservesEnvironmentVariables(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -409,10 +394,8 @@ func TestPostUpdateLaunchdPreservesEnvironmentVariables(t *testing.T) {
 	}
 }
 
-// TestWithPlistEnvironmentMergesGeneratedAndKeptEntries checks the rewrite
-// writes one dictionary when the template itself sets EnvironmentVariables: a
-// generated entry wins over a kept entry of the same name, the kept entries it
-// does not override survive, and the plist keeps its other keys.
+// TestWithPlistEnvironmentMergesGeneratedAndKeptEntries checks that the rewrite
+// writes one dictionary in which a generated entry wins over a kept one.
 func TestWithPlistEnvironmentMergesGeneratedAndKeptEntries(t *testing.T) {
 	rendered, err := LaunchDaemonPlist("/usr/local/bin/peers")
 	if err != nil {
@@ -446,8 +429,8 @@ func TestWithPlistEnvironmentMergesGeneratedAndKeptEntries(t *testing.T) {
 	}
 }
 
-// TestPostUpdateLaunchdRefusesASymlinkedPostUpdateLog checks the log file is
-// opened without following a symbolic link at its path.
+// TestPostUpdateLaunchdRefusesASymlinkedPostUpdateLog checks that the log file
+// is opened without following a symbolic link at its path.
 func TestPostUpdateLaunchdRefusesASymlinkedPostUpdateLog(t *testing.T) {
 	opts, _ := darwinPostUpdateOptions(t)
 	opts.System = true
@@ -483,9 +466,8 @@ func TestPostUpdateLaunchdRefusesASymlinkedPostUpdateLog(t *testing.T) {
 	}
 }
 
-// TestPostUpdateLaunchdRefusesAnUnsafeLogDirectory checks the directory that
-// holds the post-update log: it must belong to the account running the helper
-// and not be writable by group or others.
+// TestPostUpdateLaunchdRefusesAnUnsafeLogDirectory checks that the log
+// directory must belong to the account and not be writable by group or others.
 func TestPostUpdateLaunchdRefusesAnUnsafeLogDirectory(t *testing.T) {
 	cases := []struct {
 		name string
@@ -525,10 +507,9 @@ func TestPostUpdateLaunchdRefusesAnUnsafeLogDirectory(t *testing.T) {
 	}
 }
 
-// TestLaunchdReloadWaitsForTheCallerThenBootsOutAndBootstraps checks the three
-// properties the deferred reload needs: no launchctl command runs before the
-// caller exits, the first is the bootout, and the bootstrap follows the unload
-// wait. A gate holds the caller-exit wait open to prove the ordering.
+// TestLaunchdReloadWaitsForTheCallerThenBootsOutAndBootstraps checks that no
+// launchctl command runs before the caller exits, then bootout and bootstrap
+// follow the unload wait.
 func TestLaunchdReloadWaitsForTheCallerThenBootsOutAndBootstraps(t *testing.T) {
 	opts, fake, plistPath, id := launchdReloadFixture(t)
 	fake.loaded = true
@@ -572,10 +553,8 @@ func TestLaunchdReloadWaitsForTheCallerThenBootsOutAndBootstraps(t *testing.T) {
 	}
 }
 
-// TestLaunchdReloadSkipsTheWaitWhenTheCallerIsAlreadyGone checks the case the
-// helper's own parent pid reaches: os.Getppid returns 1 once the Broker exits
-// and the helper is reparented to init. Pid 1 is init, not the Broker, so
-// waiting on it would time out; the reload must proceed at once.
+// TestLaunchdReloadSkipsTheWaitWhenTheCallerIsAlreadyGone checks that a caller
+// pid of 1 reloads without waiting.
 func TestLaunchdReloadSkipsTheWaitWhenTheCallerIsAlreadyGone(t *testing.T) {
 	opts, fake, plistPath, id := launchdReloadFixture(t)
 	fake.loaded = true
@@ -601,9 +580,7 @@ func TestLaunchdReloadSkipsTheWaitWhenTheCallerIsAlreadyGone(t *testing.T) {
 }
 
 // TestLaunchdReloadAbandonsTheReloadWhenTheBrokerDoesNotExit checks that a
-// Broker which does not exit within the bound leaves the service loaded. The
-// update may have been rolled back, and booting the job out would stop the
-// Broker that is serving the old version instead of loading the new definition.
+// Broker that does not exit within the bound leaves the service loaded.
 func TestLaunchdReloadAbandonsTheReloadWhenTheBrokerDoesNotExit(t *testing.T) {
 	opts, fake, plistPath, id := launchdReloadFixture(t)
 	fake.loaded = true
@@ -633,10 +610,9 @@ func TestLaunchdReloadAbandonsTheReloadWhenTheBrokerDoesNotExit(t *testing.T) {
 	assertAuditDetail(t, auditPath, "did not exit within")
 }
 
-// TestLaunchdReloadAbandonsTheReloadWhenTheBinaryWasRolledBack checks the
-// reload's precondition: the plist must name the binary that started the
-// helper. A rolled-back update leaves the previous binary at that path, and the
-// helper must not boot the service out then.
+// TestLaunchdReloadAbandonsTheReloadWhenTheBinaryWasRolledBack checks that the
+// reload is abandoned when the plist no longer names the binary that started
+// the helper.
 func TestLaunchdReloadAbandonsTheReloadWhenTheBinaryWasRolledBack(t *testing.T) {
 	opts, fake, plistPath, id := launchdReloadFixture(t)
 	fake.loaded = true
@@ -645,9 +621,8 @@ func TestLaunchdReloadAbandonsTheReloadWhenTheBinaryWasRolledBack(t *testing.T) 
 	auditPath := filepath.Join(t.TempDir(), "audit.log")
 
 	exePath := rooted(opts, opts.Exe)
-	// Rename a freshly written file over the path, as a binary rollback does.
-	// Removing the new binary first could hand the same inode to the file
-	// written next, which would hide the change the helper must notice.
+	// Rename rather than remove first: the same inode could be reused and hide
+	// the change the helper must notice.
 	previous := filepath.Join(filepath.Dir(exePath), "previous-binary")
 	if err := os.WriteFile(previous, []byte("old binary"), 0o755); err != nil {
 		t.Fatalf("write the old binary: %v", err)
@@ -669,10 +644,8 @@ func TestLaunchdReloadAbandonsTheReloadWhenTheBinaryWasRolledBack(t *testing.T) 
 	assertAuditDetail(t, auditPath, "not the binary that started this helper")
 }
 
-// TestLaunchdReloadRecordsAFailedBootstrapInTheAudit checks the second phase's
-// failure path: the caller already has the success response, so the failure is
-// recorded in the audit log and reported on standard error (the post-update
-// log) instead of being returned to a caller. The Detail marks the phase.
+// TestLaunchdReloadRecordsAFailedBootstrapInTheAudit checks that a failed
+// bootstrap is recorded in the audit log with a second-phase detail.
 func TestLaunchdReloadRecordsAFailedBootstrapInTheAudit(t *testing.T) {
 	opts, fake, plistPath, id := launchdReloadFixture(t)
 	fake.loaded = true
@@ -698,7 +671,7 @@ func TestLaunchdReloadRecordsAFailedBootstrapInTheAudit(t *testing.T) {
 }
 
 // TestPostUpdateLinuxReportsAReloadFailure checks that a failing daemon-reload
-// is reported with the command that failed, so the caller can name the reason.
+// is reported with the command that failed.
 func TestPostUpdateLinuxReportsAReloadFailure(t *testing.T) {
 	opts := baseOptions(t)
 	opts.Run = func(string, ...string) ([]byte, error) {
@@ -716,9 +689,8 @@ func TestPostUpdateLinuxReportsAReloadFailure(t *testing.T) {
 	}
 }
 
-// TestPostUpdateOptionsSystemNeedsNoHome covers the systemd case: the system
-// service runs with no HOME, and rewriting its definition must not read the
-// account home. The user installation still reads it.
+// TestPostUpdateOptionsSystemNeedsNoHome checks that the system installation
+// reads no home directory while the user installation requires one.
 func TestPostUpdateOptionsSystemNeedsNoHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	opts, err := PostUpdateOptions(true)
@@ -743,8 +715,8 @@ func TestPostUpdateOptionsSystemNeedsNoHome(t *testing.T) {
 	}
 }
 
-// TestPostUpdateRejectsAnUnsupportedPlatform keeps the platform behaviour the
-// other service operations have.
+// TestPostUpdateRejectsAnUnsupportedPlatform checks that an unsupported platform
+// is refused.
 func TestPostUpdateRejectsAnUnsupportedPlatform(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "windows"
@@ -755,9 +727,8 @@ func TestPostUpdateRejectsAnUnsupportedPlatform(t *testing.T) {
 	}
 }
 
-// TestStartDetachedProcessStartsANewSession checks the real process: the
-// helper must run in a session of its own, because the launchd job's bootout
-// stops the job's process group.
+// TestStartDetachedProcessStartsANewSession checks that the helper runs in a
+// session of its own.
 func TestStartDetachedProcessStartsANewSession(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads the session id from /proc")
@@ -779,11 +750,8 @@ func TestStartDetachedProcessStartsANewSession(t *testing.T) {
 	}
 }
 
-// TestStartDetachedProcessLeavesTheReleasedPidAtMinusOne checks the property
-// behind the accident: Release sets cmd.Process.Pid to -1, so reading it after
-// the call and passing it to kill means kill(-1, SIGKILL), which signals every
-// process the account may signal. The pid must come from the return value, and
-// this test sends no signal through cmd.Process.
+// TestStartDetachedProcessLeavesTheReleasedPidAtMinusOne checks that Release
+// leaves cmd.Process.Pid at -1 so callers must use the returned pid.
 func TestStartDetachedProcessLeavesTheReleasedPidAtMinusOne(t *testing.T) {
 	cmd := exec.Command("sleep", "10")
 	pid, err := startDetachedProcess(cmd)
@@ -800,8 +768,8 @@ func TestStartDetachedProcessLeavesTheReleasedPidAtMinusOne(t *testing.T) {
 	}
 }
 
-// TestWaitProcessGoneReturnsAfterTheProcessExits checks the real wait: it
-// returns once the process is gone instead of polling until the bound.
+// TestWaitProcessGoneReturnsAfterTheProcessExits checks that the wait returns
+// once the process is gone instead of polling until the bound.
 func TestWaitProcessGoneReturnsAfterTheProcessExits(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("uses the session id from /proc")
@@ -812,21 +780,12 @@ func TestWaitProcessGoneReturnsAfterTheProcessExits(t *testing.T) {
 	}
 	pid := cmd.Process.Pid
 
-	// Prove the wait reads this child as alive before the kill: with a bound
-	// below the first poll interval, seeing the pid still running is the only way
-	// to get the "still running" error. Starting the success-path wait only after
-	// that rules out a kill that lands before the child existed, and it pins the
-	// case being tested to a live process instead of one already gone.
 	if err := waitProcessGone(pid, time.Nanosecond); err == nil {
 		t.Fatal("waitProcessGone reported the running child as gone")
 	}
 
 	done := make(chan error, 1)
 	go func() {
-		// The wait's own bound is far above the outer fallback, so returning
-		// within the fallback can only come from the process exit; a wait that
-		// ignored it would be caught by the outer select rather than race its own
-		// timer to the same "still running" error.
 		done <- waitProcessGone(pid, time.Hour)
 	}()
 
@@ -845,8 +804,6 @@ func TestWaitProcessGoneReturnsAfterTheProcessExits(t *testing.T) {
 	}
 }
 
-// darwinPostUpdateOptions returns darwin options whose directory owner matches
-// the account that runs the helper, and creates the executable the plist names.
 func darwinPostUpdateOptions(t *testing.T) (Options, *darwinFake) {
 	t.Helper()
 	opts, fake := darwinControlOptions(t)
@@ -855,17 +812,14 @@ func darwinPostUpdateOptions(t *testing.T) (Options, *darwinFake) {
 	return opts, fake
 }
 
-// ownLogDirAs makes the post-update log directory look owned by the account the
-// options name. Call it after setting EUID: Options is passed by value, so a
-// closure made before the change would keep the old value.
+// Call it after setting EUID: Options is passed by value, so a closure made
+// before the change would keep the old value.
 func ownLogDirAs(opts Options) func(string) (uint32, fs.FileMode, error) {
 	return func(string) (uint32, fs.FileMode, error) {
 		return uint32(opts.EUID), fs.ModeDir | 0o700, nil
 	}
 }
 
-// launchdReloadFixture returns options, the fake launchctl, the plist path and
-// the executable identity the helper expects.
 func launchdReloadFixture(t *testing.T) (Options, *darwinFake, string, ExecutableID) {
 	t.Helper()
 	opts, fake := darwinPostUpdateOptions(t)
@@ -881,7 +835,6 @@ func launchdReloadFixture(t *testing.T) (Options, *darwinFake, string, Executabl
 	return opts, fake, plistPath, mustExecutableID(t, rooted(opts, opts.Exe))
 }
 
-// writeRootedFile writes content at a production path under the test root.
 func writeRootedFile(t *testing.T, opts Options, path, content string, mode fs.FileMode) string {
 	t.Helper()
 	fsPath := rooted(opts, path)
@@ -894,7 +847,6 @@ func writeRootedFile(t *testing.T, opts Options, path, content string, mode fs.F
 	return fsPath
 }
 
-// mustExecutableID records the identity of an existing file.
 func mustExecutableID(t *testing.T, path string) ExecutableID {
 	t.Helper()
 	id, err := executableID(path)
@@ -904,8 +856,6 @@ func mustExecutableID(t *testing.T, path string) ExecutableID {
 	return id
 }
 
-// assertAuditDetail reads the audit log and checks it contains an update_failed
-// record with every wanted fragment.
 func assertAuditDetail(t *testing.T, path string, want ...string) {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -920,7 +870,6 @@ func assertAuditDetail(t *testing.T, path string, want ...string) {
 	}
 }
 
-// procSession returns the session id of pid from /proc.
 func procSession(t *testing.T, pid int) int {
 	t.Helper()
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
@@ -943,8 +892,6 @@ func procSession(t *testing.T, pid int) int {
 	return session
 }
 
-// assertNoInstallTempFiles checks that no atomic-write temporary file survived
-// the rewrite.
 func assertNoInstallTempFiles(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)

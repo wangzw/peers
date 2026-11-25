@@ -13,8 +13,7 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// Compile-time checks that the inbox functions still have the signatures the
-// helper package adapts.
+// Compile-time checks that the inbox functions still have the signatures the helper package adapts.
 var (
 	_ func(string, string) (inbox.Session, error)                                       = inbox.Lookup
 	_ func(inbox.Session) (inbox.Session, error)                                        = inbox.Reread
@@ -22,6 +21,7 @@ var (
 	_ func(context.Context, inbox.Session, string, string, string, time.Duration) error = inbox.Deliver
 )
 
+// TestInboxOpsLookupDelegates checks that Lookup returns the record's session fields.
 func TestInboxOpsLookupDelegates(t *testing.T) {
 	dir := t.TempDir()
 	sessions := filepath.Join(dir, "sessions")
@@ -45,6 +45,7 @@ func TestInboxOpsLookupDelegates(t *testing.T) {
 	}
 }
 
+// TestInboxOpsLookupMissingIsNoRecord checks that a missing record is reported as inbox.ErrNoRecord.
 func TestInboxOpsLookupMissingIsNoRecord(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := (InboxOps{}).Lookup(dir, "/x.sock"); !errors.Is(err, inbox.ErrNoRecord) {
@@ -126,6 +127,7 @@ func TestInboxOpsDeliverDelegates(t *testing.T) {
 	}
 }
 
+// TestStubSignatures pins the signatures of Serve, NewClient, NewPool and RunAccessCheck.
 func TestStubSignatures(t *testing.T) {
 	var (
 		_ = (func(context.Context, io.Reader, io.Writer, SessionOps, Identity) error)(Serve)

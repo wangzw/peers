@@ -8,7 +8,6 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// deliverCall is one recorded call to fakeOps.Deliver.
 type deliverCall struct {
 	s       inbox.Session
 	sig     string
@@ -17,9 +16,7 @@ type deliverCall struct {
 	timeout time.Duration
 }
 
-// fakeOps is the SessionOps test double. It serves sessions keyed by socket
-// path, records deliveries, and lets tests fire watch callbacks. All field
-// access is protected by mu; callbacks run outside the lock.
+// fakeOps is the SessionOps test double: it serves sessions keyed by socket path, records deliveries, and lets tests fire watch callbacks. All field access is protected by mu; callbacks run outside the lock.
 type fakeOps struct {
 	mu          sync.Mutex
 	sessions    map[string]inbox.Session
@@ -29,8 +26,7 @@ type fakeOps struct {
 	stopped     map[string]int
 	delivered   []deliverCall
 	fireOnWatch int
-	// watchErr makes Watch fail; onWatch runs after the callback is registered
-	// and before Watch returns, so a test can change the entry mid-call.
+	// watchErr makes Watch fail; onWatch runs after the callback is registered and before Watch returns.
 	watchErr error
 	onWatch  func()
 }
@@ -107,7 +103,6 @@ func (f *fakeOps) Deliver(ctx context.Context, s inbox.Session, sig, text, msgID
 	return fn(ctx, s, sig, text, msgID, timeout)
 }
 
-// fire calls every watch callback registered for configDir outside the lock.
 func (f *fakeOps) fire(configDir string, pid int) {
 	f.mu.Lock()
 	cbs := append([]func(int){}, f.watches[configDir]...)

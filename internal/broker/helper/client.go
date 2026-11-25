@@ -15,25 +15,15 @@ import (
 )
 
 var (
-	// ErrUnavailable reports that the account helper could not be started or
-	// that communication with it failed. It marks the failures that belong to
-	// the helper itself, as opposed to a session record that exists but cannot
-	// be read, which stays an ordinary error.
+	// ErrUnavailable reports that the account helper could not be started or that communication with it failed, as opposed to a session record that cannot be read.
 	ErrUnavailable = errors.New("helper: account helper unavailable")
-	// ErrHelperGone reports that the connection to the account helper is lost.
-	// A lost pipe is a communication failure, so it wraps ErrUnavailable.
+	// ErrHelperGone reports that the connection to the account helper is lost; it wraps ErrUnavailable.
 	ErrHelperGone = fmt.Errorf("%w: the account helper connection was lost", ErrUnavailable)
-	// ErrProtocol reports a violation of the helper pipe protocol. The helper
-	// is unusable when it speaks the protocol wrong, so it wraps ErrUnavailable.
+	// ErrProtocol reports a violation of the helper pipe protocol; it wraps ErrUnavailable.
 	ErrProtocol = fmt.Errorf("%w: helper protocol violation", ErrUnavailable)
 )
 
-// deadlineUnavailable converts a context that ended at its deadline into a
-// helper failure. A deadline on a helper call bounds how long the helper may
-// take to start or answer, so its expiry means the helper did not respond. The
-// context error stays reachable through errors.Is, because callers discard a
-// stuck helper on a deadline. A cancellation is the caller's own doing and is
-// returned unchanged, so it is not mistaken for a helper failure.
+// deadlineUnavailable turns a deadline into a helper failure, keeping the context error reachable, and returns a cancellation unchanged.
 func deadlineUnavailable(ctx context.Context) error {
 	err := ctx.Err()
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -42,32 +32,20 @@ func deadlineUnavailable(ctx context.Context) error {
 	return err
 }
 
-// cancelWait is how long Deliver waits for the outcome of a request after it
-// has asked the helper to cancel it.
 const cancelWait = time.Second
 
-// unwatchTimeout bounds asking the helper to stop a watch. A stopped helper
-// must not keep the caller, which may be a Broker event loop, waiting.
 const unwatchTimeout = time.Second
 
-// writeCancelGrace is how long a write cancelled by its context has to report
-// that it completed anyway. A pipe reader that consumed the frame unblocks the
-// writer, but the cancellation can still win the race against the writer being
-// scheduled, and that completed frame must not be mistaken for a lost one.
+// writeCancelGrace is how long a cancelled write gets to report that it completed anyway before the write end is closed.
 const writeCancelGrace = 100 * time.Millisecond
 
-// pending is one request waiting for its response.
 type pending struct {
 	ch chan *helperpb.HelperResponse
-	// watch is the entry to register when the response starts a watch. The
-	// read loop registers it before it reads any later message, so no watch
-	// event can arrive before its callback is known.
+	// watch is the entry to register when the response starts a watch; the read loop registers it before reading any later message.
 	watch *watch
 }
 
-// watch is one registered watch callback. mu is held while the callback runs,
-// so stop does not return while a callback is still in progress and no later
-// callback can start after it returns.
+// watch is one registered watch callback; mu is held while it runs, so stop does not return while a callback is in progress.
 type watch struct {
 	onChange func(pid int)
 
@@ -112,9 +90,6 @@ func NewClient(r io.Reader, w io.WriteCloser) *Client {
 	return c
 }
 
-// readLoop reads messages until the connection ends or the peer violates the
-// protocol. A first message that is not Ready, a second Ready, an unknown body
-// or a framing error all end it.
 func (c *Client) readLoop(r *msgReader) {
 	first := true
 	for {
@@ -149,9 +124,6 @@ func (c *Client) readLoop(r *msgReader) {
 	}
 }
 
-// shutdown records why the read loop ended and wakes every waiter. Channels
-// are closed rather than sent on so a waiter that already removed its entry
-// cannot be confused with one that is still registered.
 func (c *Client) shutdown(err error) {
 	c.mu.Lock()
 	if c.ended {
@@ -168,8 +140,6 @@ func (c *Client) shutdown(err error) {
 	close(c.done)
 }
 
-// dispatchResponse delivers a response to the waiter that owns its id. A
-// response for an unknown or already abandoned id is dropped.
 func (c *Client) dispatchResponse(resp *helperpb.HelperResponse) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -191,9 +161,10 @@ func (c *Client) dispatchResponse(resp *helperpb.HelperResponse) {
 	}
 }
 
-// dispatchEvent runs one watch callback in the read loop, which keeps events
-// for the same watch in order. The callback runs without Client.mu, so it may
-// stop another watch; stopping its own would wait on the lock this call holds.
+// dispatchEvent runs one watch callback in the read loop so events for a watch
+// stay in order. The callback runs without Client.mu, so it may stop another
+// watch, but it must not stop its own: stop waits on the w.mu this call holds,
+// which would deadlock.
 func (c *Client) dispatchEvent(ev *helperpb.WatchEvent) {
 	c.mu.Lock()
 	w := c.watches[ev.GetWatchId()]
@@ -208,8 +179,6 @@ func (c *Client) dispatchEvent(ev *helperpb.WatchEvent) {
 	w.mu.Unlock()
 }
 
-// register reserves the next request id and the channel its response arrives
-// on. It fails once the read loop has ended.
 func (c *Client) register(w *watch) (uint64, *pending, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -229,11 +198,7 @@ func (c *Client) remove(id uint64) {
 	c.mu.Unlock()
 }
 
-// send writes one request, giving up when ctx ends. A write that finished
-// just before cancellation is reported as done. A blocked pipe write cannot be
-// interrupted directly, so after writeCancelGrace the write end is closed; the
-// connection is then unusable, which keeps the wait bounded, and a frame that
-// was not written completely must not be followed by another on the stream.
+// send writes one request and gives up when ctx ends; a blocked pipe write cannot be interrupted, so after writeCancelGrace the write end is closed and the connection becomes unusable.
 func (c *Client) send(ctx context.Context, req *helperpb.HelperRequest) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -254,19 +219,14 @@ func (c *Client) send(ctx context.Context, req *helperpb.HelperRequest) error {
 	case <-timer.C:
 	}
 	_ = c.wc.Close()
-	// ctx ended before this point, so the write error only confirms the
-	// connection is unusable; the caller learns the cancellation.
+	// ctx ended before this point, so a write error only confirms the connection is unusable.
 	if err := <-done; err != nil && ctx.Err() == nil {
 		return err
 	}
 	return ctx.Err()
 }
 
-// goneError wraps a send failure as ErrHelperGone while keeping the context
-// error, if that is what ended the write, visible to errors.Is. A caller's
-// cancellation is returned unchanged: the helper is not what ended the call,
-// so it must not be reported as a helper failure. A deadline does belong to the
-// helper, because it bounds how long the helper may take to accept a request.
+// goneError wraps a send failure as ErrHelperGone, keeping a context error reachable, and returns a caller's cancellation unchanged.
 func goneError(err error) error {
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -278,11 +238,7 @@ func goneError(err error) error {
 	}
 }
 
-// deliverSendError classifies a failure before the request was on the wire.
-// An oversize frame was never written. A write interrupted by its context may
-// have been read in part or in full, so its outcome is unknown. A caller's
-// cancellation keeps that uncertain outcome but is not a helper failure; a
-// deadline bounds the helper, so it does wrap ErrHelperGone.
+// deliverSendError classifies a failure before the request reached the pipe: an oversize frame was not written, and a write interrupted by its context is uncertain.
 func deliverSendError(err error) error {
 	switch {
 	case errors.Is(err, errOversize):
@@ -296,7 +252,7 @@ func deliverSendError(err error) error {
 	}
 }
 
-// WaitReady returns the Ready message; ErrProtocol if the first message is not Ready.
+// WaitReady returns the Ready message. It returns ErrProtocol if the first message is not Ready and ErrHelperGone if the connection ends first; a deadline is reported as ErrUnavailable.
 func (c *Client) WaitReady(ctx context.Context) (*helperpb.Ready, error) {
 	select {
 	case <-c.ready:
@@ -319,6 +275,7 @@ func (c *Client) WaitReady(ctx context.Context) (*helperpb.Ready, error) {
 	}
 }
 
+// Lookup returns the session whose record carries socketPath.
 func (c *Client) Lookup(ctx context.Context, configDir, socketPath string) (inbox.Session, error) {
 	id, p, registered := c.register(nil)
 	if !registered {
@@ -347,6 +304,10 @@ func (c *Client) Lookup(ctx context.Context, configDir, socketPath string) (inbo
 	}
 }
 
+// Reread returns the current record of s. It reports inbox.ErrNoRecord or
+// inbox.ErrPartial for the record and ErrHelperGone when the helper is gone;
+// the caller's own cancellation or deadline is returned as it is or wrapped in
+// ErrUnavailable.
 func (c *Client) Reread(ctx context.Context, s inbox.Session) (inbox.Session, error) {
 	id, p, registered := c.register(nil)
 	if !registered {
@@ -374,6 +335,10 @@ func (c *Client) Reread(ctx context.Context, s inbox.Session) (inbox.Session, er
 	}
 }
 
+// Watch reports changes under configDir through onChange and returns a function
+// that stops it. It returns the helper's error for a failed watch, ErrProtocol
+// for a malformed reply, ErrHelperGone when the helper is gone, ErrUnavailable
+// when ctx's deadline expires, and context.Canceled when ctx is canceled.
 func (c *Client) Watch(ctx context.Context, configDir string, onChange func(pid int)) (stop func(), err error) {
 	w := &watch{onChange: onChange}
 	id, p, registered := c.register(w)
@@ -414,9 +379,7 @@ func (c *Client) Watch(ctx context.Context, configDir string, onChange func(pid 
 			})
 		}, nil
 	case <-ctx.Done():
-		// The response may still be in flight. Mark the entry abandoned so
-		// the read loop does not publish a callback that can never be
-		// stopped.
+		// The response may still be in flight, so mark the entry abandoned to keep an unstoppable callback from being published.
 		c.mu.Lock()
 		w.abandoned = true
 		w.mu.Lock()
@@ -430,10 +393,7 @@ func (c *Client) Watch(ctx context.Context, configDir string, onChange func(pid 
 	}
 }
 
-// unwatch asks the helper to stop one watch and waits for its reply. It runs
-// on a bounded background context so that stopping a watch still works while
-// the caller's context is already done, and a stopped helper cannot hold the
-// caller past unwatchTimeout; a lost connection ends the wait sooner.
+// unwatch asks the helper to stop one watch on a bounded background context, so it still works after the caller's context ends and cannot hold the caller past unwatchTimeout.
 func (c *Client) unwatch(watchID uint64) {
 	c.mu.Lock()
 	if c.ended {
@@ -462,6 +422,10 @@ func (c *Client) unwatch(watchID uint64) {
 	}
 }
 
+// Deliver writes text to s's inbox socket under sig and msgID, bounded by
+// timeout or an earlier caller deadline. It reports inbox.ErrNotWritten,
+// inbox.ErrUncertain or inbox.ErrBadSignature, wrapping ErrHelperGone when the
+// helper is gone.
 func (c *Client) Deliver(ctx context.Context, s inbox.Session, sig, text, msgID string, timeout time.Duration) error {
 	c.mu.Lock()
 	ended := c.ended
@@ -507,9 +471,6 @@ func (c *Client) Deliver(ctx context.Context, s inbox.Session, sig, text, msgID 
 	}
 }
 
-// cancelDeliver asks the helper to cancel a request whose caller gave up and
-// waits briefly for the helper to report whether the write happened. The
-// answer decides between a retryable and an unknown outcome.
 func (c *Client) cancelDeliver(id uint64, p *pending) error {
 	c.mu.Lock()
 	var cancelID uint64
@@ -575,9 +536,9 @@ func clientDeliverResult(resp *helperpb.HelperResponse) error {
 	return ErrProtocol
 }
 
-// clientError maps a helper error back to the sentinel the broker compares
-// with. The five definite outcomes keep their identity; everything else is a
-// plain error whose text comes from the helper.
+// clientError maps a helper error back: CANCELED becomes context.Canceled, the
+// other known codes become the inbox sentinel they name, and an unknown code
+// becomes a plain error carrying the helper's text.
 func clientError(e *helperpb.HelperError) error {
 	switch e.GetCode() {
 	case helperpb.HelperErrorCode_HELPER_ERROR_CODE_NO_RECORD:

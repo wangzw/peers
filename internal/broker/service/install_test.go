@@ -19,39 +19,25 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// baseOptions returns user Linux options rooted in a temporary directory.
-// Probe reports no Broker and ReadyTimeout keeps the readiness wait short; a
-// test that exercises the start overrides both.
 func baseOptions(t *testing.T) Options {
 	t.Helper()
 	return Options{
-		GOOS:     "linux",
-		EUID:     1000,
-		UID:      1000,
-		Exe:      "/usr/local/bin/peers",
-		Home:     "/home/alice",
-		TempDir:  "/tmp",
-		Root:     t.TempDir(),
-		LookPath: func(file string) (string, error) { return filepath.Join("/bin", file), nil },
-		Run:      func(string, ...string) ([]byte, error) { return nil, nil },
-		// The administration group already exists with a fixed id, so tests that
-		// do not exercise group creation emit no group commands.
-		GroupGID: func(string) (int, bool, error) { return 999, true, nil },
-		// The group lists no members, so reusing it needs no confirmation. A test
-		// that exercises the member lookup sets this to nil and drives Run.
-		GroupMembers: func(string) ([]string, error) { return nil, nil },
-		// No account has the group as its primary group, so the member lookup
-		// needs no account list. A test that exercises it replaces this.
+		GOOS:                 "linux",
+		EUID:                 1000,
+		UID:                  1000,
+		Exe:                  "/usr/local/bin/peers",
+		Home:                 "/home/alice",
+		TempDir:              "/tmp",
+		Root:                 t.TempDir(),
+		LookPath:             func(file string) (string, error) { return filepath.Join("/bin", file), nil },
+		Run:                  func(string, ...string) ([]byte, error) { return nil, nil },
+		GroupGID:             func(string) (int, bool, error) { return 999, true, nil },
+		GroupMembers:         func(string) ([]string, error) { return nil, nil },
 		PrimaryGroupAccounts: func(int) ([]string, error) { return nil, nil },
 		Probe:                func(string) (int, bool) { return 0, false },
-		// Most tests are not about degraded running; report a healthy Broker so
-		// the status check after readiness passes.
-		StatusProbe: func(string) (DegradedState, bool, error) { return DegradedState{}, false, nil },
-		// Most tests do not exercise the listen precheck; report every address
-		// free so they never bind the template's real port. The precheck tests
-		// replace this with config.ProbeListen or a stand-in.
-		ListenProbe: func(string) error { return nil },
-		Owner:       fakeOwner(nil),
+		StatusProbe:          func(string) (DegradedState, bool, error) { return DegradedState{}, false, nil },
+		ListenProbe:          func(string) error { return nil },
+		Owner:                fakeOwner(nil),
 		EvalSymlinks: func(path string) (string, error) {
 			return path, nil
 		},
@@ -80,9 +66,6 @@ func recordCommands(cmds *[]string) func(string, ...string) ([]byte, error) {
 	}
 }
 
-// recordCommandsUntil records every command and sets started when trigger
-// appears in the arguments, standing in for the service manager starting the
-// Broker.
 func recordCommandsUntil(cmds *[]string, started *bool, trigger string) func(string, ...string) ([]byte, error) {
 	return func(name string, args ...string) ([]byte, error) {
 		*cmds = append(*cmds, strings.Join(append([]string{name}, args...), " "))
@@ -96,8 +79,6 @@ func recordCommandsUntil(cmds *[]string, started *bool, trigger string) func(str
 	}
 }
 
-// probeAfterStart reports no Broker before the service starts and the given pid
-// once it has.
 func probeAfterStart(started *bool, pid int) func(string) (int, bool) {
 	return func(string) (int, bool) {
 		if *started {
@@ -107,8 +88,6 @@ func probeAfterStart(started *bool, pid int) func(string) (int, bool) {
 	}
 }
 
-// exitError returns the error of a process that exited with code, so the
-// launchctl exit-code handling is exercised by a real *exec.ExitError.
 func exitError(t *testing.T, code int) error {
 	t.Helper()
 	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
@@ -168,6 +147,9 @@ func assertNoEntries(t *testing.T, dir string) {
 	}
 }
 
+// TestInstallLinuxUser checks that a user installation writes the unit and
+// configuration file, runs daemon-reload, enable and restart, and reports the
+// paths.
 func TestInstallLinuxUser(t *testing.T) {
 	opts := baseOptions(t)
 	opts.XDGConfigHome = ""
@@ -227,6 +209,8 @@ func TestInstallLinuxUser(t *testing.T) {
 	}
 }
 
+// TestInstallLinuxUserHonoursXDGConfigHome checks that an absolute
+// XDG_CONFIG_HOME is honoured and a relative one falls back to ~/.config.
 func TestInstallLinuxUserHonoursXDGConfigHome(t *testing.T) {
 	install := func(t *testing.T, opts Options) {
 		t.Helper()
@@ -260,6 +244,9 @@ func TestInstallLinuxUserHonoursXDGConfigHome(t *testing.T) {
 	})
 }
 
+// TestInstallLinuxSystem checks that a system installation writes the system
+// unit and the 0660 configuration and runs the systemctl commands without
+// --user.
 func TestInstallLinuxSystem(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -312,6 +299,8 @@ func TestInstallLinuxSystem(t *testing.T) {
 	}
 }
 
+// TestInstallLinuxStepFailures checks that a failed daemon-reload, enable or
+// restart names the step and disables the unit.
 func TestInstallLinuxStepFailures(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -366,8 +355,6 @@ func TestInstallLinuxStepFailures(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Install error = nil, want the %s failure", tc.trigger)
 			}
-			// The error must name the reason, not only that a step failed: the
-			// command that ran, its exit status and the output it printed.
 			for _, want := range []string{tc.failing, "exit status 1", "failed step"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("Install error = %q, want it to contain %q", err, want)
@@ -383,6 +370,8 @@ func TestInstallLinuxStepFailures(t *testing.T) {
 	}
 }
 
+// TestInstallKeepsExistingSystemConfig checks that an existing system
+// configuration file keeps its content, group and mode.
 func TestInstallKeepsExistingSystemConfig(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -399,7 +388,6 @@ func TestInstallKeepsExistingSystemConfig(t *testing.T) {
 	if err := os.WriteFile(configPath, []byte(existing), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// A group and mode the new installation must not touch.
 	if err := os.Chmod(configPath, 0o640); err != nil {
 		t.Fatal(err)
 	}
@@ -431,9 +419,6 @@ func TestInstallKeepsExistingSystemConfig(t *testing.T) {
 	}
 }
 
-// systemInstallWithGroupRun builds a Linux system install whose command runner
-// answers the group database and the service manager. created reports whether
-// ensureAdminGroup's groupadd has run; gid is the id getent reports once it has.
 func systemInstallWithGroupRun(t *testing.T, opts *Options, gid int) (cmds *[]string, created *bool) {
 	t.Helper()
 	cmds = &[]string{}
@@ -460,6 +445,8 @@ func systemInstallWithGroupRun(t *testing.T, opts *Options, gid int) (cmds *[]st
 	return cmds, created
 }
 
+// TestInstallSystemCreatesAdminGroup checks that a missing administration group
+// is created and given to the configuration file.
 func TestInstallSystemCreatesAdminGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -516,6 +503,8 @@ func TestInstallSystemCreatesAdminGroup(t *testing.T) {
 	assertMode(t, configPath, 0o660)
 }
 
+// TestInstallSystemRecordsACreatedGroup checks that a group created by the run
+// is recorded for uninstallation.
 func TestInstallSystemRecordsACreatedGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -540,6 +529,8 @@ func TestInstallSystemRecordsACreatedGroup(t *testing.T) {
 	}
 }
 
+// TestInstallSystemDoesNotRecordAnExistingGroup checks that an existing
+// administration group is not recorded.
 func TestInstallSystemDoesNotRecordAnExistingGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -562,6 +553,8 @@ func TestInstallSystemDoesNotRecordAnExistingGroup(t *testing.T) {
 	}
 }
 
+// TestInstallSystemUsesAnExistingGroup checks that an existing group is reused
+// without group commands and its id is given to the configuration file.
 func TestInstallSystemUsesAnExistingGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -606,6 +599,8 @@ func TestInstallSystemUsesAnExistingGroup(t *testing.T) {
 	}
 }
 
+// TestInstallSystemFailsWhenTheAdminGroupCannotBeCreated checks that a groupadd
+// failure fails the installation before any file is written.
 func TestInstallSystemFailsWhenTheAdminGroupCannotBeCreated(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -645,6 +640,8 @@ func TestInstallSystemFailsWhenTheAdminGroupCannotBeCreated(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
+// TestInstallSystemHonoursAdminGroup checks that --admin-group selects the
+// group that is looked up and given to the configuration file.
 func TestInstallSystemHonoursAdminGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -681,6 +678,8 @@ func TestInstallSystemHonoursAdminGroup(t *testing.T) {
 	}
 }
 
+// TestInstallSystemCreatesTheNamedAdminGroup checks that a missing named
+// administration group is created with that name.
 func TestInstallSystemCreatesTheNamedAdminGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -698,6 +697,8 @@ func TestInstallSystemCreatesTheNamedAdminGroup(t *testing.T) {
 	}
 }
 
+// TestInstallKeepsExistingUserConfig checks that an existing user configuration
+// file is left unchanged.
 func TestInstallKeepsExistingUserConfig(t *testing.T) {
 	opts := baseOptions(t)
 	var cmds []string
@@ -728,9 +729,8 @@ func TestInstallKeepsExistingUserConfig(t *testing.T) {
 	}
 }
 
-// TestCreateConfigRemovesPartialFileOnWriteFailure checks that a file created
-// by this run is removed when writing the template fails, so the next install
-// does not mistake an incomplete file for an existing configuration.
+// TestCreateConfigRemovesPartialFileOnWriteFailure checks that a file this run
+// created is removed when writing the template fails.
 func TestCreateConfigRemovesPartialFileOnWriteFailure(t *testing.T) {
 	opts := baseOptions(t)
 	res := Result{}
@@ -745,8 +745,6 @@ func TestCreateConfigRemovesPartialFileOnWriteFailure(t *testing.T) {
 		t.Fatal("createConfigWith error = nil, want the write failure")
 	}
 	path := filepath.Join(opts.Root, "home/alice/.peers/config.yaml")
-	// The error must name the reason, not only that the step failed: the path
-	// the write targeted and the write error the read-only handle produced.
 	for _, want := range []string{"cannot write the configuration file", path, "bad file descriptor"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("createConfigWith error = %q, want it to contain %q", err, want)
@@ -757,6 +755,8 @@ func TestCreateConfigRemovesPartialFileOnWriteFailure(t *testing.T) {
 	}
 }
 
+// TestInstallSystemRequiresRoot checks that a system installation as a non-root
+// account is refused before any command runs.
 func TestInstallSystemRequiresRoot(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -778,6 +778,8 @@ func TestInstallSystemRequiresRoot(t *testing.T) {
 	}
 }
 
+// TestInstallUserRejectsRoot checks that a user installation as root is refused
+// before any command runs.
 func TestInstallUserRejectsRoot(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = false
@@ -799,6 +801,8 @@ func TestInstallUserRejectsRoot(t *testing.T) {
 	}
 }
 
+// TestInstallSystemRejectsWritableBinary checks that a system installation
+// refuses a binary or directory owned by another account or writable by group.
 func TestInstallSystemRejectsWritableBinary(t *testing.T) {
 	t.Run("directory owned by another account", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -840,6 +844,8 @@ func TestInstallSystemRejectsWritableBinary(t *testing.T) {
 	})
 }
 
+// TestInstallSystemChecksResolvedPath checks that the ownership check uses the
+// path with symlinks resolved.
 func TestInstallSystemChecksResolvedPath(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -856,6 +862,8 @@ func TestInstallSystemChecksResolvedPath(t *testing.T) {
 	}
 }
 
+// TestInstallDarwinSystemWritesResolvedExecutable checks that the plist names
+// the resolved executable and that an unsafe resolved target is refused.
 func TestInstallDarwinSystemWritesResolvedExecutable(t *testing.T) {
 	const (
 		link     = "/Users/alice/bin/peers"
@@ -922,6 +930,8 @@ func TestInstallDarwinSystemWritesResolvedExecutable(t *testing.T) {
 	})
 }
 
+// TestInstallRejectsTempBinary checks that both levels refuse a binary under the
+// temporary directory.
 func TestInstallRejectsTempBinary(t *testing.T) {
 	for _, system := range []struct {
 		name string
@@ -943,6 +953,8 @@ func TestInstallRejectsTempBinary(t *testing.T) {
 	}
 }
 
+// TestInstallLinuxWithoutSystemctl checks that a missing systemctl fails the
+// installation with a hint.
 func TestInstallLinuxWithoutSystemctl(t *testing.T) {
 	opts := baseOptions(t)
 	opts.LookPath = func(string) (string, error) { return "", errors.New("not found") }
@@ -957,6 +969,8 @@ func TestInstallLinuxWithoutSystemctl(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
+// TestInstallDarwinUser checks that a user installation writes the plist and log
+// directory and runs print, bootout, enable and bootstrap.
 func TestInstallDarwinUser(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -1033,6 +1047,8 @@ func TestInstallDarwinUser(t *testing.T) {
 	}
 }
 
+// TestInstallDarwinWithoutGUIDomain checks that a missing gui domain fails
+// before writing anything and suggests --system.
 func TestInstallDarwinWithoutGUIDomain(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -1055,14 +1071,14 @@ func TestInstallDarwinWithoutGUIDomain(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
+// TestInstallDarwinBootoutFailure checks that a failed bootout keeps the
+// existing plist and disables its label.
 func TestInstallDarwinBootoutFailure(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
 	opts.EUID = 501
 	opts.UID = 501
 	opts.Home = "/Users/alice"
-	// A loaded service has a plist on disk, so this failure must keep it and
-	// disable the label.
 	plist := filepath.Join(opts.Root, "Users/alice/Library/LaunchAgents/io.github.wangzw.peers.plist")
 	if err := os.MkdirAll(filepath.Dir(plist), 0o755); err != nil {
 		t.Fatal(err)
@@ -1107,9 +1123,8 @@ func TestInstallDarwinBootoutFailure(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinReportsADisableFailure checks that a disable that fails is
-// reported as such: the error must not claim the label was disabled, because the
-// kept plist may then load and start a Broker at the next login.
+// TestInstallDarwinReportsADisableFailure checks that a failing disable is
+// reported instead of claiming the label was disabled.
 func TestInstallDarwinReportsADisableFailure(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -1140,14 +1155,14 @@ func TestInstallDarwinReportsADisableFailure(t *testing.T) {
 	}
 }
 
+// TestInstallDarwinBootstrapFailureRollsBackThePlist checks that a failed
+// bootstrap removes a plist this run wrote.
 func TestInstallDarwinBootstrapFailureRollsBackThePlist(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
 	opts.EUID = 501
 	opts.UID = 501
 	opts.Home = "/Users/alice"
-	// A fresh installation has no old service, so this exercises the rollback
-	// after one bootstrap attempt rather than the exit-5 retry loop.
 	opts.BootstrapTimeout = time.Nanosecond
 	var cmds []string
 	opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -1186,6 +1201,8 @@ func TestInstallDarwinBootstrapFailureRollsBackThePlist(t *testing.T) {
 	}
 }
 
+// TestInstallDarwinBootstrapFailureReportsTheOutput checks that a bootstrap
+// failure reports the command and its output.
 func TestInstallDarwinBootstrapFailureReportsTheOutput(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -1218,6 +1235,8 @@ func TestInstallDarwinBootstrapFailureReportsTheOutput(t *testing.T) {
 	}
 }
 
+// TestInstallDarwinBootstrapFailureReportsTheOutputWhenRollbackFails checks that
+// a failed rollback is added to the bootstrap error.
 func TestInstallDarwinBootstrapFailureReportsTheOutputWhenRollbackFails(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -1235,8 +1254,6 @@ func TestInstallDarwinBootstrapFailureReportsTheOutputWhenRollbackFails(t *testi
 		case len(args) > 0 && args[0] == "bootout":
 			return nil, exitError(t, 3)
 		case len(args) > 0 && args[0] == "bootstrap":
-			// Replace the plist with a non-empty directory so the rollback
-			// cannot remove it.
 			_ = os.Remove(plist)
 			if err := os.Mkdir(plist, 0o755); err != nil {
 				t.Fatalf("creating %s: %v", plist, err)
@@ -1260,6 +1277,8 @@ func TestInstallDarwinBootstrapFailureReportsTheOutputWhenRollbackFails(t *testi
 	}
 }
 
+// TestInstallDarwinSystem checks that a system installation writes the daemon
+// plist, log directory and configuration in the system domain.
 func TestInstallDarwinSystem(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -1335,6 +1354,8 @@ func TestInstallDarwinSystem(t *testing.T) {
 	}
 }
 
+// TestInstallRejectsForeignBroker checks that a Broker the service manager does
+// not own is refused at each level while a service-managed one is replaced.
 func TestInstallRejectsForeignBroker(t *testing.T) {
 	t.Run("linux service-managed Broker is replaced", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -1546,6 +1567,8 @@ func TestInstallRejectsForeignBroker(t *testing.T) {
 	})
 }
 
+// TestInstallRejectsAnAnsweringForeignBrokerAtReady checks that a foreign Broker
+// answering after the start fails the readiness wait.
 func TestInstallRejectsAnAnsweringForeignBrokerAtReady(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -1561,10 +1584,8 @@ func TestInstallRejectsAnAnsweringForeignBrokerAtReady(t *testing.T) {
 			opts.Probe = func(string) (int, bool) {
 				probes++
 				if probes == 1 {
-					// The pre-install check sees no Broker.
 					return 0, false
 				}
-				// A foreign Broker answers after the service starts.
 				return 6666, true
 			}
 			opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -1588,6 +1609,8 @@ func TestInstallRejectsAnAnsweringForeignBrokerAtReady(t *testing.T) {
 	}
 }
 
+// TestInstallWaitsUntilTheServiceOwnsTheSocket checks that the readiness wait
+// retries until the socket peer is the service's process.
 func TestInstallWaitsUntilTheServiceOwnsTheSocket(t *testing.T) {
 	opts := baseOptions(t)
 	probes := 0
@@ -1614,6 +1637,8 @@ func TestInstallWaitsUntilTheServiceOwnsTheSocket(t *testing.T) {
 	}
 }
 
+// TestInstallWaitsForTheBroker checks that a readiness timeout names the level's
+// service log.
 func TestInstallWaitsForTheBroker(t *testing.T) {
 	t.Run("linux user", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -1715,8 +1740,6 @@ func TestInstallWaitsForTheBroker(t *testing.T) {
 	})
 }
 
-// writeListenConfig writes a configuration file for opts with broker.listen set
-// to addr, as if an earlier install had generated it.
 func writeListenConfig(t *testing.T, opts Options, addr string) {
 	t.Helper()
 	path := rooted(opts, configFilePath(opts))
@@ -1743,6 +1766,8 @@ func commandCount(cmds []string, want string) int {
 	return count
 }
 
+// TestInstallRefusesAnOccupiedListenAddress checks that an address held by
+// another process fails before any systemctl change and leaves no unit file.
 func TestInstallRefusesAnOccupiedListenAddress(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1782,8 +1807,6 @@ func TestInstallRefusesAnOccupiedListenAddress(t *testing.T) {
 			t.Errorf("commands = %q, want no %q before the listen precheck passes", cmds, cmd)
 		}
 	}
-	// The unit is written only after the precheck, so a fresh installation that
-	// cannot use its address leaves no service definition to start at boot.
 	unit := rooted(opts, "/home/alice/.config/systemd/user/"+UnitName)
 	if _, statErr := os.Stat(unit); !errors.Is(statErr, fs.ErrNotExist) {
 		t.Errorf("unit file %s exists after the precheck failed: %v", unit, statErr)
@@ -1791,9 +1814,7 @@ func TestInstallRefusesAnOccupiedListenAddress(t *testing.T) {
 }
 
 // TestInstallDarwinLeavesNoAutostartServiceAfterAPrecheckFailure checks that a
-// failed macOS precheck writes no plist. launchd loads every plist in the
-// LaunchAgents and LaunchDaemons directories at login and boot, so a plist
-// left behind would start a Broker that cannot bind.
+// failed macOS precheck writes no plist and makes no launchd state change.
 func TestInstallDarwinLeavesNoAutostartServiceAfterAPrecheckFailure(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1837,14 +1858,8 @@ func TestInstallDarwinLeavesNoAutostartServiceAfterAPrecheckFailure(t *testing.T
 	}
 }
 
-// TestInstallDisablesTheServiceWhenThePrecheckStopFails checks the case where
-// the Linux precheck cannot stop the service holding broker.listen. The failed
-// installation must still disable the service, and the error must say that it
-// will not start automatically and give the command that restores it. Without
-// both texts the operator finds a disabled service and is not told why or how
-// to bring it back. macOS does not stop the service in the precheck; its
-// bootout failure during the replacement is covered by
-// TestInstallDarwinBootoutFailure.
+// TestInstallDisablesTheServiceWhenThePrecheckStopFails checks that a failed
+// precheck stop still disables the service and gives the recovery command.
 func TestInstallDisablesTheServiceWhenThePrecheckStopFails(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1887,11 +1902,9 @@ func TestInstallDisablesTheServiceWhenThePrecheckStopFails(t *testing.T) {
 	}
 }
 
-// TestInstallRefusesAnExternalOccupantWithoutStoppingTheService checks the
-// occupant identification: a same-named service may be running while another
-// process holds broker.listen. The installation must reject the address and
-// leave the running service alone, because stopping it would take down a
-// healthy Broker that is not the occupant.
+// TestInstallRefusesAnExternalOccupantWithoutStoppingTheService checks that an
+// address held by another process is refused without touching the running
+// service.
 func TestInstallRefusesAnExternalOccupantWithoutStoppingTheService(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -1906,8 +1919,6 @@ func TestInstallRefusesAnExternalOccupantWithoutStoppingTheService(t *testing.T)
 	opts.Run = func(name string, args ...string) ([]byte, error) {
 		cmds = append(cmds, strings.Join(append([]string{name}, args...), " "))
 		if slices.Contains(args, "show") {
-			// The service manager reports a running process, but that Broker is
-			// not the one holding the address.
 			return []byte("4242\n"), nil
 		}
 		return nil, nil
@@ -1931,15 +1942,12 @@ func TestInstallRefusesAnExternalOccupantWithoutStoppingTheService(t *testing.T)
 	}
 }
 
-// TestListenErrorReportsTheOccupant checks that an address already in use is
-// reported together with the pid and executable of the process holding it. The
-// lookup reads a stand-in /proc tree, so the test does not depend on what
-// listens on the host.
+// TestListenErrorReportsTheOccupant checks that an address in use is reported
+// with the pid and executable from a stand-in /proc tree.
 func TestListenErrorReportsTheOccupant(t *testing.T) {
 	procRoot := t.TempDir()
 	var table strings.Builder
 	table.WriteString("  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n")
-	// A non-listening socket on the same port must not be taken for the occupant.
 	table.WriteString("   0: 0100007F:4423 0100007F:9999 01 00000000:00000000 00:00000000 00000000  1000        0 111111 1\n")
 	table.WriteString("   1: 0100007F:4423 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 424242 1\n")
 	writeProcFile(t, procRoot, "net/tcp", table.String())
@@ -1972,9 +1980,8 @@ func TestListenErrorReportsTheOccupant(t *testing.T) {
 	}
 }
 
-// TestListenErrorFallsBackWithoutAnOccupant checks that an address in use whose
-// holder cannot be identified still gets the plain message, with no pid or
-// executable and no second failure.
+// TestListenErrorFallsBackWithoutAnOccupant checks that an unidentifiable
+// occupant still gets the plain address-in-use message.
 func TestListenErrorFallsBackWithoutAnOccupant(t *testing.T) {
 	opts := baseOptions(t)
 	opts.ProcRoot = t.TempDir()
@@ -1994,10 +2001,8 @@ func TestListenErrorFallsBackWithoutAnOccupant(t *testing.T) {
 	}
 }
 
-// TestListenErrorQuotesTheOccupantPath keeps the kernel's " (deleted)" mark
-// from the /proc exe link outside the quotes: the path is quoted so a path with
-// spaces or shell metacharacters cannot change how the sentence reads, and the
-// mark stays visible so a replaced executable is recognizable as such.
+// TestListenErrorQuotesTheOccupantPath checks that the occupant path is quoted
+// and the kernel's deleted mark stays outside the quotes.
 func TestListenErrorQuotesTheOccupantPath(t *testing.T) {
 	procRoot := t.TempDir()
 	writeProcListener(t, procRoot, "tcp", "0100007F", 17443, 1234, "424242", "/usr/local/bin/agent-peer (deleted)")
@@ -2011,10 +2016,8 @@ func TestListenErrorQuotesTheOccupantPath(t *testing.T) {
 	}
 }
 
-// TestOccupantFromProcFindsTCP6Listener checks that a listener in
-// /proc/net/tcp6 is matched by its address, not only by its port: the listening
-// and requested addresses differ in every case, so a lookup that ignored the
-// address would report the wrong answer.
+// TestOccupantFromProcFindsTCP6Listener checks that a tcp6 listener is matched
+// by its address, not only by its port.
 func TestOccupantFromProcFindsTCP6Listener(t *testing.T) {
 	const wildcard = "00000000000000000000000000000000"      // ::
 	const documentation = "b80d0120000000000000000001000000" // 2001:db8::1
@@ -2042,11 +2045,8 @@ func TestOccupantFromProcFindsTCP6Listener(t *testing.T) {
 	}
 }
 
-// TestOccupantFromProcMatchesListenAddress checks the wildcard rules: a
-// listener on 0.0.0.0 holds a specific IPv4 address on the same port, a
-// listener on another specific address does not, a wildcard request matches a
-// specific listener, and a wildcard request matches a listener of the other
-// address family, because Go binds 0.0.0.0 with a dual-stack socket.
+// TestOccupantFromProcMatchesListenAddress checks that specific and wildcard
+// listeners conflict as the address rules say.
 func TestOccupantFromProcMatchesListenAddress(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -2072,21 +2072,17 @@ func TestOccupantFromProcMatchesListenAddress(t *testing.T) {
 	}
 }
 
-// TestOccupantFromProcSkipsUnreadableDescriptors checks that a process whose fd
-// directory cannot be read is skipped without hiding another process that holds
-// the same socket and can be read.
+// TestOccupantFromProcSkipsUnreadableDescriptors checks that an unreadable fd
+// directory does not hide another process holding the socket.
 func TestOccupantFromProcSkipsUnreadableDescriptors(t *testing.T) {
 	procRoot := t.TempDir()
 	const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
 	line := "   0: 0100007F:4423 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 424242 1\n"
 	writeProcFile(t, procRoot, "net/tcp", header+line)
 	writeProcFile(t, procRoot, "net/tcp6", header)
-	// The first process directory exists but its fd directory does not, as
-	// when /proc/<pid>/fd cannot be read.
 	if err := os.MkdirAll(filepath.Join(procRoot, "1234"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// A second process holds the same socket and can be read.
 	fdDir := filepath.Join(procRoot, "5678", "fd")
 	if err := os.MkdirAll(fdDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -2104,8 +2100,8 @@ func TestOccupantFromProcSkipsUnreadableDescriptors(t *testing.T) {
 	}
 }
 
-// TestOccupantFromProcReportsEveryOccupant checks that every process holding
-// the listening socket is named, in pid order, instead of the first one found.
+// TestOccupantFromProcReportsEveryOccupant checks that every holder of the
+// socket is reported in pid order.
 func TestOccupantFromProcReportsEveryOccupant(t *testing.T) {
 	procRoot := t.TempDir()
 	const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
@@ -2144,7 +2140,7 @@ func TestOccupantFromProcReportsEveryOccupant(t *testing.T) {
 	}
 }
 
-// TestJoinAnd checks the user-facing list join: no Oxford comma.
+// TestJoinAnd checks that the user-facing list join uses no Oxford comma.
 func TestJoinAnd(t *testing.T) {
 	cases := []struct {
 		in   []string
@@ -2161,8 +2157,7 @@ func TestJoinAnd(t *testing.T) {
 	}
 }
 
-// TestLsofPID checks that every process id column of lsof's table output is
-// read, in order and without duplicates.
+// TestLsofPID checks that lsof's pid column is read in order without duplicates.
 func TestLsofPID(t *testing.T) {
 	out := "COMMAND  PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n" +
 		"peers   4321 alice  5u  IPv4 0x1234567890abcdef      0t0  TCP *:17443 (LISTEN)\n" +
@@ -2173,7 +2168,7 @@ func TestLsofPID(t *testing.T) {
 	}
 }
 
-// TestLsofTextPath checks the executable path in lsof's field output.
+// TestLsofTextPath checks the executable path parsed from lsof field output.
 func TestLsofTextPath(t *testing.T) {
 	cases := []struct {
 		name string
@@ -2192,9 +2187,8 @@ func TestLsofTextPath(t *testing.T) {
 	}
 }
 
-// TestOccupantFromLsofParsesExecutablePath checks that the macOS path uses
-// absolute lsof paths, asks lsof for the executable with -d txt -Fn, and parses
-// only its standard output.
+// TestOccupantFromLsofParsesExecutablePath checks that the macOS lookup uses the
+// absolute lsof path and reads the executable from its field output.
 func TestOccupantFromLsofParsesExecutablePath(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -2227,7 +2221,7 @@ func TestOccupantFromLsofParsesExecutablePath(t *testing.T) {
 }
 
 // TestOccupantFromLsofFallsBackWithoutTheExecutable checks that a failed
-// executable lookup still reports the pid and never fails the installation.
+// executable lookup still reports the pid.
 func TestOccupantFromLsofFallsBackWithoutTheExecutable(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -2248,8 +2242,8 @@ func TestOccupantFromLsofFallsBackWithoutTheExecutable(t *testing.T) {
 	}
 }
 
-// TestOccupantFromLsofReportsEveryListener checks that every pid lsof lists as
-// listening on the port is reported with its executable, not only the first.
+// TestOccupantFromLsofReportsEveryListener checks that every pid lsof lists is
+// reported with its executable.
 func TestOccupantFromLsofReportsEveryListener(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -2283,8 +2277,8 @@ func TestOccupantFromLsofReportsEveryListener(t *testing.T) {
 	}
 }
 
-// TestHumanDuration checks that the timeout lines read as whole seconds instead
-// of printing a time.Duration, rounding any part of a second up to 1 second.
+// TestHumanDuration checks that timeouts render as whole seconds with any part
+// of a second rounded up.
 func TestHumanDuration(t *testing.T) {
 	cases := []struct {
 		d    time.Duration
@@ -2302,8 +2296,6 @@ func TestHumanDuration(t *testing.T) {
 	}
 }
 
-// writeProcListener writes a stand-in /proc tree with one listening socket in
-// table (tcp or tcp6) at localHex:port, held by pid through inode.
 func writeProcListener(t *testing.T, procRoot, table, localHex string, port, pid int, inode, exe string) {
 	t.Helper()
 	const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
@@ -2326,7 +2318,6 @@ func writeProcListener(t *testing.T, procRoot, table, localHex string, port, pid
 	}
 }
 
-// writeProcFile writes one file into a stand-in /proc tree.
 func writeProcFile(t *testing.T, procRoot, name, content string) {
 	t.Helper()
 	path := filepath.Join(procRoot, name)
@@ -2338,6 +2329,8 @@ func writeProcFile(t *testing.T, procRoot, name, content string) {
 	}
 }
 
+// TestInstallReinstallsOverItsOwnRunningService checks that a reinstall stops
+// its own service before the listen precheck and enables it afterwards.
 func TestInstallReinstallsOverItsOwnRunningService(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -2363,8 +2356,6 @@ func TestInstallReinstallsOverItsOwnRunningService(t *testing.T) {
 		}
 		return nil, nil
 	}
-	// The service's own Broker answers on the local socket with the pid the
-	// service manager reports, so the occupied address is this service's.
 	opts.Probe = func(string) (int, bool) { return 4242, true }
 	opts.ListenProbe = config.ProbeListen
 
@@ -2383,18 +2374,14 @@ func TestInstallReinstallsOverItsOwnRunningService(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinReinstallWaitsForTheOldServiceToExit checks that a macOS
-// reinstall waits for its own Broker to release broker.listen after launchd has
-// unloaded the job. bootout returns before the old process has exited; the wait
-// must outlast that delay instead of mistaking the old Broker for a foreign
-// occupant.
+// TestInstallDarwinReinstallWaitsForTheOldServiceToExit checks that a reinstall
+// waits for its own Broker to release broker.listen after launchd unloads the
+// job.
 func TestInstallDarwinReinstallWaitsForTheOldServiceToExit(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	writeListenConfig(t, opts, "127.0.0.1:17448")
-	// The fake keeps the old Broker's address busy for releaseDelay. The stop
-	// budget must outlast that with the package fallback, so a loaded runner
-	// cannot expire the budget before the release is observed; the delay, not the
-	// budget, is what the test asserts.
+	// The stop budget must outlast the release delay, so a loaded runner cannot
+	// let the budget expire first.
 	const releaseDelay = 1500 * time.Millisecond
 	opts.StopTimeout = releaseDelay + processExitWait
 
@@ -2454,11 +2441,9 @@ func TestInstallDarwinReinstallWaitsForTheOldServiceToExit(t *testing.T) {
 	}
 }
 
-// TestInstallReportsAStoppedServiceWhenTheAddressStaysBusy checks the message
-// of the one remaining path that stops a running service and still fails: the
-// service owned the address, but it did not release it within the bound. The
-// error must say the existing service was stopped, give a recovery command,
-// and the failure must leave the unit unable to start at boot.
+// TestInstallReportsAStoppedServiceWhenTheAddressStaysBusy checks that a stopped
+// service whose address stays busy is reported with the recovery command and
+// disabled.
 func TestInstallReportsAStoppedServiceWhenTheAddressStaysBusy(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -2499,6 +2484,8 @@ func TestInstallReportsAStoppedServiceWhenTheAddressStaysBusy(t *testing.T) {
 	}
 }
 
+// TestInstallReportsTheStartupFailureOnTimeout checks that a readiness timeout
+// carries the last startup_failed record from the log.
 func TestInstallReportsTheStartupFailureOnTimeout(t *testing.T) {
 	const reason = "listen tcp :17443: bind: address already in use"
 	fakeRun := func(name string, args ...string) ([]byte, error) {
@@ -2545,8 +2532,6 @@ func TestInstallReportsTheStartupFailureOnTimeout(t *testing.T) {
 			case len(args) > 0 && args[0] == "bootout":
 				return nil, exitError(t, 3)
 			case len(args) > 0 && args[0] == "bootstrap":
-				// The Broker writes the record while it starts, after the
-				// installation began.
 				now := time.Now().UTC().Format(time.RFC3339Nano)
 				line := fmt.Sprintf("{\"time\":%q,\"event\":\"broker_started\"}\n{\"time\":%q,\"event\":\"startup_failed\",\"error\":%q}\n", now, now, reason)
 				if err := os.WriteFile(logPath, []byte(line), 0o600); err != nil {
@@ -2565,10 +2550,8 @@ func TestInstallReportsTheStartupFailureOnTimeout(t *testing.T) {
 	})
 }
 
-// TestInstallIgnoresStartupFailuresBeforeTheInstallStarted checks that a
-// readiness timeout reports only records written after this installation
-// began. An old startup_failed record describes an earlier run and would send
-// the operator after a cause that no longer applies.
+// TestInstallIgnoresStartupFailuresBeforeTheInstallStarted checks that records
+// written before this installation began are not reported.
 func TestInstallIgnoresStartupFailuresBeforeTheInstallStarted(t *testing.T) {
 	const oldReason = "listen tcp :17443: bind: address already in use (earlier run)"
 	old := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
@@ -2637,6 +2620,8 @@ func TestInstallIgnoresStartupFailuresBeforeTheInstallStarted(t *testing.T) {
 	})
 }
 
+// TestInstallDisablesAfterAReadinessFailure checks that a readiness failure
+// disables the service and keeps the unit and configuration file.
 func TestInstallDisablesAfterAReadinessFailure(t *testing.T) {
 	t.Run("linux user", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -2714,9 +2699,6 @@ func TestInstallDisablesAfterAReadinessFailure(t *testing.T) {
 		if bootouts != 2 {
 			t.Errorf("bootout calls = %d, want one before the start and one after the failure; commands = %q", bootouts, cmds)
 		}
-		// launchd reloads every plist under LaunchAgents at login, so a kept
-		// plist must be disabled or the failed install starts a Broker that
-		// cannot bind.
 		if disables != 1 {
 			t.Errorf("launchctl disable calls = %d, want 1 after the failure", disables)
 		}
@@ -2733,10 +2715,8 @@ func TestInstallDisablesAfterAReadinessFailure(t *testing.T) {
 	})
 }
 
-// TestInstallReportsACleanupFailure checks the error of abandonInstall when
-// disabling the service it registered also fails. The installation must say
-// that the service may still start automatically instead of implying it is
-// safe from autostart.
+// TestInstallReportsACleanupFailure checks that a failing disable is reported as
+// a service that may start automatically.
 func TestInstallReportsACleanupFailure(t *testing.T) {
 	opts := baseOptions(t)
 	opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -2762,10 +2742,8 @@ func TestInstallReportsACleanupFailure(t *testing.T) {
 	}
 }
 
-// TestInstallReportsANonAddressInUseProbeError checks the listenError branch
-// for a bind failure that is not an occupied address, such as a privileged
-// port or a malformed interface. The error must name the bind failure and the
-// advice, and must not touch the service.
+// TestInstallReportsANonAddressInUseProbeError checks that a bind failure that is
+// not an occupied address names the failure and touches no service.
 func TestInstallReportsANonAddressInUseProbeError(t *testing.T) {
 	opts := baseOptions(t)
 	writeListenConfig(t, opts, "127.0.0.1:17448")
@@ -2792,6 +2770,7 @@ func TestInstallReportsANonAddressInUseProbeError(t *testing.T) {
 	}
 }
 
+// TestInstallOverwritesUnit checks that an existing unit file is replaced.
 func TestInstallOverwritesUnit(t *testing.T) {
 	opts := baseOptions(t)
 	var cmds []string
@@ -2818,10 +2797,8 @@ func TestInstallOverwritesUnit(t *testing.T) {
 	}
 }
 
-// TestInstallReportsDegradedAfterReady checks the check that runs once the
-// service answers: a Broker that reports a degraded state leaves the service
-// installed and running, returns *DegradedError with a complete Result, and is
-// never disabled or stopped.
+// TestInstallReportsDegradedAfterReady checks that a degraded answer leaves the
+// service running, returns *DegradedError and fills the Result.
 func TestInstallReportsDegradedAfterReady(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -2891,8 +2868,8 @@ func TestInstallReportsDegradedAfterReady(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinReportsDegradedAfterReady checks the same result on macOS:
-// the domain and the level's log paths are filled, and no cleanup disable runs.
+// TestInstallDarwinReportsDegradedAfterReady checks that a degraded answer on
+// macOS fills the domain and paths and runs no cleanup.
 func TestInstallDarwinReportsDegradedAfterReady(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -2946,9 +2923,8 @@ func TestInstallDarwinReportsDegradedAfterReady(t *testing.T) {
 	}
 }
 
-// TestInstallRetriesTheStatusProbe checks that a status probe that fails right
-// after readiness is retried within the readiness bound instead of failing the
-// installation on its first attempt.
+// TestInstallRetriesTheStatusProbe checks that a status probe failing after
+// readiness is retried within the readiness bound.
 func TestInstallRetriesTheStatusProbe(t *testing.T) {
 	opts := baseOptions(t)
 	var cmds []string
@@ -2973,10 +2949,8 @@ func TestInstallRetriesTheStatusProbe(t *testing.T) {
 	}
 }
 
-// TestInstallFailsWhenTheStatusCannotBeRead checks the failure that is not a
-// degraded state: the service answers but its status cannot be read. The
-// installation fails without disabling the running service, and the error tells
-// the operator the service is running and where to look.
+// TestInstallFailsWhenTheStatusCannotBeRead checks that an unreadable status
+// fails the installation without disabling the running service.
 func TestInstallFailsWhenTheStatusCannotBeRead(t *testing.T) {
 	opts := baseOptions(t)
 	var cmds []string
@@ -3011,10 +2985,8 @@ func TestInstallFailsWhenTheStatusCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestInstallReportsTheServiceManagerStateOnTimeout checks the readiness
-// timeout when the service log has no startup_failed record written by this
-// installation. The error must carry what the service manager reports about
-// the service instead of only the silent socket.
+// TestInstallReportsTheServiceManagerStateOnTimeout checks that a readiness
+// timeout with no startup_failed record reports the service manager state.
 func TestInstallReportsTheServiceManagerStateOnTimeout(t *testing.T) {
 	t.Run("linux user", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -3110,9 +3082,8 @@ func TestInstallReportsTheServiceManagerStateOnTimeout(t *testing.T) {
 	})
 }
 
-// TestServiceManagerStateQueryArguments checks the query the readiness timeout
-// makes: the user installation asks systemd for this account's unit with --user, and
-// the system installation asks about the system unit without it.
+// TestServiceManagerStateQueryArguments checks that the state query uses --user
+// only for the user installation.
 func TestServiceManagerStateQueryArguments(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -3159,6 +3130,8 @@ func TestServiceManagerStateQueryArguments(t *testing.T) {
 	}
 }
 
+// TestInstallUnsupportedOS checks that an unsupported platform returns the
+// expected error.
 func TestInstallUnsupportedOS(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "freebsd"
@@ -3169,9 +3142,6 @@ func TestInstallUnsupportedOS(t *testing.T) {
 	}
 }
 
-// darwinUserReinstall returns darwin user options for a service that is
-// already installed and loaded. A test's Run decides when launchd finishes
-// unloading it.
 func darwinUserReinstall(t *testing.T) Options {
 	t.Helper()
 	opts := baseOptions(t)
@@ -3179,8 +3149,6 @@ func darwinUserReinstall(t *testing.T) Options {
 	opts.EUID = 501
 	opts.UID = 501
 	opts.Home = "/Users/alice"
-	// A reinstall finds the plist an earlier install wrote. The install records
-	// that it existed, so a failure keeps it and disables its label.
 	plist := filepath.Join(opts.Root, "Users/alice/Library/LaunchAgents/io.github.wangzw.peers.plist")
 	if err := os.MkdirAll(filepath.Dir(plist), 0o755); err != nil {
 		t.Fatal(err)
@@ -3208,9 +3176,6 @@ func countCommand(cmds []string, want string) int {
 	return n
 }
 
-// countCommandBefore counts want in cmds before the first stop command. The
-// replacement segment ends at the bootstrap; commands after it belong to the
-// failure cleanup, which may boot out again.
 func countCommandBefore(cmds []string, want, stop string) int {
 	limit := slices.Index(cmds, stop)
 	if limit < 0 {
@@ -3219,16 +3184,10 @@ func countCommandBefore(cmds []string, want, stop string) int {
 	return countCommand(cmds[:limit], want)
 }
 
-// TestInstallDarwinWaitsForTheOldServiceToUnload reproduces the user report of
-// 2026-11-20: launchctl bootout returns before launchd has torn the job down,
-// and a bootstrap in that window fails with exit 5. The fake keeps reporting
-// the old service as loaded for a few print calls and fails any bootstrap
-// attempted while it does. It also checks that the replacement boots the job
-// out exactly once, before the wait.
+// TestInstallDarwinWaitsForTheOldServiceToUnload checks that a reinstall waits
+// for launchd to unload the old job before bootstrapping and boots it out once.
 func TestInstallDarwinWaitsForTheOldServiceToUnload(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	// The fake reports the unload after a few polls, so the budget only needs to
-	// outlast scheduling, not a real delay.
 	opts.StopTimeout = processExitWait
 
 	const loadedPolls = 3
@@ -3284,8 +3243,6 @@ func TestInstallDarwinWaitsForTheOldServiceToUnload(t *testing.T) {
 	if bootoutIndex < 0 || bootstrapIndex < 0 || bootoutIndex > bootstrapIndex {
 		t.Errorf("commands = %q, want bootout before bootstrap", cmds)
 	}
-	// The unload wait must be an explicit launchctl print between bootout and
-	// bootstrap, not merely a side effect of waiting for the address.
 	polled := false
 	for _, cmd := range cmds[bootoutIndex+1 : bootstrapIndex] {
 		if cmd == darwinPrintOldCmd {
@@ -3299,10 +3256,7 @@ func TestInstallDarwinWaitsForTheOldServiceToUnload(t *testing.T) {
 }
 
 // TestInstallDarwinWaitsForUnloadAfterBootoutExit3 checks that the unload wait
-// does not depend on bootout's exit status. launchctl reports exit 3 for a
-// service it considers unloaded, but launchd may still be tearing the job down;
-// the installation must still wait, then retry the bootstrap that raced the
-// teardown.
+// does not depend on bootout's exit status and a racing bootstrap is retried.
 func TestInstallDarwinWaitsForUnloadAfterBootoutExit3(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.StopTimeout = processExitWait
@@ -3366,9 +3320,8 @@ func TestInstallDarwinWaitsForUnloadAfterBootoutExit3(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinRetriesAPrintErrorThatDoesNotProveUnloaded checks that only
-// exit status 113 or "Could not find service" count as unloaded. Any other
-// print failure is retried until the service is reported gone.
+// TestInstallDarwinRetriesAPrintErrorThatDoesNotProveUnloaded checks that a
+// print failure other than exit 113 or the missing-service message is retried.
 func TestInstallDarwinRetriesAPrintErrorThatDoesNotProveUnloaded(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.StopTimeout = processExitWait
@@ -3409,10 +3362,9 @@ func TestInstallDarwinRetriesAPrintErrorThatDoesNotProveUnloaded(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinDoesNotTreatAPrintErrorAsUnloaded checks the timeout when
-// launchctl print keeps failing with an error that does not prove the job is
-// gone: the installation must not bootstrap over it. The failed reinstall keeps
-// the plist and disables the label, so launchd does not start it at login.
+// TestInstallDarwinDoesNotTreatAPrintErrorAsUnloaded checks that a print failure
+// that does not prove the job gone ends in an error that keeps and disables the
+// plist.
 func TestInstallDarwinDoesNotTreatAPrintErrorAsUnloaded(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.StopTimeout = 30 * time.Millisecond
@@ -3464,8 +3416,8 @@ func TestInstallDarwinDoesNotTreatAPrintErrorAsUnloaded(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinRetriesBootstrapExit5 checks that a bootstrap that still
-// returns exit 5 after the old service is gone is retried.
+// TestInstallDarwinRetriesBootstrapExit5 checks that a bootstrap failing with
+// exit 5 after the old service is gone is retried.
 func TestInstallDarwinRetriesBootstrapExit5(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.BootstrapTimeout = processExitWait
@@ -3503,8 +3455,8 @@ func TestInstallDarwinRetriesBootstrapExit5(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinFailsAtOnceOnAnotherBootstrapExit checks that only exit 5 is
-// retried: another exit status fails the installation on the first attempt.
+// TestInstallDarwinFailsAtOnceOnAnotherBootstrapExit checks that any bootstrap
+// exit other than 5 fails on the first attempt.
 func TestInstallDarwinFailsAtOnceOnAnotherBootstrapExit(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.BootstrapTimeout = processExitWait
@@ -3534,10 +3486,9 @@ func TestInstallDarwinFailsAtOnceOnAnotherBootstrapExit(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinReinstallBootstrapFailureKeepsThePlist checks the failure a
-// reinstall reports when bootstrap never succeeds: the old service is gone, no
-// Broker runs, and the new plist stays disabled so it can be loaded by hand or
-// by running the install again.
+// TestInstallDarwinReinstallBootstrapFailureKeepsThePlist checks that a reinstall
+// whose bootstrap never succeeds keeps the plist disabled and gives the recovery
+// command.
 func TestInstallDarwinReinstallBootstrapFailureKeepsThePlist(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.BootstrapTimeout = 30 * time.Millisecond
@@ -3588,10 +3539,8 @@ func TestInstallDarwinReinstallBootstrapFailureKeepsThePlist(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinBootstrapFailureKeepsAnUnloadedPlist checks a plist that
-// existed before the install whose service was not loaded, such as one left
-// disabled by an earlier failure. The install must keep that plist and disable
-// its label; only a plist this run wrote is removed.
+// TestInstallDarwinBootstrapFailureKeepsAnUnloadedPlist checks that a
+// pre-existing plist is kept and disabled even when its service was not loaded.
 func TestInstallDarwinBootstrapFailureKeepsAnUnloadedPlist(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.BootstrapTimeout = 30 * time.Millisecond
@@ -3632,9 +3581,8 @@ func TestInstallDarwinBootstrapFailureKeepsAnUnloadedPlist(t *testing.T) {
 	}
 }
 
-// TestInstallDarwinPrecheckBootsOutOnce checks the replacement order: the
-// precheck only identifies the occupant, and the whole installation boots the
-// old job out exactly once, before the unload wait and the bootstrap.
+// TestInstallDarwinPrecheckBootsOutOnce checks that the precheck identifies the
+// occupant and the replacement boots the old job out exactly once.
 func TestInstallDarwinPrecheckBootsOutOnce(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	writeListenConfig(t, opts, "127.0.0.1:17448")
@@ -3691,8 +3639,7 @@ func TestInstallDarwinPrecheckBootsOutOnce(t *testing.T) {
 }
 
 // TestInstallDarwinSharesOneStopBudget checks that the unload wait and the
-// address wait take the same deadline. A deadline that has already passed makes
-// each wait probe once instead of granting itself a fresh budget.
+// address wait take the same deadline and probe once after it has passed.
 func TestInstallDarwinSharesOneStopBudget(t *testing.T) {
 	opts := darwinUserReinstall(t)
 	opts.Run = func(string, ...string) ([]byte, error) {
@@ -3718,12 +3665,9 @@ func TestInstallDarwinSharesOneStopBudget(t *testing.T) {
 }
 
 // TestInstallDarwinBootstrapsAfterTheUnloadWaitUsesTheStopBudget checks that the
-// exit-5 retries have their own bound. The unload wait runs past the stop
-// budget's deadline and the first bootstrap still reports exit 5; the retry
-// must run and succeed instead of inheriting the spent stop deadline.
+// exit-5 retry has its own bound after the unload wait spends the stop budget.
 func TestInstallDarwinBootstrapsAfterTheUnloadWaitUsesTheStopBudget(t *testing.T) {
 	opts := darwinUserReinstall(t)
-	// Scaled down: two 100ms unload polls run past this deadline.
 	opts.StopTimeout = 190 * time.Millisecond
 	opts.BootstrapTimeout = processExitWait
 

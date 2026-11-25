@@ -16,9 +16,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/helperpb"
 )
 
-// accessGateStart returns a Start function whose fake check process blocks
-// until release is closed. Each call reports its uid on started before it
-// blocks, so a test can count how many checks are running at once.
 func accessGateStart(started chan<- uint32, release <-chan struct{}) func(context.Context, Account) (*Process, error) {
 	return func(ctx context.Context, acct Account) (*Process, error) {
 		started <- acct.UID
@@ -50,10 +47,8 @@ func accessGateStart(started chan<- uint32, release <-chan struct{}) func(contex
 	}
 }
 
-// TestCheckLimitsConcurrentChecksPerAccount reproduces the unbounded process
-// growth: without a per-account slot one account could start one check process
-// per call. The zero value of the checker must take the documented default of
-// two checks per account.
+// TestCheckLimitsConcurrentChecksPerAccount checks that the zero-value checker
+// allows at most two checks per account at once.
 func TestCheckLimitsConcurrentChecksPerAccount(t *testing.T) {
 	uid := uint32(1000)
 	const checks = 5
@@ -98,7 +93,7 @@ func TestCheckLimitsConcurrentChecksPerAccount(t *testing.T) {
 
 	waitStarted(maxPerAccount)
 	// The window is the assertion: a third check that started would send to
-	// started. Under load a window can miss one, never fail a correct run.
+	// started.
 	select {
 	case <-started:
 		close(release)
@@ -115,13 +110,11 @@ func TestCheckLimitsConcurrentChecksPerAccount(t *testing.T) {
 	}
 }
 
-// checkResult is the outcome of one Check run in a test goroutine.
 type checkResult struct {
 	allowed bool
 	err     error
 }
 
-// checkAsync runs one Check in the background.
 func checkAsync(checker *AccessChecker, uid uint32) <-chan checkResult {
 	out := make(chan checkResult, 1)
 	go func() {
@@ -131,8 +124,6 @@ func checkAsync(checker *AccessChecker, uid uint32) <-chan checkResult {
 	return out
 }
 
-// waitStartedAccount receives one started uid, failing the test if none starts
-// within the package fallback.
 func waitStartedAccount(t *testing.T, started <-chan uint32) uint32 {
 	t.Helper()
 	select {
@@ -144,14 +135,9 @@ func waitStartedAccount(t *testing.T, started <-chan uint32) uint32 {
 	}
 }
 
-// TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers checks the order in which a
-// check takes its slots: the account's slot first and the global slot second.
-// One account sends four checks, twice its own share, and only after they have
-// taken their slots does a second account send two. The first account may hold
-// two global slots, one per running check, and never more; a checker that took
-// the global slot first would hold four global slots for the same account while
-// two of its checks wait for an account slot, and the second account could not
-// start.
+// TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers checks that a check takes
+// its account slot before the global slot, so one account cannot hold every
+// global slot.
 func TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
@@ -193,10 +179,9 @@ func TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers(t *testing.T) {
 	if seen[1000] != 2 {
 		t.Fatalf("uid 1000 started %d checks, want its per-account share of 2", seen[1000])
 	}
-	// The account's other two checks hold a global slot only if the checker
-	// takes the global slot first. Waiting for the second account to start is
-	// the scheduling-independent form of that check: its two free global slots
-	// are still there exactly when the first account's waiters never took them.
+	// Waiting for the second account's checks to start is the assertion: their
+	// two free global slots are still there only if the first account's waiters
+	// never took them.
 	for i := 0; i < 2; i++ {
 		results = append(results, checkAsync(checker, 1001))
 	}
@@ -219,9 +204,8 @@ func TestCheckPerAccountSlotsLeaveGlobalSlotsForOthers(t *testing.T) {
 	}
 }
 
-// TestCheckGlobalSlotWaitsForASlotToFree checks that a check which finds the
-// global slots taken waits and then starts once one is released, within its
-// timeout budget.
+// TestCheckGlobalSlotWaitsForASlotToFree checks that a check waits for a
+// global slot and starts once one is released.
 func TestCheckGlobalSlotWaitsForASlotToFree(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
@@ -264,7 +248,7 @@ func TestCheckGlobalSlotWaitsForASlotToFree(t *testing.T) {
 }
 
 // TestCheckNoSlotWithinBudgetFails checks that a check which cannot take a slot
-// before its timeout fails and is never allowed.
+// before its deadline fails and logs access_check_busy once.
 func TestCheckNoSlotWithinBudgetFails(t *testing.T) {
 	uid := uint32(1000)
 	release := make(chan struct{})
@@ -287,8 +271,7 @@ func TestCheckNoSlotWithinBudgetFails(t *testing.T) {
 	waitStartedAccount(t, started)
 
 	// A shorter caller deadline bounds this check so the busy path is reached
-	// while the first check still holds the account's only slot. The deadline is
-	// the trigger for the busy path; the error below is the assertion.
+	// while the first check still holds the account's only slot.
 	busyCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	allowed, err := checker.Check(busyCtx, uid, "/config.yaml", AccessRead)
@@ -319,8 +302,8 @@ func TestCheckNoSlotWithinBudgetFails(t *testing.T) {
 	}
 }
 
-// TestCheckBusyLogOncePerMinute checks that one account's access_check_busy
-// record is written at most once a minute.
+// TestCheckBusyLogOncePerMinute checks that access_check_busy is written at
+// most once per minute.
 func TestCheckBusyLogOncePerMinute(t *testing.T) {
 	uid := uint32(1000)
 	release := make(chan struct{})
@@ -345,8 +328,7 @@ func TestCheckBusyLogOncePerMinute(t *testing.T) {
 	waitStartedAccount(t, started)
 
 	// A shorter caller deadline reaches the busy path quickly while the first
-	// check keeps the account's only slot. The deadline is the trigger; the log
-	// record is the assertion.
+	// check keeps the account's only slot.
 	busy := func() error {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 		defer cancel()
@@ -375,7 +357,7 @@ func TestCheckBusyLogOncePerMinute(t *testing.T) {
 }
 
 // TestCheckTimeoutReleasesItsSlot checks that a check abandoned at its timeout
-// returns its slot once the process has been stopped, so the next check runs.
+// returns its slot.
 func TestCheckTimeoutReleasesItsSlot(t *testing.T) {
 	uid := uint32(1000)
 	start, kills := pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
@@ -398,7 +380,6 @@ func TestCheckTimeoutReleasesItsSlot(t *testing.T) {
 		t.Error("the timed-out check process was not killed")
 	}
 
-	// The abandoned check must have returned its slot: the next check runs.
 	checker.Start, _ = pipeStart(t, func(*helperpb.AccessCheckRequest) (*helperpb.AccessCheckResponse, bool) {
 		return &helperpb.AccessCheckResponse{
 			ProtocolVersion: helperpb.ProtocolVersion,
@@ -416,10 +397,7 @@ func TestCheckTimeoutReleasesItsSlot(t *testing.T) {
 }
 
 // TestCheckUnknownAccountsShareSlots checks that uids with no account entry
-// share one account bucket: the bucket never holds more than two slots at once,
-// and a normal account still gets its own. The unknown-account record is a
-// shared-window signal now, so the test drives the slot table directly instead
-// of using a log record to hold a check's slot open.
+// share the unknown-account bucket while a real account keeps its own.
 func TestCheckUnknownAccountsShareSlots(t *testing.T) {
 	checker := &AccessChecker{MaxConcurrent: 8, MaxPerAccount: 2}
 	slots := checker.slotSet()
@@ -434,9 +412,7 @@ func TestCheckUnknownAccountsShareSlots(t *testing.T) {
 		t.Fatalf("second unknown slot: %v", err)
 	}
 
-	// A third unknown check finds both slots of the shared bucket taken. The
-	// short caller deadline is the assertion: the acquire must fail rather than
-	// wait out the full check budget.
+	// A third unknown check must fail rather than wait out the full budget.
 	short, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	_, err = slots.acquireAccount(short, unknownCheckAccount)
 	cancel()
@@ -444,7 +420,6 @@ func TestCheckUnknownAccountsShareSlots(t *testing.T) {
 		t.Fatal("a third unknown check took a slot while two were in use")
 	}
 
-	// A real account has its own bucket and is unaffected by the full one.
 	known, err := slots.acquireAccount(ctx, 1000)
 	if err != nil {
 		t.Fatalf("known account slot while the unknown bucket is full: %v", err)
@@ -461,9 +436,8 @@ func TestCheckUnknownAccountsShareSlots(t *testing.T) {
 	}
 }
 
-// TestCheckRejectsLookupFailureWithoutSlot checks that a lookup failure is not
-// treated as an unknown account and creates no per-uid slot entry: the check
-// fails closed and the account table stays empty.
+// TestCheckRejectsLookupFailureWithoutSlot checks that a lookup failure fails
+// closed and creates no slot entry.
 func TestCheckRejectsLookupFailureWithoutSlot(t *testing.T) {
 	boom := errors.New("account database unavailable")
 	checker := &AccessChecker{
@@ -489,9 +463,8 @@ func TestCheckRejectsLookupFailureWithoutSlot(t *testing.T) {
 	}
 }
 
-// TestCheckUnknownAccountUsesSharedBucketOnly checks that every uid with no
-// account entry shares one slot entry, so a rotating subuid cannot grow the
-// account slot table.
+// TestCheckUnknownAccountUsesSharedBucketOnly checks that many unknown uids
+// share one slot entry.
 func TestCheckUnknownAccountUsesSharedBucketOnly(t *testing.T) {
 	checker := &AccessChecker{
 		Lookup: func(uid uint32) (Account, error) {
@@ -521,9 +494,8 @@ func TestCheckUnknownAccountUsesSharedBucketOnly(t *testing.T) {
 	}
 }
 
-// TestCheckSlotTableDropsIdleAccounts checks that the account slot table drops
-// an account that has been idle past accessAccountIdleTTL, so it does not grow
-// with every account ever checked.
+// TestCheckSlotTableDropsIdleAccounts checks that an account idle past
+// accessAccountIdleTTL is dropped from the slot table.
 func TestCheckSlotTableDropsIdleAccounts(t *testing.T) {
 	now := time.Unix(1000, 0)
 	started := make(chan uint32, 32)
@@ -569,9 +541,8 @@ func TestCheckSlotTableDropsIdleAccounts(t *testing.T) {
 	}
 }
 
-// TestCheckLookupConcurrencyCapped checks that account database lookups run at
-// most lookupgate.Concurrency at once, so a burst of uids with no account entry
-// cannot start one getent process per check.
+// TestCheckLookupConcurrencyCapped checks that account lookups run at most four
+// at once.
 func TestCheckLookupConcurrencyCapped(t *testing.T) {
 	release := make(chan struct{})
 	var once sync.Once
@@ -609,8 +580,7 @@ func TestCheckLookupConcurrencyCapped(t *testing.T) {
 		waitStartedAccount(t, started)
 	}
 	// The window is the assertion: a fifth lookup that ran at once would send to
-	// started. The gate's slots are unexported, so this is the only way to
-	// observe the cap; a window can miss one under load, never fail a correct run.
+	// started.
 	select {
 	case <-started:
 		releaseAll()
@@ -636,9 +606,8 @@ func TestCheckLookupConcurrencyCapped(t *testing.T) {
 	}
 }
 
-// TestAccessSlotTableIsBounded checks the table's hard cap: with every one of
-// its 4096 account entries holding a slot, a new account is refused instead of
-// growing the table, and a slot returned makes room for it again.
+// TestAccessSlotTableIsBounded checks that the slot table refuses a new account
+// at 4096 entries and makes room after a slot is returned.
 func TestAccessSlotTableIsBounded(t *testing.T) {
 	const wantMax = 4096
 	now := time.Unix(1000, 0)
@@ -665,8 +634,6 @@ func TestAccessSlotTableIsBounded(t *testing.T) {
 		t.Fatal("a refused account got a table entry")
 	}
 
-	// Returning a slot leaves the entry idle, so the next account can replace
-	// it instead of being refused.
 	slots.releaseAccount(held[1])
 	if _, err := slots.acquireAccount(ctx, extra); err != nil {
 		t.Fatalf("acquiring an account after a slot was returned: %v", err)
@@ -676,9 +643,8 @@ func TestAccessSlotTableIsBounded(t *testing.T) {
 	}
 }
 
-// TestCheckUnknownAccountLogOncePerMinute checks that access_check_unknown_account
-// is written at most once per uid a minute, so a client that keeps checking
-// with the same uid cannot flood the runtime log.
+// TestCheckUnknownAccountLogOncePerMinute checks that
+// access_check_unknown_account is written at most once a minute.
 func TestCheckUnknownAccountLogOncePerMinute(t *testing.T) {
 	uid := uint32(7000)
 	var logBuf bytes.Buffer
@@ -714,9 +680,8 @@ func TestCheckUnknownAccountLogOncePerMinute(t *testing.T) {
 	}
 }
 
-// TestCheckUnknownAccountLogsOnceAcrossUIDs checks that rotating through 1000
-// uids with no account entry writes one access_check_unknown_account record,
-// not one per uid: every unknown uid shares one throttle window.
+// TestCheckUnknownAccountLogsOnceAcrossUIDs checks that rotating through many
+// unknown uids writes one access_check_unknown_account record.
 func TestCheckUnknownAccountLogsOnceAcrossUIDs(t *testing.T) {
 	var logBuf bytes.Buffer
 	now := time.Unix(1000, 0)
@@ -744,9 +709,8 @@ func TestCheckUnknownAccountLogsOnceAcrossUIDs(t *testing.T) {
 }
 
 // TestReleaseAccountDoesNotTouchAReplacementEntry checks that a slot is
-// returned to the entry it was taken from. If the table swept that entry and a
-// new check rebuilt the same key meanwhile, releasing must not take the
-// replacement's slot.
+// returned to the entry it was taken from, not to a replacement built under the
+// same key.
 func TestReleaseAccountDoesNotTouchAReplacementEntry(t *testing.T) {
 	now := time.Unix(1000, 0)
 	slots := newAccessSlots(8, 1, func() time.Time { return now })
@@ -757,8 +721,6 @@ func TestReleaseAccountDoesNotTouchAReplacementEntry(t *testing.T) {
 		t.Fatalf("acquiring the first entry: %v", err)
 	}
 
-	// Simulate the sweep dropping the idle entry, then a new check rebuilding
-	// the key and taking its slot before the first check releases.
 	slots.mu.Lock()
 	delete(slots.accounts, 7)
 	fresh := &accessAccountSlot{slots: make(chan struct{}, 1), idleAt: now}

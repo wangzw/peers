@@ -18,23 +18,17 @@ import (
 	"time"
 )
 
-// accessCheckIdentityBound bounds the wait for an access-check child to switch
-// to the account. It shares the package fallback for a wait on a helper child.
 const accessCheckIdentityBound = processTimeout
 
-// killProbeRole is the TestMain role that asks the kernel whether the probe's
-// own account may signal a process; exit 0 means the kernel answered EPERM.
 const killProbeRole = "kill-probe"
 
 func init() {
 	testRoleHooks[killProbeRole] = runKillProbeRole
 }
 
-// TestAccessCheckChildKeepsRootRealIdentity checks the process identity the
-// Broker's default access-check start path leaves behind: the child execs as
-// root, then drops only its effective identity to the account. The caller must
-// therefore be unable to signal it. Run under sudo; without root the test
-// skips.
+// TestAccessCheckChildKeepsRootRealIdentity checks that the access-check child
+// keeps real and saved uid 0 with the account as its effective identity,
+// skipping without root.
 func TestAccessCheckChildKeepsRootRealIdentity(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("run under sudo: the child must start as root")
@@ -80,16 +74,14 @@ func TestAccessCheckChildKeepsRootRealIdentity(t *testing.T) {
 
 	runKillProbe(t, exe, pid, acct)
 
-	// The child is waiting for a request. Closing stdin ends it; the non-zero
-	// exit is expected because no request was sent.
+	// Closing stdin ends the child; the non-zero exit is expected because no
+	// request was sent.
 	if err := proc.Stdin.Close(); err != nil {
 		t.Errorf("closing the child's stdin: %v", err)
 	}
 	_ = proc.Wait()
 }
 
-// accessTestCallerAccount returns a non-root account that stands in for the
-// caller. SUDO_UID names the account running sudo; nobody is the fallback.
 func accessTestCallerAccount(t *testing.T) Account {
 	t.Helper()
 
@@ -113,9 +105,6 @@ func accessTestCallerAccount(t *testing.T) Account {
 	return Account{}
 }
 
-// accessTestExecutable copies the running test binary to a world-readable
-// directory so the account can execute it even when the child execs before
-// changing identity.
 func accessTestExecutable(t *testing.T) string {
 	t.Helper()
 
@@ -139,7 +128,6 @@ func accessTestExecutable(t *testing.T) string {
 	return dst
 }
 
-// copyFile copies src to dst with mode.
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -161,8 +149,6 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return os.Chmod(dst, mode)
 }
 
-// waitForAccessCheckChild returns the pid of the access-check child started by
-// this test process.
 func waitForAccessCheckChild(t *testing.T, exe string) int {
 	t.Helper()
 	want := []string{exe, "internal", "access-check"}
@@ -179,8 +165,6 @@ func waitForAccessCheckChild(t *testing.T, exe string) int {
 	}
 }
 
-// findChildWithArgs returns the pid of a child of parent whose command line is
-// exactly want.
 func findChildWithArgs(parent int, want []string) (int, bool) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -213,7 +197,6 @@ func findChildWithArgs(parent int, want []string) (int, bool) {
 	return 0, false
 }
 
-// procPPID returns the PPid field of a /proc status file, or -1.
 func procPPID(status []byte) int {
 	for _, line := range strings.Split(string(status), "\n") {
 		if !strings.HasPrefix(line, "PPid:") {
@@ -232,15 +215,12 @@ func procPPID(status []byte) int {
 	return -1
 }
 
-// procIdentity is the credential part of one /proc status file.
 type procIdentity struct {
 	uid    [3]uint32 // real, effective, saved
 	gid    [3]uint32 // real, effective, saved
 	groups []uint32
 }
 
-// waitForAccountIdentity waits until pid runs with acct as its effective uid
-// and returns its identity.
 func waitForAccountIdentity(t *testing.T, pid int, acct Account) procIdentity {
 	t.Helper()
 	deadline := time.Now().Add(accessCheckIdentityBound)
@@ -259,7 +239,6 @@ func waitForAccountIdentity(t *testing.T, pid int, acct Account) procIdentity {
 	}
 }
 
-// readProcIdentity reads the uid, gid and supplementary groups of pid.
 func readProcIdentity(pid int) (procIdentity, error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
@@ -287,7 +266,6 @@ func readProcIdentity(pid int) (procIdentity, error) {
 	return ids, nil
 }
 
-// parseThreeIDs parses the real, effective and saved ids of a status line.
 func parseThreeIDs(value string, dst *[3]uint32) error {
 	fields := strings.Fields(value)
 	if len(fields) < 3 {
@@ -303,7 +281,6 @@ func parseThreeIDs(value string, dst *[3]uint32) error {
 	return nil
 }
 
-// parseGroups parses the supplementary groups of a status line.
 func parseGroups(value string) ([]uint32, error) {
 	fields := strings.Fields(value)
 	groups := make([]uint32, 0, len(fields))
@@ -317,8 +294,6 @@ func parseGroups(value string) ([]uint32, error) {
 	return groups, nil
 }
 
-// runKillProbe runs the test binary as acct and fails t unless the kernel
-// refuses its kill(pid, 0) with EPERM.
 func runKillProbe(t *testing.T, exe string, pid int, acct Account) {
 	t.Helper()
 
@@ -339,7 +314,6 @@ func runKillProbe(t *testing.T, exe string, pid int, acct Account) {
 	t.Logf("kill probe as %s (uid %d) for pid %d answered EPERM", acct.Name, acct.UID, pid)
 }
 
-// replaceEnv returns env with the named entries removed and kv appended.
 func replaceEnv(env []string, kv ...string) []string {
 	names := make(map[string]struct{}, len(kv))
 	for _, entry := range kv {
@@ -356,7 +330,6 @@ func replaceEnv(env []string, kv ...string) []string {
 	return append(out, kv...)
 }
 
-// runKillProbeRole is the TestMain body of the kill-probe role.
 func runKillProbeRole() int {
 	pid, err := strconv.Atoi(os.Getenv("PEERS_TEST_KILL_PID"))
 	if err != nil {

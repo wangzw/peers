@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// switchRecorder records the identity operations and models the process
-// credential, so a test can assert the order and see the verification.
 type switchRecorder struct {
 	calls []string
 	gids  []uint32
@@ -22,22 +20,16 @@ type switchRecorder struct {
 	realGID int
 	effGID  int
 
-	// suppGroups is the supplementary group table getgroups reports. A real
-	// switch replaces it in initgroups; groupsAfter overrides it for tests.
 	suppGroups  []int
 	groupsAfter []int
 
-	// setuidDone lets the recorder tell the pre-switch root check from the
-	// post-switch verification, which read geteuid at different moments.
 	setuidDone bool
 
-	uidAfter  *int // non-nil overrides the value the post-switch check reads
+	uidAfter  *int
 	euidAfter *int
 	gidAfter  *int
 	egidAfter *int
 
-	// regainRoot models a process that kept a root identity: the post-switch
-	// setuid(0) probe succeeds, which the switch must reject.
 	regainRoot bool
 
 	setgidErr     error
@@ -79,8 +71,6 @@ func (r *switchRecorder) ops() helperIdentityOps {
 			if r.setuidErr != nil {
 				return r.setuidErr
 			}
-			// A process that dropped root cannot setuid back to 0 unless it kept
-			// root in a saved uid, which regainRoot models.
 			if uid == 0 && r.effUID != 0 && !r.regainRoot {
 				return syscall.EPERM
 			}
@@ -125,8 +115,6 @@ func setTestIdentity(t *testing.T, uid, gid uint32) {
 	t.Setenv(accountHelperGIDEnv, fmt.Sprint(gid))
 }
 
-// unsetTestIdentity removes the identity variables for one test and restores
-// whatever the process had afterwards.
 func unsetTestIdentity(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{accountHelperUIDEnv, accountHelperGIDEnv} {
@@ -144,10 +132,8 @@ func unsetTestIdentity(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountSwitchesInOrder pins the sequence: the real, effective
-// and saved gid first, then the groups with the account uid as gmuid, then the
-// real, effective and saved uid. Only the primary group may reach the static
-// initgroups list.
+// TestEnterHelperAccountSwitchesInOrder checks the switch order: gid, then
+// groups with the account uid as gmuid, then uid.
 func TestEnterHelperAccountSwitchesInOrder(t *testing.T) {
 	setTestIdentity(t, 501, 20)
 	r := newSwitchRecorder()
@@ -168,16 +154,12 @@ func TestEnterHelperAccountSwitchesInOrder(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountLargeGroupListNeverReachesSetgroups is the regression
-// assertion at the switch level: the account may belong to more groups than
-// Darwin's NGROUPS, but the switch hands the kernel only the primary group and
-// performs no setgroups call at all.
+// TestEnterHelperAccountLargeGroupListNeverReachesSetgroups checks that a group
+// table larger than NGROUPS still goes through initgroups alone, with no
+// setgroups call.
 func TestEnterHelperAccountLargeGroupListNeverReachesSetgroups(t *testing.T) {
 	setTestIdentity(t, 502, 20)
 	r := newSwitchRecorder()
-	// The kernel resolves the account's groups through initgroups, so the
-	// resulting table may hold more entries than NGROUPS. None of it may reach a
-	// setgroups call.
 	r.groupsAfter = []int{20}
 	for i := 0; i < 17; i++ {
 		r.groupsAfter = append(r.groupsAfter, 200+i)
@@ -196,8 +178,8 @@ func TestEnterHelperAccountLargeGroupListNeverReachesSetgroups(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountRefusesNonRoot stops an ordinary account from naming a
-// different identity in the environment.
+// TestEnterHelperAccountRefusesNonRoot checks that an ordinary account cannot
+// name another identity in the environment.
 func TestEnterHelperAccountRefusesNonRoot(t *testing.T) {
 	setTestIdentity(t, 501, 20)
 	r := newSwitchRecorder()
@@ -215,8 +197,8 @@ func TestEnterHelperAccountRefusesNonRoot(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountWithoutEnvIsNoop covers Linux children, which are
-// already the account when they start, and in-process callers.
+// TestEnterHelperAccountWithoutEnvIsNoop checks that a process with no identity
+// variables switches nothing.
 func TestEnterHelperAccountWithoutEnvIsNoop(t *testing.T) {
 	unsetTestIdentity(t)
 	ops := helperIdentityOps{
@@ -233,8 +215,8 @@ func TestEnterHelperAccountWithoutEnvIsNoop(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountChecksEveryIdentityHalf fails the switch when any of
-// the four ids does not match, so a half-switched process never serves.
+// TestEnterHelperAccountChecksEveryIdentityHalf checks that a mismatch in any
+// of the four ids fails the switch.
 func TestEnterHelperAccountChecksEveryIdentityHalf(t *testing.T) {
 	const uid, gid = 501, 20
 	wrongUID, wrongGID := 0, 99
@@ -268,9 +250,8 @@ func TestEnterHelperAccountChecksEveryIdentityHalf(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountRejectsRegainingRoot is the post-drop check OpenSSH's
-// permanently_set_uid makes: if setuid(0) succeeds after the switch, the
-// process still holds root somewhere and must not serve.
+// TestEnterHelperAccountRejectsRegainingRoot checks that a setuid(0) that
+// succeeds after the switch is refused.
 func TestEnterHelperAccountRejectsRegainingRoot(t *testing.T) {
 	setTestIdentity(t, 501, 20)
 	r := newSwitchRecorder()
@@ -285,9 +266,8 @@ func TestEnterHelperAccountRejectsRegainingRoot(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountRejectsRootSupplementaryGroup stops a process that
-// still belongs to gid 0 after the switch: that group grants access the account
-// must not keep.
+// TestEnterHelperAccountRejectsRootSupplementaryGroup checks that gid 0 in the
+// supplementary groups is refused.
 func TestEnterHelperAccountRejectsRootSupplementaryGroup(t *testing.T) {
 	setTestIdentity(t, 501, 20)
 	r := newSwitchRecorder()
@@ -302,9 +282,8 @@ func TestEnterHelperAccountRejectsRootSupplementaryGroup(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountAllowsRootPrimaryGroup skips the gid 0 assertion when
-// the account's own primary group is 0: the group table legitimately contains
-// it and the switch is otherwise fine.
+// TestEnterHelperAccountAllowsRootPrimaryGroup checks that a primary group of 0
+// does not trip the gid 0 check.
 func TestEnterHelperAccountAllowsRootPrimaryGroup(t *testing.T) {
 	setTestIdentity(t, 501, 0)
 	r := newSwitchRecorder()
@@ -315,8 +294,8 @@ func TestEnterHelperAccountAllowsRootPrimaryGroup(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountRejectsZeroTargetUID refuses a target that would keep
-// the helper as root, whatever the environment says.
+// TestEnterHelperAccountRejectsZeroTargetUID checks that a target uid of 0 is
+// refused.
 func TestEnterHelperAccountRejectsZeroTargetUID(t *testing.T) {
 	setTestIdentity(t, 0, 20)
 	r := newSwitchRecorder()
@@ -333,8 +312,8 @@ func TestEnterHelperAccountRejectsZeroTargetUID(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountFailsWhenGroupsUnreadable fails closed when the group
-// table cannot be read after the switch: without it the gid 0 check cannot run.
+// TestEnterHelperAccountFailsWhenGroupsUnreadable checks that an unreadable
+// group table fails the switch.
 func TestEnterHelperAccountFailsWhenGroupsUnreadable(t *testing.T) {
 	setTestIdentity(t, 501, 20)
 	r := newSwitchRecorder()
@@ -346,8 +325,8 @@ func TestEnterHelperAccountFailsWhenGroupsUnreadable(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountStopsOnSwitchFailure closes the switch on the first
-// error and never drops privileges after a failure.
+// TestEnterHelperAccountStopsOnSwitchFailure checks that the switch stops at
+// the first failing step.
 func TestEnterHelperAccountStopsOnSwitchFailure(t *testing.T) {
 	const uid, gid = 501, 20
 	cases := []struct {
@@ -392,8 +371,8 @@ func TestEnterHelperAccountStopsOnSwitchFailure(t *testing.T) {
 	}
 }
 
-// TestEnterHelperAccountRejectsBadEnvironment reports a malformed identity
-// instead of switching to a partial one.
+// TestEnterHelperAccountRejectsBadEnvironment checks that a malformed identity
+// is refused without a switch.
 func TestEnterHelperAccountRejectsBadEnvironment(t *testing.T) {
 	cases := []struct {
 		name string
@@ -427,8 +406,6 @@ func TestEnterHelperAccountRejectsBadEnvironment(t *testing.T) {
 	}
 }
 
-// unsetOne removes one variable for the rest of the test and restores it in
-// cleanup.
 func unsetOne(t *testing.T, key string) {
 	t.Helper()
 	old, ok := os.LookupEnv(key)
@@ -442,6 +419,8 @@ func unsetOne(t *testing.T, key string) {
 	})
 }
 
+// TestHelperIdentityEnv checks that the identity variables carry the account
+// uid and gid.
 func TestHelperIdentityEnv(t *testing.T) {
 	got := helperIdentityEnv(Account{UID: 501, GID: 20})
 	want := []string{accountHelperUIDEnv + "=501", accountHelperGIDEnv + "=20"}
@@ -451,7 +430,7 @@ func TestHelperIdentityEnv(t *testing.T) {
 }
 
 // TestEnterHelperAccountClearsIdentityEnvironment checks that the consumed
-// identity does not stay in the process environment.
+// identity is removed from the environment.
 func TestEnterHelperAccountClearsIdentityEnvironment(t *testing.T) {
 	setTestIdentity(t, 501, 20)
 	r := newSwitchRecorder()

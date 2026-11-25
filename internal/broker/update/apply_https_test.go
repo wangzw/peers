@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// TestApplyRejectsHTTPAssetURL proves that a release build refuses an asset
-// served over plain HTTP before it downloads anything.
+// TestApplyRejectsHTTPAssetURL checks that a release build refuses an asset URL
+// on plain HTTP and leaves the target unchanged.
 func TestApplyRejectsHTTPAssetURL(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")
@@ -47,8 +47,8 @@ func TestApplyRejectsHTTPAssetURL(t *testing.T) {
 	assertUnchanged(t, target, original, before)
 }
 
-// TestApplyRejectsRedirectToHTTP proves that a release build refuses a
-// redirect from an https asset to a plain HTTP destination.
+// TestApplyRejectsRedirectToHTTP checks that a release build refuses a redirect
+// from https to plain HTTP and leaves the target unchanged.
 func TestApplyRejectsRedirectToHTTP(t *testing.T) {
 	const version = "0.2.0"
 	original := []byte("original binary")

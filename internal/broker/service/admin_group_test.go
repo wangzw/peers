@@ -11,6 +11,9 @@ import (
 	"testing"
 )
 
+// TestValidAdminGroupName checks that only a name starting with a lowercase
+// letter or underscore, followed by lowercase letters, digits, underscores and
+// hyphens, is accepted.
 func TestValidAdminGroupName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -35,6 +38,8 @@ func TestValidAdminGroupName(t *testing.T) {
 	}
 }
 
+// TestInstallSystemRejectsInvalidAdminGroup checks that a system install rejects
+// an invalid group name before running any command.
 func TestInstallSystemRejectsInvalidAdminGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -52,6 +57,8 @@ func TestInstallSystemRejectsInvalidAdminGroup(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
+// TestAdminGroupName checks that the default group is used when none is named
+// and the named group otherwise.
 func TestAdminGroupName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -67,6 +74,8 @@ func TestAdminGroupName(t *testing.T) {
 	}
 }
 
+// TestEnsureAdminGroupDarwinCreatesTheGroup checks that a missing group is
+// created and read back on macOS.
 func TestEnsureAdminGroupDarwinCreatesTheGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -110,6 +119,8 @@ func TestEnsureAdminGroupDarwinCreatesTheGroup(t *testing.T) {
 	}
 }
 
+// TestEnsureAdminGroupDarwinUsesAnExistingGroup checks that an existing group is
+// reused without creating anything.
 func TestEnsureAdminGroupDarwinUsesAnExistingGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -137,6 +148,8 @@ func TestEnsureAdminGroupDarwinUsesAnExistingGroup(t *testing.T) {
 	}
 }
 
+// TestEnsureAdminGroupDarwinNamesTheRequestedGroup checks that a named group is
+// looked up and created under that name.
 func TestEnsureAdminGroupDarwinNamesTheRequestedGroup(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -168,6 +181,8 @@ func TestEnsureAdminGroupDarwinNamesTheRequestedGroup(t *testing.T) {
 	}
 }
 
+// TestLookupGroupLinux checks group lookup through getent, including an absent
+// group and a query failure.
 func TestLookupGroupLinux(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -213,6 +228,8 @@ func TestLookupGroupLinux(t *testing.T) {
 	})
 }
 
+// TestLookupGroupDarwin checks group lookup through dscl, including a missing
+// record and a query failure.
 func TestLookupGroupDarwin(t *testing.T) {
 	t.Run("found", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -243,9 +260,6 @@ func TestLookupGroupDarwin(t *testing.T) {
 		}
 	})
 
-	// A dscl failure that does not say the record is missing is a query
-	// failure. Reading it as an absent group made the installation run
-	// dseditgroup create and record the group as created by this run.
 	t.Run("query failure", func(t *testing.T) {
 		opts := baseOptions(t)
 		opts.GOOS = "darwin"
@@ -271,11 +285,8 @@ func TestLookupGroupDarwin(t *testing.T) {
 	})
 }
 
-// TestLookupGroupDarwinUsesRealDscl exercises lookupGroupDarwin against the
-// host's real directory service, so a macOS CI run proves how dscl reports a
-// missing record rather than trusting the stub. It pins the split this change
-// makes: an existing group is found, and a missing one is absent rather than a
-// query failure.
+// TestLookupGroupDarwinUsesRealDscl checks lookupGroupDarwin against the host's
+// directory service for an existing and a missing group.
 func TestLookupGroupDarwinUsesRealDscl(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("dscl runs only on macOS")
@@ -293,18 +304,14 @@ func TestLookupGroupDarwinUsesRealDscl(t *testing.T) {
 		t.Fatalf("lookupGroup(staff) = (%d, %v, %v), want an existing group with a positive id", gid, exists, err)
 	}
 
-	// A record that does not exist is an absent group, and the lookup must not
-	// turn its dscl error into a query failure.
 	const missing = "peers-lookup-probe-nonexistent"
 	if _, exists, err := lookupGroup(opts, missing); err != nil || exists {
 		t.Fatalf("lookupGroup(%s) = (_, %v, %v), want an absent group and no error", missing, exists, err)
 	}
 }
 
-// TestInstallSystemDarwinFailsWhenTheGroupLookupFails reproduces the defect:
-// any nonzero dscl exit was read as an absent group, so a directory service
-// failure made the installation create the group and record it as created by
-// this run. Only eDSRecordNotFound means the group is absent.
+// TestInstallSystemDarwinFailsWhenTheGroupLookupFails checks that a dscl failure
+// other than a missing record fails the installation without creating the group.
 func TestInstallSystemDarwinFailsWhenTheGroupLookupFails(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -338,10 +345,8 @@ func TestInstallSystemDarwinFailsWhenTheGroupLookupFails(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
-// TestInstallSystemRefusesAnUnexplainedGroupWithMembers reproduces the security
-// defect: an existing group that the administrator never named and that peers
-// never recorded creating would silently hand its members management of the
-// system Broker through a newly generated configuration file.
+// TestInstallSystemRefusesAnUnexplainedGroupWithMembers checks that an unnamed
+// existing group with members is refused before any file is written.
 func TestInstallSystemRefusesAnUnexplainedGroupWithMembers(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -370,9 +375,8 @@ func TestInstallSystemRefusesAnUnexplainedGroupWithMembers(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
-// TestInstallSystemRefusesAnAdminGroupWithGIDZero reproduces the defect that a
-// group id of 0 (root's group, such as wheel) was accepted as the
-// administration group.
+// TestInstallSystemRefusesAnAdminGroupWithGIDZero checks that a group with gid 0
+// cannot be the administration group.
 func TestInstallSystemRefusesAnAdminGroupWithGIDZero(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -395,8 +399,6 @@ func TestInstallSystemRefusesAnAdminGroupWithGIDZero(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
-// systemInstallWithExistingGroup returns options for a system install that
-// reuses an existing group with the given members and would otherwise succeed.
 func systemInstallWithExistingGroup(t *testing.T, gid int, members []string) Options {
 	t.Helper()
 	opts := baseOptions(t)
@@ -411,10 +413,8 @@ func systemInstallWithExistingGroup(t *testing.T, gid int, members []string) Opt
 	return opts
 }
 
-// TestInstallSystemReusesAnExistingGroup covers the cases where an existing
-// group is used without confirmation: the administrator named it, an earlier
-// peers installation recorded creating it, the configuration file already
-// exists, or the group lists no members.
+// TestInstallSystemReusesAnExistingGroup checks the cases where an existing
+// group is reused without confirmation.
 func TestInstallSystemReusesAnExistingGroup(t *testing.T) {
 	const gid = 998
 	cases := []struct {
@@ -482,8 +482,6 @@ func TestInstallSystemReusesAnExistingGroup(t *testing.T) {
 	}
 }
 
-// writeAdminGroupRecord writes the record an earlier installation leaves when
-// it created the group.
 func writeAdminGroupRecord(t *testing.T, root, name string) {
 	t.Helper()
 	path := filepath.Join(root, adminGroupRecordPath)
@@ -495,8 +493,6 @@ func writeAdminGroupRecord(t *testing.T, root, name string) {
 	}
 }
 
-// writeExistingSystemConfig writes a minimal system configuration file, standing
-// in for one an earlier installation left in place.
 func writeExistingSystemConfig(t *testing.T, root string) {
 	t.Helper()
 	path := filepath.Join(root, "etc/peers/config.yaml")
@@ -508,7 +504,8 @@ func writeExistingSystemConfig(t *testing.T, root string) {
 	}
 }
 
-// TestGroupMembersLinux reads the member list from getent's fourth field.
+// TestGroupMembersLinux checks that the member list is read from getent's
+// fourth field.
 func TestGroupMembersLinux(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -541,10 +538,6 @@ func TestGroupMembersLinux(t *testing.T) {
 	}
 }
 
-// darwinGroupRecordStub answers the dscl reads groupMembersDarwin makes: the
-// record read returns read and readErr, and each NestedGroups GUID in names is
-// resolved to its group name. A GUID without an entry fails the search, which
-// stands for a record the directory service cannot resolve.
 func darwinGroupRecordStub(t *testing.T, read string, readErr error, names map[string]string) (func(string, ...string) ([]byte, error), *[]string) {
 	t.Helper()
 	var ran []string
@@ -568,11 +561,9 @@ func darwinGroupRecordStub(t *testing.T, read string, readErr error, names map[s
 	}, &ran
 }
 
-// TestGroupMembersDarwin reads GroupMembership and NestedGroups from dscl. A
-// group without either attribute lists no members rather than failing, while a
-// missing record is a query failure so the installation refuses. NestedGroups
-// holds group GUIDs: each is resolved to the group's name for display, and a
-// GUID that cannot be resolved is kept so its members still count.
+// TestGroupMembersDarwin checks that GroupMembership and NestedGroups are read
+// from dscl, with a missing key treated as no members and a missing record as a
+// query failure.
 func TestGroupMembersDarwin(t *testing.T) {
 	const readCommand = "dscl . -read /Groups/peers GroupMembership NestedGroups"
 
@@ -711,8 +702,6 @@ func TestGroupMembersDarwin(t *testing.T) {
 		opts := baseOptions(t)
 		opts.GOOS = "darwin"
 		opts.GroupMembers = nil
-		// A nonzero exit with no missing-key note is a query failure even when
-		// part of the record could be read.
 		run, _ := darwinGroupRecordStub(t,
 			"GroupMembership: bob\n", exitError(t, 1), nil)
 		opts.Run = run
@@ -722,10 +711,8 @@ func TestGroupMembersDarwin(t *testing.T) {
 	})
 }
 
-// TestGroupMembersDarwinUsesRealDscl exercises groupMembersDarwin against the
-// host's real directory service, so a macOS CI run proves the parser and the
-// GUID-to-name resolution against real dscl output rather than a stub. The
-// nested-group round trip needs passwordless sudo and is skipped without it.
+// TestGroupMembersDarwinUsesRealDscl checks the parser and GUID-to-name
+// resolution against the host's directory service.
 func TestGroupMembersDarwinUsesRealDscl(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("dscl runs only on macOS")
@@ -778,7 +765,8 @@ func TestGroupMembersDarwinUsesRealDscl(t *testing.T) {
 	}
 }
 
-// TestPrimaryGroupAccountsLinux reads the account list from getent passwd.
+// TestPrimaryGroupAccountsLinux checks that accounts whose primary group is the
+// target are read from getent passwd.
 func TestPrimaryGroupAccountsLinux(t *testing.T) {
 	opts := baseOptions(t)
 	opts.PrimaryGroupAccounts = nil
@@ -797,7 +785,8 @@ func TestPrimaryGroupAccountsLinux(t *testing.T) {
 	}
 }
 
-// TestPrimaryGroupAccountsDarwin reads the account list from dscl.
+// TestPrimaryGroupAccountsDarwin checks that accounts whose primary group is the
+// target are read from dscl.
 func TestPrimaryGroupAccountsDarwin(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -817,10 +806,9 @@ func TestPrimaryGroupAccountsDarwin(t *testing.T) {
 	}
 }
 
-// TestInstallSystemCountsAPrimaryGroupAccountAsAMember reproduces the defect
-// that an account whose primary group is the administration group was not
-// listed as a supplementary member, so it could write the configuration file
-// without the administrator ever accepting it.
+// TestInstallSystemCountsAPrimaryGroupAccountAsAMember checks that an account
+// with the administration group as its primary group makes the installation
+// refuse an unexplained group.
 func TestInstallSystemCountsAPrimaryGroupAccountAsAMember(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -844,9 +832,9 @@ func TestInstallSystemCountsAPrimaryGroupAccountAsAMember(t *testing.T) {
 	assertNoEntries(t, opts.Root)
 }
 
-// TestInstallSystemSkipsTheMemberLookupWhenTheDecisionIsSettled checks that a
-// reinstall is never blocked by a broken member lookup once the administrator
-// named the group or an existing configuration file is kept.
+// TestInstallSystemSkipsTheMemberLookupWhenTheDecisionIsSettled checks that
+// naming the group or keeping an existing configuration file skips the member
+// lookup.
 func TestInstallSystemSkipsTheMemberLookupWhenTheDecisionIsSettled(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -895,8 +883,8 @@ func TestInstallSystemSkipsTheMemberLookupWhenTheDecisionIsSettled(t *testing.T)
 	}
 }
 
-// TestInstallSystemRefusesAGroupRecordedUnderAnotherName guards the record
-// check: only a record naming this group explains its members.
+// TestInstallSystemRefusesAGroupRecordedUnderAnotherName checks that only a
+// record naming this group explains its members.
 func TestInstallSystemRefusesAGroupRecordedUnderAnotherName(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true

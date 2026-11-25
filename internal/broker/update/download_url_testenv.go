@@ -7,9 +7,8 @@ import (
 	"os"
 )
 
-// testAPIOverride reports whether this test build was pointed at a fake update
-// API. The override is the only reason to accept anything but https: that API
-// and its assets are plain HTTP servers on localhost.
+// testAPIOverride reports whether this test build was pointed at a fake API,
+// the only case that accepts anything but https.
 func testAPIOverride() bool {
 	return os.Getenv(testAPIEnv) != ""
 }
@@ -23,8 +22,6 @@ func checkDownloadURL(raw string) error {
 	return strictCheckDownloadURL(raw)
 }
 
-// downloadClient leaves redirect handling untouched only when testAPIEnv names
-// a fake API; otherwise redirects must stay on https, as in a release build.
 func downloadClient(c *http.Client) *http.Client {
 	if testAPIOverride() {
 		return httpClient(c)

@@ -17,8 +17,7 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// The regular pool tests use only fakes, so these limits never come from a
-// real process or a real wait; they describe the pool's configured behaviour.
+// The regular pool tests use only fakes, so these limits describe the pool's configured behaviour rather than a real wait.
 const (
 	poolTestReadyTimeout = 5 * time.Second
 	poolTestRespawnMax   = 30 * time.Second
@@ -27,21 +26,16 @@ const (
 	poolTestBackoffThree = 4 * time.Second
 )
 
-// poolNopWriteCloser stands in for the child's stdin in tests that never use it.
 type poolNopWriteCloser struct{ io.Writer }
 
 func (poolNopWriteCloser) Close() error { return nil }
 
-// poolFakeConn is the helperConn test double. It never talks to a real child.
 type poolFakeConn struct {
-	ready      *helperpb.Ready
-	readyBlock bool
-	ops        *fakeOps
-	done       chan struct{}
-	// reread overrides the fake ops for tests that need to hold one call.
-	reread func(ctx context.Context, s inbox.Session) (inbox.Session, error)
-	// waitReadyFunc replaces the Ready handshake for tests that need to act
-	// while the spawn is waiting for it.
+	ready         *helperpb.Ready
+	readyBlock    bool
+	ops           *fakeOps
+	done          chan struct{}
+	reread        func(ctx context.Context, s inbox.Session) (inbox.Session, error)
 	waitReadyFunc func(ctx context.Context) (*helperpb.Ready, error)
 
 	mu     sync.Mutex
@@ -104,21 +98,18 @@ func (c *poolFakeConn) closedCount() int {
 	return c.closed
 }
 
-// poolHarness builds a Pool whose Start and connect are replaced by fakes.
 type poolHarness struct {
 	t *testing.T
 
-	mu        sync.Mutex
-	pool      *Pool
-	starts    []Account
-	conns     []*poolFakeConn
-	byProc    map[*Process]*poolFakeConn
-	startErr  error
-	readyFn   func(Account) *helperpb.Ready
-	block     bool
-	waitBlock bool
-	// blockFirstReread makes the first spawned helper hold its Reread until the
-	// call context ends; later helpers answer immediately.
+	mu               sync.Mutex
+	pool             *Pool
+	starts           []Account
+	conns            []*poolFakeConn
+	byProc           map[*Process]*poolFakeConn
+	startErr         error
+	readyFn          func(Account) *helperpb.Ready
+	block            bool
+	waitBlock        bool
 	blockFirstReread bool
 	waitReadyFunc    func(ctx context.Context) (*helperpb.Ready, error)
 	waitN            int
@@ -197,8 +188,6 @@ func (h *poolHarness) start(ctx context.Context, acct Account) (*Process, error)
 			return s, nil
 		}
 	}
-	// When waitBlock is set, Wait does not return until Kill is called, so a
-	// test can tell whether Close waited for the child to be reaped.
 	waitReturn := make(chan struct{})
 	var killOnce sync.Once
 	proc := &Process{
@@ -338,7 +327,6 @@ func poolWaitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// nextOffer returns the timer channel the respawn loop is waiting on.
 func (h *poolHarness) nextOffer(t *testing.T) chan time.Time {
 	t.Helper()
 	select {
@@ -357,6 +345,7 @@ func poolMustLookup(t *testing.T, b *Backend, socket string) {
 	}
 }
 
+// TestPoolSpawnsOnFirstUseNotOnAcquire checks that Acquire starts nothing and the first call starts one child.
 func TestPoolSpawnsOnFirstUseNotOnAcquire(t *testing.T) {
 	h := newPoolHarness(t)
 	b, release, err := h.pool.Acquire(context.Background(), 1001)
@@ -378,6 +367,7 @@ func TestPoolSpawnsOnFirstUseNotOnAcquire(t *testing.T) {
 	}
 }
 
+// TestPoolOneHelperPerAccount checks that concurrent first uses of one account share one child while another account gets its own.
 func TestPoolOneHelperPerAccount(t *testing.T) {
 	h := newPoolHarness(t)
 	b1, r1, err := h.pool.Acquire(context.Background(), 1001)
@@ -423,6 +413,7 @@ func TestPoolOneHelperPerAccount(t *testing.T) {
 	}
 }
 
+// TestPoolRejectsWrongIdentity checks that a Ready reporting another uid causes the child to be killed and the call to fail.
 func TestPoolRejectsWrongIdentity(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setReady(func(acct Account) *helperpb.Ready {
@@ -446,6 +437,7 @@ func TestPoolRejectsWrongIdentity(t *testing.T) {
 	}
 }
 
+// TestPoolRejectsVersionMismatch checks that a Ready with a different protocol version causes the child to be killed and the call to fail.
 func TestPoolRejectsVersionMismatch(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setReady(func(acct Account) *helperpb.Ready {
@@ -473,6 +465,7 @@ func TestPoolRejectsVersionMismatch(t *testing.T) {
 	}
 }
 
+// TestPoolReadyTimeout checks that the pool's own Ready timeout kills a child that never becomes ready.
 func TestPoolReadyTimeout(t *testing.T) {
 	const readyTimeout = 100 * time.Millisecond
 	h := newPoolHarness(t, func(o *PoolOptions) {
@@ -485,9 +478,6 @@ func TestPoolReadyTimeout(t *testing.T) {
 	}
 	defer release()
 
-	// The pool's own ready timeout is the assertion. The wait is that timeout
-	// plus the package fallback, so a pool that ignores it fails instead of
-	// hanging the test.
 	done := make(chan error, 1)
 	go func() {
 		_, err := b.Lookup(context.Background(), "/cfg", "/x.sock")
@@ -506,9 +496,7 @@ func TestPoolReadyTimeout(t *testing.T) {
 	}
 }
 
-// TestPoolSpawnFailureIsUnavailable checks that a helper that cannot be started
-// is reported with ErrUnavailable. Registration uses that sentinel to tell a
-// helper failure from a session record that exists but cannot be read.
+// TestPoolSpawnFailureIsUnavailable checks that a helper that cannot be started is reported with ErrUnavailable.
 func TestPoolSpawnFailureIsUnavailable(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setStartErr(errors.New("fork/exec /usr/local/bin/peers: invalid argument"))
@@ -524,10 +512,7 @@ func TestPoolSpawnFailureIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestPoolAccountLookupFailureIsUnavailable checks that a failure to read the
-// account database is reported with ErrUnavailable. The helper cannot be
-// started without the account, so registration must report a helper failure
-// rather than a missing session record.
+// TestPoolAccountLookupFailureIsUnavailable checks that a failed account lookup is reported with ErrUnavailable and no child is started.
 func TestPoolAccountLookupFailureIsUnavailable(t *testing.T) {
 	lookupErr := errors.New("user: lookup uid 1001: temporary failure")
 	h := newPoolHarness(t, func(o *PoolOptions) {
@@ -551,11 +536,7 @@ func TestPoolAccountLookupFailureIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestPoolReadyTimeoutIsUnavailable checks that a helper that never sends its
-// Ready frame is reported with ErrUnavailable. The context is the same one the
-// registration path uses: a short call budget that expires before ReadyTimeout,
-// so the caller's own deadline ends the wait. Without the sentinel the
-// registration reports a missing record instead of a helper that did not start.
+// TestPoolReadyTimeoutIsUnavailable checks that a caller deadline before Ready is reported as unavailable and keeps the deadline reachable.
 func TestPoolReadyTimeoutIsUnavailable(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setBlocking(true)
@@ -565,8 +546,6 @@ func TestPoolReadyTimeoutIsUnavailable(t *testing.T) {
 	}
 	defer release()
 
-	// The caller's own budget is the assertion: it expires before ReadyTimeout,
-	// so the DeadlineExceeded below can only come from the caller's context.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_, err = b.Lookup(ctx, "/cfg", "/x.sock")
@@ -578,10 +557,7 @@ func TestPoolReadyTimeoutIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestPoolReadyCancelIsNotUnavailable checks that a caller's own cancellation
-// while the helper is still starting up is not reported as a helper failure.
-// The helper is not what ended the call, so registration must not turn the
-// cancellation into account_helper_failed.
+// TestPoolReadyCancelIsNotUnavailable checks that a cancellation during the Ready handshake is not reported as a helper failure.
 func TestPoolReadyCancelIsNotUnavailable(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setBlocking(true)
@@ -597,8 +573,6 @@ func TestPoolReadyCancelIsNotUnavailable(t *testing.T) {
 		_, err := b.Lookup(ctx, "/cfg", "/x.sock")
 		errCh <- err
 	}()
-	// Cancel only after the child exists and is being waited for, so the
-	// cancellation ends the Ready handshake rather than the spawn.
 	poolWaitFor(t, "the helper to start", func() bool { return h.startCount() == 1 })
 	cancel()
 
@@ -611,10 +585,7 @@ func TestPoolReadyCancelIsNotUnavailable(t *testing.T) {
 	}
 }
 
-// TestPoolWatchTimeoutIsUnavailable checks that the session-directory watch
-// path reports the same sentinel when the helper never becomes ready. The
-// watch is what fails first during registration, and it must not be mistaken
-// for a record that does not exist either.
+// TestPoolWatchTimeoutIsUnavailable checks that the watch path reports an unavailable helper at the caller deadline.
 func TestPoolWatchTimeoutIsUnavailable(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setBlocking(true)
@@ -624,7 +595,6 @@ func TestPoolWatchTimeoutIsUnavailable(t *testing.T) {
 	}
 	defer release()
 
-	// The caller's own deadline is the assertion for the watch path.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := b.Watch(ctx, "/cfg", func(int) {}); !errors.Is(err, ErrUnavailable) {
@@ -634,9 +604,7 @@ func TestPoolWatchTimeoutIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestPoolDiscardsHelperAfterCallTimeout checks that one call timing out marks
-// the helper bad. A helper that ignores a request while its pipe is not full
-// would otherwise make every later call wait for the full timeout.
+// TestPoolDiscardsHelperAfterCallTimeout checks that a timed-out call kills its helper and the next call starts a new one.
 func TestPoolDiscardsHelperAfterCallTimeout(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setFirstRereadBlocking(true)
@@ -646,7 +614,6 @@ func TestPoolDiscardsHelperAfterCallTimeout(t *testing.T) {
 	}
 	defer release()
 
-	// The caller's own deadline is the assertion for the discarding path too.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if _, err := b.Reread(ctx, inbox.Session{}); !errors.Is(err, context.DeadlineExceeded) {
@@ -662,9 +629,6 @@ func TestPoolDiscardsHelperAfterCallTimeout(t *testing.T) {
 		t.Fatalf("first connection closed = %d, want 1", got)
 	}
 
-	// The next call must start a new helper rather than wait on the old one.
-	// The package fallback bounds the rebuild: a missing rebuild fails at the
-	// call instead of blocking until the test timeout.
 	rebuildCtx, cancelRebuild := context.WithTimeout(context.Background(), processTimeout)
 	defer cancelRebuild()
 	if _, err := b.Reread(rebuildCtx, inbox.Session{}); err != nil {
@@ -675,6 +639,7 @@ func TestPoolDiscardsHelperAfterCallTimeout(t *testing.T) {
 	}
 }
 
+// TestPoolSpawnFailureDeliverIsNotWritten checks that a delivery that cannot start a helper is reported as not written.
 func TestPoolSpawnFailureDeliverIsNotWritten(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setStartErr(errors.New("boom"))
@@ -690,6 +655,7 @@ func TestPoolSpawnFailureDeliverIsNotWritten(t *testing.T) {
 	}
 }
 
+// TestPoolClosesConnWhenUnused checks that releasing the last reference closes and reaps the child and the next use starts a new one.
 func TestPoolClosesConnWhenUnused(t *testing.T) {
 	h := newPoolHarness(t)
 	b, release, err := h.pool.Acquire(context.Background(), 1001)
@@ -717,6 +683,7 @@ func TestPoolClosesConnWhenUnused(t *testing.T) {
 	}
 }
 
+// TestPoolKeepsConnWhileWatching checks that a live watch keeps the connection open and stopping it lets the pool reclaim.
 func TestPoolKeepsConnWhileWatching(t *testing.T) {
 	h := newPoolHarness(t)
 	ctx := context.Background()
@@ -732,8 +699,6 @@ func TestPoolKeepsConnWhileWatching(t *testing.T) {
 	release()
 
 	conn := h.conn(0)
-	// release reclaims synchronously, so no goroutine can close the connection
-	// between here and the check while the watch is still registered.
 	if got := conn.closedCount(); got != 0 {
 		t.Fatalf("connection closed = %d while a watch is active, want 0", got)
 	}
@@ -744,6 +709,7 @@ func TestPoolKeepsConnWhileWatching(t *testing.T) {
 	})
 }
 
+// TestPoolRespawnRestoresWatches checks that after a crash the helper respawns, restores the watch and fires it once with pid 0.
 func TestPoolRespawnRestoresWatches(t *testing.T) {
 	h := newPoolHarness(t)
 	ctx := context.Background()
@@ -790,6 +756,7 @@ func TestPoolRespawnRestoresWatches(t *testing.T) {
 	})
 }
 
+// TestPoolRespawnBackoffDoubles checks that respawn delays double on each failure and reset to the minimum after a success.
 func TestPoolRespawnBackoffDoubles(t *testing.T) {
 	h := newPoolHarness(t)
 	ctx := context.Background()
@@ -815,7 +782,6 @@ func TestPoolRespawnBackoffDoubles(t *testing.T) {
 			t.Fatalf("respawn delay = %v, want %v", got, want)
 		}
 		if i == len(wantDelays)-1 {
-			// Clear the failure before waking the last attempt so it succeeds.
 			h.setStartErr(nil)
 		}
 		offer <- time.Now()
@@ -833,10 +799,11 @@ func TestPoolRespawnBackoffDoubles(t *testing.T) {
 	offer <- time.Now()
 }
 
+// TestPoolCloseWaitsForSpawnInProgress checks that Close cancels an in-progress spawn and still waits for the child to be killed and reaped.
 func TestPoolCloseWaitsForSpawnInProgress(t *testing.T) {
 	h := newPoolHarness(t)
-	h.setBlocking(true)     // WaitReady blocks until the spawn context ends
-	h.setWaitBlocking(true) // Wait returns only after Kill
+	h.setBlocking(true)
+	h.setWaitBlocking(true)
 
 	b, release, err := h.pool.Acquire(context.Background(), 1001)
 	if err != nil {
@@ -877,6 +844,7 @@ func TestPoolCloseWaitsForSpawnInProgress(t *testing.T) {
 	}
 }
 
+// TestPoolCloseWaitsForReclaimInProgress checks that Close waits for a reclamation already under way to kill and reap its child.
 func TestPoolCloseWaitsForReclaimInProgress(t *testing.T) {
 	h := newPoolHarness(t)
 	h.setWaitBlocking(true)
@@ -910,6 +878,7 @@ func TestPoolCloseWaitsForReclaimInProgress(t *testing.T) {
 	}
 }
 
+// TestPoolCloseClosesEveryConn checks that Close closes every account's connection, reaps each child and refuses later Acquires.
 func TestPoolCloseClosesEveryConn(t *testing.T) {
 	h := newPoolHarness(t)
 	ctx := context.Background()
@@ -943,8 +912,7 @@ func TestPoolCloseClosesEveryConn(t *testing.T) {
 	}
 }
 
-// poolSyncBuffer is a log sink the background goroutines can write while the
-// test reads it.
+// poolSyncBuffer is a log sink that background goroutines can write while the test reads.
 type poolSyncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -962,9 +930,7 @@ func (b *poolSyncBuffer) String() string {
 	return b.buf.String()
 }
 
-// poolAccountHelperRecord waits for a record with the given message and decodes
-// the JSON lines the pool's logger wrote. The pool's logger is the Broker's
-// NewLogger in production; a plain JSON handler keeps the message under "msg".
+// poolAccountHelperRecord waits for and decodes the JSON record carrying message.
 func poolAccountHelperRecord(t *testing.T, logs *poolSyncBuffer, message string) map[string]any {
 	t.Helper()
 	poolWaitFor(t, "the "+message+" record", func() bool {
@@ -983,7 +949,6 @@ func poolAccountHelperRecord(t *testing.T, logs *poolSyncBuffer, message string)
 	return nil
 }
 
-// poolLogRecords decodes every JSON line the pool's logger wrote.
 func poolLogRecords(t *testing.T, logs *poolSyncBuffer) []map[string]any {
 	t.Helper()
 	raw := strings.TrimSuffix(logs.String(), "\n")
@@ -1000,8 +965,7 @@ func poolLogRecords(t *testing.T, logs *poolSyncBuffer) []map[string]any {
 	return records
 }
 
-// poolAssertNoHelperWarning fails when any record for an account helper was
-// written at WARN or ERROR.
+// poolAssertNoHelperWarning fails when an account_helper_ record was written at WARN or ERROR.
 func poolAssertNoHelperWarning(t *testing.T, logs *poolSyncBuffer) {
 	t.Helper()
 	for _, rec := range poolLogRecords(t, logs) {
@@ -1015,10 +979,7 @@ func poolAssertNoHelperWarning(t *testing.T, logs *poolSyncBuffer) {
 	}
 }
 
-// TestPoolStoppingHelperExitIsNotAnError reproduces a service stop: the
-// Broker's signal context ends and the helper goes away at the same time. That
-// exit belongs to the stop, not to a failure, so no account_helper_ record may
-// be logged at ERROR or WARN, and the helper must not be respawned.
+// TestPoolStoppingHelperExitIsNotAnError checks that a helper exit during a Broker stop logs nothing at WARN or ERROR and is not respawned.
 func TestPoolStoppingHelperExitIsNotAnError(t *testing.T) {
 	var logs poolSyncBuffer
 	stop := make(chan struct{})
@@ -1034,8 +995,6 @@ func TestPoolStoppingHelperExitIsNotAnError(t *testing.T) {
 	defer release()
 	poolMustLookup(t, b, "/sock")
 
-	// A watch keeps the pool interested in the helper, so a respawn is possible
-	// and the test exercises the same state a service stop reaches.
 	stopWatch, err := b.Watch(ctx, "/cfg", func(int) {})
 	if err != nil {
 		t.Fatalf("Watch: %v", err)
@@ -1044,8 +1003,7 @@ func TestPoolStoppingHelperExitIsNotAnError(t *testing.T) {
 
 	close(stop)
 	h.conn(0).crash()
-	// watchLive is counted in the child group, so waiting for the group to
-	// drain means every line it writes has been written before it is read.
+	// watchLive is counted in the child group, so draining it means every line it writes has been written.
 	h.pool.children.closeAndWait()
 
 	poolAssertNoHelperWarning(t, &logs)
@@ -1057,9 +1015,7 @@ func TestPoolStoppingHelperExitIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestPoolHelperExitAfterCloseIsInfo covers a helper exit observed after Close
-// started, with no Stopping channel configured, which is the self-update path.
-// Close closes closeCh, and stoppingNow must treat that as a stop.
+// TestPoolHelperExitAfterCloseIsInfo checks that a helper exit after Close started counts as a stop even without a Stopping channel.
 func TestPoolHelperExitAfterCloseIsInfo(t *testing.T) {
 	var logs poolSyncBuffer
 	p := NewPool(PoolOptions{Logger: slog.New(slog.NewJSONHandler(&logs, nil))})
@@ -1067,7 +1023,6 @@ func TestPoolHelperExitAfterCloseIsInfo(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Close has returned, so a later Add only balances watchLive's done.
 	p.children.wg.Add(1)
 	conn := &poolFakeConn{done: make(chan struct{}), ops: &fakeOps{}}
 	live := &liveHelper{
@@ -1086,8 +1041,7 @@ func TestPoolHelperExitAfterCloseIsInfo(t *testing.T) {
 	}
 }
 
-// TestPoolUnexpectedHelperExitIsAnError keeps an exit outside a stop at the
-// error level.
+// TestPoolUnexpectedHelperExitIsAnError checks that a helper exit outside a stop is logged at ERROR.
 func TestPoolUnexpectedHelperExitIsAnError(t *testing.T) {
 	var logs poolSyncBuffer
 	h := newPoolHarness(t, func(o *PoolOptions) {
@@ -1108,11 +1062,7 @@ func TestPoolUnexpectedHelperExitIsAnError(t *testing.T) {
 	}
 }
 
-// TestDetachLiveIgnoresARemovedHelper covers a late detach for a helper the
-// account already lost: reclamation or Close removes it first, and the goroutine
-// watching its connection reaches detachLive afterwards, by which time a new
-// helper may already be current. The late detach must report false and leave the
-// new helper and its watches alone.
+// TestDetachLiveIgnoresARemovedHelper checks that a late detach of a replaced helper reports false and leaves the current child and its watches alone.
 func TestDetachLiveIgnoresARemovedHelper(t *testing.T) {
 	st := &helperState{uid: 1001, watches: make(map[uint64]*poolWatch)}
 	stale := &liveHelper{conn: &poolFakeConn{done: make(chan struct{})}}

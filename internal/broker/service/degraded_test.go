@@ -14,8 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// fakeLocal answers Hello and Status on a temporary local socket, standing in
-// for a running Broker.
 type fakeLocal struct {
 	localpb.UnimplementedLocalServer
 	degraded *localpb.DegradedState
@@ -43,9 +41,8 @@ func startFakeLocal(t *testing.T, degraded *localpb.DegradedState) string {
 	return sock
 }
 
-// shortProbeSocket keeps the Unix socket path under the sun_path limit. On
-// macOS t.TempDir plus the test name can exceed it, and bind then fails with
-// EINVAL.
+// shortProbeSocket keeps the Unix socket path under the sun_path limit, which
+// t.TempDir plus the test name can exceed on macOS.
 func shortProbeSocket(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "broker.sock")
@@ -60,6 +57,8 @@ func shortProbeSocket(t *testing.T) string {
 	return filepath.Join(dir, "broker.sock")
 }
 
+// TestStatusProbeNormal checks that the status probe reports a normal Broker as
+// not degraded.
 func TestStatusProbeNormal(t *testing.T) {
 	sock := startFakeLocal(t, nil)
 
@@ -75,6 +74,8 @@ func TestStatusProbeNormal(t *testing.T) {
 	}
 }
 
+// TestStatusProbeLocalOnly checks that the status probe returns a local-only
+// degraded state unchanged.
 func TestStatusProbeLocalOnly(t *testing.T) {
 	sock := startFakeLocal(t, &localpb.DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_LOCAL_ONLY,
@@ -101,6 +102,8 @@ func TestStatusProbeLocalOnly(t *testing.T) {
 	}
 }
 
+// TestStatusProbeDiagnosticsOnly checks that the status probe returns a
+// diagnostics-only degraded state unchanged.
 func TestStatusProbeDiagnosticsOnly(t *testing.T) {
 	sock := startFakeLocal(t, &localpb.DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY,
@@ -127,6 +130,8 @@ func TestStatusProbeDiagnosticsOnly(t *testing.T) {
 	}
 }
 
+// TestStatusProbeNoAnswer checks that the status probe fails when nothing
+// answers on the socket.
 func TestStatusProbeNoAnswer(t *testing.T) {
 	sock := filepath.Join(t.TempDir(), "not-listening.sock")
 
@@ -142,6 +147,8 @@ func TestStatusProbeNoAnswer(t *testing.T) {
 	}
 }
 
+// TestStatusProbeRejectsForeignPeer checks that the status probe rejects a
+// socket served by another account.
 func TestStatusProbeRejectsForeignPeer(t *testing.T) {
 	sock := startFakeLocal(t, nil)
 	me := uint32(os.Geteuid())
@@ -160,6 +167,8 @@ func TestStatusProbeRejectsForeignPeer(t *testing.T) {
 	}
 }
 
+// TestStatusPeerAllowed checks which accounts may answer the status probe on
+// system and user sockets.
 func TestStatusPeerAllowed(t *testing.T) {
 	me := uint32(os.Geteuid())
 	foreign := me + 1
@@ -185,6 +194,8 @@ func TestStatusPeerAllowed(t *testing.T) {
 	}
 }
 
+// TestDegradedErrorIncludesReason checks that DegradedError.Error names the
+// level and reason.
 func TestDegradedErrorIncludesReason(t *testing.T) {
 	err := (&DegradedError{State: DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY,
@@ -198,6 +209,8 @@ func TestDegradedErrorIncludesReason(t *testing.T) {
 	}
 }
 
+// TestDegradedErrorWithoutReason checks that DegradedError.Error without a
+// reason is a non-empty sentence without a dangling colon.
 func TestDegradedErrorWithoutReason(t *testing.T) {
 	err := (&DegradedError{})
 	if got := err.Error(); got == "" || strings.HasSuffix(got, ": ") {
@@ -205,6 +218,8 @@ func TestDegradedErrorWithoutReason(t *testing.T) {
 	}
 }
 
+// TestDefaultOptionsSetsStatusProbe checks that DefaultOptions installs a status
+// probe that returns the fake Broker's state.
 func TestDefaultOptionsSetsStatusProbe(t *testing.T) {
 	opts, err := DefaultOptions(false)
 	if err != nil {

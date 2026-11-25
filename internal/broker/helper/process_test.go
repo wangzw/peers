@@ -19,18 +19,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// processTimeout is the package-wide fallback for a wait on a helper child,
-// whether it is a real process or a scripted child on a goroutine. It only
-// decides how long a wait that will never complete takes to fail: the success
-// path selects on the child's exit or pipe traffic and never spends this time,
-// so a larger value costs nothing. Thirty seconds is far above the worst
-// normal latency under load; it is not a claim that a child should take that
-// long.
+// processTimeout is the fallback for a wait that will never complete; the success path never spends it, so a larger value costs nothing.
 const processTimeout = 30 * time.Second
 
-// testRoleEnv returns the parent environment with PEERS_TEST_HELPER_ROLE
-// set to role, so the re-executed test binary takes the matching branch in
-// TestMain.
 func testRoleEnv(role string) []string {
 	env := make([]string, 0, len(os.Environ())+1)
 	for _, kv := range os.Environ() {
@@ -42,7 +33,6 @@ func testRoleEnv(role string) []string {
 	return append(env, "PEERS_TEST_HELPER_ROLE="+role)
 }
 
-// testRoleProcess is one real child running a helper role.
 type testRoleProcess struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -53,8 +43,6 @@ type testRoleProcess struct {
 	waitErr   error
 }
 
-// startTestRole re-executes the test binary as role. The child is killed and
-// reaped by t.Cleanup when the test ends.
 func startTestRole(t *testing.T, role string) *testRoleProcess {
 	t.Helper()
 	exe, err := os.Executable()
@@ -84,19 +72,15 @@ func startTestRole(t *testing.T, role string) *testRoleProcess {
 	return p
 }
 
-// closeStdin tells the child that no more requests follow.
 func (p *testRoleProcess) closeStdin() {
 	p.stdinOnce.Do(func() { _ = p.stdin.Close() })
 }
 
-// wait reaps the child once, so the test and the cleanup can both ask for the
-// exit status without racing each other.
 func (p *testRoleProcess) wait() error {
 	p.waitOnce.Do(func() { p.waitErr = p.cmd.Wait() })
 	return p.waitErr
 }
 
-// waitWithin reaps the child, failing the test if it does not exit in time.
 func (p *testRoleProcess) waitWithin(t *testing.T) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -114,7 +98,6 @@ func (p *testRoleProcess) waitWithin(t *testing.T) error {
 	}
 }
 
-// testContext returns a context bounded by processTimeout.
 func testContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), processTimeout)
@@ -122,8 +105,6 @@ func testContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// newProcessSession writes a session record without binding a socket, so a
-// helper child can look it up from the filesystem.
 func newProcessSession(t *testing.T, name, status string) *fakesession.Fake {
 	t.Helper()
 	return fakesession.New(t, fakesession.Options{
@@ -134,8 +115,6 @@ func newProcessSession(t *testing.T, name, status string) *fakesession.Fake {
 	})
 }
 
-// startAccountHelperClient starts the real account-helper child and connects a
-// Client to it.
 func startAccountHelperClient(t *testing.T) (*Client, *testRoleProcess) {
 	t.Helper()
 	child := startTestRole(t, "account-helper")
@@ -144,6 +123,7 @@ func startAccountHelperClient(t *testing.T) (*Client, *testRoleProcess) {
 	return client, child
 }
 
+// TestProcessHelperLookupRoundTrip checks that a real helper child reports its identity and returns a session record's fields.
 func TestProcessHelperLookupRoundTrip(t *testing.T) {
 	fake := newProcessSession(t, "worker", "busy")
 	client, _ := startAccountHelperClient(t)
@@ -181,6 +161,7 @@ func TestProcessHelperLookupRoundTrip(t *testing.T) {
 	}
 }
 
+// TestProcessHelperErrorPropagates checks that a missing record is reported as inbox.ErrNoRecord by both Lookup and Reread.
 func TestProcessHelperErrorPropagates(t *testing.T) {
 	client, _ := startAccountHelperClient(t)
 	ctx := testContext(t)
@@ -200,10 +181,8 @@ func TestProcessHelperErrorPropagates(t *testing.T) {
 	}
 }
 
+// TestProcessHelperFramingAcrossPipeBuffer checks that messages above one pipe buffer round-trip whole in both directions.
 func TestProcessHelperFramingAcrossPipeBuffer(t *testing.T) {
-	// A message above the kernel pipe buffer must be reassembled by the child
-	// when it spans several reads, and a reply of the same size must arrive
-	// whole on this side.
 	const size = 128 << 10
 	name := strings.Repeat("n", size)
 	fake := newProcessSession(t, name, "idle")
@@ -221,8 +200,6 @@ func TestProcessHelperFramingAcrossPipeBuffer(t *testing.T) {
 		t.Fatalf("Name has %d bytes, want the %d-byte record name", len(sess.Name), size)
 	}
 
-	// Reread carries a session whose Name is also far above one pipe buffer,
-	// though the child only uses PID and ConfigDir.
 	got, err := client.Reread(ctx, inbox.Session{
 		ConfigDir:  fake.ConfigDir(),
 		PID:        fake.PID(),
@@ -237,9 +214,8 @@ func TestProcessHelperFramingAcrossPipeBuffer(t *testing.T) {
 	}
 }
 
+// TestProcessHelperPipelinedRequests checks that concurrent requests over one pipe each get their own response.
 func TestProcessHelperPipelinedRequests(t *testing.T) {
-	// Several requests share one pipe at once; every response must carry its
-	// own id and data.
 	const requests = 8
 	fakes := make([]*fakesession.Fake, requests)
 	for i := range fakes {
@@ -276,6 +252,7 @@ func TestProcessHelperPipelinedRequests(t *testing.T) {
 	}
 }
 
+// TestProcessHelperGoneAfterExit checks that a clean child exit is observed and later calls report the helper gone.
 func TestProcessHelperGoneAfterExit(t *testing.T) {
 	client, child := startAccountHelperClient(t)
 	ctx := testContext(t)
@@ -283,8 +260,6 @@ func TestProcessHelperGoneAfterExit(t *testing.T) {
 		t.Fatalf("WaitReady: %v", err)
 	}
 
-	// Closing stdin makes the child take a clean EOF, exit, and close its
-	// stdout; the client then observes the end of the connection.
 	child.closeStdin()
 	select {
 	case <-client.Done():
@@ -304,6 +279,7 @@ func TestProcessHelperGoneAfterExit(t *testing.T) {
 	}
 }
 
+// TestProcessPoolUsesRealChild checks that a Pool over a real child serves a lookup.
 func TestProcessPoolUsesRealChild(t *testing.T) {
 	fake := newProcessSession(t, "pooled", "idle")
 	pool := NewPool(PoolOptions{
@@ -332,8 +308,6 @@ func TestProcessPoolUsesRealChild(t *testing.T) {
 	}
 }
 
-// testRoleStart returns a PoolOptions.Start function that runs the test binary
-// in role.
 func testRoleStart(t *testing.T, role string) func(context.Context, Account) (*Process, error) {
 	return func(context.Context, Account) (*Process, error) {
 		child := startTestRole(t, role)
@@ -346,6 +320,7 @@ func testRoleStart(t *testing.T, role string) func(context.Context, Account) (*P
 	}
 }
 
+// TestProcessAccessCheckAllowedAndDenied checks that the access-check child allows the same read-only (0400) file for read and refuses it for write.
 func TestProcessAccessCheckAllowedAndDenied(t *testing.T) {
 	skipUnlessAccessChecksAreMeaningful(t)
 
@@ -381,8 +356,6 @@ func TestProcessAccessCheckAllowedAndDenied(t *testing.T) {
 	}
 }
 
-// runAccessCheckChild feeds one request to a real access-check child and
-// decodes its response.
 func runAccessCheckChild(t *testing.T, req *helperpb.AccessCheckRequest) *helperpb.AccessCheckResponse {
 	t.Helper()
 	child := startTestRole(t, "access-check")

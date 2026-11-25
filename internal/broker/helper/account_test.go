@@ -52,6 +52,8 @@ func TestLookupAccountMissingGroupsIsNoAccount(t *testing.T) {
 	}
 }
 
+// TestLookupAccountTemporaryFailureIsNotMissing checks that a failed group
+// lookup is an error, not ErrNoAccount.
 func TestLookupAccountTemporaryFailureIsNotMissing(t *testing.T) {
 	oldUID, oldGroups := lookupUIDFromDB, groupIDsFromDB
 	t.Cleanup(func() { lookupUIDFromDB, groupIDsFromDB = oldUID, oldGroups })
@@ -72,6 +74,8 @@ func TestLookupAccountTemporaryFailureIsNotMissing(t *testing.T) {
 	}
 }
 
+// TestLookupAccountMissingUIDIsNoAccount checks that a uid the account database
+// does not have maps to ErrNoAccount.
 func TestLookupAccountMissingUIDIsNoAccount(t *testing.T) {
 	old := lookupUIDFromDB
 	t.Cleanup(func() { lookupUIDFromDB = old })
@@ -86,6 +90,8 @@ func TestLookupAccountMissingUIDIsNoAccount(t *testing.T) {
 	}
 }
 
+// TestLookupAccountCurrentUser checks the entry LookupAccount returns for this
+// process's uid.
 func TestLookupAccountCurrentUser(t *testing.T) {
 	uid := uint32(os.Getuid())
 	acct, err := LookupAccount(uid)
@@ -106,6 +112,7 @@ func TestLookupAccountCurrentUser(t *testing.T) {
 	}
 }
 
+// TestLookupAccountUnknownUID checks that an unused uid maps to ErrNoAccount.
 func TestLookupAccountUnknownUID(t *testing.T) {
 	const first, last = uint32(0x7ffffff0), uint32(0x7ffffffe)
 	for uid := first; uid <= last; uid++ {
@@ -121,6 +128,8 @@ func TestLookupAccountUnknownUID(t *testing.T) {
 	t.Skip("every probed uid exists in the account database")
 }
 
+// TestAccountCommandEnvironmentIsMinimal checks that the helper child gets only
+// HOME, USER, LOGNAME and PATH and runs from /.
 func TestAccountCommandEnvironmentIsMinimal(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "/run/user/0")
 	t.Setenv("TMPDIR", "/tmp/root")
@@ -148,6 +157,8 @@ func TestAccountCommandEnvironmentIsMinimal(t *testing.T) {
 	}
 }
 
+// TestAccountCommandSelfHasNoCredential checks that no credential change is
+// made for the Broker's own account.
 func TestAccountCommandSelfHasNoCredential(t *testing.T) {
 	euid := uint32(os.Geteuid())
 

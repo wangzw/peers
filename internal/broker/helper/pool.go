@@ -17,12 +17,17 @@ import (
 
 // Process is one started helper child.
 type Process struct {
-	Stdin  io.WriteCloser
+	// Stdin is the child's standard input.
+	Stdin io.WriteCloser
+	// Stdout is the child's standard output.
 	Stdout io.Reader
-	Wait   func() error // reaps the child
-	Kill   func() error
+	// Wait reaps the child.
+	Wait func() error
+	// Kill terminates the child.
+	Kill func() error
 }
 
+// PoolOptions configures a Pool; zero fields take the defaults noted here.
 type PoolOptions struct {
 	Exe          string                                                    // required unless Start is set
 	Lookup       func(uid uint32) (Account, error)                         // default LookupAccount
@@ -32,12 +37,10 @@ type PoolOptions struct {
 	RespawnMax   time.Duration                                             // default 30s
 	After        func(d time.Duration) <-chan time.Time                    // default time.After
 	Logger       *slog.Logger                                              // default slog.Default()
-	// Stopping is closed when the process starts to shut down. A helper that
-	// exits while it is closed is stopping with the Broker, not failing.
+	// Stopping is closed when the process starts to shut down; a helper that exits then is stopping with the Broker, not failing.
 	Stopping <-chan struct{}
 }
 
-// helperConn is the parent side of one helper connection; *Client implements it.
 type helperConn interface {
 	WaitReady(ctx context.Context) (*helperpb.Ready, error)
 	Lookup(ctx context.Context, configDir, socketPath string) (inbox.Session, error)
@@ -50,12 +53,8 @@ type helperConn interface {
 
 var _ helperConn = (*Client)(nil)
 
-// errPoolClosed is returned by Acquire and by every backend call once Close
-// has started.
 var errPoolClosed = errors.New("the helper pool is closed")
 
-// reapTimeout is how long a child gets to exit after its stdin is closed
-// before it is killed.
 const reapTimeout = 2 * time.Second
 
 // Pool supervises one account helper process per account.
@@ -72,8 +71,7 @@ type Pool struct {
 	children    childGroup // every goroutine that still owns a child process
 }
 
-// childGroup makes Close's wait race-free with late additions: add refuses
-// once closeAndWait has started, so no child can be left behind.
+// childGroup makes Close's wait race-free with late additions: add refuses once closeAndWait has started, so no child is left behind.
 type childGroup struct {
 	mu     sync.Mutex
 	closed bool
@@ -99,8 +97,7 @@ func (g *childGroup) closeAndWait() {
 	g.wg.Wait()
 }
 
-// liveHelper is one running child together with its connection. wait reaps the
-// child exactly once, whichever goroutine gets there first.
+// liveHelper is one running child and its connection; wait reaps the child exactly once whichever goroutine asks first.
 type liveHelper struct {
 	conn helperConn
 	proc *Process
@@ -125,9 +122,7 @@ func (l *liveHelper) killAndWait() {
 	_ = l.wait()
 }
 
-// poolWatch is one Backend.Watch subscription. The mutex also gives stop its
-// guarantee: fire holds it while calling onChange, so once stop has set
-// stopped no callback is running or will start.
+// poolWatch is one Backend.Watch subscription; fire holds mu while calling onChange, so once stop has set stopped no callback is running or will start.
 type poolWatch struct {
 	id        uint64
 	configDir string
@@ -148,9 +143,7 @@ func (e *poolWatch) fire(pid int) {
 	e.onChange(pid)
 }
 
-// detach marks the entry stopped and returns the stop of the connection it is
-// currently attached to, if any. The caller invokes the returned function
-// after releasing the lock.
+// detach marks the entry stopped and returns the stop of the connection it is attached to, to be invoked after the lock is released.
 func (e *poolWatch) detach() func() {
 	e.mu.Lock()
 	e.stopped = true
@@ -161,13 +154,10 @@ func (e *poolWatch) detach() func() {
 	return stop
 }
 
-// helperState is everything the pool tracks for one account.
 type helperState struct {
 	uid uint32
 
-	// spawnMu serialises process creation for this account; it is held across
-	// Lookup, Start and the Ready handshake so concurrent first uses share one
-	// child.
+	// spawnMu is held across Lookup, Start and the Ready handshake so concurrent first uses share one child.
 	spawnMu sync.Mutex
 
 	mu        sync.Mutex
@@ -178,14 +168,13 @@ type helperState struct {
 	nextWatch uint64
 	backoff   time.Duration
 
-	// respawn holds the token of the respawn loop that currently owns this
-	// account, or nil. Token identity keeps a finishing loop from clearing the
-	// token of a newer one.
+	// respawn holds the token of the respawn loop that owns this account, or nil; token identity keeps a finishing loop from clearing a newer one.
 	respawn *respawnRun
 }
 
 type respawnRun struct{}
 
+// NewPool returns a Pool that starts helpers with opts, filling in defaults for zero fields.
 func NewPool(opts PoolOptions) *Pool {
 	if opts.Lookup == nil {
 		opts.Lookup = LookupAccount
@@ -231,10 +220,7 @@ func NewPool(opts PoolOptions) *Pool {
 	return p
 }
 
-// stoppingNow reports whether the Broker has begun to shut down, either
-// because Close has started or because the process context passed as Stopping
-// has ended. A helper that exits or writes a cancellation line while this is
-// true is stopping with the Broker, not failing.
+// stoppingNow reports whether Close has started or the Stopping channel has ended; a helper that exits then is stopping with the Broker, not failing.
 func (p *Pool) stoppingNow() bool {
 	select {
 	case <-p.closeCh:
@@ -251,19 +237,13 @@ func (p *Pool) stoppingNow() bool {
 	return false
 }
 
-// startHelperProcess runs exe's hidden account-helper subcommand as acct and
-// connects the child's standard streams to pipes.
 func startHelperProcess(exe string, acct Account, log *slog.Logger, stopping func() bool) (*Process, error) {
 	return startHelperProcessArgs(exe, []string{"internal", "account-helper"}, acct, log, stopping)
 }
 
-// helperPipe creates one of the two pipes that connect a helper's standard
-// streams to the Broker. It is a variable so tests can make creation fail,
-// which a normal start only meets under file-descriptor exhaustion.
+// helperPipe is a variable so tests can make pipe creation fail.
 var helperPipe = os.Pipe
 
-// startHelperProcessArgs is startHelperProcess with the subcommand arguments
-// spelled out, so tests can exercise the same standard-stream wiring.
 func startHelperProcessArgs(exe string, args []string, acct Account, log *slog.Logger, stopping func() bool) (*Process, error) {
 	cmd := accountCommand(exe, args, acct)
 	stdinR, stdinW, err := helperPipe()
@@ -278,9 +258,7 @@ func startHelperProcessArgs(exe string, args []string, acct Account, log *slog.L
 		return nil, err
 	}
 	cmd.Stdout = stdoutW
-	// The helper's stderr is a pipe read by the Broker, not the Broker's own
-	// stderr: a helper must not write into the service log as if it were the
-	// Broker, and its output is only useful with the account it belongs to.
+	// The helper's stderr goes through helperStderr, never the Broker's own stderr, so its output carries the account.
 	stderr := newHelperStderr(log, acct.UID, stopping)
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
@@ -290,8 +268,7 @@ func startHelperProcessArgs(exe string, args []string, acct Account, log *slog.L
 		_ = stdoutW.Close()
 		return nil, err
 	}
-	// The child holds its own copies now. Closing the parent's copies lets EOF
-	// travel between the two sides.
+	// Close the parent's copies so EOF can travel between the two sides.
 	_ = stdinR.Close()
 	_ = stdoutW.Close()
 	return &Process{
@@ -376,14 +353,11 @@ func (p *Pool) Close() error {
 			p.reap(live)
 		}
 	}
-	// Spawns and reclamations still in progress own children the state sweep
-	// above could not see. Wait for every one of them to be reaped.
+	// Spawns and reclamations in progress own children the sweep above cannot see, so wait for them too.
 	p.children.closeAndWait()
 	return nil
 }
 
-// reap closes the connection, waits up to two seconds for the child to exit,
-// and kills it if it has not.
 func (p *Pool) reap(live *liveHelper) {
 	done := make(chan struct{})
 	go func() {
@@ -401,8 +375,7 @@ func (p *Pool) reap(live *liveHelper) {
 	}
 }
 
-// maybeReclaimLocked closes the connection of st when nothing uses it any
-// more. st.mu must be held.
+// maybeReclaimLocked closes st's connection when nothing uses it; st.mu must be held.
 func (p *Pool) maybeReclaimLocked(st *helperState) {
 	if p.closed.Load() || st.live == nil {
 		return
@@ -410,9 +383,7 @@ func (p *Pool) maybeReclaimLocked(st *helperState) {
 	if st.refs > 0 || st.inflight > 0 || len(st.watches) > 0 {
 		return
 	}
-	// Count the reaper before detaching the child: if the pool is closing, the
-	// Close sweep must still be able to find the live child, and if it is not,
-	// Close must wait for this goroutine's child to be reaped.
+	// Count the reaper before detaching the child so Close sees either the live child or a pending reap.
 	if !p.children.add() {
 		return
 	}
@@ -424,9 +395,7 @@ func (p *Pool) maybeReclaimLocked(st *helperState) {
 	}()
 }
 
-// ensureLive returns the account's running child, starting one when there is
-// none. Spawn attempt, Ready handshake and identity checks all happen while
-// holding st.spawnMu, so concurrent callers observe one child.
+// ensureLive returns the account's running child, starting one when there is none; the spawn, Ready handshake and identity checks all run under st.spawnMu.
 func (p *Pool) ensureLive(ctx context.Context, st *helperState) (*liveHelper, error) {
 	st.spawnMu.Lock()
 	defer st.spawnMu.Unlock()
@@ -445,9 +414,7 @@ func (p *Pool) ensureLive(ctx context.Context, st *helperState) (*liveHelper, er
 	if err := ctx.Err(); err != nil {
 		return nil, deadlineUnavailable(ctx)
 	}
-	// Count the child before it exists, not after Ready: Close must wait for a
-	// spawn that is still in progress, and it cancels closeCtx so a well-behaved
-	// Start or Ready wait gives up instead of holding Close for ReadyTimeout.
+	// Count the child before it exists so Close waits for a spawn in progress and cancels it through closeCtx.
 	if !p.children.add() {
 		return nil, errPoolClosed
 	}
@@ -465,8 +432,7 @@ func (p *Pool) ensureLive(ctx context.Context, st *helperState) (*liveHelper, er
 
 	acct, err := p.opts.Lookup(st.uid)
 	if err != nil {
-		// The helper cannot be started without the account, so this is a helper
-		// failure for registration, not a session record that is missing.
+		// Without the account the helper cannot start, so this is a helper failure, not a missing session record.
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	proc, err := p.opts.Start(spawnCtx, acct)
@@ -476,12 +442,10 @@ func (p *Pool) ensureLive(ctx context.Context, st *helperState) (*liveHelper, er
 		}
 		if ctx.Err() != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				// The deadline bounds the helper, so a child that did not start
-				// within it is a helper failure. Keep both errors reachable.
+				// The deadline bounds the helper, so a child that did not start within it is a helper failure.
 				return nil, fmt.Errorf("%w: %w", ErrUnavailable, errors.Join(ctx.Err(), err))
 			}
-			// The caller cancelled while the child was being started; that is
-			// not the helper failing.
+			// The caller cancelled while the child was starting, which is not the helper failing.
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
@@ -513,13 +477,9 @@ func (p *Pool) ensureLive(ctx context.Context, st *helperState) (*liveHelper, er
 		case p.closed.Load():
 			err = errPoolClosed
 		case ctx.Err() != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded):
-			// The caller cancelled while the helper was starting up; that is
-			// not the helper failing.
+			// The caller cancelled while the helper was starting, which is not the helper failing.
 		default:
-			// A helper that never became ready, spoke a different protocol or
-			// reported the wrong identity could not be put to use. A deadline
-			// that ended the wait belongs here too: it bounds the helper, so
-			// the helper did not start in time.
+			// A helper that never became ready or reported the wrong identity is a helper failure, and a deadline that ended the wait belongs here too.
 			err = fmt.Errorf("%w: %w", ErrUnavailable, err)
 		}
 		live.killAndWait()
@@ -542,15 +502,12 @@ func (p *Pool) ensureLive(ctx context.Context, st *helperState) (*liveHelper, er
 	return live, nil
 }
 
-// watchLive logs an unexpected child exit, detaches its watches and starts the
-// respawn loop when any watch still needs the child.
 func (p *Pool) watchLive(st *helperState, live *liveHelper) {
 	defer p.children.done()
 	<-live.conn.Done()
 
 	watches, ok := detachLive(st, live)
 	if !ok {
-		// Closed by reclamation or by Pool.Close.
 		return
 	}
 
@@ -562,12 +519,8 @@ func (p *Pool) watchLive(st *helperState, live *liveHelper) {
 	}
 	p.opts.Logger.Error("account_helper_exited", "uid", st.uid, "err", err)
 	if watches > 0 {
-		// Close can begin between the check above and this point. A respawn
-		// started now would find the pool closed and do nothing, so check
-		// again instead of launching a loop into a closing pool. What remains
-		// is the window between the first check and the Error above, where the
-		// record is written without a lock shared with Close; overlapping that
-		// window would still leave one Error record for a normal exit.
+		// A Close can begin between the check above and this point and overlap the Error record, which shares no lock with Close; that overlap still leaves one record.
+		// Check again before starting the respawn loop: a loop started into a closing pool would do nothing.
 		if p.stoppingNow() {
 			return
 		}
@@ -575,9 +528,6 @@ func (p *Pool) watchLive(st *helperState, live *liveHelper) {
 	}
 }
 
-// discardLive drops a helper whose call hit its deadline. The helper is marked
-// bad, the watches attached to it are detached and the respawn loop restores
-// them; with no watch registered, the next call starts a fresh helper.
 func (p *Pool) discardLive(st *helperState, live *liveHelper) {
 	watches, ok := detachLive(st, live)
 	if !ok {
@@ -590,9 +540,6 @@ func (p *Pool) discardLive(st *helperState, live *liveHelper) {
 	}
 }
 
-// detachLive removes live from the account's state while it is still the
-// current child, and detaches every watch attached to its connection. It
-// reports how many watches remain, and false when live was already gone.
 func detachLive(st *helperState, live *liveHelper) (watches int, ok bool) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -611,7 +558,6 @@ func detachLive(st *helperState, live *liveHelper) (watches int, ok bool) {
 	return len(st.watches), true
 }
 
-// startRespawn launches the account's respawn loop unless one already runs.
 func (p *Pool) startRespawn(st *helperState) {
 	p.mu.Lock()
 	if p.closed.Load() {
@@ -638,8 +584,6 @@ func (p *Pool) startRespawn(st *helperState) {
 	go p.respawnLoop(st, tok)
 }
 
-// respawnLoop retries the spawn with exponential backoff and, once a child is
-// up, restores every watch and asks the Broker to reread with pid 0.
 func (p *Pool) respawnLoop(st *helperState, tok *respawnRun) {
 	defer p.children.done()
 	defer func() {
@@ -690,8 +634,7 @@ func (p *Pool) respawnLoop(st *helperState, tok *respawnRun) {
 			continue
 		}
 
-		// Give up ownership before restoring so a crash during the restore
-		// can start a fresh loop.
+		// Give up ownership before restoring so a crash during the restore can start a fresh loop.
 		st.mu.Lock()
 		if st.respawn == tok {
 			st.respawn = nil
@@ -705,8 +648,7 @@ func (p *Pool) respawnLoop(st *helperState, tok *respawnRun) {
 	}
 }
 
-// restoreWatches reattaches the account's watches to a new connection and then
-// fires each one with pid 0 so the Broker rereads in full.
+// restoreWatches reattaches the account's watches to a new connection and fires each with pid 0 so the Broker rereads in full.
 func (p *Pool) restoreWatches(st *helperState, live *liveHelper) {
 	st.mu.Lock()
 	entries := make([]*poolWatch, 0, len(st.watches))
@@ -756,8 +698,6 @@ type Backend struct {
 	state *helperState
 }
 
-// invoke runs fn on the account's current connection, with the in-flight
-// counter held across the call, spawning on demand.
 func (b *Backend) invoke(ctx context.Context, fn func(helperConn) error) (spawnFailed bool, err error) {
 	st := b.state
 	st.mu.Lock()
@@ -787,15 +727,14 @@ func (b *Backend) invoke(ctx context.Context, fn func(helperConn) error) (spawnF
 	b.pool.maybeReclaimLocked(st)
 	st.mu.Unlock()
 
-	// The call's deadline can end while the helper is still working with room
-	// left in the pipe, and every later call would pay the same timeout. Drop
-	// this helper so the next call starts a fresh one.
+	// A call deadline can expire while the helper still works, so drop the helper and let the next call start a fresh one.
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		b.pool.discardLive(st, live)
 	}
 	return false, err
 }
 
+// Lookup returns the session whose record carries socketPath.
 func (b *Backend) Lookup(ctx context.Context, configDir, socketPath string) (inbox.Session, error) {
 	var s inbox.Session
 	_, err := b.invoke(ctx, func(c helperConn) error {
@@ -806,6 +745,9 @@ func (b *Backend) Lookup(ctx context.Context, configDir, socketPath string) (inb
 	return s, err
 }
 
+// Reread returns the current record of s, reporting inbox.ErrNoRecord or
+// inbox.ErrPartial for the record and a spawn failure wrapping ErrUnavailable;
+// it returns errPoolClosed after Close.
 func (b *Backend) Reread(ctx context.Context, s inbox.Session) (inbox.Session, error) {
 	var out inbox.Session
 	_, err := b.invoke(ctx, func(c helperConn) error {
@@ -816,6 +758,10 @@ func (b *Backend) Reread(ctx context.Context, s inbox.Session) (inbox.Session, e
 	return out, err
 }
 
+// Watch reports changes under configDir through onChange and returns a function
+// that stops it; the watch survives a helper restart. It reports errPoolClosed
+// after Close, a spawn failure wrapping ErrUnavailable, the error Client.Watch
+// returns, and an error when the watch is stopped while starting.
 func (b *Backend) Watch(ctx context.Context, configDir string, onChange func(pid int)) (stop func(), err error) {
 	p := b.pool
 	st := b.state
@@ -881,6 +827,10 @@ func (b *Backend) Watch(ctx context.Context, configDir string, onChange func(pid
 	return nil, err
 }
 
+// Deliver writes text to s's inbox socket under sig and msgID; it reports
+// inbox.ErrNotWritten, inbox.ErrUncertain or inbox.ErrBadSignature from the
+// helper. A spawn failure is reported as inbox.ErrNotWritten, except
+// ErrNoAccount, which is returned as it is.
 func (b *Backend) Deliver(ctx context.Context, s inbox.Session, sig, text, msgID string, timeout time.Duration) error {
 	spawnFailed, err := b.invoke(ctx, func(c helperConn) error {
 		return c.Deliver(ctx, s, sig, text, msgID, timeout)

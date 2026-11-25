@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestAccountCommandParentDeathSignal checks that the helper child is killed
+// when the parent dies.
 func TestAccountCommandParentDeathSignal(t *testing.T) {
 	cmd := accountCommand("/bin/true", nil, Account{UID: uint32(os.Geteuid())})
 	if cmd.SysProcAttr == nil {

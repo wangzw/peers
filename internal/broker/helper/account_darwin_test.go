@@ -9,11 +9,9 @@ import (
 	"testing"
 )
 
-// TestAccountCommandDarwinDoesNotSetSupplementalGroups is the regression test
-// for the account-helper launch. Darwin caps setgroups at NGROUPS (16), so an
-// account in more groups would make the credential change fail with EINVAL
-// before the helper started. The child must start as root with the identity in
-// its environment and switch itself; the credential must carry no group table.
+// TestAccountCommandDarwinDoesNotSetSupplementalGroups checks that a Darwin
+// helper child gets the identity in its environment and no group table in the
+// credential.
 func TestAccountCommandDarwinDoesNotSetSupplementalGroups(t *testing.T) {
 	other := Account{
 		Name:   "other",
@@ -47,9 +45,8 @@ func TestAccountCommandDarwinDoesNotSetSupplementalGroups(t *testing.T) {
 	}
 }
 
-// TestAccountCommandDarwinSelfKeepsPlainEnvironment covers the helper for the
-// Broker's own account: nothing has to switch, so no identity reaches the
-// child's environment.
+// TestAccountCommandDarwinSelfKeepsPlainEnvironment checks that the Broker's
+// own account gets no identity in the child's environment.
 func TestAccountCommandDarwinSelfKeepsPlainEnvironment(t *testing.T) {
 	self := Account{
 		Name:   "self",

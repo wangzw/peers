@@ -9,7 +9,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// socketPeerPID returns the pid of the process at the other end of conn.
 func socketPeerPID(conn *net.UnixConn) (int, error) {
 	raw, err := conn.SyscallConn()
 	if err != nil {

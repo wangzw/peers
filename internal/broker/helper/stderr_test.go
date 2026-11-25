@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestHelperStderrTagsUIDAndFlushes checks that a complete line is logged with the uid and an unterminated one only on flush.
 func TestHelperStderrTagsUIDAndFlushes(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -33,9 +34,7 @@ func TestHelperStderrTagsUIDAndFlushes(t *testing.T) {
 	}
 }
 
-// TestHelperStderrContextCanceledDuringStopIsDebug checks that the line a
-// helper writes when its context ends with the Broker is not a WARN: it is the
-// stop, not a helper failure.
+// TestHelperStderrContextCanceledDuringStopIsDebug checks that a cancellation line written while the Broker stops is logged at DEBUG.
 func TestHelperStderrContextCanceledDuringStopIsDebug(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -55,9 +54,7 @@ func TestHelperStderrContextCanceledDuringStopIsDebug(t *testing.T) {
 	}
 }
 
-// TestHelperStderrContextCanceledOutsideStopStaysWarn keeps a cancellation
-// line at WARN when the Broker is not stopping: the helper ended on its own,
-// so the line reports a real failure.
+// TestHelperStderrContextCanceledOutsideStopStaysWarn checks that a cancellation line outside a stop is logged at WARN.
 func TestHelperStderrContextCanceledOutsideStopStaysWarn(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -72,8 +69,7 @@ func TestHelperStderrContextCanceledOutsideStopStaysWarn(t *testing.T) {
 	}
 }
 
-// TestHelperStderrOtherLineDuringStopStaysWarn keeps every other helper stderr
-// line at WARN, stop or not.
+// TestHelperStderrOtherLineDuringStopStaysWarn checks that a non-cancellation line is logged at WARN even during a stop.
 func TestHelperStderrOtherLineDuringStopStaysWarn(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
@@ -87,7 +83,7 @@ func TestHelperStderrOtherLineDuringStopStaysWarn(t *testing.T) {
 	}
 }
 
-// TestHelperStderrTruncatesLongUnterminatedLine checks that a line longer than the limit is logged truncated and the next line starts fresh.
+// TestHelperStderrTruncatesLongUnterminatedLine checks that an overlong unterminated line is logged truncated and the next line starts fresh.
 func TestHelperStderrTruncatesLongUnterminatedLine(t *testing.T) {
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -112,7 +108,6 @@ func TestHelperStderrTruncatesLongUnterminatedLine(t *testing.T) {
 		t.Fatal("log holds more than the line limit")
 	}
 
-	// The buffer is reset after truncation, so the next line starts fresh.
 	if _, err := w.Write([]byte("next line\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -121,6 +116,7 @@ func TestHelperStderrTruncatesLongUnterminatedLine(t *testing.T) {
 	}
 }
 
+// TestProcessHelperStderrIsTaggedWithAccount checks that a real helper child's stderr is logged with its account uid.
 func TestProcessHelperStderrIsTaggedWithAccount(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {

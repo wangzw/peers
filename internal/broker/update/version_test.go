@@ -2,8 +2,8 @@ package update
 
 import "testing"
 
-// TestIsReleaseVersion checks the exported predicate accepts formal versions
-// and rejects development, prerelease and non-canonical forms.
+// TestIsReleaseVersion checks that the exported predicate accepts formal
+// versions and rejects development, prerelease and non-canonical forms.
 func TestIsReleaseVersion(t *testing.T) {
 	tests := []struct {
 		version string
@@ -28,6 +28,8 @@ func TestIsReleaseVersion(t *testing.T) {
 	}
 }
 
+// TestNewer checks that a candidate is newer only when both versions are formal
+// releases.
 func TestNewer(t *testing.T) {
 	tests := []struct {
 		name      string

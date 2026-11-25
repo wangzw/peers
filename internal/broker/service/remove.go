@@ -16,12 +16,8 @@ import (
 )
 
 const (
-	// systemConfigDir holds the system configuration file and the files
-	// an administrator adds beside it.
 	systemConfigDir = "/etc/peers"
-	// systemDataDir holds the system identity, peer table and discovery
-	// records.
-	systemDataDir = "/var/lib/peers"
+	systemDataDir   = "/var/lib/peers"
 )
 
 // ServiceBinary returns the binary the service definition of opts' level starts:
@@ -61,7 +57,6 @@ func ServiceBinary(opts Options) (path string, ok bool, err error) {
 	return path, true, nil
 }
 
-// systemdExecBinary reads the first field of the unit's ExecStart line.
 func systemdExecBinary(content, defPath string) (string, error) {
 	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
@@ -83,8 +78,6 @@ func systemdExecBinary(content, defPath string) (string, error) {
 	return "", nil
 }
 
-// systemdFirstField returns the first word of a systemd command line. Double
-// quotes group words; a backslash escapes the next character.
 func systemdFirstField(line string) (string, bool) {
 	var b strings.Builder
 	quoted := false
@@ -114,9 +107,6 @@ func systemdFirstField(line string) (string, bool) {
 	return b.String(), started
 }
 
-// systemdUnescape maps one escaped character to its value. The writer in
-// units.go only emits backslash and double quote escapes; the rest follow
-// systemd's C-style escapes so a hand-edited unit reads correctly.
 func systemdUnescape(c byte) byte {
 	switch c {
 	case 'n':
@@ -132,7 +122,6 @@ func systemdUnescape(c byte) byte {
 	}
 }
 
-// launchdProgramBinary returns the first ProgramArguments item of a plist.
 func launchdProgramBinary(content, defPath string) (string, error) {
 	dec := xml.NewDecoder(strings.NewReader(content))
 	afterKey := false
@@ -194,10 +183,10 @@ func RemoveRuntimeDir(opts Options) ([]string, error) {
 }
 
 // PurgeData removes the configuration, data, audit log and service log of opts'
-// level, the systemd drop-in directory, and for the system installation the admin group
-// when the installation recorded that it created the group. removed lists the
-// paths removed, "group <name>" for a deleted group, and "kept group <name>:
-// <reason>" for a group that was left in place. A group that does not exist is
+// level, the systemd drop-in directory (peers.service.d), and for the system
+// installation the admin group the installation recorded creating. removed
+// lists the paths removed, "group <name>" for a deleted group and "kept group
+// <name>: <reason>" for a group left in place; a group that does not exist is
 // skipped.
 func PurgeData(opts Options) (removed []string, err error) {
 	if err := checkPlatform(opts, "purge data"); err != nil {
@@ -207,9 +196,9 @@ func PurgeData(opts Options) (removed []string, err error) {
 		return nil, fmt.Errorf("cannot purge data: the home directory %q is not an absolute path", opts.Home)
 	}
 
-	// The group record and the configuration file's owner are read before
-	// anything is removed; the data directory holding the record goes away in
-	// the loop below.
+	// Read the group record and the configuration file's owner before anything
+	// is removed, because the loop below deletes the data directory holding the
+	// record.
 	record := ""
 	current := ""
 	configExists := false
@@ -234,9 +223,6 @@ func PurgeData(opts Options) (removed []string, err error) {
 		}
 	}
 	if opts.GOOS == "linux" && opts.System {
-		// The audit log is the only file this level keeps there, so the
-		// directory is empty now. Removing it fails harmlessly when someone
-		// left another file in it.
 		if pruned, err := pruneEmptyDir(opts, systemLogDir); err != nil {
 			return removed, err
 		} else if pruned {
@@ -259,7 +245,6 @@ func PurgeData(opts Options) (removed []string, err error) {
 	return removed, nil
 }
 
-// purgePaths returns the paths PurgeData removes for opts' level.
 func purgePaths(opts Options) []string {
 	if opts.System {
 		paths := []string{systemConfigDir, systemDataDir}
@@ -283,8 +268,6 @@ func purgePaths(opts Options) []string {
 	return paths
 }
 
-// removePath removes path and its contents. A path that does not exist is not
-// an error. ok reports whether something was removed.
 func removePath(opts Options, path string) (ok bool, err error) {
 	rootedPath := rooted(opts, path)
 	if _, err := os.Lstat(rootedPath); err != nil {
@@ -299,8 +282,6 @@ func removePath(opts Options, path string) (ok bool, err error) {
 	return true, nil
 }
 
-// pruneEmptyDir removes path when it is an empty directory. A missing or
-// non-empty directory is not an error and reports false.
 func pruneEmptyDir(opts Options, path string) (bool, error) {
 	rootedPath := rooted(opts, path)
 	entries, err := os.ReadDir(rootedPath)
@@ -319,8 +300,6 @@ func pruneEmptyDir(opts Options, path string) (bool, error) {
 	return true, nil
 }
 
-// readAdminGroupRecord returns the group name an installation recorded, or an
-// empty string when there is no record.
 func readAdminGroupRecord(opts Options) (string, error) {
 	path := adminGroupRecordPath
 	data, err := os.ReadFile(rooted(opts, path))
@@ -333,10 +312,6 @@ func readAdminGroupRecord(opts Options) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// currentAdminGroupName returns the group that owns the system configuration
-// file. exists reports whether the file is there, and gid is the file's owner
-// group id, or -1 when the file is not there. name is empty when the group
-// database does not resolve the id to a name.
 func currentAdminGroupName(opts Options) (name string, gid int, exists bool, err error) {
 	path := configFilePath(opts)
 	info, err := os.Lstat(rooted(opts, path))
@@ -358,21 +333,11 @@ func currentAdminGroupName(opts Options) (name string, gid int, exists bool, err
 	return name, gid, true, nil
 }
 
-// purgeAdminGroup removes the administration group only when the installation
-// recorded creating it, the record matches the group that currently owns the
-// configuration file, and the group is neither the root group nor any
-// enumerated account's primary group. Otherwise it returns a kept message with
-// a manual command. A group that is not in the group database is skipped.
 func purgeAdminGroup(opts Options, record, current string, configExists bool) (deletedName, kept string, err error) {
 	if record == "" {
-		// Without a record the group may be a system or user group, even when
-		// its name matches the default, so it is kept when it exists. There is
-		// nothing to keep when the group database does not have it.
 		name := DefaultAdminGroup
 		if configExists {
 			if current == "" {
-				// The configuration file's group id has no name in the group
-				// database, so that group does not exist.
 				return "", "", nil
 			}
 			name = current
@@ -424,14 +389,11 @@ func purgeAdminGroup(opts Options, record, current string, configExists bool) (d
 	return record, "", nil
 }
 
-// keptGroupMessage describes a group that was left in place and how to remove
-// it by hand.
 func keptGroupMessage(opts Options, name, reason string) string {
 	return fmt.Sprintf("kept group %s: %s; remove it manually with: %s",
 		name, reason, adminGroupDeleteCommand(opts, name))
 }
 
-// adminGroupDeleteCommand returns the platform's group deletion command.
 func adminGroupDeleteCommand(opts Options, name string) string {
 	if opts.GOOS == "darwin" {
 		return "dseditgroup -o delete " + name
@@ -439,10 +401,6 @@ func adminGroupDeleteCommand(opts Options, name string) string {
 	return "groupdel " + name
 }
 
-// primaryGroupAccounts returns the accounts whose primary group is gid, sorted
-// by name. Options.PrimaryGroupAccounts replaces the lookup in a test;
-// otherwise the platform's directory lookup is queried. The list is whatever
-// that lookup returns; an account it does not enumerate is not seen.
 func primaryGroupAccounts(opts Options, gid int) ([]string, error) {
 	if opts.PrimaryGroupAccounts != nil {
 		return opts.PrimaryGroupAccounts(gid)
@@ -480,9 +438,6 @@ func primaryGroupAccounts(opts Options, gid int) ([]string, error) {
 	}
 }
 
-// primaryGroupOfAnyAccount reports whether gid is the primary group of an
-// account. groupdel itself refuses to remove a local account's primary group,
-// so a missed account still leaves the group in place.
 func primaryGroupOfAnyAccount(opts Options, gid int) (bool, error) {
 	accounts, err := primaryGroupAccounts(opts, gid)
 	if err != nil {
@@ -491,8 +446,6 @@ func primaryGroupOfAnyAccount(opts Options, gid int) (bool, error) {
 	return len(accounts) > 0, nil
 }
 
-// groupNameByGID returns the name of the group with gid, or an empty string
-// when the group database has no such group.
 func groupNameByGID(opts Options, gid int) (string, error) {
 	id := strconv.Itoa(gid)
 	switch opts.GOOS {
@@ -526,8 +479,6 @@ func groupNameByGID(opts Options, gid int) (string, error) {
 	}
 }
 
-// deleteAdminGroup removes the administration group. The caller has already
-// checked that the group exists and may be removed.
 func deleteAdminGroup(opts Options, name string) error {
 	var argv []string
 	switch opts.GOOS {
@@ -546,8 +497,8 @@ func deleteAdminGroup(opts Options, name string) error {
 	return nil
 }
 
-// OtherAccountBrokers lists the accounts other than opts.UID whose user
-// Broker answers on /tmp/peers-<uid>/broker.sock.
+// OtherAccountBrokers lists the accounts other than opts.UID whose user Broker
+// answers on /tmp/peers-<uid>/broker.sock, sorted by uid.
 func OtherAccountBrokers(opts Options) (accounts []string, err error) {
 	tmp := rooted(opts, "/tmp")
 	entries, err := os.ReadDir(tmp)
@@ -591,8 +542,6 @@ func OtherAccountBrokers(opts Options) (accounts []string, err error) {
 	return accounts, nil
 }
 
-// accountName returns the account name of uid, or the uid itself when the
-// account database does not know it.
 func accountName(opts Options, uid int) string {
 	id := strconv.Itoa(uid)
 	switch opts.GOOS {

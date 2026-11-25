@@ -30,9 +30,6 @@ func Start(opts Options) (Result, error) {
 			return res, err
 		}
 	case "darwin":
-		// A loaded job is started in place; bootstrapping it again would fail.
-		// An unloaded job needs its label enabled first, because a failed
-		// earlier installation disables it.
 		if launchctlDomainLoaded(opts, domain) {
 			if err := runLaunchctlCommand(opts, domain, &res, "kickstart"); err != nil {
 				return res, err
@@ -52,7 +49,7 @@ func Start(opts Options) (Result, error) {
 }
 
 // Stop stops opts' level service without disabling it. On macOS it waits until
-// launchd has unloaded the job, so the next Start does not race the teardown.
+// launchd has unloaded the job before returning.
 func Stop(opts Options) (Result, error) {
 	res, domain, err := serviceTarget(opts, false)
 	if err != nil {
@@ -68,8 +65,8 @@ func Stop(opts Options) (Result, error) {
 	case "darwin":
 		if domain == "" {
 			// A user service can only be loaded in gui/<uid>. Without that
-			// domain nothing is loaded, so stopping it is already done; the plist
-			// stays installed.
+			// domain nothing is loaded, so stopping it is already done; the
+			// plist stays installed.
 			return res, nil
 		}
 		if err := bootoutService(opts, domain, &res); err != nil {
@@ -100,10 +97,8 @@ func Restart(opts Options) (Result, error) {
 			return res, err
 		}
 	case "darwin":
-		// Installed accepts a loaded job whose plist was deleted. Booting that
-		// job out before finding out would stop the service for good, because the
-		// bootstrap that follows has no file to load. Refuse first and leave the
-		// running service untouched.
+		// Refuse a loaded job whose plist is missing before bootout, or the
+		// bootstrap that follows has no file to load.
 		plist, err := unitPath(opts)
 		if err != nil {
 			return res, err
@@ -117,9 +112,8 @@ func Restart(opts Options) (Result, error) {
 		if err := bootoutService(opts, domain, &res); err != nil {
 			return res, err
 		}
-		// launchctl bootout returns while the job is still being torn down. The
-		// next bootstrap fails with exit 5 during that window, so wait for the
-		// job to disappear before loading the plist again.
+		// launchctl bootout returns while the job is still being torn down, and
+		// an immediate bootstrap fails with exit 5.
 		budget := stopBound(opts)
 		if err := waitServiceUnloaded(opts, domain, time.Now().Add(budget), budget, unloadAdvice(opts, domain, "service restart")); err != nil {
 			return res, err
@@ -136,10 +130,6 @@ func Restart(opts Options) (Result, error) {
 	return res, checkDegraded(opts, deadline)
 }
 
-// serviceTarget validates the platform and the installation and returns the
-// launchd domain for macOS. needsDomain reports whether the command must load
-// the job: a user service on macOS has no domain without a graphical login
-// session, and then Stop has nothing to unload.
 func serviceTarget(opts Options, needsDomain bool) (Result, string, error) {
 	var res Result
 	if err := checkPlatform(opts, "run the service command"); err != nil {
@@ -169,8 +159,6 @@ func serviceTarget(opts Options, needsDomain bool) (Result, string, error) {
 	return res, "", fmt.Errorf("cannot start the service: launchd has no %s domain for uid %d; run this command from the user's graphical login session", domain, opts.UID)
 }
 
-// notInstalledError names the level that has no service, so the command can
-// tell the operator which install command creates one.
 func notInstalledError(opts Options) error {
 	level := "user service"
 	if opts.System {
@@ -179,9 +167,6 @@ func notInstalledError(opts Options) error {
 	return fmt.Errorf("%w (%s)", ErrNotInstalled, level)
 }
 
-// enableAndBootstrap enables the launchd label and loads the installed plist.
-// It is what a start or restart of an unloaded job does; the enable clears a
-// disabled state left by a failed earlier installation.
 func enableAndBootstrap(opts Options, domain string, res *Result) error {
 	path, err := unitPath(opts)
 	if err != nil {
@@ -200,11 +185,6 @@ func enableAndBootstrap(opts Options, domain string, res *Result) error {
 	return nil
 }
 
-// checkDegraded asks the Broker that just became ready for its status. The
-// status is retried until the readiness deadline, as Install does: the Broker
-// answered on the socket a moment earlier and may still be serving the call. A
-// degraded Broker turns into a *DegradedError that carries the state to print;
-// the service stays running.
 func checkDegraded(opts Options, deadline time.Time) error {
 	state, degraded, err := waitStatus(opts, deadline)
 	if err != nil {

@@ -16,30 +16,23 @@ import (
 )
 
 const (
-	// postUpdateTimeout bounds the new binary's post-update step. Rewriting a
-	// unit and asking the service manager to reload it is quick; a binary that
-	// hangs must not keep the previous version from coming back.
+	// postUpdateTimeout bounds the new binary's post-update step so a hung
+	// binary cannot keep the previous version from coming back.
 	postUpdateTimeout = 30 * time.Second
 
-	// postUpdateExitNotNeeded is the exit code of a binary that has no
-	// post-update command. The contract reserves 2 for exactly that: a later
-	// release may drop the command, and the update then has no post-install
-	// step to run.
+	// postUpdateExitNotNeeded is the exit code a binary without the post-update
+	// command returns; 2 is the agreed code, do not change it.
 	postUpdateExitNotNeeded = 2
 )
 
 // PostUpdateOptions names the installed binary whose post-update step runs, the
-// service level whose unit it rewrites and the bound on the step. A zero
-// Timeout keeps postUpdateTimeout; a test shortens it instead of waiting for
-// the production bound. The caller passes its own pid to the step, which needs
-// it to start the detached macOS helper.
+// service level whose unit it rewrites and the bound on the step.
 type PostUpdateOptions struct {
-	Binary  string
-	Level   string
-	Timeout time.Duration
+	Binary  string        // the installed binary to run
+	Level   string        // "system" or "user"
+	Timeout time.Duration // zero means postUpdateTimeout
 }
 
-// checkLevel requires level to name one of the two service levels.
 func checkLevel(level string) error {
 	if level != "system" && level != "user" {
 		return fmt.Errorf("service level %q is not system or user", level)
@@ -47,21 +40,17 @@ func checkLevel(level string) error {
 	return nil
 }
 
-// postUpdateOptions and saveMainUnit are package variables so a test can make
-// either pre-step unit guard fail. Production always calls the service package
-// directly; neither variable is exported.
+// postUpdateOptions and saveMainUnit are variables so a test can fail either
+// pre-step unit guard.
 var (
 	postUpdateOptions = service.PostUpdateOptions
 	saveMainUnit      = service.SaveMainUnit
 )
 
-// Install installs o's release and then runs the new binary's hidden
-// post-update command at level, before anything restarts it. The previous
-// binary is kept beside the target and the main unit file is saved before the
-// step runs: a failed, timed-out or canceled step restores both, so the caller
-// can report the failure and leave the old version in place. Restoring the unit
-// here is what covers a step killed by its bound or by a canceled context,
-// because that step never reaches its own restore.
+// Install installs o's release, then runs the new binary's hidden post-update
+// command at level before anything restarts it. A failed, timed-out or canceled
+// step restores the previous binary and the saved main unit, so the caller sees
+// the failure and the old version stays in place.
 func Install(ctx context.Context, o ApplyOptions, level string) error {
 	if err := checkLevel(level); err != nil {
 		return err
@@ -71,10 +60,9 @@ func Install(ctx context.Context, o ApplyOptions, level string) error {
 		return err
 	}
 	if err := Apply(ctx, o); err != nil {
-		// Apply promises to leave the target untouched on failure, but it can
-		// fail after the rename while syncing the directory. Restoring the
-		// hard link covers both cases and is a no-op when the target never
-		// changed, because the backup names the same inode.
+		// Apply can fail after the rename while syncing the directory, so
+		// restore the hard link; it is a no-op when the target never changed,
+		// because the backup names the same inode.
 		if restoreErr := restoreTarget(backup, o.Target); restoreErr != nil {
 			return restoreFailure(err, restoreErr)
 		}
@@ -103,15 +91,10 @@ func Install(ctx context.Context, o ApplyOptions, level string) error {
 	return nil
 }
 
-// restoreFailure reports cause along with why the previous binary could not be
-// put back.
 func restoreFailure(cause, restoreErr error) error {
 	return fmt.Errorf("%w; restoring the previous binary failed: %v", cause, restoreErr)
 }
 
-// restoreAfterStepSetupFailure restores the previous binary when the unit
-// guard could not be prepared. The post-update step did not run, so the unit
-// file is still the one the guard would have saved.
 func restoreAfterStepSetupFailure(cause error, backup, target string) error {
 	if err := restoreTarget(backup, target); err != nil {
 		return restoreFailure(cause, err)
@@ -119,13 +102,6 @@ func restoreAfterStepSetupFailure(cause error, backup, target string) error {
 	return fmt.Errorf("%w; the previous binary was restored", cause)
 }
 
-// rollBackInstall undoes an install whose post-update step failed. The previous
-// binary comes back and the main unit file returns to the bytes read before the
-// step. The step's own restore covers a failure it survives; this restore also
-// covers a step killed by its bound or by a canceled context, which never
-// reaches that code. On Linux the restore reloads the unit database after
-// writing the old definition; macOS's detached helper notices the rolled-back
-// binary by its inode and abandons the reload on its own.
 func rollBackInstall(cause error, backup, target string, opts service.Options, saved service.SavedUnit) error {
 	binaryErr := restoreTarget(backup, target)
 	unitErr := service.RestoreMainUnit(opts, saved)
@@ -141,8 +117,6 @@ func rollBackInstall(cause error, backup, target string, opts service.Options, s
 	}
 }
 
-// postUpdateBound returns the bound on the post-update step: the caller's
-// Timeout when it set one, postUpdateTimeout otherwise.
 func postUpdateBound(o PostUpdateOptions) time.Duration {
 	if o.Timeout > 0 {
 		return o.Timeout
@@ -166,10 +140,9 @@ func RunPostUpdate(ctx context.Context, o PostUpdateOptions) error {
 	defer cancel()
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(runCtx, o.Binary, "internal", "post-update", "--level", o.Level, "--pid", strconv.Itoa(os.Getpid()))
-	// The step runs the service manager commands itself, so it inherits this
-	// process's environment: a user Broker carries the session bus and
-	// runtime directory those commands need. Its working directory is "/" so a
-	// system service does not depend on a directory that may be removed.
+	// The step inherits this process's environment so a user Broker passes the
+	// session bus and runtime directory the service manager commands need, and
+	// runs in "/" so a system service does not depend on a removed directory.
 	cmd.Dir = "/"
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -192,10 +165,6 @@ func RunPostUpdate(ctx context.Context, o PostUpdateOptions) error {
 	return fmt.Errorf("the post-update step failed: %w", err)
 }
 
-// backupTarget reserves a rollback name beside target and hard-links target to
-// it, returning the name. A hard link keeps the old inode intact without
-// copying the binary, and it leaves target itself in place while the
-// replacement is prepared.
 func backupTarget(target string) (string, error) {
 	f, err := os.CreateTemp(filepath.Dir(target), ".peers-rollback-*")
 	if err != nil {
@@ -215,8 +184,6 @@ func backupTarget(target string) (string, error) {
 	return name, nil
 }
 
-// restoreTarget renames backup over target and flushes the directory entry, so
-// the previous binary survives a crash right after a failed update.
 func restoreTarget(backup, target string) error {
 	if err := os.Rename(backup, target); err != nil {
 		return fmt.Errorf("restoring %s from %s: %w", target, backup, err)

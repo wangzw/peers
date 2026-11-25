@@ -10,9 +10,8 @@ import (
 	"testing"
 )
 
-// unsetTestAPIEnv clears testAPIEnv for the test and restores the previous
-// state when the test ends. t.Setenv cannot express "not set", and the strict
-// case is about an absent override, so the test removes the variable outright.
+// unsetTestAPIEnv removes testAPIEnv because t.Setenv cannot express an absent
+// variable.
 func unsetTestAPIEnv(t *testing.T) {
 	t.Helper()
 	original, had := os.LookupEnv(testAPIEnv)
@@ -28,8 +27,8 @@ func unsetTestAPIEnv(t *testing.T) {
 	})
 }
 
-// TestTestBuildRejectsHTTPWithoutOverride proves that a test build without the
-// fake API variable keeps the release rule: an http download URL is refused.
+// TestTestBuildRejectsHTTPWithoutOverride checks that a test build without the
+// fake API variable still refuses an http download URL.
 func TestTestBuildRejectsHTTPWithoutOverride(t *testing.T) {
 	unsetTestAPIEnv(t)
 	err := checkDownloadURL("http://127.0.0.1:18123/download/asset")
@@ -41,8 +40,8 @@ func TestTestBuildRejectsHTTPWithoutOverride(t *testing.T) {
 	}
 }
 
-// TestTestBuildAcceptsHTTPWithOverride proves that setting the fake API
-// variable is what relaxes the check, so the local plain HTTP test server works.
+// TestTestBuildAcceptsHTTPWithOverride checks that the fake API variable is what
+// relaxes the check, so a local plain HTTP server works.
 func TestTestBuildAcceptsHTTPWithOverride(t *testing.T) {
 	t.Setenv(testAPIEnv, "http://127.0.0.1:18123")
 	if err := checkDownloadURL("http://127.0.0.1:18123/download/asset"); err != nil {
@@ -50,8 +49,8 @@ func TestTestBuildAcceptsHTTPWithOverride(t *testing.T) {
 	}
 }
 
-// TestTestBuildKeepsHTTPSAccepted proves that the strict rule still accepts
-// https, so tightening the test build does not reject real download URLs.
+// TestTestBuildKeepsHTTPSAccepted checks that the strict rule still accepts
+// https.
 func TestTestBuildKeepsHTTPSAccepted(t *testing.T) {
 	unsetTestAPIEnv(t)
 	if err := checkDownloadURL("https://example.com/download/asset"); err != nil {
@@ -59,7 +58,7 @@ func TestTestBuildKeepsHTTPSAccepted(t *testing.T) {
 	}
 }
 
-// TestTestBuildRedirectCheckFollowsOverride proves that the redirect rule is
+// TestTestBuildRedirectCheckFollowsOverride checks that the redirect rule is
 // gated by the same variable as the initial URL check.
 func TestTestBuildRedirectCheckFollowsOverride(t *testing.T) {
 	target, err := url.Parse("http://127.0.0.1:18123/download/asset")

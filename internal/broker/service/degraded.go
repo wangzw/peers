@@ -15,9 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// statusProbeTimeout bounds one Hello and Status exchange on the local socket.
-// The probe runs after the service is ready, so the Broker is already
-// listening and should answer promptly.
 const statusProbeTimeout = 2 * time.Second
 
 // DegradedLevel is the wire enum the degraded state carries.
@@ -32,22 +29,25 @@ const (
 // DegradedState is the Status a degraded Broker reports, as the service
 // commands print it.
 type DegradedState struct {
-	Level  localpb.DegradedLevel
-	Step   string
+	// Level is the degraded degree: local only or diagnostics only.
+	Level localpb.DegradedLevel
+	// Step names the startup step that failed.
+	Step string
+	// Reason is why the step failed.
 	Reason string
-	Fix    string
+	// Fix tells the operator how to fix the failure.
+	Fix string
 }
 
 // DegradedError reports that the service is installed and running but the
-// Broker runs degraded. Install, and the start and restart commands, return it
-// together with a complete Result; the service is left running. The command
-// prints State and exits with exitServiceDegraded.
+// Broker runs degraded. Install, Start and Restart return it together with a
+// complete Result; the service is left running.
 type DegradedError struct {
+	// State is the degraded status to print.
 	State DegradedState
 }
 
-// Error names the level and the reason so an error logged without the printed
-// summary still says why the Broker runs degraded.
+// Error names the degraded level and reason.
 func (e *DegradedError) Error() string {
 	msg := "the Broker is running degraded"
 	if e.State.Level != localpb.DegradedLevel_DEGRADED_LEVEL_UNSPECIFIED {
@@ -59,9 +59,6 @@ func (e *DegradedError) Error() string {
 	return msg
 }
 
-// defaultStatusProbe asks the Broker on socketPath for its status and reports
-// the degraded state it carries. An error means no answer was received, or the
-// socket is served by an account that may not run this level's Broker.
 func defaultStatusProbe(socketPath string) (DegradedState, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), statusProbeTimeout)
 	defer cancel()
@@ -99,10 +96,8 @@ func defaultStatusProbe(socketPath string) (DegradedState, bool, error) {
 	}, true, nil
 }
 
-// dialStatusSocket dials the local Broker socket, reads the peer's account
-// before gRPC sends a byte, and rejects an account that may not serve this
-// level's Broker. A socket taken over by another account is therefore never
-// asked for its status.
+// dialStatusSocket reads the peer's account before gRPC sends a byte, so a
+// socket taken over by another account is never asked for its status.
 func dialStatusSocket(ctx context.Context, address string) (net.Conn, error) {
 	path := socketPathFromAddress(address)
 	d := net.Dialer{Timeout: probeTimeout}
@@ -122,8 +117,6 @@ func dialStatusSocket(ctx context.Context, address string) (net.Conn, error) {
 	return conn, nil
 }
 
-// socketPathFromAddress turns the target gRPC hands to a context dialer back
-// into a socket path.
 func socketPathFromAddress(address string) string {
 	if path, ok := strings.CutPrefix(address, "unix://"); ok {
 		return path
@@ -134,9 +127,6 @@ func socketPathFromAddress(address string) string {
 	return address
 }
 
-// statusPeerAllowed reports whether uid may answer the status probe on the
-// socket at path. A system socket is served by root; a user one by
-// this account.
 func statusPeerAllowed(path string, uid uint32) bool {
 	if isSystemSocket(path) {
 		return uid == 0
@@ -144,7 +134,6 @@ func statusPeerAllowed(path string, uid uint32) bool {
 	return uid == uint32(os.Geteuid())
 }
 
-// statusPeerWant names the account statusPeerAllowed expects, for errors.
 func statusPeerWant(path string) string {
 	if isSystemSocket(path) {
 		return "root"
@@ -152,8 +141,6 @@ func statusPeerWant(path string) string {
 	return fmt.Sprintf("this account (%d)", os.Geteuid())
 }
 
-// isSystemSocket reports whether path is the local socket a system
-// Broker binds on either supported platform.
 func isSystemSocket(path string) bool {
 	path = filepath.Clean(path)
 	for _, goos := range []string{"linux", "darwin"} {

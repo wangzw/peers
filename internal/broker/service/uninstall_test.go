@@ -9,8 +9,6 @@ import (
 	"testing"
 )
 
-// writeInstalledFile writes a stand-in unit file or plist at the production
-// path under the test root.
 func writeInstalledFile(t *testing.T, opts Options, path string) string {
 	t.Helper()
 	rootedPath := filepath.Join(opts.Root, path)
@@ -23,13 +21,13 @@ func writeInstalledFile(t *testing.T, opts Options, path string) string {
 	return rootedPath
 }
 
+// TestUninstallLinuxUser checks that a Linux user uninstall disables and removes
+// the unit, reloads systemd and keeps the data.
 func TestUninstallLinuxUser(t *testing.T) {
 	opts := baseOptions(t)
 	unitPath := "/home/alice/.config/systemd/user/peers.service"
 	rootedUnit := writeInstalledFile(t, opts, unitPath)
 
-	// Configuration, identity and audit logs live under the data directory and
-	// must survive the uninstall.
 	dataDir := filepath.Join(opts.Root, "home/alice/.peers")
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -67,6 +65,8 @@ func TestUninstallLinuxUser(t *testing.T) {
 	}
 }
 
+// TestUninstallLinuxSystemKeepsData checks that a Linux system uninstall removes
+// the unit and keeps the configuration, identity and audit log.
 func TestUninstallLinuxSystemKeepsData(t *testing.T) {
 	opts := baseOptions(t)
 	opts.System = true
@@ -118,6 +118,8 @@ func TestUninstallLinuxSystemKeepsData(t *testing.T) {
 	}
 }
 
+// TestUninstallLinuxWithoutSystemctl checks that a Linux uninstall with an
+// installed unit and no systemctl reports the systemd hint.
 func TestUninstallLinuxWithoutSystemctl(t *testing.T) {
 	opts := baseOptions(t)
 	writeInstalledFile(t, opts, "/home/alice/.config/systemd/user/peers.service")
@@ -129,6 +131,8 @@ func TestUninstallLinuxWithoutSystemctl(t *testing.T) {
 	}
 }
 
+// TestUninstallRepeats checks that a second uninstall succeeds with Removed=false
+// and runs no removal command.
 func TestUninstallRepeats(t *testing.T) {
 	opts := baseOptions(t)
 	writeInstalledFile(t, opts, "/home/alice/.config/systemd/user/peers.service")
@@ -162,10 +166,11 @@ func TestUninstallRepeats(t *testing.T) {
 	}
 }
 
+// TestUninstallLinuxServiceStillLoaded checks that a Linux uninstall removes a
+// unit systemd still has loaded although is-enabled fails.
 func TestUninstallLinuxServiceStillLoaded(t *testing.T) {
-	// Measured in the systemd e2e container after the unit file was deleted
-	// without a daemon-reload: is-enabled fails, is-active still reports
-	// active, and systemctl disable --now stops the loaded unit.
+	// Without a daemon-reload, is-enabled fails while is-active still reports
+	// the loaded unit, and disable --now stops it.
 	opts := baseOptions(t)
 	var cmds []string
 	opts.Run = func(name string, args ...string) ([]byte, error) {
@@ -197,6 +202,8 @@ func TestUninstallLinuxServiceStillLoaded(t *testing.T) {
 	}
 }
 
+// TestUninstallLinuxDaemonReloadFailureRestoresTheUnit checks that a failed
+// daemon-reload restores the removed unit and reports the failure.
 func TestUninstallLinuxDaemonReloadFailureRestoresTheUnit(t *testing.T) {
 	opts := baseOptions(t)
 	rootedUnit := writeInstalledFile(t, opts, "/home/alice/.config/systemd/user/peers.service")
@@ -219,13 +226,13 @@ func TestUninstallLinuxDaemonReloadFailureRestoresTheUnit(t *testing.T) {
 	}
 }
 
+// TestUninstallLinuxDaemonReloadRestoreFailureReported checks that a failed
+// daemon-reload and a failed restore report both failures.
 func TestUninstallLinuxDaemonReloadRestoreFailureReported(t *testing.T) {
 	opts := baseOptions(t)
 	rootedUnit := writeInstalledFile(t, opts, "/home/alice/.config/systemd/user/peers.service")
 	opts.Run = func(name string, args ...string) ([]byte, error) {
 		if slices.Contains(args, "daemon-reload") {
-			// Replace the removed unit path with a non-empty directory so the
-			// restore rename fails.
 			if err := os.Mkdir(rootedUnit, 0o755); err != nil {
 				t.Fatalf("creating %s: %v", rootedUnit, err)
 			}
@@ -248,6 +255,8 @@ func TestUninstallLinuxDaemonReloadRestoreFailureReported(t *testing.T) {
 	}
 }
 
+// TestUninstallRequiresTheMatchingAccount checks that a system uninstall requires
+// root and a user uninstall rejects root.
 func TestUninstallRequiresTheMatchingAccount(t *testing.T) {
 	t.Run("system requires root", func(t *testing.T) {
 		opts := baseOptions(t)
@@ -271,6 +280,8 @@ func TestUninstallRequiresTheMatchingAccount(t *testing.T) {
 	})
 }
 
+// TestUninstallDarwinUser checks that a darwin user uninstall boots the job out
+// and removes the plist.
 func TestUninstallDarwinUser(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -310,6 +321,8 @@ func TestUninstallDarwinUser(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinWithoutGUIDomain checks that a darwin uninstall without a
+// gui domain removes the plist without booting out.
 func TestUninstallDarwinWithoutGUIDomain(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -336,6 +349,8 @@ func TestUninstallDarwinWithoutGUIDomain(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinWithoutGUIDomainOrPlist checks that a darwin uninstall with
+// no gui domain and no plist reports nothing removed without querying the label.
 func TestUninstallDarwinWithoutGUIDomainOrPlist(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -361,6 +376,8 @@ func TestUninstallDarwinWithoutGUIDomainOrPlist(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinSystem checks that a darwin system uninstall boots out the
+// system job and removes the plist.
 func TestUninstallDarwinSystem(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -395,6 +412,8 @@ func TestUninstallDarwinSystem(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinBootoutFailureKeepsThePlistForARetry checks that a failed
+// bootout keeps the plist and a later uninstall that sees exit 3 removes it.
 func TestUninstallDarwinBootoutFailureKeepsThePlistForARetry(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -441,6 +460,8 @@ func TestUninstallDarwinBootoutFailureKeepsThePlistForARetry(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinLoadedWithoutFile checks that a darwin uninstall removes the
+// service when it is still loaded without a plist.
 func TestUninstallDarwinLoadedWithoutFile(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -473,6 +494,8 @@ func TestUninstallDarwinLoadedWithoutFile(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinNotInstalled checks that a darwin uninstall with no plist
+// and no loaded label reports nothing removed.
 func TestUninstallDarwinNotInstalled(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"
@@ -507,6 +530,8 @@ func TestUninstallDarwinNotInstalled(t *testing.T) {
 	}
 }
 
+// TestUninstallDarwinSystemBootoutFailureKeepsThePlist checks that a failed
+// system bootout keeps the plist.
 func TestUninstallDarwinSystemBootoutFailureKeepsThePlist(t *testing.T) {
 	opts := baseOptions(t)
 	opts.GOOS = "darwin"

@@ -24,15 +24,12 @@ import (
 	"github.com/wangzw/peers/internal/broker/helperpb"
 )
 
-// switchErrRole is a test-only child role whose identity switch fails with
-// EINVAL. TestCheckLogsSwitchFailure uses it to exercise the response path
-// without a real credential change.
 const switchErrRole = "access-check-switch-error"
 
 func init() {
 	testRoleHooks[switchErrRole] = func() int {
-		// Drain the request first so the parent's write cannot race with this
-		// process exiting; the switch below is the behavior under test.
+		// Drain the request first so the parent's write does not race with this
+		// process exiting.
 		_, _ = io.Copy(io.Discard, os.Stdin)
 		switchSetegid = func(int) error { return nil }
 		switchInitgroups = func([]uint32, uint32) error { return syscall.EINVAL }
@@ -44,7 +41,6 @@ func init() {
 	}
 }
 
-// stubDarwinSwitch replaces the three Darwin syscall seams for one test.
 func stubDarwinSwitch(t *testing.T, setegid func(int) error, initgroups func([]uint32, uint32) error, seteuid func(int) error) {
 	t.Helper()
 	oldSetegid, oldInitgroups, oldSeteuid := switchSetegid, switchInitgroups, switchSeteuid
@@ -56,8 +52,6 @@ func stubDarwinSwitch(t *testing.T, setegid func(int) error, initgroups func([]u
 	switchSeteuid = seteuid
 }
 
-// testExecStartEnv runs the current test binary in role with extra environment
-// variables. The child runs as the test process, with no credential change.
 func testExecStartEnv(t *testing.T, role string, env []string) func(context.Context, Account) (*Process, error) {
 	t.Helper()
 	home := t.TempDir()
@@ -93,10 +87,8 @@ func testExecStartEnv(t *testing.T, role string, env []string) func(context.Cont
 	}
 }
 
-// TestBecomeAccountDarwinUsesInitgroupsWithGMUID covers the switch for an
-// account whose group list exceeds Darwin's NGROUPS. The account's list is
-// ignored: only the primary group goes into the static list, and the account
-// uid goes in as gmuid so the kernel resolves the rest through memberd.
+// TestBecomeAccountDarwinUsesInitgroupsWithGMUID checks that the switch passes
+// only the primary group and the account uid as gmuid, in order.
 func TestBecomeAccountDarwinUsesInitgroupsWithGMUID(t *testing.T) {
 	uid := uint32(os.Geteuid()) + 1000
 	gid := uint32(os.Getegid()) + 1000
@@ -142,8 +134,8 @@ func TestBecomeAccountDarwinUsesInitgroupsWithGMUID(t *testing.T) {
 	}
 }
 
-// TestBecomeAccountDarwinSetegidFailureStops covers the first step: an EPERM
-// from setegid returns before initgroups and seteuid run.
+// TestBecomeAccountDarwinSetegidFailureStops checks that a setegid failure
+// stops the switch before initgroups and seteuid.
 func TestBecomeAccountDarwinSetegidFailureStops(t *testing.T) {
 	uid := uint32(os.Geteuid()) + 1000
 	gid := uint32(os.Getegid()) + 1000
@@ -173,9 +165,8 @@ func TestBecomeAccountDarwinSetegidFailureStops(t *testing.T) {
 	}
 }
 
-// TestBecomeAccountDarwinInitgroupsFailureStops closes the switch on the first
-// error: the errno is returned to RunAccessCheck, which reports it in the
-// response for the Broker log, and the effective uid is never dropped.
+// TestBecomeAccountDarwinInitgroupsFailureStops checks that an initgroups
+// failure stops the switch before the effective uid is dropped.
 func TestBecomeAccountDarwinInitgroupsFailureStops(t *testing.T) {
 	uid := uint32(os.Geteuid()) + 1000
 	gid := uint32(os.Getegid()) + 1000
@@ -208,7 +199,8 @@ func TestBecomeAccountDarwinInitgroupsFailureStops(t *testing.T) {
 	}
 }
 
-// TestBecomeAccountDarwinSeteuidFailureIsReported covers the last step.
+// TestBecomeAccountDarwinSeteuidFailureIsReported checks that a seteuid failure
+// is returned.
 func TestBecomeAccountDarwinSeteuidFailureIsReported(t *testing.T) {
 	uid := uint32(os.Geteuid()) + 1000
 	gid := uint32(os.Getegid()) + 1000
@@ -223,8 +215,8 @@ func TestBecomeAccountDarwinSeteuidFailureIsReported(t *testing.T) {
 	}
 }
 
-// TestBecomeAccountDarwinSkipsCurrentIdentity keeps the rule that a check for
-// the current effective identity does not touch the groups.
+// TestBecomeAccountDarwinSkipsCurrentIdentity checks that a check for the
+// current effective identity does not run the switch.
 func TestBecomeAccountDarwinSkipsCurrentIdentity(t *testing.T) {
 	called := false
 	stubDarwinSwitch(t,
@@ -240,9 +232,8 @@ func TestBecomeAccountDarwinSkipsCurrentIdentity(t *testing.T) {
 	}
 }
 
-// TestRunAccessCheckSwitchFailureWritesErrorResponse checks the response path:
-// a failed switch writes the errno into the response and still reports a
-// failure.
+// TestRunAccessCheckSwitchFailureWritesErrorResponse checks that a failed
+// switch is reported in the response with the errno and still returns an error.
 func TestRunAccessCheckSwitchFailureWritesErrorResponse(t *testing.T) {
 	uid := uint32(os.Geteuid()) + 1000
 	gid := uint32(os.Getegid()) + 1000
@@ -282,8 +273,8 @@ func TestRunAccessCheckSwitchFailureWritesErrorResponse(t *testing.T) {
 	}
 }
 
-// TestCheckLogsSwitchFailure runs the real helper as a child whose switch
-// fails with EINVAL. The parent must return an error and log the errno text.
+// TestCheckLogsSwitchFailure checks that a child whose switch fails makes Check
+// return an error and log the errno.
 func TestCheckLogsSwitchFailure(t *testing.T) {
 	uid := uint32(os.Geteuid()) + 1000
 	gid := uint32(os.Getegid()) + 1000

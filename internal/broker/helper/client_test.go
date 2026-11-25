@@ -12,16 +12,12 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// scriptedChild plays the helper process on the other end of a Client's
-// pipes. Tests drive it message by message.
 type scriptedChild struct {
 	reqs *msgReader
 	msgs *msgWriter
 	msgW *io.PipeWriter
 }
 
-// newScriptedChild connects a Client to a scripted child, completes the
-// handshake and returns both.
 func newScriptedChild(t *testing.T) (*Client, *scriptedChild) {
 	t.Helper()
 	toChildR, toChildW := io.Pipe()
@@ -44,7 +40,6 @@ func newScriptedChild(t *testing.T) (*Client, *scriptedChild) {
 	return c, sc
 }
 
-// next reads the next request, failing the test after three seconds.
 func (s *scriptedChild) next(t *testing.T) *helperpb.HelperRequest {
 	t.Helper()
 	type result struct {
@@ -76,7 +71,6 @@ func (s *scriptedChild) send(t *testing.T, msg *helperpb.HelperMessage) {
 	}
 }
 
-// die closes the child's write end, which the Client sees as a lost helper.
 func (s *scriptedChild) die() {
 	_ = s.msgW.Close()
 }
@@ -131,6 +125,7 @@ func watchEventMessage(watchID uint64, pid int64) *helperpb.HelperMessage {
 	}
 }
 
+// TestClientLookupRoundTrip checks that Lookup sends the request fields and decodes the session response.
 func TestClientLookupRoundTrip(t *testing.T) {
 	c, child := newScriptedChild(t)
 
@@ -173,6 +168,7 @@ func TestClientLookupRoundTrip(t *testing.T) {
 	}
 }
 
+// TestClientErrorsAreSentinels checks that helper error codes map back to the inbox sentinels.
 func TestClientErrorsAreSentinels(t *testing.T) {
 	t.Run("lookup", func(t *testing.T) {
 		c, child := newScriptedChild(t)
@@ -202,6 +198,7 @@ func TestClientErrorsAreSentinels(t *testing.T) {
 	})
 }
 
+// TestClientDeliverInFlightWhenHelperDiesIsUncertain checks that a delivery in flight when the helper dies is uncertain and wraps ErrHelperGone.
 func TestClientDeliverInFlightWhenHelperDiesIsUncertain(t *testing.T) {
 	c, child := newScriptedChild(t)
 	errCh := make(chan error, 1)
@@ -228,6 +225,7 @@ func TestClientDeliverInFlightWhenHelperDiesIsUncertain(t *testing.T) {
 	}
 }
 
+// TestClientDeliverAfterGoneIsNotWritten checks that a delivery after the helper is gone is reported as not written.
 func TestClientDeliverAfterGoneIsNotWritten(t *testing.T) {
 	c, child := newScriptedChild(t)
 	child.die()
@@ -246,6 +244,7 @@ func TestClientDeliverAfterGoneIsNotWritten(t *testing.T) {
 	}
 }
 
+// TestClientDeliverCancelWaitsForOutcome checks that cancelling a delivery asks the helper to cancel and returns the write outcome.
 func TestClientDeliverCancelWaitsForOutcome(t *testing.T) {
 	c, child := newScriptedChild(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -285,6 +284,7 @@ func TestClientDeliverCancelWaitsForOutcome(t *testing.T) {
 	}
 }
 
+// TestClientDeliverTimeoutClampedToDeadline checks that the delivery timeout is reduced to an earlier caller deadline.
 func TestClientDeliverTimeoutClampedToDeadline(t *testing.T) {
 	c, child := newScriptedChild(t)
 	const deadline = 2 * time.Second
@@ -314,6 +314,7 @@ func TestClientDeliverTimeoutClampedToDeadline(t *testing.T) {
 	}
 }
 
+// TestClientWatchStopNoLateCallbacks checks that no watch callback runs after stop returns.
 func TestClientWatchStopNoLateCallbacks(t *testing.T) {
 	c, child := newScriptedChild(t)
 
@@ -371,8 +372,6 @@ func TestClientWatchStopNoLateCallbacks(t *testing.T) {
 	}
 
 	child.send(t, watchEventMessage(1, 8))
-	// A subsequent request/response pair proves the read loop has consumed the
-	// event: both messages travel on the same child-to-broker stream.
 	synced := make(chan struct{})
 	go func() {
 		defer close(synced)
@@ -409,6 +408,7 @@ func clientWaitForPids(t *testing.T, mu *sync.Mutex, pids *[]int, want int) {
 	}
 }
 
+// TestClientUnknownResponseIdIgnored checks that a response with an unknown id is dropped without disturbing the next call.
 func TestClientUnknownResponseIdIgnored(t *testing.T) {
 	c, child := newScriptedChild(t)
 
@@ -435,6 +435,7 @@ func TestClientUnknownResponseIdIgnored(t *testing.T) {
 	}
 }
 
+// TestClientSecondReadyIsProtocolError checks that a second Ready ends the connection.
 func TestClientSecondReadyIsProtocolError(t *testing.T) {
 	c, child := newScriptedChild(t)
 	child.send(t, readyMessage())
@@ -449,8 +450,7 @@ func TestClientSecondReadyIsProtocolError(t *testing.T) {
 	}
 }
 
-// TestClientGoneIsUnavailable checks that losing the pipe to the helper wraps
-// ErrUnavailable.
+// TestClientGoneIsUnavailable checks that losing the pipe to the helper wraps ErrUnavailable.
 func TestClientGoneIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 	child.die()
@@ -464,9 +464,7 @@ func TestClientGoneIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestClientPermissionErrorIsNotUnavailable checks that an error the helper
-// reports for a record it could not read stays an ordinary error: the helper
-// ran and answered, so it is not the thing that failed.
+// TestClientPermissionErrorIsNotUnavailable checks that an error the helper reports for a record it could not read is not a helper failure.
 func TestClientPermissionErrorIsNotUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 	errCh := make(chan error, 1)
@@ -486,15 +484,10 @@ func TestClientPermissionErrorIsNotUnavailable(t *testing.T) {
 	}
 }
 
-// TestClientLookupDeadlineIsUnavailable checks that a helper that accepted the
-// request but never answered is reported with ErrUnavailable when the call's
-// deadline expires. The helper is up and the request reached it, so this is the
-// helper failing to answer, not a record that cannot be read.
+// TestClientLookupDeadlineIsUnavailable checks that a helper that accepted the request but never answered is reported as unavailable at the deadline.
 func TestClientLookupDeadlineIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
-	// The caller's own deadline is the assertion: the helper accepted the
-	// request and never answered, so the call must end when it expires.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -503,7 +496,6 @@ func TestClientLookupDeadlineIsUnavailable(t *testing.T) {
 		errCh <- err
 	}()
 
-	// Read the request so the write completes; no response follows.
 	child.next(t)
 	err := <-errCh
 	if !errors.Is(err, ErrUnavailable) {
@@ -514,12 +506,10 @@ func TestClientLookupDeadlineIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestClientWatchDeadlineIsUnavailable checks the same for the
-// session-directory watch request.
+// TestClientWatchDeadlineIsUnavailable checks that a watch that never answered is reported as unavailable at the deadline.
 func TestClientWatchDeadlineIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
-	// The caller's own deadline is the assertion for the watch path too.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -538,14 +528,10 @@ func TestClientWatchDeadlineIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestClientRereadDeadlineIsUnavailable checks that a helper that accepted the
-// reread request but never answered is reported with ErrUnavailable when the
-// call's deadline expires. The helper is up and the request reached it, so this
-// is the helper failing to answer, not a record that cannot be read.
+// TestClientRereadDeadlineIsUnavailable checks that a reread that never answered is reported as unavailable at the deadline.
 func TestClientRereadDeadlineIsUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
-	// The caller's own deadline is the assertion for the reread path too.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -554,7 +540,6 @@ func TestClientRereadDeadlineIsUnavailable(t *testing.T) {
 		errCh <- err
 	}()
 
-	// Read the request so the write completes; no response follows.
 	child.next(t)
 	err := <-errCh
 	if !errors.Is(err, ErrUnavailable) {
@@ -565,9 +550,7 @@ func TestClientRereadDeadlineIsUnavailable(t *testing.T) {
 	}
 }
 
-// TestClientCancelIsNotUnavailable checks that a caller's own cancellation is
-// not reported as a helper failure: the helper is not the thing that ended the
-// call.
+// TestClientCancelIsNotUnavailable checks that a caller's own cancellation is not reported as a helper failure.
 func TestClientCancelIsNotUnavailable(t *testing.T) {
 	c, child := newScriptedChild(t)
 
@@ -588,9 +571,8 @@ func TestClientCancelIsNotUnavailable(t *testing.T) {
 	}
 }
 
+// TestClientRereadCancelUnblocksPipeWrite checks that a request blocked on a pipe returns at its deadline and reports the connection unusable.
 func TestClientRereadCancelUnblocksPipeWrite(t *testing.T) {
-	// The scripted child never reads, so the request write blocks on the pipe.
-	// Cancellation must return rather than wait for a reader that is gone.
 	const timeout = 100 * time.Millisecond
 	c, _ := newScriptedChild(t)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -615,11 +597,7 @@ func TestClientRereadCancelUnblocksPipeWrite(t *testing.T) {
 	}
 }
 
-// TestClientWriteCancelIsNotUnavailable checks that a caller's cancellation
-// while the request is still being written is not reported as a helper
-// failure. The child never reads, so the write is blocked on the pipe when the
-// cancellation arrives; the connection is unusable afterwards, but the helper
-// is not what ended the call.
+// TestClientWriteCancelIsNotUnavailable checks that a cancellation during a blocked write is not reported as a helper failure.
 func TestClientWriteCancelIsNotUnavailable(t *testing.T) {
 	c, _ := newScriptedChild(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -639,6 +617,7 @@ func TestClientWriteCancelIsNotUnavailable(t *testing.T) {
 	}
 }
 
+// TestClientDeliverOversizeIsNotWritten checks that an oversize delivery is a definite not-written result.
 func TestClientDeliverOversizeIsNotWritten(t *testing.T) {
 	c, _ := newScriptedChild(t)
 	session := inbox.Session{SocketPath: "/s"}
@@ -653,12 +632,10 @@ func TestClientDeliverOversizeIsNotWritten(t *testing.T) {
 	}
 }
 
-// unwatchWaitBound is how long the test waits for stop to return after the
-// helper leaves an unwatch unanswered. The product bounds the request by
-// unwatchTimeout; the package fallback covers handing the result back to the
-// test goroutine on a loaded runner after that timer fires.
+// unwatchWaitBound is how long the test waits for stop to return after the helper leaves an unwatch unanswered.
 const unwatchWaitBound = unwatchTimeout + processTimeout
 
+// TestClientUnwatchBoundedWhenReplyMissing checks that stop returns after unwatchTimeout when the unwatch reply never arrives.
 func TestClientUnwatchBoundedWhenReplyMissing(t *testing.T) {
 	c, child := newScriptedChild(t)
 
@@ -682,7 +659,6 @@ func TestClientUnwatchBoundedWhenReplyMissing(t *testing.T) {
 		stop()
 		close(stopped)
 	}()
-	// Read the unwatch request but never answer it.
 	if unwatchReq := child.next(t); unwatchReq.GetUnwatch() == nil {
 		t.Fatalf("request op = %T, want unwatch", unwatchReq.GetOp())
 	}
@@ -697,6 +673,7 @@ func TestClientUnwatchBoundedWhenReplyMissing(t *testing.T) {
 	}
 }
 
+// TestClientFirstMessageNotReady checks that a first message other than Ready is a protocol error.
 func TestClientFirstMessageNotReady(t *testing.T) {
 	toChildR, toChildW := io.Pipe()
 	fromChildR, fromChildW := io.Pipe()

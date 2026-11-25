@@ -7,8 +7,7 @@ import (
 	"syscall"
 )
 
-// switchSetgroups, switchSetegid and switchSeteuid replace the credential
-// syscalls switchAccount calls, so a unit test can check the call order and
+// The syscall seams are variables so a unit test can check the call order and
 // inject a failure.
 var (
 	switchSetgroups = syscall.Setgroups
@@ -16,9 +15,9 @@ var (
 	switchSeteuid   = syscall.Seteuid
 )
 
-// switchAccount replaces the process's supplementary groups, effective gid and
-// effective uid, in that order. It is the Linux and BSD path; Darwin uses the
-// initgroups system call instead, because its setgroups is capped at NGROUPS.
+// switchAccount replaces the supplementary groups, effective gid and effective
+// uid, in that order; Darwin uses initgroups instead, because its setgroups is
+// capped at NGROUPS.
 func switchAccount(uid, gid uint32, groups []uint32) error {
 	intGroups := make([]int, len(groups))
 	for i, group := range groups {

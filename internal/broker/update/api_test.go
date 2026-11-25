@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestLatestReturnsNewestRelease checks that Latest returns the tag and release
+// page of the newest formal release.
 func TestLatestReturnsNewestRelease(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if want := "/repos/wangzw/peers/releases/latest"; r.URL.Path != want {
@@ -32,6 +34,8 @@ func TestLatestReturnsNewestRelease(t *testing.T) {
 	}
 }
 
+// TestLatestRejectsAPIError checks that a failing API response becomes an error
+// carrying the status.
 func TestLatestRejectsAPIError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "boom", http.StatusInternalServerError)
@@ -42,8 +46,6 @@ func TestLatestRejectsAPIError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Latest() error = nil, want an error for a failing API")
 	}
-	// The error must carry the response's status, not only that the request
-	// failed.
 	for _, want := range []string{"500 Internal Server Error", "releases/latest"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("Latest() error = %q, want it to contain %q", err, want)
@@ -51,6 +53,8 @@ func TestLatestRejectsAPIError(t *testing.T) {
 	}
 }
 
+// TestLatestRejectsOversizedResponse checks that a response above the body limit
+// is refused.
 func TestLatestRejectsOversizedResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write(bytes.Repeat([]byte{'x'}, int(maxAPIBodySize)+1))
@@ -67,6 +71,8 @@ func TestLatestRejectsOversizedResponse(t *testing.T) {
 	}
 }
 
+// TestLatestRejectsInvalidContent checks that malformed JSON and non-release
+// tags are rejected with a reason.
 func TestLatestRejectsInvalidContent(t *testing.T) {
 	tests := []struct {
 		name string
@@ -105,8 +111,6 @@ func TestLatestRejectsInvalidContent(t *testing.T) {
 			if err == nil {
 				t.Fatal("Latest() error = nil, want an error for invalid content")
 			}
-			// The error must explain what was wrong with the content, not only
-			// that it was rejected.
 			for _, want := range tc.want {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("Latest() error = %q, want it to contain %q", err, want)

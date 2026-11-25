@@ -4,9 +4,8 @@ package update
 
 import "net/http"
 
-// checkDownloadURL requires a download URL to use https. Hosts are not
-// restricted: GitHub redirects assets to storage hosts, and the checksum still
-// verifies the content.
+// checkDownloadURL requires an https URL; the host is not restricted because
+// GitHub redirects assets to storage hosts.
 func checkDownloadURL(raw string) error {
 	return strictCheckDownloadURL(raw)
 }

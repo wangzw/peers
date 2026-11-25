@@ -16,16 +16,11 @@ import (
 const DefaultAPI = "https://api.github.com"
 
 const (
-	// repository is the only repository this package ever addresses. The
-	// owner and name are fixed so a caller cannot redirect the check or the
-	// download to another project.
 	repositoryOwner = "wangzw"
 	repositoryName  = "peers"
 
 	checksumsAsset = "checksums.txt"
 
-	// maxAPIBodySize caps a JSON API response at 1 MiB. Release metadata is
-	// a few kilobytes; anything larger is a sign of a hostile or broken peer.
 	maxAPIBodySize int64 = 1 << 20
 )
 
@@ -36,8 +31,7 @@ type Release struct {
 }
 
 // Latest returns the newest formal release of the repository behind api.
-// Prereleases and drafts are rejected: the endpoint only returns a formal
-// release, but the tag is validated as well.
+// Prereleases and drafts are rejected.
 func Latest(ctx context.Context, c *http.Client, api string) (Release, error) {
 	var payload struct {
 		TagName string `json:"tag_name"`
@@ -53,8 +47,6 @@ func Latest(ctx context.Context, c *http.Client, api string) (Release, error) {
 	return Release{Version: version, URL: payload.HTMLURL}, nil
 }
 
-// releaseURL builds a releases endpoint URL. ref is either "latest" or
-// "tags/v<version>".
 func releaseURL(api, ref string) string {
 	if api == "" {
 		api = APIBase()
@@ -62,8 +54,6 @@ func releaseURL(api, ref string) string {
 	return strings.TrimRight(api, "/") + "/repos/" + repositoryOwner + "/" + repositoryName + "/releases/" + ref
 }
 
-// releaseVersion turns a release tag into a version without the v prefix and
-// rejects anything that is not a formal release version.
 func releaseVersion(tag string) (string, error) {
 	version := strings.TrimPrefix(tag, "v")
 	if !isReleaseVersion(version) {
@@ -72,7 +62,6 @@ func releaseVersion(tag string) (string, error) {
 	return version, nil
 }
 
-// getJSON performs one GET request and decodes its JSON body into v.
 func getJSON(ctx context.Context, c *http.Client, url string, v any) error {
 	resp, err := get(ctx, c, url)
 	if err != nil {
@@ -93,7 +82,6 @@ func getJSON(ctx context.Context, c *http.Client, url string, v any) error {
 	return nil
 }
 
-// get issues one GET request and turns a non-200 response into an error.
 func get(ctx context.Context, c *http.Client, url string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -110,7 +98,6 @@ func get(ctx context.Context, c *http.Client, url string) (*http.Response, error
 	return resp, nil
 }
 
-// httpClient returns c, or the default client when c is nil.
 func httpClient(c *http.Client) *http.Client {
 	if c == nil {
 		return http.DefaultClient
