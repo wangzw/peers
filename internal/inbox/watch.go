@@ -52,10 +52,15 @@ type watcher struct {
 	// watch is installed, which can happen only when every directory the
 	// watcher could follow has disappeared.
 	watchPath string
-	// failedWatch is the path whose Add failed most recently. The next
-	// reconciliation skips it and falls back to its nearest existing ancestor
-	// instead of retrying the same path forever.
+	// failedWatch is the path whose Add failed in the current reconciliation.
+	// That reconciliation skips it and falls back to its nearest existing
+	// ancestor instead of retrying the same path forever; each later
+	// reconciliation starts fresh, so a directory that becomes watchable is
+	// retried once per event.
 	failedWatch string
+	// watchFailure records the Add failure the callbacks were last told about:
+	// the failing path and the error text.
+	watchFailure string
 }
 
 // watchReconcileAttempts bounds the loop that reconciles the installed watch
@@ -213,8 +218,8 @@ func (w *watcher) installWatch() (climbed bool, err error) {
 // desiredWatchPath returns the deepest directory the watcher can observe: the
 // registry directory when it exists, else the configuration directory, else
 // the nearest existing ancestor of the configuration directory. It skips
-// failedWatch so that a failed Add falls back one level instead of being
-// retried forever.
+// failedWatch so that the current reconciliation falls back one level instead
+// of retrying the same path forever.
 func (w *watcher) desiredWatchPath() string {
 	candidates := []string{w.sessionsPath, w.configDir}
 	for p := filepath.Dir(w.configDir); ; p = filepath.Dir(p) {
@@ -555,12 +560,16 @@ func pathWithin(parent, child string) bool {
 // The file system is checked again after every Add, because a directory
 // created between the existence check and Add produces no notification for
 // the new watch. When no watch can be installed, the watcher calls back with 0
-// once per reconciliation instead of failing silently; later events from the
+// once per new failure instead of failing silently; later events from the
 // nearest existing ancestor let it pick the watch up again.
 func (w *watcher) ensureWatchTarget() (switched bool) {
 	if w.stopped.Load() {
 		return false
 	}
+	// A failure recorded by an earlier reconciliation must not hide the
+	// directory forever: the event that triggered this reconciliation may be
+	// the change that made it watchable.
+	w.failedWatch = ""
 	notified := false
 	notifyLost := func() {
 		if !notified {
@@ -568,9 +577,15 @@ func (w *watcher) ensureWatchTarget() (switched bool) {
 			w.notify(0)
 		}
 	}
+	failed := false
 	for attempt := 0; attempt < watchReconcileAttempts; attempt++ {
 		desired := w.desiredWatchPath()
 		if desired == w.watchPath {
+			// Nothing failed on this pass, so a failure reported earlier has
+			// been repaired; report it again if it recurs.
+			if !failed {
+				w.watchFailure = ""
+			}
 			return switched
 		}
 		if desired == "" {
@@ -587,7 +602,15 @@ func (w *watcher) ensureWatchTarget() (switched bool) {
 		}
 		if err := w.fsw.Add(desired); err != nil {
 			w.failedWatch = desired
-			notifyLost()
+			failed = true
+			// Retry the path on the next reconciliation, but report the fallback
+			// only when this failure differs from the one already reported: a
+			// persistently unwatchable directory calls back with 0 once.
+			failure := desired + "\x00" + err.Error()
+			if failure != w.watchFailure {
+				w.watchFailure = failure
+				notifyLost()
+			}
 			continue
 		}
 		if w.watchPath != "" {
@@ -595,9 +618,12 @@ func (w *watcher) ensureWatchTarget() (switched bool) {
 		}
 		w.watchPath = desired
 		w.failedWatch = ""
+		w.watchFailure = ""
 		switched = true
 	}
-	notifyLost()
+	if !failed {
+		notifyLost()
+	}
 	return switched
 }
 
