@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // frameChildTimeout bounds one frame written by a freshly executed subprocess,
@@ -115,7 +117,7 @@ func TestForkEachUsesDistinctPids(t *testing.T) {
 	}
 
 	const count = 3
-	path := filepath.Join(t.TempDir(), "inbox.sock")
+	path := socktest.Path(t, "inbox.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatalf("listening: %v", err)
@@ -173,7 +175,7 @@ func TestForkEachUsesDistinctPids(t *testing.T) {
 // after reading the newline, which the frame writer waits for.
 func listenOnce(t *testing.T) (string, <-chan string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "inbox.sock")
+	path := socktest.Path(t, "inbox.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatalf("listening: %v", err)

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 type fakeStatusServer struct {
@@ -40,7 +40,7 @@ func (f *fakeStatusServer) Status(context.Context, *localpb.StatusRequest) (*loc
 
 func startFakeStatusServer(t *testing.T, fake *fakeStatusServer) string {
 	t.Helper()
-	socket := filepath.Join(t.TempDir(), "broker.sock")
+	socket := socktest.Path(t, "broker.sock")
 	lis, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
