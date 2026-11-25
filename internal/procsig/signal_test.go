@@ -8,12 +8,10 @@ import (
 	"testing"
 )
 
-// TestSendSignalRefusesGuardPids checks the pids the guard exists for: -1
-// reaches every process the account may signal, 0 reaches the caller's process
-// group, and 1 reaches init. SIGCONT keeps a regression harmless while the
-// message check still fails when the syscall is attempted and succeeds or
-// returns a permission error.
+// TestSendSignalRefusesGuardPids checks that SendSignal refuses -1, 0 and 1.
 func TestSendSignalRefusesGuardPids(t *testing.T) {
+	// SIGCONT is deliberate: a guard regression that lets the signal through
+	// stays harmless, so never switch to a terminating signal.
 	for _, pid := range []int{-1, 0, 1} {
 		err := SendSignal(pid, syscall.SIGCONT)
 		if err == nil {
@@ -25,16 +23,18 @@ func TestSendSignalRefusesGuardPids(t *testing.T) {
 	}
 }
 
-// TestSendSignalAcceptsOwnPID checks that the guard lets a live pid through,
-// so the refusal above cannot pass by refusing every call.
+// TestSendSignalAcceptsOwnPID checks that SendSignal accepts the caller's own
+// pid.
 func TestSendSignalAcceptsOwnPID(t *testing.T) {
+	// SIGCONT is deliberate: a guard regression that lets the signal through
+	// stays harmless to the test process, so never switch to a terminating
+	// signal.
 	if err := SendSignal(os.Getpid(), syscall.SIGCONT); err != nil {
 		t.Fatalf("SendSignal(%d, SIGCONT) = %v, want nil", os.Getpid(), err)
 	}
 }
 
-// TestAliveRefusesGuardPids checks that the liveness probe refuses the same
-// pids SendSignal refuses. Alive must not send a signal for any of them.
+// TestAliveRefusesGuardPids checks that Alive reports false for -1, 0 and 1.
 func TestAliveRefusesGuardPids(t *testing.T) {
 	for _, pid := range []int{-1, 0, 1} {
 		if Alive(pid) {
@@ -43,16 +43,16 @@ func TestAliveRefusesGuardPids(t *testing.T) {
 	}
 }
 
-// TestAliveAcceptsOwnPID checks that the liveness probe reports a live pid, so
-// the refusal above cannot pass by reporting every pid dead.
+// TestAliveAcceptsOwnPID checks that Alive reports the caller's own pid as
+// alive.
 func TestAliveAcceptsOwnPID(t *testing.T) {
 	if !Alive(os.Getpid()) {
 		t.Fatalf("Alive(%d) = false, want true", os.Getpid())
 	}
 }
 
-// TestAliveReportsExitedProcess checks that a pid stops counting as alive once
-// its process has exited and been reaped.
+// TestAliveReportsExitedProcess checks that Alive reports false for a process
+// that has exited and been reaped.
 func TestAliveReportsExitedProcess(t *testing.T) {
 	cmd := exec.Command("true")
 	if err := cmd.Start(); err != nil {
