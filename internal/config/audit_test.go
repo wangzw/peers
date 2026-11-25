@@ -2,7 +2,9 @@ package config
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -1782,5 +1784,460 @@ func TestConfigAuditCloseFlushesSummary(t *testing.T) {
 	if last.Detail != "other sources" || last.Peer != nil || last.Count != 2 {
 		t.Errorf("summary after close = %+v, want detail %q, no peer and count 2",
 			last, "other sources")
+	}
+}
+
+// TestOpenAuditUsesRealClockAndReportsUnknownKind covers the two append paths
+// a caller reaches with a real audit log: an event without a time takes the
+// log's clock, and an event whose kind is outside the known set is refused and
+// reported to the log's logger.
+func TestOpenAuditUsesRealClockAndReportsUnknownKind(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	path := filepath.Join(t.TempDir(), "audit.log")
+	log, err := openAuditWithDirMode(path, auditDirMode, time.Now, logger)
+	if err != nil {
+		t.Fatalf("open audit log: %v", err)
+	}
+	t.Cleanup(func() { _ = log.close() })
+
+	if err := log.append(Event{Event: EventKind("bogus")}); err == nil {
+		t.Fatal("append of an unknown kind returned no error")
+	}
+	if !strings.Contains(logs.String(), "config_audit_unknown_kind") {
+		t.Errorf("the logger did not receive the unknown-kind report: %q", logs.String())
+	}
+
+	if err := log.append(Event{Event: EventLinkUp}); err != nil {
+		t.Fatalf("append link_up: %v", err)
+	}
+	events, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if len(events) != 1 || events[0].Time.IsZero() {
+		t.Fatalf("events = %+v, want one record carrying the clock's time", events)
+	}
+	if age := time.Since(events[0].Time); age < 0 || age > time.Minute {
+		t.Errorf("the clock produced %s, which is %s from now", events[0].Time, age)
+	}
+}
+
+// TestOpenAuditReportsFilesystemFailures checks that a parent directory that
+// cannot be created and a name the filesystem refuses are both reported.
+func TestOpenAuditReportsFilesystemFailures(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocker")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatalf("seed blocker file: %v", err)
+	}
+	if _, err := openAudit(filepath.Join(blocker, "audit.log"), time.Now, testLogger()); err == nil {
+		t.Fatal("opening an audit log under a regular file succeeded")
+	} else if !strings.Contains(err.Error(), "cannot create the audit log directory") {
+		t.Errorf("parent-directory error = %v", err)
+	}
+
+	tooLong := filepath.Join(dir, strings.Repeat("a", 300))
+	if _, err := openAudit(tooLong, time.Now, testLogger()); err == nil {
+		t.Fatal("opening an audit log with an over-long name succeeded")
+	} else if !strings.Contains(err.Error(), "cannot open the audit log") {
+		t.Errorf("open error = %v", err)
+	}
+}
+
+// TestAuditAppendStripsSecretKindValues checks that a secret-kind value is
+// removed from an event that did not go through the key table.
+func TestAuditAppendStripsSecretKindValues(t *testing.T) {
+	log, path, _ := newAuditTestLog(t, 0o700)
+	if err := log.append(Event{
+		Time:  auditTestClock(t),
+		Event: EventLinkUp,
+		Old:   &Value{Kind: KindSecret, SecretIsSet: true},
+		New:   &Value{Kind: KindSecret, SecretIsSet: true},
+	}); err != nil {
+		t.Fatalf("append link_up: %v", err)
+	}
+	events, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].Old != nil || events[0].New != nil {
+		t.Fatalf("record carries a secret-kind value: old %#v new %#v", events[0].Old, events[0].New)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	if bytes.Contains(data, []byte(`"secret"`)) {
+		t.Errorf("secret kind reached the audit file: %s", data)
+	}
+}
+
+// TestAuditAppendWriteFailureIsLogged checks that a write failure is returned
+// and logged, and that a later read reports its seek failure.
+func TestAuditAppendWriteFailureIsLogged(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	log, err := openAudit(path, func() time.Time { return auditTestClock(t) }, logger)
+	if err != nil {
+		t.Fatalf("open audit log: %v", err)
+	}
+	t.Cleanup(func() { _ = log.close() })
+	if err := log.file.Close(); err != nil {
+		t.Fatalf("close the underlying file: %v", err)
+	}
+
+	if err := log.append(Event{Time: auditTestClock(t), Event: EventLinkUp}); err == nil {
+		t.Fatal("append to a closed file returned no error")
+	}
+	if !strings.Contains(logs.String(), "cannot append audit record") {
+		t.Errorf("write failure was not logged: %q", logs.String())
+	}
+	if _, err := log.read(time.Time{}); err == nil {
+		t.Fatal("read from a closed file returned no error")
+	} else if !strings.Contains(err.Error(), "cannot seek in the audit log") {
+		t.Errorf("read error = %v", err)
+	}
+}
+
+// TestAuditReadSkipsBlankAndUnterminatedLines checks that a blank line adds no
+// record and a trailing line without a newline is skipped and logged.
+func TestAuditReadSkipsBlankAndUnterminatedLines(t *testing.T) {
+	log, path, logs := newAuditTestLog(t, 0o700)
+	if err := log.append(Event{Time: auditTestClock(t), Event: EventLinkUp}); err != nil {
+		t.Fatalf("append link_up: %v", err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatalf("open for raw append: %v", err)
+	}
+	if _, err := file.WriteString("\n" + `{"time":"2026-11-18T12:00:01`); err != nil {
+		t.Fatalf("write raw tail: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close raw append: %v", err)
+	}
+
+	events, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if len(events) != 1 || events[0].Event != EventLinkUp {
+		t.Fatalf("got %+v, want only the written link_up record", events)
+	}
+	if got := strings.Count(logs.String(), "skipping unreadable audit record"); got != 1 {
+		t.Errorf("unreadable-line reports = %d, want 1 (the blank line must not be reported): %q",
+			got, logs.String())
+	}
+}
+
+// TestAuditReadSinceFiltersPendingWindow checks that a pending window whose
+// first event predates since is omitted from the result.
+func TestAuditReadSinceFiltersPendingWindow(t *testing.T) {
+	log, _, clock, _, _ := newAuditTestLogAt(t)
+	base := clock.Now()
+	if err := log.append(Event{
+		Time:     base,
+		Event:    EventConnectionRejected,
+		MergeKey: "source:203.0.113.20/32",
+	}); err != nil {
+		t.Fatalf("append connection_rejected: %v", err)
+	}
+
+	all, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("got %d events without a filter, want the pending window", len(all))
+	}
+	filtered, err := log.read(base.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("read audit log with since: %v", err)
+	}
+	if len(filtered) != 0 {
+		t.Fatalf("got %d events after since, want the pending window omitted: %+v", len(filtered), filtered)
+	}
+}
+
+// TestDecodeEventRejectsMalformedRecords checks each malformed wire record:
+// no time, an unknown kind, a fingerprint that is not hex and one that is the
+// wrong length.
+func TestDecodeEventRejectsMalformedRecords(t *testing.T) {
+	cases := []struct {
+		name  string
+		line  string
+		want  string
+		check func(*testing.T, error)
+	}{
+		{"no time", `{"event":"link_up"}`, "no time", nil},
+		{"unknown kind", fmt.Sprintf(`{"time":%q,"event":"bogus"}`, auditTestClockText), "unknown audit event kind", nil},
+		{"bad fingerprint hex", fmt.Sprintf(`{"time":%q,"event":"link_up","peer":{"fingerprint":"zz"}}`, auditTestClockText), "invalid byte", func(t *testing.T, err error) {
+			var invalid hex.InvalidByteError
+			if !errors.As(err, &invalid) {
+				t.Fatalf("error = %v, want hex.InvalidByteError", err)
+			}
+			if strings.Contains(err.Error(), "bytes") {
+				t.Fatalf("error = %v, want the hex failure, not the fingerprint length", err)
+			}
+		}},
+		{"short fingerprint", fmt.Sprintf(`{"time":%q,"event":"link_up","peer":{"fingerprint":"00"}}`, auditTestClockText), "1 bytes", nil},
+	}
+	for _, tc := range cases {
+		_, err := decodeEvent([]byte(tc.line))
+		if err == nil {
+			t.Errorf("%s: decodeEvent accepted the record", tc.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+		if tc.check != nil {
+			tc.check(t, err)
+		}
+	}
+}
+
+// TestDecodeEventRejectsMalformedValues checks that a malformed old or new
+// value makes the whole record unreadable.
+func TestDecodeEventRejectsMalformedValues(t *testing.T) {
+	for field, value := range map[string]string{
+		"old": `"old":{"kind":"string","value":5}`,
+		"new": `"new":{"kind":"string","value":5}`,
+	} {
+		line := fmt.Sprintf(`{"time":%q,"event":"link_up",%s}`, auditTestClockText, value)
+		_, err := decodeEvent([]byte(line))
+		if err == nil {
+			t.Errorf("%s: decodeEvent accepted a malformed value", field)
+			continue
+		}
+		var typeErr *json.UnmarshalTypeError
+		if !errors.As(err, &typeErr) {
+			t.Errorf("%s: error = %v, want a *json.UnmarshalTypeError", field, err)
+		}
+	}
+}
+
+// TestDecodeValueRejectsMalformedPayloads checks that every value kind reports
+// its own malformed payload: a wrong JSON type, an unparseable duration, a
+// secret, or an unknown kind.
+func TestDecodeValueRejectsMalformedPayloads(t *testing.T) {
+	typeMismatch := func(err error) bool {
+		var typeErr *json.UnmarshalTypeError
+		return errors.As(err, &typeErr)
+	}
+	cases := []struct {
+		name  string
+		wire  wireValue
+		check func(error) bool
+		want  string
+	}{
+		{"string", wireValue{Kind: "string", Value: json.RawMessage(`5`)}, typeMismatch, ""},
+		{"bool", wireValue{Kind: "bool", Value: json.RawMessage(`"x"`)}, typeMismatch, ""},
+		{"int", wireValue{Kind: "int", Value: json.RawMessage(`"x"`)}, typeMismatch, ""},
+		{"duration payload", wireValue{Kind: "duration", Value: json.RawMessage(`5`)}, typeMismatch, ""},
+		{"duration text", wireValue{Kind: "duration", Value: json.RawMessage(`"not-a-duration"`)}, nil, "invalid duration"},
+		{"string list", wireValue{Kind: "string_list", Value: json.RawMessage(`5`)}, typeMismatch, ""},
+		{"secret", wireValue{Kind: "secret", Value: json.RawMessage(`true`)}, nil, "audit record contains a secret value"},
+		{"unknown kind", wireValue{Kind: "bogus", Value: json.RawMessage(`null`)}, nil, `unknown audit value kind "bogus"`},
+	}
+	for _, tc := range cases {
+		_, err := decodeValue(tc.wire)
+		if err == nil {
+			t.Errorf("%s: decodeValue accepted the payload", tc.name)
+			continue
+		}
+		if tc.check != nil && !tc.check(err) {
+			t.Errorf("%s: error = %v, want a *json.UnmarshalTypeError", tc.name, err)
+		}
+		if tc.want != "" && !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: error = %v, want it to mention %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// TestAuditRescheduleClampsNegativeDelay checks that a window whose deadline
+// already passed when it opened is armed with a zero delay, not a negative one.
+func TestAuditRescheduleClampsNegativeDelay(t *testing.T) {
+	log, _, clock, timers, _ := newAuditTestLogAt(t)
+	base := clock.Now()
+	if err := log.append(Event{
+		Time:     base.Add(-20 * time.Minute),
+		Event:    EventConnectionRejected,
+		MergeKey: "source:203.0.113.30/32",
+	}); err != nil {
+		t.Fatalf("append connection_rejected: %v", err)
+	}
+
+	timers.mu.Lock()
+	armed := append([]time.Duration{}, timers.durations...)
+	timers.mu.Unlock()
+	if len(armed) != 1 || armed[0] != 0 {
+		t.Fatalf("armed delays = %v, want one timer with delay 0", armed)
+	}
+	log.mu.Lock()
+	due := log.timerDue
+	log.mu.Unlock()
+	if want := base.Add(-10 * time.Minute); !due.Equal(want) {
+		t.Errorf("timer due = %s, want the deadline %s", due, want)
+	}
+}
+
+// TestAuditSummaryWindowClosesOnExpiredEvent checks that a new overflow event
+// after the summary window expired writes the old summary and opens a new one.
+func TestAuditSummaryWindowClosesOnExpiredEvent(t *testing.T) {
+	log, path, clock, _, _ := newAuditTestLogAt(t)
+	base := clock.Now()
+	for index := 0; index < auditMaxPendingWindows; index++ {
+		if err := log.append(Event{
+			Time:     base,
+			Event:    EventConnectionRejected,
+			MergeKey: fmt.Sprintf("source:198.51.100.%d/32", index),
+		}); err != nil {
+			t.Fatalf("append window %d: %v", index, err)
+		}
+	}
+	for _, offset := range []time.Duration{0, 2 * auditMergeWindow} {
+		if err := log.append(Event{
+			Time:     base.Add(offset),
+			Event:    EventConnectionRejected,
+			MergeKey: fmt.Sprintf("source:192.0.2.%d/32", 200+int(offset/time.Minute)),
+		}); err != nil {
+			t.Fatalf("append overflow event at %s: %v", offset, err)
+		}
+	}
+
+	records := auditFileRecords(t, path)
+	if len(records) != 1 {
+		t.Fatalf("file has %d records, want the expired summary only", len(records))
+	}
+	if records[0].Detail != auditOverflowDetail || records[0].Count != 0 {
+		t.Errorf("expired summary = %+v, want detail %q and no count", records[0], auditOverflowDetail)
+	}
+	if !records[0].Time.Equal(base) {
+		t.Errorf("expired summary time = %s, want %s", records[0].Time, base)
+	}
+
+	events, err := log.read(time.Time{})
+	if err != nil {
+		t.Fatalf("read audit log: %v", err)
+	}
+	var summaries []Event
+	for _, event := range events {
+		if event.Detail == auditOverflowDetail {
+			summaries = append(summaries, event)
+		}
+	}
+	if len(summaries) != 2 {
+		t.Fatalf("got %d summary records, want the written one and the new one: %+v", len(summaries), summaries)
+	}
+	if !summaries[0].Time.Equal(base) || !summaries[1].Time.Equal(base.Add(2*auditMergeWindow)) {
+		t.Errorf("summary times = [%s %s], want [%s %s]",
+			summaries[0].Time, summaries[1].Time, base, base.Add(2*auditMergeWindow))
+	}
+}
+
+// TestCoreAuditAppendWithoutOpenLogReportsToCoreLogger checks that an event
+// reported while no audit log is open reaches the core's own run log.
+func TestCoreAuditAppendWithoutOpenLogReportsToCoreLogger(t *testing.T) {
+	var logs bytes.Buffer
+	previous := defaultLogger
+	defaultLogger = func() *slog.Logger {
+		return slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	}
+	t.Cleanup(func() { defaultLogger = previous })
+
+	c := newCore()
+	c.auditAppend(Event{Event: EventLinkUp})
+	if !strings.Contains(logs.String(), "config_audit_not_open") {
+		t.Fatalf("the core logger did not receive the report: %q", logs.String())
+	}
+}
+
+// TestOpenAuditReportsRepairFailures checks that a stat failure and an
+// unreadable tail both make opening fail with the repair error.
+func TestOpenAuditReportsRepairFailures(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "audit.log")
+	previous := auditCreateFile
+	t.Cleanup(func() { auditCreateFile = previous })
+
+	closedFile, err := os.OpenFile(filepath.Join(dir, "closed.tmp"), os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatalf("create scratch file: %v", err)
+	}
+	if err := closedFile.Close(); err != nil {
+		t.Fatalf("close scratch file: %v", err)
+	}
+	auditCreateFile = func(string) (*os.File, error) { return closedFile, nil }
+	if _, err := openAudit(path, time.Now, testLogger()); err == nil {
+		t.Fatal("opening an audit log whose file cannot be statted succeeded")
+	} else if !strings.Contains(err.Error(), "cannot repair the audit log") {
+		t.Errorf("stat failure error = %v", err)
+	}
+
+	seed := filepath.Join(dir, "writeonly.tmp")
+	if err := os.WriteFile(seed, []byte("x\n"), 0o600); err != nil {
+		t.Fatalf("seed scratch file: %v", err)
+	}
+	writeOnly, err := os.OpenFile(seed, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open scratch file write-only: %v", err)
+	}
+	t.Cleanup(func() { _ = writeOnly.Close() })
+	auditCreateFile = func(string) (*os.File, error) { return writeOnly, nil }
+	if _, err := openAudit(path, time.Now, testLogger()); err == nil {
+		t.Fatal("opening an audit log whose tail cannot be read succeeded")
+	} else if !strings.Contains(err.Error(), "cannot repair the audit log") {
+		t.Errorf("read failure error = %v", err)
+	}
+}
+
+// TestCreateOrOpenAuditFileReportsChmodFailure checks that the explicit chmod
+// failure is returned and stays distinguishable through the open error.
+func TestCreateOrOpenAuditFileReportsChmodFailure(t *testing.T) {
+	sentinel := errors.New("chmod denied")
+	previous := auditChmodFile
+	auditChmodFile = func(*os.File, os.FileMode) error { return sentinel }
+	t.Cleanup(func() { auditChmodFile = previous })
+
+	path := filepath.Join(t.TempDir(), "audit.log")
+	if _, err := openAudit(path, time.Now, testLogger()); !errors.Is(err, sentinel) {
+		t.Fatalf("openAudit error = %v, want it to wrap the chmod failure", err)
+	}
+}
+
+// TestAuditReadReportsReadFailure checks that a log whose file can be seeked
+// but not read reports the read error.
+func TestAuditReadReportsReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	seed := filepath.Join(dir, "writeonly.tmp")
+	if err := os.WriteFile(seed, nil, 0o600); err != nil {
+		t.Fatalf("seed scratch file: %v", err)
+	}
+	writeOnly, err := os.OpenFile(seed, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatalf("open scratch file write-only: %v", err)
+	}
+	t.Cleanup(func() { _ = writeOnly.Close() })
+
+	previous := auditCreateFile
+	auditCreateFile = func(string) (*os.File, error) { return writeOnly, nil }
+	t.Cleanup(func() { auditCreateFile = previous })
+
+	log, err := openAudit(filepath.Join(dir, "audit.log"), time.Now, testLogger())
+	if err != nil {
+		t.Fatalf("open audit log over an empty write-only file: %v", err)
+	}
+	t.Cleanup(func() { _ = log.close() })
+	if _, err := log.read(time.Time{}); err == nil {
+		t.Fatal("read from a write-only file returned no error")
+	} else if !strings.Contains(err.Error(), "cannot read the audit log") {
+		t.Errorf("read error = %v", err)
 	}
 }

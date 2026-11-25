@@ -206,7 +206,7 @@ func openAuditWithDirMode(path string, dirMode os.FileMode, now func() time.Time
 			return nil, fmt.Errorf("cannot create the audit log directory %s: %w", dir, err)
 		}
 	}
-	file, err := createOrOpenAuditFile(path)
+	file, err := auditCreateFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open the audit log %s: %w", path, err)
 	}
@@ -225,13 +225,22 @@ func openAuditWithDirMode(path string, dirMode os.FileMode, now func() time.Time
 	}, nil
 }
 
+// auditCreateFile opens the audit file for appending; the same handle serves
+// the repair and the reads. Tests replace it to make the repair's stat or read
+// fail, or to hand a later read a write-only file.
+var auditCreateFile = createOrOpenAuditFile
+
+// auditChmodFile sets the audit file's mode. It is a seam so a test can make
+// the explicit chmod fail on a filesystem that does not reject it.
+var auditChmodFile = func(file *os.File, mode os.FileMode) error { return file.Chmod(mode) }
+
 // createOrOpenAuditFile creates the audit file with auditFileMode when it does
 // not exist and opens it for appending otherwise. The explicit chmod corrects
 // a permissive umask; an existing file keeps its own mode, owner and group.
 func createOrOpenAuditFile(path string) (*os.File, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|os.O_APPEND, auditFileMode)
 	if err == nil {
-		if chmodErr := file.Chmod(auditFileMode); chmodErr != nil {
+		if chmodErr := auditChmodFile(file, auditFileMode); chmodErr != nil {
 			_ = file.Close()
 			return nil, chmodErr
 		}
