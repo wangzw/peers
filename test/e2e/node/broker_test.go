@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 func init() {
@@ -96,23 +97,11 @@ func brokerTestEnv(t *testing.T, more map[string]string) []string {
 	return BaseEnv{Home: t.TempDir(), Path: path}.Build(more)
 }
 
-// shortSocketDir returns a temporary directory short enough for a Unix socket
-// path.
-func shortSocketDir(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "ap-")
-	if err != nil {
-		t.Fatalf("node: creating socket directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
-}
-
 func TestStartBrokerReady(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("ListProcs is only implemented on Linux")
 	}
-	dir := shortSocketDir(t)
+	dir := socktest.Dir(t)
 	socket := filepath.Join(dir, "broker.sock")
 	logPath := filepath.Join(t.TempDir(), "broker.log")
 
@@ -162,7 +151,7 @@ func TestStartBrokerReady(t *testing.T) {
 // the process has been waited for, its pid may name another process. The handle
 // must refuse the signal and leave its sent count unchanged.
 func TestBrokerProcRefusesSignalAfterReap(t *testing.T) {
-	dir := shortSocketDir(t)
+	dir := socktest.Dir(t)
 	socket := filepath.Join(dir, "broker.sock")
 	logPath := filepath.Join(t.TempDir(), "broker.log")
 
@@ -209,7 +198,7 @@ func TestBrokerProcRefusesSignalAfterReap(t *testing.T) {
 func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 	const iterations = 40
 	for i := 0; i < iterations; i++ {
-		dir := shortSocketDir(t)
+		dir := socktest.Dir(t)
 		socket := filepath.Join(dir, "broker.sock")
 		logPath := filepath.Join(t.TempDir(), "broker.log")
 
@@ -301,7 +290,7 @@ func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 }
 
 func TestStartBrokerFailure(t *testing.T) {
-	dir := shortSocketDir(t)
+	dir := socktest.Dir(t)
 	socket := filepath.Join(dir, "broker.sock")
 	logPath := filepath.Join(dir, "broker.log")
 
@@ -329,7 +318,7 @@ func TestStartBrokerFailure(t *testing.T) {
 // startOracleTestServer serves srv on a temporary Unix socket.
 func startOracleTestServer(t *testing.T, srv localpb.LocalServer) string {
 	t.Helper()
-	socket := filepath.Join(shortSocketDir(t), "local.sock")
+	socket := filepath.Join(socktest.Dir(t), "local.sock")
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatalf("node: listening on %s: %v", socket, err)

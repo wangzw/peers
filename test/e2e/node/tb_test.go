@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/wangzw/peers/internal/testkit/fakesession"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 var _ testing.TB = (*TB)(nil)
@@ -73,7 +74,7 @@ func TestTBDrivesEveryFakeMethod(t *testing.T) {
 // caller, and that the same message is available through TakeErrors.
 func TestTBFatalBecomesError(t *testing.T) {
 	tb := NewTB("x", t.TempDir())
-	dir := filepath.Join(t.TempDir(), "readonly")
+	dir := filepath.Join(socktest.Dir(t), "readonly")
 	if err := os.Mkdir(dir, 0o500); err != nil {
 		t.Fatalf("creating read-only directory: %v", err)
 	}
@@ -91,6 +92,11 @@ func TestTBFatalBecomesError(t *testing.T) {
 	}
 	if !strings.Contains(fatal.Error(), "fakesession: binding") {
 		t.Fatalf("FatalError %q does not mention binding", fatal.Error())
+	}
+	// FatalError carries the formatted message rather than the wrapped error,
+	// so EACCES is matched by the text it produces.
+	if msg := fatal.Error(); !strings.Contains(msg, "permission denied") {
+		t.Fatalf("FatalError %q is not a permission error (EACCES)", msg)
 	}
 	errs := tb.TakeErrors()
 	if len(errs) != 1 || !strings.Contains(errs[0], "fakesession: binding") {

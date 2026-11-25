@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 	"github.com/wangzw/peers/test/e2e/ctl"
 	"github.com/wangzw/peers/test/e2e/node"
 )
@@ -184,7 +185,7 @@ func TestServeShutdown(t *testing.T) {
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatalf("creating the account home: %v", err)
 	}
-	socket := filepath.Join(dir, "ctl.sock")
+	socket := socktest.Path(t, "ctl.sock")
 
 	var stderr bytes.Buffer
 	cmd := exec.Command(binary, "serve", "--ctl", socket, "--home", home, "--bin", binary)
