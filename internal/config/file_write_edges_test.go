@@ -55,16 +55,31 @@ func TestWriteConfigFileReportsDirectoryCreationFailure(t *testing.T) {
 }
 
 // TestWriteConfigFileReportsTruncateFailure checks that a file that opens but
-// cannot be truncated is reported as ErrFileWrite.
+// cannot be truncated is reported as ErrFileWrite with the target path. The
+// seam returns the target opened read-only: truncating a descriptor without
+// write access fails on both linux and darwin, whereas a FIFO makes darwin
+// report the later seek instead.
 func TestWriteConfigFileReportsTruncateFailure(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "config.fifo")
-	if err := unix.Mkfifo(path, 0o600); err != nil {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := []byte("existing: value\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	readOnly, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = readOnly.Close() }()
 
-	err := writeConfigFile(path, []byte("broker:\n  alias: a\n"), ModeUser)
+	old := openConfigFileForWrite
+	t.Cleanup(func() { openConfigFileForWrite = old })
+	openConfigFileForWrite = func(string, int, os.FileMode) (*os.File, error) {
+		return readOnly, nil
+	}
+
+	err = writeConfigFile(path, []byte("broker:\n  alias: a\n"), ModeUser)
 	if err == nil {
-		t.Fatal("writeConfigFile accepted a FIFO")
+		t.Fatal("writeConfigFile truncated a file opened read-only")
 	}
 	if !errors.Is(err, ErrFileWrite) {
 		t.Fatalf("writeConfigFile error = %v, want ErrFileWrite", err)
@@ -72,12 +87,15 @@ func TestWriteConfigFileReportsTruncateFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "truncate") {
 		t.Fatalf("writeConfigFile error = %v, want the truncate failure", err)
 	}
-	info, statErr := os.Stat(path)
-	if statErr != nil {
-		t.Fatal(statErr)
+	if !strings.Contains(err.Error(), path) {
+		t.Fatalf("writeConfigFile error = %v, want the target path %s", err, path)
 	}
-	if info.Mode()&os.ModeNamedPipe == 0 {
-		t.Fatalf("the FIFO was replaced by a %v", info.Mode())
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if !bytes.Equal(got, original) {
+		t.Fatalf("file content = %q, want %q", got, original)
 	}
 }
 
