@@ -15,7 +15,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// PEERS_TEST_SOCKET names the socket to use, ahead of account selection.
+// TestSelectTestSocketTakesPrecedence selects the socket PEERS_TEST_SOCKET names
+// ahead of account selection.
 func TestSelectTestSocketTakesPrecedence(t *testing.T) {
 	envPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, envPath, fakelocal.Handlers{})
@@ -40,17 +41,17 @@ func TestSelectTestSocketTakesPrecedence(t *testing.T) {
 	}
 }
 
-// A dead PEERS_TEST_SOCKET must not silently fall through to another
-// Broker.
+// TestSelectTestSocketMissingDoesNotFallThrough reports a dead PEERS_TEST_SOCKET
+// instead of selecting another Broker.
 func TestSelectTestSocketMissingDoesNotFallThrough(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "absent.sock")
+	missing := filepath.Join(shortTempDir(t), "absent.sock")
 	userPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, userPath, fakelocal.Handlers{})
 	t.Setenv("PEERS_TEST_SOCKET", missing)
 
 	s := &selector{
 		userSocket:   userPath,
-		systemSocket: filepath.Join(t.TempDir(), "system.sock"),
+		systemSocket: filepath.Join(shortTempDir(t), "system.sock"),
 		probe:        inspectSocket,
 	}
 
@@ -63,9 +64,8 @@ func TestSelectTestSocketMissingDoesNotFallThrough(t *testing.T) {
 	}
 }
 
-// PEERS_TEST_SOCKET names a socket that must be served by this account or
-// by root. Another account makes the socket unusable, and the error names the
-// path and the account that answered.
+// TestSelectRejectsForeignTestSocket rejects a PEERS_TEST_SOCKET served by
+// another account and names the path and that account.
 func TestSelectRejectsForeignTestSocket(t *testing.T) {
 	envPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, envPath, fakelocal.Handlers{})
@@ -77,8 +77,8 @@ func TestSelectRejectsForeignTestSocket(t *testing.T) {
 	t.Cleanup(func() { peerUID = old })
 
 	s := &selector{
-		userSocket:   filepath.Join(t.TempDir(), "user.sock"),
-		systemSocket: filepath.Join(t.TempDir(), "system.sock"),
+		userSocket:   filepath.Join(shortTempDir(t), "user.sock"),
+		systemSocket: filepath.Join(shortTempDir(t), "system.sock"),
 		probe:        inspectSocket,
 	}
 
@@ -94,9 +94,8 @@ func TestSelectRejectsForeignTestSocket(t *testing.T) {
 	}
 }
 
-// FindBrokerWithDial returns a dialer that checks the peer of every connection
-// it opens, so a socket taken over by another account after selection is
-// refused before Hello is sent.
+// TestFindBrokerWithDialRefusesForeignPeer refuses, before Hello, a socket taken
+// over by another account after selection.
 func TestFindBrokerWithDialRefusesForeignPeer(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{})
@@ -137,4 +136,124 @@ func TestFindBrokerWithDialRefusesForeignPeer(t *testing.T) {
 			t.Fatal("the fake Broker received Hello over a connection served by another account")
 		}
 	}
+}
+
+// TestFindNamedSocket skips the named-socket step when PEERS_TEST_SOCKET is
+// empty and selects a serving socket when it is set.
+func TestFindNamedSocket(t *testing.T) {
+	s := &selector{}
+
+	t.Setenv("PEERS_TEST_SOCKET", "")
+	got, found, err := s.findNamedSocket(context.Background())
+	if err != nil || found || got.Path != "" {
+		t.Fatalf("findNamedSocket = (%+v, %v, %v), want no target and no error", got, found, err)
+	}
+
+	path := fakelocal.SocketPath(t)
+	fakelocal.Start(t, path, fakelocal.Handlers{})
+	t.Setenv("PEERS_TEST_SOCKET", path)
+	got, found, err = s.findNamedSocket(context.Background())
+	if err != nil || !found || got.Path != path || got.Kind != kindTest {
+		t.Fatalf("findNamedSocket = (%+v, %v, %v), want {%s kindTest}", got, found, err, path)
+	}
+}
+
+// TestSelectorEnvironmentDefaultsToProcess reads the process environment when the
+// selector has no environment seam.
+func TestSelectorEnvironmentDefaultsToProcess(t *testing.T) {
+	t.Setenv("PEERS_TEST_SOCKET", "/tmp/named.sock")
+	s := &selector{}
+	if got := s.environment("PEERS_TEST_SOCKET"); got != "/tmp/named.sock" {
+		t.Fatalf("environment = %q, want the process value", got)
+	}
+}
+
+// TestProbeDescriptionNamesEveryFailure describes each probe outcome in words.
+func TestProbeDescriptionNamesEveryFailure(t *testing.T) {
+	tests := []struct {
+		in   probeResult
+		want string
+	}{
+		{probeMissing, "the path does not exist"},
+		{probeRefused, "no process accepts connections"},
+		{probeDenied, "this account may not connect to it"},
+		{probeOther, "the connection failed"},
+		{probeOK, "unknown failure"},
+	}
+	for _, tt := range tests {
+		if got := probeDescription(tt.in); got != tt.want {
+			t.Fatalf("probeDescription(%v) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestFindAtLevelReportsDeadTestSocket reports a dead test socket as an error at
+// every level.
+func TestFindAtLevelReportsDeadTestSocket(t *testing.T) {
+	missing := filepath.Join(shortTempDir(t), "absent.sock")
+	t.Setenv("PEERS_TEST_SOCKET", missing)
+	s := &selector{}
+	_, _, err := s.findAtLevel(context.Background(), false)
+	if err == nil || !strings.Contains(err.Error(), "PEERS_TEST_SOCKET") {
+		t.Fatalf("findAtLevel error = %v, want it to name PEERS_TEST_SOCKET", err)
+	}
+}
+
+// TestFindBrokerFunctionsReportDeadTestSocket reports a dead PEERS_TEST_SOCKET
+// with the path from every finder.
+func TestFindBrokerFunctionsReportDeadTestSocket(t *testing.T) {
+	missing := filepath.Join(shortTempDir(t), "absent.sock")
+	t.Setenv("PEERS_TEST_SOCKET", missing)
+	ctx := context.Background()
+
+	errs := map[string]error{}
+	if _, err := FindBroker(ctx); err != nil {
+		errs["FindBroker"] = err
+	} else {
+		t.Fatal("FindBroker returned nil error for a dead test socket")
+	}
+	if _, err := FindBrokerForLevel(ctx, false, true); err != nil {
+		errs["FindBrokerForLevel"] = err
+	} else {
+		t.Fatal("FindBrokerForLevel returned nil error for a dead test socket")
+	}
+	if _, _, err := FindBrokerWithDial(ctx); err != nil {
+		errs["FindBrokerWithDial"] = err
+	} else {
+		t.Fatal("FindBrokerWithDial returned nil error for a dead test socket")
+	}
+	if _, _, err := FindBrokerWithDialForLevel(ctx, false, true); err != nil {
+		errs["FindBrokerWithDialForLevel"] = err
+	} else {
+		t.Fatal("FindBrokerWithDialForLevel returned nil error for a dead test socket")
+	}
+	for name, err := range errs {
+		if !strings.Contains(err.Error(), missing) || !strings.Contains(err.Error(), "PEERS_TEST_SOCKET") {
+			t.Fatalf("%s error = %q, want it to name %s and PEERS_TEST_SOCKET", name, err, missing)
+		}
+	}
+}
+
+// TestFindBrokerWithDialForLevelReturnsDialer selects a live test socket and
+// returns a dialer that opens a connection to it.
+func TestFindBrokerWithDialForLevelReturnsDialer(t *testing.T) {
+	path := fakelocal.SocketPath(t)
+	fakelocal.Start(t, path, fakelocal.Handlers{})
+	t.Setenv("PEERS_TEST_SOCKET", path)
+
+	got, dial, err := FindBrokerWithDialForLevel(context.Background(), false, true)
+	if err != nil {
+		t.Fatalf("FindBrokerWithDialForLevel: %v", err)
+	}
+	if got != path {
+		t.Fatalf("path = %q, want %q", got, path)
+	}
+	cc, client, err := dial()
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	if client == nil {
+		t.Fatal("dial returned no client")
+	}
+	_ = cc.Close()
 }
