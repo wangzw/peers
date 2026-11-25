@@ -10,8 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// statusToWire maps a Member.Status to its wire value. Only the four known
-// lowercase values are recognized; everything else means unknown.
 func statusToWire(s string) topicpb.AgentStatus {
 	switch s {
 	case "idle":
@@ -27,8 +25,6 @@ func statusToWire(s string) topicpb.AgentStatus {
 	}
 }
 
-// statusFromWire maps a wire status to Member.Status. UNSPECIFIED and any
-// unknown enum value mean unknown, which is the empty string.
 func statusFromWire(s topicpb.AgentStatus) string {
 	switch s {
 	case topicpb.AgentStatus_AGENT_STATUS_IDLE:
@@ -44,7 +40,6 @@ func statusFromWire(s topicpb.AgentStatus) string {
 	}
 }
 
-// memberToWire converts a Member to its wire form.
 func memberToWire(m Member) *topicpb.Member {
 	return &topicpb.Member{
 		Name:         m.Name,
@@ -56,8 +51,7 @@ func memberToWire(m Member) *topicpb.Member {
 	}
 }
 
-// memberFromWire converts a wire member to a Member. A nil message is the zero
-// Member.
+// A nil message becomes the zero Member.
 func memberFromWire(p *topicpb.Member) Member {
 	if p == nil {
 		return Member{}
@@ -72,17 +66,13 @@ func memberFromWire(p *topicpb.Member) Member {
 	}
 }
 
-// MaxMemberNameBytes is the longest member name or previous name, in bytes,
-// that a roster entry may carry. It matches inbox.MaxNameBytes, which topic
-// cannot import; a broker test keeps the two equal.
+// MaxMemberNameBytes is the longest member name or previous name, in bytes, that
+// a roster entry may carry. It equals inbox.MaxNameBytes, which topic cannot
+// import; a broker test keeps them equal.
 const MaxMemberNameBytes = 128
 
-// validMemberEntry reports whether an inbound roster entry follows the broker's
-// rules for names, disambiguators and previous names: a Ref of 6 to 12 lowercase
-// hex digits, a non-empty name without whitespace, '@', '*' or control
-// characters, and a previous name that is either empty or follows the same name
-// rule. The account is display-only and is not part of this check: an illegal
-// account is cleared by SanitizeAccountName, never allowed to drop the entry.
+// The account is display-only and not checked here: an illegal account is
+// cleared by SanitizeAccountName and must not drop the entry.
 func validMemberEntry(m Member) bool {
 	if len(m.Ref) < 6 || len(m.Ref) > 12 {
 		return false
@@ -102,9 +92,7 @@ func validMemberEntry(m Member) bool {
 }
 
 // SanitizeAccountName returns account when it is usable as the display-only
-// account name on a roster entry, or "" when it is not. An illegal account must
-// not cost the whole member entry, and the publisher may have sent one because
-// its own account database allows characters a member name does not.
+// account name on a roster entry, or the empty string when it is not.
 func SanitizeAccountName(account string) string {
 	if account == "" {
 		return ""
@@ -115,8 +103,6 @@ func SanitizeAccountName(account string) string {
 	return account
 }
 
-// validMemberName reports whether name is a non-empty member name of at most
-// MaxMemberNameBytes bytes with no whitespace, '@', '*' or control characters.
 func validMemberName(name string) bool {
 	if name == "" || len(name) > MaxMemberNameBytes {
 		return false
@@ -129,15 +115,12 @@ func validMemberName(name string) bool {
 	return true
 }
 
-// sortByBytes sorts s by the bytes of each key, ascending. Digests and
-// fingerprints both use this order so frames leave in a deterministic order.
 func sortByBytes[T ~[32]byte](s []T) {
 	slices.SortFunc(s, func(a, b T) int {
 		return bytes.Compare(a[:], b[:])
 	})
 }
 
-// digestsMsg builds a TopicDigests with the digests in ascending byte order.
 func digestsMsg(ds [][32]byte) *topicpb.TopicDigests {
 	sorted := slices.Clone(ds)
 	sortByBytes(sorted)
@@ -150,7 +133,6 @@ func digestsMsg(ds [][32]byte) *topicpb.TopicDigests {
 	return out
 }
 
-// rosterMsg builds a Roster whose members are in ascending Ref order.
 func rosterMsg(d [32]byte, ms []Member) *topicpb.Roster {
 	sorted := sortMembers(slices.Clone(ms))
 	out := &topicpb.Roster{
@@ -163,8 +145,6 @@ func rosterMsg(d [32]byte, ms []Member) *topicpb.Roster {
 	return out
 }
 
-// deltaMsg builds a RosterDelta whose three lists are each in ascending Ref
-// order.
 func deltaMsg(d [32]byte, added []Member, removed []memberKey, changed []Member) *topicpb.RosterDelta {
 	sortedAdded := sortMembers(slices.Clone(added))
 	sortedRemoved := slices.Clone(removed)
@@ -191,7 +171,6 @@ func deltaMsg(d [32]byte, added []Member, removed []memberKey, changed []Member)
 	return out
 }
 
-// sortMembers returns ms sorted by Ref ascending.
 func sortMembers(ms []Member) []Member {
 	slices.SortFunc(ms, func(a, b Member) int {
 		return cmp.Compare(a.Ref, b.Ref)
@@ -199,10 +178,8 @@ func sortMembers(ms []Member) []Member {
 	return ms
 }
 
-// errBadDigest reports a digest that is not exactly 32 bytes.
 var errBadDigest = errors.New("digest is not 32 bytes")
 
-// parseDigest checks that b is a 32-byte digest and copies it.
 func parseDigest(b []byte) ([32]byte, error) {
 	var d [32]byte
 	if len(b) != len(d) {
@@ -212,8 +189,7 @@ func parseDigest(b []byte) ([32]byte, error) {
 	return d, nil
 }
 
-// parseDigests returns the set of digests in m. Any item of the wrong length
-// rejects the whole frame.
+// Any item of the wrong length rejects the whole frame.
 func parseDigests(m *topicpb.TopicDigests) (map[[32]byte]struct{}, error) {
 	out := map[[32]byte]struct{}{}
 	if m == nil {

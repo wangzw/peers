@@ -247,11 +247,11 @@ type Member struct {
 	Ref          string                 `protobuf:"bytes,2,opt,name=ref,proto3" json:"ref,omitempty"`
 	Status       AgentStatus            `protobuf:"varint,3,opt,name=status,proto3,enum=internal.topic.topicpb.AgentStatus" json:"status,omitempty"`
 	PreviousName string                 `protobuf:"bytes,4,opt,name=previous_name,json=previousName,proto3" json:"previous_name,omitempty"`
-	// account is the name of the account that published this member. It is for
-	// display only and never takes part in addressing or resolution.
+	// account is the display name of the account that published this member and
+	// never takes part in addressing or resolution.
 	Account string `protobuf:"bytes,5,opt,name=account,proto3" json:"account,omitempty"`
 	// ref_required says the publisher requires this member to be addressed by
-	// its disambiguator; a bare name must not select it.
+	// its disambiguator, so a bare name must not select it.
 	RefRequired   bool `protobuf:"varint,6,opt,name=ref_required,json=refRequired,proto3" json:"ref_required,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

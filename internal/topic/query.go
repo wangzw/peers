@@ -6,11 +6,9 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// visible reports the local topic names that local and other share, ascending.
-// A zero Peer means other is an agent on this Broker named by ID; otherwise
-// Peer selects the link and Ref the agent's entry in that peer's roster.
-// It returns nil when they share no topic, or when local is unknown or in no
-// topic.
+// visible returns the local topic names that local and other share, ascending,
+// or nil when they share none; a zero Peer means a local agent named by ID, and a
+// non-zero Peer selects the link with Ref its roster entry.
 func visible(lt *localTable, peers map[link.Fingerprint]*peerState, local AgentID, other AgentRef) []string {
 	if lt == nil {
 		return nil
@@ -44,10 +42,8 @@ func visible(lt *localTable, peers map[link.Fingerprint]*peerState, local AgentI
 	return shared
 }
 
-// visibleAgents lists the agents visible to local. Local agents come first,
-// ordered by ID; remote agents follow, ordered by peer fingerprint and then by
-// Ref. A remote agent in several shared topics appears once, with Shared merged
-// and the entry taken from the first shared topic by local name.
+// visibleAgents orders local agents before remote ones and merges a remote agent
+// in several shared topics into one entry.
 func visibleAgents(lt *localTable, peers map[link.Fingerprint]*peerState, local AgentID) []VisibleAgent {
 	if lt == nil {
 		return nil
@@ -132,9 +128,7 @@ func visibleAgents(lt *localTable, peers map[link.Fingerprint]*peerState, local 
 }
 
 // remoteMembers returns the peer's agents under the shared digests, deduplicated
-// by Ref and ordered by Ref. When a Ref appears under several shared topics the
-// entry comes from the first topic by local name. It returns nil when there is
-// no link state or no shared entry.
+// by Ref and ordered by Ref, or nil when there are none.
 func remoteMembers(ps *peerState) []Member {
 	if ps == nil {
 		return nil
@@ -169,8 +163,6 @@ func remoteMembers(ps *peerState) []Member {
 	return out
 }
 
-// sharedMember returns the entry with Ref == ref under the digest of the local
-// topic name, when that digest exists and is in the shared set.
 func sharedMember(ps *peerState, name, ref string) (Member, bool) {
 	if ps == nil || ref == "" {
 		return Member{}, false
@@ -186,8 +178,6 @@ func sharedMember(ps *peerState, name, ref string) (Member, bool) {
 	return member, ok
 }
 
-// sharedNames returns the local topic names behind the shared digests,
-// ascending.
 func sharedNames(ps *peerState) []string {
 	if ps == nil {
 		return nil
@@ -204,8 +194,6 @@ func querySortedTopics(topics map[string]struct{}) []string {
 	return sortedKeys(topics)
 }
 
-// sharedTopicNames returns the names in localTopics that other also has.
-// localTopics is ascending, so the result is too.
 func sharedTopicNames(localTopics []string, other map[string]struct{}) []string {
 	var shared []string
 	for _, name := range localTopics {

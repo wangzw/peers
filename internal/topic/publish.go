@@ -8,8 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// publishSortedPeers returns the fingerprints that have link state, ascending
-// by their bytes, so frames leave this Broker in a deterministic order.
+// The fingerprints are ascending so frames leave this Broker in a deterministic
+// order.
 func publishSortedPeers(peers map[link.Fingerprint]*peerState) []link.Fingerprint {
 	out := make([]link.Fingerprint, 0, len(peers))
 	for p := range peers {
@@ -20,9 +20,9 @@ func publishSortedPeers(peers map[link.Fingerprint]*peerState) []link.Fingerprin
 }
 
 // Join adds agent to the topic name. It returns ErrInvalidTopic for a name that
-// ValidateName rejects, and ErrUnknownAgent when AgentChanged never introduced
-// the agent. The whole event, including the frames it produces, happens under
-// the registry lock.
+// ValidateName rejects, ErrUnknownAgent when AgentChanged never introduced the
+// agent, and ErrTopicLimit when a local topic or member cap is reached. The whole
+// event, including the frames it produces, happens under the registry lock.
 func (r *Registry) Join(agent AgentID, name string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -91,9 +91,10 @@ func (r *Registry) Leave(agent AgentID, name string) error {
 	return nil
 }
 
-// LeaveAll removes every membership and the agent's information. It produces
-// one TopicDigests per peer carrying the topics that became empty, then a
-// RosterDelta for each remaining topic inside that peer's intersection.
+// LeaveAll removes every membership and the agent's information. A later Join
+// returns ErrUnknownAgent until AgentChanged introduces the agent again. Per
+// peer, it sends a TopicDigests frame only when this leave emptied a topic, and
+// a RosterDelta only for the remaining topics that peer still shares.
 func (r *Registry) LeaveAll(agent AgentID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -136,12 +137,9 @@ func (r *Registry) LeaveAll(agent AgentID) {
 	}
 }
 
-// AgentChanged stores the agent's new information, which also introduces an
-// agent the registry has not seen before. It pushes a RosterDelta for every
-// topic the agent belongs to inside a peer's intersection: a rename or a Ref
-// change sends the old key as removed and the new entry as added, while any
-// other entry change, including the status, previous name, account and
-// ref_required fields, is a change. When nothing differs it sends no frame.
+// AgentChanged stores the agent's new information, introducing an agent not seen
+// before. It pushes a RosterDelta to the peers sharing each of the agent's topics;
+// when nothing differs it sends no frame.
 func (r *Registry) AgentChanged(agent AgentID, m Member) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

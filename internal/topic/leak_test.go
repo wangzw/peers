@@ -11,9 +11,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// leakQueryText renders every query the broker could make for the given local
-// agents and peers, so a test can assert that none of it mentions a name that
-// must stay on its own Broker.
 func leakQueryText(t *testing.T, r *Registry, locals []AgentID, peers []link.Fingerprint) string {
 	t.Helper()
 	var b strings.Builder
@@ -27,7 +24,6 @@ func leakQueryText(t *testing.T, r *Registry, locals []AgentID, peers []link.Fin
 	return b.String()
 }
 
-// leakMustMarshal marshals an injected frame and fails the test on error.
 func leakMustMarshal(t *testing.T, m proto.Message) []byte {
 	t.Helper()
 	b, err := proto.Marshal(m)
@@ -37,7 +33,6 @@ func leakMustMarshal(t *testing.T, m proto.Message) []byte {
 	return b
 }
 
-// leakAssertAbsent fails when text contains any of the strings.
 func leakAssertAbsent(t *testing.T, where, text string, names ...string) {
 	t.Helper()
 	for _, name := range names {
@@ -47,11 +42,9 @@ func leakAssertAbsent(t *testing.T, where, text string, names ...string) {
 	}
 }
 
-// TestPrivateTopicNameNeverSent covers REQ-topics-008 and REQ-topics-009: a
-// topic name that is not declared public and not shared never appears in the
-// frames one Broker sends to the other, in the other Broker's query results, or
-// in its logs, even across joins, leaves, renames, status changes, reconnects
-// and a dropped inbound frame.
+// TestPrivateTopicNameNeverSent checks that a private topic name never appears in
+// the frames sent to the other Broker or in its query results or logs, even
+// across joins, leaves, renames, reconnects and a dropped frame.
 func TestPrivateTopicNameNeverSent(t *testing.T) {
 	const (
 		secret = "secret-x"
@@ -83,8 +76,6 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 	connect(la, lb, salt1)
 	flushAll(t, la, lb)
 
-	// A full round of local changes: leave and rejoin the shared topic, then a
-	// rename and a status change. Every frame they produce goes to B.
 	if err := ra.Leave(aID, shared); err != nil {
 		t.Fatalf("Leave %q: %v", shared, err)
 	}
@@ -95,15 +86,12 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10004", Status: "waiting"})
 	flushAll(t, la, lb)
 
-	// A new connection with a new salt: the exchange starts over.
 	disconnect(la, lb)
 	flushAll(t, la, lb)
 	salt2 := []byte("salt-2")
 	connect(la, lb, salt2)
 	flushAll(t, la, lb)
 
-	// An invalid Roster (its digest is not in the peer's set) carrying the
-	// private name. It must be dropped without the name reaching the log.
 	unknown := digest(salt2, la.self, "unshared-topic")
 	bad := &topicpb.Roster{
 		Digest: unknown[:],
@@ -126,7 +114,8 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 		}
 	}
 
-	// The scenario must be real: B knows A's agent under the shared topic.
+	// Without this check the test would pass vacuously when the scenario never
+	// reached visibility.
 	var names []string
 	for _, m := range rb.RemoteMembers(la.self) {
 		names = append(names, m.Name)
@@ -143,8 +132,8 @@ func TestPrivateTopicNameNeverSent(t *testing.T) {
 	}
 }
 
-// TestRosterOnlyToPeersWithMembers covers REQ-topics-014: the members of a topic
-// reach a peer only after that peer has a member in the same topic.
+// TestRosterOnlyToPeersWithMembers checks that the members of a topic reach a
+// peer only after that peer has a member in the same topic.
 func TestRosterOnlyToPeersWithMembers(t *testing.T) {
 	const (
 		shared = "t1"
@@ -181,7 +170,6 @@ func TestRosterOnlyToPeersWithMembers(t *testing.T) {
 	leakAssertAbsent(t, "B queries before joining", leakQueryText(t, rb, []AgentID{cID}, []link.Fingerprint{la.self}), member)
 	leakAssertAbsent(t, "B log before joining", bufB.String(), member)
 
-	// Once c joins the same topic the rosters flow both ways.
 	if err := rb.Join(cID, shared); err != nil {
 		t.Fatalf("Join %q on B: %v", shared, err)
 	}
@@ -195,8 +183,6 @@ func TestRosterOnlyToPeersWithMembers(t *testing.T) {
 	}
 }
 
-// leakHasRemote reports whether agents includes a remote agent whose member name
-// is name.
 func leakHasRemote(t *testing.T, agents []VisibleAgent, name string) bool {
 	t.Helper()
 	for _, a := range agents {
@@ -207,9 +193,8 @@ func leakHasRemote(t *testing.T, agents []VisibleAgent, name string) bool {
 	return false
 }
 
-// TestLogsCarryNoNames covers the logging decision: neither Broker's logs carry
-// a topic name, a member name, a previous name or a Ref used in the scenario,
-// even while frames are dropped and connections come and go.
+// TestLogsCarryNoNames checks that neither Broker's logs carry a topic name, a
+// member name, a previous name or a Ref used in the scenario.
 func TestLogsCarryNoNames(t *testing.T) {
 	names := []string{
 		"secret-alpha", "shared-beta",
@@ -239,8 +224,6 @@ func TestLogsCarryNoNames(t *testing.T) {
 	connect(la, lb, []byte("salt-1"))
 	flushAll(t, la, lb)
 
-	// A rename with a previous name and a new Ref, a status change, a leave and
-	// rejoin: every path that pushes entries or digests.
 	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10006", Status: "busy", PrevName: "api-legacy"})
 	ra.AgentChanged(aID, Member{Name: "api-v2", Ref: "a10006", Status: "waiting", PrevName: "api-legacy"})
 	if err := ra.Leave(aID, "shared-beta"); err != nil {
@@ -256,8 +239,6 @@ func TestLogsCarryNoNames(t *testing.T) {
 	connect(la, lb, []byte("salt-2"))
 	flushAll(t, la, lb)
 
-	// A frame that carries several of the names but is dropped because its
-	// digest is not in the peer's set; the log must not echo its payload.
 	unknown := digest([]byte("salt-2"), lb.self, "unshared-topic")
 	bad := &topicpb.Roster{
 		Digest: unknown[:],
@@ -271,7 +252,8 @@ func TestLogsCarryNoNames(t *testing.T) {
 	injectRaw(lb, la.self, topicpb.KindRoster, leakMustMarshal(t, bad))
 	flushAll(t, la, lb)
 
-	// Sanity: the exchange reached B under the shared topic in both directions.
+	// Without this check the test would pass vacuously when the exchange never
+	// reached visibility in both directions.
 	if len(rb.RemoteMembers(la.self)) == 0 || len(ra.RemoteMembers(lb.self)) == 0 {
 		t.Fatalf("the scenario did not reach visibility: A sees %+v, B sees %+v",
 			ra.RemoteMembers(lb.self), rb.RemoteMembers(la.self))

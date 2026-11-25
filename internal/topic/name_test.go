@@ -14,7 +14,6 @@ import (
 )
 
 // TestValidateName checks the rules for a legal topic name.
-// REQ-topics-001: a topic is joined by name, so the name must be legal first.
 func TestValidateName(t *testing.T) {
 	valid := []string{
 		"release",
@@ -48,12 +47,13 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
+// TestDigestBindsSender checks that digest binds the sender and salt, orders
+// salt before fingerprint before name, and never writes into the caller's salt.
 func TestDigestBindsSender(t *testing.T) {
 	salt := []byte("salt")
 	var f1, f2 link.Fingerprint
 	f1[0], f2[0] = 1, 2
 
-	// Two directions of one topic under one salt, against fixed values.
 	for _, tc := range []struct {
 		fp   link.Fingerprint
 		want string
@@ -72,15 +72,14 @@ func TestDigestBindsSender(t *testing.T) {
 		t.Error("the digest ignores the salt")
 	}
 
-	// SHA-256("ab" || zero fingerprint || "c") proves salt first, sender
-	// second, name third.
+	// This vector proves salt comes first, the sender fingerprint second and the
+	// name third.
 	var zero link.Fingerprint
 	if got, want := digest([]byte("ab"), zero, "c"), "311d16069bf00c1d50ef0f78ebcd407e88b193f5a737020ace49c1e0ccac89de"; hex.EncodeToString(got[:]) != want {
 		t.Errorf("digest(\"ab\", zero, \"c\") = %s, want %s", hex.EncodeToString(got[:]), want)
 	}
 
-	// A digest must not write into the caller's salt, not even into its spare
-	// capacity.
+	// digest must not write into the caller's salt, not even its spare capacity.
 	tight := make([]byte, 3, 16)
 	copy(tight, "s1x")
 	before := append([]byte(nil), tight[:cap(tight)]...)
@@ -90,6 +89,8 @@ func TestDigestBindsSender(t *testing.T) {
 	}
 }
 
+// TestNewPeerStateCopiesSalt checks that newPeerState copies the salt and fills
+// both digest directions and the reverse lookup.
 func TestNewPeerStateCopiesSalt(t *testing.T) {
 	salt := []byte("s1")
 	self, peer := link.Fingerprint{1}, link.Fingerprint{2}
@@ -122,8 +123,6 @@ func TestNewPeerStateCopiesSalt(t *testing.T) {
 	}
 }
 
-// sendFailTransport is the smallest Transport implementation: SendLatest always
-// fails, the other methods do nothing.
 type sendFailTransport struct {
 	err error
 }
@@ -139,6 +138,8 @@ func (s *sendFailTransport) HandleState(link.FrameKind, func(link.Fingerprint, l
 func (s *sendFailTransport) Subscribe(func(link.Fingerprint, []byte), func(link.Fingerprint)) {
 }
 
+// TestSendLatestLockedLogsFailure checks that sendLatestLocked logs one
+// send_failed record carrying the kind when the transport fails.
 func TestSendLatestLockedLogsFailure(t *testing.T) {
 	var buf bytes.Buffer
 	r := &Registry{

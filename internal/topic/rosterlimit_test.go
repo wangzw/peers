@@ -10,8 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// linkedRosterTest sets up a registry whose local agent shares the given topic
-// names with one fake peer, and returns the pieces the tests below need.
 func linkedRosterTest(t *testing.T, topics ...string) (*fakeLink, *Registry, *syncBuffer, [32]byte) {
 	t.Helper()
 	p := fakeLinkFingerprint(2)
@@ -31,7 +29,6 @@ func linkedRosterTest(t *testing.T, topics ...string) (*fakeLink, *Registry, *sy
 	return fl, r, buf, p
 }
 
-// rosterMembersOf builds n distinct valid wire members.
 func rosterMembersOf(n int) []*topicpb.Member {
 	out := make([]*topicpb.Member, n)
 	for i := range out {
@@ -41,8 +38,7 @@ func rosterMembersOf(n int) []*topicpb.Member {
 }
 
 // TestRosterDeltaCumulativeLimit checks that a second frame adding another 4096
-// entries under the same digest is dropped whole, because the digest would then
-// hold more than the limit.
+// entries under the same digest is dropped whole.
 func TestRosterDeltaCumulativeLimit(t *testing.T) {
 	const limit = 4096
 	fl, r, buf, p := linkedRosterTest(t, "t1")
@@ -118,7 +114,6 @@ func TestPeerRosterCumulativeLimit(t *testing.T) {
 	if logs := buf.String(); !strings.Contains(logs, `"reason":"peer_roster_full"`) {
 		t.Fatalf("log has no reason=peer_roster_full: %s", logs)
 	}
-	// The first four digests must still be usable.
 	if shared, ok := r.Visible("a", AgentRef{Peer: p, Ref: "000001"}); !ok || !slices.Equal(shared, topics[:4]) {
 		t.Fatalf("Visible = (%v, %v), want the first four topics", shared, ok)
 	}
@@ -126,8 +121,7 @@ func TestPeerRosterCumulativeLimit(t *testing.T) {
 
 // TestRosterResendSameDigestCountsReplacement checks that re-sending a full
 // Roster for a digest that already has entries counts the new list in place of
-// the old one, not in addition to it. With four digests already at 4096 entries
-// the peer is at the 16384 limit; replacing one digest's list must be accepted.
+// the old one rather than in addition to it.
 func TestRosterResendSameDigestCountsReplacement(t *testing.T) {
 	const perDigest = 4096
 	topics := []string{"t1", "t2", "t3", "t4"}
@@ -143,9 +137,8 @@ func TestRosterResendSameDigestCountsReplacement(t *testing.T) {
 		t.Fatalf("%d entries after four full rosters, want %d", got, len(topics)*perDigest)
 	}
 
-	// Replace the first digest's list with a disjoint set. The total stays the
-	// same, so the replacement must be stored; counting the old list too would
-	// put the peer over 16384 and drop the frame.
+	// A disjoint replacement keeps the total at the limit, so counting the old
+	// list too would wrongly drop it.
 	replacement := rosterMembersOf(perDigest)
 	for i := range replacement {
 		replacement[i].Ref = fmt.Sprintf("%06x", perDigest+i)
@@ -167,8 +160,6 @@ func TestRosterResendSameDigestCountsReplacement(t *testing.T) {
 	}
 }
 
-// rosterEntryCount returns the number of entries the registry keeps for peer
-// across every digest, without deduplicating Refs.
 func rosterEntryCount(r *Registry, peer link.Fingerprint) int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -183,7 +174,6 @@ func rosterEntryCount(r *Registry, peer link.Fingerprint) int {
 	return n
 }
 
-// memberList converts wire members to Member values for deltaMsg.
 func memberList(ms []*topicpb.Member) []Member {
 	out := make([]Member, len(ms))
 	for i, m := range ms {

@@ -12,8 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// pubNewRegistry returns a Registry that uses fl as its transport and writes its
-// logs to a buffer, without registering link callbacks.
 func pubNewRegistry(t *testing.T, fl *fakeLink) (*Registry, *bytes.Buffer) {
 	t.Helper()
 	buf := &bytes.Buffer{}
@@ -26,8 +24,6 @@ func pubNewRegistry(t *testing.T, fl *fakeLink) (*Registry, *bytes.Buffer) {
 	}, buf
 }
 
-// pubLinkPeer simulates an established link to p whose peer has members in
-// remoteTopics under salt, then clears the frames recorded so far.
 func pubLinkPeer(t *testing.T, r *Registry, fl *fakeLink, p link.Fingerprint, salt []byte, remoteTopics ...string) {
 	t.Helper()
 	fl.up(p, salt)
@@ -46,7 +42,6 @@ func pubLinkPeer(t *testing.T, r *Registry, fl *fakeLink, p link.Fingerprint, sa
 	fl.clearSent(p)
 }
 
-// pubDigestSet returns the digests this Broker sends for names under salt.
 func pubDigestSet(self link.Fingerprint, salt []byte, names ...string) map[[32]byte]struct{} {
 	set := make(map[[32]byte]struct{}, len(names))
 	for _, name := range names {
@@ -55,7 +50,6 @@ func pubDigestSet(self link.Fingerprint, salt []byte, names ...string) map[[32]b
 	return set
 }
 
-// pubCheckDigests checks that f is a TopicDigests carrying exactly want.
 func pubCheckDigests(t *testing.T, f fakeFrame, want map[[32]byte]struct{}) {
 	t.Helper()
 	if f.Kind != topicpb.KindTopicDigests {
@@ -76,7 +70,6 @@ func pubCheckDigests(t *testing.T, f fakeFrame, want map[[32]byte]struct{}) {
 	}
 }
 
-// pubCheckRoster checks that f is a Roster under d carrying exactly want.
 func pubCheckRoster(t *testing.T, f fakeFrame, d [32]byte, want []Member) {
 	t.Helper()
 	if f.Kind != topicpb.KindRoster {
@@ -91,7 +84,6 @@ func pubCheckRoster(t *testing.T, f fakeFrame, d [32]byte, want []Member) {
 	}
 }
 
-// pubCheckDelta checks that f is a RosterDelta under d with the given lists.
 func pubCheckDelta(t *testing.T, f fakeFrame, d [32]byte, added []Member, removed []memberKey, changed []Member) {
 	t.Helper()
 	if f.Kind != topicpb.KindRosterDelta {
@@ -130,8 +122,6 @@ func pubKeys(ks []*topicpb.MemberKey) []memberKey {
 
 // TestJoinAndTopicsOf checks that joining records the membership and that an
 // agent can belong to several topics at once.
-// REQ-topics-001: an agent can join a topic by name.
-// REQ-topics-004: an agent may be in more than one topic.
 func TestJoinAndTopicsOf(t *testing.T) {
 	fl := newFakeLink(t, fakeLinkFingerprint(100))
 	r, _ := pubNewRegistry(t, fl)
@@ -153,11 +143,8 @@ func TestJoinAndTopicsOf(t *testing.T) {
 	}
 }
 
-// TestJoinFrameOrder checks the frames a join produces: a new topic sends
-// TopicDigests and a Roster only to peers that also have members in it, while a
-// second member of an existing topic sends a RosterDelta only to sharing peers.
-// REQ-topics-002: joining an unused name succeeds without approval.
-// REQ-topics-014: rosters go only to peers that also have members in the topic.
+// TestJoinFrameOrder checks the frames a join sends to peers that share the
+// topic and to those that do not.
 func TestJoinFrameOrder(t *testing.T) {
 	fl := newFakeLink(t, fakeLinkFingerprint(100))
 	r, _ := pubNewRegistry(t, fl)
@@ -203,8 +190,7 @@ func TestJoinFrameOrder(t *testing.T) {
 }
 
 // TestLeaveFrames checks that leaving a topic with members left sends a
-// RosterDelta, and that the last leave sends TopicDigests instead.
-// REQ-topics-003: an agent can leave a topic.
+// RosterDelta and that the last leave sends TopicDigests.
 func TestLeaveFrames(t *testing.T) {
 	fl := newFakeLink(t, fakeLinkFingerprint(100))
 	r, _ := pubNewRegistry(t, fl)
@@ -243,10 +229,8 @@ func TestLeaveFrames(t *testing.T) {
 	pubCheckDigests(t, pf[0], pubDigestSet(r.self, salt))
 }
 
-// TestLeaveAllFrames checks the frames when an agent disappears: one
-// TopicDigests for the emptied topics and a RosterDelta for each topic that
-// still has members.
-// REQ-topics-022: the memberships all disappear when the session ends.
+// TestLeaveAllFrames checks the frames when an agent disappears: one TopicDigests
+// for the emptied topics and a RosterDelta for each topic that still has members.
 func TestLeaveAllFrames(t *testing.T) {
 	fl := newFakeLink(t, fakeLinkFingerprint(100))
 	r, _ := pubNewRegistry(t, fl)
@@ -330,8 +314,6 @@ func TestIdempotentAndInvalid(t *testing.T) {
 
 // TestAgentChangedFrames checks how a change of name, previous name, Ref and
 // status is encoded.
-// REQ-agent-messaging-031: an old name is carried to the peer.
-// REQ-agent-messaging-032: previous names within ten minutes are listed.
 func TestAgentChangedFrames(t *testing.T) {
 	fl := newFakeLink(t, fakeLinkFingerprint(100))
 	r, _ := pubNewRegistry(t, fl)
@@ -413,7 +395,6 @@ func TestAgentChangedWithoutTopics(t *testing.T) {
 
 // TestDeltaOnlyToSharingPeers checks that an incremental change reaches only the
 // peers that share the topic.
-// REQ-topics-014: rosters go only to peers that also have members in the topic.
 func TestDeltaOnlyToSharingPeers(t *testing.T) {
 	fl := newFakeLink(t, fakeLinkFingerprint(100))
 	r, _ := pubNewRegistry(t, fl)

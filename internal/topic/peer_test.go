@@ -9,13 +9,10 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// peerTestFingerprints returns distinct self and peer fingerprints for tests
-// that build a peerState directly.
 func peerTestFingerprints() (self, peer link.Fingerprint) {
 	return link.Fingerprint{1}, link.Fingerprint{2}
 }
 
-// peerTestDigestSet builds the digest set a peer would send for ds.
 func peerTestDigestSet(ds [][32]byte) map[[32]byte]struct{} {
 	set := make(map[[32]byte]struct{}, len(ds))
 	for _, d := range ds {
@@ -24,10 +21,8 @@ func peerTestDigestSet(ds [][32]byte) map[[32]byte]struct{} {
 	return set
 }
 
-// TestRecomputeEntering checks that the same topic name under the same salt is
-// the only digest in the intersection, and that a second recompute reports
-// nothing new.
-// REQ-topics-007: the same non-public topic name on two Brokers is one topic.
+// TestRecomputeEntering checks that only the same topic name under the same salt
+// enters the intersection and that a second recompute reports nothing.
 func TestRecomputeEntering(t *testing.T) {
 	salt := []byte("salt")
 	self, peer := peerTestFingerprints()
@@ -43,8 +38,8 @@ func TestRecomputeEntering(t *testing.T) {
 	a.setRemote(peerTestDigestSet(b.localDigests()))
 	b.setRemote(peerTestDigestSet(a.localDigests()))
 
-	// Each side compares in the direction of the other Broker's fingerprint,
-	// so the two intersections hold different digests for the same topic.
+	// Each side compares in the direction of the other Broker's fingerprint, so
+	// the two intersections hold different digests for the same topic.
 	wantA := [][32]byte{digest(salt, peer, "t1")}
 	wantB := [][32]byte{digest(salt, self, "t1")}
 	if got := a.recompute(); !slices.Equal(got, wantA) {
@@ -81,9 +76,8 @@ func TestSaltChangesDigests(t *testing.T) {
 	}
 }
 
-// TestLeavingDropsRoster checks that leaving the intersection drops the digest
-// from shared and discards its roster, and that re-entering reports the digest
-// again but starts with no entries.
+// TestLeavingDropsRoster checks that leaving the intersection discards the
+// digest's roster and that re-entering starts with no entries.
 func TestLeavingDropsRoster(t *testing.T) {
 	salt := []byte("salt")
 	self, peer := peerTestFingerprints()

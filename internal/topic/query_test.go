@@ -8,13 +8,11 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// localSpec describes one agent for buildLocal.
 type localSpec struct {
 	Info   Member
 	Topics []string
 }
 
-// buildLocal fills a localTable directly, without going through its methods.
 func buildLocal(t *testing.T, agents map[AgentID]localSpec) *localTable {
 	t.Helper()
 	lt := newLocalTable()
@@ -34,7 +32,6 @@ func buildLocal(t *testing.T, agents map[AgentID]localSpec) *localTable {
 	return lt
 }
 
-// buildPeer fills a peerState with the shared set and the rosters it is given.
 // A roster topic outside the intersection is stored too, so tests can prove
 // those entries stay invisible.
 func buildPeer(t *testing.T, salt []byte, self, peer link.Fingerprint, localTopics, sharedTopics []string, rosters map[string][]Member) *peerState {
@@ -67,7 +64,6 @@ func queryFingerprint(b byte) link.Fingerprint {
 
 // TestVisibleLocal checks that local agents are visible exactly when they share
 // a topic.
-// REQ-topics-005
 func TestVisibleLocal(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -116,7 +112,6 @@ func TestVisibleLocal(t *testing.T) {
 
 // TestAgentWithoutTopicsInvisible checks that an agent in no topic is never
 // listed and never sees anyone.
-// REQ-topics-006
 func TestAgentWithoutTopicsInvisible(t *testing.T) {
 	lt := buildLocal(t, map[AgentID]localSpec{
 		"a": {Info: Member{Name: "a"}, Topics: []string{"t1"}},
@@ -141,7 +136,6 @@ func TestAgentWithoutTopicsInvisible(t *testing.T) {
 
 // TestVisibleRemoteOnlyInShared checks that a remote entry is visible only under
 // a digest in the intersection and on a link we know.
-// REQ-topics-005, REQ-topics-014
 func TestVisibleRemoteOnlyInShared(t *testing.T) {
 	salt := []byte("salt")
 	p := queryFingerprint(1)
@@ -239,7 +233,6 @@ func TestRemoteMembersDedupe(t *testing.T) {
 		"t2": {
 			{Name: "one", Ref: "r1", Status: "idle"},
 		},
-		// t3 is not in the intersection, so its entry must not appear.
 		"t3": {{Name: "ghost", Ref: "r9", Status: "shell"}},
 	})
 

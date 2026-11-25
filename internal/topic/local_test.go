@@ -7,8 +7,7 @@ import (
 )
 
 // TestJoinRequiresInfo checks that joining a topic for an agent that setInfo
-// never introduced fails without touching the table. Otherwise a roster entry
-// with an empty name could be sent.
+// never introduced fails without touching the table.
 func TestJoinRequiresInfo(t *testing.T) {
 	lt := newLocalTable()
 
@@ -31,8 +30,6 @@ func TestJoinRequiresInfo(t *testing.T) {
 }
 
 // TestJoinLeaveFlags checks the joined, created, left and emptied flags.
-// REQ-topics-002: joining an unused name succeeds without approval.
-// REQ-topics-003: leaving removes the membership.
 func TestJoinLeaveFlags(t *testing.T) {
 	lt := newLocalTable()
 	lt.setInfo("a", Member{Name: "api-worker", Ref: "aaaaaa"})
@@ -84,7 +81,6 @@ func TestJoinLeaveFlags(t *testing.T) {
 }
 
 // TestMultipleTopics checks that one agent can belong to several topics.
-// REQ-topics-004: an agent may be in more than one topic at a time.
 func TestMultipleTopics(t *testing.T) {
 	lt := newLocalTable()
 	lt.setInfo("a", Member{Name: "api-worker", Ref: "aaaaaa"})
@@ -100,15 +96,14 @@ func TestMultipleTopics(t *testing.T) {
 	}
 }
 
-// TestLeaveAllRemovesAgent checks that LeaveAll drops every membership and the
+// TestLeaveAllRemovesAgent checks that leaveAll drops every membership and the
 // agent's information itself.
-// REQ-topics-022: the memberships all disappear when the session ends.
 func TestLeaveAllRemovesAgent(t *testing.T) {
 	lt := newLocalTable()
 	lt.setInfo("a", Member{Name: "api-worker", Ref: "aaaaaa"})
 	lt.setInfo("b", Member{Name: "frontend", Ref: "bbbbbb"})
-	_, _, _ = lt.join("a", "t1") // only a
-	_, _, _ = lt.join("a", "t2") // a and b
+	_, _, _ = lt.join("a", "t1")
+	_, _, _ = lt.join("a", "t2")
 	_, _, _ = lt.join("b", "t2")
 
 	info, emptied, remaining, existed := lt.leaveAll("a")

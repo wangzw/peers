@@ -9,27 +9,22 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// wlEndpoint is one side of a walkthrough: a Registry on its own fakeLink.
 type wlEndpoint struct {
 	r *Registry
 	l *fakeLink
 }
 
-// wlNewEndpoint builds a Registry wired to a fresh fakeLink for self.
 func wlNewEndpoint(t *testing.T, self link.Fingerprint) *wlEndpoint {
 	t.Helper()
 	l := newFakeLink(t, self)
 	return &wlEndpoint{r: New(l, Options{Self: self}), l: l}
 }
 
-// introduce registers an agent with the registry. AgentChanged also introduces
-// an agent that the registry has not seen before.
 func (e *wlEndpoint) introduce(t *testing.T, id AgentID, name, ref string) {
 	t.Helper()
 	e.r.AgentChanged(id, Member{Name: name, Ref: ref, Status: "idle"})
 }
 
-// join adds an agent to a topic and fails the test on an error.
 func (e *wlEndpoint) join(t *testing.T, id AgentID, name string) {
 	t.Helper()
 	if err := e.r.Join(id, name); err != nil {
@@ -37,14 +32,10 @@ func (e *wlEndpoint) join(t *testing.T, id AgentID, name string) {
 	}
 }
 
-// wlMember returns the roster entry used by these tests: status idle, no
-// previous name.
 func wlMember(name, ref string) Member {
 	return Member{Name: name, Ref: ref, Status: "idle"}
 }
 
-// wlCheckMembers compares remote member lists, treating nil and an empty list
-// as equal.
 func wlCheckMembers(t *testing.T, what string, got, want []Member) {
 	t.Helper()
 	if len(got) == 0 && len(want) == 0 {
@@ -55,8 +46,6 @@ func wlCheckMembers(t *testing.T, what string, got, want []Member) {
 	}
 }
 
-// wlCheckVisibleAgents compares visible agent lists, treating nil and an empty
-// list as equal.
 func wlCheckVisibleAgents(t *testing.T, what string, got, want []VisibleAgent) {
 	t.Helper()
 	if len(got) == 0 && len(want) == 0 {
@@ -67,7 +56,6 @@ func wlCheckVisibleAgents(t *testing.T, what string, got, want []VisibleAgent) {
 	}
 }
 
-// wlHasMember reports whether ms contains an entry with the given name.
 func wlHasMember(ms []Member, name string) bool {
 	for _, m := range ms {
 		if m.Name == name {
@@ -77,8 +65,6 @@ func wlHasMember(ms []Member, name string) bool {
 	return false
 }
 
-// wlCheckNoSecretRoster checks that A never sent B a Roster or RosterDelta
-// under the digest of a private topic before the peer joined it.
 func wlCheckNoSecretRoster(t *testing.T, frames []fakeFrame, d [32]byte) {
 	t.Helper()
 	for i, f := range frames {
@@ -97,10 +83,8 @@ func wlCheckNoSecretRoster(t *testing.T, frames []fakeFrame, d [32]byte) {
 	}
 }
 
-// TestWalkthrough follows the seven steps of design-topic.md's walkthrough with
-// two linked brokers. It covers REQ-topics-007 (same name on both brokers is
-// the same topic), REQ-topics-009 (a private topic's name never leaves) and
-// REQ-topics-014 (a roster only goes to a peer that has members).
+// TestWalkthrough checks the digest exchange, a new membership and a disconnect
+// between two linked Brokers.
 func TestWalkthrough(t *testing.T) {
 	const (
 		repo   = "github.com/org/repo"
@@ -124,8 +108,6 @@ func TestWalkthrough(t *testing.T) {
 	connect(a.l, b.l, salt)
 	flushAll(t, a.l, b.l)
 
-	// Steps 1 to 4: both sides send their digest sets, both intersections are
-	// repo only, both exchange a roster for it, and api-worker sees frontend.
 	node := AgentRef{Peer: b.l.self, Ref: "ff0001"}
 	wlCheckVisibleAgents(t, "A.VisibleAgents(api-worker)", a.r.VisibleAgents(apiWorker), []VisibleAgent{{
 		Agent:  node,
@@ -136,8 +118,6 @@ func TestWalkthrough(t *testing.T) {
 		wlMember("api-worker", "aa0001"),
 	})
 
-	// Before step 5 neither a roster nor a delta under the private topic's
-	// digest crossed the link, and no frame carried the name itself.
 	wlCheckNoSecretRoster(t, a.l.sentFrames(b.l.self), digest(salt, a.l.self, secret))
 	for i, f := range a.l.sentFrames(b.l.self) {
 		if bytes.Contains(f.Payload, []byte(secret)) {
@@ -145,9 +125,6 @@ func TestWalkthrough(t *testing.T) {
 		}
 	}
 
-	// Steps 5 and 6: db-worker joins the private topic on B; B re-sends its
-	// digest set and sends the new roster, then A recomputes on receipt and
-	// sends its own roster for the topic.
 	b.introduce(t, dbWorker, "db-worker", "dd0001")
 	b.join(t, dbWorker, secret)
 	flushAll(t, a.l, b.l)
@@ -162,7 +139,6 @@ func TestWalkthrough(t *testing.T) {
 		Shared: []string{secret},
 	}})
 
-	// Step 7: the link goes down and both sides forget the other.
 	disconnect(a.l, b.l)
 	flushAll(t, a.l, b.l)
 
@@ -171,9 +147,9 @@ func TestWalkthrough(t *testing.T) {
 	wlCheckVisibleAgents(t, "A.VisibleAgents(api-worker) after disconnect", a.r.VisibleAgents(apiWorker), nil)
 }
 
-// TestJoinNewNameNoApproval covers REQ-topics-002: joining a topic nobody has
-// used succeeds, and two agents that joined the same new name see each other,
-// on one broker and across brokers.
+// TestJoinNewNameNoApproval checks that joining a topic nobody has used succeeds
+// and that two agents in the same new name see each other on one Broker and
+// across Brokers.
 func TestJoinNewNameNoApproval(t *testing.T) {
 	const name = "never-used-before"
 
@@ -198,7 +174,6 @@ func TestJoinNewNameNoApproval(t *testing.T) {
 		t.Fatalf("A.Visible(alpha, {ID: bravo}) = (%v, %v), want ([%s], true)", shared, ok, name)
 	}
 
-	// Nobody is on B yet, so B joining the same name is the first member there.
 	b.introduce(t, charlie, "charlie", "c10002")
 	b.join(t, charlie, name)
 	flushAll(t, a.l, b.l)
@@ -211,8 +186,8 @@ func TestJoinNewNameNoApproval(t *testing.T) {
 	}
 }
 
-// TestLeaveAcrossBrokers covers REQ-topics-003: an agent that leaves a topic
-// stops being visible, and the peer's view follows the remaining members.
+// TestLeaveAcrossBrokers checks that an agent that leaves a topic stops being
+// visible and that the peer's view follows the remaining members.
 func TestLeaveAcrossBrokers(t *testing.T) {
 	const name = "t1"
 
@@ -253,9 +228,9 @@ func TestLeaveAcrossBrokers(t *testing.T) {
 	wlCheckMembers(t, "B.RemoteMembers(A) after both left", b.r.RemoteMembers(a.l.self), nil)
 }
 
-// TestLeaveAllAcrossBrokers covers REQ-topics-022: leaving everything removes
-// every membership and the agent's information, and the peer stops seeing it
-// while still seeing the other agents.
+// TestLeaveAllAcrossBrokers checks that leaving everything removes every
+// membership and the agent's information while the peer still sees the other
+// agents.
 func TestLeaveAllAcrossBrokers(t *testing.T) {
 	const (
 		t1 = "t1"
@@ -296,9 +271,8 @@ func TestLeaveAllAcrossBrokers(t *testing.T) {
 	}
 }
 
-// TestAgentChangedAcrossBrokers covers REQ-agent-messaging-031 and
-// REQ-agent-messaging-032: a rename and the eventual clearing of the previous
-// name reach the peer's roster.
+// TestAgentChangedAcrossBrokers checks that a rename and the eventual clearing of
+// the previous name reach the peer's roster.
 func TestAgentChangedAcrossBrokers(t *testing.T) {
 	const name = "t1"
 
@@ -316,7 +290,6 @@ func TestAgentChangedAcrossBrokers(t *testing.T) {
 	connect(a.l, b.l, []byte("salt"))
 	flushAll(t, a.l, b.l)
 
-	// A rename carries the old name as the entry's previous name.
 	a.r.AgentChanged(alpha, Member{Name: "api-v2", Ref: "aa0001", Status: "busy", PrevName: "api-worker"})
 	flushAll(t, a.l, b.l)
 
@@ -327,7 +300,6 @@ func TestAgentChangedAcrossBrokers(t *testing.T) {
 		PrevName: "api-worker",
 	}})
 
-	// Clearing the previous name is pushed as a change, not silently kept.
 	a.r.AgentChanged(alpha, Member{Name: "api-v2", Ref: "aa0001", Status: "busy"})
 	flushAll(t, a.l, b.l)
 
@@ -338,8 +310,8 @@ func TestAgentChangedAcrossBrokers(t *testing.T) {
 	}})
 }
 
-// TestDeltaOnlyToSharingPeersAcrossBrokers covers REQ-topics-014 with three
-// brokers: a change on A reaches only the peer that shares the affected topic.
+// TestDeltaOnlyToSharingPeersAcrossBrokers checks that with three Brokers a
+// change on A reaches only the peer that shares the affected topic.
 func TestDeltaOnlyToSharingPeersAcrossBrokers(t *testing.T) {
 	a := wlNewEndpoint(t, fakeLinkFingerprint(1))
 	b := wlNewEndpoint(t, fakeLinkFingerprint(2))

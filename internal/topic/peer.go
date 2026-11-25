@@ -1,12 +1,10 @@
 package topic
 
-// addLocal adds a local topic and both of its digests under this link's salt.
 func (ps *peerState) addLocal(name string) {
 	ps.indexLocal(name)
 }
 
-// removeLocal removes a local topic and both of its digests. The intersection
-// is not recomputed here; the caller does that.
+// The caller must recompute the intersection.
 func (ps *peerState) removeLocal(name string) {
 	if _, ok := ps.send[name]; !ok {
 		return
@@ -17,8 +15,6 @@ func (ps *peerState) removeLocal(name string) {
 	delete(ps.recvName, r)
 }
 
-// localDigests returns the digests this Broker sends for every local topic,
-// ascending.
 func (ps *peerState) localDigests() [][32]byte {
 	out := make([][32]byte, 0, len(ps.send))
 	for _, d := range ps.send {
@@ -28,7 +24,6 @@ func (ps *peerState) localDigests() [][32]byte {
 	return out
 }
 
-// setRemote replaces the peer's digest set with a copy of set.
 func (ps *peerState) setRemote(set map[[32]byte]struct{}) {
 	remote := make(map[[32]byte]struct{}, len(set))
 	for d := range set {
@@ -37,17 +32,13 @@ func (ps *peerState) setRemote(set map[[32]byte]struct{}) {
 	ps.remote = remote
 }
 
-// knowsRemote reports whether d is in the peer's latest digest set.
 func (ps *peerState) knowsRemote(d [32]byte) bool {
 	_, ok := ps.remote[d]
 	return ok
 }
 
-// recompute replaces the intersection with the peer-direction digests that are
-// both local and in the peer's set, and returns the digests that entered it,
-// ascending. A digest that leaves the intersection loses its roster: entries
-// that went stale while the topic was outside the intersection must not come
-// back when it re-enters, so the peer has to send a new Roster.
+// A digest that leaves the intersection must lose its roster, or entries that
+// went stale while it was outside come back when it re-enters.
 func (ps *peerState) recompute() (entered [][32]byte) {
 	shared := make(map[[32]byte]struct{}, len(ps.recv))
 	for _, d := range ps.recv {
@@ -70,8 +61,6 @@ func (ps *peerState) recompute() (entered [][32]byte) {
 	return entered
 }
 
-// sharedDigest returns the digest this Broker sends for a local topic when the
-// topic is in the intersection.
 func (ps *peerState) sharedDigest(name string) ([32]byte, bool) {
 	recv, ok := ps.recv[name]
 	if !ok {
@@ -83,9 +72,6 @@ func (ps *peerState) sharedDigest(name string) ([32]byte, bool) {
 	return ps.send[name], true
 }
 
-// entriesForRoster returns the table a Roster frame would set under a digest.
-// Entries with an empty Ref are skipped, and a later entry with the same Ref
-// overwrites an earlier one.
 func entriesForRoster(ms []Member) map[string]Member {
 	entries := make(map[string]Member, len(ms))
 	for _, m := range ms {
@@ -138,10 +124,8 @@ func deltaResultCount(cur map[string]Member, added []Member, removed []memberKey
 	return n
 }
 
-// applyDeltaInPlace applies added, removed and changed to cur. Removals apply
-// first and only take effect when both the Ref and the name match; added and
-// changed entries are written by Ref, overwriting or creating the entry, and an
-// empty Ref is skipped.
+// Removals apply before additions and changes, and only when both the Ref and
+// the name match.
 func applyDeltaInPlace(cur map[string]Member, added []Member, removed []memberKey, changed []Member) {
 	for _, k := range removed {
 		if m, ok := cur[k.Ref]; ok && m.Name == k.Name {
@@ -160,8 +144,6 @@ func applyDeltaInPlace(cur map[string]Member, added []Member, removed []memberKe
 	}
 }
 
-// rosterTotalExcept returns the number of entries the peer holds across every
-// digest other than exclude.
 func (ps *peerState) rosterTotalExcept(exclude [32]byte) int {
 	n := 0
 	for d, entries := range ps.rosters {
@@ -172,14 +154,14 @@ func (ps *peerState) rosterTotalExcept(exclude [32]byte) int {
 	return n
 }
 
-// applyRoster replaces the peer's entries under d. It is used by tests that do
-// not go through the inbound frame limits.
+// applyRoster replaces the peer's roster under d. It bypasses the inbound frame
+// limits and is for tests only; production code uses handleRoster.
 func (ps *peerState) applyRoster(d [32]byte, ms []Member) {
 	ps.rosters[d] = entriesForRoster(ms)
 }
 
-// applyDelta applies one incremental change under d. It is used by tests that
-// do not go through the inbound frame limits.
+// applyDelta applies a delta to the peer's roster under d. It bypasses the
+// inbound frame limits and is for tests only; production code uses handleDelta.
 func (ps *peerState) applyDelta(d [32]byte, added []Member, removed []memberKey, changed []Member) {
 	cur := ps.rosters[d]
 	if cur == nil {

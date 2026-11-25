@@ -25,10 +25,7 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// digest returns SHA-256 of the salt, then sender's fingerprint, then name.
-// Binding the sender makes one direction's digest unusable in the other, so a
-// peer cannot echo a Broker's own digest set back to match it. Salt is always
-// 64 bytes and a fingerprint 32, so the concatenation is unambiguous. It never
+// digest returns SHA-256 of salt, then sender's fingerprint, then name. It never
 // writes to the caller's salt slice.
 func digest(salt []byte, sender link.Fingerprint, name string) [32]byte {
 	buf := make([]byte, 0, len(salt)+len(sender)+len(name))

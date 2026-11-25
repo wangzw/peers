@@ -9,9 +9,7 @@ import (
 )
 
 // TestMemberAccountAndRefRequiredAcrossBrokers checks that a roster entry's
-// account and ref_required fields cross the wire: A publishes them, B's roster
-// holds the same values, and a later flip of RefRequired is pushed as one
-// change.
+// account and ref_required fields cross the wire to another Broker.
 func TestMemberAccountAndRefRequiredAcrossBrokers(t *testing.T) {
 	const name = "t1"
 
@@ -64,11 +62,8 @@ func TestMemberAccountAndRefRequiredAcrossBrokers(t *testing.T) {
 	}})
 }
 
-// TestAccountValidated checks the roster entry's account field: empty is
-// allowed, an account of up to MaxMemberNameBytes with the name character rules
-// is kept, and a longer one or one with a control character or whitespace is
-// cleared while the entry itself survives. The account is display-only, so an
-// illegal one must never cost the whole member.
+// TestAccountValidated checks that the account field is kept when legal and
+// cleared otherwise, while the member entry survives.
 func TestAccountValidated(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")

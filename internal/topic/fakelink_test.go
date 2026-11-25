@@ -13,19 +13,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// errFakeNotEstablished is returned by fakeLink.Send while the link to the peer
-// is not established or the test has made the send fail.
 var errFakeNotEstablished = errors.New("fakelink: link to peer is not established")
 
-// errFakeQueueFull is returned when a stalled peer's send queue overflows. The
-// link is marked down, matching link's bounded queue.
+// The link is marked down, matching link's bounded queue.
 var errFakeQueueFull = fmt.Errorf("%w: send queue full", errFakeNotEstablished)
 
-// fakeSendQueueLimit is the send queue size a stalled peer models. It matches
-// link's own sendQueueSize.
+// It matches link's own sendQueueSize.
 const fakeSendQueueLimit = 1024
 
-// fakeEventKind is the kind of one event in a fakeLink's queue.
 type fakeEventKind uint8
 
 const (
@@ -34,9 +29,7 @@ const (
 	fakeEventDown
 )
 
-// fakeEvent is one item of the FIFO that the scheduler goroutine executes in
-// order. gen is the peer's generation at the time the event was enqueued; a
-// frame whose generation is older than the peer's current generation is
+// A frame whose generation is older than the peer's current generation is
 // dropped, modelling a frame lost with a connection that has since closed.
 type fakeEvent struct {
 	kind  fakeEventKind
@@ -46,43 +39,34 @@ type fakeEvent struct {
 	salt  []byte
 }
 
-// fakePeer is the fakeLink's view of the link to one peer.
 type fakePeer struct {
 	up   bool
 	gen  uint64
-	conn *fakeLink // the other endpoint when the two are connected
+	conn *fakeLink
 
-	// stalled models a peer that has stopped reading: frames sent while it is
-	// set stay in this endpoint's bounded queue instead of being delivered.
-	stalled bool
-	// outstanding counts frames queued while stalled and not delivered yet.
+	stalled     bool
 	outstanding int
-	// pending holds the frames queued while stalled, in order, and pendingByKey
-	// indexes the latest one of each key so a newer latest frame replaces it.
-	pending      []*fakePending
+	pending     []*fakePending
+	// pendingByKey indexes the latest pending frame of each key so a newer
+	// latest frame replaces it.
 	pendingByKey map[string]*fakePending
 }
 
-// fakePending is one frame held in a stalled endpoint's send queue.
 type fakePending struct {
 	key   string
 	frame link.Frame
 }
 
-// fakeFrame is one frame recorded by Send, SendLatest or SendLatestKey.
 type fakeFrame struct {
 	Kind    uint32
 	Payload []byte
-	Latest  bool   // sent through SendLatest or SendLatestKey
-	Key     string // the latest-slot key, empty for Send
+	Latest  bool
+	Key     string
 }
 
-// fakeLink is an in-memory implementation of Transport. One scheduler goroutine
-// per endpoint executes the queued events in FIFO order, so callbacks for one
-// peer are serial and a connection's frames are never delivered after its
-// onDown. Callbacks are always called without the fakeLink's lock held, and
-// Send only records the frame and enqueues it at the other endpoint, so it
-// never blocks. All exported test methods are safe for concurrent use.
+// One scheduler goroutine per endpoint runs events in FIFO order, so callbacks
+// for one peer are serial and no frame is delivered after its onDown. Callbacks
+// run without the lock held, and Send only records and enqueues the frame.
 type fakeLink struct {
 	self link.Fingerprint
 
@@ -102,8 +86,6 @@ type fakeLink struct {
 	sent     map[link.Fingerprint][]fakeFrame
 }
 
-// newFakeLink returns a fakeLink for self and starts its scheduler goroutine.
-// The goroutine stops when the test finishes.
 func newFakeLink(t *testing.T, self link.Fingerprint) *fakeLink {
 	t.Helper()
 	l := &fakeLink{
@@ -120,34 +102,26 @@ func newFakeLink(t *testing.T, self link.Fingerprint) *fakeLink {
 	return l
 }
 
-// Send delivers a frame to peer. Tests use it to inject one. It calls the test
-// hook first, without holding the lock, then returns errFakeNotEstablished
-// unless the link to peer is established and not failing. A successful frame is
-// recorded and, when peer is connected to another fakeLink, enqueued at that
-// endpoint.
+// It calls the test hook first without holding the lock, then returns
+// errFakeNotEstablished unless the link is established and not failing.
 func (l *fakeLink) Send(peer link.Fingerprint, f link.Frame) error {
 	_, err := l.send(peer, f, "")
 	return err
 }
 
-// SendLatest implements Transport. It keys the frame by kind and otherwise
-// behaves like Send.
 func (l *fakeLink) SendLatest(peer link.Fingerprint, f link.Frame) error {
 	_, err := l.send(peer, f, fmt.Sprintf("k:%d", f.Kind))
 	return err
 }
 
-// SendLatestKey implements Transport. A stalled peer's queued frame with the
-// same key is replaced in place and replaced reports true.
+// A stalled peer's queued frame with the same key is replaced in place.
 func (l *fakeLink) SendLatestKey(peer link.Fingerprint, key string, f link.Frame) (replaced bool, err error) {
 	return l.send(peer, f, key)
 }
 
-// send records and delivers one frame. A per-kind error installed with
-// setSendError is returned in place of delivering the frame. While the peer is
-// stalled, the frame is held in a bounded queue instead, the frame with the same
-// key is replaced when key is non-empty, and a queue past its limit marks the
-// link down like link's FailQueueFull.
+// A per-kind error installed by setSendError is returned instead of delivering;
+// while the peer is stalled the frame is queued, a same-key frame is replaced,
+// and a queue past its limit marks the link down.
 func (l *fakeLink) send(peer link.Fingerprint, f link.Frame, key string) (replaced bool, err error) {
 	l.mu.Lock()
 	hook := l.hook
@@ -202,15 +176,12 @@ func (l *fakeLink) send(peer link.Fingerprint, f link.Frame, key string) (replac
 	return false, nil
 }
 
-// stall marks peer as not reading, so sends queue up to the send limit.
 func (l *fakeLink) stall(peer link.Fingerprint) {
 	l.mu.Lock()
 	l.peerLocked(peer).stalled = true
 	l.mu.Unlock()
 }
 
-// resume makes peer read again, delivering every frame held while it was
-// stalled, and reports whether the link is still up.
 func (l *fakeLink) resume(peer link.Fingerprint) bool {
 	l.mu.Lock()
 	st := l.peers[peer]
@@ -235,7 +206,6 @@ func (l *fakeLink) resume(peer link.Fingerprint) bool {
 	return up
 }
 
-// isUp reports whether the link to peer is still established.
 func (l *fakeLink) isUp(peer link.Fingerprint) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -243,23 +213,20 @@ func (l *fakeLink) isUp(peer link.Fingerprint) bool {
 	return st != nil && st.up
 }
 
-// HandleState implements Transport.
 func (l *fakeLink) HandleState(kind link.FrameKind, h func(peer link.Fingerprint, f link.Frame)) {
 	l.mu.Lock()
 	l.handlers[kind] = h
 	l.mu.Unlock()
 }
 
-// Subscribe implements Transport.
 func (l *fakeLink) Subscribe(onUp func(peer link.Fingerprint, salt []byte), onDown func(peer link.Fingerprint)) {
 	l.mu.Lock()
 	l.onUp, l.onDown = onUp, onDown
 	l.mu.Unlock()
 }
 
-// deliver enqueues at this endpoint a frame sent by from. The frame carries the
-// endpoint's current generation for from; a send on a connection that has since
-// gone down is dropped.
+// The frame carries the endpoint's current generation, so a send on a connection
+// that has since gone down is dropped.
 func (l *fakeLink) deliver(from link.Fingerprint, f link.Frame) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -271,8 +238,6 @@ func (l *fakeLink) deliver(from link.Fingerprint, f link.Frame) {
 	l.cond.Broadcast()
 }
 
-// up marks the link to peer as established with the given salt and queues the
-// onUp event. It may be used on a single endpoint, without another fakeLink.
 func (l *fakeLink) up(peer link.Fingerprint, salt []byte) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -291,8 +256,6 @@ func (l *fakeLink) upLocked(peer link.Fingerprint, salt []byte) {
 	l.cond.Broadcast()
 }
 
-// down marks the link to peer as down and queues the onDown event. It may be
-// used on a single endpoint, without another fakeLink.
 func (l *fakeLink) down(peer link.Fingerprint) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -311,8 +274,6 @@ func (l *fakeLink) downLocked(peer link.Fingerprint) {
 	l.cond.Broadcast()
 }
 
-// inject queues an inbound state frame on this endpoint, as if peer had sent it
-// on the current connection.
 func (l *fakeLink) inject(peer link.Fingerprint, kind uint32, msg proto.Message) {
 	b, err := proto.Marshal(msg)
 	if err != nil {
@@ -333,7 +294,6 @@ func (l *fakeLink) inject(peer link.Fingerprint, kind uint32, msg proto.Message)
 	l.cond.Broadcast()
 }
 
-// sentFrames returns a copy of the frames that Send recorded for peer.
 func (l *fakeLink) sentFrames(peer link.Fingerprint) []fakeFrame {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -345,23 +305,20 @@ func (l *fakeLink) sentFrames(peer link.Fingerprint) []fakeFrame {
 	return out
 }
 
-// clearSent forgets the frames recorded for peer.
 func (l *fakeLink) clearSent(peer link.Fingerprint) {
 	l.mu.Lock()
 	delete(l.sent, peer)
 	l.mu.Unlock()
 }
 
-// setSendHook installs a hook called at the start of every send, without the
-// fakeLink's lock held. A nil hook removes it.
+// The hook is called at the start of every send without the fakeLink's lock
+// held.
 func (l *fakeLink) setSendHook(hook func(peer link.Fingerprint, f link.Frame)) {
 	l.mu.Lock()
 	l.hook = hook
 	l.mu.Unlock()
 }
 
-// setSendError makes Send and SendLatest return err for frames of kind. A nil
-// err removes the entry.
 func (l *fakeLink) setSendError(kind link.FrameKind, err error) {
 	l.mu.Lock()
 	if err == nil {
@@ -372,7 +329,6 @@ func (l *fakeLink) setSendError(kind link.FrameKind, err error) {
 	l.mu.Unlock()
 }
 
-// setFailSend makes Send fail for peer while fail is true.
 func (l *fakeLink) setFailSend(peer link.Fingerprint, fail bool) {
 	l.mu.Lock()
 	if fail {
@@ -383,8 +339,6 @@ func (l *fakeLink) setFailSend(peer link.Fingerprint, fail bool) {
 	l.mu.Unlock()
 }
 
-// run executes queued events one at a time and calls the callbacks without the
-// lock held.
 func (l *fakeLink) run() {
 	for {
 		l.mu.Lock()
@@ -439,7 +393,6 @@ func (l *fakeLink) run() {
 	}
 }
 
-// stop stops the scheduler goroutine once it next finds no event to execute.
 func (l *fakeLink) stop() {
 	l.mu.Lock()
 	l.closed = true
@@ -456,9 +409,8 @@ func (l *fakeLink) peerLocked(peer link.Fingerprint) *fakePeer {
 	return st
 }
 
-// connect links a and b to each other with the same salt. Both onUp events are
-// queued before either endpoint can send a frame, so no frame is forwarded
-// before the receiving side knows the link is up.
+// Both onUp events are queued before either endpoint can send, so no frame is
+// forwarded before the receiver knows the link is up.
 func connect(a, b *fakeLink, salt []byte) {
 	a.mu.Lock()
 	b.mu.Lock()
@@ -470,8 +422,6 @@ func connect(a, b *fakeLink, salt []byte) {
 	a.mu.Unlock()
 }
 
-// disconnect takes the link between a and b down on both sides and unregisters
-// the endpoints from each other.
 func disconnect(a, b *fakeLink) {
 	a.mu.Lock()
 	b.mu.Lock()
@@ -487,13 +437,10 @@ func disconnect(a, b *fakeLink) {
 	a.mu.Unlock()
 }
 
-// flushAll waits until every fakeLink has an empty queue and an idle scheduler.
-// It blocks on each link's condition variable until that link is idle, then
-// takes all their locks at once to confirm none of them is running; a frame
-// forwarded during the pass to a link checked earlier is therefore delivered
-// before flushAll returns. The success path ends on the quiescence it confirms,
-// not on elapsed time; a timer that fires after the package eventTimeout wakes
-// every waiter only so a stuck drain fails instead of hanging.
+// flushAll waits until every fakeLink has an empty queue and an idle scheduler,
+// confirming quiescence with all their locks held so no forwarded frame is
+// missed. A timer after eventTimeout only wakes the waiters so a stuck drain
+// fails rather than hangs.
 func flushAll(t *testing.T, ls ...*fakeLink) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -518,10 +465,8 @@ func flushAll(t *testing.T, ls ...*fakeLink) {
 	}
 }
 
-// allIdle reports whether every link has an empty queue and no running
-// scheduler at the same instant. Holding all the links' locks before reading
-// any of them keeps a frame forwarded by one link from being missed on a link
-// that a sequential pass already checked.
+// Holding all the links' locks before reading any of them keeps a frame
+// forwarded by one link from being missed on one already checked.
 func allIdle(ls []*fakeLink) bool {
 	for _, l := range ls {
 		l.mu.Lock()
@@ -539,8 +484,6 @@ func allIdle(ls []*fakeLink) bool {
 	return true
 }
 
-// waitIdle waits on l's condition variable until its scheduler is idle, and
-// reports false once deadline has passed.
 func (l *fakeLink) waitIdle(deadline time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -553,8 +496,6 @@ func (l *fakeLink) waitIdle(deadline time.Time) bool {
 	return true
 }
 
-// fakeLinkFingerprint returns a fingerprint whose last byte is b, so tests can
-// name endpoints compactly.
 func fakeLinkFingerprint(b byte) link.Fingerprint {
 	var fp link.Fingerprint
 	fp[len(fp)-1] = b
@@ -588,6 +529,8 @@ func decodeDelta(t *testing.T, f fakeFrame) *topicpb.RosterDelta {
 	return m
 }
 
+// TestFakeLinkDeliversInOrder checks that frames sent to a connected endpoint are
+// delivered in order.
 func TestFakeLinkDeliversInOrder(t *testing.T) {
 	a := newFakeLink(t, fakeLinkFingerprint(1))
 	b := newFakeLink(t, fakeLinkFingerprint(2))
@@ -624,6 +567,8 @@ func TestFakeLinkDeliversInOrder(t *testing.T) {
 	}
 }
 
+// TestFakeLinkSendFailsWhenDown checks that a send before connecting and after
+// disconnecting fails and records no frame.
 func TestFakeLinkSendFailsWhenDown(t *testing.T) {
 	a := newFakeLink(t, fakeLinkFingerprint(1))
 	b := newFakeLink(t, fakeLinkFingerprint(2))
@@ -649,6 +594,8 @@ func TestFakeLinkSendFailsWhenDown(t *testing.T) {
 	}
 }
 
+// TestFakeLinkDropsFramesOfOldGeneration checks that frames queued under an old
+// connection are dropped after the link is rebuilt.
 func TestFakeLinkDropsFramesOfOldGeneration(t *testing.T) {
 	a := newFakeLink(t, fakeLinkFingerprint(1))
 	b := newFakeLink(t, fakeLinkFingerprint(2))
@@ -724,6 +671,7 @@ func TestFakeLinkDropsFramesOfOldGeneration(t *testing.T) {
 	}
 }
 
+// TestFakeLinkFlushWaits checks that flushAll waits for every handler to run.
 func TestFakeLinkFlushWaits(t *testing.T) {
 	a := newFakeLink(t, fakeLinkFingerprint(1))
 	b := newFakeLink(t, fakeLinkFingerprint(2))
@@ -750,9 +698,8 @@ func TestFakeLinkFlushWaits(t *testing.T) {
 	}
 }
 
-// TestFakeLinkFlushWaitsForForwardedFrame covers a frame forwarded during the
-// pass: a is checked first, then b's handler forwards a frame to a. flushAll
-// must not return while that frame is still queued at a.
+// TestFakeLinkFlushWaitsForForwardedFrame checks that flushAll does not return
+// while a frame forwarded during the pass is still queued.
 func TestFakeLinkFlushWaitsForForwardedFrame(t *testing.T) {
 	kind := link.FrameKind(topicpb.KindTopicDigests)
 

@@ -10,14 +10,10 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// stableTestCap bounds the join loop. A build without the local topic limit
-// joins this many topics instead of looping forever, so the test still ends.
+// A build without the local topic limit joins this many topics instead of
+// looping forever.
 const stableTestCap = 4097
 
-// stablePeer builds a registry whose first agent is in as many local topics as
-// Join allows (up to stableTestCap), brings one fake peer up, and tells the peer
-// to share every one of those topics. It returns the fake link, the registry,
-// the peer fingerprint and the topic count.
 func stablePeer(t *testing.T, agents int) (*fakeLink, *Registry, link.Fingerprint, int) {
 	t.Helper()
 	p := fakeLinkFingerprint(2)
@@ -57,10 +53,8 @@ func stablePeer(t *testing.T, agents int) (*fakeLink, *Registry, link.Fingerprin
 	return fl, r, p, n
 }
 
-// TestLinkStaysUpSharingTopicsToLimit shares topics up to the local limit and
-// checks the link is established and stays so. The local topic count must stay
-// within the 512-topic budget that keeps the TopicDigests frame inside what a
-// peer accepts and one change from fanning out past the send queue.
+// TestLinkStaysUpSharingTopicsToLimit checks that sharing topics up to the
+// 512-topic local limit leaves the link up.
 func TestLinkStaysUpSharingTopicsToLimit(t *testing.T) {
 	fl, _, p, n := stablePeer(t, 1)
 
@@ -72,12 +66,9 @@ func TestLinkStaysUpSharingTopicsToLimit(t *testing.T) {
 	}
 }
 
-// TestLinkStaysUpWhenAgentAtLimitRenames renames an agent that is in the maximum
-// number of topics several times while the peer has stopped reading. Each rename
-// produces one frame per topic; the queue must fold the repeat for a digest, so
-// the link must stay up instead of going down with a full send queue. The number
-// of renames is chosen so that, without the fold, the frames would exceed the
-// send queue even though a single rename alone fits under it.
+// TestLinkStaysUpWhenAgentAtLimitRenames checks that repeated renames of an agent
+// in many topics fold per digest and keep the link up while the peer is not
+// reading.
 func TestLinkStaysUpWhenAgentAtLimitRenames(t *testing.T) {
 	fl, r, p, n := stablePeer(t, 1)
 
@@ -95,10 +86,8 @@ func TestLinkStaysUpWhenAgentAtLimitRenames(t *testing.T) {
 	}
 }
 
-// TestLinkStaysUpUnderConcurrentStatusChanges changes several agents' status at
-// once while the peer has stopped reading. Every agent is in the same maximum
-// set of topics, so each change would enqueue one frame per topic; the queue
-// must keep one frame per digest across them, and the link must stay up.
+// TestLinkStaysUpUnderConcurrentStatusChanges checks that concurrent status
+// changes across many topics keep the link up while the peer is not reading.
 func TestLinkStaysUpUnderConcurrentStatusChanges(t *testing.T) {
 	const agents = 4
 	fl, r, p, n := stablePeer(t, agents)

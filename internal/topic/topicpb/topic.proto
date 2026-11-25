@@ -25,11 +25,11 @@ message Member {
   string ref = 2;
   AgentStatus status = 3;
   string previous_name = 4;
-  // account is the name of the account that published this member. It is for
-  // display only and never takes part in addressing or resolution.
+  // account is the display name of the account that published this member and
+  // never takes part in addressing or resolution.
   string account = 5;
   // ref_required says the publisher requires this member to be addressed by
-  // its disambiguator; a bare name must not select it.
+  // its disambiguator, so a bare name must not select it.
   bool ref_required = 6;
 }
 

@@ -12,7 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// wireSize returns the encoded size of a frame as the link transports it.
 func wireSize(t *testing.T, kind uint32, m proto.Message) int {
 	t.Helper()
 	f, err := encodeFrame(kind, m)
@@ -23,9 +22,7 @@ func wireSize(t *testing.T, kind uint32, m proto.Message) int {
 }
 
 // TestOutboundLimitsFitLinkMessage checks that the largest TopicDigests and
-// Roster this Broker may build, with names and previous names at the limit,
-// still fit in one link message. It guards against a future limit increase that
-// silently makes every such frame too large to send.
+// Roster this Broker may build still fit in one link message.
 func TestOutboundLimitsFitLinkMessage(t *testing.T) {
 	digests := wireSize(t, topicpb.KindTopicDigests, digestsMsg(testDigestList(maxInboundDigests)))
 	if digests >= link.MaxMessageSize {

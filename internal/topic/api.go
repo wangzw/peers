@@ -10,26 +10,31 @@ import (
 // AgentID is the broker's agent ID: lowercase hex SHA-256 of "session:" + socket path.
 type AgentID string
 
-// AgentRef names an agent for Visible. Peer is zero for an agent on this
-// Broker, which ID then names; otherwise Ref is the agent's disambiguator as
-// carried in the peer's roster entries and ID is ignored.
+// AgentRef names an agent for Visible: a local one when Peer is zero, otherwise
+// a remote one on Peer's link.
 type AgentRef struct {
+	// Peer is the agent's Broker; the zero value means the local Broker.
 	Peer link.Fingerprint
-	ID   AgentID
-	Ref  string
+	// ID is the local agent's identifier, ignored for a remote agent.
+	ID AgentID
+	// Ref is a remote agent's disambiguator from the peer's roster.
+	Ref string
 }
 
-// Member is one roster entry. Status is "idle", "busy", "waiting", "shell",
-// or "" when unknown. PrevName is "" when there is none. Account is the
-// publisher's account name, for display only. RefRequired means the publisher
-// requires this member to be addressed by its disambiguator; a bare name must
-// not select it.
+// Member is one roster entry.
 type Member struct {
-	Name        string
-	Ref         string
-	Status      string
-	PrevName    string
-	Account     string
+	// Name is the agent's name.
+	Name string
+	// Ref is the agent's disambiguator.
+	Ref string
+	// Status is "idle", "busy", "waiting", "shell", or "" when unknown.
+	Status string
+	// PrevName is the previous name, or "" when there is none.
+	PrevName string
+	// Account is the publisher's account name, for display only.
+	Account string
+	// RefRequired means the publisher requires this member to be addressed by
+	// its disambiguator; a bare name must not select it.
 	RefRequired bool
 }
 
@@ -40,14 +45,13 @@ type VisibleAgent struct {
 	Shared []string // shared topic names, ascending
 }
 
-// Options configures a Registry. A nil Logger means slog.Default().
+// Options configures a Registry.
 type Options struct {
+	// Logger receives this package's log records; nil means slog.Default().
 	Logger *slog.Logger
 
 	// Self is this Broker's certificate fingerprint, the value the peer sees on
-	// the link. Digests this Broker sends are bound to it so a peer cannot echo
-	// a digest set back and match it. New panics when Self is the zero
-	// Fingerprint.
+	// the link. New panics when Self is the zero Fingerprint.
 	Self link.Fingerprint
 }
 

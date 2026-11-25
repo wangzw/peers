@@ -7,11 +7,8 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// TestEchoedDigestsRevealNothing reproduces the audit finding behind
-// REQ-topics-014: a peer that sends a Broker's own TopicDigests back verbatim
-// must not enter the intersection. Before digests bound the sender's
-// fingerprint the echo matched every local topic, so the Broker sent a Roster
-// for each topic and accepted a forged Roster under the same digest.
+// TestEchoedDigestsRevealNothing checks that a peer echoing this Broker's own
+// TopicDigests back enters no intersection and cannot forge a roster under them.
 func TestEchoedDigestsRevealNothing(t *testing.T) {
 	self := fakeLinkFingerprint(1)
 	peer := fakeLinkFingerprint(2)
@@ -30,7 +27,6 @@ func TestEchoedDigestsRevealNothing(t *testing.T) {
 	echo := decodeDigests(t, frames[0])
 	fl.clearSent(peer)
 
-	// The peer echoes the digests it received as its own set.
 	fl.inject(peer, topicpb.KindTopicDigests, echo)
 	flushAll(t, fl)
 
@@ -38,7 +34,6 @@ func TestEchoedDigestsRevealNothing(t *testing.T) {
 		t.Fatalf("echoed digests produced %d frames, want none; a Roster reveals the topic", len(got))
 	}
 
-	// A forged Roster under an echoed digest must stay invisible.
 	fl.inject(peer, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  echo.Digests[0],
 		Members: []*topicpb.Member{{Name: "intruder", Ref: "bbbbbb"}},

@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// newLocalRegistry returns a registry with one introduced agent.
 func newLocalRegistry(t *testing.T) (*Registry, AgentID) {
 	t.Helper()
 	fl := newFakeLink(t, fakeLinkFingerprint(1))
@@ -32,7 +31,6 @@ func TestJoinTopicCountLimit(t *testing.T) {
 		t.Fatalf("TopicsOf has %d topics, want %d", got, maxLocalTopics)
 	}
 
-	// Rejoining an existing topic stays idempotent at the limit.
 	if err := r.Join(id, "t0"); err != nil {
 		t.Fatalf("rejoin at the topic limit: %v", err)
 	}
@@ -60,7 +58,6 @@ func TestJoinMemberLimit(t *testing.T) {
 		t.Fatalf("rejoin a member at the limit: %v", err)
 	}
 
-	// The refused agent also did not join any other topic.
 	if got := r.TopicsOf(extra); len(got) != 0 {
 		t.Fatalf("refused agent has topics %v, want none", got)
 	}

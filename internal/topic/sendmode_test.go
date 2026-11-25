@@ -8,10 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// TestOutgoingFramesUseLatestKeys checks the replacement key each topic frame
-// uses: TopicDigests through SendLatest keyed by kind, and Roster and
-// RosterDelta through SendLatestKey keyed by digest so a newer frame for the
-// same digest replaces an older one still queued.
+// TestOutgoingFramesUseLatestKeys checks that TopicDigests is keyed by kind and
+// Roster and RosterDelta by digest.
 func TestOutgoingFramesUseLatestKeys(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
@@ -28,8 +26,6 @@ func TestOutgoingFramesUseLatestKeys(t *testing.T) {
 	flushAll(t, fl)
 	fl.clearSent(p)
 
-	// A new topic sends TopicDigests; joining an existing shared topic sends a
-	// RosterDelta.
 	if err := r.Join("a", "t2"); err != nil {
 		t.Fatalf("Join t2: %v", err)
 	}

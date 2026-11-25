@@ -9,6 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
+// TestStatusMapping checks that the four known statuses round-trip through the
+// wire form and that anything else becomes unknown.
 func TestStatusMapping(t *testing.T) {
 	for _, s := range []string{"idle", "busy", "waiting", "shell"} {
 		if got := statusFromWire(statusToWire(s)); got != s {
@@ -46,6 +48,8 @@ func TestMemberNameLengthLimit(t *testing.T) {
 	}
 }
 
+// TestMemberRoundTrip checks that a Member survives a conversion to and from the
+// wire form unchanged.
 func TestMemberRoundTrip(t *testing.T) {
 	members := []Member{
 		{Name: "api-worker", Ref: "abc123", Status: "busy", PrevName: "api-v1", Account: "bob", RefRequired: true},
@@ -58,6 +62,8 @@ func TestMemberRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMessagesAreSorted checks that the digest, roster and delta messages sort
+// their entries and that the digest message does not alias its input.
 func TestMessagesAreSorted(t *testing.T) {
 	mk := func(b byte) [32]byte {
 		var d [32]byte
@@ -124,6 +130,8 @@ func TestMessagesAreSorted(t *testing.T) {
 	})
 }
 
+// TestParseDigests checks that valid digests deduplicate into a set and that one
+// of the wrong length rejects the whole frame.
 func TestParseDigests(t *testing.T) {
 	var d [32]byte
 	d[len(d)-1] = 7

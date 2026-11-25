@@ -15,12 +15,8 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// Compile-time check that the fake link satisfies the interface the registry
-// consumes.
 var _ Transport = (*fakeLink)(nil)
 
-// syncBuffer is a bytes.Buffer safe for concurrent use by the fake link's
-// scheduler goroutine and the test goroutine.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -38,7 +34,6 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// newLinkRegistry builds a Registry over fl that logs at debug level.
 func newLinkRegistry(t *testing.T, fl *fakeLink) (*Registry, *syncBuffer) {
 	t.Helper()
 	buf := &syncBuffer{}
@@ -46,8 +41,6 @@ func newLinkRegistry(t *testing.T, fl *fakeLink) (*Registry, *syncBuffer) {
 	return r, buf
 }
 
-// seedLocal adds an agent and its memberships, bypassing Join, which belongs to
-// another work item.
 func seedLocal(t *testing.T, r *Registry, id AgentID, m Member, topics ...string) {
 	t.Helper()
 	r.mu.Lock()
@@ -60,8 +53,6 @@ func seedLocal(t *testing.T, r *Registry, id AgentID, m Member, topics ...string
 	}
 }
 
-// injectRaw queues a frame with an arbitrary payload. fakeLink.inject marshals a
-// message, so malformed bytes need this path.
 func injectRaw(fl *fakeLink, peer link.Fingerprint, kind uint32, payload []byte) {
 	fl.mu.Lock()
 	defer fl.mu.Unlock()
@@ -78,7 +69,6 @@ func injectRaw(fl *fakeLink, peer link.Fingerprint, kind uint32, payload []byte)
 	fl.cond.Broadcast()
 }
 
-// wireDigestsOf decodes a TopicDigests frame into fixed-size digests.
 func wireDigestsOf(t *testing.T, f fakeFrame) [][32]byte {
 	t.Helper()
 	m := decodeDigests(t, f)
@@ -94,7 +84,6 @@ func wireDigestsOf(t *testing.T, f fakeFrame) [][32]byte {
 	return out
 }
 
-// sortDigests sorts a digest list in place, ascending.
 func sortDigests(ds [][32]byte) {
 	slices.SortFunc(ds, func(a, b [32]byte) int { return bytes.Compare(a[:], b[:]) })
 }
@@ -150,8 +139,7 @@ func TestOnUpSendsDigests(t *testing.T) {
 }
 
 // TestDigestsTriggerRosterForSharedOnly checks that the peer's digests start a
-// Roster for the topics that entered the intersection and only for those, once.
-// REQ-topics-014: the roster goes only to a peer with members in that topic.
+// Roster for each topic that entered the intersection, only for those, and once.
 func TestDigestsTriggerRosterForSharedOnly(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
@@ -187,9 +175,7 @@ func TestDigestsTriggerRosterForSharedOnly(t *testing.T) {
 }
 
 // TestRosterOutsideRemoteDigestsIgnored checks that a Roster for a digest the
-// peer never announced is ignored at debug level and its names never reach the
-// log. A merged TopicDigests can overtake a Roster queued before it, so this is
-// a legal arrival order rather than a peer bug.
+// peer never announced is ignored at debug level without leaking a name.
 func TestRosterOutsideRemoteDigestsIgnored(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
@@ -223,8 +209,7 @@ func TestRosterOutsideRemoteDigestsIgnored(t *testing.T) {
 }
 
 // TestRosterThenVisible checks that a roster entry under a shared digest makes a
-// remote agent visible, and that disconnecting clears it.
-// REQ-topics-005: visibility ends with the link.
+// remote agent visible and that disconnecting clears it.
 func TestRosterThenVisible(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
@@ -420,7 +405,6 @@ func TestQueriesReturnCopies(t *testing.T) {
 	}
 }
 
-// testDigestList returns n distinct 32-byte digests.
 func testDigestList(n int) [][32]byte {
 	out := make([][32]byte, n)
 	for i := range out {
@@ -429,7 +413,6 @@ func testDigestList(n int) [][32]byte {
 	return out
 }
 
-// testMemberWire returns n distinct wire members with valid names and Refs.
 func testMemberWire(n int) []*topicpb.Member {
 	out := make([]*topicpb.Member, n)
 	for i := range out {
@@ -438,7 +421,6 @@ func testMemberWire(n int) []*topicpb.Member {
 	return out
 }
 
-// memberNames returns the names of members in order.
 func memberNames(ms []Member) []string {
 	out := make([]string, len(ms))
 	for i, m := range ms {
@@ -447,11 +429,8 @@ func memberNames(ms []Member) []string {
 	return out
 }
 
-// TestReenteringIntersectionDropsOldRoster reproduces the failure where a topic
-// leaves the intersection and comes back: the entries saved before leaving must
-// be gone, so the remote agent stays invisible until the peer sends a new
-// Roster. The peer's digest set still contains the topic and no Delta arrives
-// in this scenario, which is what made the stale entry visible.
+// TestReenteringIntersectionDropsOldRoster checks that a topic leaving and
+// re-entering the intersection drops the old roster.
 func TestReenteringIntersectionDropsOldRoster(t *testing.T) {
 	p := fakeLinkFingerprint(2)
 	salt := []byte("salt")
@@ -477,9 +456,8 @@ func TestReenteringIntersectionDropsOldRoster(t *testing.T) {
 	}
 	flushAll(t, fl)
 
-	// The peer still announces the digest (it has other members in the topic)
-	// and sends no Delta while the topic is outside its intersection. Rejoining
-	// must wait for a new Roster instead of resurrecting the old entry.
+	// The peer announces the digest but sends no Delta while the topic is outside
+	// its intersection, so rejoining must wait for a new Roster.
 	if err := r.Join("a", "t1"); err != nil {
 		t.Fatalf("Join: %v", err)
 	}
@@ -526,7 +504,6 @@ func TestDeltaForUnknownDigestIgnored(t *testing.T) {
 		t.Fatalf("log has a topic.frame_dropped for a legal arrival order: %s", logs)
 	}
 
-	// d2 enters the intersection only now; the ignored delta must not resurface.
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1, d2}))
 	flushAll(t, fl)
 
@@ -600,7 +577,7 @@ func TestDownDiscardsLinkState(t *testing.T) {
 		}
 	})
 
-	// No onUp in between: these frames belong to the old connection.
+	// No onUp in between, so these frames belong to the old connection.
 	fl.inject(p, topicpb.KindTopicDigests, digestsMsg([][32]byte{d1}))
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{
 		Digest:  d1[:],
@@ -618,7 +595,6 @@ func TestDownDiscardsLinkState(t *testing.T) {
 		t.Fatalf("inbound frames after the disconnect produced %d sends, want 0", got)
 	}
 
-	// A new local topic must not be pushed to the disconnected peer.
 	if err := r.Join("a", "t2"); err != nil {
 		t.Fatalf("Join t2: %v", err)
 	}
@@ -711,7 +687,6 @@ func TestInboundMemberEntriesValidated(t *testing.T) {
 	fl.inject(p, topicpb.KindRoster, &topicpb.Roster{Digest: d1[:], Members: members})
 	flushAll(t, fl)
 
-	// A Delta carries entries too; a bad one must be dropped the same way.
 	fl.inject(p, topicpb.KindRosterDelta, deltaMsg(d1, []Member{{Name: "delta bad", Ref: "aaabbb"}}, nil, nil))
 	flushAll(t, fl)
 
@@ -892,7 +867,6 @@ func TestDeltaOutsideIntersectionNotStored(t *testing.T) {
 		t.Fatalf("RemoteMembers = %+v, want none", got)
 	}
 
-	// t2 enters the intersection later; the discarded Delta must stay gone.
 	if err := r.Join("a", "t2"); err != nil {
 		t.Fatalf("Join t2: %v", err)
 	}
@@ -938,7 +912,6 @@ func TestRosterOutsideIntersectionNotStored(t *testing.T) {
 		t.Fatalf("RemoteMembers = %+v, want none", got)
 	}
 
-	// t2 enters the intersection later; the discarded Roster must stay gone.
 	if err := r.Join("a", "t2"); err != nil {
 		t.Fatalf("Join t2: %v", err)
 	}

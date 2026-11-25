@@ -15,10 +15,8 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// TestSendHappensUnderLock checks lock rule three: every frame is handed to the
-// transport's send methods while the caller holds Registry.mu. A send hook tries
-// to take the lock and fails the test when it succeeds, which happens exactly
-// when an event collected frames under the lock and sent them after releasing it.
+// TestSendHappensUnderLock checks that every frame is handed to the transport
+// while the registry lock is held.
 func TestSendHappensUnderLock(t *testing.T) {
 	la := newFakeLink(t, fakeLinkFingerprint(1))
 	lb := newFakeLink(t, fakeLinkFingerprint(2))
@@ -49,8 +47,6 @@ func TestSendHappensUnderLock(t *testing.T) {
 	connect(la, lb, []byte("salt"))
 	flushAll(t, la, lb)
 
-	// Cover the four local operations, including a topic B also has so that
-	// the deltas and rosters are not vacuous.
 	ra.AgentChanged(a, Member{Name: "api2", Ref: "a10003", Status: "busy", PrevName: "api"})
 	if err := ra.Join(a, "t2"); err != nil {
 		t.Fatalf("join t2 for a: %v", err)
@@ -72,9 +68,8 @@ func TestSendHappensUnderLock(t *testing.T) {
 	}
 }
 
-// TestCallbacksConcurrentWithOperations checks lock rules two and six: callbacks
-// from the link run concurrently with local operations and queries, all of them
-// complete, and -race reports no unsynchronized access.
+// TestCallbacksConcurrentWithOperations checks that link callbacks run
+// concurrently with local operations and queries without a data race.
 func TestCallbacksConcurrentWithOperations(t *testing.T) {
 	la := newFakeLink(t, fakeLinkFingerprint(1))
 	lb := newFakeLink(t, fakeLinkFingerprint(2))
@@ -141,10 +136,8 @@ func TestCallbacksConcurrentWithOperations(t *testing.T) {
 	flushAll(t, la, lb)
 }
 
-// TestConvergence drives both registries with random concurrent operations and
-// checks that each side's remote view equals the other side's local membership
-// inside the topics they share. The reconnect variant repeats the run while the
-// link is torn down and rebuilt with a fresh salt.
+// TestConvergence checks that random concurrent operations converge both sides'
+// remote views, with and without reconnecting.
 func TestConvergence(t *testing.T) {
 	for seed := int64(1); seed <= 5; seed++ {
 		seed := seed
@@ -160,10 +153,8 @@ func TestConvergence(t *testing.T) {
 	}
 }
 
-// TestOldConnectionFramesDoNotPolluteNewLink blocks B's scheduler on the first
-// frame of the old connection while A keeps changing and sending, then tears the
-// link down and rebuilds it. Frames queued under the old generation must not
-// survive the rebuild into the new table.
+// TestOldConnectionFramesDoNotPolluteNewLink checks that frames queued under an
+// old connection do not survive a rebuild.
 func TestOldConnectionFramesDoNotPolluteNewLink(t *testing.T) {
 	la := newFakeLink(t, fakeLinkFingerprint(1))
 	lb := newFakeLink(t, fakeLinkFingerprint(2))
@@ -219,15 +210,12 @@ func TestOldConnectionFramesDoNotPolluteNewLink(t *testing.T) {
 	concAssertConverged(t, rb, ra, la.self)
 }
 
-// concAgent is one seeded local agent used by the randomized workloads.
 type concAgent struct {
 	id   AgentID
 	ref  string
 	base string
 }
 
-// concSeedSide introduces six agents and places each in one of the five topics,
-// mirroring what the broker does before it calls Join.
 func concSeedSide(t *testing.T, r *Registry, prefix string) []concAgent {
 	t.Helper()
 	agents := make([]concAgent, 6)
@@ -245,8 +233,8 @@ func concSeedSide(t *testing.T, r *Registry, prefix string) []concAgent {
 	return agents
 }
 
-// concOwned splits agents round-robin over four workers so no two workers drive
-// the same agent's lifecycle.
+// It splits agents round-robin over four workers so no two workers drive one
+// agent's lifecycle.
 func concOwned(agents []concAgent, w int) []concAgent {
 	out := make([]concAgent, 0, len(agents)/4+1)
 	for i := w; i < len(agents); i += 4 {
@@ -257,10 +245,8 @@ func concOwned(agents []concAgent, w int) []concAgent {
 
 var concStatuses = []string{"idle", "busy", "waiting", "shell"}
 
-// concRandomOp performs one of join, leave, info change, and leave-all followed
-// by reintroduction. Errors are ignored on purpose: every agent belongs to one
-// worker and the names are valid, so the call shape matches the registry's
-// contract.
+// Errors are ignored on purpose: each agent belongs to one worker and the names
+// are valid.
 func concRandomOp(rng *rand.Rand, r *Registry, agents []concAgent) {
 	ag := agents[rng.IntN(len(agents))]
 	switch rng.IntN(4) {
@@ -284,8 +270,6 @@ func concRandomOp(rng *rand.Rand, r *Registry, agents []concAgent) {
 	}
 }
 
-// concRunConvergence runs one convergence scenario for a seed and checks both
-// directions once the links have drained.
 func concRunConvergence(t *testing.T, seed int64, reconnecting bool) {
 	t.Helper()
 	la := newFakeLink(t, fakeLinkFingerprint(1))
@@ -350,8 +334,6 @@ func concRunConvergence(t *testing.T, seed int64, reconnecting bool) {
 	concAssertConverged(t, rb, ra, la.self)
 }
 
-// concAssertConverged compares viewer's remote view of peer with the membership
-// the checks can compute from both local tables.
 func concAssertConverged(t *testing.T, viewer, peer *Registry, peerFP link.Fingerprint) {
 	t.Helper()
 
@@ -382,9 +364,6 @@ func concAssertConverged(t *testing.T, viewer, peer *Registry, peerFP link.Finge
 	}
 }
 
-// concExpectedRemoteMembers returns peer's agents in the topics both sides have,
-// deduplicated by Ref and ordered by Ref, taking the entry from the first topic
-// by name.
 func concExpectedRemoteMembers(t *testing.T, viewer, peer *Registry) []Member {
 	t.Helper()
 
@@ -416,8 +395,6 @@ func concExpectedRemoteMembers(t *testing.T, viewer, peer *Registry) []Member {
 	return out
 }
 
-// concExpectedVisibleRemote returns the remote half of viewer agent local's
-// VisibleAgents, computed from peer's local table.
 func concExpectedVisibleRemote(t *testing.T, viewer, peer *Registry, local AgentID, peerFP link.Fingerprint) []VisibleAgent {
 	t.Helper()
 
@@ -457,7 +434,6 @@ func concExpectedVisibleRemote(t *testing.T, viewer, peer *Registry, local Agent
 	return out
 }
 
-// concIntersect returns the common names of two ascending lists, ascending.
 func concIntersect(a, b []string) []string {
 	var out []string
 	for i, j := 0, 0; i < len(a) && j < len(b); {
@@ -475,7 +451,6 @@ func concIntersect(a, b []string) []string {
 	return out
 }
 
-// concEqualVisible compares VisibleAgent slices field by field.
 func concEqualVisible(a, b []VisibleAgent) bool {
 	if len(a) != len(b) {
 		return false
