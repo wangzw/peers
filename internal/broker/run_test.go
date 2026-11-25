@@ -23,6 +23,7 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/pairing"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // orderLog records startup and shutdown events so an assertion does not depend
@@ -181,12 +182,7 @@ type runTest struct {
 
 func newRunTest(t *testing.T, mutate ...func(*runTest)) *runTest {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "ap-")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return newRunTestAt(t, dir, mutate...)
+	return newRunTestAt(t, socktest.Dir(t), mutate...)
 }
 
 func newRunTestAt(t *testing.T, dir string, mutate ...func(*runTest)) *runTest {

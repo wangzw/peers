@@ -2,12 +2,12 @@ package broker
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakesession"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // TestRegisterSocketSymlinkNotOwned checks that the socket owner check does not
@@ -16,7 +16,7 @@ func TestRegisterSocketSymlinkNotOwned(t *testing.T) {
 	tb := newTestBroker(t)
 	target := fakesession.New(t, fakesession.Options{Name: "symlink-target"})
 
-	linkPath := filepath.Join(t.TempDir(), "inbox.sock")
+	linkPath := socktest.Path(t, "inbox.sock")
 	if err := os.Symlink(target.SocketPath(), linkPath); err != nil {
 		t.Fatalf("symlink %s -> %s: %v", linkPath, target.SocketPath(), err)
 	}
@@ -40,7 +40,7 @@ func TestRegisterSocketSymlinkNotOwned(t *testing.T) {
 // still rejected when it is not a socket.
 func TestRegisterRegularFileNotOwned(t *testing.T) {
 	tb := newTestBroker(t)
-	path := filepath.Join(t.TempDir(), "inbox.sock")
+	path := socktest.Path(t, "inbox.sock")
 	if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}

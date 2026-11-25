@@ -3,7 +3,6 @@ package broker
 import (
 	"log/slog"
 	"net"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 type testBroker struct {
@@ -31,11 +31,7 @@ type testBroker struct {
 func newTestBroker(t *testing.T, mutate ...func(*Deps)) *testBroker {
 	t.Helper()
 
-	dir, err := os.MkdirTemp("", "ap-")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := socktest.Dir(t)
 
 	clock := newFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	cfg := newFakeConfig(dir)

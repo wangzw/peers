@@ -17,6 +17,7 @@ import (
 	"github.com/wangzw/peers/internal/config"
 	"github.com/wangzw/peers/internal/inbox"
 	"github.com/wangzw/peers/internal/testkit/fakesession"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // regStream is one open Register stream with a pump that is the only Recv caller,
@@ -155,12 +156,7 @@ func waitForReg(t *testing.T, what string, cond func() bool) {
 
 func shortTempDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "ap-")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return dir
+	return socktest.Dir(t)
 }
 
 func mustAgentID(t *testing.T, socketPath string) AgentID {

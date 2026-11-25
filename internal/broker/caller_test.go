@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,6 +21,7 @@ import (
 	"github.com/wangzw/peers/internal/broker/helper"
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/broker/lookupgate"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 func resetUsernameCache(t *testing.T) {
@@ -268,12 +268,7 @@ type credTestBroker struct {
 
 func startCredBroker(t *testing.T, creds credentials.TransportCredentials, impl localpb.LocalServer) *credTestBroker {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "apcred")
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	path := filepath.Join(dir, "broker.sock")
+	path := socktest.Path(t, "broker.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatalf("listen on %s: %v", path, err)

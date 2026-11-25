@@ -2,7 +2,6 @@ package broker
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/link"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // orderedSessions records when a registration handler releases its session
@@ -202,7 +202,8 @@ func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 
 	// A valid absolute path with no session record keeps the handler on its watch.
 	client := dialRunLocal(t, rt.socketPath())
-	startRegistrationAt(t, client, t.TempDir(), filepath.Join(t.TempDir(), "s.sock"))
+	configDir := t.TempDir()
+	startRegistrationAt(t, client, configDir, socktest.Path(t, "s.sock"))
 
 	deadline := time.Now().Add(eventTimeout)
 	for {

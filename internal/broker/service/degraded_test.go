@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 type fakeLocal struct {
@@ -133,7 +134,7 @@ func TestStatusProbeDiagnosticsOnly(t *testing.T) {
 // TestStatusProbeNoAnswer checks that the status probe fails when nothing
 // answers on the socket.
 func TestStatusProbeNoAnswer(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "not-listening.sock")
+	sock := socktest.Path(t, "not-listening.sock")
 
 	state, degraded, err := defaultStatusProbe(sock)
 	if err == nil {

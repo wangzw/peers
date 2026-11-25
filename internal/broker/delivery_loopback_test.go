@@ -13,6 +13,7 @@ import (
 	"github.com/wangzw/peers/internal/link"
 	"github.com/wangzw/peers/internal/pairing"
 	"github.com/wangzw/peers/internal/testkit/fakesession"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 type loopbackFixture struct {
@@ -48,7 +49,7 @@ func newLoopbackFixture(t *testing.T) *loopbackFixture {
 	senderID, receiverID := fakenetPeer(1), fakenetPeer(2)
 	link := newLoopbackLink(t, senderID)
 
-	caller := testAgent("api-worker", t.TempDir()+"/api-worker.sock")
+	caller := testAgent("api-worker", socktest.Path(t, "api-worker.sock"))
 	session := fakesession.New(t, fakesession.Options{Name: "frontend", Mode: fakesession.CloseAfterRead})
 	target := liveTestAgent(t, session, "frontend")
 

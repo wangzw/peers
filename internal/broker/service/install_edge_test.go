@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/wangzw/peers/internal/config"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // TestDefaultOptionsFromTheRunningProcess checks that DefaultOptions fills the
@@ -98,7 +99,7 @@ func TestDefaultOptionsFromTheRunningProcess(t *testing.T) {
 	if !answering || pid != os.Getpid() {
 		t.Errorf("Probe(live socket) = %d, %v, want %d, true", pid, answering, os.Getpid())
 	}
-	if pid, answering := opts.Probe(filepath.Join(t.TempDir(), "absent.sock")); answering || pid != 0 {
+	if pid, answering := opts.Probe(socktest.Path(t, "absent.sock")); answering || pid != 0 {
 		t.Errorf("Probe(absent socket) = %d, %v, want 0, false", pid, answering)
 	}
 }
@@ -888,7 +889,7 @@ func TestWaitReadyUsesTheDefaultBound(t *testing.T) {
 // TestWaitStatusUsesTheDefaultProbe checks that waitStatus reports a failed
 // default probe naming the socket.
 func TestWaitStatusUsesTheDefaultProbe(t *testing.T) {
-	runDir := filepath.Join(t.TempDir(), "run")
+	runDir := filepath.Join(socktest.Dir(t), "run")
 	old := runtimeDirFor
 	runtimeDirFor = func(int) string { return runDir }
 	t.Cleanup(func() { runtimeDirFor = old })
