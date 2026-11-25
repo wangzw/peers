@@ -14,9 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// loopFixture is one Directory driven by a fake clock, ready to start. The
-// helpers are prefixed with "loop" so they cannot collide with helpers added by
-// the other work items that share this package.
 type loopFixture struct {
 	t   *testing.T
 	d   *Directory
@@ -27,13 +24,11 @@ type loopFixture struct {
 	dir string
 }
 
-// newLoopFixture opens a directory at the fixture instant.
 func newLoopFixture(t *testing.T, seed byte, dir string, public bool, net *fakeNet, at time.Time) *loopFixture {
 	t.Helper()
 	return newLoopFixtureWithOps(t, seed, dir, public, net, at, realFileOps{})
 }
 
-// newLoopFixtureWithOps opens a directory with the given file operations.
 func newLoopFixtureWithOps(t *testing.T, seed byte, dir string, public bool, net *fakeNet, at time.Time, ops fileOps) *loopFixture {
 	t.Helper()
 	id := newTestIdentity(seed)
@@ -57,8 +52,6 @@ func newLoopFixtureWithOps(t *testing.T, seed byte, dir string, public bool, net
 	return &loopFixture{t: t, d: d, ep: ep, clk: clk, set: set, fp: id.Fingerprint(), dir: dir}
 }
 
-// start starts the directory and waits until the maintenance loop has created
-// its first timer, so a following Advance cannot race ahead of the timer.
 func (f *loopFixture) start() {
 	f.t.Helper()
 	if err := f.d.Start(); err != nil {
@@ -67,7 +60,6 @@ func (f *loopFixture) start() {
 	f.clk.WaitTimers(f.t, 1)
 }
 
-// card returns the local card. The record is immutable once stored.
 func (f *loopFixture) card() *storedRecord {
 	f.t.Helper()
 	r, ok := loopOwnCard(f)
@@ -77,28 +69,24 @@ func (f *loopFixture) card() *storedRecord {
 	return r
 }
 
-// loopOwnCard returns the card published by f's directory.
 func loopOwnCard(f *loopFixture) (*storedRecord, bool) {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
 	return f.d.st.get(recordID{publisher: f.fp, kind: recKindCard})
 }
 
-// loopPeerCard returns the card published by fp that f's directory holds.
 func loopPeerCard(f *loopFixture, fp Fingerprint) (*storedRecord, bool) {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
 	return f.d.st.get(recordID{publisher: fp, kind: recKindCard})
 }
 
-// loopLinked reports whether f considers the link to peer established.
 func loopLinked(f *loopFixture, peer Fingerprint) bool {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
 	return f.d.up[peer]
 }
 
-// loopWait polls cond until it holds, failing after eventTimeout.
 func loopWait(t *testing.T, desc string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -110,8 +98,6 @@ func loopWait(t *testing.T, desc string, cond func() bool) {
 	}
 }
 
-// loopWaitMaintained waits for one completed maintenance pass signalled by the
-// afterMaintain hook installed before Start.
 func loopWaitMaintained(t *testing.T, ch <-chan struct{}, desc string) {
 	t.Helper()
 	select {
@@ -121,7 +107,6 @@ func loopWaitMaintained(t *testing.T, ch <-chan struct{}, desc string) {
 	}
 }
 
-// loopCopyFile copies src to dst, used to restore a directory file backup.
 func loopCopyFile(t *testing.T, src, dst string) {
 	t.Helper()
 	data, err := os.ReadFile(src)
@@ -133,7 +118,6 @@ func loopCopyFile(t *testing.T, src, dst string) {
 	}
 }
 
-// loopFailFirstWriteOps fails the first WriteFile and delegates afterwards.
 type loopFailFirstWriteOps struct {
 	realFileOps
 	mu     sync.Mutex
@@ -153,6 +137,7 @@ func (o *loopFailFirstWriteOps) WriteFile(path string, data []byte, mode os.File
 	return o.realFileOps.WriteFile(path, data, mode)
 }
 
+// TestStartRegistersAndChecks checks that Start registers the frame handlers and issues the card of a public Broker.
 func TestStartRegistersAndChecks(t *testing.T) {
 	f := newLoopFixture(t, 1, t.TempDir(), true, newFakeNet(), dirTestNow())
 	f.start()
@@ -173,6 +158,7 @@ func TestStartRegistersAndChecks(t *testing.T) {
 	}
 }
 
+// TestStartTwiceAndAfterClose checks that a second Start changes nothing and Start after Close fails with ErrClosed.
 func TestStartTwiceAndAfterClose(t *testing.T) {
 	f := newLoopFixture(t, 1, t.TempDir(), true, newFakeNet(), dirTestNow())
 	f.start()
@@ -191,6 +177,7 @@ func TestStartTwiceAndAfterClose(t *testing.T) {
 	}
 }
 
+// TestPeriodicReconcile checks that reconciliation runs once the interval elapses and follows a shortened interval.
 func TestPeriodicReconcile(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -223,9 +210,6 @@ func TestPeriodicReconcile(t *testing.T) {
 		})
 	}
 
-	// The maintenance loop must read the interval on every pass, not once at
-	// Start: starting at ten minutes and shortening it to thirty seconds must
-	// make the next one-minute pass reconcile.
 	t.Run("interval shortened at runtime", func(t *testing.T) {
 		net := newFakeNet()
 		a := newLoopFixture(t, 1, t.TempDir(), false, net, dirTestNow())
@@ -249,8 +233,6 @@ func TestPeriodicReconcile(t *testing.T) {
 		})
 		clearReconcileSent(a.ep)
 
-		// The first pass runs at the original ten-minute interval and must not
-		// reconcile.
 		a.clk.Advance(time.Minute)
 		loopWaitMaintained(t, maintained, "the first maintenance pass")
 		a.clk.WaitTimers(t, 1)
@@ -258,8 +240,6 @@ func TestPeriodicReconcile(t *testing.T) {
 			t.Fatalf("A reconciled %d times before the interval elapsed, want 0", got)
 		}
 
-		// After the interval shrinks, the next pass one minute later must see the
-		// new value and send a full list.
 		a.set.SetReconcileInterval(30 * time.Second)
 		a.clk.Advance(time.Minute)
 		loopWaitMaintained(t, maintained, "the second maintenance pass")
@@ -269,11 +249,7 @@ func TestPeriodicReconcile(t *testing.T) {
 	})
 }
 
-// TestPersistTimerIndependentOfReconcileInterval checks that the maintenance
-// loop wakes at the persist deadline even when directory.reconcile_interval is
-// shorter than maintainInterval. With a 50-second reconcile interval the loop
-// otherwise wakes at 100 seconds and writes at 150, holding records for 100
-// seconds instead of the promised minute.
+// TestPersistTimerIndependentOfReconcileInterval checks that the loop still writes at the persist deadline when the reconcile interval is shorter.
 func TestPersistTimerIndependentOfReconcileInterval(t *testing.T) {
 	f := newLoopFixture(t, 1, t.TempDir(), false, newFakeNet(), dirTestNow())
 	f.set.SetReconcileInterval(50 * time.Second)
@@ -288,8 +264,6 @@ func TestPersistTimerIndependentOfReconcileInterval(t *testing.T) {
 		}
 	}
 
-	// dirty before the first pass, which happens at 50 seconds because the
-	// reconcile interval is shorter than the minute.
 	f.d.mu.Lock()
 	f.d.dirty = true
 	f.d.mu.Unlock()
@@ -302,9 +276,6 @@ func TestPersistTimerIndependentOfReconcileInterval(t *testing.T) {
 	}
 	f.clk.WaitTimers(t, 1)
 
-	// Mark the directory dirty again. The reconcile pass at 100 seconds must
-	// not write, because only 50 seconds have passed; the persist deadline at
-	// 110 seconds must, independent of the reconcile cadence.
 	f.d.mu.Lock()
 	f.d.dirty = true
 	f.d.mu.Unlock()
@@ -322,14 +293,13 @@ func TestPersistTimerIndependentOfReconcileInterval(t *testing.T) {
 	}
 }
 
+// TestLoopRenewsAndPurges checks that the loop renews the local card, purges an expired record and rewrites the file.
 func TestLoopRenewsAndPurges(t *testing.T) {
 	net := newFakeNet()
 	f := newLoopFixture(t, 1, t.TempDir(), true, net, dirTestNow())
 	f.start()
 	before := f.card().version
 
-	// A foreign card accepted now expires within the minute, so the pass after
-	// a day of advance must purge it.
 	foreign := mustSignRecord(t, 2, recKindCard, "", 1, dirTestNow().Add(time.Minute), recTestCard("foreign"))
 	foreign.source = newTestIdentity(3).Fingerprint()
 	f.d.mu.Lock()
@@ -349,7 +319,6 @@ func TestLoopRenewsAndPurges(t *testing.T) {
 		return ok && !present && cur.version > before
 	})
 
-	// The pass that purged and renewed also rewrote the file.
 	loopWait(t, "the directory file to be rewritten", func() bool {
 		f.d.mu.RLock()
 		cur, ok := f.d.st.get(recordID{publisher: f.fp, kind: recKindCard})
@@ -366,6 +335,7 @@ func TestLoopRenewsAndPurges(t *testing.T) {
 	})
 }
 
+// TestCloseStopsLoop checks that Close stops the maintenance loop.
 func TestCloseStopsLoop(t *testing.T) {
 	f := newLoopFixture(t, 1, t.TempDir(), true, newFakeNet(), dirTestNow())
 	f.start()
@@ -384,6 +354,7 @@ func TestCloseStopsLoop(t *testing.T) {
 	}
 }
 
+// TestPersistRetryInLoop checks that a failed write is retried by a later maintenance pass.
 func TestPersistRetryInLoop(t *testing.T) {
 	ops := &loopFailFirstWriteOps{}
 	f := newLoopFixtureWithOps(t, 1, t.TempDir(), true, newFakeNet(), dirTestNow(), ops)
@@ -400,6 +371,7 @@ func TestPersistRetryInLoop(t *testing.T) {
 	})
 }
 
+// TestRestartKeepsDirectoryAndVersion checks that the version keeps rising across restarts and a clock rollback.
 func TestRestartKeepsDirectoryAndVersion(t *testing.T) {
 	dir := t.TempDir()
 	net := newFakeNet()
@@ -417,7 +389,6 @@ func TestRestartKeepsDirectoryAndVersion(t *testing.T) {
 	}
 	second.d.Close()
 
-	// A clock set back by a day must not lower the version either.
 	third := newLoopFixture(t, 1, dir, true, net, dirTestNow().Add(-24*time.Hour))
 	third.start()
 	thirdVersion := third.card().version
@@ -426,6 +397,7 @@ func TestRestartKeepsDirectoryAndVersion(t *testing.T) {
 	}
 }
 
+// TestBackupRestoreRaisesVersion checks that a Broker restored from an older backup raises its version above the one already propagated.
 func TestBackupRestoreRaisesVersion(t *testing.T) {
 	net := newFakeNet()
 	dirA := t.TempDir()
@@ -440,8 +412,6 @@ func TestBackupRestoreRaisesVersion(t *testing.T) {
 	a.d.Reissue()
 	a.d.Reissue()
 
-	// Keep the current state as the older copy, then issue more records so the
-	// network sees a version above the copy.
 	loopCopyFile(t, filepath.Join(dirA, fileName), filepath.Join(backupDir, fileName))
 	a.d.Reissue()
 	a.d.Reissue()
@@ -459,14 +429,11 @@ func TestBackupRestoreRaisesVersion(t *testing.T) {
 	net.Disconnect(a.fp, b.fp)
 	a.d.Close()
 
-	// Restore the older copy and come back with a different advertised address.
 	loopCopyFile(t, filepath.Join(backupDir, fileName), filepath.Join(dirA, fileName))
 	restored := newLoopFixture(t, 1, dirA, true, net, dirTestNow())
 	restored.set.SetAdvertised([]config.AdvertisedAddr{{Kind: "direct", Addr: "10.0.0.2:7000"}})
 	restored.start()
 
-	// B accepted the card from the first session, so let the replacement
-	// interval pass before the restored Broker's newer card may replace it.
 	b.clk.Advance(directoryReplaceInterval())
 	net.Connect(restored.fp, b.fp)
 	reconcileAwait(t, net, "A to publish a card above B's version", func() bool {

@@ -5,9 +5,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// Fingerprint identifies a Broker. It is the SHA-256 over the certificate's DER
-// SubjectPublicKeyInfo, as defined by the pairing package, so it matches the
-// pairing and link layers. The zero value means "no identity".
+// Fingerprint identifies a Broker. It is the pairing package's fingerprint, the
+// SHA-256 of the certificate's DER SubjectPublicKeyInfo. The zero value means
+// no identity.
 type Fingerprint = pairing.Fingerprint
 
 // BrokerStatus describes how a Broker appears in the directory's view.
@@ -75,36 +75,51 @@ const (
 
 // LinkView is the directory's view of the link to one peer.
 type LinkView struct {
-	Phase       LinkPhase
-	Reason      LinkFailure // meaningful when Phase is LinkBackoff or LinkRejected
-	PeerVersion uint32      // peer's link protocol version when Reason is FailureVersionIncompatible; 0 when unknown
+	// Phase is the state of the link to this peer.
+	Phase LinkPhase
+	// Reason is the most recent failure reason; it is meaningful only when
+	// Phase is LinkBackoff or LinkRejected.
+	Reason LinkFailure
+	// PeerVersion is the peer's link protocol version when Reason is
+	// FailureVersionIncompatible, and 0 when unknown.
+	PeerVersion uint32
 }
 
 // KnownBroker is one entry in the directory's broker view.
 type KnownBroker struct {
+	// Fingerprint identifies the Broker.
 	Fingerprint Fingerprint
-	Alias       string                  // effective alias for a peer; card alias for a non-peer
-	Addresses   []config.AdvertisedAddr // only entries with Kind == "direct"; may be nil or an empty slice
-	IsPeer      bool
-	Role        pairing.Role // pairing.RoleUnknown for a non-peer
-	Status      BrokerStatus
-	Link        LinkPhase // LinkNone for a non-peer
-	Detail      string    // non-peer entries only; empty for peers
+	// Alias is the effective alias for a peer and the card alias for a
+	// non-peer.
+	Alias string
+	// Addresses holds the advertised addresses this version recognizes, all of
+	// kind "direct"; it may be nil or empty.
+	Addresses []config.AdvertisedAddr
+	// IsPeer reports whether this Broker is a peer.
+	IsPeer bool
+	// Role is this side's role in the peer pair; pairing.RoleUnknown for a
+	// non-peer.
+	Role pairing.Role
+	// Status is the Broker's status in the directory view.
+	Status BrokerStatus
+	// Link is the link phase; LinkNone for a non-peer.
+	Link LinkPhase
+	// Detail is explanatory text for a non-peer entry; it is empty for a peer.
+	Detail string
 }
 
 // PublicTopic is one public topic currently declared by a Broker.
 type PublicTopic struct {
+	// Name is the topic name.
 	Name string
-	// Description is the description of the chosen declaration: the local
-	// Broker's when it declares the name, otherwise a peer's, otherwise the
-	// highest version among the remaining publishers.
+	// Description is the description of the chosen declaration.
 	Description string
 	// Publisher is the fingerprint of the Broker whose declaration supplied
 	// Description.
 	Publisher Fingerprint
-	// PublisherAlias is the effective alias of a peer publisher, the alias in
+	// PublisherAlias is the effective alias of a peer publisher, the alias on
 	// the live card of any other publisher, and empty when neither is known.
 	PublisherAlias string
-	// Declarers is the number of live, well-formed declarations of the name.
+	// Declarers is the number of valid declarations of the name.
 	Declarers int
 }

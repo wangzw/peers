@@ -13,13 +13,11 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// OnCard registers a callback invoked whenever a card published by another
-// Broker is accepted from a link. Callbacks run in registration order, outside
-// the directory lock, in the goroutine that handles the batch; callbacks for
-// different links may run concurrently, so a callback must be safe to call
-// concurrently and must not block for long. The addresses are the card's
-// "direct" entries, at most eight, in the card's order. Callbacks are not
-// called for records issued locally or loaded from disk.
+// OnCard registers a callback invoked when another Broker's card is accepted
+// from a link. Callbacks run in registration order outside the directory lock,
+// and different links may call concurrently, so a callback must be safe for
+// concurrent use and must not block for long. The addresses are the recognized
+// direct entries, at most eight, in card order.
 func (d *Directory) OnCard(f func(fp Fingerprint, addresses []config.AdvertisedAddr)) {
 	if f == nil {
 		return
@@ -29,31 +27,14 @@ func (d *Directory) OnCard(f func(fp Fingerprint, addresses []config.AdvertisedA
 	d.mu.Unlock()
 }
 
-// recordsReplyBudget is the largest encoded Records frame the answer path
-// sends. A reply holding more records is split into several frames, each at or
-// below this byte budget, so no frame approaches link's single-frame limit.
 const recordsReplyBudget = 1 << 20
 
-// registerReconcile registers the handlers for the reconciliation frames: the
-// RecordList state frame, the RecordRequest request frame, and the Records
-// frames that carry the later batches of a split reply.
 func (d *Directory) registerReconcile() {
 	d.links.HandleState(directorypb.KindRecordList, d.handleRecordList)
 	d.links.HandleState(directorypb.KindRecords, d.handleRecordsState)
 	d.links.HandleRequest(directorypb.KindRecordRequest, d.handleRecordRequest)
 }
 
-// handleRecordList compares a peer's list of identifiers and versions with the
-// local directory. Missing or older local records are queued for a fetch; for
-// every identifier the local directory holds a strictly higher version of, an
-// incremental RecordList is sent back. Equal versions are ignored, so an
-// exchange always terminates. An identifier whose held version was accepted from
-// a link less than directoryReplaceInterval() ago is not fetched now; it is
-// recorded in the
-// peer's deferred set and fetched once when the interval ends. At
-// most one fetch runs per peer: while it is outstanding, further identifiers
-// merge into that peer's pending set, and the fetch loop sends them when the
-// outstanding request finishes. Records is never sent here.
 func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	if !d.linkUp(peer) {
 		return
@@ -90,12 +71,6 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 				tellBack = append(tellBack, held.recordVersion())
 				continue
 			}
-			// The held version is older and still live. A record published by
-			// the local Broker is exempt: a peer returning a higher version
-			// only raises the issued version, so it is fetched at once as the
-			// store allows it to replace. Any other record whose held version
-			// was accepted from a link less than the replacement interval ago
-			// is deferred until that interval ends.
 			if id.publisher != d.st.self && !held.acceptedAt.IsZero() && now.Before(held.acceptedAt.Add(replaceInterval)) {
 				if deferred == nil {
 					deferred = make(map[recordID]time.Time)
@@ -106,13 +81,6 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 			fetchIDs = append(fetchIDs, id)
 			continue
 		}
-		// The local record is missing or expired, so the peer's version is
-		// worth fetching, unless the identifier was accepted from a link less
-		// than the replacement interval ago. The store remembers that instant
-		// even after the record expires and is purged, and fetching before the
-		// interval ends would only be dropped again. This applies to a record
-		// published by the local Broker too: a version that came back from a
-		// link carries an acceptance instant like any other.
 		if at, seen := d.st.replaceNotBefore(id); seen && now.Before(at.Add(replaceInterval)) {
 			if deferred == nil {
 				deferred = make(map[recordID]time.Time)
@@ -135,13 +103,6 @@ func (d *Directory) handleRecordList(peer Fingerprint, payload []byte) {
 	}
 }
 
-// handleRecordRequest answers a RecordRequest with the held, unexpired records
-// whose identifiers were asked for. Identifiers are deduplicated, so a record
-// asked for twice appears once. When the answer exceeds recordsReplyBudget it
-// is split into several frames: the first batch is the reply and the rest are
-// sent as further Records frames, so the whole answer is delivered without
-// truncation or an oversized frame. A frame from a peer whose link is not
-// established gets an empty answer.
 func (d *Directory) handleRecordRequest(_ context.Context, peer Fingerprint, payload []byte) (uint32, []byte) {
 	if !d.linkUp(peer) {
 		return directorypb.KindRecords, nil
@@ -198,10 +159,6 @@ func (d *Directory) handleRecordRequest(_ context.Context, peer Fingerprint, pay
 	return directorypb.KindRecords, reply
 }
 
-// splitRecords groups recs into batches whose encoded Records frames do not
-// exceed budget. A single record larger than the budget is sent on its own; the
-// per-record limit makes that unreachable through the accepting paths. Order is
-// preserved.
 func splitRecords(recs []*directorypb.Record, budget int) [][]*directorypb.Record {
 	var (
 		batches [][]*directorypb.Record
@@ -210,8 +167,7 @@ func splitRecords(recs []*directorypb.Record, budget int) [][]*directorypb.Recor
 	)
 	for _, r := range recs {
 		n := proto.Size(r)
-		// A repeated message field encodes as a one-byte tag, the length
-		// varint and the record itself; the sum is the Records frame size.
+		// A repeated message field adds a tag and a length varint per record.
 		add := 1 + protowire.SizeVarint(uint64(n)) + n
 		if len(cur) > 0 && size+add > budget {
 			batches = append(batches, cur)
@@ -226,9 +182,6 @@ func splitRecords(recs []*directorypb.Record, budget int) [][]*directorypb.Recor
 	return batches
 }
 
-// handleRecordsState accepts a Records frame. These carry the batches of a
-// reply that did not fit in one frame, so their records are accepted only if
-// this direction requested them and their accept window is still open.
 func (d *Directory) handleRecordsState(peer Fingerprint, payload []byte) {
 	if !d.linkUp(peer) {
 		return
@@ -241,21 +194,13 @@ func (d *Directory) handleRecordsState(peer Fingerprint, payload []byte) {
 	d.acceptRecords(peer, recs.GetRecords())
 }
 
-// cardEvent is one accepted foreign card handed to the OnCard callbacks.
 type cardEvent struct {
 	fp    Fingerprint
 	addrs []config.AdvertisedAddr
 }
 
-// acceptBatch verifies and accepts a batch of records received from peer, then
-// pushes the newly accepted identifiers to every other established peer, runs
-// the card callbacks and the own-record hook, and marks the directory dirty. A
-// replacement the interval dropped is recorded for one fetch when the interval
-// ends.
-// Records accepted from a link are written to disk by the maintenance loop, at
-// most once a minute; a locally issued record, a revocation and Close still
-// write at once. The records are parsed outside the lock; the acceptance and the
-// bookkeeping run under one write lock.
+// acceptBatch parses the records outside d.mu, then accepts and accounts for
+// them under one write lock.
 func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 	if !d.linkUp(peer) {
 		return
@@ -328,9 +273,6 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 		case outcomeReplaceTooFast:
 			dropped++
 			reasons = addReason(reasons, "replace_interval")
-			// The held version may already have expired and been purged, but
-			// the store still remembers when the identifier was accepted, so the
-			// newer version is fetched once that interval ends.
 			if at, ok := d.st.replaceNotBefore(r.id); ok {
 				if pr == nil {
 					pr = newPeerReconcile()
@@ -368,7 +310,6 @@ func (d *Directory) acceptBatch(peer Fingerprint, recs []*directorypb.Record) {
 	}
 }
 
-// addReason appends reason to reasons unless it is already there.
 func addReason(reasons []string, reason string) []string {
 	for _, r := range reasons {
 		if r == reason {
@@ -378,7 +319,6 @@ func addReason(reasons []string, reason string) []string {
 	return append(reasons, reason)
 }
 
-// reconcileAll sends a full RecordList to every peer whose link is established.
 func (d *Directory) reconcileAll() {
 	d.mu.RLock()
 	if d.closed {

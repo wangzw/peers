@@ -18,9 +18,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// reconcileNode is one Directory wired to a fake network endpoint. The helpers
-// below are prefixed with "reconcile" so they cannot collide with helpers added
-// by the other work items that share this package.
 type reconcileNode struct {
 	d    *Directory
 	ep   *fakeLinks
@@ -29,8 +26,6 @@ type reconcileNode struct {
 	logs *lockedBuffer
 }
 
-// newReconcileNode opens a directory for seed, subscribes it to link
-// notifications and registers the reconciliation handlers.
 func newReconcileNode(t *testing.T, net *fakeNet, seed byte) *reconcileNode {
 	t.Helper()
 	id := newTestIdentity(seed)
@@ -59,7 +54,6 @@ func newReconcileNode(t *testing.T, net *fakeNet, seed byte) *reconcileNode {
 	}
 }
 
-// reconcileInject puts r into n's directory without going through a link.
 func reconcileInject(t *testing.T, n *reconcileNode, r *storedRecord) {
 	t.Helper()
 	n.d.mu.Lock()
@@ -68,26 +62,21 @@ func reconcileInject(t *testing.T, n *reconcileNode, r *storedRecord) {
 	n.d.mu.Unlock()
 }
 
-// reconcileLookup returns the record held for id.
 func reconcileLookup(n *reconcileNode, id recordID) (*storedRecord, bool) {
 	n.d.mu.RLock()
 	defer n.d.mu.RUnlock()
 	return n.d.st.get(id)
 }
 
-// clearReconcileSent empties the endpoint's record of sent frames.
 func clearReconcileSent(ep *fakeLinks) {
 	ep.mu.Lock()
 	ep.sent = nil
 	ep.mu.Unlock()
 }
 
-// reconcileAwait drains the fake network until cond reports true. It polls the
-// observable state instead of passing the directories' inflight groups to
-// fakeNet.Settle: Settle's Wait can run while a fetch goroutine spawned by an
-// already finished delivery performs its first Add on a zero counter, which the
-// race detector reports as WaitGroup misuse. Polling does not sleep, so the
-// eventTimeout bound still applies.
+// reconcileAwait drains the fake network until cond reports true. It polls
+// instead of passing the inflight groups to Settle: a fetch goroutine can Add on
+// a zero counter while Settle waits, which the race detector reports.
 func reconcileAwait(t *testing.T, net *fakeNet, desc string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -103,7 +92,6 @@ func reconcileAwait(t *testing.T, net *fakeNet, desc string, cond func() bool) {
 	}
 }
 
-// reconcileListPayload encodes a RecordList frame body.
 func reconcileListPayload(t *testing.T, vs ...*directorypb.RecordVersion) []byte {
 	t.Helper()
 	p, err := proto.Marshal(&directorypb.RecordList{Records: vs})
@@ -113,7 +101,6 @@ func reconcileListPayload(t *testing.T, vs ...*directorypb.RecordVersion) []byte
 	return p
 }
 
-// reconcileRequestPayload encodes a RecordRequest frame body.
 func reconcileRequestPayload(t *testing.T, ids ...*directorypb.RecordId) []byte {
 	t.Helper()
 	p, err := proto.Marshal(&directorypb.RecordRequest{Records: ids})
@@ -123,7 +110,6 @@ func reconcileRequestPayload(t *testing.T, ids ...*directorypb.RecordId) []byte 
 	return p
 }
 
-// reconcileListHasID reports whether an encoded RecordList mentions id.
 func reconcileListHasID(t *testing.T, payload []byte, id recordID) bool {
 	t.Helper()
 	var list directorypb.RecordList
@@ -139,7 +125,6 @@ func reconcileListHasID(t *testing.T, payload []byte, id recordID) bool {
 	return false
 }
 
-// reconcileRequestHasID reports whether an encoded RecordRequest asks for id.
 func reconcileRequestHasID(t *testing.T, payload []byte, id recordID) bool {
 	t.Helper()
 	var req directorypb.RecordRequest
@@ -155,7 +140,6 @@ func reconcileRequestHasID(t *testing.T, payload []byte, id recordID) bool {
 	return false
 }
 
-// reconcileListCount counts the RecordList frames ep sent to to that mention id.
 func reconcileListCount(t *testing.T, ep *fakeLinks, to Fingerprint, id recordID) int {
 	t.Helper()
 	n := 0
@@ -170,7 +154,6 @@ func reconcileListCount(t *testing.T, ep *fakeLinks, to Fingerprint, id recordID
 	return n
 }
 
-// reconcileFrames counts the frames ep sent to to with kind.
 func reconcileFrames(ep *fakeLinks, to Fingerprint, kind uint32) int {
 	n := 0
 	for _, f := range ep.Sent() {
@@ -189,20 +172,19 @@ func reconcileRelayAddr(addr string) *directorypb.AdvertisedAddress {
 	return &directorypb.AdvertisedAddress{Kind: "relay", Addr: addr}
 }
 
-// reconcileCard signs a card with the key derived from seed.
 func reconcileCard(t *testing.T, seed byte, version uint64, alias string, addrs ...*directorypb.AdvertisedAddress) *storedRecord {
 	t.Helper()
 	return mustSignRecord(t, seed, recKindCard, "", version, dirTestNow().Add(recordTTL), recTestCard(alias, addrs...))
 }
 
-// reconcileAnnouncement signs a public topic declaration with the key derived
-// from seed.
 func reconcileAnnouncement(t *testing.T, seed byte, name, description string, version uint64) *storedRecord {
 	t.Helper()
 	return mustSignRecord(t, seed, recKindTopic, name, version, dirTestNow().Add(recordTTL),
 		&directorypb.TopicAnnouncement{Name: name, Description: description})
 }
 
+// TestReconcileOnLinkUp checks that a card held by one directory reaches a peer
+// on link-up.
 func TestReconcileOnLinkUp(t *testing.T) {
 	net := newFakeNet()
 	a := newReconcileNode(t, net, 1)
@@ -218,6 +200,8 @@ func TestReconcileOnLinkUp(t *testing.T) {
 	})
 }
 
+// TestReconcileFetchesNewerOnly checks that a peer fetches a newer version and
+// never requests the older one it already holds.
 func TestReconcileFetchesNewerOnly(t *testing.T) {
 	net := newFakeNet()
 	a := newReconcileNode(t, net, 1)
@@ -244,7 +228,6 @@ func TestReconcileFetchesNewerOnly(t *testing.T) {
 		return true
 	})
 
-	// A holds the higher version of X, so it must not ask B for the older one.
 	for _, f := range a.ep.Sent() {
 		if f.to != b.fp || f.kind != directorypb.KindRecordRequest {
 			continue
@@ -255,6 +238,8 @@ func TestReconcileFetchesNewerOnly(t *testing.T) {
 	}
 }
 
+// TestHopByHopPush checks that a newly accepted record is pushed to other peers
+// and never back to its source.
 func TestHopByHopPush(t *testing.T) {
 	net := newFakeNet()
 	a := newReconcileNode(t, net, 1)
@@ -279,6 +264,8 @@ func TestHopByHopPush(t *testing.T) {
 	}
 }
 
+// TestHigherVersionToldBackByIncrementalList checks that a peer holding a higher
+// version answers a lower one with an incremental RecordList, not the record.
 func TestHigherVersionToldBackByIncrementalList(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -316,6 +303,8 @@ func TestHigherVersionToldBackByIncrementalList(t *testing.T) {
 	}
 }
 
+// TestEqualVersionsNotToldBack checks that equal versions produce no incremental
+// list on either side.
 func TestEqualVersionsNotToldBack(t *testing.T) {
 	net := newFakeNet()
 	a := newReconcileNode(t, net, 1)
@@ -348,6 +337,8 @@ func TestEqualVersionsNotToldBack(t *testing.T) {
 	}
 }
 
+// TestRingTerminates checks that a record propagated around a ring is sent to
+// each neighbor at most once.
 func TestRingTerminates(t *testing.T) {
 	net := newFakeNet()
 	a := newReconcileNode(t, net, 1)
@@ -390,8 +381,8 @@ func TestRingTerminates(t *testing.T) {
 	}
 }
 
-// REQ-broker-discovery-006: tampered records and records that claim another
-// publisher's fingerprint are dropped with a warning naming the source.
+// TestRejectsTamperedAndForged checks that tampered and forged records are
+// dropped with a warning naming the source.
 func TestRejectsTamperedAndForged(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -437,8 +428,8 @@ func TestRejectsTamperedAndForged(t *testing.T) {
 	}
 }
 
-// REQ-broker-discovery-010: frames from a fingerprint without an established
-// link change nothing, and a record request from it is answered with nothing.
+// TestIgnoresFramesFromNonEstablishedSource checks that frames and record
+// requests from a fingerprint without an established link change nothing.
 func TestIgnoresFramesFromNonEstablishedSource(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -455,8 +446,6 @@ func TestIgnoresFramesFromNonEstablishedSource(t *testing.T) {
 		t.Fatalf("sent %d frames after ignoring a non-established source", len(sent))
 	}
 
-	// A RecordRequest from the same fingerprint must get an empty answer even
-	// when the directory holds the record it asks for.
 	held := reconcileCard(t, 201, 1, "hostHeld")
 	b.d.mu.Lock()
 	out := b.d.st.accept(held, b.d.now(), b.d.limits())
@@ -478,6 +467,8 @@ func TestIgnoresFramesFromNonEstablishedSource(t *testing.T) {
 	}
 }
 
+// TestQuotaDropLoggedOncePerBatch checks that records over the per-link limit are
+// dropped and reported once for the batch.
 func TestQuotaDropLoggedOncePerBatch(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -510,6 +501,8 @@ func TestQuotaDropLoggedOncePerBatch(t *testing.T) {
 	}
 }
 
+// TestOnCardCalledWithKnownAddresses checks that OnCard receives the publisher
+// and the recognized addresses of a forwarded card.
 func TestOnCardCalledWithKnownAddresses(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -564,6 +557,8 @@ func TestOnCardCalledWithKnownAddresses(t *testing.T) {
 	}
 }
 
+// TestAcceptsAnnouncementWithLongDescription checks that a declaration with an
+// over-long description is accepted and propagated.
 func TestAcceptsAnnouncementWithLongDescription(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -589,6 +584,8 @@ func TestAcceptsAnnouncementWithLongDescription(t *testing.T) {
 	})
 }
 
+// TestOnCardNotCalledForOwnOrNonCard checks that OnCard is not called for the
+// local Broker's own card, a declaration or a revocation.
 func TestOnCardNotCalledForOwnOrNonCard(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -612,6 +609,9 @@ func TestOnCardNotCalledForOwnOrNonCard(t *testing.T) {
 	}
 }
 
+// TestOwnRecordFromNetworkRaisesAndHooks checks that the local Broker's own
+// record arriving from the network raises the issued version and calls the
+// own-record hook.
 func TestOwnRecordFromNetworkRaisesAndHooks(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -641,10 +641,8 @@ func TestOwnRecordFromNetworkRaisesAndHooks(t *testing.T) {
 	}
 }
 
-// TestRecordListFetchesOwnHigherVersionAtOnce checks that the replacement
-// interval does not defer a record published by the local Broker. The store
-// exempts it, so a RecordList naming a higher version must fetch it at once to
-// raise the issued version, rather than record it for a later refetch.
+// TestRecordListFetchesOwnHigherVersionAtOnce checks that a higher version of the
+// local Broker's own record is fetched at once rather than deferred.
 func TestRecordListFetchesOwnHigherVersionAtOnce(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -653,8 +651,6 @@ func TestRecordListFetchesOwnHigherVersionAtOnce(t *testing.T) {
 	net.Connect(p.fp, b.fp)
 	net.Settle(t)
 
-	// B accepts its own card from the link, so the held version carries a
-	// recent acceptance instant.
 	v1 := mustSignRecord(t, 1, recKindCard, "", 1, dirTestNow().Add(recordTTL), recTestCard("self"))
 	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
 
@@ -678,11 +674,8 @@ func TestRecordListFetchesOwnHigherVersionAtOnce(t *testing.T) {
 }
 
 // TestRecordListDefersExpiredOwnRecordAcceptedFromLink checks that the
-// replacement window also applies to a record published by the local Broker
-// once it came back from a link: such a record carries an acceptance instant
-// even though the store skips rememberAccepted for it. When it has expired and
-// a peer lists its identifier while the window is open, the fetch must wait for
-// the window to end rather than run at once.
+// replacement window applies to the local Broker's own record once it came back
+// from a link, even after it expires.
 func TestRecordListDefersExpiredOwnRecordAcceptedFromLink(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -692,8 +685,6 @@ func TestRecordListDefersExpiredOwnRecordAcceptedFromLink(t *testing.T) {
 	net.Settle(t)
 
 	clk := refetchClock(t, b)
-	// B's own card, short-lived so it expires while the replacement window is
-	// still open.
 	v1 := mustSignRecord(t, 1, recKindCard, "", 1, dirTestNow().Add(2*time.Second), recTestCard("self"))
 	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
 
@@ -706,7 +697,7 @@ func TestRecordListDefersExpiredOwnRecordAcceptedFromLink(t *testing.T) {
 			held.source, held.acceptedAt)
 	}
 
-	clk.Advance(3 * time.Second) // v1 has expired, its window is still open
+	clk.Advance(3 * time.Second)
 
 	v2 := mustSignRecord(t, 1, recKindCard, "", 2, dirTestNow().Add(recordTTL), recTestCard("self"))
 	reconcileInject(t, p, v2)
@@ -732,6 +723,8 @@ func TestRecordListDefersExpiredOwnRecordAcceptedFromLink(t *testing.T) {
 	}
 }
 
+// TestRequestHandlerReturnsHeldOnly checks that a record request is answered with
+// the held, unexpired records only.
 func TestRequestHandlerReturnsHeldOnly(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -768,6 +761,8 @@ func TestRequestHandlerReturnsHeldOnly(t *testing.T) {
 	}
 }
 
+// TestFetchFailureIsSilent checks that a failed record request stores no record
+// and sends no further request.
 func TestFetchFailureIsSilent(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -782,7 +777,6 @@ func TestFetchFailureIsSilent(t *testing.T) {
 	reconcileAwait(t, net, "the failed record request", func() bool {
 		return strings.Contains(b.logs.String(), "record request failed")
 	})
-	// No further frame can arrive, so the fetch is the last work the group holds.
 	b.d.inflight.Wait()
 
 	if _, ok := reconcileLookup(b, x.id); ok {
@@ -793,7 +787,6 @@ func TestFetchFailureIsSilent(t *testing.T) {
 	}
 }
 
-// reconcileRecordsPayload encodes a Records frame body.
 func reconcileRecordsPayload(t *testing.T, recs ...*directorypb.Record) []byte {
 	t.Helper()
 	p, err := proto.Marshal(&directorypb.Records{Records: recs})
@@ -803,8 +796,6 @@ func reconcileRecordsPayload(t *testing.T, recs ...*directorypb.Record) []byte {
 	return p
 }
 
-// reconcileRequestBatchSizes returns the number of identifiers in every
-// RecordRequest frame ep sent to to, in send order.
 func reconcileRequestBatchSizes(t *testing.T, ep *fakeLinks, to Fingerprint) []int {
 	t.Helper()
 	var sizes []int
@@ -821,9 +812,8 @@ func reconcileRequestBatchSizes(t *testing.T, ep *fakeLinks, to Fingerprint) []i
 	return sizes
 }
 
-// TestReconcileCapsInflightFetchPerPeer checks that a peer cannot stack fetch
-// goroutines: while one request is in flight, further RecordList frames for the
-// same identifier merge into the pending set instead of starting another.
+// TestReconcileCapsInflightFetchPerPeer checks that repeated RecordList frames
+// for an identifier already in flight start no second request.
 func TestReconcileCapsInflightFetchPerPeer(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -864,9 +854,9 @@ func TestReconcileCapsInflightFetchPerPeer(t *testing.T) {
 	}
 }
 
-// TestReconcileMergesDistinctIDsWhileFetching checks that a RecordList naming
-// an identifier other than the one in flight joins the pending set instead of
-// starting a second fetch.
+// TestReconcileMergesDistinctIDsWhileFetching checks that a RecordList naming a
+// different identifier while a fetch is in flight queues it instead of starting a
+// second fetch.
 func TestReconcileMergesDistinctIDsWhileFetching(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -897,14 +887,6 @@ func TestReconcileMergesDistinctIDsWhileFetching(t *testing.T) {
 
 	b.d.handleRecordList(pfp, reconcileListPayload(t, second.recordVersion()))
 
-	// The second identifier is merged into the pending set inside this call, and
-	// the in-flight loop is the only one that may send a request, so no second
-	// fetch can start before the first finishes. Assert that state directly, then
-	// hold the state unchanged for a window: the direct asserts catch a second
-	// identifier put in flight immediately, and the window catches a second loop
-	// that a missing running check would start after the first is under way.
-	// Waiting can only miss a defect, never invent one, so it does not make the
-	// test flaky.
 	assertOneFetch := func() {
 		b.d.mu.RLock()
 		pr := b.d.recon[pfp]
@@ -935,8 +917,8 @@ func TestReconcileMergesDistinctIDsWhileFetching(t *testing.T) {
 	b.d.inflight.Wait()
 }
 
-// TestRejectsUnrequestedRecords checks that a Records state frame carrying a
-// record this direction never asked for is dropped as a whole and logged.
+// TestRejectsUnrequestedRecords checks that a record never requested is dropped
+// and logged as directory_unrequested_records.
 func TestRejectsUnrequestedRecords(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -965,7 +947,7 @@ func TestRejectsUnrequestedRecords(t *testing.T) {
 }
 
 // TestUnrequestedRecordsMergeIntoOneWarning checks that all unrequested records
-// in one frame produce a single warning carrying the total count.
+// in one frame produce a single warning with the total count.
 func TestUnrequestedRecordsMergeIntoOneWarning(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -989,7 +971,7 @@ func TestUnrequestedRecordsMergeIntoOneWarning(t *testing.T) {
 }
 
 // TestRequestedRecordWindowExpires checks that a record is accepted only while
-// the request that asked for it is still inside its window.
+// the request that asked for it is still in its window.
 func TestRequestedRecordWindowExpires(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1029,8 +1011,8 @@ func TestRequestedRecordWindowExpires(t *testing.T) {
 	}
 }
 
-// TestDisconnectClearsReconcileState checks that the pending set and the accept
-// window of a peer are dropped when its link goes down.
+// TestDisconnectClearsReconcileState checks that a peer's pending set and accept
+// window are dropped when its link goes down.
 func TestDisconnectClearsReconcileState(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1074,11 +1056,8 @@ func TestDisconnectClearsReconcileState(t *testing.T) {
 	b.d.inflight.Wait()
 }
 
-// TestReconnectRejectsOldWindowRecords checks that the accept window belongs to
-// the link: a record whose request was sent before the link went down is
-// dropped as a whole, and reported, after the link comes back. Without the
-// per-link reset a reconnected peer could deliver a record requested on the
-// previous link.
+// TestReconnectRejectsOldWindowRecords checks that an accept window of the
+// previous link does not accept records after reconnect.
 func TestReconnectRejectsOldWindowRecords(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1111,8 +1090,6 @@ func TestReconnectRejectsOldWindowRecords(t *testing.T) {
 	net.Connect(b.fp, pfp)
 	net.Settle(t)
 
-	// x names the identifier requested on the previous link; y was never
-	// requested at all. Both are dropped, and the whole frame is reported once.
 	y := reconcileCard(t, 201, 1, "hostY")
 	b.d.handleRecordsState(pfp, reconcileRecordsPayload(t, x.wire(), y.wire()))
 
@@ -1131,12 +1108,9 @@ func TestReconnectRejectsOldWindowRecords(t *testing.T) {
 	}
 }
 
-// TestRequestedWindowCappedAtMaxRecords checks that the identifiers this
-// direction has asked a peer for but not yet accepted stay bounded by
-// directory.max_records. A peer that keeps sending fresh RecordList frames and
-// answers every request with an empty Records frame must not be able to grow the
-// accept window without bound: each round would otherwise retain a full batch
-// of new identifiers for the whole 60-second window.
+// TestRequestedWindowCappedAtMaxRecords checks that the accept window stays
+// bounded by directory.max_records against a peer that answers every request
+// with no records.
 func TestRequestedWindowCappedAtMaxRecords(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1176,11 +1150,8 @@ func TestRequestedWindowCappedAtMaxRecords(t *testing.T) {
 	}
 }
 
-// TestCompletedRequestWindowsAreDropped checks that an accept window whose
-// identifiers all arrived is dropped at once. A peer that answers every request
-// immediately must not leave one window per request behind for the whole accept
-// TTL, which would tie memory to the request rate rather than to the
-// outstanding identifiers.
+// TestCompletedRequestWindowsAreDropped checks that a request window whose
+// identifiers all arrived is dropped at once.
 func TestCompletedRequestWindowsAreDropped(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1244,9 +1215,8 @@ func TestCompletedRequestWindowsAreDropped(t *testing.T) {
 	}
 }
 
-// TestScheduleFetchCapsPendingAtMaxRecords checks that the identifiers waiting
-// for a request stay bounded by directory.max_records even when more arrive
-// while a request is in flight.
+// TestScheduleFetchCapsPendingAtMaxRecords checks that the pending set stays
+// bounded by directory.max_records while a fetch is in flight.
 func TestScheduleFetchCapsPendingAtMaxRecords(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1302,9 +1272,7 @@ func TestScheduleFetchCapsPendingAtMaxRecords(t *testing.T) {
 }
 
 // TestRequestedRecordAcceptedOnce checks that a requested identifier is accepted
-// only once: the first record consumes its accept entry, so a second copy of the
-// same record names an identifier that is no longer requested and is dropped and
-// reported.
+// once and a second copy is dropped and reported.
 func TestRequestedRecordAcceptedOnce(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1335,8 +1303,7 @@ func TestRequestedRecordAcceptedOnce(t *testing.T) {
 }
 
 // TestTakeBatchCapsRequestByMaxRecords checks that one RecordRequest never names
-// more identifiers than directory.max_records, even when the pending set holds
-// more.
+// more identifiers than directory.max_records.
 func TestTakeBatchCapsRequestByMaxRecords(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1355,8 +1322,8 @@ func TestTakeBatchCapsRequestByMaxRecords(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-014: accepting a card from a Broker that is not a peer
-// never makes this package send a frame outside the established links.
+// TestNoFramesToNonPeers checks that accepting a card from a non-peer sends no
+// frame outside the established links.
 func TestNoFramesToNonPeers(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1384,10 +1351,9 @@ func TestNoFramesToNonPeers(t *testing.T) {
 	}
 }
 
-// TestReplaceIntervalDropsNewerVersion checks that a newer version accepted
-// from a link one second after the old one is dropped and not forwarded, and
-// that a version arriving once the 60-second interval has passed replaces the
-// held one and is forwarded.
+// TestReplaceIntervalDropsNewerVersion checks that a too-fast replacement is
+// dropped and not forwarded, and a version after the interval replaces it and is
+// forwarded.
 func TestReplaceIntervalDropsNewerVersion(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1434,8 +1400,6 @@ func TestReplaceIntervalDropsNewerVersion(t *testing.T) {
 	}
 }
 
-// heldVersion returns r's version, or 0 when r is nil, so a failure message can
-// name the version without dereferencing a missing record.
 func heldVersion(r *storedRecord) uint64 {
 	if r == nil {
 		return 0
@@ -1443,10 +1407,8 @@ func heldVersion(r *storedRecord) uint64 {
 	return r.version
 }
 
-// TestRecordListDoesNotRequestWithinReplaceInterval checks that a RecordList
-// naming a newer version starts no fetch while the held record was accepted
-// less than the interval ago, and that the fetch runs once the interval has
-// passed.
+// TestRecordListDoesNotRequestWithinReplaceInterval checks that a newer version
+// is not requested within the replacement interval and is fetched after it.
 func TestRecordListDoesNotRequestWithinReplaceInterval(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -1469,8 +1431,6 @@ func TestRecordListDoesNotRequestWithinReplaceInterval(t *testing.T) {
 	clearReconcileSent(b.ep)
 
 	b.d.handleRecordList(p.fp, reconcileListPayload(t, v2.recordVersion()))
-	// A fetch started by the list runs as its own goroutine. Wait for it, so
-	// the frame count below sees the request it sent when one was started.
 	b.d.inflight.Wait()
 	net.Settle(t)
 	if got := reconcileFrames(b.ep, p.fp, directorypb.KindRecordRequest); got != 0 {

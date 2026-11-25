@@ -9,21 +9,16 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// viewCardAddressMax is the number of advertised addresses a card contributes
-// to the views. A received card may carry more; the extra entries are still
-// accepted and forwarded but are not listed.
+// viewCardAddressMax is the advertised-address count a card contributes to the
+// views; extra entries are still accepted and forwarded but not listed.
 const viewCardAddressMax = 8
 
-// viewCardRecord is an immutable snapshot of one BrokerCard record taken under
-// the directory lock.
 type viewCardRecord struct {
 	publisher Fingerprint
 	alias     string
 	addresses []config.AdvertisedAddr
 }
 
-// viewTopicRecord is one well-formed public topic declaration considered while
-// merging the topic list.
 type viewTopicRecord struct {
 	name        string
 	description string
@@ -32,9 +27,10 @@ type viewTopicRecord struct {
 	isPeer      bool
 }
 
-// Brokers returns every paired peer and every non-peer that holds a live card.
-// The local Broker never appears. The record snapshot is taken under the read
-// lock; the peer table and the link status are queried outside it.
+// Brokers returns every paired peer and every non-peer that holds a live card,
+// sorted by alias and then fingerprint. The local Broker never appears. The
+// record snapshot is taken under the read lock; the peer table and link status
+// are queried outside it.
 func (d *Directory) Brokers() []KnownBroker {
 	now := d.now()
 	self := d.viewSelf()
@@ -96,16 +92,9 @@ func (d *Directory) Brokers() []KnownBroker {
 }
 
 // PublicTopics returns the live public topic declarations of the whole
-// directory, including the local Broker's own. Names are merged into one entry
-// each. The description is chosen by publisher tier first: the local Broker's
-// declaration, otherwise a peer's, otherwise the declarations of every other
-// publisher. Within a tier the highest version wins, and a tie goes to the
-// smaller publisher fingerprint. A publisher chooses its own version, so the
-// tiering keeps a remote publisher from replacing the local or a peer
-// declaration with a large version. A declaration whose name is not 1 to 256
-// bytes of valid UTF-8 free of control characters, or whose description is not
-// acceptable to validDescription, is left out; the record is still accepted and
-// forwarded. The result is ordered by name.
+// directory, including the local Broker's own, merged one entry per name and
+// ordered by name. The description is the one the tiering rule selects for the
+// name, and a declaration with an invalid name or description is left out.
 func (d *Directory) PublicTopics() []PublicTopic {
 	now := d.now()
 
@@ -132,8 +121,8 @@ func (d *Directory) PublicTopics() []PublicTopic {
 	}
 	d.mu.RUnlock()
 
-	// The peer table is queried outside the directory lock: a caller may
-	// re-enter the directory from a peer callback.
+	// Query the peer table outside the directory lock: a peer callback may
+	// re-enter the directory.
 	type mergedTopic struct {
 		best  viewTopicRecord
 		tier  int
@@ -186,9 +175,6 @@ func (d *Directory) PublicTopics() []PublicTopic {
 	return out
 }
 
-// betterTopicDeclaration reports whether a should supply the description over b
-// when both are in the same publisher tier. The higher version wins; a tie goes
-// to the smaller publisher fingerprint.
 func betterTopicDeclaration(a, b viewTopicRecord) bool {
 	if a.version != b.version {
 		return a.version > b.version
@@ -197,16 +183,11 @@ func betterTopicDeclaration(a, b viewTopicRecord) bool {
 }
 
 // CardsByAddress returns the fingerprints of every publisher whose live card
-// advertises address, in ascending fingerprint byte order and without
-// duplicates. It returns nil when no card matches. Addresses advertised with a
-// kind this version does not know and the local Broker's own card are ignored.
-// The lookup address and the advertised addresses are compared in canonical
-// form, so host case, port leading zeros and IPv6 spelling do not hide a
-// match.
-//
-// The version is chosen by each publisher, so a single winner must not be
-// picked by version: any public publisher could set MaxUint64 and claim another
-// Broker's address.
+// advertises address, deduplicated and sorted ascending by fingerprint, or nil
+// when no card matches. Addresses advertised with an unknown kind and the local
+// Broker's own card are ignored, and both sides are compared in canonical form.
+// A publisher chooses its own version, so do not pick a single winner by
+// version.
 func (d *Directory) CardsByAddress(address string) []Fingerprint {
 	now := d.now()
 	self := d.viewSelf()
@@ -237,8 +218,6 @@ func (d *Directory) CardsByAddress(address string) []Fingerprint {
 	return out
 }
 
-// viewCards snapshots every live, non-revoked BrokerCard record under the read
-// lock, including the local Broker's own card.
 func (d *Directory) viewCards(now time.Time) []viewCardRecord {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
@@ -261,20 +240,15 @@ func (d *Directory) viewCards(now time.Time) []viewCardRecord {
 	return out
 }
 
-// viewSelf returns the local Broker's fingerprint.
 func (d *Directory) viewSelf() Fingerprint {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.st.self
 }
 
-// viewPeerAddresses builds the address list of a peer entry. When the local
-// Broker is the dialer, the addresses the acceptor announced during pairing
-// come first, in their original order, followed by the live card's addresses.
-// SourceCard and SourcePairing candidates are skipped: the former may come
-// from a revoked or expired card, and the latter is the pairing address. When
-// the local Broker is the acceptor only the live card contributes. Entries are
-// deduplicated by address.
+// viewPeerAddresses builds a peer's address list: the acceptor-announced
+// candidates first when this side is the dialer, then the live card's
+// addresses, deduplicated by address; an acceptor side takes only the card's.
 func viewPeerAddresses(p pairing.Peer, card viewCardRecord, hasCard bool) []config.AdvertisedAddr {
 	addrs := make([]config.AdvertisedAddr, 0, len(p.Candidates))
 	seen := make(map[string]bool, len(p.Candidates))
@@ -303,8 +277,6 @@ func viewPeerAddresses(p pairing.Peer, card viewCardRecord, hasCard bool) []conf
 	return addrs
 }
 
-// viewStatus derives the broker status from the link phase and the address
-// list.
 func viewStatus(phase LinkPhase, addrs []config.AdvertisedAddr) BrokerStatus {
 	if phase == LinkEstablished {
 		return StatusConnected

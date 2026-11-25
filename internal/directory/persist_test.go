@@ -15,8 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// persistFailRenameOps fails every rename, leaving the temporary file for the
-// caller to clean up the way atomicWrite does.
 type persistFailRenameOps struct {
 	realFileOps
 }
@@ -25,7 +23,6 @@ func (persistFailRenameOps) Rename(_, _ string) error {
 	return errors.New("rename failed")
 }
 
-// persistReadErrorOps makes ReadFile fail with err.
 type persistReadErrorOps struct {
 	realFileOps
 	err error
@@ -40,6 +37,8 @@ func mustSaveFile(t *testing.T, dir string, highest uint64, recs []fileRecord) {
 	}
 }
 
+// TestSaveLoadRoundTrip checks that saveFile and loadFile round-trip the
+// records and highest_issued.
 func TestSaveLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	recs := []fileRecord{
@@ -62,6 +61,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFileModeIs0600 checks that saveFile writes the directory file with mode
+// 0600.
 func TestFileModeIs0600(t *testing.T) {
 	dir := t.TempDir()
 	mustSaveFile(t, dir, 1, nil)
@@ -75,6 +76,8 @@ func TestFileModeIs0600(t *testing.T) {
 	}
 }
 
+// TestLoadMissingFile checks that loadFile treats a missing file as an empty
+// directory.
 func TestLoadMissingFile(t *testing.T) {
 	recs, highest, err := loadFile(realFileOps{}, t.TempDir())
 	if err != nil {
@@ -85,6 +88,8 @@ func TestLoadMissingFile(t *testing.T) {
 	}
 }
 
+// TestLoadPropagatesReadError checks that loadFile returns a read error as
+// itself rather than errUnreadable.
 func TestLoadPropagatesReadError(t *testing.T) {
 	_, _, err := loadFile(persistReadErrorOps{err: fs.ErrPermission}, t.TempDir())
 	if !errors.Is(err, fs.ErrPermission) {
@@ -95,6 +100,8 @@ func TestLoadPropagatesReadError(t *testing.T) {
 	}
 }
 
+// TestLoadCorruptFile checks that loadFile reports unparsable content or an
+// unknown format as errUnreadable and leaves the file in place.
 func TestLoadCorruptFile(t *testing.T) {
 	cases := map[string]string{
 		"not json":  `{not json`,
@@ -122,6 +129,8 @@ func TestLoadCorruptFile(t *testing.T) {
 	}
 }
 
+// TestAtomicWriteFailureKeepsOldFile checks that a failed rename leaves the old
+// directory file in place and removes the temporary file.
 func TestAtomicWriteFailureKeepsOldFile(t *testing.T) {
 	dir := t.TempDir()
 	oldRecs := []fileRecord{{Raw: []byte("old"), Signature: []byte("old-sig"), Source: ""}}
@@ -157,6 +166,8 @@ func TestAtomicWriteFailureKeepsOldFile(t *testing.T) {
 	}
 }
 
+// TestSaveIsDeterministic checks that saving identical content twice produces
+// identical file bytes.
 func TestSaveIsDeterministic(t *testing.T) {
 	dir := t.TempDir()
 	recs := []fileRecord{
@@ -180,8 +191,7 @@ func TestSaveIsDeterministic(t *testing.T) {
 }
 
 // TestMaintainPersistThrottledToOnePerMinute checks that two maintenance passes
-// inside one maintainInterval write the directory file only once, so a short
-// reconcile interval cannot turn the maintenance loop into a write per interval.
+// inside one maintainInterval write the directory file only once.
 func TestMaintainPersistThrottledToOnePerMinute(t *testing.T) {
 	b := newReconcileNode(t, newFakeNet(), 1)
 
@@ -201,15 +211,12 @@ func TestMaintainPersistThrottledToOnePerMinute(t *testing.T) {
 		t.Fatalf("the first pass wrote %d times, want 1", n)
 	}
 
-	// A second pass 30 seconds later is dirty too, but it is inside the same
-	// minute and must not write again.
 	markDirty()
 	b.d.maintain(now.Add(30*time.Second), now)
 	if n := got(); n != 1 {
 		t.Fatalf("the second pass wrote %d times in total, want 1 inside the minute", n)
 	}
 
-	// The pass at the minute boundary may write.
 	markDirty()
 	b.d.maintain(now.Add(60*time.Second), now)
 	if n := got(); n != 2 {
@@ -218,8 +225,7 @@ func TestMaintainPersistThrottledToOnePerMinute(t *testing.T) {
 }
 
 // TestLinkAcceptsPersistInMaintenance checks that records accepted from a link
-// only mark the directory dirty and are written by a maintenance pass, while a
-// locally issued record is still written at once.
+// persist on a maintenance pass while a locally issued record persists at once.
 func TestLinkAcceptsPersistInMaintenance(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -244,7 +250,6 @@ func TestLinkAcceptsPersistInMaintenance(t *testing.T) {
 		t.Fatalf("the maintenance pass wrote the directory file %d times, want 1", got)
 	}
 
-	// A locally issued record still persists immediately.
 	b.set.SetAlias("hostB")
 	if err := b.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)

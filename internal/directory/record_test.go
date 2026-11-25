@@ -73,6 +73,8 @@ func recTestCard(alias string, addrs ...*directorypb.AdvertisedAddress) *directo
 	return &directorypb.BrokerCard{Alias: alias, Addresses: addrs}
 }
 
+// TestSignParseRoundTrip checks that signRecord and parseRecord round-trip a
+// card, a topic announcement and a revocation.
 func TestSignParseRoundTrip(t *testing.T) {
 	expires := recTestExpiry()
 	pub, priv := recTestKey(1)
@@ -163,8 +165,8 @@ func TestSignParseRoundTrip(t *testing.T) {
 	}
 }
 
-// REQ-broker-discovery-006: a card whose bytes changed after signing is
-// rejected.
+// TestParseRejectsTamperedRaw checks that a record whose byte changed after
+// signing is rejected with errBadSignature.
 func TestParseRejectsTamperedRaw(t *testing.T) {
 	pub, priv := recTestKey(2)
 	body := recTestBody(pub, recKindCard, "", 1, recTestExpiry(), recTestCard("hostA",
@@ -182,8 +184,8 @@ func TestParseRejectsTamperedRaw(t *testing.T) {
 	}
 }
 
-// REQ-broker-discovery-006: a record that claims another publisher's
-// fingerprint is rejected.
+// TestParseRejectsForeignPublisher checks that a record whose publisher does
+// not match the signing key is rejected with errBadSignature.
 func TestParseRejectsForeignPublisher(t *testing.T) {
 	pubA, _ := recTestKey(3)
 	pubB, privB := recTestKey(4)
@@ -210,9 +212,9 @@ func TestParseRejectsForeignPublisher(t *testing.T) {
 	})
 }
 
+// TestParseRejectsBadCardAlias checks that a card whose alias breaks the alias
+// rules is rejected as malformed.
 func TestParseRejectsBadCardAlias(t *testing.T) {
-	// REQ-broker-pairing-037: a card whose alias breaks the alias rules is
-	// dropped as malformed.
 	pub, priv := recTestKey(5)
 
 	cases := []struct {
@@ -244,6 +246,8 @@ func TestParseRejectsBadCardAlias(t *testing.T) {
 	}
 }
 
+// TestParseStructuralRules checks which kind, object and payload combinations
+// parseRecord accepts and which it rejects as malformed.
 func TestParseStructuralRules(t *testing.T) {
 	pub, priv := recTestKey(6)
 	expires := recTestExpiry()
@@ -267,8 +271,6 @@ func TestParseStructuralRules(t *testing.T) {
 			},
 		},
 		{
-			// An announcement payload paired with the card kind must not pass
-			// structural validation even when object and name agree.
 			name: "announcement payload with card kind",
 			build: func() *directorypb.RecordBody {
 				return recTestBody(pub, recKindCard, "news", 1, expires, &directorypb.TopicAnnouncement{Name: "news"})
@@ -335,6 +337,8 @@ func TestParseStructuralRules(t *testing.T) {
 	}
 }
 
+// TestParseKeepsUnknownFields checks that an unknown field in the raw bytes
+// survives a parse unchanged.
 func TestParseKeepsUnknownFields(t *testing.T) {
 	pub, priv := recTestKey(7)
 	body := recTestBody(pub, recKindCard, "", 3, recTestExpiry(), recTestCard("hostA",
@@ -354,6 +358,8 @@ func TestParseKeepsUnknownFields(t *testing.T) {
 	}
 }
 
+// TestKnownAddrsSkipsUnknownKinds checks that knownAddrs skips address items of
+// an unknown kind and honors the limit.
 func TestKnownAddrsSkipsUnknownKinds(t *testing.T) {
 	card := &directorypb.BrokerCard{Addresses: []*directorypb.AdvertisedAddress{
 		{Kind: "relay", Addr: "relay.example:17443"},
@@ -379,6 +385,8 @@ func TestKnownAddrsSkipsUnknownKinds(t *testing.T) {
 	}
 }
 
+// TestParseCopiesInput checks that parseRecord copies the raw bytes and
+// signature.
 func TestParseCopiesInput(t *testing.T) {
 	pub, priv := recTestKey(8)
 	body := recTestBody(pub, recKindCard, "", 1, recTestExpiry(), recTestCard("hostA",
@@ -407,8 +415,8 @@ func TestParseCopiesInput(t *testing.T) {
 	}
 }
 
-// TestIDFromProtoRejectsOversizedObject checks that a peer-chosen identifier
-// object is bounded before it enters the pending and requested sets.
+// TestIDFromProtoRejectsOversizedObject checks that idFromProto rejects an
+// object longer than maxRecordObjectLen and accepts one exactly at the limit.
 func TestIDFromProtoRejectsOversizedObject(t *testing.T) {
 	pub := make([]byte, 32)
 	tooLong := strings.Repeat("x", maxRecordObjectLen+1)

@@ -6,10 +6,12 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// The link package must keep the method set the adapter relies on. A change
-// to any of these signatures fails to compile here.
+// The link package must keep the method set the adapter relies on; a change to
+// any signature fails to compile here.
 var _ linkAPI = (*link.Link)(nil)
 
+// TestNewLinkTransportNotNil checks that NewLinkTransport(nil) returns a non-nil
+// Links.
 func TestNewLinkTransportNotNil(t *testing.T) {
 	links := NewLinkTransport(nil)
 	if links == nil {

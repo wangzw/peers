@@ -7,10 +7,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// configSettings is the production Settings implementation. Every method reads
-// the current value, so a configuration change is visible on the next call.
-// The three read seams may be replaced in tests; nil means the corresponding
-// config package function.
 type configSettings struct {
 	get        func(string) (config.Value, error)
 	advertised func() []config.AdvertisedAddr
@@ -19,7 +15,6 @@ type configSettings struct {
 
 var _ Settings = configSettings{}
 
-// value reads one key through the get seam, falling back to config.Get.
 func (s configSettings) value(key string) (config.Value, error) {
 	if s.get != nil {
 		return s.get(key)
@@ -27,7 +22,6 @@ func (s configSettings) value(key string) (config.Value, error) {
 	return config.Get(key)
 }
 
-// Public returns broker.public. It returns false when config is not loaded.
 func (s configSettings) Public() bool {
 	v, err := s.value("broker.public")
 	if err != nil {
@@ -36,8 +30,6 @@ func (s configSettings) Public() bool {
 	return v.Bool
 }
 
-// Alias returns broker.alias. It returns an empty string when config is not
-// loaded.
 func (s configSettings) Alias() string {
 	v, err := s.value("broker.alias")
 	if err != nil {
@@ -46,7 +38,6 @@ func (s configSettings) Alias() string {
 	return v.String
 }
 
-// Advertised returns a copy of the current advertised address list.
 func (s configSettings) Advertised() []config.AdvertisedAddr {
 	src := s.advertised
 	if src == nil {
@@ -59,8 +50,6 @@ func (s configSettings) Advertised() []config.AdvertisedAddr {
 	return append([]config.AdvertisedAddr(nil), addrs...)
 }
 
-// DataDir returns the directory that holds directory.json. It returns an
-// error when config has no data directory, which is the case before Load.
 func (s configSettings) DataDir() (string, error) {
 	paths := s.paths
 	if paths == nil {
@@ -73,8 +62,6 @@ func (s configSettings) DataDir() (string, error) {
 	return dir, nil
 }
 
-// ReconcileInterval returns directory.reconcile_interval, or ten minutes when
-// config is not loaded.
 func (s configSettings) ReconcileInterval() time.Duration {
 	v, err := s.value("directory.reconcile_interval")
 	if err != nil {
@@ -83,7 +70,6 @@ func (s configSettings) ReconcileInterval() time.Duration {
 	return v.Duration
 }
 
-// MaxRecords returns directory.max_records, or 1000 when config is not loaded.
 func (s configSettings) MaxRecords() int {
 	v, err := s.value("directory.max_records")
 	if err != nil {
@@ -92,8 +78,6 @@ func (s configSettings) MaxRecords() int {
 	return int(v.Int)
 }
 
-// MaxRecordsPerLink returns directory.max_records_per_link, or 250 when config
-// is not loaded.
 func (s configSettings) MaxRecordsPerLink() int {
 	v, err := s.value("directory.max_records_per_link")
 	if err != nil {
@@ -102,8 +86,6 @@ func (s configSettings) MaxRecordsPerLink() int {
 	return int(v.Int)
 }
 
-// MaxTopicsPerPublisher returns directory.max_topics_per_publisher, or 16 when
-// config is not loaded.
 func (s configSettings) MaxTopicsPerPublisher() int {
 	v, err := s.value("directory.max_topics_per_publisher")
 	if err != nil {

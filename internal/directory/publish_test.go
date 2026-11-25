@@ -12,9 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// pubFixture is one open Directory backed by a fake clock, fake settings and a
-// fake network endpoint. Its identity is newTestIdentity(1) and its alias is
-// "hostA".
 type pubFixture struct {
 	t        *testing.T
 	d        *Directory
@@ -27,13 +24,11 @@ type pubFixture struct {
 	log      *lockedBuffer
 }
 
-// newPubFixture opens a Directory over a temporary data directory.
 func newPubFixture(t *testing.T) *pubFixture {
 	t.Helper()
 	return newPubFixtureWithIdentity(t, newTestIdentity(1))
 }
 
-// newPubFixtureWithIdentity opens a Directory whose identity is id.
 func newPubFixtureWithIdentity(t *testing.T, id Identity) *pubFixture {
 	t.Helper()
 	dir := t.TempDir()
@@ -57,17 +52,14 @@ func newPubFixtureWithIdentity(t *testing.T, id Identity) *pubFixture {
 	return &pubFixture{t: t, d: d, clock: clock, settings: settings, ep: ep, net: net, id: id, self: id.Fingerprint(), log: logs}
 }
 
-// now returns the fixture's current instant.
 func (f *pubFixture) now() time.Time { return f.clock.Now() }
 
-// ownRecord returns the local record for kind and object.
 func (f *pubFixture) ownRecord(kind directorypb.RecordKind, object string) (*storedRecord, bool) {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
 	return f.d.st.get(recordID{publisher: f.self, kind: kind, object: object})
 }
 
-// mustOwnRecord returns the local record for kind and object or fails the test.
 func (f *pubFixture) mustOwnRecord(kind directorypb.RecordKind, object string) *storedRecord {
 	f.t.Helper()
 	r, ok := f.ownRecord(kind, object)
@@ -77,14 +69,12 @@ func (f *pubFixture) mustOwnRecord(kind directorypb.RecordKind, object string) *
 	return r
 }
 
-// recordCount returns how many records the directory holds.
 func (f *pubFixture) recordCount() int {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
 	return len(f.d.st.records)
 }
 
-// activeContains reports whether name is in the active public topic set.
 func (f *pubFixture) activeContains(name string) bool {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
@@ -92,15 +82,12 @@ func (f *pubFixture) activeContains(name string) bool {
 	return ok
 }
 
-// activeLen returns the size of the active public topic set.
 func (f *pubFixture) activeLen() int {
 	f.d.mu.RLock()
 	defer f.d.mu.RUnlock()
 	return len(f.d.active)
 }
 
-// pubOwnRecord signs a record as the local Broker at the given version and
-// expiry without storing it.
 func pubOwnRecord(t *testing.T, d *Directory, kind directorypb.RecordKind, object string, version uint64, expires time.Time, payload any) *storedRecord {
 	t.Helper()
 	body := recTestBody(d.id.PublicKey(), kind, object, version, expires, payload)
@@ -111,8 +98,6 @@ func pubOwnRecord(t *testing.T, d *Directory, kind directorypb.RecordKind, objec
 	return r
 }
 
-// pubSeedOwn stores an already signed local record as if it had been loaded
-// from disk.
 func pubSeedOwn(t *testing.T, d *Directory, r *storedRecord) {
 	t.Helper()
 	d.mu.Lock()
@@ -121,8 +106,6 @@ func pubSeedOwn(t *testing.T, d *Directory, r *storedRecord) {
 	d.mu.Unlock()
 }
 
-// pubAcceptReturned feeds an already signed local record through the acceptance
-// rules, as if it had arrived from a link.
 func pubAcceptReturned(t *testing.T, f *pubFixture, r *storedRecord) {
 	t.Helper()
 	f.d.mu.Lock()
@@ -133,8 +116,6 @@ func pubAcceptReturned(t *testing.T, f *pubFixture, r *storedRecord) {
 	}
 }
 
-// failingIdentity wraps an Identity and drops Sign results while failed is set.
-// It reproduces a signing failure without removing the identity.
 type failingIdentity struct {
 	Identity
 	mu     sync.Mutex
@@ -151,16 +132,14 @@ func (id *failingIdentity) Sign(data []byte) []byte {
 	return id.Identity.Sign(data)
 }
 
-// SetFailSign makes Sign fail or recover.
 func (id *failingIdentity) SetFailSign(failed bool) {
 	id.mu.Lock()
 	defer id.mu.Unlock()
 	id.failed = failed
 }
 
+// TestPrivateByDefaultIssuesNothing checks that a Broker that was not made public issues nothing.
 func TestPrivateByDefaultIssuesNothing(t *testing.T) {
-	// REQ-broker-discovery-001: a Broker that is not explicitly made public
-	// publishes nothing.
 	f := newPubFixture(t)
 	peer := newTestIdentity(2).Fingerprint()
 	f.net.Endpoint(peer)
@@ -194,9 +173,8 @@ func TestPrivateByDefaultIssuesNothing(t *testing.T) {
 	}
 }
 
+// TestSetPublicIssuesCard checks that the card carries the configured alias and addresses.
 func TestSetPublicIssuesCard(t *testing.T) {
-	// REQ-broker-discovery-002 and REQ-broker-config-031: the card carries the
-	// configured alias and addresses in the configured order.
 	f := newPubFixture(t)
 	addrs := []config.AdvertisedAddr{
 		{Kind: "direct", Addr: "b.example:443"},
@@ -248,6 +226,7 @@ func TestSetPublicIssuesCard(t *testing.T) {
 	})
 }
 
+// TestSetPublicTwiceIsNoop checks that a second SetPublic(true) issues no new version.
 func TestSetPublicTwiceIsNoop(t *testing.T) {
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
@@ -265,9 +244,8 @@ func TestSetPublicTwiceIsNoop(t *testing.T) {
 	}
 }
 
+// TestSetPublicFalseRevokesAll checks that going private revokes the card and every public topic declaration.
 func TestSetPublicFalseRevokesAll(t *testing.T) {
-	// REQ-broker-discovery-009 and REQ-topics-024: going private revokes the
-	// card and every public topic declaration.
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)
@@ -310,8 +288,8 @@ func TestSetPublicFalseRevokesAll(t *testing.T) {
 	}
 }
 
+// TestSetPublicStaysPrivateWhenSigningFails checks that a card that cannot be signed leaves the Broker private and returns no error.
 func TestSetPublicStaysPrivateWhenSigningFails(t *testing.T) {
-	// A card that cannot be signed must not leave the Broker marked public.
 	f := newPubFixture(t)
 	f.settings.SetAlias("")
 	if err := f.d.SetPublic(true); err != nil {
@@ -340,9 +318,8 @@ func TestSetPublicStaysPrivateWhenSigningFails(t *testing.T) {
 	}
 }
 
+// TestSetPublicFalseRetriesRevocations checks that a revocation that failed to sign is issued by a later maintenance pass.
 func TestSetPublicFalseRetriesRevocations(t *testing.T) {
-	// A revocation that could not be signed is retried by the maintenance loop
-	// until it is issued.
 	id := &failingIdentity{Identity: newTestIdentity(1)}
 	f := newPubFixtureWithIdentity(t, id)
 	if err := f.d.SetPublic(true); err != nil {
@@ -380,9 +357,8 @@ func TestSetPublicFalseRetriesRevocations(t *testing.T) {
 	}
 }
 
+// TestRevocationOutlivesRevokedRecord checks that a revocation does not expire before the record it revokes.
 func TestRevocationOutlivesRevokedRecord(t *testing.T) {
-	// After a clock rollback the revocation must not expire before the record it
-	// revokes, or the old record could be injected again in the gap.
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)
@@ -404,7 +380,6 @@ func TestRevocationOutlivesRevokedRecord(t *testing.T) {
 		t.Fatalf("revocation expires at %v, want the revoked card's expiry %v", rev.expires, oldExpires)
 	}
 
-	// Advance to the revocation's own expiry, drop it, then inject the old card.
 	f.clock.Advance(rev.expires.Sub(f.now()))
 	f.d.maintain(f.now(), f.now())
 
@@ -417,8 +392,8 @@ func TestRevocationOutlivesRevokedRecord(t *testing.T) {
 	}
 }
 
+// TestDeclareWhenPrivateFails checks that a private Broker cannot declare a public topic.
 func TestDeclareWhenPrivateFails(t *testing.T) {
-	// REQ-topics-023: a private Broker cannot declare a public topic.
 	f := newPubFixture(t)
 	before := f.recordCount()
 	err := f.d.DeclarePublicTopic("infra-help", "ask here")
@@ -436,6 +411,7 @@ func TestDeclareWhenPrivateFails(t *testing.T) {
 	}
 }
 
+// TestDeclareQuota checks the per-publisher quota, re-declaration and reuse after retiring.
 func TestDeclareQuota(t *testing.T) {
 	f := newPubFixture(t)
 	f.settings.SetMaxTopicsPerPublisher(2)
@@ -470,6 +446,7 @@ func TestDeclareQuota(t *testing.T) {
 	}
 }
 
+// TestDeclareEmptyName checks that an empty topic name is rejected.
 func TestDeclareEmptyName(t *testing.T) {
 	f := newPubFixture(t)
 	if err := f.d.DeclarePublicTopic("", "description"); !errors.Is(err, ErrInvalidTopic) {
@@ -480,9 +457,8 @@ func TestDeclareEmptyName(t *testing.T) {
 	}
 }
 
+// TestDeclareInvalidDescription checks that an invalid description is rejected and a valid one accepted.
 func TestDeclareInvalidDescription(t *testing.T) {
-	// REQ-topics-010: the description is limited to 256 bytes of valid UTF-8
-	// without control characters, and an invalid one produces no record.
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)
@@ -529,9 +505,8 @@ func TestDeclareInvalidDescription(t *testing.T) {
 	}
 }
 
+// TestRetireTopic checks that retiring revokes a declaration and re-declaring issues a new version.
 func TestRetireTopic(t *testing.T) {
-	// REQ-topics-025: retiring a declaration revokes it, and declaring again
-	// issues a new version.
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)
@@ -571,8 +546,8 @@ func TestRetireTopic(t *testing.T) {
 	}
 }
 
+// TestReissueOnAddressChange checks that Reissue publishes the new address list.
 func TestReissueOnAddressChange(t *testing.T) {
-	// REQ-broker-discovery-016: a new address list is published by Reissue.
 	f := newPubFixture(t)
 	f.settings.SetAdvertised([]config.AdvertisedAddr{{Kind: "direct", Addr: "198.51.100.4:17443"}})
 	if err := f.d.SetPublic(true); err != nil {
@@ -600,9 +575,7 @@ func TestReissueOnAddressChange(t *testing.T) {
 	})
 }
 
-// TestReissueRetriesAfterSigningFailure covers a re-sign that could not be
-// signed: the maintenance loop must retry it even though the last card is not
-// yet due for renewal.
+// TestReissueRetriesAfterSigningFailure checks that a re-sign that failed is retried by the maintenance loop.
 func TestReissueRetriesAfterSigningFailure(t *testing.T) {
 	id := &failingIdentity{Identity: newTestIdentity(1)}
 	f := newPubFixtureWithIdentity(t, id)
@@ -638,10 +611,8 @@ func TestReissueRetriesAfterSigningFailure(t *testing.T) {
 	}
 }
 
+// TestRenewDue checks that a card and an active declaration renew after a day while inactive and private ones do not.
 func TestRenewDue(t *testing.T) {
-	// REQ-broker-discovery-008 and REQ-topics-012: a card and an active
-	// declaration are renewed after one day; a declaration outside the active
-	// set and everything while private are not.
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)
@@ -702,6 +673,7 @@ func TestRenewDue(t *testing.T) {
 	})
 }
 
+// TestStartupRevokesWhenPrivate checks that a private startup revokes every live local record.
 func TestStartupRevokesWhenPrivate(t *testing.T) {
 	f := newPubFixture(t)
 	now := f.now()
@@ -731,6 +703,7 @@ func TestStartupRevokesWhenPrivate(t *testing.T) {
 	}
 }
 
+// TestStartupReissuesWhenPublic checks that a public startup issues a fresh card and leaves loaded declarations alone.
 func TestStartupReissuesWhenPublic(t *testing.T) {
 	f := newPubFixture(t)
 	now := f.now()
@@ -770,6 +743,7 @@ func TestStartupReissuesWhenPublic(t *testing.T) {
 	}
 }
 
+// TestRetireInactiveTopics checks that declarations outside the active set are revoked.
 func TestRetireInactiveTopics(t *testing.T) {
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
@@ -800,9 +774,8 @@ func TestRetireInactiveTopics(t *testing.T) {
 	}
 }
 
+// TestReconcileOwnTable checks each returned-record case against the local state.
 func TestReconcileOwnTable(t *testing.T) {
-	// The table of "已先行决定的事项" item 9: a record published by the local
-	// Broker and accepted back from the network is corrected to the local state.
 	cardID := func(f *pubFixture) recordID {
 		return recordID{publisher: f.self, kind: recKindCard}
 	}
@@ -976,6 +949,7 @@ func TestReconcileOwnTable(t *testing.T) {
 	}
 }
 
+// TestVersionMonotonicAcrossClockRollback checks that a clock rollback does not lower the next version.
 func TestVersionMonotonicAcrossClockRollback(t *testing.T) {
 	f := newPubFixture(t)
 	if err := f.d.SetPublic(true); err != nil {
@@ -991,6 +965,7 @@ func TestVersionMonotonicAcrossClockRollback(t *testing.T) {
 	}
 }
 
+// TestPublishBroadcastsOutsideLock checks that publishing calls Send without holding the directory lock.
 func TestPublishBroadcastsOutsideLock(t *testing.T) {
 	f := newPubFixture(t)
 	peer := newTestIdentity(2).Fingerprint()
@@ -1016,9 +991,8 @@ func TestPublishBroadcastsOutsideLock(t *testing.T) {
 	}
 }
 
+// TestPublishPersistsBeforeBroadcast checks that a locally issued record is written to disk before it is announced.
 func TestPublishPersistsBeforeBroadcast(t *testing.T) {
-	// A locally issued record is written to disk before it is announced, so a
-	// peer cannot fetch a record this Broker would forget across a crash.
 	f := newPubFixture(t)
 	peer := newTestIdentity(2).Fingerprint()
 	f.net.Endpoint(peer)

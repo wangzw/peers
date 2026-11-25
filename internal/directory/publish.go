@@ -15,8 +15,8 @@ import (
 // card immediately; calling it again while public is a no-op. Making it private
 // revokes every live locally issued record and clears the active public topic
 // set, whether or not the Broker was public before. It returns ErrClosed after
-// Close; a failed file write is not reported because the in-memory directory is
-// authoritative and the next change or maintenance pass retries the write.
+// Close; a failed file write is not returned as an error and the next change or
+// maintenance round retries the write.
 func (d *Directory) SetPublic(public bool) error {
 	d.mu.Lock()
 	if d.closed {
@@ -33,8 +33,8 @@ func (d *Directory) SetPublic(public bool) error {
 		d.public = true
 		v, err := d.issueCardLocked(now)
 		if err != nil {
-			// The interface only reports ErrClosed, so a card that cannot be
-			// signed leaves the Broker private instead of returning an error.
+			// SetPublic reports only ErrClosed, so a card that cannot be signed
+			// leaves the Broker private rather than returning an error.
 			d.public = false
 			d.mu.Unlock()
 			return nil
@@ -54,13 +54,13 @@ func (d *Directory) SetPublic(public bool) error {
 }
 
 // DeclarePublicTopic declares a public topic under the local Broker's name. It
-// returns ErrInvalidTopic for an empty name, ErrInvalidDescription when the
-// description is longer than 256 bytes, is not valid UTF-8 or contains control
-// characters, ErrNotPublic when the Broker is not public, and ErrQuotaExceeded
-// when the Broker already holds the maximum number of live declarations.
-// Declaring the same name again issues a new version with the given
-// description, and a name already declared by the Broker does not count against
-// the quota.
+// returns ErrInvalidTopic for an empty name; ErrInvalidDescription when the
+// description is longer than 256 bytes, is not valid UTF-8 or holds a control
+// character; ErrNotPublic when the Broker is not public; ErrQuotaExceeded when
+// the Broker already holds the maximum number of live declarations; and
+// ErrClosed after Close. A failure to sign the declaration is returned as
+// itself. Declaring the same name again issues a new version without counting
+// against the quota.
 func (d *Directory) DeclarePublicTopic(name, description string) error {
 	d.mu.Lock()
 	if d.closed {
@@ -96,8 +96,8 @@ func (d *Directory) DeclarePublicTopic(name, description string) error {
 	return nil
 }
 
-// RetirePublicTopic withdraws the local Broker's public declaration of name. It
-// revokes the live declaration when one is held and does nothing otherwise.
+// RetirePublicTopic withdraws the local Broker's public declaration of name,
+// revoking the live declaration when one is held.
 func (d *Directory) RetirePublicTopic(name string) {
 	d.mu.Lock()
 	if d.closed {
@@ -124,8 +124,8 @@ func (d *Directory) RetirePublicTopic(name string) {
 
 // RetireInactiveTopics revokes every live public topic declaration of the local
 // Broker whose name is not in the active set. It exists for declarations loaded
-// from disk: after a restart the Broker re-declares in the ways its callers
-// choose, and the declarations loaded from earlier runs are withdrawn.
+// from disk: call it only after the caller has had a chance to re-declare, so
+// that a restart does not revoke topics that are about to be declared again.
 func (d *Directory) RetireInactiveTopics() {
 	d.mu.Lock()
 	if d.closed {
@@ -179,11 +179,7 @@ func (d *Directory) Reissue() {
 	d.commitOwn(vs)
 }
 
-// renewDue reissues the local card and every active public topic declaration
-// whose renewal is due, retries a card whose Reissue could not be signed, and
-// retries revocations whose signing failed earlier. Nothing is renewed while
-// the Broker is private, but pending revocations are retried in either state
-// until signing succeeds. The maintenance loop calls it once per wakeup.
+// Pending revocations are retried in either state until signing succeeds.
 func (d *Directory) renewDue(now time.Time) {
 	d.mu.Lock()
 	if d.closed {
@@ -237,19 +233,16 @@ func (d *Directory) renewDue(now time.Time) {
 	}
 	d.mu.Unlock()
 
-	// A renewal is a local issuance and writes at once. When nothing was
-	// renewed, a dirty flag left by records accepted from a link belongs to the
-	// maintenance throttle, so this must not write it every pass.
+	// A renewal writes at once; with nothing renewed, the dirty flag belongs
+	// to the maintenance throttle and must not be written every pass.
 	if len(vs) > 0 {
 		d.persistIfDirty()
 	}
 	d.broadcast(vs, Fingerprint{})
 }
 
-// startupCheck applies the configured public flag at start: a public Broker
-// signs a fresh card, and a private one revokes every live locally issued
-// record. Start calls it once; the public flag changes only through SetPublic
-// afterwards.
+// startupCheck applies the configured public flag: a public Broker signs a
+// fresh card, and a private one revokes every live locally issued record.
 func (d *Directory) startupCheck(now time.Time) {
 	d.mu.Lock()
 	if d.closed {
@@ -271,10 +264,6 @@ func (d *Directory) startupCheck(now time.Time) {
 	d.commitOwn(vs)
 }
 
-// reconcileOwn corrects records published by the local Broker that came back
-// from the network, for example after a backup restore or a clock rollback.
-// Accepting them has already raised the highest issued version; this signs
-// replacements or revocations so the network converges on the local state.
 func (d *Directory) reconcileOwn(ids []recordID) {
 	if len(ids) == 0 {
 		return
@@ -330,9 +319,6 @@ func (d *Directory) reconcileOwn(ids []recordID) {
 	d.commitOwn(vs)
 }
 
-// validDescription reports whether s is acceptable as a public topic
-// description: at most 256 bytes, valid UTF-8 and free of control characters.
-// The empty string is valid.
 func validDescription(s string) bool {
 	if len(s) > 256 {
 		return false
@@ -348,9 +334,7 @@ func validDescription(s string) bool {
 	return true
 }
 
-// revokeOwnLocked revokes every live locally issued record and returns the
-// versions of the revocations. The caller must hold the write lock and
-// broadcast the returned versions itself.
+// The caller must hold the write lock and broadcast the returned versions.
 func (d *Directory) revokeOwnLocked(now time.Time) []*directorypb.RecordVersion {
 	var vs []*directorypb.RecordVersion
 	for _, r := range d.st.ownRecords() {
@@ -364,9 +348,7 @@ func (d *Directory) revokeOwnLocked(now time.Time) []*directorypb.RecordVersion 
 	return vs
 }
 
-// issueCardLocked signs a new card from the current alias and advertised
-// addresses and stores it. The caller must hold the write lock and broadcast
-// the returned version itself.
+// The caller must hold the write lock and broadcast the returned version.
 func (d *Directory) issueCardLocked(now time.Time) (*directorypb.RecordVersion, error) {
 	addrs := d.settings.Advertised()
 	if len(addrs) > 8 {
@@ -389,8 +371,7 @@ func (d *Directory) issueCardLocked(now time.Time) (*directorypb.RecordVersion, 
 	})
 }
 
-// issueAnnouncementLocked signs a new public topic declaration and stores it.
-// The caller must hold the write lock and broadcast the returned version itself.
+// The caller must hold the write lock and broadcast the returned version.
 func (d *Directory) issueAnnouncementLocked(name, description string, now time.Time) (*directorypb.RecordVersion, error) {
 	return d.signOwnLocked(&directorypb.RecordBody{
 		Publisher: d.publisherBytes(),
@@ -406,12 +387,9 @@ func (d *Directory) issueAnnouncementLocked(name, description string, now time.T
 	})
 }
 
-// issueRevocationLocked signs a revocation of id and stores it. The caller must
-// hold the write lock and broadcast the returned version itself. The revocation
-// expires with the record it revokes when that is later than a fresh ttl, so a
-// clock rollback cannot make the revocation expire first and let the old record
-// come back. A signing failure marks the record for the maintenance loop to
-// retry.
+// The caller must hold the write lock and broadcast the returned version. The
+// revocation expires no earlier than the record it revokes, so a clock rollback
+// cannot let the old record come back; a signing failure marks it for retry.
 func (d *Directory) issueRevocationLocked(id recordID, now time.Time) (*directorypb.RecordVersion, error) {
 	expires := now.Add(recordTTL)
 	if r, ok := d.st.get(id); ok && r.expires.After(expires) {
@@ -437,9 +415,7 @@ func (d *Directory) issueRevocationLocked(id recordID, now time.Time) (*director
 	return v, nil
 }
 
-// signOwnLocked signs body, stores the result as a locally issued record and
-// returns its RecordVersion. A signing failure is logged as a warning and
-// leaves the directory unchanged. The caller must hold the write lock.
+// The caller must hold the write lock.
 func (d *Directory) signOwnLocked(body *directorypb.RecordBody) (*directorypb.RecordVersion, error) {
 	r, err := signRecord(body, d.id.Sign)
 	if err != nil {
@@ -451,7 +427,6 @@ func (d *Directory) signOwnLocked(body *directorypb.RecordBody) (*directorypb.Re
 	return r.recordVersion(), nil
 }
 
-// publisherBytes returns a copy of the local fingerprint for a record body.
 func (d *Directory) publisherBytes() []byte {
 	return append([]byte(nil), d.st.self[:]...)
 }

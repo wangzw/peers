@@ -11,39 +11,29 @@ import (
 	"time"
 )
 
-// fileName is the directory file kept in the data directory.
 const fileName = "directory.json"
 
-// fileFormat is the only directory file format this version writes and reads.
 const fileFormat = 1
 
-// errUnreadable reports that directory.json exists and can be read but cannot
-// be used: its content does not parse or its format is unknown. The caller logs
-// it and starts with an empty directory, which reconciliation can refill. A
-// read failure is returned as itself so that startup fails instead of silently
-// replacing the file.
+// errUnreadable reports that directory.json cannot be used: its content does
+// not parse or its format is unknown. A read failure is returned as itself so
+// that startup fails instead of silently replacing the file.
 var errUnreadable = errors.New("directory.json is unreadable")
 
-// directoryFile is the on-disk form of the directory.
 type directoryFile struct {
 	Format        int          `json:"format"`
 	HighestIssued uint64       `json:"highest_issued"`
 	Records       []fileRecord `json:"records"`
 }
 
-// fileRecord is one record as stored on disk. Raw and Signature hold the record
-// bytes exactly as signed; encoding/json encodes []byte as base64. Source is the
-// 64-character lowercase hexadecimal fingerprint of the link the record was
-// accepted from, or the empty string for a locally issued record.
 type fileRecord struct {
 	Raw       []byte `json:"raw"`
 	Signature []byte `json:"signature"`
 	Source    string `json:"source"`
 }
 
-// saveFile writes format 1 with the given records in the given order to
-// dir/directory.json. It does not sort; the caller is responsible for a stable
-// order so that identical content produces identical bytes.
+// saveFile writes directory.json; it does not sort, so the caller must pass
+// records in a stable order for identical content to produce identical bytes.
 func saveFile(ops fileOps, dir string, highest uint64, recs []fileRecord) error {
 	if ops == nil {
 		ops = realFileOps{}
@@ -59,12 +49,7 @@ func saveFile(ops fileOps, dir string, highest uint64, recs []fileRecord) error 
 	return atomicWrite(ops, filepath.Join(dir, fileName), data)
 }
 
-// loadFile returns the records and highest_issued stored in dir/directory.json
-// unchanged. It does not verify signatures or validate Source. A missing file
-// yields nil records, a zero highest and no error. A read failure is returned
-// wrapped so that the caller fails startup. A parse failure or a format this
-// version does not know yields errUnreadable so that the caller can log it and
-// start with an empty directory; the file is left in place.
+// loadFile reads directory.json without verifying signatures or Source.
 func loadFile(ops fileOps, dir string) (recs []fileRecord, highest uint64, err error) {
 	if ops == nil {
 		ops = realFileOps{}
@@ -87,10 +72,10 @@ func loadFile(ops fileOps, dir string) (recs []fileRecord, highest uint64, err e
 	return f.Records, f.HighestIssued, nil
 }
 
-// atomicWrite writes data to a temporary file next to path, fsyncs it, renames
-// it over path and fsyncs the containing directory. A same-directory temporary
-// file is required for rename to be atomic. On any failure the temporary file is
-// removed and the error is returned wrapped; path is left untouched.
+// atomicWrite writes to a temporary file in the same directory, fsyncs it,
+// renames it over path and fsyncs the directory. A failed write or rename
+// leaves path untouched; a failed directory sync happens after the rename, so
+// path may already hold the new content.
 func atomicWrite(ops fileOps, path string, data []byte) error {
 	if ops == nil {
 		ops = realFileOps{}
@@ -111,8 +96,6 @@ func atomicWrite(ops fileOps, path string, data []byte) error {
 	return nil
 }
 
-// randomSuffix returns 8 random bytes as lowercase hexadecimal for a temporary
-// file name.
 func randomSuffix() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {

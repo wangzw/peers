@@ -2,10 +2,9 @@ package directory
 
 import "os"
 
-// fileOps is the file-system seam used by the directory file. Production uses
-// realFileOps; tests inject failures without relying on a read-only directory.
 type fileOps interface {
-	// WriteFile creates or truncates path, writes data, fsyncs and closes it.
+	// WriteFile creates or truncates path, writes data, fsyncs it and closes
+	// the file.
 	WriteFile(path string, data []byte, mode os.FileMode) error
 	Rename(oldpath, newpath string) error
 	SyncDir(dir string) error
@@ -13,7 +12,6 @@ type fileOps interface {
 	Remove(path string) error
 }
 
-// realFileOps implements fileOps with the os package.
 type realFileOps struct{}
 
 func (realFileOps) WriteFile(path string, data []byte, mode os.FileMode) error {

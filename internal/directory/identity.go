@@ -7,14 +7,12 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// identitySource is the part of *pairing.Pairing that NewIdentity uses.
 type identitySource interface {
 	Fingerprint() pairing.Fingerprint
 	PublicKey() []byte // 32-byte raw Ed25519 key copy; nil without identity
 	Sign(data []byte) []byte
 }
 
-// pairingIdentity is the production Identity backed by a pairing source.
 type pairingIdentity struct {
 	src identitySource
 	fp  Fingerprint
@@ -48,11 +46,9 @@ func newIdentity(src identitySource) (Identity, error) {
 	}, nil
 }
 
-// Fingerprint returns the fingerprint of the local certificate.
 func (id *pairingIdentity) Fingerprint() Fingerprint { return id.fp }
 
 // PublicKey returns a copy of the raw 32-byte Ed25519 public key.
 func (id *pairingIdentity) PublicKey() []byte { return append([]byte(nil), id.pub...) }
 
-// Sign returns the Ed25519 signature over data.
 func (id *pairingIdentity) Sign(data []byte) []byte { return id.src.Sign(data) }

@@ -9,6 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
+// TestValidPublicTopicName checks the byte length, UTF-8 and control-character
+// rules of validPublicTopicName.
 func TestValidPublicTopicName(t *testing.T) {
 	cases := []struct {
 		name string
@@ -31,6 +33,7 @@ func TestValidPublicTopicName(t *testing.T) {
 	}
 }
 
+// TestValidDirectAddr checks the host and port rules of validDirectAddr.
 func TestValidDirectAddr(t *testing.T) {
 	cases := []struct {
 		name string
@@ -64,6 +67,9 @@ func TestValidDirectAddr(t *testing.T) {
 	}
 }
 
+// TestKnownAddrsSkipsMalformedDirectAddresses checks that knownAddrs skips
+// malformed direct addresses and counts only entries that pass the syntax check
+// against the limit.
 func TestKnownAddrsSkipsMalformedDirectAddresses(t *testing.T) {
 	card := &directorypb.BrokerCard{Addresses: []*directorypb.AdvertisedAddress{
 		{Kind: "direct", Addr: "\x1b198.51.100.5:17443"},
@@ -81,7 +87,6 @@ func TestKnownAddrsSkipsMalformedDirectAddresses(t *testing.T) {
 		t.Fatalf("knownAddrs = %v, want %v", got, want)
 	}
 
-	// The limit counts only entries that pass the syntax check.
 	if got := knownAddrs(card, 1); !reflect.DeepEqual(got, want[:1]) {
 		t.Errorf("knownAddrs with max 1 = %v, want %v", got, want[:1])
 	}

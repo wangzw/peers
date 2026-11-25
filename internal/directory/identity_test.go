@@ -9,10 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// *pairing.Pairing is the production identitySource implementation.
 var _ identitySource = (*pairing.Pairing)(nil)
 
-// stubIdentitySource is a test identitySource built from an Ed25519 key.
 type stubIdentitySource struct {
 	fp  pairing.Fingerprint
 	pub []byte
@@ -23,7 +21,6 @@ func (s *stubIdentitySource) Fingerprint() pairing.Fingerprint { return s.fp }
 func (s *stubIdentitySource) PublicKey() []byte                { return append([]byte(nil), s.pub...) }
 func (s *stubIdentitySource) Sign(data []byte) []byte          { return ed25519.Sign(s.key, data) }
 
-// newTestSource derives a key from seed and returns a matching identitySource.
 func newTestSource(t *testing.T, seed byte) (*stubIdentitySource, ed25519.PublicKey) {
 	t.Helper()
 	var raw [ed25519.SeedSize]byte
@@ -33,6 +30,8 @@ func newTestSource(t *testing.T, seed byte) (*stubIdentitySource, ed25519.Public
 	return &stubIdentitySource{fp: pairing.FingerprintOf(pub), pub: pub, key: key}, pub
 }
 
+// TestNewIdentityMatchesSource checks that newIdentity returns an identity
+// whose fingerprint, public key and signature match the source.
 func TestNewIdentityMatchesSource(t *testing.T) {
 	t.Parallel()
 	src, pub := newTestSource(t, 1)
@@ -63,6 +62,8 @@ func TestNewIdentityMatchesSource(t *testing.T) {
 	}
 }
 
+// TestNewIdentityRejectsMismatch checks that newIdentity rejects a source whose
+// public key does not match its fingerprint or is the wrong length.
 func TestNewIdentityRejectsMismatch(t *testing.T) {
 	t.Parallel()
 	srcA, pubA := newTestSource(t, 2)
@@ -83,6 +84,8 @@ func TestNewIdentityRejectsMismatch(t *testing.T) {
 	})
 }
 
+// TestNewIdentityWithoutIdentity checks that NewIdentity reports ErrNoIdentity
+// when the pairing has no identity.
 func TestNewIdentityWithoutIdentity(t *testing.T) {
 	t.Parallel()
 	for _, p := range []*pairing.Pairing{{}, nil} {

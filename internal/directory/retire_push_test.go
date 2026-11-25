@@ -6,12 +6,7 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// TestRetirePublicTopicPushesRevocationImmediately pins the push half of
-// REQ-topics-025: retiring a public topic declaration broadcasts the revocation
-// to every established peer right away. The test neither advances the clock nor
-// runs a maintenance pass or a reconciliation round before inspecting the
-// frames, so only the broadcast inside RetirePublicTopic can produce the
-// expected RecordList.
+// TestRetirePublicTopicPushesRevocationImmediately checks that retiring a declaration broadcasts the revocation at once.
 func TestRetirePublicTopicPushesRevocationImmediately(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -53,8 +48,6 @@ func TestRetirePublicTopicPushesRevocationImmediately(t *testing.T) {
 		t.Fatalf("revocation version %d is not above the announcement's %d", revocation.version, announcement.version)
 	}
 
-	// No tick and no Settle ran after RetirePublicTopic, so a frame in this
-	// slice can only come from the broadcast it performs itself.
 	var pushed []*directorypb.RecordVersion
 	for _, f := range a.ep.Sent()[before:] {
 		if f.to != b.fp || f.kind != directorypb.KindRecordList {

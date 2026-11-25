@@ -14,8 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// newViewDirectory opens a directory backed by a fake network and returns the
-// peer table and clock its tests drive.
 func newViewDirectory(t *testing.T, seed byte, now time.Time) (*Directory, *fakePeers, *fakeLinks, *fakeClock) {
 	t.Helper()
 	deps, ep := dirTestDeps(t, seed, t.TempDir(), newFakeNet(), nil)
@@ -29,13 +27,10 @@ func newViewDirectory(t *testing.T, seed byte, now time.Time) (*Directory, *fake
 	return d, peers, ep, clk
 }
 
-// advAddr builds one advertised address entry.
 func advAddr(kind, addr string) *directorypb.AdvertisedAddress {
 	return &directorypb.AdvertisedAddress{Kind: kind, Addr: addr}
 }
 
-// viewPut inserts a signed record as if it were already held. It bypasses the
-// acceptance limits, which the views do not exercise.
 func viewPut(t *testing.T, d *Directory, r *storedRecord) {
 	t.Helper()
 	d.mu.Lock()
@@ -43,28 +38,23 @@ func viewPut(t *testing.T, d *Directory, r *storedRecord) {
 	d.mu.Unlock()
 }
 
-// viewCard inserts a broker card signed with the key derived from seed.
 func viewCard(t *testing.T, d *Directory, seed byte, alias string, version uint64, expires time.Time, addrs ...*directorypb.AdvertisedAddress) {
 	t.Helper()
 	viewPut(t, d, mustSignRecord(t, seed, recKindCard, "", version, expires, recTestCard(alias, addrs...)))
 }
 
-// viewAnnouncement inserts a public topic declaration signed with seed.
 func viewAnnouncement(t *testing.T, d *Directory, seed byte, name, description string, version uint64, expires time.Time) {
 	t.Helper()
 	viewPut(t, d, mustSignRecord(t, seed, recKindTopic, name, version, expires,
 		&directorypb.TopicAnnouncement{Name: name, Description: description}))
 }
 
-// viewRevocation inserts a revocation for the record identified by kind and
-// object, signed with seed.
 func viewRevocation(t *testing.T, d *Directory, seed byte, kind directorypb.RecordKind, object string, version uint64, expires time.Time) {
 	t.Helper()
 	viewPut(t, d, mustSignRecord(t, seed, kind, object, version, expires,
 		&directorypb.Revocation{RevokedKind: kind}))
 }
 
-// viewFind returns the entry for fp and fails the test when it is absent.
 func viewFind(t *testing.T, brokers []KnownBroker, fp Fingerprint) KnownBroker {
 	t.Helper()
 	for _, b := range brokers {
@@ -76,7 +66,6 @@ func viewFind(t *testing.T, brokers []KnownBroker, fp Fingerprint) KnownBroker {
 	return KnownBroker{}
 }
 
-// viewHas reports whether fp appears in brokers.
 func viewHas(brokers []KnownBroker, fp Fingerprint) bool {
 	for _, b := range brokers {
 		if b.Fingerprint == fp {
@@ -86,8 +75,8 @@ func viewHas(brokers []KnownBroker, fp Fingerprint) bool {
 	return false
 }
 
+// TestBrokersListsPeersAndCardHolders checks the address list of a dialer peer, an acceptor peer and a card holder.
 func TestBrokersListsPeersAndCardHolders(t *testing.T) {
-	// REQ-broker-discovery-012
 	now := dirTestNow()
 	d, peers, _, _ := newViewDirectory(t, 1, now)
 	fpD := newTestIdentity(2).Fingerprint()
@@ -155,7 +144,6 @@ func TestBrokersListsPeersAndCardHolders(t *testing.T) {
 		t.Errorf("card holder link = %v, want LinkNone", xEntry.Link)
 	}
 
-	// A card for the dialer peer joins the acceptor-announced address.
 	viewCard(t, d, 2, "alpha", 2, now.Add(recordTTL), advAddr("direct", "198.51.100.8:17443"))
 	dEntry = viewFind(t, d.Brokers(), fpD)
 	wantD = []config.AdvertisedAddr{
@@ -166,7 +154,6 @@ func TestBrokersListsPeersAndCardHolders(t *testing.T) {
 		t.Errorf("dialer peer addresses after its card arrived = %v, want %v", dEntry.Addresses, wantD)
 	}
 
-	// A card address that repeats a pairing candidate is listed once.
 	viewCard(t, d, 2, "alpha", 3, now.Add(recordTTL),
 		advAddr("direct", "203.0.113.5:17443"), advAddr("direct", "198.51.100.8:17443"))
 	dEntry = viewFind(t, d.Brokers(), fpD)
@@ -179,8 +166,8 @@ func TestBrokersListsPeersAndCardHolders(t *testing.T) {
 	}
 }
 
+// TestBrokersStatus checks connected, connectable and unreachable status and that unknown address kinds are skipped.
 func TestBrokersStatus(t *testing.T) {
-	// REQ-broker-discovery-013, REQ-broker-discovery-017
 	now := dirTestNow()
 	d, peers, ep, _ := newViewDirectory(t, 1, now)
 	fpUp := newTestIdentity(2).Fingerprint()
@@ -221,8 +208,8 @@ func TestBrokersStatus(t *testing.T) {
 	}
 }
 
+// TestBrokersIsPeerFollowsPairing checks that isPeer follows the current peer table.
 func TestBrokersIsPeerFollowsPairing(t *testing.T) {
-	// REQ-broker-discovery-014
 	now := dirTestNow()
 	d, peers, _, _ := newViewDirectory(t, 1, now)
 	fpX := newTestIdentity(2).Fingerprint()
@@ -250,9 +237,9 @@ func TestBrokersIsPeerFollowsPairing(t *testing.T) {
 	}
 }
 
+// TestBrokersExcludesSelfAndRevoked checks that the local card, revoked cards and expired cards are left out.
 func TestBrokersExcludesSelfAndRevoked(t *testing.T) {
-	// REQ-broker-discovery-007
-	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC) // day 6
+	now := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
 	expires := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	alive := newTestIdentity(2).Fingerprint()
 
@@ -274,8 +261,7 @@ func TestBrokersExcludesSelfAndRevoked(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-035: a rejected peer reports that phase, and Detail stays
-// empty because broker-peers owns the status text.
+// TestBrokersPeerDetailEmpty checks that a peer entry reports its link phase and leaves Detail empty.
 func TestBrokersPeerDetailEmpty(t *testing.T) {
 	now := dirTestNow()
 	d, peers, ep, _ := newViewDirectory(t, 1, now)
@@ -310,8 +296,8 @@ func TestBrokersPeerDetailEmpty(t *testing.T) {
 	}
 }
 
+// TestPublicTopicsMerge checks that same-name declarations merge into one entry and a revocation lowers the count.
 func TestPublicTopicsMerge(t *testing.T) {
-	// REQ-topics-010
 	now := dirTestNow()
 	d, _, _, _ := newViewDirectory(t, 1, now)
 	expires := now.Add(recordTTL)
@@ -334,12 +320,8 @@ func TestPublicTopicsMerge(t *testing.T) {
 	}
 }
 
-// TestPublicTopicsPrefersSelfAndPeerDescriptions covers a publisher choosing a
-// large version to take over a name: the local Broker's declaration still
-// supplies the description, a peer outranks a non-peer, and the entry reports
-// which Broker supplied the description and how many declare the name.
+// TestPublicTopicsPrefersSelfAndPeerDescriptions checks that the local and peer tiers outrank a large version from another publisher.
 func TestPublicTopicsPrefersSelfAndPeerDescriptions(t *testing.T) {
-	// REQ-topics-010, REQ-topics-011
 	now := dirTestNow()
 	d, peers, _, _ := newViewDirectory(t, 1, now)
 	expires := now.Add(recordTTL)
@@ -355,16 +337,12 @@ func TestPublicTopicsPrefersSelfAndPeerDescriptions(t *testing.T) {
 		Role:        pairing.RoleAcceptor,
 	})
 
-	// A non-peer picks the maximum version, yet the local declaration wins.
 	viewAnnouncement(t, d, 1, "local-name", "A", 1, expires)
 	viewAnnouncement(t, d, 3, "local-name", "B", math.MaxUint64, expires)
-	// The peer's declaration outranks the non-peer's maximum version.
 	viewAnnouncement(t, d, 2, "peer-name", "P", 1, expires)
 	viewAnnouncement(t, d, 3, "peer-name", "Q", math.MaxUint64, expires)
-	// With only non-peers declaring the name the highest version still wins.
 	viewAnnouncement(t, d, 4, "other-name", "R", 1, expires)
 	viewAnnouncement(t, d, 3, "other-name", "S", 2, expires)
-	// A non-peer publisher carries the alias from its live card.
 	viewCard(t, d, 3, "other-card", 1, expires)
 
 	want := []PublicTopic{
@@ -376,7 +354,6 @@ func TestPublicTopicsPrefersSelfAndPeerDescriptions(t *testing.T) {
 		t.Fatalf("PublicTopics() = %v, want %v", got, want)
 	}
 
-	// A tie on version inside one tier goes to the smaller fingerprint.
 	viewAnnouncement(t, d, 4, "tie-name", "U", 5, expires)
 	viewAnnouncement(t, d, 3, "tie-name", "V", 5, expires)
 	first, firstDesc := fpOther, "V"
@@ -392,9 +369,7 @@ func TestPublicTopicsPrefersSelfAndPeerDescriptions(t *testing.T) {
 	}
 }
 
-// TestPublicTopicsSkipsInvalidDeclarations covers declarations accepted from a
-// link: an over-long description, a name holding a control character and an
-// over-long name are still accepted and forwarded, but do not enter the view.
+// TestPublicTopicsSkipsInvalidDeclarations checks that malformed declarations are forwarded but left out of the view.
 func TestPublicTopicsSkipsInvalidDeclarations(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -439,9 +414,7 @@ func TestPublicTopicsSkipsInvalidDeclarations(t *testing.T) {
 	}
 }
 
-// TestBrokersSkipsMalformedDirectAddresses checks that a "direct" card entry
-// that cannot be split into a host and port, or whose host carries a control
-// character, is left out of the broker view while the card itself stays usable.
+// TestBrokersSkipsMalformedDirectAddresses checks that a "direct" entry that cannot be parsed is left out while the card stays usable.
 func TestBrokersSkipsMalformedDirectAddresses(t *testing.T) {
 	now := dirTestNow()
 	d, _, _, _ := newViewDirectory(t, 1, now)
@@ -466,12 +439,12 @@ func TestBrokersSkipsMalformedDirectAddresses(t *testing.T) {
 	}
 }
 
-// fingerprintsAscending returns fps sorted by fingerprint bytes ascending.
 func fingerprintsAscending(fps ...Fingerprint) []Fingerprint {
 	sort.Slice(fps, func(i, j int) bool { return bytes.Compare(fps[i][:], fps[j][:]) < 0 })
 	return fps
 }
 
+// TestCardsByAddress checks that every publisher advertising an address is returned and unknown or self addresses are not.
 func TestCardsByAddress(t *testing.T) {
 	now := dirTestNow()
 	d, _, _, _ := newViewDirectory(t, 1, now)
@@ -482,8 +455,6 @@ func TestCardsByAddress(t *testing.T) {
 	shared := "198.51.100.4:17443"
 	tie := "198.51.100.11:17443"
 
-	// fpA picks the highest possible version for the shared address. A publisher
-	// chooses its own version, so a large one must not hide fpB's claim.
 	viewCard(t, d, 2, "a", math.MaxUint64, expires, advAddr("direct", shared))
 	viewCard(t, d, 3, "b", 7, expires, advAddr("direct", shared), advAddr("direct", tie))
 	viewCard(t, d, 4, "c", 1, expires, advAddr("relay", "198.51.100.5:17443"))
@@ -495,9 +466,9 @@ func TestCardsByAddress(t *testing.T) {
 		t.Fatalf("CardsByAddress(%q) = %v, want every matching publisher %v", shared, got, wantShared)
 	}
 	for _, addr := range []string{
-		"203.0.113.99:17443", // no card advertises it
-		"198.51.100.5:17443", // carried with an unknown kind
-		"198.51.100.1:17443", // the local Broker's own address
+		"203.0.113.99:17443",
+		"198.51.100.5:17443",
+		"198.51.100.1:17443",
 	} {
 		if got := d.CardsByAddress(addr); got != nil {
 			t.Errorf("CardsByAddress(%q) = %v, want nil", addr, got)
@@ -510,8 +481,7 @@ func TestCardsByAddress(t *testing.T) {
 	}
 }
 
-// TestCardsByAddressCanonicalForm covers a card address that differs only in
-// host case, port leading zeros or IPv6 compression from the lookup address.
+// TestCardsByAddressCanonicalForm checks that host case, port leading zeros and IPv6 spelling do not hide a match.
 func TestCardsByAddressCanonicalForm(t *testing.T) {
 	now := dirTestNow()
 	d, _, _, _ := newViewDirectory(t, 1, now)
@@ -537,7 +507,6 @@ func TestCardsByAddressCanonicalForm(t *testing.T) {
 	}
 }
 
-// reentrantPeers calls back into the directory from Peers, as a callback could.
 type reentrantPeers struct {
 	*fakePeers
 	d    *Directory
@@ -554,6 +523,7 @@ func (p *reentrantPeers) Peers() []pairing.Peer {
 	return p.fakePeers.Peers()
 }
 
+// TestViewsDoNotHoldLockDuringCallbacks checks that Brokers calls the peer table outside the directory lock even when the callback re-enters the directory.
 func TestViewsDoNotHoldLockDuringCallbacks(t *testing.T) {
 	now := dirTestNow()
 	d, peers, _, _ := newViewDirectory(t, 1, now)

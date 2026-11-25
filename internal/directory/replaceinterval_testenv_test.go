@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// TestDirectoryReplaceIntervalUsesTestOverride proves that a peers_testenv
+// TestDirectoryReplaceIntervalUsesTestOverride checks that a peers_testenv
 // build reads PEERS_TEST_DIRECTORY_REPLACE_INTERVAL as a Go duration.
 func TestDirectoryReplaceIntervalUsesTestOverride(t *testing.T) {
 	t.Setenv(testDirectoryReplaceIntervalEnv, "1h")
@@ -16,8 +16,8 @@ func TestDirectoryReplaceIntervalUsesTestOverride(t *testing.T) {
 	}
 }
 
-// TestDirectoryReplaceIntervalAcceptsShortInterval proves the value the
-// end-to-end suite injects, one second, is read as written.
+// TestDirectoryReplaceIntervalAcceptsShortInterval checks that a one-second
+// override is read as written.
 func TestDirectoryReplaceIntervalAcceptsShortInterval(t *testing.T) {
 	t.Setenv(testDirectoryReplaceIntervalEnv, "1s")
 	if got, want := directoryReplaceInterval(), time.Second; got != want {
@@ -25,7 +25,7 @@ func TestDirectoryReplaceIntervalAcceptsShortInterval(t *testing.T) {
 	}
 }
 
-// TestDirectoryReplaceIntervalFallsBackWhenInvalid proves that an unset,
+// TestDirectoryReplaceIntervalFallsBackWhenInvalid checks that an unset,
 // unparsable or non-positive PEERS_TEST_DIRECTORY_REPLACE_INTERVAL keeps the
 // release default.
 func TestDirectoryReplaceIntervalFallsBackWhenInvalid(t *testing.T) {

@@ -12,35 +12,17 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// Errors returned by record signing and parsing. They are matched with
-// errors.Is.
+// Errors returned by record signing and parsing, matched with errors.Is.
 var (
-	// errBadSignature means the record is unsigned, its signature does not
-	// verify against the public key in its body, or the publisher is not the
-	// holder of that key.
-	errBadSignature = errors.New("bad signature")
-	// errMalformed means the record's encoding or structure is invalid.
-	errMalformed = errors.New("malformed record")
-	// errRecordTooLarge is a malformed record whose raw bytes exceed
-	// maxRecordRaw. It wraps errMalformed.
+	errBadSignature   = errors.New("bad signature")
+	errMalformed      = errors.New("malformed record")
 	errRecordTooLarge = fmt.Errorf("%w: raw exceeds %d bytes", errMalformed, maxRecordRaw)
 )
 
-// maxRecordRaw is the largest accepted encoded record body. The receiving path
-// and the local signing path both enforce it, so no record larger than this can
-// enter the directory or be issued, and a reconciliation reply stays bounded.
 const maxRecordRaw = 64 << 10
 
-// maxRecordObjectLen is the largest object name accepted in a record
-// identifier. A public topic name is the only non-empty object this version
-// issues, but a malformed one must still be accepted and forwarded, so the
-// limit is generous. It keeps a peer-chosen RecordList from carrying unbounded
-// object strings into the pending and requested sets.
 const maxRecordObjectLen = 4 << 10
 
-// signRecord marshals body deterministically, signs it and returns the stored
-// form. The result is checked with parseRecord so that the local Broker never
-// signs a record it would itself reject.
 func signRecord(body *directorypb.RecordBody, sign func([]byte) []byte) (*storedRecord, error) {
 	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(body)
 	if err != nil {
@@ -60,9 +42,6 @@ func signRecord(body *directorypb.RecordBody, sign func([]byte) []byte) (*stored
 	return rec, nil
 }
 
-// parseRecord verifies and parses a record received from a link or loaded from
-// disk. The raw bytes and the signature are copied into the result, so the
-// caller may reuse its slices. The source field is left for the caller to fill.
 func parseRecord(r *directorypb.Record) (*storedRecord, error) {
 	raw, sig := r.GetRaw(), r.GetSignature()
 	if len(raw) == 0 || len(sig) == 0 {
@@ -115,8 +94,8 @@ func parseRecord(r *directorypb.Record) (*storedRecord, error) {
 			return nil, errMalformed
 		}
 	case nil:
-		// A record whose payload this version does not know is still verified,
-		// stored and forwarded so that newer records keep propagating.
+		// A nil payload is accepted so that a record this version does not
+		// understand still propagates.
 	default:
 		return nil, errMalformed
 	}
@@ -139,8 +118,6 @@ func parseRecord(r *directorypb.Record) (*storedRecord, error) {
 	}, nil
 }
 
-// validCardAlias reports whether s is 1 to config.AliasMaxLen bytes long and
-// contains only A-Z, a-z, 0-9, '.', '-' and '_'.
 func validCardAlias(s string) bool {
 	if len(s) == 0 || len(s) > config.AliasMaxLen {
 		return false
@@ -157,10 +134,6 @@ func validCardAlias(s string) bool {
 	return true
 }
 
-// knownAddrs returns the addresses of card whose kind is "direct", in order,
-// at most max of them. Address kinds this version does not know and "direct"
-// entries that are not well-formed (see validDirectAddr) are skipped; the card
-// itself is still accepted and forwarded with them.
 func knownAddrs(card *directorypb.BrokerCard, max int) []config.AdvertisedAddr {
 	if card == nil || max <= 0 {
 		return nil
@@ -178,18 +151,14 @@ func knownAddrs(card *directorypb.BrokerCard, max int) []config.AdvertisedAddr {
 	return addrs
 }
 
-// recordVersion converts the record to its RecordList entry.
 func (r *storedRecord) recordVersion() *directorypb.RecordVersion {
 	return &directorypb.RecordVersion{Id: r.id.toProto(), Version: r.version}
 }
 
-// wire returns the record in its wire form, keeping raw and signature exactly
-// as they were signed.
 func (r *storedRecord) wire() *directorypb.Record {
 	return &directorypb.Record{Raw: r.raw, Signature: r.sig}
 }
 
-// isRevocation reports whether the record's payload is a revocation.
 func (r *storedRecord) isRevocation() bool {
 	if r == nil || r.body == nil {
 		return false
@@ -198,10 +167,6 @@ func (r *storedRecord) isRevocation() bool {
 	return ok
 }
 
-// idFromProto converts a wire record identifier. It reports false when the
-// publisher is not a 32-byte fingerprint or the object exceeds
-// maxRecordObjectLen, so a peer cannot push unbounded identifier strings into
-// the pending and requested sets.
 func idFromProto(id *directorypb.RecordId) (recordID, bool) {
 	pub := id.GetPublisher()
 	if len(pub) != 32 || len(id.GetObject()) > maxRecordObjectLen {
@@ -216,7 +181,6 @@ func idFromProto(id *directorypb.RecordId) (recordID, bool) {
 	}, true
 }
 
-// toProto converts the identifier to its wire form.
 func (id recordID) toProto() *directorypb.RecordId {
 	return &directorypb.RecordId{
 		Publisher: id.publisher[:],

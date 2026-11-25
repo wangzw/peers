@@ -29,9 +29,8 @@ type PeerTable interface {
 	EffectiveAlias(fp Fingerprint) string
 }
 
-// Links carries directory frames over established links. Frames are identified
-// by kind and payload bytes; the adapter converts them to and from the link
-// package's own types.
+// Links carries directory frames over established links, identified by kind
+// and payload bytes.
 type Links interface {
 	// Send sends one frame without blocking. When the link to peer is not
 	// established it returns a non-nil error immediately and does not queue

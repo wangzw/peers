@@ -15,13 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// Test doubles for the directory package. They let tests form a network of
-// Directory instances in one process, advance time without waiting, and inspect
-// the frames each endpoint sent.
-
-// fakeClock is a clock whose current instant and timers are driven by Advance.
-// The zero value is usable: it starts at the zero time and lazily creates its
-// condition variable.
 type fakeClock struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -31,8 +24,6 @@ type fakeClock struct {
 
 var _ clock = (*fakeClock)(nil)
 
-// newFakeClock returns a fake clock reset to start. With no start argument the
-// zero time is used.
 func newFakeClock(start ...time.Time) *fakeClock {
 	c := &fakeClock{}
 	if len(start) > 0 {
@@ -41,8 +32,7 @@ func newFakeClock(start ...time.Time) *fakeClock {
 	return c
 }
 
-// condLocked returns the condition variable, creating it on first use. The
-// caller must hold c.mu.
+// The caller must hold c.mu.
 func (c *fakeClock) condLocked() *sync.Cond {
 	if c.cond == nil {
 		c.cond = sync.NewCond(&c.mu)
@@ -50,15 +40,12 @@ func (c *fakeClock) condLocked() *sync.Cond {
 	return c.cond
 }
 
-// Now returns the fake current instant.
 func (c *fakeClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
 }
 
-// NewTimer registers a timer that fires when Advance moves the clock to or past
-// its deadline.
 func (c *fakeClock) NewTimer(d time.Duration) timer {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -68,8 +55,6 @@ func (c *fakeClock) NewTimer(d time.Duration) timer {
 	return tm
 }
 
-// Advance moves the clock forward and fires every pending timer whose deadline
-// is not after the new instant.
 func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -87,8 +72,6 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.condLocked().Broadcast()
 }
 
-// WaitTimers blocks until at least n untriggered timers exist. It fails the
-// test after eventTimeout.
 func (c *fakeClock) WaitTimers(t *testing.T, n int) {
 	t.Helper()
 	c.mu.Lock()
@@ -112,8 +95,7 @@ func (c *fakeClock) WaitTimers(t *testing.T, n int) {
 	}
 }
 
-// pendingLocked counts timers that have neither fired nor been stopped. The
-// caller must hold c.mu.
+// The caller must hold c.mu.
 func (c *fakeClock) pendingLocked() int {
 	n := 0
 	for _, tm := range c.timers {
@@ -124,7 +106,6 @@ func (c *fakeClock) pendingLocked() int {
 	return n
 }
 
-// fakeTimer is one timer created by fakeClock.
 type fakeTimer struct {
 	clock    *fakeClock
 	deadline time.Time
@@ -135,8 +116,6 @@ type fakeTimer struct {
 
 func (t *fakeTimer) C() <-chan time.Time { return t.ch }
 
-// Stop prevents the timer from firing. It reports whether the timer was still
-// pending.
 func (t *fakeTimer) Stop() bool {
 	t.clock.mu.Lock()
 	defer t.clock.mu.Unlock()
@@ -153,26 +132,23 @@ var (
 	errFakeUnsupported    = errors.New("fake net: no request handler")
 )
 
-// sentFrame is one frame an endpoint sent through fakeLinks.
 type sentFrame struct {
 	to      Fingerprint
 	kind    uint32
 	payload []byte
 }
 
-// fakeNet is an in-process network of fakeLinks endpoints.
 type fakeNet struct {
 	mu        sync.Mutex
 	cond      *sync.Cond
 	endpoints map[Fingerprint]*fakeLinks
 	directed  map[Fingerprint]map[Fingerprint]*directedLink
 	upDone    map[Fingerprint]map[Fingerprint]bool // upDone[a][b]: a's onUp for b returned
-	active    int                                  // deliveries and request handlers currently running
-	done      uint64                               // completed deliveries and request handlers
+	active    int
+	done      uint64
 	timedOut  bool
 }
 
-// newFakeNet creates an empty fake network.
 func newFakeNet() *fakeNet {
 	n := &fakeNet{
 		endpoints: make(map[Fingerprint]*fakeLinks),
@@ -183,15 +159,13 @@ func newFakeNet() *fakeNet {
 	return n
 }
 
-// Endpoint returns the fakeLinks for fp, creating it on first use.
 func (n *fakeNet) Endpoint(fp Fingerprint) *fakeLinks {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.endpointLocked(fp)
 }
 
-// endpointLocked returns the endpoint for fp, creating it. The caller must hold
-// n.mu.
+// The caller must hold n.mu.
 func (n *fakeNet) endpointLocked(fp Fingerprint) *fakeLinks {
 	if ep, ok := n.endpoints[fp]; ok {
 		return ep
@@ -207,11 +181,9 @@ func (n *fakeNet) endpointLocked(fp Fingerprint) *fakeLinks {
 	return ep
 }
 
-// Connect establishes a bidirectional link between a and b. Both endpoints
-// receive their onUp notification, a before b, with a 32-byte zero salt. As on
-// a real link, no frame is dispatched to an endpoint until its own onUp
-// notification has returned: a peer sending its full list from onUp must not
-// reach a directory that has not recorded the link as established yet.
+// Connect establishes a bidirectional link between a and b and delivers their
+// onUp notifications, a before b. As on a real link, no frame is dispatched to
+// an endpoint until its own onUp notification has returned.
 func (n *fakeNet) Connect(a, b Fingerprint) {
 	n.mu.Lock()
 	ea := n.endpointLocked(a)
@@ -246,8 +218,6 @@ func (n *fakeNet) Connect(a, b Fingerprint) {
 	n.markUp(b, a)
 }
 
-// markUp records that fp's onUp notification for peer has returned and wakes
-// the delivery goroutines waiting on it.
 func (n *fakeNet) markUp(fp, peer Fingerprint) {
 	n.mu.Lock()
 	if n.upDone[fp] == nil {
@@ -258,17 +228,15 @@ func (n *fakeNet) markUp(fp, peer Fingerprint) {
 	n.mu.Unlock()
 }
 
-// upReturnedLocked reports whether fp's onUp notification for peer has
-// returned. The caller must hold n.mu.
+// The caller must hold n.mu.
 func (n *fakeNet) upReturnedLocked(fp, peer Fingerprint) bool {
 	return n.upDone[fp] != nil && n.upDone[fp][peer]
 }
 
-// deliveryGateHeld waits until the delivery goroutine for the link from->to
-// has either parked a queued frame at the onUp gate or taken the frame for
-// delivery. It reports whether the gate held the frame. The caller runs inside
-// the destination's onUp notification. It waits without a fixed delay: one of
-// the two states is reached as soon as the delivery goroutine runs.
+// deliveryGateHeld waits until the delivery goroutine for from->to has either
+// parked a queued frame at the onUp gate or taken the frame for delivery, and
+// reports whether the gate held it. The caller runs inside the destination's
+// onUp notification.
 func (n *fakeNet) deliveryGateHeld(from, to Fingerprint) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -321,13 +289,8 @@ func (n *fakeNet) Disconnect(a, b Fingerprint) {
 	}
 }
 
-// TestFakeNetHoldsFramesUntilUpReturns pins the link contract that frames are
-// dispatched to an endpoint only after its own onUp notification has returned.
-// Directories send their first full list from onUp, so a frame delivered any
-// earlier would reach a peer that has not recorded the link as established yet
-// and be dropped. B's onUp waits for the delivery goroutine to reach the onUp
-// gate: the gated order parks the queued frame there, while an ungated order
-// dispatches it and the test fails.
+// TestFakeNetHoldsFramesUntilUpReturns checks that a frame is delivered to an
+// endpoint only after its own onUp notification has returned.
 func TestFakeNetHoldsFramesUntilUpReturns(t *testing.T) {
 	net := newFakeNet()
 	a := newTestIdentity(1).Fingerprint()
@@ -344,10 +307,6 @@ func TestFakeNetHoldsFramesUntilUpReturns(t *testing.T) {
 		handled.Add(1)
 	})
 
-	// B's onUp waits for the delivery goroutine to reach the gate with the
-	// queued frame. The gated implementation parks the frame there; an ungated
-	// one dispatches it, which deliveryGateHeld reports and the test fails.
-	// The flag is set at the end of onUp as the contract requires.
 	enteredUp := make(chan struct{})
 	eb.Subscribe(func(peer Fingerprint, salt []byte) {
 		close(enteredUp)
@@ -357,7 +316,6 @@ func TestFakeNetHoldsFramesUntilUpReturns(t *testing.T) {
 		upReturned.Store(true)
 	}, nil)
 
-	// A's onUp sends the first frame, as a directory does on link-up.
 	ea.Subscribe(func(peer Fingerprint, salt []byte) {
 		if err := ea.Send(b, 300, []byte("first")); err != nil {
 			t.Errorf("send on link-up: %v", err)
@@ -370,7 +328,6 @@ func TestFakeNetHoldsFramesUntilUpReturns(t *testing.T) {
 		close(connected)
 	}()
 
-	// A's onUp ran before B's was entered, so the frame is already queued.
 	<-enteredUp
 	<-connected
 	net.Settle(t)
@@ -379,14 +336,12 @@ func TestFakeNetHoldsFramesUntilUpReturns(t *testing.T) {
 	}
 }
 
-// connected reports whether the directed link from a to b exists.
 func (n *fakeNet) connected(a, b Fingerprint) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.directed[a] != nil && n.directed[a][b] != nil
 }
 
-// busyLocked reports whether any delivery is running or any queue is non-empty.
 func (n *fakeNet) busyLocked() bool {
 	if n.active > 0 {
 		return true
@@ -401,9 +356,6 @@ func (n *fakeNet) busyLocked() bool {
 	return false
 }
 
-// Settle waits until the network is idle and the given wait groups have
-// finished. It repeats the round when new activity appeared during it and fails
-// the test after eventTimeout.
 func (n *fakeNet) Settle(t *testing.T, inflight ...*sync.WaitGroup) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -452,7 +404,6 @@ func (n *fakeNet) Settle(t *testing.T, inflight ...*sync.WaitGroup) {
 	}
 }
 
-// waitGroupWithin waits for wg, reporting false when timeout elapses first.
 func waitGroupWithin(wg *sync.WaitGroup, timeout time.Duration) bool {
 	if wg == nil {
 		return true
@@ -472,8 +423,8 @@ func waitGroupWithin(wg *sync.WaitGroup, timeout time.Duration) bool {
 	}
 }
 
-// directedLink is one direction of a fake link: a FIFO queue plus the single
-// goroutine that drains it.
+// directedLink is one direction of a fake link: a FIFO queue drained by one
+// goroutine.
 type directedLink struct {
 	net      *fakeNet
 	from     Fingerprint
@@ -484,15 +435,13 @@ type directedLink struct {
 	dequeued int  // frames taken for delivery
 }
 
-// fakeFrame is one frame queued on a directed link.
 type fakeFrame struct {
 	kind    uint32
 	payload []byte
 }
 
-// run delivers queued state frames in order until the link is closed. Frames
-// wait while the destination has not returned from its onUp notification for
-// this link.
+// run delivers queued state frames in order until the link is closed, waiting
+// while the destination has not returned from its onUp notification.
 func (l *directedLink) run() {
 	for {
 		l.net.mu.Lock()
@@ -523,7 +472,6 @@ func (l *directedLink) run() {
 	}
 }
 
-// deliver calls the destination's state handler, if any.
 func (l *directedLink) deliver(f fakeFrame) {
 	l.dst.mu.Lock()
 	h := l.dst.stateHandlers[f.kind]
@@ -534,7 +482,6 @@ func (l *directedLink) deliver(f fakeFrame) {
 	h(l.from, f.payload)
 }
 
-// fakeLinks is one endpoint of fakeNet. It implements Links.
 type fakeLinks struct {
 	net *fakeNet
 	fp  Fingerprint
@@ -551,7 +498,6 @@ type fakeLinks struct {
 
 var _ Links = (*fakeLinks)(nil)
 
-// Send enqueues one state frame. It fails when the link is not established.
 func (l *fakeLinks) Send(peer Fingerprint, kind uint32, payload []byte) error {
 	l.mu.Lock()
 	hook := l.sendHook
@@ -581,8 +527,6 @@ func (l *fakeLinks) Send(peer Fingerprint, kind uint32, payload []byte) error {
 	return nil
 }
 
-// Request calls the peer's request handler in a new goroutine. When the link is
-// not established it reports sent == false.
 func (l *fakeLinks) Request(ctx context.Context, peer Fingerprint, kind uint32, payload []byte) (uint32, []byte, bool, error) {
 	if !l.net.connected(l.fp, peer) {
 		return 0, nil, false, nil
@@ -631,21 +575,18 @@ func (l *fakeLinks) Request(ctx context.Context, peer Fingerprint, kind uint32, 
 	}
 }
 
-// HandleState registers the handler for state frames of one kind.
 func (l *fakeLinks) HandleState(kind uint32, h func(peer Fingerprint, payload []byte)) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.stateHandlers[kind] = h
 }
 
-// HandleRequest registers the handler for request frames of one kind.
 func (l *fakeLinks) HandleRequest(kind uint32, h func(ctx context.Context, peer Fingerprint, payload []byte) (replyKind uint32, reply []byte)) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.requestHandlers[kind] = h
 }
 
-// Subscribe registers link up and down notifications.
 func (l *fakeLinks) Subscribe(onUp func(peer Fingerprint, salt []byte), onDown func(peer Fingerprint)) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -653,8 +594,6 @@ func (l *fakeLinks) Subscribe(onUp func(peer Fingerprint, salt []byte), onDown f
 	l.onDown = onDown
 }
 
-// Status returns the LinkView set by SetStatus, or a view derived from the fake
-// network's connections.
 func (l *fakeLinks) Status(peer Fingerprint) LinkView {
 	l.mu.Lock()
 	v, ok := l.status[peer]
@@ -668,14 +607,12 @@ func (l *fakeLinks) Status(peer Fingerprint) LinkView {
 	return LinkView{}
 }
 
-// SetStatus overrides the LinkView Status returns for peer.
 func (l *fakeLinks) SetStatus(peer Fingerprint, view LinkView) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.status[peer] = view
 }
 
-// Sent returns a copy of every frame this endpoint sent.
 func (l *fakeLinks) Sent() []sentFrame {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -686,7 +623,7 @@ func (l *fakeLinks) Sent() []sentFrame {
 	return out
 }
 
-// SetSendHook sets the hook called before Send enqueues a frame. The hook runs
+// SetSendHook sets the hook called before Send enqueues a frame; the hook runs
 // without any endpoint lock held.
 func (l *fakeLinks) SetSendHook(hook func(to Fingerprint, kind uint32)) {
 	l.mu.Lock()
@@ -714,10 +651,8 @@ type fakePeers struct {
 
 var _ PeerTable = (*fakePeers)(nil)
 
-// newFakePeers returns an empty peer table.
 func newFakePeers() *fakePeers { return &fakePeers{} }
 
-// Add inserts or replaces a peer.
 func (p *fakePeers) Add(peer pairing.Peer) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -727,14 +662,12 @@ func (p *fakePeers) Add(peer pairing.Peer) {
 	p.peers[peer.Fingerprint] = peer
 }
 
-// Remove deletes a peer.
 func (p *fakePeers) Remove(fp Fingerprint) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.peers, fp)
 }
 
-// IsPeer reports whether fp is in the table.
 func (p *fakePeers) IsPeer(fp Fingerprint) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -742,7 +675,6 @@ func (p *fakePeers) IsPeer(fp Fingerprint) bool {
 	return ok
 }
 
-// Peers returns a copy of the table.
 func (p *fakePeers) Peers() []pairing.Peer {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -753,7 +685,6 @@ func (p *fakePeers) Peers() []pairing.Peer {
 	return out
 }
 
-// EffectiveAlias returns LocalAlias when set, and Alias otherwise.
 func (p *fakePeers) EffectiveAlias(fp Fingerprint) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -783,7 +714,6 @@ type fakeSettings struct {
 
 var _ Settings = (*fakeSettings)(nil)
 
-// newFakeSettings returns settings whose data directory is dir.
 func newFakeSettings(dir string) *fakeSettings { return &fakeSettings{dir: dir} }
 
 func (s *fakeSettings) Public() bool {
@@ -846,56 +776,48 @@ func (s *fakeSettings) MaxTopicsPerPublisher() int {
 	return s.maxTopics
 }
 
-// SetPublic changes the public flag.
 func (s *fakeSettings) SetPublic(v bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.public = v
 }
 
-// SetAlias changes the configured alias.
 func (s *fakeSettings) SetAlias(v string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.alias = v
 }
 
-// SetAdvertised replaces the advertised addresses.
 func (s *fakeSettings) SetAdvertised(v []config.AdvertisedAddr) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.advertised = append([]config.AdvertisedAddr(nil), v...)
 }
 
-// SetDataDir changes the data directory.
 func (s *fakeSettings) SetDataDir(v string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dir = v
 }
 
-// SetReconcileInterval changes the reconcile interval.
 func (s *fakeSettings) SetReconcileInterval(v time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reconcile = v
 }
 
-// SetMaxRecords changes the total record limit.
 func (s *fakeSettings) SetMaxRecords(v int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.maxRecords = v
 }
 
-// SetMaxRecordsPerLink changes the per-link record limit.
 func (s *fakeSettings) SetMaxRecordsPerLink(v int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.maxPerLink = v
 }
 
-// SetMaxTopicsPerPublisher changes the per-publisher topic limit.
 func (s *fakeSettings) SetMaxTopicsPerPublisher(v int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -911,7 +833,6 @@ type testIdentity struct {
 
 var _ Identity = (*testIdentity)(nil)
 
-// newTestIdentity builds an identity from 32 bytes all equal to seed.
 func newTestIdentity(seed byte) Identity {
 	var s [ed25519.SeedSize]byte
 	for i := range s {
@@ -944,14 +865,12 @@ func (b *lockedBuffer) Write(p []byte) (int, error) {
 	return b.buf.Write(p)
 }
 
-// String returns everything written so far.
 func (b *lockedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
 }
 
-// newLogBuffer returns a text logger writing at debug level to a locked buffer.
 func newLogBuffer() (*slog.Logger, *lockedBuffer) {
 	b := &lockedBuffer{}
 	logger := slog.New(slog.NewTextHandler(b, &slog.HandlerOptions{Level: slog.LevelDebug}))

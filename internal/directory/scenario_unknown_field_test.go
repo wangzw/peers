@@ -10,8 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// scenarioUnknownFieldCard signs a card whose raw bytes carry an extra field
-// this version does not know (number 100), as a newer publisher could produce.
 func scenarioUnknownFieldCard(t *testing.T, seed byte) *storedRecord {
 	t.Helper()
 	pub, priv := recTestKey(seed)
@@ -28,9 +26,8 @@ func scenarioUnknownFieldCard(t *testing.T, seed byte) *storedRecord {
 	return rec
 }
 
-// TestScenarioForwardsUnknownFieldsByteForByte sends a card with an unknown
-// field through P and B to C and checks that the bytes C holds are identical to
-// the published ones: forwarding must not re-encode the record.
+// TestScenarioForwardsUnknownFieldsByteForByte checks that forwarding preserves a
+// card's raw bytes, including an unknown field, byte for byte.
 func TestScenarioForwardsUnknownFieldsByteForByte(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())

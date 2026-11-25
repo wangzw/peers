@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// TestFakeNetOrderedDelivery checks that frames arrive in the order they were sent.
 func TestFakeNetOrderedDelivery(t *testing.T) {
 	n := newFakeNet()
 	a, b := Fingerprint{1}, Fingerprint{2}
@@ -48,6 +49,7 @@ func TestFakeNetOrderedDelivery(t *testing.T) {
 	}
 }
 
+// TestFakeNetSendWhenDown checks that Send and Request on a down link report the failure.
 func TestFakeNetSendWhenDown(t *testing.T) {
 	n := newFakeNet()
 	a, b := Fingerprint{1}, Fingerprint{2}
@@ -67,6 +69,7 @@ func TestFakeNetSendWhenDown(t *testing.T) {
 	}
 }
 
+// TestFakeClockFiresTimers checks that a timer fires only after the fake clock passes it.
 func TestFakeClockFiresTimers(t *testing.T) {
 	c := newFakeClock(time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC))
 	tm := c.NewTimer(10 * time.Minute)
@@ -86,6 +89,7 @@ func TestFakeClockFiresTimers(t *testing.T) {
 	}
 }
 
+// TestSettleWaitsForChainedFrames checks that Settle waits for a frame sent by a handler.
 func TestSettleWaitsForChainedFrames(t *testing.T) {
 	n := newFakeNet()
 	s, a, b := Fingerprint{1}, Fingerprint{2}, Fingerprint{3}

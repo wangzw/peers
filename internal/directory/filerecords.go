@@ -6,10 +6,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// toFileRecords converts stored records to their file form. The records are
-// ordered by publisher bytes, kind and object; the input slice is not modified.
-// Source is the source fingerprint's lowercase hexadecimal form, or "" for a
-// locally issued record.
 func toFileRecords(recs []*storedRecord) []fileRecord {
 	sorted := append([]*storedRecord(nil), recs...)
 	sortRecords(sorted)
@@ -25,10 +21,9 @@ func toFileRecords(recs []*storedRecord) []fileRecord {
 	return out
 }
 
-// fromFileRecords parses each file entry with parseRecord and sets its source.
-// An entry whose Source is neither "" nor 64 lowercase hexadecimal digits, or
-// that fails parseRecord, is skipped and counted in dropped; it is never
-// treated as a locally issued record. Expiry is not checked here.
+// fromFileRecords parses each entry and sets its source; an entry with an
+// invalid Source or that fails parseRecord is dropped, never treated as locally
+// issued.
 func fromFileRecords(frs []fileRecord) (recs []*storedRecord, dropped int) {
 	for _, fr := range frs {
 		var source Fingerprint
@@ -56,7 +51,6 @@ func fromFileRecords(frs []fileRecord) (recs []*storedRecord, dropped int) {
 	return recs, dropped
 }
 
-// validSourceHex reports whether s is exactly 64 lowercase hexadecimal digits.
 func validSourceHex(s string) bool {
 	if len(s) != 64 {
 		return false

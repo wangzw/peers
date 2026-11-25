@@ -30,15 +30,12 @@ message RecordId {
 }
 
 message Record {
-  // raw is the serialized RecordBody. The receiver reads the publisher public
-  // key from raw, verifies the signature over raw, then parses the remaining
-  // fields.
+  // raw is the serialized RecordBody; the receiver reads the publisher public
+  // key from it and verifies the signature before parsing any other field.
   bytes raw = 1;
   bytes signature = 2;
 }
 
-// A revocation is not a kind of its own: its RecordId takes the kind and
-// object of the record it revokes, and its RecordBody payload is Revocation.
 enum RecordKind {
   RECORD_KIND_UNSPECIFIED = 0;
   RECORD_KIND_BROKER_CARD = 1;

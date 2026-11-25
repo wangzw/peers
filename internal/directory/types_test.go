@@ -7,9 +7,10 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// *pairing.Pairing is the production PeerTable implementation.
 var _ PeerTable = (*pairing.Pairing)(nil)
 
+// TestBrokerStatusString checks the String form of each BrokerStatus, including
+// unknown values.
 func TestBrokerStatusString(t *testing.T) {
 	cases := []struct {
 		status BrokerStatus
@@ -28,6 +29,8 @@ func TestBrokerStatusString(t *testing.T) {
 	}
 }
 
+// TestPairingSatisfiesPeerTable checks that *pairing.Pairing satisfies
+// PeerTable and that its peer fields are usable.
 func TestPairingSatisfiesPeerTable(t *testing.T) {
 	var table PeerTable = (*pairing.Pairing)(nil)
 	_ = table
@@ -54,6 +57,8 @@ func TestPairingSatisfiesPeerTable(t *testing.T) {
 	}
 }
 
+// TestRealClockUsesNow checks that realClock uses its now function when set and
+// the wall clock otherwise, and that NewTimer fires.
 func TestRealClockUsesNow(t *testing.T) {
 	fixed := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	c := realClock{now: func() time.Time { return fixed }}

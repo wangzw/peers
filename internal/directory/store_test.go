@@ -8,17 +8,14 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// storeFP builds a Fingerprint whose first byte is b, so tests can name
-// publishers and links compactly.
 func storeFP(b byte) Fingerprint {
 	var fp Fingerprint
 	fp[0] = b
 	return fp
 }
 
-// rec builds a stored record without signing it. The store only reads the
-// identifier, version, expiry, source and payload type, so a literal body is
-// enough here.
+// rec builds an unsigned stored record; the store only reads the identifier,
+// version, expiry, source and payload type.
 func rec(pub Fingerprint, kind directorypb.RecordKind, object string, version uint64, expires time.Time, source Fingerprint) *storedRecord {
 	r := &storedRecord{
 		id:      recordID{publisher: pub, kind: kind, object: object},
@@ -37,14 +34,14 @@ func rec(pub Fingerprint, kind directorypb.RecordKind, object string, version ui
 	return r
 }
 
-// revocation builds a record with a Revocation payload under the identifier of
-// the record it revokes.
 func revocation(pub Fingerprint, kind directorypb.RecordKind, object string, version uint64, expires time.Time, source Fingerprint) *storedRecord {
 	r := rec(pub, kind, object, version, expires, source)
 	r.body = &directorypb.RecordBody{Payload: &directorypb.RecordBody_Revocation{Revocation: &directorypb.Revocation{RevokedKind: kind}}}
 	return r
 }
 
+// TestAcceptKeepsHighestVersion checks that accept keeps the highest version
+// and treats an equal or lower version as stale.
 func TestAcceptKeepsHighestVersion(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -64,7 +61,6 @@ func TestAcceptKeepsHighestVersion(t *testing.T) {
 	if got := s.accept(rec(pub, card, "", 3, exp, link), later, lim); got != outcomeReplaced {
 		t.Fatalf("accept v3 after v2 = %v, want outcomeReplaced", got)
 	}
-	// Accepting the same version again must not replace the held record.
 	if got := s.accept(rec(pub, card, "", 3, exp, link), later, lim); got != outcomeStale {
 		t.Fatalf("accept v3 again = %v, want outcomeStale", got)
 	}
@@ -77,6 +73,8 @@ func TestAcceptKeepsHighestVersion(t *testing.T) {
 	}
 }
 
+// TestRevocationBlocksOlderVersion checks that an accepted revocation makes a
+// lower-version record of the same identifier stale.
 func TestRevocationBlocksOlderVersion(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -102,6 +100,8 @@ func TestRevocationBlocksOlderVersion(t *testing.T) {
 	}
 }
 
+// TestTotalLimitAllowsRenewal checks that the total limit rejects new
+// identifiers but accepts renewals of held ones.
 func TestTotalLimitAllowsRenewal(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 3, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -126,6 +126,8 @@ func TestTotalLimitAllowsRenewal(t *testing.T) {
 	}
 }
 
+// TestPerLinkLimit checks that the per-link limit counts only records accepted
+// from that link.
 func TestPerLinkLimit(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 4, maxTopicsPerPublisher: 100}
@@ -149,6 +151,8 @@ func TestPerLinkLimit(t *testing.T) {
 	}
 }
 
+// TestExpiryChecks checks that accept drops expired and too-distant expiries
+// and that purgeExpired removes records once they expire.
 func TestExpiryChecks(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -181,6 +185,8 @@ func TestExpiryChecks(t *testing.T) {
 	}
 }
 
+// TestReplaceMovesLinkCount checks that replacing a record under a different
+// source link moves the per-link count.
 func TestReplaceMovesLinkCount(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -205,6 +211,8 @@ func TestReplaceMovesLinkCount(t *testing.T) {
 	}
 }
 
+// TestOwnRecordRaisesHighest checks that accepting a record published by the
+// local Broker raises highestIssued.
 func TestOwnRecordRaisesHighest(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -229,6 +237,8 @@ func TestOwnRecordRaisesHighest(t *testing.T) {
 	}
 }
 
+// TestVersionsSkipExpired checks that versions returns every live record
+// ordered by publisher, kind and object.
 func TestVersionsSkipExpired(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -273,6 +283,9 @@ func TestVersionsSkipExpired(t *testing.T) {
 	}
 }
 
+// TestLoadKeepsOverLimitAndRaisesHighest checks that load keeps every parsed
+// record regardless of the limits, drops expired ones and takes the higher
+// highest_issued.
 func TestLoadKeepsOverLimitAndRaisesHighest(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	self := storeFP(7)
@@ -319,9 +332,7 @@ func TestLoadKeepsOverLimitAndRaisesHighest(t *testing.T) {
 }
 
 // TestPurgedRecordStillWaitsOutReplaceInterval checks that an identifier keeps
-// its replacement interval after its record expires and is purged. Without the
-// remembered acceptance instant, a short-lived record could be replaced at once
-// by presenting the successor as a brand-new identifier.
+// its replacement interval after its record has expired and been purged.
 func TestPurgedRecordStillWaitsOutReplaceInterval(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -341,8 +352,6 @@ func TestPurgedRecordStillWaitsOutReplaceInterval(t *testing.T) {
 		t.Fatal("the expired record was not purged")
 	}
 
-	// Six seconds after the first acceptance the successor is still inside the
-	// replacement interval, even though the record it replaces is gone.
 	if got := s.accept(rec(pub, card, "", 2, now.Add(time.Hour), link), now.Add(6*time.Second), lim); got != outcomeReplaceTooFast {
 		t.Fatalf("accept v2 six seconds later = %v, want outcomeReplaceTooFast", got)
 	}
@@ -356,8 +365,7 @@ func TestPurgedRecordStillWaitsOutReplaceInterval(t *testing.T) {
 }
 
 // TestLastAcceptedSetCappedAtMaxRecords checks that the remembered acceptance
-// instants are bounded by directory.max_records, so cycling short-lived records
-// cannot grow the set without bound.
+// instants are bounded by directory.max_records.
 func TestLastAcceptedSetCappedAtMaxRecords(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 2, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -382,15 +390,15 @@ func TestLastAcceptedSetCappedAtMaxRecords(t *testing.T) {
 	}
 }
 
-// TestLastAcceptedDropsOldestEntry checks that when the remembered acceptance
-// instants exceed directory.max_records, the entry with the earliest instant is
-// the one dropped and the newest is kept. The eviction scan walks a map, whose
-// order varies, so the check runs many trials: a scan that picks the last entry
-// it visits would pass by chance only rarely.
+// TestLastAcceptedDropsOldestEntry checks that evicting beyond
+// directory.max_records drops the earliest acceptance instant and keeps the
+// newest.
 func TestLastAcceptedDropsOldestEntry(t *testing.T) {
 	base := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	const limit = 4
 	const trials = 50
+	// The map is walked in varying order, so only repeated trials tell apart
+	// evicting the oldest entry from evicting the last visited.
 	for trial := 0; trial < trials; trial++ {
 		s := newStore(storeFP(99))
 		for i := 0; i <= limit; i++ {
@@ -411,11 +419,9 @@ func TestLastAcceptedDropsOldestEntry(t *testing.T) {
 	}
 }
 
-// TestReplaceIntervalLimitsLinkReplacements checks that a newer version arriving
-// from a link replaces a record the directory accepted less than the replacement
-// interval ago only after that interval has passed. A record published by the
-// local Broker is exempt, and a record with no link source, like one loaded from
-// the file, may be replaced at once.
+// TestReplaceIntervalLimitsLinkReplacements checks that a link replacement
+// waits out the replacement interval, while a local record or a record without
+// a source may be replaced at once.
 func TestReplaceIntervalLimitsLinkReplacements(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 10}
@@ -440,8 +446,6 @@ func TestReplaceIntervalLimitsLinkReplacements(t *testing.T) {
 		t.Fatalf("accept v3 at the interval = %v, want outcomeReplaced", got)
 	}
 
-	// The local publisher is exempt: a record signed here and returned by a
-	// link may raise its version at any time.
 	self := storeFP(7)
 	own := newStore(self)
 	if got := own.accept(rec(self, card, "", 1, exp, link), now, lim); got != outcomeAccepted {
@@ -451,8 +455,6 @@ func TestReplaceIntervalLimitsLinkReplacements(t *testing.T) {
 		t.Fatalf("replace own v1 with v2 = %v, want outcomeReplaced", got)
 	}
 
-	// A record with no link source, like one loaded from the file, may be
-	// replaced at once.
 	loaded := newStore(storeFP(99))
 	if got := loaded.accept(rec(pub, card, "", 1, exp, Fingerprint{}), now, lim); got != outcomeAccepted {
 		t.Fatalf("accept a record without a source = %v, want outcomeAccepted", got)

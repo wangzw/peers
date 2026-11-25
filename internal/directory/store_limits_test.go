@@ -10,9 +10,7 @@ import (
 )
 
 // TestPublisherLimitExcludesCard checks that a Broker card does not count
-// against the per-publisher limit: a publisher holding its full quota of public
-// declarations still has its card accepted, while one more declaration is
-// rejected.
+// against the per-publisher limit.
 func TestPublisherLimitExcludesCard(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 100, maxPerLink: 100, maxTopicsPerPublisher: 16}
@@ -39,10 +37,8 @@ func TestPublisherLimitExcludesCard(t *testing.T) {
 }
 
 // TestPublisherLimitCountsDeclarationsAndUnknownKinds checks that the
-// per-publisher limit counts public topic declarations and records of kinds
-// this version does not understand, so a publisher cannot bypass it with
-// another kind. Broker cards and revocations do not count, and a replacement
-// is never subject to the limit.
+// per-publisher limit counts public topic declarations and unknown kinds but
+// not cards or revocations, and never rejects a replacement.
 func TestPublisherLimitCountsDeclarationsAndUnknownKinds(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 2}
@@ -95,9 +91,7 @@ func TestPublisherLimitCountsDeclarationsAndUnknownKinds(t *testing.T) {
 }
 
 // TestPublisherTopicLimitIgnoresRevocations checks that a revocation does not
-// occupy the slot of the declaration it replaces: with a limit of two, two
-// declarations are accepted, a third is rejected, and after one declaration is
-// revoked the third is accepted again.
+// occupy a per-publisher slot.
 func TestPublisherTopicLimitIgnoresRevocations(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 2}
@@ -128,8 +122,7 @@ func TestPublisherTopicLimitIgnoresRevocations(t *testing.T) {
 }
 
 // TestPublisherTopicLimitCardFirst checks that a card accepted before any
-// declaration does not take one of the publisher's slots: with a limit of two,
-// the card and two declarations are all accepted.
+// declaration does not take one of the publisher's slots.
 func TestPublisherTopicLimitCardFirst(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 	lim := limits{maxRecords: 10, maxPerLink: 10, maxTopicsPerPublisher: 2}
@@ -154,7 +147,7 @@ func TestPublisherTopicLimitCardFirst(t *testing.T) {
 }
 
 // TestOpenWarnsOnExpiredLoadedRecords checks that a record dropped at load time
-// because it has expired is counted in the "dropped invalid records" warning.
+// because it has expired is counted in the dropped-records warning.
 func TestOpenWarnsOnExpiredLoadedRecords(t *testing.T) {
 	dir := t.TempDir()
 	expired := mustSignRecord(t, 61, recKindCard, "", 1, dirTestNow().Add(-time.Hour), recTestCard("hostGone"))

@@ -13,11 +13,10 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// replyBudget is the byte budget one Records frame must stay within.
 const replyBudget = 1 << 20
 
 // TestAcceptsOversizedRecordLogsReason checks that a record over the 64 KiB raw
-// limit is dropped on receipt and that the warning names the reason.
+// limit is dropped and the warning names the reason.
 func TestAcceptsOversizedRecordLogsReason(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -45,7 +44,7 @@ func TestAcceptsOversizedRecordLogsReason(t *testing.T) {
 }
 
 // TestRecordRequestDedupesIDs checks that asking twice for the same identifier
-// returns the record only once.
+// returns the record once.
 func TestRecordRequestDedupesIDs(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -72,9 +71,6 @@ func TestRecordRequestDedupesIDs(t *testing.T) {
 	}
 }
 
-// largeAnnouncements signs count announcements from distinct publishers, each
-// just under the per-record raw limit and large enough that all of them exceed
-// one reply budget.
 func largeAnnouncements(t *testing.T, count int) []*storedRecord {
 	t.Helper()
 	description := strings.Repeat("d", 60*1024)
@@ -86,8 +82,7 @@ func largeAnnouncements(t *testing.T, count int) []*storedRecord {
 }
 
 // TestRecordRequestSplitsReplyUnderBudget checks that a reply over the 1 MiB
-// budget is split into several frames, none over the budget, and that every
-// requested record appears exactly once across them.
+// budget is split into frames under the budget, each record appearing once.
 func TestRecordRequestSplitsReplyUnderBudget(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -151,9 +146,8 @@ func TestRecordRequestSplitsReplyUnderBudget(t *testing.T) {
 	}
 }
 
-// TestRecordRequestDeliversAllSplitFrames checks that the requesting peer ends
-// up holding every record when the reply spans several frames: the first batch
-// is the request's reply and the rest arrive as Records state frames.
+// TestRecordRequestDeliversAllSplitFrames checks that a peer ends up holding
+// every record when the reply spans several frames.
 func TestRecordRequestDeliversAllSplitFrames(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -181,9 +175,8 @@ func TestRecordRequestDeliversAllSplitFrames(t *testing.T) {
 	}
 }
 
-// TestReconcileRequestsInBatches checks that a peer needing 600 identifiers asks
-// for them in three requests of at most 256 identifiers each, and accepts all
-// of them.
+// TestReconcileRequestsInBatches checks that 600 identifiers are requested in
+// three requests of at most 256 each and all accepted.
 func TestReconcileRequestsInBatches(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -218,7 +211,7 @@ func TestReconcileRequestsInBatches(t *testing.T) {
 }
 
 // TestCloseCancelsBlockedFetch checks that Close cancels an in-flight record
-// request instead of waiting for its 30-second deadline.
+// request instead of waiting for its deadline.
 func TestCloseCancelsBlockedFetch(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)

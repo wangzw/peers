@@ -19,23 +19,12 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// eventTimeout is the package-wide fallback for a wait on an event that the
-// production code signals on a channel, or on a real timer, and that the test
-// cannot force. It only decides how long a wait that will never complete takes
-// to fail: the success path selects on the event itself and never spends this
-// time, so a larger value costs nothing. Thirty seconds is far above the worst
-// normal latency under load; it is not a claim that an event should take that
-// long.
 const eventTimeout = 30 * time.Second
 
-// dirTestNow is the fixed instant most tests run at.
 func dirTestNow() time.Time {
 	return time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 }
 
-// mustSignRecord signs a structurally valid record with the key derived from
-// seed. The result has no source; tests set it when the record is accepted from
-// a link.
 func mustSignRecord(t *testing.T, seed byte, kind directorypb.RecordKind, object string, version uint64, expires time.Time, payload any) *storedRecord {
 	t.Helper()
 	pub, priv := recTestKey(seed)
@@ -48,8 +37,6 @@ func mustSignRecord(t *testing.T, seed byte, kind directorypb.RecordKind, object
 	return r
 }
 
-// dirTestDeps builds Deps for a directory identified by seed, backed by the fake
-// network endpoint for that fingerprint.
 func dirTestDeps(t *testing.T, seed byte, dir string, net *fakeNet, logger *slog.Logger) (Deps, *fakeLinks) {
 	t.Helper()
 	id := newTestIdentity(seed)
@@ -65,7 +52,6 @@ func dirTestDeps(t *testing.T, seed byte, dir string, net *fakeNet, logger *slog
 	}, net.Endpoint(id.Fingerprint())
 }
 
-// decodeRecordList unmarshals a RecordList frame.
 func decodeRecordList(t *testing.T, payload []byte) *directorypb.RecordList {
 	t.Helper()
 	var list directorypb.RecordList
@@ -75,6 +61,7 @@ func decodeRecordList(t *testing.T, payload []byte) *directorypb.RecordList {
 	return &list
 }
 
+// TestOpenLoadsAndPurges checks that Open drops records that expired and keeps the rest.
 func TestOpenLoadsAndPurges(t *testing.T) {
 	dir := t.TempDir()
 	day := func(n int) time.Time { return time.Date(2026, 11, n, 12, 0, 0, 0, time.UTC) }
@@ -108,6 +95,7 @@ func TestOpenLoadsAndPurges(t *testing.T) {
 	}
 }
 
+// TestFileRecordsRoundTrip checks that file records survive a round trip unchanged and in a stable order.
 func TestFileRecordsRoundTrip(t *testing.T) {
 	exp := time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
 	card := mustSignRecord(t, 1, recKindCard, "", 10, exp, recTestCard("hostA"))
@@ -151,6 +139,7 @@ func TestFileRecordsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestFromFileRecordsDropsTampered checks that a record whose raw bytes were altered is dropped.
 func TestFromFileRecordsDropsTampered(t *testing.T) {
 	r := mustSignRecord(t, 2, recKindCard, "", 1, dirTestNow().Add(recordTTL), recTestCard("hostP"))
 	frs := toFileRecords([]*storedRecord{r})
@@ -166,6 +155,7 @@ func TestFromFileRecordsDropsTampered(t *testing.T) {
 	}
 }
 
+// TestFromFileRecordsDropsBadSource checks that a record with an unparsable source is dropped.
 func TestFromFileRecordsDropsBadSource(t *testing.T) {
 	r := mustSignRecord(t, 2, recKindCard, "", 1, dirTestNow().Add(recordTTL), recTestCard("hostP"))
 	frs := toFileRecords([]*storedRecord{r})
@@ -180,6 +170,7 @@ func TestFromFileRecordsDropsBadSource(t *testing.T) {
 	}
 }
 
+// TestOpenUnreadableFileStartsEmpty checks that a corrupt file starts an empty directory and logs one error.
 func TestOpenUnreadableFileStartsEmpty(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, fileName), []byte("not json"), 0o600); err != nil {
@@ -206,6 +197,7 @@ func TestOpenUnreadableFileStartsEmpty(t *testing.T) {
 	}
 }
 
+// TestOpenReadErrorFails checks that a read error makes Open fail with that error.
 func TestOpenReadErrorFails(t *testing.T) {
 	deps, _ := dirTestDeps(t, 1, t.TempDir(), newFakeNet(), nil)
 
@@ -218,13 +210,13 @@ func TestOpenReadErrorFails(t *testing.T) {
 	}
 }
 
-// zeroIdentity is an Identity with no fingerprint.
 type zeroIdentity struct{}
 
 func (zeroIdentity) Fingerprint() Fingerprint { return Fingerprint{} }
 func (zeroIdentity) PublicKey() []byte        { return make([]byte, ed25519.PublicKeySize) }
 func (zeroIdentity) Sign([]byte) []byte       { return nil }
 
+// TestOpenRejectsZeroIdentity checks that a zero fingerprint makes Open return ErrNoIdentity.
 func TestOpenRejectsZeroIdentity(t *testing.T) {
 	deps, _ := dirTestDeps(t, 1, t.TempDir(), newFakeNet(), nil)
 	deps.Identity = zeroIdentity{}
@@ -234,6 +226,7 @@ func TestOpenRejectsZeroIdentity(t *testing.T) {
 	}
 }
 
+// TestOpenUsesDepsNow checks that Open and the directory use the injected clock.
 func TestOpenUsesDepsNow(t *testing.T) {
 	dir := t.TempDir()
 	issued := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
@@ -261,6 +254,7 @@ func TestOpenUsesDepsNow(t *testing.T) {
 	}
 }
 
+// TestOpenDoesNotTouchLinks checks that Open registers no link handler and sends nothing.
 func TestOpenDoesNotTouchLinks(t *testing.T) {
 	deps, ep := dirTestDeps(t, 1, t.TempDir(), newFakeNet(), nil)
 	d, err := openWith(deps, newFakeClock(dirTestNow()), realFileOps{})
@@ -283,6 +277,7 @@ func TestOpenDoesNotTouchLinks(t *testing.T) {
 	}
 }
 
+// TestTrackLinksSendsFullList checks that a link coming up receives one full RecordList.
 func TestTrackLinksSendsFullList(t *testing.T) {
 	dir := t.TempDir()
 	now := dirTestNow()
@@ -326,6 +321,7 @@ func TestTrackLinksSendsFullList(t *testing.T) {
 	}
 }
 
+// TestBroadcastSkipsSourceAndDownPeers checks that a broadcast reaches only established peers other than the source.
 func TestBroadcastSkipsSourceAndDownPeers(t *testing.T) {
 	net := newFakeNet()
 	deps, ea := dirTestDeps(t, 1, t.TempDir(), net, nil)
@@ -371,6 +367,7 @@ func TestBroadcastSkipsSourceAndDownPeers(t *testing.T) {
 	}
 }
 
+// TestBroadcastSendsOutsideLock checks that broadcast calls Send without holding the directory lock.
 func TestBroadcastSendsOutsideLock(t *testing.T) {
 	net := newFakeNet()
 	deps, ea := dirTestDeps(t, 1, t.TempDir(), net, nil)
@@ -407,7 +404,6 @@ func TestBroadcastSendsOutsideLock(t *testing.T) {
 	}
 }
 
-// failOnceRenameOps fails the first rename and succeeds afterwards.
 type failOnceRenameOps struct {
 	realFileOps
 	mu     sync.Mutex
@@ -424,6 +420,7 @@ func (o *failOnceRenameOps) Rename(oldpath, newpath string) error {
 	return o.realFileOps.Rename(oldpath, newpath)
 }
 
+// TestPersistFailureKeepsMemoryAndRetries checks that a failed write keeps memory and the dirty flag for a retry.
 func TestPersistFailureKeepsMemoryAndRetries(t *testing.T) {
 	dir := t.TempDir()
 	logger, logs := newLogBuffer()
@@ -479,12 +476,7 @@ func TestPersistFailureKeepsMemoryAndRetries(t *testing.T) {
 	}
 }
 
-// TestClosePersistsChangeMadeDuringWrite checks that a change made while a
-// write is in flight is persisted before Close returns. The persistHook holds
-// the first write between its snapshot and saveFile; meanwhile a second
-// goroutine changes the directory and closes it. The afterPersistLock seam
-// reports when a caller holds persistMu, and the dirty flag read at that
-// instant shows whether the caller took its snapshot only after the lock.
+// TestClosePersistsChangeMadeDuringWrite checks that a change made while a write is in flight is persisted before Close returns.
 func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 	dir := t.TempDir()
 	deps, _ := dirTestDeps(t, 1, dir, newFakeNet(), nil)
@@ -516,10 +508,6 @@ func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 		<-release
 	}
 
-	// afterPersistLock fires once a persistIfDirty call holds persistMu. The
-	// first call is the write started below, which reaches the seam before it
-	// blocks in persistHook; the second is Close. Blocking on the second call
-	// keeps the dirty flag still while the test reads it.
 	closeAtLock := make(chan struct{})
 	releaseLock := make(chan struct{})
 	var releaseLockOnce sync.Once
@@ -576,10 +564,6 @@ func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 		}
 	})
 
-	// Let the held write finish so Close can acquire persistMu and reach the
-	// seam. An implementation that clears dirty before acquiring persistMu has
-	// already taken the newer snapshot by then; the held older write lands on
-	// top after the release.
 	unblock()
 
 	select {
@@ -616,6 +600,7 @@ func TestClosePersistsChangeMadeDuringWrite(t *testing.T) {
 	}
 }
 
+// TestCloseIsIdempotentAndStopsHandlers checks that Close may run twice and that handlers do nothing after it.
 func TestCloseIsIdempotentAndStopsHandlers(t *testing.T) {
 	deps, ep := dirTestDeps(t, 1, t.TempDir(), newFakeNet(), nil)
 	d, err := openWith(deps, newFakeClock(dirTestNow()), realFileOps{})

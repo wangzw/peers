@@ -9,7 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/directory/directorypb"
 )
 
-// refetchClock returns the fake clock that drives n's directory.
 func refetchClock(t *testing.T, n *reconcileNode) *fakeClock {
 	t.Helper()
 	clk, ok := n.d.clk.(*fakeClock)
@@ -19,7 +18,6 @@ func refetchClock(t *testing.T, n *reconcileNode) *fakeClock {
 	return clk
 }
 
-// refetchRequestsFor counts the RecordRequest frames ep sent to to that name id.
 func refetchRequestsFor(t *testing.T, ep *fakeLinks, to Fingerprint, id recordID) int {
 	t.Helper()
 	n := 0
@@ -34,7 +32,6 @@ func refetchRequestsFor(t *testing.T, ep *fakeLinks, to Fingerprint, id recordID
 	return n
 }
 
-// refetchHeldVersion returns the version n holds for id, or 0 when absent.
 func refetchHeldVersion(n *reconcileNode, id recordID) uint64 {
 	r, ok := reconcileLookup(n, id)
 	if !ok {
@@ -43,9 +40,8 @@ func refetchHeldVersion(n *reconcileNode, id recordID) uint64 {
 	return r.version
 }
 
-// TestRefetchDeferredReplacementAfterWindow checks that a replacement dropped
-// by the replacement interval is fetched once and accepted when the interval
-// expires, without waiting for another reconciliation pass.
+// TestRefetchDeferredReplacementAfterWindow checks that a replacement dropped by
+// the interval is fetched once and accepted when the interval ends.
 func TestRefetchDeferredReplacementAfterWindow(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -71,7 +67,6 @@ func TestRefetchDeferredReplacementAfterWindow(t *testing.T) {
 		t.Fatalf("B requested %d replacements inside the window, want 0", got)
 	}
 
-	// The deferral arms one timer for the end of the window.
 	clk.WaitTimers(t, 1)
 	clk.Advance(directoryReplaceInterval() - time.Second)
 
@@ -83,9 +78,8 @@ func TestRefetchDeferredReplacementAfterWindow(t *testing.T) {
 	}
 }
 
-// TestRefetchAtMostOncePerWindow checks that any number of newer versions
-// pushed inside the window still produce exactly one refetch when it expires,
-// and that the refetch takes the highest of them.
+// TestRefetchAtMostOncePerWindow checks that many newer versions inside the
+// window produce one refetch when it expires, taking the highest.
 func TestRefetchAtMostOncePerWindow(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -121,8 +115,7 @@ func TestRefetchAtMostOncePerWindow(t *testing.T) {
 }
 
 // TestRefetchSetCappedAtMaxRecords checks that the deferred set holds at most
-// directory.max_records identifiers: the entries beyond the cap are not
-// recorded and wait for the next reconciliation pass.
+// directory.max_records identifiers.
 func TestRefetchSetCappedAtMaxRecords(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -139,9 +132,6 @@ func TestRefetchSetCappedAtMaxRecords(t *testing.T) {
 	for i := 0; i < held; i++ {
 		r := reconcileCard(t, byte(200+i), 1, fmt.Sprintf("host%d", i))
 		ids = append(ids, r.id)
-		// A locally put record bypasses the count limit, so the store can hold
-		// more records than directory.max_records and the deferred set can run
-		// into its cap.
 		b.d.mu.Lock()
 		b.d.st.putOwn(r)
 		r.acceptedAt = now
@@ -185,11 +175,8 @@ func TestRefetchSetCappedAtMaxRecords(t *testing.T) {
 	}
 }
 
-// TestRefetchNotLostWhenSetEmpties checks the hand-off between a refetch loop
-// that finds the deferred set empty and a noteRefetch that adds an identifier
-// at that same instant. The loop must clear refetchRunning in the same critical
-// section as its emptiness check, so the late identifier starts a new waiter
-// instead of sending a wake nobody reads.
+// TestRefetchNotLostWhenSetEmpties checks that an identifier added as the
+// deferred set empties starts a new waiter instead of being lost.
 func TestRefetchNotLostWhenSetEmpties(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -202,7 +189,6 @@ func TestRefetchNotLostWhenSetEmpties(t *testing.T) {
 	earlier := reconcileCard(t, 210, 1, "earlier")
 	later := reconcileCard(t, 211, 1, "later")
 
-	// Arm the loop with one deferred identifier; it parks on that deadline.
 	b.d.noteRefetch(p.fp, map[recordID]time.Time{earlier.id: b.d.now().Add(10 * time.Minute)})
 	clk.WaitTimers(t, 1)
 
@@ -210,13 +196,11 @@ func TestRefetchNotLostWhenSetEmpties(t *testing.T) {
 	hookDone := make(chan struct{})
 	b.d.refetchIdle = func() {
 		once.Do(func() {
-			// Add an identifier at the moment the loop found the set empty.
 			b.d.noteRefetch(p.fp, map[recordID]time.Time{later.id: b.d.now().Add(time.Minute)})
 			close(hookDone)
 		})
 	}
 
-	// Waking the loop with the set empty runs the hook at the hand-off point.
 	b.d.mu.Lock()
 	pr := b.d.recon[p.fp]
 	clearRefetchLocked(pr, earlier.id)
@@ -227,7 +211,6 @@ func TestRefetchNotLostWhenSetEmpties(t *testing.T) {
 	case <-time.After(eventTimeout):
 		t.Fatal("the refetch loop did not reach the empty-set hand-off")
 	}
-	// The late identifier must have a waiter and therefore a timer.
 	clk.WaitTimers(t, 1)
 	clk.Advance(time.Minute)
 
@@ -239,8 +222,8 @@ func TestRefetchNotLostWhenSetEmpties(t *testing.T) {
 	}
 }
 
-// TestRefetchClearedOnLinkDown checks that a link going down discards the
-// peer's deferred set, so an old deadline cannot fetch through a later link.
+// TestRefetchClearedOnLinkDown checks that a link going down discards the peer's
+// deferred set.
 func TestRefetchClearedOnLinkDown(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -274,9 +257,8 @@ func TestRefetchClearedOnLinkDown(t *testing.T) {
 	}
 }
 
-// TestPurgedRecordStillHoldsReplacementWindow checks that a record which
-// expired before its replacement interval ended is not replaced at once. The
-// newer version is held back and fetched when the interval ends.
+// TestPurgedRecordStillHoldsReplacementWindow checks that a record purged after
+// expiring still holds its replacement window.
 func TestPurgedRecordStillHoldsReplacementWindow(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -289,14 +271,12 @@ func TestPurgedRecordStillHoldsReplacementWindow(t *testing.T) {
 	v1 := mustSignRecord(t, 200, recKindCard, "", 1, b.d.now().Add(2*time.Second), recTestCard("hostX"))
 	b.d.acceptBatch(p.fp, []*directorypb.Record{v1.wire()})
 
-	// The record expires two seconds later and the maintenance pass purges it.
 	clk.Advance(2 * time.Second)
 	b.d.maintain(b.d.now(), b.d.now())
 	if _, ok := reconcileLookup(b, v1.id); ok {
 		t.Fatal("the expired record was not purged")
 	}
 
-	// Six seconds after acceptance, the successor is still a replacement.
 	clk.Advance(4 * time.Second)
 	v2 := mustSignRecord(t, 200, recKindCard, "", 2, b.d.now().Add(time.Hour), recTestCard("hostX"))
 	reconcileInject(t, p, v2)
@@ -305,7 +285,6 @@ func TestPurgedRecordStillHoldsReplacementWindow(t *testing.T) {
 		t.Fatalf("held version = %d six seconds after acceptance, want none", r.version)
 	}
 
-	// The deferred fetch takes the successor once the interval ends.
 	clk.WaitTimers(t, 1)
 	clk.Advance(directoryReplaceInterval() - 6*time.Second)
 	reconcileAwait(t, net, "the deferred successor of the purged record", func() bool {
@@ -313,10 +292,8 @@ func TestPurgedRecordStillHoldsReplacementWindow(t *testing.T) {
 	})
 }
 
-// TestRefetchWaiterLeavesOnLinkDown checks that the link-down notification
-// wakes the peer's deferred-refetch waiter, so it leaves at once rather than
-// holding its slot until the deadline. A peer therefore never has an old waiter
-// and a new one after reconnecting.
+// TestRefetchWaiterLeavesOnLinkDown checks that a link going down wakes the
+// deferred-refetch waiter.
 func TestRefetchWaiterLeavesOnLinkDown(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -336,7 +313,6 @@ func TestRefetchWaiterLeavesOnLinkDown(t *testing.T) {
 
 	net.Disconnect(p.fp, b.fp)
 
-	// The waiter must leave without the clock being advanced to its deadline.
 	done := make(chan struct{})
 	go func() {
 		b.d.refetching.Wait()
@@ -350,7 +326,7 @@ func TestRefetchWaiterLeavesOnLinkDown(t *testing.T) {
 }
 
 // TestRefetchClearedOnUnpair checks that unpairing a peer discards its deferred
-// set, just as it discards the rest of the link's reconcile state.
+// set.
 func TestRefetchClearedOnUnpair(t *testing.T) {
 	net := newFakeNet()
 	b := newReconcileNode(t, net, 1)
@@ -368,8 +344,6 @@ func TestRefetchClearedOnUnpair(t *testing.T) {
 	b.d.acceptBatch(p.fp, []*directorypb.Record{v2.wire()})
 	clk.WaitTimers(t, 1)
 
-	// Unpair removes the peer, and pairing drops the link, which delivers the
-	// link-down notification the directory sees.
 	peers, ok := b.d.peers.(*fakePeers)
 	if !ok {
 		t.Fatalf("peer table type = %T, want *fakePeers", b.d.peers)

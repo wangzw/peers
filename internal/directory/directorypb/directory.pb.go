@@ -22,8 +22,6 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// A revocation is not a kind of its own: its RecordId takes the kind and
-// object of the record it revokes, and its RecordBody payload is Revocation.
 type RecordKind int32
 
 const (
@@ -319,9 +317,8 @@ func (x *RecordId) GetObject() string {
 
 type Record struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// raw is the serialized RecordBody. The receiver reads the publisher public
-	// key from raw, verifies the signature over raw, then parses the remaining
-	// fields.
+	// raw is the serialized RecordBody; the receiver reads the publisher public
+	// key from it and verifies the signature before parsing any other field.
 	Raw           []byte `protobuf:"bytes,1,opt,name=raw,proto3" json:"raw,omitempty"`
 	Signature     []byte `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
 	unknownFields protoimpl.UnknownFields

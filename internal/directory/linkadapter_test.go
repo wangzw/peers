@@ -9,8 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// fakeLinkAPI records the calls the adapter makes and lets tests drive the
-// registered handlers directly. No real link is created.
 type fakeLinkAPI struct {
 	sentPeer  link.Fingerprint
 	sentFrame link.Frame
@@ -65,6 +63,8 @@ func (f *fakeLinkAPI) State(peer link.Fingerprint) link.LinkState {
 	return f.stateValue
 }
 
+// TestMapLinkState checks that every link phase and failure reason maps to the
+// directory's view.
 func TestMapLinkState(t *testing.T) {
 	phases := []struct {
 		in   link.Phase
@@ -122,13 +122,14 @@ func TestMapLinkState(t *testing.T) {
 	}
 }
 
+// TestAdapterFramesUseLinkFrame checks that the adapter converts frames to and
+// from link.Frame in each direction.
 func TestAdapterFramesUseLinkFrame(t *testing.T) {
 	fake := &fakeLinkAPI{}
 	links := newLinkTransport(fake)
 	peer := Fingerprint{1, 2, 3}
 	ctx := context.Background()
 
-	// Send converts kind and payload into a link.Frame.
 	payload := []byte{0xde, 0xad}
 	if err := links.Send(peer, 300, payload); err != nil {
 		t.Fatalf("Send returned %v", err)
@@ -140,7 +141,6 @@ func TestAdapterFramesUseLinkFrame(t *testing.T) {
 		t.Errorf("link Send frame = %+v, want kind 300 with payload %v", fake.sentFrame, payload)
 	}
 
-	// Send forwards the link error unchanged.
 	sendErr := errors.New("send failed")
 	fake.sendErr = sendErr
 	if err := links.Send(peer, 300, payload); !errors.Is(err, sendErr) {
@@ -148,7 +148,6 @@ func TestAdapterFramesUseLinkFrame(t *testing.T) {
 	}
 	fake.sendErr = nil
 
-	// Request converts the request and unwraps the reply.
 	fake.requestSent = true
 	fake.requestReply = link.Frame{Kind: 302, Payload: []byte{0xbe, 0xef}}
 	reqPayload := []byte{0x01}
@@ -166,7 +165,6 @@ func TestAdapterFramesUseLinkFrame(t *testing.T) {
 		t.Errorf("Request returned (%d, %v), want (302, [be ef])", kind, reply)
 	}
 
-	// HandleState unwraps the link frame before calling the directory handler.
 	var gotPeer Fingerprint
 	var gotPayload []byte
 	links.HandleState(300, func(p Fingerprint, pl []byte) {
@@ -181,7 +179,6 @@ func TestAdapterFramesUseLinkFrame(t *testing.T) {
 		t.Errorf("state handler got peer=%v payload=%v, want peer %v payload %v", gotPeer, gotPayload, peer, statePayload)
 	}
 
-	// HandleRequest wraps the handler's reply in a link frame.
 	links.HandleRequest(301, func(ctx context.Context, p Fingerprint, pl []byte) (uint32, []byte) {
 		if p != peer || !bytes.Equal(pl, reqPayload) {
 			t.Errorf("request handler got peer=%v payload=%v, want peer %v payload %v", p, pl, peer, reqPayload)
@@ -197,6 +194,8 @@ func TestAdapterFramesUseLinkFrame(t *testing.T) {
 	}
 }
 
+// TestAdapterPassesUnsupportedError checks that an unsupported request error is
+// returned as *link.UnsupportedError.
 func TestAdapterPassesUnsupportedError(t *testing.T) {
 	fake := &fakeLinkAPI{
 		requestSent: true,
@@ -220,6 +219,8 @@ func TestAdapterPassesUnsupportedError(t *testing.T) {
 	}
 }
 
+// TestAdapterStatusMapsState checks that Status maps the link state into a
+// LinkView.
 func TestAdapterStatusMapsState(t *testing.T) {
 	fake := &fakeLinkAPI{stateValue: link.LinkState{
 		Phase:       link.PhaseRejected,
@@ -239,6 +240,7 @@ func TestAdapterStatusMapsState(t *testing.T) {
 	}
 }
 
+// TestAdapterSubscribeForwards checks that Subscribe forwards both callbacks.
 func TestAdapterSubscribeForwards(t *testing.T) {
 	fake := &fakeLinkAPI{}
 	links := newLinkTransport(fake)

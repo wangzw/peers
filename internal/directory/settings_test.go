@@ -7,9 +7,7 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestConfigSettingsDefaultsWhenNotLoaded checks that every setting falls back
-// to the config package default before Load. A zero limit would make the
-// directory reject every record.
+// TestConfigSettingsDefaultsWhenNotLoaded checks the value every setting returns before the config is loaded.
 func TestConfigSettingsDefaultsWhenNotLoaded(t *testing.T) {
 	s := configSettings{}
 
@@ -39,10 +37,7 @@ func TestConfigSettingsDefaultsWhenNotLoaded(t *testing.T) {
 	}
 }
 
-// TestConfigSettingsReadsLiveValues checks that each call goes through the read
-// seam, so a changed value is visible without rebuilding the settings. The seam
-// returns ErrUnknownKey for keys this test does not set, which catches a
-// misspelled key name.
+// TestConfigSettingsReadsLiveValues checks that each call reads the current value through the seam.
 func TestConfigSettingsReadsLiveValues(t *testing.T) {
 	values := map[string]config.Value{
 		"broker.public":         {Kind: config.KindBool, Bool: true},

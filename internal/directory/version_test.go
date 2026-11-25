@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+// TestNextVersionUsesClock checks that nextVersion returns the clock when no
+// version has been issued yet.
 func TestNextVersionUsesClock(t *testing.T) {
 	now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	want := uint64(now.UnixMilli())
@@ -14,6 +16,8 @@ func TestNextVersionUsesClock(t *testing.T) {
 	}
 }
 
+// TestNextVersionUsesClockWhenHigher checks that nextVersion takes the clock
+// when it exceeds a lower stored highest.
 func TestNextVersionUsesClockWhenHigher(t *testing.T) {
 	now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	highest := uint64(now.UnixMilli()) - 1000
@@ -23,6 +27,8 @@ func TestNextVersionUsesClockWhenHigher(t *testing.T) {
 	}
 }
 
+// TestNextVersionClockBackwards checks that nextVersion keeps rising when the
+// clock is behind the highest issued version.
 func TestNextVersionClockBackwards(t *testing.T) {
 	now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	highest := uint64(now.UnixMilli()) + uint64(time.Hour/time.Millisecond)
@@ -32,6 +38,8 @@ func TestNextVersionClockBackwards(t *testing.T) {
 	}
 }
 
+// TestNextVersionSaturates checks that nextVersion saturates at math.MaxUint64
+// instead of wrapping to zero.
 func TestNextVersionSaturates(t *testing.T) {
 	now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	if got := nextVersion(now, math.MaxUint64); got != math.MaxUint64 {
@@ -39,13 +47,17 @@ func TestNextVersionSaturates(t *testing.T) {
 	}
 }
 
+// TestNextVersionNegativeClock checks that nextVersion treats a pre-1970 clock
+// as zero.
 func TestNextVersionNegativeClock(t *testing.T) {
-	before := time.Date(1969, 12, 31, 23, 59, 59, 0, time.UTC) // negative Unix milliseconds
+	before := time.Date(1969, 12, 31, 23, 59, 59, 0, time.UTC)
 	if got := nextVersion(before, 0); got != 1 {
 		t.Fatalf("nextVersion(%v, 0) = %d, want 1", before, got)
 	}
 }
 
+// TestExpiryBoundaries checks isExpired and expiryTooFar at their exact
+// boundaries.
 func TestExpiryBoundaries(t *testing.T) {
 	now := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 
@@ -64,6 +76,8 @@ func TestExpiryBoundaries(t *testing.T) {
 	}
 }
 
+// TestRenewalDueBoundary checks issuedAt and renewalDue at and around the
+// renewal boundary.
 func TestRenewalDueBoundary(t *testing.T) {
 	issued := time.Date(2026, 11, 18, 0, 0, 0, 0, time.UTC)
 	expires := issued.Add(recordTTL)

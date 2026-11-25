@@ -19,15 +19,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// The scenario tests wire several Directory instances into one fake network and
-// walk the PRD acceptance cases end to end. They deliberately use Start's two
-// side effects (frame registration and the startup check) and one maintenance
-// wakeup through bringUp and tick, so they do not depend on the maintenance
-// loop. Every helper is prefixed with "scenario" to avoid collisions with the
-// other test files in this package.
-
-// scenarioNode is one Directory wired to a fake network endpoint and a shared
-// fake clock.
 type scenarioNode struct {
 	d     *Directory
 	ep    *fakeLinks
@@ -37,8 +28,6 @@ type scenarioNode struct {
 	logs  *lockedBuffer
 }
 
-// newScenarioNode opens a private Broker identified by seed on the shared fake
-// clock and network.
 func newScenarioNode(t *testing.T, net *fakeNet, clock *fakeClock, seed byte) *scenarioNode {
 	t.Helper()
 	id := newTestIdentity(seed)
@@ -67,18 +56,13 @@ func newScenarioNode(t *testing.T, net *fakeNet, clock *fakeClock, seed byte) *s
 	}
 }
 
-// bringUp replaces Start in the scenario tests: it registers the reconciliation
-// handlers, subscribes to link notifications and runs the startup check. It does
-// not start the maintenance loop.
+// bringUp deliberately does not start the maintenance loop.
 func bringUp(d *Directory) {
 	d.registerReconcile()
 	d.trackLinks()
 	d.startupCheck(d.now())
 }
 
-// tick replaces one wakeup of the maintenance loop: it purges expired records,
-// renews anything due and persists a pending change. Offline instances are not
-// ticked.
 func tick(d *Directory) {
 	now := d.now()
 	d.mu.Lock()
@@ -94,18 +78,12 @@ func tick(d *Directory) {
 	d.persistIfDirty()
 }
 
-// scenarioConnect connects every adjacent pair of nodes.
 func scenarioConnect(net *fakeNet, nodes ...*scenarioNode) {
 	for i := 0; i+1 < len(nodes); i++ {
 		net.Connect(nodes[i].fp, nodes[i+1].fp)
 	}
 }
 
-// scenarioWait drains the fake network until cond reports true. The fake net
-// delivers a full list sent from onUp only after the peer's onUp has returned,
-// so the link-up exchange needs no resend. The loop re-settles instead of
-// sleeping because a fetch goroutine can start after the network looked idle
-// once.
 func scenarioWait(t *testing.T, net *fakeNet, _ []*scenarioNode, desc string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -121,10 +99,6 @@ func scenarioWait(t *testing.T, net *fakeNet, _ []*scenarioNode, desc string, co
 	}
 }
 
-// scenarioRelaxReplaceInterval advances the shared clock past the replacement
-// interval and makes every node reconcile, so a newer version the interval held
-// back is fetched on the next pass, then waits for cond. It models the cost of
-// the interval: a legitimate change can wait for the next reconciliation.
 func scenarioRelaxReplaceInterval(t *testing.T, net *fakeNet, clock *fakeClock, nodes []*scenarioNode, desc string, cond func() bool) {
 	t.Helper()
 	clock.Advance(directoryReplaceInterval())
@@ -134,8 +108,8 @@ func scenarioRelaxReplaceInterval(t *testing.T, net *fakeNet, clock *fakeClock, 
 	scenarioWait(t, net, nodes, desc, cond)
 }
 
-// scenarioInject seeds n with an already signed record as if it had arrived
-// from a link. A zero source keeps the per-link limit out of the way.
+// scenarioInject seeds n with an already signed record whose source is empty, so
+// the per-link limit does not count it.
 func scenarioInject(t *testing.T, n *scenarioNode, r *storedRecord) {
 	t.Helper()
 	cp := *r
@@ -148,14 +122,12 @@ func scenarioInject(t *testing.T, n *scenarioNode, r *storedRecord) {
 	}
 }
 
-// scenarioHeld returns the record n holds for id.
 func scenarioHeld(d *Directory, id recordID) (*storedRecord, bool) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.st.get(id)
 }
 
-// scenarioHeldCard returns the card record n holds for fp or fails the test.
 func scenarioHeldCard(t *testing.T, n *scenarioNode, fp Fingerprint) *storedRecord {
 	t.Helper()
 	r, ok := scenarioHeld(n.d, scenarioCardID(fp))
@@ -173,7 +145,6 @@ func scenarioTopicID(fp Fingerprint, name string) recordID {
 	return recordID{publisher: fp, kind: recKindTopic, object: name}
 }
 
-// scenarioFind returns the broker entry for fp.
 func scenarioFind(brokers []KnownBroker, fp Fingerprint) (KnownBroker, bool) {
 	for _, b := range brokers {
 		if b.Fingerprint == fp {
@@ -183,13 +154,11 @@ func scenarioFind(brokers []KnownBroker, fp Fingerprint) (KnownBroker, bool) {
 	return KnownBroker{}, false
 }
 
-// scenarioHas reports whether fp is listed.
 func scenarioHas(brokers []KnownBroker, fp Fingerprint) bool {
 	_, ok := scenarioFind(brokers, fp)
 	return ok
 }
 
-// scenarioNonPeerCount counts the card holders that are not paired peers.
 func scenarioNonPeerCount(d *Directory) int {
 	n := 0
 	for _, b := range d.Brokers() {
@@ -200,13 +169,11 @@ func scenarioNonPeerCount(d *Directory) int {
 	return n
 }
 
-// scenarioTopicFound reports whether name is in the public topic list.
 func scenarioTopicFound(d *Directory, name string) bool {
 	_, ok := scenarioTopicDescription(d, name)
 	return ok
 }
 
-// scenarioTopicDescription returns the merged description of name.
 func scenarioTopicDescription(d *Directory, name string) (string, bool) {
 	for _, t := range d.PublicTopics() {
 		if t.Name == name {
@@ -216,7 +183,6 @@ func scenarioTopicDescription(d *Directory, name string) (string, bool) {
 	return "", false
 }
 
-// scenarioSentRequestIDs decodes every RecordRequest endpoint ep sent to to.
 func scenarioSentRequestIDs(ep *fakeLinks, to Fingerprint) []*directorypb.RecordId {
 	var ids []*directorypb.RecordId
 	for _, f := range ep.Sent() {
@@ -232,10 +198,6 @@ func scenarioSentRequestIDs(ep *fakeLinks, to Fingerprint) []*directorypb.Record
 	return ids
 }
 
-// scenarioPushedList reports whether ep sent to recipient an incremental
-// RecordList holding exactly one entry for id with a version above
-// afterVersion. A directory pushes such a list as soon as it signs a
-// revocation, without waiting for the next reconciliation round.
 func scenarioPushedList(t *testing.T, ep *fakeLinks, recipient Fingerprint, id recordID, afterVersion uint64) bool {
 	t.Helper()
 	for _, f := range ep.Sent() {
@@ -257,7 +219,6 @@ func scenarioPushedList(t *testing.T, ep *fakeLinks, recipient Fingerprint, id r
 	return false
 }
 
-// scenarioRequested reports whether ids names id.
 func scenarioRequested(ids []*directorypb.RecordId, want recordID) bool {
 	for _, pid := range ids {
 		if id, ok := idFromProto(pid); ok && id == want {
@@ -267,8 +228,6 @@ func scenarioRequested(ids []*directorypb.RecordId, want recordID) bool {
 	return false
 }
 
-// scenarioCapture records the payloads of the reconciliation frames a node
-// receives.
 type scenarioCapture struct {
 	mu       sync.Mutex
 	payloads [][]byte
@@ -309,7 +268,8 @@ func scenarioCaptureFrames(n *scenarioNode) *scenarioCapture {
 	return c
 }
 
-// TestWalkthrough follows the eight steps of the design walkthrough.
+// TestWalkthrough checks the public-card lifecycle of issue, renewal, revocation
+// and expiry across a connected network.
 func TestWalkthrough(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -325,7 +285,6 @@ func TestWalkthrough(t *testing.T) {
 	all := []*scenarioNode{a, b, c}
 	scenarioWait(t, net, all, "the links to settle", func() bool { return true })
 
-	// Step 1 and 2: A becomes public and B fetches the card.
 	if err := a.d.SetPublic(true); err != nil {
 		t.Fatalf("SetPublic(true): %v", err)
 	}
@@ -335,7 +294,6 @@ func TestWalkthrough(t *testing.T) {
 		return ok && !r.isRevocation()
 	})
 
-	// Step 3 and 4: C lists hostA as a connectable card holder.
 	entry, ok := scenarioFind(c.d.Brokers(), a.fp)
 	if !ok {
 		t.Fatalf("C does not list A")
@@ -351,7 +309,6 @@ func TestWalkthrough(t *testing.T) {
 		t.Fatalf("C lists A as %v, want connectable", entry.Status)
 	}
 
-	// Step 5: a day later the card is renewed and reaches every node.
 	v1 := scenarioHeldCard(t, c, a.fp).version
 	clock.Advance(24 * time.Hour)
 	tick(a.d)
@@ -370,8 +327,6 @@ func TestWalkthrough(t *testing.T) {
 	}
 	oldCard := *scenarioHeldCard(t, c, a.fp)
 
-	// Step 6: going private revokes the card everywhere. The revocation is
-	// pushed right away rather than on a later reconciliation round.
 	if err := a.d.SetPublic(false); err != nil {
 		t.Fatalf("SetPublic(false): %v", err)
 	}
@@ -394,8 +349,6 @@ func TestWalkthrough(t *testing.T) {
 		t.Fatalf("C still lists A after the revocation")
 	}
 
-	// Step 7: a Broker that still holds the old card learns the revocation
-	// without C asking it for the stale card.
 	d := newScenarioNode(t, net, clock, 4)
 	bringUp(d.d)
 	scenarioInject(t, d, &oldCard)
@@ -412,7 +365,6 @@ func TestWalkthrough(t *testing.T) {
 		t.Fatalf("C asked D for A's card")
 	}
 
-	// Step 8: the revocation expires and no node keeps A's record.
 	clock.Advance(7 * 24 * time.Hour)
 	online := []*scenarioNode{a, b, c, d}
 	for _, n := range online {
@@ -429,8 +381,7 @@ func TestWalkthrough(t *testing.T) {
 	}
 }
 
-// TestCardReachesWholeNetwork covers REQ-broker-discovery-003 and
-// REQ-broker-discovery-002: a card crosses three hops unchanged.
+// TestCardReachesWholeNetwork checks that a card crosses three hops unchanged.
 func TestCardReachesWholeNetwork(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -467,15 +418,15 @@ func TestCardReachesWholeNetwork(t *testing.T) {
 	}
 }
 
-// TestPrivateBrokerNotLeaked covers REQ-broker-discovery-004 and
-// REQ-broker-discovery-001: nothing about a private Broker crosses its links.
+// TestPrivateBrokerNotLeaked checks that nothing about a private Broker crosses
+// its links.
 func TestPrivateBrokerNotLeaked(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
 	a := newScenarioNode(t, net, clock, 1)
 	b := newScenarioNode(t, net, clock, 2)
 	c := newScenarioNode(t, net, clock, 3)
-	a.set.SetAlias("hostA") // never published, must not appear anywhere
+	a.set.SetAlias("hostA")
 	b.set.SetAlias("hostB")
 	b.set.SetPublic(true)
 	c.set.SetAlias("hostC")
@@ -525,8 +476,8 @@ func TestPrivateBrokerNotLeaked(t *testing.T) {
 	}
 }
 
-// TestPrivateBrokerLearnsOthers covers REQ-broker-discovery-005: a private
-// Broker still learns cards from the rest of the connected network.
+// TestPrivateBrokerLearnsOthers checks that a private Broker still learns cards
+// from the rest of the network.
 func TestPrivateBrokerLearnsOthers(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -565,8 +516,8 @@ func TestPrivateBrokerLearnsOthers(t *testing.T) {
 	}
 }
 
-// TestCardLifetime covers REQ-broker-discovery-007: a card survives six days
-// and is gone on the eighth.
+// TestCardLifetime checks that a card survives six days offline and is gone on
+// the eighth.
 func TestCardLifetime(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -600,8 +551,8 @@ func TestCardLifetime(t *testing.T) {
 	}
 }
 
-// TestTenDaysOnline covers REQ-broker-discovery-008: a public Broker renews
-// daily and stays visible for ten days of hourly steps.
+// TestTenDaysOnline checks that a public Broker renews daily and stays visible
+// for ten days.
 func TestTenDaysOnline(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -629,8 +580,8 @@ func TestTenDaysOnline(t *testing.T) {
 	}
 }
 
-// TestRevocationWithin covers REQ-broker-discovery-009: a revocation is pushed
-// at once and a stale card cannot bring the entry back.
+// TestRevocationWithin checks that a revocation reaches the network and a stale
+// card cannot bring the entry back.
 func TestRevocationWithin(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -669,8 +620,8 @@ func TestRevocationWithin(t *testing.T) {
 	}
 }
 
-// TestTotalLimitScenario covers REQ-broker-discovery-011: a full directory
-// rejects new identifiers but keeps accepting renewals of the ones it holds.
+// TestTotalLimitScenario checks that a full directory rejects new identifiers
+// but keeps accepting renewals.
 func TestTotalLimitScenario(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -717,8 +668,6 @@ func TestTotalLimitScenario(t *testing.T) {
 		heldVersions[entry.Fingerprint] = r.version
 	}
 
-	// A day later every publisher renews and the three held identifiers accept
-	// the replacement even though the directory is full.
 	clock.Advance(24 * time.Hour)
 	injectCards(5, 100, clock.Now())
 	p.d.reconcileAll()
@@ -736,7 +685,6 @@ func TestTotalLimitScenario(t *testing.T) {
 		t.Fatalf("B lists %d card holders after renewal, want 3", got)
 	}
 
-	// Past the original expiry of the first records the renewals are still live.
 	clock.Advance(6*24*time.Hour + 23*time.Hour)
 	tick(b.d)
 	net.Settle(t)
@@ -750,8 +698,8 @@ func TestTotalLimitScenario(t *testing.T) {
 	}
 }
 
-// TestPerLinkLimitScenario covers REQ-broker-discovery-015: one peer can fill
-// only its per-link share, another peer can still introduce a card.
+// TestPerLinkLimitScenario checks that one peer fills only its per-link share
+// while another peer can still introduce a card.
 func TestPerLinkLimitScenario(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -808,9 +756,9 @@ func TestPerLinkLimitScenario(t *testing.T) {
 	}
 }
 
-// TestUnknownAddressKindPropagates covers REQ-broker-discovery-017: an address
-// kind this version does not know is skipped by the views but travels with the
-// card.
+// TestUnknownAddressKindPropagates checks that a card with an address kind this
+// version does not know still reaches other Brokers and is listed with only its
+// recognized addresses.
 func TestUnknownAddressKindPropagates(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -847,8 +795,8 @@ func TestUnknownAddressKindPropagates(t *testing.T) {
 	}
 }
 
-// TestAddressChangeReissue covers REQ-broker-discovery-016: Reissue publishes
-// the new address list across the network.
+// TestAddressChangeReissue checks that Reissue publishes the new address list
+// across the network.
 func TestAddressChangeReissue(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -882,8 +830,8 @@ func TestAddressChangeReissue(t *testing.T) {
 	})
 }
 
-// TestPublicTopicAcrossNetwork covers REQ-topics-010 and REQ-topics-011: a
-// declaration with and without a description reaches three hops away.
+// TestPublicTopicAcrossNetwork checks that a declaration with and without a
+// description reaches a Broker two links away.
 func TestPublicTopicAcrossNetwork(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -915,8 +863,8 @@ func TestPublicTopicAcrossNetwork(t *testing.T) {
 	}
 }
 
-// TestPublicTopicExpiresOffline covers REQ-topics-012: an offline declarer's
-// declaration disappears after seven days.
+// TestPublicTopicExpiresOffline checks that an offline declarer's declaration
+// disappears after seven days.
 func TestPublicTopicExpiresOffline(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -945,8 +893,8 @@ func TestPublicTopicExpiresOffline(t *testing.T) {
 	}
 }
 
-// TestPrivateDeclareFails covers REQ-topics-023: a private Broker cannot
-// declare a public topic.
+// TestPrivateDeclareFails checks that a private Broker cannot declare a public
+// topic.
 func TestPrivateDeclareFails(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -970,8 +918,8 @@ func TestPrivateDeclareFails(t *testing.T) {
 	}
 }
 
-// TestGoPrivateRetractsTopics covers REQ-topics-024: going private revokes the
-// public topic declarations across the network.
+// TestGoPrivateRetractsTopics checks that going private revokes the public topic
+// declarations across the network.
 func TestGoPrivateRetractsTopics(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())
@@ -1004,8 +952,8 @@ func TestGoPrivateRetractsTopics(t *testing.T) {
 	}
 }
 
-// TestLastPublicMemberLeaves covers REQ-topics-025: retiring the local
-// declaration withdraws it, and declaring again brings it back.
+// TestLastPublicMemberLeaves checks that retiring the local declaration
+// withdraws it and declaring again brings it back.
 func TestLastPublicMemberLeaves(t *testing.T) {
 	net := newFakeNet()
 	clock := newFakeClock(dirTestNow())

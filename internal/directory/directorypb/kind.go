@@ -1,3 +1,5 @@
+// Package directorypb defines the messages Brokers exchange to reconcile
+// directory records.
 package directorypb
 
 // Frame kinds for directory reconciliation payloads.
