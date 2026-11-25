@@ -29,6 +29,10 @@ type fakeOps struct {
 	stopped     map[string]int
 	delivered   []deliverCall
 	fireOnWatch int
+	// watchErr makes Watch fail; onWatch runs after the callback is registered
+	// and before Watch returns, so a test can change the entry mid-call.
+	watchErr error
+	onWatch  func()
 }
 
 func (f *fakeOps) Lookup(configDir, socketPath string) (inbox.Session, error) {
@@ -64,7 +68,16 @@ func (f *fakeOps) Watch(configDir string, onChange func(int)) (func(), error) {
 	}
 	f.watches[configDir] = append(f.watches[configDir], onChange)
 	firePID := f.fireOnWatch
+	hook := f.onWatch
+	err := f.watchErr
 	f.mu.Unlock()
+
+	if hook != nil {
+		hook()
+	}
+	if err != nil {
+		return nil, err
+	}
 
 	var once sync.Once
 	stop := func() {

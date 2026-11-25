@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os/exec"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -256,15 +257,22 @@ func startHelperProcess(exe string, acct Account, log *slog.Logger, stopping fun
 	return startHelperProcessArgs(exe, []string{"internal", "account-helper"}, acct, log, stopping)
 }
 
+// The child's standard-stream pipes are variables so tests can exercise the
+// pipe-creation failures a normal start cannot trigger.
+var (
+	helperStdinPipe  = func(cmd *exec.Cmd) (io.WriteCloser, error) { return cmd.StdinPipe() }
+	helperStdoutPipe = func(cmd *exec.Cmd) (io.ReadCloser, error) { return cmd.StdoutPipe() }
+)
+
 // startHelperProcessArgs is startHelperProcess with the subcommand arguments
 // spelled out, so tests can exercise the same standard-stream wiring.
 func startHelperProcessArgs(exe string, args []string, acct Account, log *slog.Logger, stopping func() bool) (*Process, error) {
 	cmd := accountCommand(exe, args, acct)
-	stdin, err := cmd.StdinPipe()
+	stdin, err := helperStdinPipe(cmd)
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
+	stdout, err := helperStdoutPipe(cmd)
 	if err != nil {
 		return nil, err
 	}

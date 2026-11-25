@@ -40,12 +40,18 @@ type poolFakeConn struct {
 	done       chan struct{}
 	// reread overrides the fake ops for tests that need to hold one call.
 	reread func(ctx context.Context, s inbox.Session) (inbox.Session, error)
+	// waitReadyFunc replaces the Ready handshake for tests that need to act
+	// while the spawn is waiting for it.
+	waitReadyFunc func(ctx context.Context) (*helperpb.Ready, error)
 
 	mu     sync.Mutex
 	closed int
 }
 
 func (c *poolFakeConn) WaitReady(ctx context.Context) (*helperpb.Ready, error) {
+	if c.waitReadyFunc != nil {
+		return c.waitReadyFunc(ctx)
+	}
 	if c.readyBlock {
 		<-ctx.Done()
 		return nil, ctx.Err()
@@ -114,6 +120,7 @@ type poolHarness struct {
 	// blockFirstReread makes the first spawned helper hold its Reread until the
 	// call context ends; later helpers answer immediately.
 	blockFirstReread bool
+	waitReadyFunc    func(ctx context.Context) (*helperpb.Ready, error)
 	waitN            int
 	killN            int
 	delays           []time.Duration
@@ -168,16 +175,18 @@ func (h *poolHarness) start(ctx context.Context, acct Account) (*Process, error)
 	block := h.block
 	waitBlock := h.waitBlock
 	blockFirstReread := h.blockFirstReread
+	waitReadyFunc := h.waitReadyFunc
 	h.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
 
 	conn := &poolFakeConn{
-		ready:      readyFn(acct),
-		readyBlock: block,
-		ops:        &fakeOps{},
-		done:       make(chan struct{}),
+		ready:         readyFn(acct),
+		readyBlock:    block,
+		ops:           &fakeOps{},
+		done:          make(chan struct{}),
+		waitReadyFunc: waitReadyFunc,
 	}
 	if blockFirstReread {
 		conn.reread = func(ctx context.Context, s inbox.Session) (inbox.Session, error) {
@@ -287,6 +296,12 @@ func (h *poolHarness) setWaitBlocking(block bool) {
 func (h *poolHarness) setFirstRereadBlocking(block bool) {
 	h.mu.Lock()
 	h.blockFirstReread = block
+	h.mu.Unlock()
+}
+
+func (h *poolHarness) setWaitReady(fn func(ctx context.Context) (*helperpb.Ready, error)) {
+	h.mu.Lock()
+	h.waitReadyFunc = fn
 	h.mu.Unlock()
 }
 
