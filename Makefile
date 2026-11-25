@@ -5,6 +5,28 @@
 
 JOBS ?= 4
 
+# Statement coverage for the two test rounds, off by default. When COVER_DIR
+# names an absolute directory, each round wipes its own subdirectory (unit,
+# testenv) and has the instrumented test binaries write Go's covdata files
+# there, which cover-report merges. An empty value runs exactly the plain
+# commands, so a developer's make test neither pays for instrumentation nor
+# needs a coverage directory.
+COVER_DIR ?=
+COVER_PKGS := github.com/wangzw/peers/internal/...,github.com/wangzw/peers/cmd/...
+
+# Guard and prepare one coverage round: refuse a relative directory, then
+# recreate the round's own subdirectory empty so no stale data survives. The
+# shell body is a separate variable so the $(if) below never parses the ')' in
+# its case patterns; both expand to nothing when coverage is off.
+COVER_ROUND_PREP_ON = case "$(COVER_DIR)" in /*) ;; *) echo "test: COVER_DIR must name an absolute path (got '$(COVER_DIR)')" >&2; exit 2 ;; esac; rm -rf "$(COVER_DIR)/$(1)" && mkdir -p "$(COVER_DIR)/$(1)";
+COVER_ROUND_PREP = $(if $(COVER_DIR),$(COVER_ROUND_PREP_ON))
+
+# Instrumentation flags for a test round, and the trailing -args that sends the
+# round's covdata directory to the test binary. -args passes everything after
+# it to the binary, so it must stay last on the go test command line.
+COVER_GO_FLAGS = $(if $(COVER_DIR), -cover -covermode=atomic -coverpkg=$(COVER_PKGS))
+COVER_GO_ARGS = $(if $(COVER_DIR), -args -test.gocoverdir=$(COVER_DIR)/$(1))
+
 # Optional directory for golangci-lint's cache. The global run lock is disabled
 # in .golangci.yml (allow-parallel-runners), so concurrent gates share the
 # default cache safely and need no separate directory here. A caller may still
@@ -150,19 +172,19 @@ proto-lint:
 # after the tests finish. A failure in either one fails the target.
 test:
 	go build ./...
-	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	@$(call COVER_ROUND_PREP,unit)tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
 	go vet ./... > "$$tmp/vet.log" 2>&1 & \
 	vetpid=$$!; \
 	status=0; \
 	if ! go build -o "$$tmp/testreport" ./scripts/testreport; then status=1; fi; \
 	if [ $$status -eq 0 ]; then \
-		bash -o pipefail -c 'go test -race -count=1 -json -p $(JOBS) -parallel $(JOBS) ./... | '"$$tmp"'/testreport -label test -' || status=$$?; \
+		bash -o pipefail -c 'go test -race -count=1 -json -p $(JOBS) -parallel $(JOBS)$(COVER_GO_FLAGS) ./...$(call COVER_GO_ARGS,unit) | '"$$tmp"'/testreport -label test -' || status=$$?; \
 	fi; \
 	wait "$$vetpid"; vetstatus=$$?; \
 	cat "$$tmp/vet.log"; \
 	if [ $$vetstatus -ne 0 ]; then echo "test: go vet failed" >&2; status=1; fi; \
 	exit $$status
-	@root="$$(mktemp -d)"; home="$$(mktemp -d)"; scratch="$$(mktemp -d)"; \
+	@$(call COVER_ROUND_PREP,testenv)root="$$(mktemp -d)"; home="$$(mktemp -d)"; scratch="$$(mktemp -d)"; \
 	cleanup() { status=$$1; rm -rf "$$root" "$$home" "$$scratch"; exit $$status; }; \
 	go list -e -f '{{.ImportPath}}|{{join .GoFiles " "}}|{{join .TestGoFiles " "}}' ./... > "$$scratch/plain" || cleanup $$?; \
 	go list -e -tags peers_testenv -f '{{.ImportPath}}|{{join .GoFiles " "}}|{{join .TestGoFiles " "}}' ./... > "$$scratch/tagged" || cleanup $$?; \
@@ -183,8 +205,8 @@ test:
 	echo "test: peers_testenv packages:$$pkgs"; \
 	echo "test: peers_testenv tests:^($$tests)$$"; \
 	PEERS_TEST_RUNTIME_ROOT="$$root" PEERS_TEST_HOME="$$home" \
-		go test -race -count=1 -json -tags peers_testenv -p $(JOBS) -parallel $(JOBS) \
-			-run "^($$tests)$$" $$pkgs > "$$scratch/testenv.json"; \
+		go test -race -count=1 -json -tags peers_testenv -p $(JOBS) -parallel $(JOBS)$(COVER_GO_FLAGS) \
+			-run "^($$tests)$$" $$pkgs$(call COVER_GO_ARGS,testenv) > "$$scratch/testenv.json"; \
 	status=$$?; \
 	go run ./scripts/testreport -label test-env "$$scratch/testenv.json" || cleanup $$?; \
 	cleanup $$status
