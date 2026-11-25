@@ -8,16 +8,12 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// CreatePairingKey generates a one-time pairing key for this Broker and
-// returns it with the addresses to show and the expiry. It takes no key
-// material from the caller and never reports the key in an audit record or a
-// log line.
-//
-// The optional agent_id only fills the audit record's actor; resolution comes
-// before any side effect, so a bad agent leaves no valid key behind. A Broker
-// that does not listen cannot accept a dial, so key creation fails there with
-// invalid_argument and tells the caller to create a pairing key on the other
-// side.
+// CreatePairingKey generates a one-time pairing key and returns it with the
+// addresses to show and its expiry. It never reports the key in an audit record
+// or a log line. The optional agent_id only fills the audit actor, and a bad
+// one is refused before any key is created. A Broker that does not listen
+// returns invalid_argument; a local-only degraded Broker returns
+// broker_degraded, and a Broker without pairing returns internal.
 func (b *Broker) CreatePairingKey(ctx context.Context, req *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error) {
 	if degraded := b.degradedState(); degraded != nil &&
 		degraded.Level == localpb.DegradedLevel_DEGRADED_LEVEL_LOCAL_ONLY {

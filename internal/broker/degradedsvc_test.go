@@ -54,6 +54,8 @@ func degradedClient(t *testing.T, path string) (localpb.LocalClient, *grpc.Clien
 	return localpb.NewLocalClient(cc), cc
 }
 
+// TestDegradedServiceHelloAndStatus checks that Hello and Status answer while
+// diagnostics only, with Status carrying only the version and the fault.
 func TestDegradedServiceHelloAndStatus(t *testing.T) {
 	state := &localpb.DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY,
@@ -89,6 +91,8 @@ func TestDegradedServiceHelloAndStatus(t *testing.T) {
 	}
 }
 
+// TestDegradedServiceRefusesOtherCalls checks that calls outside Hello and
+// Status return broker_degraded with the fault reason.
 func TestDegradedServiceRefusesOtherCalls(t *testing.T) {
 	state := &localpb.DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY,
@@ -115,6 +119,8 @@ func TestDegradedServiceRefusesOtherCalls(t *testing.T) {
 	}
 }
 
+// TestDegradedServiceRegisterKeepsStreamOpen checks that a registration gets
+// not_registered/broker_degraded and the stream stays open.
 func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 	state := &localpb.DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY,
@@ -147,8 +153,7 @@ func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 		t.Errorf("detail = %q, want %q", problem.GetDetail(), state.Reason)
 	}
 
-	// A second frame must not fail and the next receive must keep waiting
-	// rather than see EOF: the stream stays open until the client goes away.
+	// A second frame must not fail and the next receive keeps waiting.
 	if err := stream.Send(&localpb.RegisterRequest{}); err != nil {
 		t.Fatalf("Register second send: %v", err)
 	}
@@ -157,8 +162,8 @@ func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 		_, err := stream.Recv()
 		recvDone <- err
 	}()
-	// The window is the assertion: the stream must stay open. It can only miss a
-	// premature return under load, never fail a correct run.
+	// The window is the assertion: a premature return fails, a slow run does
+	// not.
 	select {
 	case err := <-recvDone:
 		t.Fatalf("Register second recv returned %v, want the stream to stay open", err)
@@ -173,9 +178,8 @@ func TestDegradedServiceRegisterKeepsStreamOpen(t *testing.T) {
 	}
 }
 
-// TestDegradedServiceStopEndsConnections checks the other half of leaving
-// diagnostics only: Stop closes the connections established before it, so the
-// full service starts on a socket nobody is still talking to the degraded one.
+// TestDegradedServiceStopEndsConnections checks that Stop closes the
+// connections established before it.
 func TestDegradedServiceStopEndsConnections(t *testing.T) {
 	state := &localpb.DegradedState{Level: localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY, Reason: "degraded"}
 	path, _, svc := startTestDegradedService(t, state)
@@ -223,11 +227,12 @@ func TestDegradedServiceStopEndsConnections(t *testing.T) {
 	t.Fatalf("the client connection stayed ready after Stop: %v", cc.GetState())
 }
 
+// TestDegradedServiceStopLeavesListenerOpen checks that the original listener
+// still accepts connections after the degraded service stops.
 func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 	state := &localpb.DegradedState{Level: localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY, Reason: "degraded"}
 	path, sock, svc := startTestDegradedService(t, state)
 
-	// A connection is accepted while the degraded service runs.
 	client, _ := degradedClient(t, path)
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer cancel()
@@ -237,8 +242,6 @@ func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 
 	svc.Stop()
 
-	// The original listener still accepts new connections after the degraded
-	// service stopped and closed its duplicate.
 	accepted := make(chan net.Conn, 1)
 	acceptErr := make(chan error, 1)
 	go func() {
@@ -265,8 +268,7 @@ func TestDegradedServiceStopLeavesListenerOpen(t *testing.T) {
 }
 
 // TestDegradedServiceEnforcesLimits checks that the diagnostics-only service
-// carries the same local interface limits as the full service: with two
-// registrations allowed per account, a third is refused with quota_exceeded.
+// carries the same per-account registration limit as the full service.
 func TestDegradedServiceEnforcesLimits(t *testing.T) {
 	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 2)
 	state := &localpb.DegradedState{

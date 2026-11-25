@@ -26,7 +26,6 @@ type helperAccess interface {
 	Check(ctx context.Context, uid uint32, path string, need helper.Access) (bool, error)
 }
 
-// systemRouter adapts a helper pool to SessionRouter.
 type systemRouter struct{ pool helperPool }
 
 func (r systemRouter) Acquire(ctx context.Context, uid uint32) (SessionBackend, func(), error) {
@@ -34,38 +33,30 @@ func (r systemRouter) Acquire(ctx context.Context, uid uint32) (SessionBackend, 
 	if err != nil {
 		return nil, nil, err
 	}
-	// Keep the uid so a watch request is checked against the directory's owner
+	// The uid lets a watch request be checked against the directory's owner
 	// before it reaches the helper.
 	return ownedBackend{SessionBackend: b, uid: uid}, release, nil
 }
 
-// configDirVerifier is implemented by a backend whose calls run as one account.
-// acquireWatchLocked asks it to prove configDir belongs to that account before
-// subscribing.
+// configDirVerifier is implemented by a backend that proves a configuration
+// directory belongs to its account before a watch subscribes.
 type configDirVerifier interface {
 	verifyConfigDir(ctx context.Context, configDir string) error
 }
 
 // configDirVerifyTimeout bounds the ownership check of a configuration
-// directory. The check reads the account database and stats a path the caller
-// chooses, as root; neither may run while Broker.mu is held, and a path on a
-// filesystem that blocks must not hold the check forever.
+// directory. The check stats a caller-chosen path as root, so it must not hold
+// Broker.mu or run unbounded.
 const configDirVerifyTimeout = time.Second
 
 // configDirCheckSet allows at most one unfinished ownership check per account.
-// A caller that finds the account's slot taken waits for it in its own
-// goroutine. A check abandoned at its timeout keeps its slot until its
-// goroutine returns, because the goroutine still holds the account database
-// lookup and the blocking stat. Without the limit, every registration that
-// found the previous check stuck would add another goroutine that never
-// returns.
+// A check abandoned at its timeout keeps its slot until its goroutine returns,
+// so a stuck stat cannot accumulate goroutines.
 type configDirCheckSet struct {
 	mu   sync.Mutex
 	busy map[uint32]chan struct{}
 }
 
-// begin takes the account's slot, waiting for it to free until ctx is done.
-// The released channel is closed by end.
 func (s *configDirCheckSet) begin(ctx context.Context, uid uint32) error {
 	for {
 		s.mu.Lock()
@@ -87,7 +78,6 @@ func (s *configDirCheckSet) begin(ctx context.Context, uid uint32) error {
 	}
 }
 
-// end releases the account's slot after its check goroutine returns.
 func (s *configDirCheckSet) end(uid uint32) {
 	s.mu.Lock()
 	if freed, ok := s.busy[uid]; ok {
@@ -97,13 +87,9 @@ func (s *configDirCheckSet) end(uid uint32) {
 	s.mu.Unlock()
 }
 
-// verifyConfigDirBounded runs the verifier in its own goroutine and treats a
-// check that does not finish within configDirVerifyTimeout as a failed check. A
-// stat that never returns is abandoned rather than allowed to stall the caller;
-// the goroutine finishes on its own if the call ever does. Waiting for the
-// account's slot and the check itself share that one budget: a caller that
-// cannot take the slot before the budget expires reports a failed check too.
-// At most one check per account may be unfinished.
+// verifyConfigDirBounded runs the verifier in its own goroutine with one
+// timeout shared by the slot wait and the check; a stat that never returns is
+// abandoned.
 func verifyConfigDirBounded(ctx context.Context, uid uint32, checks *configDirCheckSet, v configDirVerifier, configDir string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -126,12 +112,11 @@ func verifyConfigDirBounded(ctx context.Context, uid uint32, checks *configDirCh
 	}
 }
 
-// ownedBackend is the system router's handle on one account's helper.
 type ownedBackend struct {
 	SessionBackend
 	uid uint32
-	// stat is os.Stat. A test replaces it to hold the ownership check on a path
-	// whose stat never returns.
+	// stat is os.Stat; a test replaces it to hold the check on a stat that never
+	// returns.
 	stat func(string) (fs.FileInfo, error)
 }
 
@@ -148,11 +133,9 @@ func (b ownedBackend) statConfigDir(path string) (fs.FileInfo, error) {
 }
 
 // verifyConfigDir reports whether configDir belongs to the account. An empty
-// value is the account's default, resolved here from the account database the
-// helper is started from rather than from the Broker's own home. A directory
-// that does not exist yet has no conflicting owner: the helper watches an
-// existing ancestor that the account can reach and moves the watch down when
-// the directory appears.
+// value is the account's default, resolved from the account database rather
+// than the Broker's home, and a directory that does not exist yet has no
+// conflicting owner.
 func (b ownedBackend) verifyConfigDir(ctx context.Context, configDir string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -192,7 +175,6 @@ func (b ownedBackend) verifyConfigDir(ctx context.Context, configDir string) err
 	return nil
 }
 
-// systemChecker adapts a helper access checker to accessChecker.
 type systemChecker struct{ c helperAccess }
 
 func (s systemChecker) Check(ctx context.Context, who Caller, path string, need Access) (bool, error) {
@@ -202,29 +184,25 @@ func (s systemChecker) Check(ctx context.Context, who Caller, path string, need 
 	case AccessWrite:
 		return s.c.Check(ctx, who.UID, path, helper.AccessWrite)
 	case AccessNone:
-		// AccessNone needs no check on the configuration file.
 		return true, nil
 	default:
 		return false, fmt.Errorf("unknown access level %d", need)
 	}
 }
 
-// newHelperPool builds the system Broker's helper pool. A test replaces it to
-// run the helper protocol in-process while still exercising the wiring below.
+// newHelperPool is a test seam; production uses helper.NewPool.
 var newHelperPool = helper.NewPool
 
-// The system Broker allows this many permission checks to run at once, with at
-// most accessChecksPerAccount for one account. Repeated status, configuration
-// or audit calls from one account therefore cannot turn into an unbounded
-// number of root check processes.
+// The system Broker allows this many permission checks at once, with at most
+// accessChecksPerAccount for one account.
 const (
 	accessChecksConcurrent = 8
 	accessChecksPerAccount = 2
 )
 
-// newSystemDeps builds the router and checker of a system Broker and a close function.
-// ctx is the process context; the pool uses its cancellation to recognize
-// helper exits that belong to a normal stop.
+// newSystemDeps builds the router and checker of a system Broker and a close
+// function. The pool uses ctx's cancellation to recognize helper exits that
+// belong to a normal stop.
 func newSystemDeps(ctx context.Context, exe string, logger *slog.Logger) (SessionRouter, accessChecker, func() error) {
 	pool := newHelperPool(helper.PoolOptions{Exe: exe, Logger: logger, Stopping: ctx.Done()})
 	ac := &helper.AccessChecker{
@@ -236,7 +214,8 @@ func newSystemDeps(ctx context.Context, exe string, logger *slog.Logger) (Sessio
 	return systemRouter{pool: pool}, systemChecker{c: ac}, pool.Close
 }
 
-// systemAssembler is placed first in the assembler list when RunOptions.System is true.
+// systemAssembler runs first when RunOptions.System is true, so asm.Access is
+// filled before configWiring reads it.
 type systemAssembler struct {
 	executable func() (string, error)                                                             // nil: os.Executable
 	newDeps    func(exe string, logger *slog.Logger) (SessionRouter, accessChecker, func() error) // nil: newSystemDeps
@@ -263,15 +242,14 @@ func (a systemAssembler) Assemble(ctx context.Context, _ ConfigSource, deps *Dep
 	}
 	router, checker, closeFn := newDeps(exe, deps.Logger)
 	deps.Sessions = router
-	// Every account on the host may connect; the local socket's group and
-	// mode decide who can reach it.
 	deps.AllowCaller = func(Caller) bool { return true }
 	asm.Access = checker
 	return []Component{&systemComponent{close: closeFn}}, nil
 }
 
-// systemComponent closes the helper pool after the local interface and the
-// other components have stopped.
+// systemComponent closes the helper pool after the local interface and the other
+// components have stopped: the system assembler runs first, so its component
+// starts first and stops last.
 type systemComponent struct {
 	close func() error
 	once  sync.Once
@@ -291,16 +269,15 @@ func (c *systemComponent) Stop() {
 	})
 }
 
-// assemblersFor returns opts.Assemblers (DefaultAssemblers() when nil), with systemAssembler{} prepended when opts.System is true.
+// assemblersFor returns opts.Assemblers (DefaultAssemblers when nil) with a
+// system assembler prepended when opts.System is true, and does not modify
+// opts.Assemblers.
 func assemblersFor(opts RunOptions) []Assembler {
 	list := opts.Assemblers
 	if list == nil {
 		list = DefaultAssemblers()
 	}
 	if opts.System {
-		// A new slice: opts.Assemblers belongs to the caller and must not be
-		// modified. The system assembler runs first so asm.Access is filled
-		// before configWiring reads it.
 		return append([]Assembler{systemAssembler{}}, list...)
 	}
 	return list

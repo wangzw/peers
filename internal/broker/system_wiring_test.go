@@ -23,7 +23,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// fakeHelperPool is the systemRouter's view of a helper pool.
 type fakeHelperPool struct {
 	mu       sync.Mutex
 	backend  *helper.Backend
@@ -57,14 +56,12 @@ func (p *fakeHelperPool) Close() error {
 	return nil
 }
 
-// helperAccessCall is one recorded Check call.
 type helperAccessCall struct {
 	uid  uint32
 	path string
 	need helper.Access
 }
 
-// fakeHelperAccess returns the configured results in order.
 type fakeHelperAccess struct {
 	mu      sync.Mutex
 	results []fakeAccessResult
@@ -95,6 +92,8 @@ func (f *fakeHelperAccess) snapshot() []helperAccessCall {
 	return append([]helperAccessCall(nil), f.calls...)
 }
 
+// TestSystemCheckerMapsResults checks that the helper's allowed flag and error
+// reach the caller unchanged.
 func TestSystemCheckerMapsResults(t *testing.T) {
 	checkErr := errors.New("uid mismatch")
 	access := &fakeHelperAccess{results: []fakeAccessResult{
@@ -119,6 +118,8 @@ func TestSystemCheckerMapsResults(t *testing.T) {
 	}
 }
 
+// TestSystemCheckerPassesPathAndAccess checks that read and write levels map to
+// the helper's levels and AccessNone skips the check.
 func TestSystemCheckerPassesPathAndAccess(t *testing.T) {
 	access := &fakeHelperAccess{}
 	checker := systemChecker{c: access}
@@ -147,6 +148,8 @@ func TestSystemCheckerPassesPathAndAccess(t *testing.T) {
 	}
 }
 
+// TestSystemCheckerRejectsUnknownAccess checks that an unknown access level
+// fails without reaching the helper.
 func TestSystemCheckerRejectsUnknownAccess(t *testing.T) {
 	access := &fakeHelperAccess{}
 	checker := systemChecker{c: access}
@@ -163,6 +166,8 @@ func TestSystemCheckerRejectsUnknownAccess(t *testing.T) {
 	}
 }
 
+// TestSystemRouterForwards checks that Acquire returns the pool's backend
+// wrapped with the uid and forwards the release.
 func TestSystemRouterForwards(t *testing.T) {
 	backend := &helper.Backend{}
 	pool := &fakeHelperPool{backend: backend}
@@ -206,6 +211,8 @@ func TestSystemRouterForwards(t *testing.T) {
 	}
 }
 
+// TestSystemAssemblerFillsDeps checks that the system assembler fills Sessions,
+// AllowCaller and Assembly.Access and returns one closeable component.
 func TestSystemAssemblerFillsDeps(t *testing.T) {
 	router := &fakeSessions{}
 	checker := &wiringChecker{granted: true}
@@ -273,9 +280,8 @@ func TestSystemAssemblerFillsDeps(t *testing.T) {
 	}
 }
 
-// TestNewSystemDepsFillsAccessCheckLimits checks that the system Broker's
-// access checker carries the check limits rather than relying on the helper
-// defaults.
+// TestNewSystemDepsFillsAccessCheckLimits checks that the access checker carries
+// the Broker's check limits rather than the helper defaults.
 func TestNewSystemDepsFillsAccessCheckLimits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -303,8 +309,7 @@ func TestNewSystemDepsFillsAccessCheckLimits(t *testing.T) {
 }
 
 // inProcessHelperStart serves the helper protocol over pipes instead of
-// spawning a child. exits receives one function per helper that ends it, which
-// stands in for the signal a service manager sends when it stops the Broker.
+// spawning a child; exits receives one function per helper that ends it.
 func inProcessHelperStart(t *testing.T, exits chan<- func()) func(context.Context, helper.Account) (*helper.Process, error) {
 	t.Helper()
 	return func(_ context.Context, acct helper.Account) (*helper.Process, error) {
@@ -338,8 +343,6 @@ func inProcessHelperStart(t *testing.T, exits chan<- func()) func(context.Contex
 	}
 }
 
-// waitForAccountHelperRecord waits until the logger wrote a record for an
-// account helper.
 func waitForAccountHelperRecord(t *testing.T, logs *syncBuffer) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -352,10 +355,8 @@ func waitForAccountHelperRecord(t *testing.T, logs *syncBuffer) {
 	t.Fatalf("no account_helper_ record before the event timeout: %s", logs.String())
 }
 
-// TestSystemStopDoesNotLogHelperExitAsError runs the production assembler and
-// its pool wiring around an in-process helper. Cancelling the context passed
-// to Assemble, as a signal does, and then ending the helper, as the service
-// manager does, must not produce an ERROR or WARN account_helper_ record.
+// TestSystemStopDoesNotLogHelperExitAsError checks that a normal stop does not
+// log the helper exit at ERROR or WARN.
 func TestSystemStopDoesNotLogHelperExitAsError(t *testing.T) {
 	uid := uint32(os.Getuid())
 	if _, err := helper.LookupAccount(uid); err != nil {
@@ -413,7 +414,6 @@ func TestSystemStopDoesNotLogHelperExitAsError(t *testing.T) {
 		t.Fatal("the in-process helper did not start")
 	}
 
-	// A service stop signals the Broker and the helper at the same time.
 	cancel()
 	exit()
 
@@ -438,6 +438,8 @@ func TestSystemStopDoesNotLogHelperExitAsError(t *testing.T) {
 	comps[0].Stop()
 }
 
+// TestAssemblersForPrependsSystem checks that a system run gets the system
+// assembler first and a user run keeps the caller's list.
 func TestAssemblersForPrependsSystem(t *testing.T) {
 	x := &configWiring{}
 
@@ -466,6 +468,8 @@ func TestAssemblersForPrependsSystem(t *testing.T) {
 	}
 }
 
+// TestConfigWiringUsesAssemblyAccess checks that a denied Assembly.Access refuses
+// SetConfig while a nil one allows reads.
 func TestConfigWiringUsesAssemblyAccess(t *testing.T) {
 	t.Run("denied", func(t *testing.T) {
 		denied := &wiringChecker{granted: false}
@@ -494,6 +498,8 @@ func TestConfigWiringUsesAssemblyAccess(t *testing.T) {
 	})
 }
 
+// TestAllowCallerOverridesSameAccount checks that AllowCaller overrides the
+// default same-account restriction.
 func TestAllowCallerOverridesSameAccount(t *testing.T) {
 	readOther := func(net.Conn) (Caller, error) { return Caller{UID: 4242}, nil }
 
@@ -519,6 +525,8 @@ func TestAllowCallerOverridesSameAccount(t *testing.T) {
 	})
 }
 
+// TestSystemRegisterAcquiresCallerAccount checks that a registration in the
+// system form takes the caller account's session backend.
 func TestSystemRegisterAcquiresCallerAccount(t *testing.T) {
 	sessions := &fakeSessions{}
 	tb := newTestBroker(t, func(d *Deps) {
@@ -544,7 +552,6 @@ func TestSystemRegisterAcquiresCallerAccount(t *testing.T) {
 	}
 }
 
-// recordedDelivery is one Deliver call seen by a recordingBackend.
 type recordedDelivery struct {
 	session inbox.Session
 	sig     string
@@ -552,7 +559,6 @@ type recordedDelivery struct {
 	msgID   string
 }
 
-// recordingBackend forwards to one account backend and records Deliver calls.
 type recordingBackend struct {
 	SessionBackend
 	mu         sync.Mutex
@@ -577,7 +583,6 @@ func (b *recordingBackend) snapshot() []recordedDelivery {
 	return append([]recordedDelivery(nil), b.deliveries...)
 }
 
-// sequenceSessions hands out its backends in Acquire order.
 type sequenceSessions struct {
 	mu       sync.Mutex
 	backends []SessionBackend
@@ -599,6 +604,8 @@ func (s *sequenceSessions) Acquire(_ context.Context, uid uint32) (SessionBacken
 	return b, func() {}, nil
 }
 
+// TestSystemDeliveryUsesTargetAgentBackend checks that a delivery goes through
+// the target account's backend, not the sender's.
 func TestSystemDeliveryUsesTargetAgentBackend(t *testing.T) {
 	senderBackend := newRecordingBackend()
 	targetBackend := newRecordingBackend()
@@ -655,8 +662,6 @@ func TestSystemDeliveryUsesTargetAgentBackend(t *testing.T) {
 	}
 }
 
-// statBlockingRouter replaces one account's backend with an ownedBackend whose
-// directory stat blocks.
 type statBlockingRouter struct {
 	SessionRouter
 	stuckUID uint32
@@ -674,7 +679,6 @@ func (r statBlockingRouter) Acquire(ctx context.Context, uid uint32) (SessionBac
 	return ownedBackend{SessionBackend: base, uid: uid, stat: r.stat}, release, nil
 }
 
-// sequencePeerCreds identifies successive connections with the given uids.
 func sequencePeerCreds(uids ...uint32) func(net.Conn) (Caller, error) {
 	var mu sync.Mutex
 	next := 0
@@ -689,14 +693,12 @@ func sequencePeerCreds(uids ...uint32) func(net.Conn) (Caller, error) {
 	}
 }
 
-// configDirVerifyWaitBound is how long the test waits for the bounded
-// ownership check to return. The check returns only after the product's
-// configDirVerifyTimeout; the package fallback covers handing the result back
-// to the test goroutine on a loaded runner after that timer fires.
+// configDirVerifyWaitBound is how long the test waits for the bounded ownership
+// check to return: the product timeout plus eventTimeout as a fallback.
 const configDirVerifyWaitBound = configDirVerifyTimeout + eventTimeout
 
 // TestVerifyConfigDirBoundedTimesOut checks that a blocked ownership check is
-// abandoned after the named timeout and reported as a failed check.
+// abandoned after the timeout and reported as a failure.
 func TestVerifyConfigDirBoundedTimesOut(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
@@ -736,9 +738,8 @@ func TestVerifyConfigDirBoundedTimesOut(t *testing.T) {
 	}
 }
 
-// TestBlockedConfigDirCheckDoesNotHoldBrokerLock checks that the ownership
-// check runs without Broker.mu: one account stuck in stat must not prevent
-// another account from registering.
+// TestBlockedConfigDirCheckDoesNotHoldBrokerLock checks that one account stuck
+// in the ownership check does not prevent another account from registering.
 func TestBlockedConfigDirCheckDoesNotHoldBrokerLock(t *testing.T) {
 	realUID := uint32(os.Geteuid())
 	statStarted := make(chan struct{})
@@ -761,8 +762,6 @@ func TestBlockedConfigDirCheckDoesNotHoldBrokerLock(t *testing.T) {
 	t.Cleanup(func() { close(releaseStat) })
 
 	dir := shortTempDir(t)
-	// This registration stops in the ownership check, whose stat does not
-	// return until the test releases it.
 	startRegistrationAt(t, tb.client, dir, filepath.Join(dir, "stuck.sock"))
 	select {
 	case <-statStarted:
@@ -770,15 +769,11 @@ func TestBlockedConfigDirCheckDoesNotHoldBrokerLock(t *testing.T) {
 		t.Fatal("the stuck account's ownership check did not reach stat")
 	}
 
-	// Another account's registration must complete while the first check is
-	// still blocked.
 	fake := fakesession.New(t, fakesession.Options{Name: "other"})
 	other := tb.newClient(t)
 	rs := startRegistrationAt(t, other, fake.ConfigDir(), fake.SocketPath())
 	rs.complete(eventTimeout)
 
-	// The blocked check itself is abandoned after the named timeout and
-	// reported as a failure.
 	waitForReg(t, "the blocked ownership check to time out", func() bool {
 		for _, line := range tb.logLines(t) {
 			if line["event"] != EvRegistryWatchFailed {
@@ -794,10 +789,8 @@ func TestBlockedConfigDirCheckDoesNotHoldBrokerLock(t *testing.T) {
 }
 
 // TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount checks that repeated
-// registrations of one account cannot pile up ownership checks behind a stat
-// that never returns. The first check holds the account's slot; later
-// registrations wait for it in their own goroutines and fail when their budget
-// expires, so only one check goroutine is alive.
+// registrations of one stuck account leave only one ownership-check goroutine
+// alive.
 func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 	const (
 		stuckUID      = 9004
@@ -841,11 +834,6 @@ func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 		t.Fatal("the first ownership check did not reach stat")
 	}
 
-	// The other registrations wait for the account's slot within the same
-	// budget as the check itself: none may fail before the first check reaches
-	// its timeout, and each fails once its own budget expires. Without the
-	// per-account limit each of them would start a goroutine behind the stuck
-	// stat.
 	expiredChecks := func() int {
 		n := 0
 		for _, line := range tb.logLines(t) {
@@ -869,11 +857,6 @@ func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 	if got := expiredChecks(); got != 0 {
 		t.Fatalf("registrations failed %d times before the budget expired, want 0", got)
 	}
-	// The registrations must each fail once their own product budget expires.
-	// The wait is that budget plus the package's shared fallback: the product
-	// timer decides when a registration gives up, and eventTimeout only keeps a
-	// check whose expiry is never reported from hanging the test. The earlier
-	// observation that none failed before half the budget is the lower bound.
 	deadline := time.Now().Add(configDirVerifyWaitBound)
 	for time.Now().Before(deadline) {
 		if expiredChecks() >= registrations {
@@ -889,10 +872,6 @@ func TestBlockedConfigDirCheckKeepsOneGoroutinePerAccount(t *testing.T) {
 	}
 }
 
-// countingSessionRouter signals when want session backends have been acquired.
-// A Register stream acquires its backend before beginRegistration runs the
-// ownership check, so the signal means every registration has reached the
-// handler.
 type countingSessionRouter struct {
 	SessionRouter
 	acquired atomic.Int32
@@ -909,10 +888,8 @@ func (r *countingSessionRouter) Acquire(ctx context.Context, uid uint32) (Sessio
 }
 
 // TestConcurrentConfigDirChecksAllTakeTheWatch checks that registrations of one
-// account that arrive while an ownership check is running wait for the slot and
-// then take their watch. A Broker restart reconnects every session of an
-// account at once, so a later connection may not be left registered without a
-// watch on its configuration directory.
+// account arriving while an ownership check runs wait for the slot and then take
+// their watch.
 func TestConcurrentConfigDirChecksAllTakeTheWatch(t *testing.T) {
 	uid := uint32(os.Geteuid())
 	const registrations = 5
@@ -924,9 +901,7 @@ func TestConcurrentConfigDirChecksAllTakeTheWatch(t *testing.T) {
 	stat := func(path string) (fs.FileInfo, error) {
 		checks.Add(1)
 		if first.CompareAndSwap(false, true) {
-			// Hold the first check until every registration has reached its
-			// handler, so the later ones queue for the account's slot instead of
-			// racing a fixed delay.
+			// Hold the first check until every registration reaches its handler.
 			close(entered)
 			<-release
 		}

@@ -9,9 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestListenProbeCheckRejectsBusyPort covers REQ-broker-config-034: an address
-// that cannot be bound is rejected, and the successful probe of a busy port
-// must not take the port away from its current holder.
+// TestListenProbeCheckRejectsBusyPort checks that a busy port is rejected and the
+// listener that occupied it still accepts afterwards.
 func TestListenProbeCheckRejectsBusyPort(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -52,10 +51,8 @@ func TestListenProbeCheckRejectsBusyPort(t *testing.T) {
 	}
 }
 
-// TestListenValidatorSameValueSkipsProbe covers the case where the running
-// link holds the listener: setting broker.listen to the value it already has
-// must succeed without probing, because a probe of the occupied address would
-// fail. The probe fails the test if it is called at all.
+// TestListenValidatorSameValueSkipsProbe checks that an unchanged
+// broker.listen value is accepted without probing.
 func TestListenValidatorSameValueSkipsProbe(t *testing.T) {
 	old := config.Value{Kind: config.KindString, String: "127.0.0.1:17443"}
 	newValue := config.Value{Kind: config.KindString, String: "127.0.0.1:17443"}
@@ -68,15 +65,8 @@ func TestListenValidatorSameValueSkipsProbe(t *testing.T) {
 	}
 }
 
-// TestListenProbeCheckProbesChangedValue checks that a changed broker.listen
-// reaches the probe with the new value and that a successful probe accepts the
-// change.
-//
-// Whether config.ProbeListen closes the listener it opens is checked by
-// TestProbeListenLeavesNoListener in package config, the only package that can
-// observe the listener the probe opens. Re-binding a released port here would
-// depend on that port staying free, and another process can take it between the
-// release and the probe or between the probe and the re-bind.
+// TestListenProbeCheckProbesChangedValue checks that a changed value reaches
+// the probe with the new value and that a successful probe accepts the change.
 func TestListenProbeCheckProbesChangedValue(t *testing.T) {
 	const addr = "127.0.0.1:17444"
 	calls := 0

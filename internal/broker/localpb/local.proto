@@ -56,9 +56,9 @@ message RegistrationComplete {
 
 message RegistrationProblem {
   NotRegisteredReason reason = 1;
-  // Detail names the specific cause when the reason alone is too general, such
-  // as which character makes a session name unusable. Empty when the reason is
-  // all the Broker can tell.
+  // detail names the specific cause when the reason alone is too general, such
+  // as which character makes a session name unusable; it is empty when the
+  // reason says all the Broker can tell.
   string detail = 2;
 }
 
@@ -76,14 +76,13 @@ enum NotRegisteredReason {
   NOT_REGISTERED_REASON_SOCKET_NOT_OWNED = 3;
   NOT_REGISTERED_REASON_SOCKET_PATH_MISSING = 4;
   // NOT_REGISTERED_REASON_BROKER_DEGRADED answers a registration while the
-  // Broker runs degraded with diagnostics only. detail carries the cause, the
-  // same text as StatusResponse.degraded.reason. The stream stays open.
+  // Broker runs degraded with diagnostics only; detail repeats
+  // StatusResponse.degraded.reason and the stream stays open.
   NOT_REGISTERED_REASON_BROKER_DEGRADED = 5;
-  // NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED answers a registration when
-  // the account's helper process could not be started, including a failure to
-  // look up the account before starting it, or stopped answering. This is
-  // distinct from a missing session record. The stream stays open and the
-  // Broker retries like it does for a missing record.
+  // NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED answers a registration when the
+  // account's helper process could not start, including an account lookup
+  // failure, or stopped answering; it is distinct from a missing session
+  // record, the stream stays open and the Broker retries.
   NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED = 6;
 }
 
@@ -171,19 +170,17 @@ message ListBrokersRequest {}
 
 message ListBrokersResponse {
   repeated BrokerInfo brokers = 1;
-  // local is this Broker's own state. It is always set by a Broker that knows
-  // the field; an older Broker leaves it unset, which reads as online and not
-  // degraded.
+  // local is this Broker's own state; the answering Broker always sets it.
   LocalBrokerState local = 2;
 }
 
-// LocalBrokerState is what list_brokers and broker list show about the Broker
-// that answers, as opposed to its peers.
+// LocalBrokerState is what list_brokers and broker list show about the
+// answering Broker.
 message LocalBrokerState {
   // offline is the value of broker.offline.
   bool offline = 1;
   // degraded is unset unless the Broker runs degraded; it then holds the same
-  // value as StatusResponse.degraded, so broker list can print the Fix line.
+  // value as StatusResponse.degraded.
   DegradedState degraded = 2;
 }
 
@@ -312,11 +309,9 @@ message StatusResponse {
   // when there is none. current_version is the version this Broker runs.
   string available_version = 3;
   string current_version = 4;
-  // offline is the value of broker.offline. False while diagnostics only,
-  // because the configuration is not in effect then.
+  // offline is the value of broker.offline; it is false while diagnostics only.
   bool offline = 5;
-  // degraded is unset while the Broker runs normally. With diagnostics only,
-  // agents and peers are empty and only current_version is filled besides it.
+  // degraded is unset while the Broker runs normally.
   DegradedState degraded = 6;
 }
 
@@ -362,7 +357,7 @@ message ApplyUpdateResponse {
   // to_version is empty when no newer release exists, and nothing changed.
   string to_version = 2;
   // restarting is true when the new binary is installed and the Broker is
-  // about to exit so that the service manager starts it again.
+  // about to exit.
   bool restarting = 3;
 }
 
@@ -435,8 +430,8 @@ enum ErrorCode {
   ERROR_CODE_VERSION_MISMATCH = 13;
   ERROR_CODE_QUOTA_EXCEEDED = 14;
   ERROR_CODE_INTERNAL = 15;
-  // ERROR_CODE_NOT_UNDER_SERVICE_MANAGER answers an update the Broker cannot
-  // supervise: without a service manager it cannot start the new binary again.
+  // ERROR_CODE_NOT_UNDER_SERVICE_MANAGER answers an update from a Broker that
+  // no service manager supervises.
   ERROR_CODE_NOT_UNDER_SERVICE_MANAGER = 16;
   // ERROR_CODE_UPDATE_IN_PROGRESS answers a second update while one runs.
   ERROR_CODE_UPDATE_IN_PROGRESS = 17;

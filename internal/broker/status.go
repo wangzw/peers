@@ -8,16 +8,16 @@ import (
 )
 
 // Status returns the local part of the process status: every local agent with
-// its membership, plus the peers reported by Deps.Peers. It deliberately does
-// not reread session records. A caller without read permission on the
-// configuration file gets only the agents it owns; the peers and their
-// connection states stay visible. Status needs no agent identity.
+// its membership, plus the peers reported by Deps.Peers. It does not reread
+// session records, and a caller without read permission on the configuration
+// file gets only its own agents while peers stay visible. In diagnostics-only
+// degradation it returns the version and the fault only. Status needs no agent
+// identity.
 func (b *Broker) Status(ctx context.Context, req *localpb.StatusRequest) (*localpb.StatusResponse, error) {
 	current := b.deps.Version
 	if degraded := b.degradedState(); degraded != nil &&
 		degraded.Level == localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
-		// Diagnostics only: the Broker has no agent table or peers, so the
-		// caller gets the version and the failure and nothing else.
+		// Diagnostics only: the Broker has no agent table or peers.
 		return &localpb.StatusResponse{
 			CurrentVersion: current,
 			Degraded:       degraded,
@@ -61,7 +61,7 @@ func (b *Broker) Status(ctx context.Context, req *localpb.StatusRequest) (*local
 		agents = kept
 	}
 
-	// The available version comes from the periodic check. It is empty for a
+	// The available version comes from the periodic check and is empty for a
 	// non-release build, which never checks.
 	available, _ := b.availableUpdate()
 	if !isReleaseVersion(current) {
@@ -77,11 +77,6 @@ func (b *Broker) Status(ctx context.Context, req *localpb.StatusRequest) (*local
 	}, nil
 }
 
-// offline reports the current broker.offline value. A failed read, which can
-// happen once the configuration is closed during shutdown, reads as online:
-// the switch only informs the caller and never blocks a status answer. The
-// failure is logged through configSettings.readFailed, the same record
-// configSettings.Offline writes.
 func (b *Broker) offline() bool {
 	v, err := b.deps.Config.Get("broker.offline")
 	if err != nil {

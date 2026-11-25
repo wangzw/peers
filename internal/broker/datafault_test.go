@@ -15,6 +15,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
+// TestPeerAssemblerMarksIdentityAndPeerTableFailures checks that identity and
+// peer-table open failures enter the data-unavailable class with the right kind,
+// while an unrelated wiring failure does not.
 func TestPeerAssemblerMarksIdentityAndPeerTableFailures(t *testing.T) {
 	cases := []struct {
 		name string
@@ -51,7 +54,6 @@ func TestPeerAssemblerMarksIdentityAndPeerTableFailures(t *testing.T) {
 	}
 }
 
-// pathsConfig overrides the path set of a fake configuration.
 type pathsConfig struct {
 	*fakeConfig
 	paths config.PathSet
@@ -59,13 +61,15 @@ type pathsConfig struct {
 
 func (c pathsConfig) Paths() config.PathSet { return c.paths }
 
-// zeroIdentity satisfies directory.Identity without a real key.
 type zeroIdentity struct{}
 
 func (zeroIdentity) Fingerprint() directory.Fingerprint { return directory.Fingerprint{} }
 func (zeroIdentity) PublicKey() []byte                  { return nil }
 func (zeroIdentity) Sign([]byte) []byte                 { return nil }
 
+// TestDirectoryAssemblerMarksReadFailures checks that a failed directory read is
+// marked as a directory data-unavailable failure, while a missing identity is
+// not.
 func TestDirectoryAssemblerMarksReadFailures(t *testing.T) {
 	cfg := pathsConfig{
 		fakeConfig: newFakeConfig(t.TempDir()),
@@ -74,8 +78,6 @@ func TestDirectoryAssemblerMarksReadFailures(t *testing.T) {
 	asm := &Assembly{Pairing: &pairing.Pairing{}, Link: &link.Link{}}
 	a := &directoryAssembler{
 		open: func(directory.Deps) (directoryHandle, error) {
-			// directory.Open wraps a failed read of directory.json, which is an
-			// *fs.PathError at the bottom of the chain.
 			return nil, fmt.Errorf("directory: read %s: %w", "/home/u/.peers/directory.json",
 				&fs.PathError{Op: "open", Path: "/home/u/.peers/directory.json", Err: errors.New("permission denied")})
 		},

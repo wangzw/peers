@@ -20,8 +20,6 @@ var (
 	_ cardPairing  = (*pairing.Pairing)(nil)
 )
 
-// relaySwitch is the publicSwitch test double. It records every call in order
-// so tests can assert the exact sequence the relay produces.
 type relaySwitch struct {
 	setPublicErr error
 	declareErr   map[string]error
@@ -46,14 +44,11 @@ func (s *relaySwitch) RetirePublicTopic(name string) {
 	s.calls = append(s.calls, "Retire("+name+")")
 }
 
-// cardUpdate is one recorded call to UpdateCardAddresses.
 type cardUpdate struct {
 	FP    pairing.Fingerprint
 	Addrs []config.AdvertisedAddr
 }
 
-// discoveryPairing is the cardPairing test double: it resolves roles from a map
-// and records the card addresses it is given.
 type discoveryPairing struct {
 	roles   map[pairing.Fingerprint]pairing.Role
 	updates []cardUpdate
@@ -77,7 +72,6 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil))
 }
 
-// logRecords decodes every JSON line the logger wrote.
 func logRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
 	var records []map[string]any
@@ -94,7 +88,6 @@ func logRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	}
 }
 
-// findLogRecord returns the first record whose msg field equals want.
 func findLogRecord(t *testing.T, records []map[string]any, want string) map[string]any {
 	t.Helper()
 	for _, rec := range records {
@@ -106,7 +99,6 @@ func findLogRecord(t *testing.T, records []map[string]any, want string) map[stri
 	return nil
 }
 
-// assertDebugNotWarn requires a debug record with msg and no warning at all.
 func assertDebugNotWarn(t *testing.T, buf *bytes.Buffer, msg string) {
 	t.Helper()
 	records := logRecords(t, buf)
@@ -127,6 +119,8 @@ func relayTestFP(b byte) pairing.Fingerprint {
 	return fp
 }
 
+// TestPublicChangedTrueRedeclares checks that becoming public sets the flag and
+// re-declares the topics in name order.
 func TestPublicChangedTrueRedeclares(t *testing.T) {
 	sw := &relaySwitch{}
 	topics := func() map[string]string {
@@ -141,6 +135,8 @@ func TestPublicChangedTrueRedeclares(t *testing.T) {
 	}
 }
 
+// TestPublicChangedFalseOnlyRevokes checks that becoming private clears the flag
+// without reading the topics.
 func TestPublicChangedFalseOnlyRevokes(t *testing.T) {
 	sw := &relaySwitch{}
 	topicsCalled := false
@@ -160,6 +156,8 @@ func TestPublicChangedFalseOnlyRevokes(t *testing.T) {
 	}
 }
 
+// TestPublicChangedSetPublicErrorStops checks that a failed SetPublic stops the
+// relay and logs set_public_failed.
 func TestPublicChangedSetPublicErrorStops(t *testing.T) {
 	sw := &relaySwitch{setPublicErr: errors.New("directory closed")}
 	logger, buf := relayTestLogger(t)
@@ -176,9 +174,8 @@ func TestPublicChangedSetPublicErrorStops(t *testing.T) {
 	}
 }
 
-// TestPublicChangedClosedDirectoryLogsDebug covers a notification delivered
-// while the directory is closing: SetPublic returns ErrClosed, which is not a
-// warning.
+// TestPublicChangedClosedDirectoryLogsDebug checks that a closed directory
+// during shutdown logs at debug, not as a warning.
 func TestPublicChangedClosedDirectoryLogsDebug(t *testing.T) {
 	sw := &relaySwitch{setPublicErr: directory.ErrClosed}
 	logger, buf := relayTestLogger(t)
@@ -188,6 +185,8 @@ func TestPublicChangedClosedDirectoryLogsDebug(t *testing.T) {
 	assertDebugNotWarn(t, buf, "set_public_closed")
 }
 
+// TestPublicChangedOneDeclareFailureContinues checks that one failed declaration
+// logs and does not stop the rest.
 func TestPublicChangedOneDeclareFailureContinues(t *testing.T) {
 	sw := &relaySwitch{declareErr: map[string]error{"x": errors.New("quota exceeded")}}
 	logger, buf := relayTestLogger(t)
@@ -210,6 +209,8 @@ func TestPublicChangedOneDeclareFailureContinues(t *testing.T) {
 	}
 }
 
+// TestPublicChangedRetiresTopicsLeftMeanwhile checks that topics dropped between
+// the two snapshots are retired.
 func TestPublicChangedRetiresTopicsLeftMeanwhile(t *testing.T) {
 	sw := &relaySwitch{}
 	calls := 0
@@ -229,6 +230,8 @@ func TestPublicChangedRetiresTopicsLeftMeanwhile(t *testing.T) {
 	}
 }
 
+// TestRelayCardOnlyDialerPeers checks that only a dialer peer's card addresses
+// are recorded.
 func TestRelayCardOnlyDialerPeers(t *testing.T) {
 	dialer := relayTestFP(1)
 	acceptor := relayTestFP(2)

@@ -15,23 +15,14 @@ import (
 )
 
 // updateShutdownGrace is how long the Broker waits after answering ApplyUpdate
-// before it starts the normal shutdown. gRPC writes the unary response right
-// after the handler returns, so the grace covers a client that reads slowly and
-// any scheduling delay: the caller learns that restarting is under way before
-// the process exits and the local socket closes. It is well below the restart
-// delay of the installed units (RestartSec=5 in systemd, launchd's KeepAlive),
-// so the service manager starts the new binary promptly.
+// before it shuts down.
 const updateShutdownGrace = 500 * time.Millisecond
 
-// ApplyUpdate installs the newest formal release over the running binary,
-// has the new binary rewrite its level's service unit, and arranges the
-// restart that makes it take effect. The request names neither a version nor
-// a source. Access is enforced by the interceptor, not here: the system Broker
-// requires write permission on the configuration file, and the user
-// Broker allows every local caller, as it does for SetConfig.
-//
-// The Broker refuses when no service manager runs it, because nothing would
-// start the new binary after it exits. Only one update may run at a time.
+// ApplyUpdate installs the newest formal release over the running binary, has
+// the new binary rewrite its level's service unit, and arranges the restart
+// that makes it take effect. The request names neither a version nor a source.
+// The Broker refuses when no service manager runs it; only one update runs at a
+// time. Access is enforced by the interceptor, not here.
 func (b *Broker) ApplyUpdate(ctx context.Context, _ *localpb.ApplyUpdateRequest) (*localpb.ApplyUpdateResponse, error) {
 	caller, ok := CallerFrom(ctx)
 	if !ok {
@@ -111,8 +102,6 @@ func (b *Broker) ApplyUpdate(ctx context.Context, _ *localpb.ApplyUpdateRequest)
 	}, nil
 }
 
-// serviceLevel is the --level value of "peers internal post-update" for the
-// service level this Broker runs at.
 func serviceLevel(system bool) string {
 	if system {
 		return "system"
@@ -120,8 +109,8 @@ func serviceLevel(system bool) string {
 	return "user"
 }
 
-// installedExecutable returns the running binary with symbolic links resolved,
-// so the replacement lands on the file the service runs.
+// installedExecutable resolves symbolic links so the replacement lands on the
+// file the service runs.
 func installedExecutable() (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -134,20 +123,13 @@ func installedExecutable() (string, error) {
 	return real, nil
 }
 
-// detectServiceManager reports whether this process is the one the service
-// manager of its platform and level started. The environment is not a
-// judgement: a terminal often inherits systemd's INVOCATION_ID or launchd's
-// XPC_SERVICE_NAME from the process that opened it, and replacing the binary of
-// a Broker nothing would restart is exactly the failure this check prevents.
+// detectServiceManager reports whether the service manager of this platform
+// and level started this process. Environment variables are not evidence: a
+// terminal can inherit systemd's INVOCATION_ID or launchd's XPC_SERVICE_NAME.
 func detectServiceManager(system bool) bool {
 	return runningUnderServiceManager(runtime.GOOS, system, os.Getpid(), service.MainPID)
 }
 
-// runningUnderServiceManager implements detectServiceManager with the platform,
-// the level, the current pid and the service-manager query injected for tests.
-// The process is service-managed only when the manager reports a running
-// service whose main pid is this process. A failed query, a missing or stopped
-// unit and a different pid all report false.
 func runningUnderServiceManager(goos string, system bool, pid int, mainPID func(bool) (int, bool)) bool {
 	switch goos {
 	case "linux", "darwin":
@@ -158,8 +140,8 @@ func runningUnderServiceManager(goos string, system bool, pid int, mainPID func(
 	}
 }
 
-// updateAppliedEvent is the audit record for an installed release. It carries
-// the versions only, never a URL or any other content of the download.
+// updateAppliedEvent builds the audit record for an installed release; it
+// carries only the versions, never a download URL.
 func updateAppliedEvent(account, oldVersion, newVersion string) config.Event {
 	oldValue := config.Value{Kind: config.KindString, String: oldVersion}
 	newValue := config.Value{Kind: config.KindString, String: newVersion}
@@ -171,8 +153,8 @@ func updateAppliedEvent(account, oldVersion, newVersion string) config.Event {
 	}
 }
 
-// auditUpdateFailed records a failed update attempt. detail is the underlying
-// error text, which may name a URL; the download itself never enters the log.
+// auditUpdateFailed records a failed update attempt. detail is the error text,
+// which may name a URL; the download itself never enters the log.
 func (b *Broker) auditUpdateFailed(account, detail string) {
 	b.deps.Config.Audit(config.Event{
 		Event:   config.EventUpdateFailed,

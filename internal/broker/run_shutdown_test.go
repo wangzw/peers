@@ -15,8 +15,7 @@ import (
 )
 
 // orderedSessions records when a registration handler releases its session
-// backend and closes released the first time it happens, so the shutdown test
-// can wait for the handler instead of sleeping.
+// backend and closes released the first time it happens.
 type orderedSessions struct {
 	*fakeSessions
 	order    *orderLog
@@ -36,17 +35,15 @@ func (s *orderedSessions) Acquire(ctx context.Context, uid uint32) (SessionBacke
 	}, nil
 }
 
-// waitingRunner is a LinkRunner whose Close waits for a frame handler the test
-// started, the way link.Close waits for its own handlers. It never waits longer
-// than closeWait, so an unfixed shutdown fails the elapsed-time assertion
-// instead of hanging the test binary.
+// waitingRunner is a LinkRunner whose Close waits for a frame handler, bounded
+// by closeWait.
 type waitingRunner struct {
 	order       *orderLog
 	handlerDone <-chan struct{}
 }
 
-// closeWait shares the package fallback: an unfixed shutdown still fails the
-// elapsed-time assertion, it just takes the fallback to reach it.
+// closeWait is the package fallback, so a stuck shutdown fails the
+// elapsed-time assertion instead of hanging.
 const closeWait = eventTimeout
 
 func (*waitingRunner) Listen(string) error { return nil }
@@ -60,10 +57,8 @@ func (r *waitingRunner) Close() {
 	}
 }
 
-// TestRunShutdownStopsBlockedDelivery checks that shutdown is not held up by a
-// delivery handler blocked in an inbox write. Run must cancel the delivery
-// lifecycle before link Close waits for its handlers, so the write ends and Run
-// returns within a second of cancellation.
+// TestRunShutdownStopsBlockedDelivery checks that shutdown returns without
+// waiting for a delivery handler blocked in an inbox write.
 func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 	peer := fakenetPeer(20)
 	sender := remoteMember{Name: "api-worker", Ref: "1a2b3c"}
@@ -141,14 +136,10 @@ func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 	case <-time.After(eventTimeout):
 		t.Fatal("the delivery handler never reached the inbox write")
 	}
-	// Release a handler the fix did not stop, so no goroutine outlives the test.
 	t.Cleanup(func() { close(block.release) })
 
-	// No requirement bounds shutdown: the handler above is released only by the
-	// cleanup, so a shutdown that waits for it never returns. This bound is only
-	// there to turn that hang into a failure the test can report, and the fallback
-	// is wide enough that a correct shutdown, which returns as soon as the handler
-	// is left blocked, never spends it.
+	// The handler is released only by cleanup, so this timeout turns a shutdown
+	// that waits for it into a reported failure; a correct shutdown never spends it.
 	rt.cancel()
 	done := make(chan error, 1)
 	go func() { done <- rt.waitErr() }()
@@ -161,9 +152,8 @@ func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 		t.Fatal("Run did not return after cancel: shutdown waited for the inbox write")
 	}
 
-	// The canceled write is not proof that nothing reached the session: the
-	// frame may already be on the wire when the context ends. The request must
-	// report delivery_unknown, never "not sent" or a success.
+	// A cancelled write does not prove nothing reached the session, so the
+	// request must report delivery_unknown.
 	select {
 	case reply := <-replies:
 		wantReceiveError(t, reply, localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN, "Delivery unknown:")
@@ -172,7 +162,6 @@ func TestRunShutdownStopsBlockedDelivery(t *testing.T) {
 	}
 }
 
-// dialRunLocal opens a client connection to a Broker that Run serves.
 func dialRunLocal(t *testing.T, sock string) localpb.LocalClient {
 	t.Helper()
 	cc, err := grpc.NewClient("unix://"+sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -183,12 +172,9 @@ func dialRunLocal(t *testing.T, sock string) localpb.LocalClient {
 	return localpb.NewLocalClient(cc)
 }
 
-// TestRunShutdownWaitsForRegistrationHandlers checks that Run does not return
-// while a Register handler is still using the Broker. grpc.Server.Stop does not
-// wait for method handlers by default, so shutdown could close the configuration
-// and release the account lock under a handler that is still unregistering its
-// agent. The criterion is: when Run returns, no watch is left and every
-// Acquire was released.
+// TestRunShutdownWaitsForRegistrationHandlers checks that Run returns only
+// after an in-flight Register handler has released its backend and left no
+// watch.
 func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 	sessions := &fakeSessions{}
 	order := &orderLog{}
@@ -214,14 +200,10 @@ func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 		t.Fatal("the component never received the Broker")
 	}
 
-	// A valid absolute path with no session record: the handler acquires its
-	// session backend, takes a watch on the configuration directory and waits
-	// for the record. It stays in the handler until the stream ends.
+	// A valid absolute path with no session record keeps the handler on its watch.
 	client := dialRunLocal(t, rt.socketPath())
 	startRegistrationAt(t, client, t.TempDir(), filepath.Join(t.TempDir(), "s.sock"))
 
-	// Wait until the handler holds its watch, which is the state it must leave
-	// cleanly on shutdown.
 	deadline := time.Now().Add(eventTimeout)
 	for {
 		b.mu.Lock()
@@ -236,11 +218,8 @@ func TestRunShutdownWaitsForRegistrationHandlers(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Holding Broker.mu keeps the handler inside dropConn. Cancel and release
-	// the mutex: the handler then finishes and releases its backend, which is
-	// the event shutdown must have waited for. The component Stop runs only
-	// after Stop returns, and Stop waits for every handler, so it must be logged
-	// after the release.
+	// Holding Broker.mu keeps the handler inside dropConn; cancelling and
+	// releasing it lets the handler finish and release its backend.
 	b.mu.Lock()
 	rt.cancel()
 	b.mu.Unlock()

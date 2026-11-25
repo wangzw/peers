@@ -12,9 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// assembleTest drives a peerAssembler whose three construction seams are
-// replaced with doubles. The doubles record what the assembler passes and let
-// a test plant failures without touching pairing's or link's process state.
 type assembleTest struct {
 	t      *testing.T
 	cfg    *fakeConfig
@@ -79,10 +76,8 @@ func (at *assembleTest) assemble() ([]Component, error) {
 	return at.a.Assemble(context.Background(), at.cfg, at.deps, at.asm)
 }
 
-// TestPeerAssemblerInjectsTransportBeforeLinkExists checks that pairing is
-// opened with the late transport and that link is bound to it afterwards:
-// before the bind a dial fails as a dial failure, after it the dial and the
-// drop reach link's adapter (REQ-broker-pairing-021).
+// TestPeerAssemblerInjectsTransportBeforeLinkExists checks that pairing dials
+// fail before link is bound and reach link's adapter afterwards.
 func TestPeerAssemblerInjectsTransportBeforeLinkExists(t *testing.T) {
 	at := newAssembleTest(t)
 	at.links.pairDialFn = func(_ context.Context, address string, _ func(pairing.PairConn) error) error {
@@ -129,10 +124,8 @@ func TestPeerAssemblerInjectsTransportBeforeLinkExists(t *testing.T) {
 	}
 }
 
-// TestPeerAssemblerFillsDepsAndAssembly checks every field the assembler owns
-// and that it neither returns components nor touches link's lifecycle.
-// REQ-broker-pairing-019: the link built here is the one Run starts after the
-// local socket is ready, so the assembly must carry that exact instance.
+// TestPeerAssemblerFillsDepsAndAssembly checks that the assembler fills every
+// Deps and Assembly field and starts nothing.
 func TestPeerAssemblerFillsDepsAndAssembly(t *testing.T) {
 	at := newAssembleTest(t)
 	comps, err := at.assemble()
@@ -165,9 +158,8 @@ func TestPeerAssemblerFillsDepsAndAssembly(t *testing.T) {
 	}
 }
 
-// TestPeerAssemblerAliasWiredBeforeLink checks that broker.alias is in
-// pairing's cache and its conflict check is registered by the time link is
-// constructed: a link built earlier could handshake with an empty alias.
+// TestPeerAssemblerAliasWiredBeforeLink checks that broker.alias is cached and
+// its conflict check registered before link is built.
 func TestPeerAssemblerAliasWiredBeforeLink(t *testing.T) {
 	at := newAssembleTest(t)
 	var (
@@ -194,9 +186,8 @@ func TestPeerAssemblerAliasWiredBeforeLink(t *testing.T) {
 	}
 }
 
-// TestPeerAssemblerPassesProtocolVersion checks that Run's link protocol
-// version reaches link unchanged, including zero, which link turns into its
-// default.
+// TestPeerAssemblerPassesProtocolVersion checks that Run's link protocol version
+// reaches link unchanged, including zero.
 func TestPeerAssemblerPassesProtocolVersion(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -233,9 +224,8 @@ func TestPeerAssemblerPassesProtocolVersion(t *testing.T) {
 	}
 }
 
-// TestPeerAssemblerCatalogSetLater checks that Deps.Peers looks up the catalog
-// on each call: a directory assembler that runs after this one can still
-// supply card addresses.
+// TestPeerAssemblerCatalogSetLater checks that the peer view reads the catalog on
+// each call, so a later assembler can supply it.
 func TestPeerAssemblerCatalogSetLater(t *testing.T) {
 	at := newAssembleTest(t)
 	at.store.peers = []pairing.Peer{{Fingerprint: fp(2), Alias: "hostB", Role: pairing.RoleAcceptor}}
@@ -258,7 +248,7 @@ func TestPeerAssemblerCatalogSetLater(t *testing.T) {
 }
 
 // TestPeerAssemblerOpenFailure checks that a failure to open pairing names the
-// step and stops assembly before link is created.
+// step and stops before link is created.
 func TestPeerAssemblerOpenFailure(t *testing.T) {
 	at := newAssembleTest(t)
 	at.openErr = pairing.ErrIdentity
@@ -278,9 +268,8 @@ func TestPeerAssemblerOpenFailure(t *testing.T) {
 	}
 }
 
-// TestPeerAssemblerAliasSubscribedFirst checks that pairing's subscription is
-// registered before any later assembler's: when broker.alias changes, pairing's
-// cache is updated before the later subscriber runs.
+// TestPeerAssemblerAliasSubscribedFirst checks that pairing's broker.alias
+// subscription is registered before a later subscriber.
 func TestPeerAssemblerAliasSubscribedFirst(t *testing.T) {
 	at := newAssembleTest(t)
 	if _, err := at.assemble(); err != nil {
@@ -313,8 +302,8 @@ func TestPeerAssemblerAliasSubscribedFirst(t *testing.T) {
 	}
 }
 
-// TestDefaultAssemblersStartsWithPeers checks that the production startup path
-// builds pairing and link before anything that reads them.
+// TestDefaultAssemblersStartsWithPeers checks that the peer assembler is the
+// first production assembler.
 func TestDefaultAssemblersStartsWithPeers(t *testing.T) {
 	as := DefaultAssemblers()
 	if len(as) == 0 {

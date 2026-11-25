@@ -5,10 +5,6 @@ import (
 	"time"
 )
 
-// listenRetrier retries binding broker.listen with exponential backoff while
-// the Broker runs local only. The first wait is one second, each later wait
-// doubles and the wait is capped at one minute. A broker.listen change wakes
-// it immediately and resets the backoff. A successful bind ends it.
 type listenRetrier struct {
 	bind        func(addr string) error
 	currentAddr func() (string, error)
@@ -45,13 +41,10 @@ func newListenRetrier(bind func(string) error, currentAddr func() (string, error
 	}
 }
 
-// start begins the retry loop. It is called once.
 func (r *listenRetrier) start() {
 	go r.run()
 }
 
-// retryNow asks for an immediate attempt and resets the backoff. A change
-// delivered while an attempt runs is retained for the next wait.
 func (r *listenRetrier) retryNow() {
 	select {
 	case r.wake <- struct{}{}:
@@ -59,7 +52,6 @@ func (r *listenRetrier) retryNow() {
 	}
 }
 
-// stop ends the retry loop and waits for it. It is safe to call once.
 func (r *listenRetrier) stop() {
 	if r == nil {
 		return
@@ -72,9 +64,6 @@ func (r *listenRetrier) run() {
 	defer close(r.done)
 	delay := listenRetryFirst
 	lastReason := ""
-	// bound is the address a successful bind left listening. It stays put when
-	// a later reconcile fails, so the failure can say the old listener still
-	// serves.
 	bound := ""
 	for {
 		fired, stopped := r.wait(delay)
@@ -88,10 +77,6 @@ func (r *listenRetrier) run() {
 		if err == nil {
 			bound = addr
 			if r.onSuccess != nil {
-				// onSuccess reconciles the bound address with the current
-				// value after enabling the component's rebinding. A failure
-				// there keeps the retrier running and names the address that
-				// failed.
 				next, successErr := r.onSuccess(addr)
 				if successErr != nil {
 					err = successErr
@@ -122,15 +107,11 @@ func (r *listenRetrier) run() {
 				delay = listenRetryMax
 			}
 		} else {
-			// woken by a broker.listen change: the immediate attempt above
-			// already used the new address, and the next wait starts over.
 			delay = listenRetryFirst
 		}
 	}
 }
 
-// wait blocks for d or until a change wakes the loop or it is stopped. fired
-// reports that d elapsed; stopped reports that the retrier is shutting down.
 func (r *listenRetrier) wait(d time.Duration) (fired, stopped bool) {
 	ch := make(chan struct{}, 1)
 	t := r.clock.AfterFunc(d, func() {

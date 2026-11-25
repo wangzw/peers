@@ -8,21 +8,15 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// resolveAgent describes one Agent independently of whether it is local or
-// remote, so every pickTarget case runs against both candidate sets.
 type resolveAgent struct {
 	name, ref, prev string
 	visible         bool
 }
 
-// resolveTestAddr spells addresses the way a send test does, without depending
-// on the signature work item.
 func resolveTestAddr(name, ref string, unique bool) string {
 	return FormatAddress(name, ref, "h", !unique)
 }
 
-// resolveLocalCands builds local candidates. The ID starts with the ref so the
-// local prefix rule sees the same disambiguation the remote ref describes.
 func resolveLocalCands(agents []resolveAgent) []candidate {
 	views := make([]agentView, len(agents))
 	visible := make(map[string]bool, len(agents))
@@ -34,7 +28,6 @@ func resolveLocalCands(agents []resolveAgent) []candidate {
 	return localCandidates(views, func(v agentView) bool { return visible[v.ID] }, resolveTestAddr)
 }
 
-// resolveRemoteCands builds remote candidates.
 func resolveRemoteCands(agents []resolveAgent) []candidate {
 	members := make([]remoteMember, len(agents))
 	visible := make(map[string]bool, len(agents))
@@ -47,7 +40,6 @@ func resolveRemoteCands(agents []resolveAgent) []candidate {
 	}, resolveTestAddr)
 }
 
-// resolveBothKinds runs the same case against local and remote candidates.
 func resolveBothKinds(t *testing.T, agents []resolveAgent, run func(t *testing.T, cands []candidate, refMatch func(candidate, string) bool, where string)) {
 	t.Helper()
 	t.Run("local", func(t *testing.T) {
@@ -79,8 +71,8 @@ func resolveWantNotContains(t *testing.T, s, sub string) {
 	}
 }
 
-// TestParseTargetPlain checks the ordinary name@alias form. Splitting at the
-// first "@" instead of the last would break this.
+// TestParseTargetPlain checks that parseTarget accepts a plain name@alias
+// address.
 func TestParseTargetPlain(t *testing.T) {
 	got, ok := parseTarget("api-worker@hostB")
 	if !ok {
@@ -92,8 +84,7 @@ func TestParseTargetPlain(t *testing.T) {
 	}
 }
 
-// TestParseTargetWithRef checks that the trailing ref is split off the name
-// (REQ-agent-messaging-029).
+// TestParseTargetWithRef checks that a trailing ref is split off the name.
 func TestParseTargetWithRef(t *testing.T) {
 	got, ok := parseTarget("ab [1a2b3c]@hostA")
 	if !ok {
@@ -150,8 +141,7 @@ func TestPickUniqueByName(t *testing.T) {
 }
 
 // TestPickAmbiguousListsVisibleOnly checks that ambiguity lists the visible
-// Agents only and leaks no address of an invisible one
-// (REQ-agent-messaging-007).
+// Agents only and leaks no address of an invisible one.
 func TestPickAmbiguousListsVisibleOnly(t *testing.T) {
 	agents := []resolveAgent{
 		{name: "api-worker", ref: "1a2b3c", visible: true},
@@ -172,7 +162,7 @@ func TestPickAmbiguousListsVisibleOnly(t *testing.T) {
 }
 
 // TestPickByRefAmongDuplicates checks that a ref selects one of two Agents
-// sharing a name (REQ-agent-messaging-007).
+// sharing a name.
 func TestPickByRefAmongDuplicates(t *testing.T) {
 	agents := []resolveAgent{
 		{name: "api-worker", ref: "1a2b3c", visible: true},
@@ -190,7 +180,7 @@ func TestPickByRefAmongDuplicates(t *testing.T) {
 }
 
 // TestPickRefNameMismatchUsesPrevName checks that a ref plus a previous name
-// reports the current address instead of delivering (REQ-agent-messaging-031).
+// reports the current address instead of delivering.
 func TestPickRefNameMismatchUsesPrevName(t *testing.T) {
 	agents := []resolveAgent{
 		{name: "api-v2", ref: "1a2b3c", prev: "api-worker", visible: true},
@@ -206,7 +196,7 @@ func TestPickRefNameMismatchUsesPrevName(t *testing.T) {
 }
 
 // TestPickPrevNameWithoutRef checks the rename hint for an address without a
-// ref (REQ-agent-messaging-031, REQ-agent-messaging-005).
+// ref.
 func TestPickPrevNameWithoutRef(t *testing.T) {
 	agents := []resolveAgent{
 		{name: "api-v2", ref: "1a2b3c", prev: "api-worker", visible: true},
@@ -222,7 +212,7 @@ func TestPickPrevNameWithoutRef(t *testing.T) {
 }
 
 // TestPickInvisibleIsNotVisible checks that an Agent the caller cannot see
-// yields not_visible and no address (REQ-agent-messaging-014).
+// yields not_visible and no address.
 func TestPickInvisibleIsNotVisible(t *testing.T) {
 	agents := []resolveAgent{
 		{name: "api-worker", ref: "1a2b3c", visible: false},
@@ -238,12 +228,8 @@ func TestPickInvisibleIsNotVisible(t *testing.T) {
 	})
 }
 
-// TestPickTruncatedNamePrefix checks that the truncated address an Agent
-// renders selects it in a reply (REQ-agent-messaging-037, :025). The address
-// carries the full twelve-character ref. The name written may be the shortened
-// name this Broker renders or the shortened name another alias length renders,
-// because the address may have been made by another Broker; a prefix that no
-// legal alias length produces is not accepted.
+// TestPickTruncatedNamePrefix checks that an Agent's shortened address selects
+// it in a reply when the address carries the full twelve-character ref.
 func TestPickTruncatedNamePrefix(t *testing.T) {
 	long := strings.Repeat("x", 70)
 	agents := []resolveAgent{{name: long, ref: "1a2b3c4d5e6f", visible: true}}
@@ -263,8 +249,6 @@ func TestPickTruncatedNamePrefix(t *testing.T) {
 			t.Fatalf("idx = %d, want 0", idx)
 		}
 
-		// One rune shorter is the shortened name at the next alias length, which
-		// another Broker would render, so the full ref still selects it.
 		runes := []rune(name)
 		fromLongerAlias := parsedAddress{Name: string(runes[:len(runes)-1]), Ref: ref, Alias: alias}
 		idx, err = pickTarget(fromLongerAlias, cands, refMatch, where)
@@ -275,8 +259,6 @@ func TestPickTruncatedNamePrefix(t *testing.T) {
 			t.Fatalf("idx = %d, want 0 for a name shortened by another alias", idx)
 		}
 
-		// A prefix that no legal alias length produces is not the rendered name
-		// at any alias, so the full ref does not select it.
 		unreachable := parsedAddress{Name: string(runes[:len(runes)-config.AliasMaxLen-1]), Ref: ref, Alias: alias}
 		if _, err := pickTarget(unreachable, cands, refMatch, where); err == nil {
 			t.Fatal("a prefix no legal alias length renders selected the Agent")
@@ -284,9 +266,8 @@ func TestPickTruncatedNamePrefix(t *testing.T) {
 	})
 }
 
-// TestPickCleanedNameWithRef checks that a cleaned name plus ref selects the
-// Agent whose raw name cleans to it, not the Agent actually named that
-// (REQ-agent-messaging-029).
+// TestPickCleanedNameWithRef checks that a cleaned name plus a ref selects the
+// Agent whose raw name cleans to it, not the Agent actually named that.
 func TestPickCleanedNameWithRef(t *testing.T) {
 	agents := []resolveAgent{
 		{name: "a<b", ref: "aaaaaa", visible: true},
@@ -304,9 +285,8 @@ func TestPickCleanedNameWithRef(t *testing.T) {
 	})
 }
 
-// TestPickRefEmptyCleanedName checks that a name that cleans to nothing cannot
-// select an Agent: an empty prefix matches every cleaned name, so it must be
-// treated as no match rather than a wildcard.
+// TestPickRefEmptyCleanedName checks that a ref whose cleaned name is empty
+// selects no agent.
 func TestPickRefEmptyCleanedName(t *testing.T) {
 	agents := []resolveAgent{{name: "api-worker", ref: "1a2b3c", visible: true}}
 	resolveBothKinds(t, agents, func(t *testing.T, cands []candidate, refMatch func(candidate, string) bool, where string) {
@@ -331,7 +311,6 @@ func TestRemoteRefMatchMutualPrefix(t *testing.T) {
 		t.Fatal("a different ref matched")
 	}
 
-	// The same rule must hold through pickTarget.
 	cands := resolveRemoteCands([]resolveAgent{{name: "api-worker", ref: "1a2b3c", visible: true}})
 	idx, err := pickTarget(parsedAddress{Name: "api-worker", Ref: "1a2b3c4d", Alias: "h"}, cands, remoteRefMatch, "on hostB")
 	if err != nil {
@@ -355,9 +334,9 @@ func TestPickNotFound(t *testing.T) {
 	})
 }
 
-// TestRemoteCandidatesRefRequired checks that a remote member whose publisher
-// requires a ref always gets a ref in its address, even when its name is unique
-// in the roster. A member without the flag keeps the plain address when unique.
+// TestRemoteCandidatesRefRequired checks that a ref-required remote member
+// always gets a ref in its address while a plain member keeps the plain address
+// when unique.
 func TestRemoteCandidatesRefRequired(t *testing.T) {
 	members := []remoteMember{
 		{Name: "worker", Ref: "abcdef", RefRequired: true},

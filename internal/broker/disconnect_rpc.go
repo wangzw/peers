@@ -9,11 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// resolvePeerRef turns the broker field of a DisconnectRequest into the
-// fingerprint of a paired Broker. The reference is first resolved as an
-// effective alias; a full 64-hex-digit fingerprint is accepted when no peer
-// has that alias. Fingerprint prefixes are rejected, because they would need
-// an ambiguity rule this version does not have.
 func resolvePeerRef(p PairingOps, ref string) (pairing.Fingerprint, *Error) {
 	if ref == "" {
 		return pairing.Fingerprint{}, Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
@@ -37,9 +32,8 @@ func resolvePeerRef(p PairingOps, ref string) (pairing.Fingerprint, *Error) {
 }
 
 // Disconnect removes one peer from the pairing table. The link is closed by
-// pairing itself, through the injected Transport.Drop, so the handler never
-// calls PeerLinks.Drop: pairing only drops the link when the removed entry was
-// not replaced by a new pairing.
+// pairing through the injected transport, so the handler must not call
+// PeerLinks.Drop.
 func (b *Broker) Disconnect(ctx context.Context, req *localpb.DisconnectRequest) (*localpb.DisconnectResponse, error) {
 	actor, err := b.auditActor(ctx, req.GetAgentId())
 	if err != nil {
@@ -55,15 +49,14 @@ func (b *Broker) Disconnect(ctx context.Context, req *localpb.DisconnectRequest)
 		return nil, toStatus(refErr)
 	}
 
-	// Read the alias before Unpair removes the entry; the audit record and the
-	// log line name the peer by the alias it had when it was still a peer.
+	// Read the alias before Unpair removes the entry: the audit record and the
+	// log line name the peer by its alias before removal.
 	alias := b.deps.Pairing.EffectiveAlias(fingerprint)
 	if err := b.deps.Pairing.Unpair(fingerprint); err != nil {
 		return nil, toStatus(unpairError(err))
 	}
-	// Unpairing is the only event that forgets a peer's inbound buckets: its
-	// next pairing starts with a fresh quota. A dropped link deliberately does
-	// not, or the peer could reconnect to spend another burst.
+	// Unpairing is the only event that forgets a peer's inbound buckets; a
+	// dropped link keeps them so a reconnect cannot refresh the quota.
 	if b.deps.Delivery != nil {
 		b.deps.Delivery.inbound.dropPeer(fingerprint)
 	}

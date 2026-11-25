@@ -282,8 +282,8 @@ func (*Delivered) Descriptor() ([]byte, []int) {
 	return file_internal_broker_deliverpb_deliver_proto_rawDescGZIP(), []int{2}
 }
 
-// A2A 1.0.0 Message subset. Field numbers are the A2A numbers; unused numbers
-// (2, 3, 6, 7, 8) are intentionally skipped for future compatibility.
+// A2A 1.0.0 Message subset whose field numbers are A2A's; 2, 3, 6, 7 and 8 are
+// A2A field numbers that must not be reassigned to other fields.
 type Message struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MessageId     string                 `protobuf:"bytes,1,opt,name=message_id,json=messageId,proto3" json:"message_id,omitempty"`

@@ -9,9 +9,9 @@ import (
 )
 
 // GetConfig returns configuration values. An empty key returns every key in
-// the dictionary order All reports; a non-empty key returns exactly that one
-// entry. Secret values are reported as set or unset only, never in clear.
-// Access is enforced by the interceptor, not here.
+// the order All reports; a non-empty key returns exactly that entry. Secret
+// values are reported only as set or unset. Access is enforced by the
+// interceptor, not here.
 func (b *Broker) GetConfig(ctx context.Context, req *localpb.GetConfigRequest) (*localpb.GetConfigResponse, error) {
 	cfg := b.deps.Config
 	key := req.GetKey()
@@ -33,8 +33,6 @@ func (b *Broker) GetConfig(ctx context.Context, req *localpb.GetConfigRequest) (
 	}}, nil
 }
 
-// configValueError maps a failed configuration read or write to a client error.
-// An unknown key names the key; every other failure keeps its own class.
 func configValueError(key string, err error) *Error {
 	if errors.Is(err, config.ErrUnknownKey) {
 		return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
@@ -44,10 +42,9 @@ func configValueError(key string, err error) *Error {
 }
 
 // SetConfig parses and applies one configuration change. The initiator is
-// resolved first, so a bad agent_id leaves the configuration untouched. Secret
-// keys and broker.listen while this run is fixed by --listen are refused before
-// the value is parsed, so their explanation does not depend on how the value is
-// written. Access is enforced by the interceptor, not here.
+// resolved first, before any key is read. Secret keys and broker.listen, while
+// this run is fixed by --listen, are refused before the value is parsed. Access
+// is enforced by the interceptor, not here.
 func (b *Broker) SetConfig(ctx context.Context, req *localpb.SetConfigRequest) (*localpb.SetConfigResponse, error) {
 	cfg := b.deps.Config
 

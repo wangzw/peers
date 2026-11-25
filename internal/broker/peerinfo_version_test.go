@@ -9,9 +9,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
+// TestStatusDetailVersionWithoutPeerVersion checks that a version mismatch
+// explains the upgrade even without the peer's version.
 func TestStatusDetailVersionWithoutPeerVersion(t *testing.T) {
-	// design-link.md:196: a version mismatch explains which side to upgrade even
-	// when the peer's version is unknown.
 	want := "link protocol version incompatible with this peer; upgrade the older Broker"
 	got := peerStatusDetail(PeerLinkStatus{Phase: LinkBackoff, Failure: FailureVersionIncompatible})
 	if got != want {
@@ -19,6 +19,8 @@ func TestStatusDetailVersionWithoutPeerVersion(t *testing.T) {
 	}
 }
 
+// TestStatusDetailVersionWithPeerVersion checks that a version mismatch names
+// the peer's version when it is known.
 func TestStatusDetailVersionWithPeerVersion(t *testing.T) {
 	want := "link protocol version incompatible with this peer; upgrade the older Broker: peer speaks link protocol version 2"
 	got := peerStatusDetail(peerLinkStatus(link.LinkState{
@@ -31,9 +33,9 @@ func TestStatusDetailVersionWithPeerVersion(t *testing.T) {
 	}
 }
 
+// TestListBrokersAndStatusShareDetail checks that ListBrokers and Status show the
+// same version detail for a backing-off peer.
 func TestListBrokersAndStatusShareDetail(t *testing.T) {
-	// design-link.md:196: ListBrokers and Status show the same explanation for
-	// a peer that is backing off after a version mismatch.
 	want := "link protocol version incompatible with this peer; upgrade the older Broker: peer speaks link protocol version 2"
 	p := &fakePairing{peers: []pairing.Peer{
 		{Fingerprint: fp(5), Alias: "hostB", Role: pairing.RoleDialer},

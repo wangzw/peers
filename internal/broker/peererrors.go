@@ -9,20 +9,15 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// connectError maps the error a pairing attempt returns to the local
-// interface error code and message. It returns nil for context.Canceled, which
-// toStatus reports as Canceled; callers must pass the original error to
-// toStatus in that case.
+// connectError maps the error a pairing attempt returns to the local interface
+// error code and message. It returns nil for context.Canceled, which toStatus
+// reports as Canceled, so callers must pass the original error to toStatus.
 func connectError(address, localAlias string, err error) *Error {
 	switch {
 	case errors.Is(err, pairing.ErrInvalidAddress):
 		return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 			"invalid address %q: write it as address:port or hostname(address:port); an IPv6 address needs brackets", address)
 	case errors.Is(err, pairing.ErrInvalidAlias):
-		// pairing reports every unusable local alias with one sentinel. A
-		// character outside the set is named first, so a multi-byte alias is
-		// not described as merely too long; otherwise an alias over the limit
-		// says so.
 		if !aliasCharsValid(localAlias) {
 			return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
 				"invalid local alias: use 1 to %d letters, digits, '.', '-' or '_'", config.AliasMaxLen)
@@ -40,8 +35,8 @@ func connectError(address, localAlias string, err error) *Error {
 	}
 
 	// A *PairingError unwraps to ErrPairingRejected, so it has to be checked
-	// before the generic rejected branch. Its message starts with
-	// "Not connected: ", which mcpserver adds itself, so only Detail is used.
+	// before the generic rejected branch; its message starts with "Not
+	// connected: ", which mcpserver adds itself, so only Detail is used.
 	var pe *pairing.PairingError
 	if errors.As(err, &pe) {
 		detail := pe.Detail
@@ -67,7 +62,6 @@ func connectError(address, localAlias string, err error) *Error {
 	}
 }
 
-// pairingKeyError maps the error from creating a one-time pairing key.
 func pairingKeyError(err error) *Error {
 	if errors.Is(err, pairing.ErrNotListening) {
 		return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
@@ -76,8 +70,6 @@ func pairingKeyError(err error) *Error {
 	return Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL, "creating a pairing key failed: %v", err)
 }
 
-// unpairError maps the error from Unpair. Unpair fails only when pairing is
-// not open or the peer table cannot be written.
 func unpairError(err error) *Error {
 	return Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL, "unpairing failed: %v", err)
 }

@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestUpdateCheckInitialDelayUsesTestOverride proves that a peers_testenv build
-// reads PEERS_TEST_UPDATE_INITIAL_DELAY as a Go duration.
+// TestUpdateCheckInitialDelayUsesTestOverride checks that a peers_testenv build
+// reads the override as a Go duration.
 func TestUpdateCheckInitialDelayUsesTestOverride(t *testing.T) {
 	t.Setenv(testUpdateInitialDelayEnv, "3s")
 	if got, want := updateCheckInitialDelay(), 3*time.Second; got != want {
@@ -16,9 +16,8 @@ func TestUpdateCheckInitialDelayUsesTestOverride(t *testing.T) {
 	}
 }
 
-// TestUpdateCheckInitialDelayFallsBackWhenInvalid proves that an unset,
-// unparsable or non-positive PEERS_TEST_UPDATE_INITIAL_DELAY keeps the
-// one-minute default.
+// TestUpdateCheckInitialDelayFallsBackWhenInvalid checks that an unset,
+// unparsable or non-positive override keeps the one-minute default.
 func TestUpdateCheckInitialDelayFallsBackWhenInvalid(t *testing.T) {
 	for _, value := range []string{"", "not-a-duration", "5", "0s", "-1s"} {
 		t.Run(value, func(t *testing.T) {

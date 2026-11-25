@@ -10,10 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// TestOtherCallsNeverDial checks that only connect_broker reaches a Broker
-// that is not yet a peer.
-// REQ-broker-pairing-014: listing, disconnecting and creating a pairing key
-// must not start a pairing connection.
+// TestOtherCallsNeverDial checks that only Connect reaches the network, while
+// list, disconnect and key creation never dial.
 func TestOtherCallsNeverDial(t *testing.T) {
 	var dials, connects atomic.Int32
 	p := &fakePairing{

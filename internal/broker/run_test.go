@@ -25,9 +25,8 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// orderLog records events from the startup and shutdown sequence. Every
-// assertion reads this one log, so the order does not depend on which goroutine
-// observed a moment.
+// orderLog records startup and shutdown events so an assertion does not depend
+// on which goroutine observed them.
 type orderLog struct {
 	mu      sync.Mutex
 	entries []string
@@ -45,8 +44,7 @@ func (o *orderLog) list() []string {
 	return append([]string(nil), o.entries...)
 }
 
-// fakeRunner is the LinkRunner the assemblers install. It records the
-// lifecycle calls Run drives.
+// fakeRunner is the LinkRunner the assemblers install and records its calls.
 type fakeRunner struct {
 	order     *orderLog
 	listenErr error
@@ -71,26 +69,18 @@ func (r *fakeRunner) Start() {
 
 func (r *fakeRunner) Close() { r.order.add("Close") }
 
-// runWaitBound bounds every wait for Run to reach its next lifecycle step or
-// to return. It is a liveness bound, not a latency budget: it fires only when
-// Run is stuck, so a slow but correct startup must not trip it. The system form
-// resolves broker.local_socket_group before it binds anything, and one
-// account-database lookup may take accountdb.LookupBound on a host whose NSS
-// source is slow. One lookup is a product timer, so the bound is that timer plus
-// the package fallback rather than a separate margin.
+// runWaitBound bounds every wait for Run to reach its next step or return; it
+// only fires when Run is stuck, so it covers one account lookup plus the fallback.
 const runWaitBound = accountdb.LookupBound + eventTimeout
 
-// TestRunWaitBoundCoversAccountLookup checks the invariant behind runWaitBound:
-// a Run test must not give up on startup while the account database is still
-// inside its own bound for one lookup. accountdb.LookupBound is the product
-// bound, and runWaitBound must be that bound plus the package fallback.
+// TestRunWaitBoundCoversAccountLookup checks that runWaitBound is
+// accountdb.LookupBound plus the package fallback.
 func TestRunWaitBoundCoversAccountLookup(t *testing.T) {
 	if want := accountdb.LookupBound + eventTimeout; runWaitBound != want {
 		t.Fatalf("runWaitBound = %v, want %v (accountdb.LookupBound %v plus the %v package fallback)", runWaitBound, want, accountdb.LookupBound, eventTimeout)
 	}
 }
 
-// waitStarted blocks until Start ran, with the run liveness bound.
 func (r *fakeRunner) waitStarted(t *testing.T) {
 	t.Helper()
 	select {
@@ -100,7 +90,6 @@ func (r *fakeRunner) waitStarted(t *testing.T) {
 	}
 }
 
-// orderedReady records each readiness write before passing it to the pipe.
 type orderedReady struct {
 	w     io.WriteCloser
 	order *orderLog
@@ -113,9 +102,8 @@ func (r *orderedReady) Write(p []byte) (int, error) {
 
 func (r *orderedReady) Close() error { return r.w.Close() }
 
-// orderComponent records Start and Stop. It always implements
-// PostReadyComponent, but AfterReady records only when afterReady is set, so a
-// plain component stays out of the recorded sequence.
+// orderComponent records Start and Stop; AfterReady records only when
+// afterReady is set.
 type orderComponent struct {
 	name           string
 	order          *orderLog
@@ -150,7 +138,6 @@ func (c *orderComponent) AfterReady(context.Context) error {
 	return c.afterReadyErr
 }
 
-// fakeAssembler is an Assembler backed by a function.
 type fakeAssembler struct {
 	name string
 	fn   func(ctx context.Context, cfg ConfigSource, deps *Deps, asm *Assembly) ([]Component, error)
@@ -164,7 +151,6 @@ func (a *fakeAssembler) Assemble(ctx context.Context, cfg ConfigSource, deps *De
 	return a.fn(ctx, cfg, deps, asm)
 }
 
-// checkErrConfig makes CheckRuntimeDir fail while delegating everything else.
 type checkErrConfig struct {
 	ConfigSource
 	err error
@@ -172,8 +158,6 @@ type checkErrConfig struct {
 
 func (c checkErrConfig) CheckRuntimeDir() error { return c.err }
 
-// runTest drives one Run in a goroutine with a readiness pipe, a fake clockless
-// configuration and a controllable periodic-check channel.
 type runTest struct {
 	t      *testing.T
 	ctx    context.Context
@@ -195,7 +179,6 @@ type runTest struct {
 	waited  bool
 }
 
-// newRunTest creates a fresh runtime directory for the test.
 func newRunTest(t *testing.T, mutate ...func(*runTest)) *runTest {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "ap-")
@@ -206,8 +189,6 @@ func newRunTest(t *testing.T, mutate ...func(*runTest)) *runTest {
 	return newRunTestAt(t, dir, mutate...)
 }
 
-// newRunTestAt uses an existing directory, so a test can share the account lock
-// path between two Runs.
 func newRunTestAt(t *testing.T, dir string, mutate ...func(*runTest)) *runTest {
 	t.Helper()
 	cfg := newFakeConfig(dir)
@@ -260,7 +241,6 @@ func (rt *runTest) start() {
 
 func (rt *runTest) socketPath() string { return filepath.Join(rt.dir, "broker.sock") }
 
-// readyLine reads one readiness line, bounded by the run liveness bound.
 func (rt *runTest) readyLine() string {
 	rt.t.Helper()
 	if err := rt.readyR.SetReadDeadline(time.Now().Add(runWaitBound)); err != nil {
@@ -353,6 +333,8 @@ func logsHaveEvent(t *testing.T, raw string, event string) bool {
 	return false
 }
 
+// TestRunWritesOKAfterSocketBound checks that Run writes ok and closes the pipe
+// after binding the socket.
 func TestRunWritesOKAfterSocketBound(t *testing.T) {
 	rt := newRunTest(t)
 	rt.start()
@@ -379,8 +361,9 @@ func TestRunWritesOKAfterSocketBound(t *testing.T) {
 	}
 }
 
+// TestRunSecondInstanceFails checks that a second Run on the same runtime
+// directory fails with ErrAlreadyRunning and leaves the first serving.
 func TestRunSecondInstanceFails(t *testing.T) {
-	// REQ-broker-config-013: one instance per account.
 	first := newRunTest(t)
 	first.start()
 	if got := first.readyLine(); got != "ok\n" {
@@ -415,6 +398,8 @@ func TestRunSecondInstanceFails(t *testing.T) {
 	}
 }
 
+// TestRunRefusesInsideSession checks that Run refuses to start inside a
+// session's process tree and releases the lock.
 func TestRunRefusesInsideSession(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.Deps.InSession = func() bool { return true }
@@ -440,6 +425,8 @@ func TestRunRefusesInsideSession(t *testing.T) {
 	}
 }
 
+// TestRunSentinels checks the sentinel error Run returns for runtime-directory
+// and configuration failures.
 func TestRunSentinels(t *testing.T) {
 	t.Run("runtime dir", func(t *testing.T) {
 		rt := newRunTest(t)
@@ -483,17 +470,14 @@ func TestRunSentinels(t *testing.T) {
 	}
 }
 
-// swapAfterListen installs hook as the package's listen/chmod test seam and
-// returns a function that restores the previous hook.
 func swapAfterListen(hook func()) func() {
 	prev := afterListen
 	afterListen = hook
 	return func() { afterListen = prev }
 }
 
-// waitForLocalSocketOrRunError waits until the local socket at sock accepts a
-// connection. When Run returns first, it fails with that error, so a startup
-// that gave up on the socket reports what it returned.
+// waitForLocalSocketOrRunError waits for the socket to accept a connection,
+// failing with Run's error when Run returns first.
 func waitForLocalSocketOrRunError(t *testing.T, rt *runTest, sock string) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -552,9 +536,9 @@ func TestRunRebindsSocketRemovedAfterListen(t *testing.T) {
 	}
 }
 
+// TestRunListensBeforeOKAndStartsAfter checks that Run binds the link before
+// writing ok and starts link after, and closes link before stopping components.
 func TestRunListensBeforeOKAndStartsAfter(t *testing.T) {
-	// REQ-broker-config-024: bind the link address before reporting ready and
-	// dial only after the local socket is ready.
 	order := &orderLog{}
 	runner := newFakeRunner(order)
 	runner.started = make(chan struct{})
@@ -592,6 +576,8 @@ func TestRunListensBeforeOKAndStartsAfter(t *testing.T) {
 	}
 }
 
+// TestRunEmptyListenSkipsListen checks that an empty broker.listen skips the
+// bind but still starts link.
 func TestRunEmptyListenSkipsListen(t *testing.T) {
 	order := &orderLog{}
 	runner := newFakeRunner(order)
@@ -619,8 +605,9 @@ func TestRunEmptyListenSkipsListen(t *testing.T) {
 	}
 }
 
+// TestRunListenFailure checks that a bind failure aborts startup, cleans up and
+// releases the lock.
 func TestRunListenFailure(t *testing.T) {
-	// REQ-broker-config-024: a bind failure aborts startup.
 	order := &orderLog{}
 	runner := newFakeRunner(order)
 	runner.listenErr = errors.New("address already in use")
@@ -662,6 +649,8 @@ func TestRunListenFailure(t *testing.T) {
 	lock.Release()
 }
 
+// TestRunAssemblersRunAfterLoadBeforeNew checks that assemblers run after
+// Config.Load and their Deps changes reach New.
 func TestRunAssemblersRunAfterLoadBeforeNew(t *testing.T) {
 	replacement := newFakeTopics()
 	captured := make(chan *Broker, 1)
@@ -693,6 +682,9 @@ func TestRunAssemblersRunAfterLoadBeforeNew(t *testing.T) {
 	}
 }
 
+// TestRunAssemblerOrderAndAssembly checks that assemblers run in order and
+// share the Assembly, and that their components start in order and stop in
+// reverse order.
 func TestRunAssemblerOrderAndAssembly(t *testing.T) {
 	order := &orderLog{}
 	p := &pairing.Pairing{}
@@ -734,6 +726,8 @@ func TestRunAssemblerOrderAndAssembly(t *testing.T) {
 	}
 }
 
+// TestRunAssemblerFailureStopsEarlier checks that an assembler failure stops
+// earlier components and releases the lock.
 func TestRunAssemblerFailureStopsEarlier(t *testing.T) {
 	order := &orderLog{}
 	asm1 := &fakeAssembler{name: "first", fn: func(context.Context, ConfigSource, *Deps, *Assembly) ([]Component, error) {
@@ -776,14 +770,13 @@ func TestRunAssemblerFailureStopsEarlier(t *testing.T) {
 	lock.Release()
 }
 
+// TestRunNilAssemblersUsesDefaults checks that a nil RunOptions.Assemblers
+// selects the default assemblers.
 func TestRunNilAssemblersUsesDefaults(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) { rt.opts.Assemblers = nil })
 	rt.start()
-	// A nil list selects DefaultAssemblers. Its first entry is the peer
-	// assembler, which opens the real pairing identity; that needs the real
-	// config singleton, which the fake ConfigSource does not provide. The
-	// readiness line naming the assembler proves Run used the defaults rather
-	// than starting with none.
+	// The default peer assembler fails on the fake configuration, and the line
+	// naming it proves Run used the defaults rather than starting with none.
 	got := rt.readyLine()
 	if !strings.HasPrefix(got, "pairing and link: ") {
 		t.Fatalf("readiness line = %q, want the default assembler's failure", got)
@@ -797,6 +790,8 @@ func TestRunNilAssemblersUsesDefaults(t *testing.T) {
 	}
 }
 
+// TestRunPassesLinkProtocolVersion checks that each assembler sees
+// RunOptions.LinkProtocolVersion.
 func TestRunPassesLinkProtocolVersion(t *testing.T) {
 	for _, version := range []uint32{9, 0} {
 		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
@@ -829,6 +824,8 @@ func TestRunPassesLinkProtocolVersion(t *testing.T) {
 	}
 }
 
+// TestRunComponentFailureReportsReason checks that a component start failure
+// names the component and stops the started ones.
 func TestRunComponentFailureReportsReason(t *testing.T) {
 	order := &orderLog{}
 	c1 := &orderComponent{name: "C1", order: order}
@@ -854,8 +851,6 @@ func TestRunComponentFailureReportsReason(t *testing.T) {
 	if n := countString(list, "C1.Stop"); n != 1 {
 		t.Errorf("C1.Stop called %d times, want 1", n)
 	}
-	// The failing component is stopped too, so nothing it built survives a
-	// failed startup.
 	if n := countString(list, "C2.Stop"); n != 1 {
 		t.Errorf("C2.Stop called %d times, want 1", n)
 	}
@@ -869,6 +864,8 @@ func TestRunComponentFailureReportsReason(t *testing.T) {
 	lock.Release()
 }
 
+// TestRunPassesListenOverride checks that Run passes the listen override to Load
+// in user mode.
 func TestRunPassesListenOverride(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) { rt.opts.Listen = "127.0.0.1:0" })
 	rt.start()
@@ -888,6 +885,8 @@ func TestRunPassesListenOverride(t *testing.T) {
 	}
 }
 
+// TestRunPostReadyAfterOK checks that AfterReady runs after the readiness write
+// and link Start.
 func TestRunPostReadyAfterOK(t *testing.T) {
 	order := &orderLog{}
 	runner := newFakeRunner(order)
@@ -926,6 +925,8 @@ func TestRunPostReadyAfterOK(t *testing.T) {
 	}
 }
 
+// TestRunRebindsMissingSocket checks that the periodic check rebinds a removed
+// socket.
 func TestRunRebindsMissingSocket(t *testing.T) {
 	rt := newRunTest(t)
 	rt.start()
@@ -951,6 +952,8 @@ func TestRunRebindsMissingSocket(t *testing.T) {
 	}
 }
 
+// TestRunExitsWhenLockReplaced checks that Run returns ErrLockLost when the lock
+// file is replaced.
 func TestRunExitsWhenLockReplaced(t *testing.T) {
 	rt := newRunTest(t)
 	rt.start()
@@ -976,6 +979,7 @@ func TestRunExitsWhenLockReplaced(t *testing.T) {
 	}
 }
 
+// TestRunReplacesStaleSocket checks that Run replaces a leftover socket file.
 func TestRunReplacesStaleSocket(t *testing.T) {
 	rt := newRunTest(t)
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: rt.socketPath(), Net: "unix"})
@@ -996,6 +1000,8 @@ func TestRunReplacesStaleSocket(t *testing.T) {
 	}
 }
 
+// TestRunShutdownOnCancel checks that cancelling Run removes the socket, keeps
+// the lock file and closes the configuration once.
 func TestRunShutdownOnCancel(t *testing.T) {
 	rt := newRunTest(t)
 	rt.start()
@@ -1023,8 +1029,9 @@ func TestRunShutdownOnCancel(t *testing.T) {
 	}
 }
 
+// TestRunLogIsJSON checks that the run log has one JSON object per line with
+// broker_started and broker_stopping.
 func TestRunLogIsJSON(t *testing.T) {
-	// REQ-broker-config-011: one JSON object per log line.
 	rt := newRunTest(t, func(rt *runTest) { rt.opts.Version = "v9.9.9" })
 	rt.start()
 	if got := rt.readyLine(); got != "ok\n" {
@@ -1059,6 +1066,7 @@ func TestRunLogIsJSON(t *testing.T) {
 	}
 }
 
+// TestRunLogLevelFollowsConfig checks that a log.level change takes effect.
 func TestRunLogLevelFollowsConfig(t *testing.T) {
 	captured := make(chan *Broker, 1)
 	rt := newRunTest(t, func(rt *runTest) {
@@ -1081,9 +1089,9 @@ func TestRunLogLevelFollowsConfig(t *testing.T) {
 	}
 }
 
+// TestRunSetsDefaultLogger checks that Run installs its logger as the process
+// default so other packages log through it.
 func TestRunSetsDefaultLogger(t *testing.T) {
-	// REQ-broker-config-011: with no injected logger, Run installs the JSON
-	// logger as the process default, so config and inbox log through it too.
 	previous := slog.Default()
 	t.Cleanup(func() { slog.SetDefault(previous) })
 

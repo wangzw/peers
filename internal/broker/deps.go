@@ -26,16 +26,19 @@ var ErrUnknownAgent = errors.New("agent not introduced to the topic table")
 // broker maps it to quota_exceeded.
 var ErrTopicQuotaExceeded = errors.New("topic quota exceeded")
 
-// Member is one agent's current roster entry in the topic table. Account is
-// the publisher's account name, for display only. RefRequired means the
-// publisher requires this member to be addressed by its ref; a bare name must
-// not select it.
+// Member is one agent's current roster entry in the topic table.
 type Member struct {
-	Name        string
-	Ref         string
-	Status      string
-	PrevName    string
-	Account     string
+	// Name is the member's agent name.
+	Name string
+	// Ref is the member's disambiguator.
+	Ref string
+	// Status is the member's session status.
+	Status string
+	// PrevName is the member's most recent former name, empty when none.
+	PrevName string
+	// Account is the publisher's account name, for display only.
+	Account string
+	// RefRequired means this member must be addressed by its ref, not a bare name.
 	RefRequired bool
 }
 
@@ -48,22 +51,32 @@ type VisibleAgent struct {
 	Shared []string // shared topics, sorted
 }
 
-// TopicTable is the broker's view of the topic registry. The topic package is
-// not imported here; its assembler supplies an adapter once it lands.
+// TopicTable is the broker's view of the topic registry.
 type TopicTable interface {
+	// Join adds agent to topic name, returning ErrInvalidTopicName,
+	// ErrUnknownAgent or ErrTopicQuotaExceeded.
 	Join(agent AgentID, name string) error
+	// Leave removes agent from topic name, returning ErrInvalidTopicName.
 	Leave(agent AgentID, name string) error
+	// LeaveAll removes agent from every topic.
 	LeaveAll(agent AgentID)
+	// TopicsOf returns the topics agent belongs to.
 	TopicsOf(agent AgentID) []string
+	// AgentChanged records agent's current roster entry m.
 	AgentChanged(agent AgentID, m Member)
+	// Visible reports whether other is visible to local and the topics they share.
 	Visible(local AgentID, other VisibleAgent) (shared []string, ok bool)
-	VisibleAgents(local AgentID) []VisibleAgent // excludes local itself
+	// VisibleAgents returns the agents visible to local, excluding local itself.
+	VisibleAgents(local AgentID) []VisibleAgent
+	// RemoteMembers returns the members of peer's roster.
 	RemoteMembers(peer [32]byte) []Member
 }
 
 // PublicTopic is one public topic declaration, merged by name.
 type PublicTopic struct {
-	Name        string
+	// Name is the topic name.
+	Name string
+	// Description is the declaration's description.
 	Description string
 	// Publisher is the fingerprint of the Broker whose declaration supplied
 	// Description.
@@ -75,35 +88,45 @@ type PublicTopic struct {
 }
 
 // PublicTopicDirectory is the broker's view of the directory's public topic
-// declarations. DeclarePublicTopic returns an *Error or a plain error; the
-// broker passes it to the client unchanged except for plain-error mapping.
+// declarations.
 type PublicTopicDirectory interface {
+	// DeclarePublicTopic records a public declaration. It returns an *Error to
+	// choose the status the client receives; any other error reaches the client
+	// as internal.
 	DeclarePublicTopic(name, description string) error
+	// RetirePublicTopic withdraws the declaration for name.
 	RetirePublicTopic(name string)
+	// PublicTopics returns the merged public topic declarations.
 	PublicTopics() []PublicTopic
 }
 
 // PeerView is the broker's view of paired Brokers: their effective local
 // aliases and their information for Status.
 type PeerView interface {
+	// EffectiveAlias returns the local alias for fp, and whether one is known.
 	EffectiveAlias(fp [32]byte) (alias string, ok bool)
+	// Peers returns the paired Brokers' information for Status.
 	Peers(ctx context.Context) []*localpb.BrokerInfo
 }
 
-// LinkRunner is the lifecycle of link that Run drives (startup steps 6 and 9,
-// shutdown).
+// LinkRunner is the link lifecycle Run drives at startup and shutdown.
 type LinkRunner interface {
+	// Listen binds the link listener at address.
 	Listen(address string) error
+	// Start dials the peers for which this side is the dialer.
 	Start()
+	// Close stops the link and its handlers.
 	Close()
 }
 
 // Component is a part of the Broker started after New and before the link
-// starts listening. Start registers RPC handlers, event subscriptions and link
-// frame handling; Stop releases them.
+// starts listening.
 type Component interface {
+	// Name identifies the component.
 	Name() string
+	// Start registers RPC handlers, event subscriptions and link frame handling.
 	Start(ctx context.Context, b *Broker) error
+	// Stop releases what Start registered.
 	Stop()
 }
 
@@ -111,19 +134,17 @@ type Component interface {
 // socket is ready and the link has started.
 type PostReadyComponent interface {
 	Component
+	// AfterReady runs after the local socket is bound and the link has started.
 	AfterReady(ctx context.Context) error
 }
 
-// listenBoundReporter is implemented by a Component that forwards broker.listen
-// changes. Run reports the address it bound at startup, so the component can
-// reconcile a change delivered between that bind and its AfterReady.
 type listenBoundReporter interface {
 	listenBound(address string)
 }
 
-// CardIssuer re-signs the own directory card; Reissue is a no-op when the
-// Broker is not public.
+// CardIssuer re-signs the Broker's own directory card.
 type CardIssuer interface {
+	// Reissue re-signs the card; a no-op when the Broker is not public.
 	Reissue()
 }
 
@@ -141,8 +162,7 @@ type Deps struct {
 	ReadPeerCred         func(net.Conn) (Caller, error) // nil: ReadPeerCred
 	ServerOptions        []grpc.ServerOption            // appended to the gRPC server options (e.g. the access interceptor)
 	LocalProtocolVersion uint32                         // 0: localpb.ProtocolVersion; Run copies RunOptions.LocalProtocolVersion here
-	// System is true for the system Broker. ApplyUpdate uses it to query
-	// the service manager of the right level. Run fills it from RunOptions.
+	// System is true for the system Broker.
 	System bool
 
 	// Version is the version this process reports, without a leading v. It is

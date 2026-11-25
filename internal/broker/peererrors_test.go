@@ -11,19 +11,17 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// TestConnectErrorMapping covers REQ-broker-pairing-004 (a local alias must be
-// offered on conflict), REQ-broker-pairing-011 (a refusal names its reason) and
-// REQ-broker-pairing-037 (an over-long local alias says that it is too long).
+// TestConnectErrorMapping checks that each pairing error maps to the expected local error code and message.
 func TestConnectErrorMapping(t *testing.T) {
 	const address = "198.51.100.4:17443"
 
 	tests := []struct {
 		name       string
-		localAlias string // the alias the caller asked pairing to use
+		localAlias string
 		err        error
 		wantCode   localpb.ErrorCode
-		wantMsg    string   // exact message when non-empty
-		contains   []string // substrings the message must contain
+		wantMsg    string
+		contains   []string
 		notContain []string
 	}{
 		{
@@ -53,9 +51,6 @@ func TestConnectErrorMapping(t *testing.T) {
 			contains:   []string{"invalid local alias: longer than 24 characters"},
 		},
 		{
-			// A multi-byte character is outside the alias character set, so the
-			// refusal names the characters even though 13 two-byte characters
-			// are also over the byte limit.
 			name:       "local alias with non-ASCII characters",
 			localAlias: strings.Repeat("é", 13),
 			err:        pairing.ErrInvalidAlias,
@@ -158,9 +153,7 @@ func TestConnectErrorMapping(t *testing.T) {
 	}
 }
 
-// TestConnectErrorDropsNotConnectedPrefix checks that the detail of a
-// PairingError is passed without its "Not connected: " prefix, which mcpserver
-// adds when it relays the message.
+// TestConnectErrorDropsNotConnectedPrefix checks that a PairingError's detail is passed without its "Not connected: " prefix.
 func TestConnectErrorDropsNotConnectedPrefix(t *testing.T) {
 	err := &pairing.PairingError{Reason: pairing.ReasonVerificationFailed, Detail: "verification failed"}
 	got := connectError("h(192.0.2.1:1)", "", err)
@@ -175,8 +168,7 @@ func TestConnectErrorDropsNotConnectedPrefix(t *testing.T) {
 	}
 }
 
-// TestConnectErrorCanceledIsNil checks that a canceled call is left to
-// toStatus, which reports it as Canceled instead of an internal error.
+// TestConnectErrorCanceledIsNil checks that a canceled call is left to toStatus.
 func TestConnectErrorCanceledIsNil(t *testing.T) {
 	for _, err := range []error{
 		context.Canceled,
@@ -188,8 +180,9 @@ func TestConnectErrorCanceledIsNil(t *testing.T) {
 	}
 }
 
-// TestPairingKeyErrorNotListening covers REQ-broker-pairing-036: a Broker that
-// does not listen must say so and point at the other side.
+// TestPairingKeyErrorNotListening checks that a Broker that does not listen
+// returns invalid_argument naming the empty broker.listen, and a store failure
+// returns internal.
 func TestPairingKeyErrorNotListening(t *testing.T) {
 	got := pairingKeyError(pairing.ErrNotListening)
 	if got == nil {
@@ -221,8 +214,7 @@ func TestPairingKeyErrorNotListening(t *testing.T) {
 	}
 }
 
-// TestUnpairErrorIsInternal checks that a peer table failure while unpairing is
-// reported as internal and names the operation.
+// TestUnpairErrorIsInternal checks that a peer table failure while unpairing is reported as internal and names the operation.
 func TestUnpairErrorIsInternal(t *testing.T) {
 	got := unpairError(pairing.ErrStore)
 	if got == nil {

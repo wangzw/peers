@@ -10,11 +10,9 @@ import (
 	"time"
 )
 
-// TestPeriodicCheckRefreshesRuntimeTimestamps covers the minute-long review:
-// it must refresh the access and modification times of the account lock, the
-// runtime directory and the local socket. Without the refresh, a /tmp cleanup
-// rule that deletes old files removes the running Broker's lock and the Broker
-// then exits on its own.
+// TestPeriodicCheckRefreshesRuntimeTimestamps checks that a periodic check
+// refreshes the timestamps of the account lock, the runtime directory and the
+// local socket.
 func TestPeriodicCheckRefreshesRuntimeTimestamps(t *testing.T) {
 	rt := newRunTest(t)
 	rt.start()
@@ -60,8 +58,8 @@ func TestPeriodicCheckRefreshesRuntimeTimestamps(t *testing.T) {
 	}
 }
 
-// TestAccountLockTouchSetsModificationTime covers the exported method on its
-// own: it sets the lock file's modification time through the open descriptor.
+// TestAccountLockTouchSetsModificationTime checks that Touch sets the lock
+// file's modification time.
 func TestAccountLockTouchSetsModificationTime(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	lock, err := AcquireAccountLock(path)
@@ -83,8 +81,8 @@ func TestAccountLockTouchSetsModificationTime(t *testing.T) {
 	}
 }
 
-// TestAccountLockTouchAfterReleaseFails covers a released lock: there is no
-// descriptor left to set the timestamps on.
+// TestAccountLockTouchAfterReleaseFails checks that Touch on a released lock
+// returns an error.
 func TestAccountLockTouchAfterReleaseFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	lock, err := AcquireAccountLock(path)
@@ -98,9 +96,8 @@ func TestAccountLockTouchAfterReleaseFails(t *testing.T) {
 	}
 }
 
-// TestPeriodicCheckTouchFailureDoesNotExit covers a failed refresh: the Broker
-// logs the failure and keeps serving, because the lock and the socket are still
-// there and the next check tries again.
+// TestPeriodicCheckTouchFailureDoesNotExit checks that a failed refresh is
+// logged once and the Broker keeps serving.
 func TestPeriodicCheckTouchFailureDoesNotExit(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.touchLock = func(*AccountLock, time.Time) error {
@@ -119,9 +116,6 @@ func TestPeriodicCheckTouchFailureDoesNotExit(t *testing.T) {
 		t.Fatal("the periodic check did not run")
 	}
 
-	// Drive a second check: completing it proves Run kept serving after the
-	// first failure, without waiting a fixed duration. The failure repeating
-	// must not add a second record.
 	rt.ticks <- time.Now()
 	select {
 	case <-rt.checks:
@@ -136,9 +130,8 @@ func TestPeriodicCheckTouchFailureDoesNotExit(t *testing.T) {
 	}
 }
 
-// TestRuntimeTimestampRefresherLogsEachTargetOnceAndRecovery covers the failed
-// refresh events: the directory and the socket have distinct event names, and a
-// failure that repeats is logged once, with a recovery record when it clears.
+// TestRuntimeTimestampRefresherLogsEachTargetOnceAndRecovery checks that each
+// target's failure is logged once and a recovery is logged when it clears.
 func TestRuntimeTimestampRefresherLogsEachTargetOnceAndRecovery(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "broker.lock")
@@ -169,7 +162,6 @@ func TestRuntimeTimestampRefresherLogsEachTargetOnceAndRecovery(t *testing.T) {
 		t.Errorf("logs = %q, want no account lock failure when its refresh succeeds", logs.String())
 	}
 
-	// Creating the directory clears its failure; the socket is still missing.
 	if err := os.Mkdir(missingDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -185,9 +177,8 @@ func TestRuntimeTimestampRefresherLogsEachTargetOnceAndRecovery(t *testing.T) {
 	}
 }
 
-// TestRuntimeTimestampRefresherLockFailureDeduplicatesAndRecovers covers the
-// same rule for the account lock: a repeated failure is logged once, and the
-// first success after it logs the recovery.
+// TestRuntimeTimestampRefresherLockFailureDeduplicatesAndRecovers checks that a
+// repeated account lock failure is logged once and its recovery once.
 func TestRuntimeTimestampRefresherLockFailureDeduplicatesAndRecovers(t *testing.T) {
 	var logs strings.Builder
 	logger := slog.New(slog.NewTextHandler(&logs, nil))

@@ -9,9 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// TestSignatureUniqueCleanName pins the plain form: a unique Agent with a clean
-// name carries no ref and the alias sits after "@"
-// (REQ-agent-messaging-022, REQ-agent-messaging-004).
+// TestSignatureUniqueCleanName checks that a unique Agent with a clean name
+// carries no ref.
 func TestSignatureUniqueCleanName(t *testing.T) {
 	sig, ok := signatureFor("api-worker", "1a2b3c", true, "hostA")
 	if !ok {
@@ -24,7 +23,7 @@ func TestSignatureUniqueCleanName(t *testing.T) {
 }
 
 // TestSignatureDuplicateNameHasRef checks that a duplicated name always carries
-// its ref so the receiver can tell the senders apart (REQ-agent-messaging-004).
+// its ref.
 func TestSignatureDuplicateNameHasRef(t *testing.T) {
 	sig, ok := signatureFor("api-worker", "1a2b3c", false, "hostA")
 	if !ok {
@@ -37,8 +36,7 @@ func TestSignatureDuplicateNameHasRef(t *testing.T) {
 }
 
 // TestSignatureCleanedNameHasRef checks that a name the receiver would rewrite
-// carries its ref, so a reply cannot land on a different Agent with the cleaned
-// name (REQ-agent-messaging-029).
+// carries its ref, so a reply cannot land on a lookalike.
 func TestSignatureCleanedNameHasRef(t *testing.T) {
 	sig, ok := signatureFor("a<b", "1a2b3c", true, "hostA")
 	if !ok {
@@ -50,9 +48,8 @@ func TestSignatureCleanedNameHasRef(t *testing.T) {
 	}
 }
 
-// TestSignatureTruncatesLongName checks that a long name is truncated, keeps
-// its ref and its alias, and stays inside the receiver's limits
-// (REQ-agent-messaging-037).
+// TestSignatureTruncatesLongName checks that a long name is truncated with its
+// ref and alias inside the receiver's limits.
 func TestSignatureTruncatesLongName(t *testing.T) {
 	name := strings.Repeat("x", 70)
 	const ref = "1a2b3c4d5e6f"
@@ -81,7 +78,7 @@ func TestSignatureTruncatesLongName(t *testing.T) {
 }
 
 // TestSignatureTruncatesByBytes checks that truncation respects the 200-byte
-// limit for multibyte names instead of only the 64-rune limit.
+// limit for multibyte names, not only the 64-rune limit.
 func TestSignatureTruncatesByBytes(t *testing.T) {
 	name := strings.Repeat("\U0001D49C", 60) // U+1D49C is four bytes in UTF-8.
 	sig, ok := signatureFor(name, "1a2b3c", true, "h")
@@ -96,9 +93,8 @@ func TestSignatureTruncatesByBytes(t *testing.T) {
 	}
 }
 
-// TestSignatureIsFixedPointOfCleaning checks that every signature the Broker
-// produces is already what the receiver reads back, or the message is shown
-// without its sender (REQ-agent-messaging-037).
+// TestSignatureIsFixedPointOfCleaning checks that every generated signature is
+// already what the receiver reads back.
 func TestSignatureIsFixedPointOfCleaning(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	pool := []rune{
@@ -148,15 +144,15 @@ func TestSignatureIsFixedPointOfCleaning(t *testing.T) {
 }
 
 // TestSignatureEmptyCleanName checks that a name the receiver would clean away
-// has no signature instead of one the receiver rewrites.
+// has no signature.
 func TestSignatureEmptyCleanName(t *testing.T) {
 	if sig, ok := signatureFor("<>", "1a2b3c", true, "h"); ok {
 		t.Fatalf("signatureFor = (%q, true), want ok == false", sig)
 	}
 }
 
-// TestSignatureBadInputsNoPanic checks that malformed input from a peer never
-// reaches the panicking FormatAddress.
+// TestSignatureBadInputsNoPanic checks that malformed input never reaches the
+// panicking FormatAddress.
 func TestSignatureBadInputsNoPanic(t *testing.T) {
 	cases := []struct{ name, ref, alias string }{
 		{"api-worker", "ABCDEF", "h"},
@@ -174,7 +170,7 @@ func TestSignatureBadInputsNoPanic(t *testing.T) {
 }
 
 // TestSignatureMatchesFormatAddress checks that signatures and listed addresses
-// follow one rule, so a reply to a listed address reaches the same Agent.
+// follow one rule.
 func TestSignatureMatchesFormatAddress(t *testing.T) {
 	names := []string{
 		"api-worker", "a<b", "é", strings.Repeat("y", 70), " two  spaces ",
@@ -198,9 +194,8 @@ func TestSignatureMatchesFormatAddress(t *testing.T) {
 	}
 }
 
-// TestFrameSizeAdditive checks the premise of MaxSendFrameSize: the body adds
-// the same number of bytes under every signature, so a short body can rank the
-// signatures.
+// TestFrameSizeAdditive checks that the body adds the same bytes under every
+// signature, so a short body can rank signatures.
 func TestFrameSizeAdditive(t *testing.T) {
 	sigs := []string{
 		"api-worker@hostA",
@@ -233,8 +228,7 @@ func TestFrameSizeAdditive(t *testing.T) {
 }
 
 // TestMaxFrameSizeCoversEveryAlias checks that MaxSendFrameSize is the maximum
-// over every alias length and both uniqueness values, not just the longest
-// alias (REQ-agent-messaging-026).
+// over every alias length and both uniqueness values.
 func TestMaxFrameSizeCoversEveryAlias(t *testing.T) {
 	const text = "body & <tag> 中文\U0001D49C</cross-session-message>"
 	cases := []struct{ name, ref string }{

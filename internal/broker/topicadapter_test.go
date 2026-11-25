@@ -17,8 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/topic"
 )
 
-// nopTopicTransport is the smallest topic.Transport: it never delivers a frame
-// and never reports a link up or down.
 type nopTopicTransport struct{}
 
 var _ topic.Transport = nopTopicTransport{}
@@ -33,8 +31,8 @@ func (nopTopicTransport) HandleState(link.FrameKind, func(link.Fingerprint, link
 
 func (nopTopicTransport) Subscribe(func(link.Fingerprint, []byte), func(link.Fingerprint)) {}
 
-// TestTopicRegistryErrorMapsTopicLimit checks that the adapter turns the topic
-// package's limit sentinel into the broker's quota sentinel.
+// TestTopicRegistryErrorMapsTopicLimit checks that the topic package's limit
+// sentinel maps to the broker's quota sentinel.
 func TestTopicRegistryErrorMapsTopicLimit(t *testing.T) {
 	err := topicRegistryError(fmt.Errorf("registry: %w", topic.ErrTopicLimit))
 	if !errors.Is(err, ErrTopicQuotaExceeded) {
@@ -42,9 +40,8 @@ func TestTopicRegistryErrorMapsTopicLimit(t *testing.T) {
 	}
 }
 
-// TestMemberNameLimitsAgree checks that the two packages limit member names to
-// the same number of bytes. topic cannot import inbox, so the constants are
-// separate declarations that must stay equal.
+// TestMemberNameLimitsAgree checks that topic.MaxMemberNameBytes and
+// inbox.MaxNameBytes stay equal.
 func TestMemberNameLimitsAgree(t *testing.T) {
 	if topic.MaxMemberNameBytes != inbox.MaxNameBytes {
 		t.Fatalf("topic.MaxMemberNameBytes = %d, inbox.MaxNameBytes = %d",
@@ -52,9 +49,8 @@ func TestMemberNameLimitsAgree(t *testing.T) {
 	}
 }
 
-// TestTopicNameRulesMatch checks that the Broker rejects exactly the names
-// topic.ValidateName rejects, so a name the Broker accepts never reaches the
-// registry as an internal error.
+// TestTopicNameRulesMatch checks that the Broker rejects the same topic names
+// as topic.ValidateName.
 func TestTopicNameRulesMatch(t *testing.T) {
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "namer")
@@ -110,7 +106,7 @@ func TestTopicNameRulesMatch(t *testing.T) {
 }
 
 // TestTopicAdapterJoinLeave checks that the adapter forwards memberships,
-// roster entries and errors between the Broker's types and the registry's.
+// roster entries and errors between the Broker's and the registry's types.
 func TestTopicAdapterJoinLeave(t *testing.T) {
 	r := topic.New(nopTopicTransport{}, topic.Options{Self: link.Fingerprint{1}})
 	table := NewTopicTable(r)

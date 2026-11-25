@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// TestAccountLockSecondAcquireFails covers REQ-broker-config-013: one account
-// runs at most one Broker instance at a time.
+// TestAccountLockSecondAcquireFails checks that a second Acquire on a held
+// account lock returns ErrAlreadyRunning and that Release allows it again.
 func TestAccountLockSecondAcquireFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	first, err := AcquireAccountLock(path)
@@ -32,10 +32,8 @@ func TestAccountLockSecondAcquireFails(t *testing.T) {
 	second.Release()
 }
 
-// TestAccountLockHeldByOtherIgnoresForeignOwner covers an attacker planting a
-// lock file in a runtime directory this account will use. The owner check must
-// keep a lock file owned by another account from blocking the Broker even when
-// that lock is actually held.
+// TestAccountLockHeldByOtherIgnoresForeignOwner checks that a lock file owned
+// by another account does not count as held.
 func TestAccountLockHeldByOtherIgnoresForeignOwner(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	held, err := AcquireAccountLock(path)
@@ -62,6 +60,8 @@ func TestAccountLockHeldByOtherIgnoresForeignOwner(t *testing.T) {
 	}
 }
 
+// TestAccountLockReleaseKeepsFile checks that Release is idempotent and leaves
+// the lock file in place.
 func TestAccountLockReleaseKeepsFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	lock, err := AcquireAccountLock(path)
@@ -69,13 +69,15 @@ func TestAccountLockReleaseKeepsFile(t *testing.T) {
 		t.Fatalf("AcquireAccountLock: %v", err)
 	}
 	lock.Release()
-	lock.Release() // Release is idempotent.
+	lock.Release()
 
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("lock file missing after Release: %v", err)
 	}
 }
 
+// TestAccountLockStillHeld checks that StillHeld is false after the lock file is
+// removed or replaced.
 func TestAccountLockStillHeld(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "broker.lock")

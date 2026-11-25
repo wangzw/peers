@@ -11,7 +11,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// listBrokersPeers returns the entries ListBrokers marks as peers, in order.
 func listBrokersPeers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
 	out := make([]*localpb.BrokerInfo, 0, len(brokers))
 	for _, info := range brokers {
@@ -23,7 +22,7 @@ func listBrokersPeers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
 }
 
 // TestListBrokersReportsLocalOffline checks that ListBrokers always sets local
-// and carries the current broker.offline value (REQ-broker-config-068).
+// and reports the current broker.offline value.
 func TestListBrokersReportsLocalOffline(t *testing.T) {
 	tb := newTestBroker(t)
 
@@ -48,9 +47,9 @@ func TestListBrokersReportsLocalOffline(t *testing.T) {
 	}
 }
 
+// TestListBrokersNeedsNoAgent checks that ListBrokers works without an agent
+// identity or configuration permission.
 func TestListBrokersNeedsNoAgent(t *testing.T) {
-	// REQ-broker-config-023: listing brokers does not depend on an agent
-	// identity or on any configuration permission.
 	p := &fakePairing{peers: []pairing.Peer{
 		{Fingerprint: fp(2), Alias: "hostB", Role: pairing.RoleDialer},
 	}}
@@ -73,9 +72,9 @@ func TestListBrokersNeedsNoAgent(t *testing.T) {
 	}
 }
 
+// TestListBrokersDialerAndAcceptor checks that peers carry their addresses,
+// role and peer flag.
 func TestListBrokersDialerAndAcceptor(t *testing.T) {
-	// REQ-broker-discovery-012, REQ-broker-discovery-014: peers carry their
-	// addresses, their role and their peer flag.
 	p := &fakePairing{peers: []pairing.Peer{
 		{
 			Fingerprint: fp(2),
@@ -125,9 +124,9 @@ func TestListBrokersDialerAndAcceptor(t *testing.T) {
 	}
 }
 
+// TestListBrokersAfterUnpair checks that the list follows the current peer set
+// rather than a startup snapshot.
 func TestListBrokersAfterUnpair(t *testing.T) {
-	// REQ-broker-discovery-014: the list follows the current peer set; it is
-	// not a cache of the peers present when the Broker started.
 	p := &fakePairing{peers: []pairing.Peer{
 		{Fingerprint: fp(2), Alias: "hostB", Role: pairing.RoleDialer},
 		{Fingerprint: fp(3), Alias: "hostC", Role: pairing.RoleAcceptor},
@@ -153,9 +152,9 @@ func TestListBrokersAfterUnpair(t *testing.T) {
 	}
 }
 
+// TestListBrokersMergesNonPeers checks that non-peer card holders appear in the
+// non-peer shape and a peer never appears twice.
 func TestListBrokersMergesNonPeers(t *testing.T) {
-	// REQ-broker-discovery-012: card holders that are not peers appear too,
-	// forced to the non-peer shape, and a peer never appears twice.
 	p := &fakePairing{peers: []pairing.Peer{
 		{
 			Fingerprint: fp(2),
@@ -227,10 +226,9 @@ func TestListBrokersMergesNonPeers(t *testing.T) {
 	}
 }
 
+// TestStatusPeersMatchListBrokers checks that Status and ListBrokers report the
+// same peers, with card-only brokers left to ListBrokers.
 func TestStatusPeersMatchListBrokers(t *testing.T) {
-	// REQ-broker-config-010: Status reports the same peers as ListBrokers and
-	// leaves the card holders that are not peers to ListBrokers. Status
-	// forwards Deps.Peers verbatim, so this compares that exact value.
 	p := &fakePairing{peers: []pairing.Peer{
 		{
 			Fingerprint: fp(2),
@@ -258,8 +256,6 @@ func TestStatusPeersMatchListBrokers(t *testing.T) {
 		withPeers(p, l),
 		func(d *Deps) {
 			d.Catalog = catalog
-			// The production assembler wires the view to the live Deps; do
-			// the same so Status and ListBrokers read one catalog.
 			d.Peers = newPeerViewFunc(p, l, func() BrokerCatalog { return d.Catalog })
 		},
 	)
@@ -283,9 +279,6 @@ func TestStatusPeersMatchListBrokers(t *testing.T) {
 		}
 	}
 
-	// hostC has a directory card: its address comes from the card, and the
-	// definition of CONNECTABLE only needs a known address, even though this
-	// Broker never dials the acceptor.
 	var hostC *localpb.BrokerInfo
 	for _, info := range listPeers {
 		if info.GetAlias() == "hostC" {
@@ -311,8 +304,9 @@ func TestStatusPeersMatchListBrokers(t *testing.T) {
 	}
 }
 
+// TestListBrokersWithoutPairing checks that without pairing the card holders
+// still list as non-peers.
 func TestListBrokersWithoutPairing(t *testing.T) {
-	// Without pairing there are no peers, but the card holders still list.
 	catalog := &fakeCatalog{nonPeers: []*localpb.BrokerInfo{
 		{
 			Alias:       "hostD",

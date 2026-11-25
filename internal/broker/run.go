@@ -20,9 +20,9 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// The startup failures listed in design-broker.md. Run wraps each with the
-// concrete cause, so cmd can pick an exit code with errors.Is while the
-// readiness pipe gets the full text as one line.
+// Run's startup failures, wrapped with the concrete cause so the command can
+// pick an exit code with errors.Is and the readiness pipe gets the full text on
+// one line.
 var (
 	// ErrNotRoot is returned by Run when --system is used without root.
 	ErrNotRoot           = errors.New("the system Broker must run as root")
@@ -34,24 +34,14 @@ var (
 	ErrLockLost          = errors.New("the account lock file was replaced; exiting so that only one Broker runs")
 )
 
-// evLocalServeFailed records an error returned by the local gRPC server. It is
-// not a startup failure: the Broker keeps running, and only the listener that
-// failed stops accepting.
 const evLocalServeFailed = "local_serve_failed"
 
-// errSystemWiring reports a system run whose access wiring is incomplete. The
-// system form must never start without the checker the system assembler built.
 func errSystemWiring(detail string) error {
 	return fmt.Errorf("system mode access wiring is incomplete: %s", detail)
 }
 
-// runtimeTimestampRefresher sets the account lock, the runtime directory and
-// the local socket to the same moment, so a /tmp cleanup rule that deletes old
-// files does not remove the running Broker's lock. Paths are set without
-// following a symbolic link. Each target logs its failure only when it starts
-// failing and logs the recovery when it succeeds again, so a long-running
-// failure does not fill the log. A failure never stops the Broker: the files
-// still exist, and the next tick tries again.
+// Refreshing the lock file's timestamp keeps a cleanup rule that deletes old
+// files from removing a live lock.
 type runtimeTimestampRefresher struct {
 	lockFailed bool
 	dirFailed  bool
@@ -91,41 +81,34 @@ func (r *runtimeTimestampRefresher) refreshPath(path, failedEvent, recoveredEven
 }
 
 // RunOptions is the process entry point's input to Run. The exported fields
-// mirror the command line, except Ready, which is a test seam for reading the
-// startup result. checkTick and afterCheck exist only so tests can drive the
-// periodic runtime-directory review without waiting a minute.
+// mirror the command line.
 type RunOptions struct {
-	System               bool
-	Listen               string
-	AllowDegraded        bool
-	Ready                io.WriteCloser // tests only; nil means no readiness pipe
-	LogOutput            io.Writer
+	// System runs the system form.
+	System bool
+	// Listen is the --listen address; empty means use broker.listen.
+	Listen string
+	// AllowDegraded permits a degraded run on a recoverable startup failure.
+	AllowDegraded bool
+	Ready         io.WriteCloser // tests only; nil means no readiness pipe
+	// LogOutput receives the run log; nil means standard error.
+	LogOutput io.Writer
+	// Version is the version this process reports.
 	Version              string
 	LocalProtocolVersion uint32      // 0: localpb.ProtocolVersion
 	LinkProtocolVersion  uint32      // 0: linkpb.ProtocolVersion
 	Assemblers           []Assembler // nil: DefaultAssemblers()
-	Components           []Component
-	Deps                 Deps
+	// Components are started after the assemblers' components.
+	Components []Component
+	// Deps are the dependencies passed to New.
+	Deps Deps
 
-	checkTick  <-chan time.Time // tests only; nil: time.NewTicker(time.Minute)
-	afterCheck func()           // tests only; called after every periodic check
-	// touchLock replaces AccountLock.Touch in tests that need the periodic
-	// refresh to fail without disturbing the lock itself.
-	touchLock func(*AccountLock, time.Time) error
-
-	// afterUnsuppress runs in the recovery path after the config component's
-	// own rebind is enabled again and before broker.listen is read once more.
-	// Tests use it to deliver a change in exactly that window.
-	afterUnsuppress func()
-
-	// afterListenFailure runs after a local-only retry failure reports its
-	// state. Tests use it to read the address and the still-bound address
-	// without depending on polling timing.
+	checkTick          <-chan time.Time // tests only; nil: time.NewTicker(time.Minute)
+	afterCheck         func()
+	touchLock          func(*AccountLock, time.Time) error
+	afterUnsuppress    func()
 	afterListenFailure func(addr, bound string)
 }
 
-// liveBroker is a fully started Broker (normal or local only) that Run now
-// serves until shutdown.
 type liveBroker struct {
 	b        *Broker
 	sock     *LocalSocket
@@ -136,8 +119,6 @@ type liveBroker struct {
 	degraded *localpb.DegradedState // nil when the listen address is bound
 }
 
-// otherAccountLockPaths returns the candidate account lock paths other than
-// own. The Broker holds own, so checking it again would report itself.
 func otherAccountLockPaths(candidates []string, own string) []string {
 	own = filepath.Clean(own)
 	var others []string
@@ -150,20 +131,18 @@ func otherAccountLockPaths(candidates []string, own string) []string {
 }
 
 // Run starts a Broker and blocks until ctx is cancelled or a periodic check
-// fails. The startup sequence is Load, the assemblers, New, the component Start
+// fails. With AllowDegraded, a data-directory failure after the account lock
+// enters diagnostics only and a listen bind failure enters local only; every
+// other failure after the lock is fatal, and no failure before the lock is
+// degraded.
+//
+// The startup sequence is Load, the assemblers, New, the component Start
 // methods, binding the link listener, binding the local socket, writing "ok",
 // starting link, and the AfterReady methods; a failure at any point is written
 // to the readiness pipe as one line and unwinds everything acquired so far.
-//
-// With AllowDegraded, a data-directory failure after the account lock enters
-// diagnostics only: the process keeps the lock, serves a reduced local
-// interface and retries the startup steps. A listen bind failure enters local
-// only: the full local interface runs and the bind is retried. Every other
-// failure after the lock stays fatal, and no failure before the lock is ever
-// degraded.
 func Run(ctx context.Context, opts RunOptions) error {
-	// Step 0: defaults. The logger is created here rather than inside New
-	// because the assemblers log through deps.Logger and they run before New.
+	// The logger is created here rather than inside New because the assemblers
+	// log through deps.Logger and run before New.
 	deps := opts.Deps
 
 	level := new(slog.LevelVar)
@@ -188,9 +167,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 	deps.LocalProtocolVersion = opts.LocalProtocolVersion
 	deps.Version = opts.Version
 	deps.System = opts.System
-	// RequestShutdown cancels runCtx rather than the caller's context: an
-	// ApplyUpdate success then takes the same shutdown path as a signal, and
-	// Run returns nil so the command exits with its normal code.
+	// RequestShutdown cancels runCtx so an ApplyUpdate success takes the same
+	// shutdown path as a signal and Run returns nil.
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
 	deps.RequestShutdown = stopRun
@@ -202,9 +180,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 		writeReadyLine(opts.Ready, err.Error())
 	}
 
-	// Step 1: the system form requires root. The steps below then use the
-	// system paths and the accounts on this host, so this check stays before
-	// the account lock and the configuration load.
+	// The root check must precede the account lock and the configuration load,
+	// so neither runs for a non-root --system run.
 	if opts.System {
 		if euid := effectiveGeteuid(baseDeps)(); euid != 0 {
 			err := fmt.Errorf("%w: --system requires root (euid %d)", ErrNotRoot, euid)
@@ -213,30 +190,27 @@ func Run(ctx context.Context, opts RunOptions) error {
 		}
 	}
 
-	// Step 2: never run inside a Claude Code session's process tree.
 	if baseDeps.InSession() {
 		err := fmt.Errorf("%w: this process or one of its parent processes belongs to a Claude Code session", ErrInSession)
 		writeFailure(err)
 		return err
 	}
 
-	// Step 3: prepare the runtime directory and take the account lock. The
-	// lock is taken before Load so that a second instance fails before it
-	// touches any configuration.
 	if err := cfg.CheckRuntimeDir(); err != nil {
 		err = fmt.Errorf("%w: %v", ErrRuntimeDir, err)
 		writeFailure(err)
 		return err
 	}
+	// Take the lock before Load so a second instance fails before it touches any
+	// configuration.
 	lockPath := cfg.AccountLock()
 	lock, err := AcquireAccountLock(lockPath)
 	if err != nil {
 		writeFailure(err)
 		return err
 	}
-	// The account's Broker may be running from the other runtime directory: the
-	// occupant of the preferred one can remove it at any time, so a process that
-	// resolves to the freed preferred path must still see the fallback Broker.
+	// The account's Broker may be running from the other runtime directory, so a
+	// process resolving to the freed preferred path must still see it.
 	if err := checkAccountLockAvailable(otherAccountLockPaths(cfg.AccountLockCandidates(), lockPath)); err != nil {
 		lock.Release()
 		writeFailure(err)
@@ -246,10 +220,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 	// A degraded run retries Load, so the fallback notice is written once.
 	fallbackLogged := false
 
-	// startOnce runs the post-lock startup sequence. It undoes everything it
-	// acquired before returning a failure, except the account lock, which the
-	// caller owns. reuseSock is non-nil only when a diagnostics-only run is
-	// retrying and keeps its bound local socket.
+	// On failure it undoes everything it acquired except the account lock, which
+	// the caller owns.
 	startOnce := func(reuseSock *LocalSocket, fallback config.PathSet, fallbackGroup, fallbackMode string) (*liveBroker, *startupFailure) {
 		d := baseDeps
 		asm := &Assembly{System: opts.System}
@@ -290,7 +262,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 			return &startupFailure{step: step, err: err, system: opts.System, paths: paths, socketGroup: group, socketMode: mode}
 		}
 
-		// Step 4: load the configuration and follow log.level.
 		cfgMode := config.ModeUser
 		if opts.System {
 			cfgMode = config.ModeSystem
@@ -304,9 +275,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 			// still tell an invalid value from a parse or read failure.
 			switch {
 			case errors.Is(err, config.ErrDataUnavailable):
-				// The data-directory class is the only one the caller may
-				// degrade. Without --allow-degraded it keeps the old
-				// configuration-failure shape and exit code.
 				if !opts.AllowDegraded {
 					sf.err = fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 				}
@@ -352,23 +320,20 @@ func Run(ctx context.Context, opts RunOptions) error {
 			}
 			lv, err := ParseLogLevel(newVal.String)
 			if err != nil {
-				// Keep the current level for an invalid value.
 				return
 			}
 			level.Set(lv)
 			d.Logger.Info(EvLogLevelChanged, "level", newVal.String)
 		})
 
-		// System mode: the runtime directory and the local socket are shared by
-		// every account, so their group and mode come from the configuration. The
-		// group is checked before anything binds, and both keys are watched so a
-		// change is applied to the socket that is already there.
 		sockPath := filepath.Join(paths.RuntimeDir, "broker.sock")
 		var applySocketPerms func() error
 		if opts.System {
 			applySocketPerms = func() error {
 				return applySocketPermsFor(cfg, sockPath, paths.RuntimeDir)
 			}
+			// The group is checked before anything binds, so a bad value fails
+			// startup.
 			cfg.Validate("broker.local_socket_group", validateSocketGroup)
 			if err := checkSocketGroupAtStartup(cfg); err != nil {
 				return nil, failWith("config", err)
@@ -376,7 +341,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 			watchSocketPerms(cfg, applySocketPerms, d.Logger)
 		}
 
-		// Step 5: run the assemblers, then append the options' components.
 		assemblers := assemblersFor(opts)
 		asm.LinkProtocolVersion = opts.LinkProtocolVersion
 		for _, a := range assemblers {
@@ -387,9 +351,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 			assembled = append(assembled, comps...)
 		}
 
-		// System mode fails closed: without the config assembler there is no access
-		// interceptor at all, and a checker other than the one the system assembler
-		// built would let a caller choose the decision. Neither may start.
+		// System mode fails closed: without the system assembler's checker every
+		// local call would be unguarded.
 		if opts.System {
 			var wiringErr error
 			switch {
@@ -408,16 +371,13 @@ func Run(ctx context.Context, opts RunOptions) error {
 		components = append(components, assembled...)
 		components = append(components, opts.Components...)
 
-		// Step 6: construct the Broker from the (possibly modified) Deps.
 		nb, err := New(d)
 		if err != nil {
 			return nil, failWith("broker", err)
 		}
 		b = nb
 
-		// Step 7: start the components in order. If one fails, the failing
-		// component and every component not started yet are stopped as well, so
-		// a retry does not inherit goroutines or open files they already built.
+		// A failed component stops the started ones and the remaining pending ones.
 		startPhase = true
 		pending := append([]Component(nil), components...)
 		for len(pending) > 0 {
@@ -434,9 +394,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 			pending = pending[1:]
 		}
 
-		// Step 8: bind the link listener, using the effective broker.listen. An
-		// empty address skips this step. With AllowDegraded a failure here does
-		// not abort startup: the local interface runs and the bind is retried.
 		var listenState *localpb.DegradedState
 		if asm.Runner != nil {
 			v, err := cfg.Get("broker.listen")
@@ -445,9 +402,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 			}
 			runnerRan = true
 			if v.String != "" {
-				// The privileged-port rule is a listen rule. It is checked
-				// here, not in Load, so a refusal enters local-only degraded
-				// mode and the foreground exit code is the listen one.
+				// The low-port rule is checked here, not in Load, so a refusal
+				// enters local-only degradation.
 				err := cfg.CheckLowPort()
 				if err == nil {
 					err = asm.Runner.Listen(v.String)
@@ -470,15 +426,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 				}
 			}
 			if listenState == nil {
-				// Tell the components that forward broker.listen what is bound, so
-				// a change delivered before their AfterReady is reconciled against
-				// it.
 				notifyListenBound(started, v.String)
 			}
 		}
 
-		// Step 9: bind the local socket. Only the lock holder reaches this
-		// point. A diagnostics-only retry reuses the socket it already bound.
+		// Only the account lock holder binds the local socket.
 		if sock == nil {
 			s, err := BindLocalSocket(sockPath, 0o600, d.Logger)
 			if err != nil {
@@ -507,7 +459,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 		}, nil
 	}
 
-	// serveLive runs a fully started Broker until shutdown.
 	serveLive := func(live *liveBroker) error {
 		b := live.b
 		sock := live.sock
@@ -521,21 +472,20 @@ func Run(ctx context.Context, opts RunOptions) error {
 		if live.degraded != nil {
 			_ = b.setDegraded(live.degraded)
 		}
-		// Step 10: the readiness pipe, when a test supplies one, reports success
-		// only after both listeners exist. The local service is served from here on.
+		// Report success only after the link listener and the local socket are
+		// bound.
 		writeReadyLine(opts.Ready, "ok")
 		deps.Logger.Info(EvBrokerStarted, "socket", sockPath, "pid", os.Getpid(), "version", opts.Version)
 		go serveLocal(b, sock.Listener(), deps.Logger)
 
-		// Step 11: start link after the local socket is ready. A local-only
-		// Broker still starts link: it may be the dialing side of a peer.
+		// Link starts after the local socket is ready; a local-only Broker still
+		// starts it because it may be the dialing side of a peer.
 		if asm.Runner != nil {
 			asm.Runner.Start()
 		}
 
-		// A local-only Broker retries the bind with backoff and reacts to a
-		// broker.listen change. While the retry owns binding, the config
-		// component must not bind the same address from its subscription.
+		// While the retry owns binding, the config component must not bind the
+		// same address from its subscription.
 		var hasRebinder bool
 		for _, c := range started {
 			if _, ok := c.(interface{ rebind(string) error }); ok {
@@ -543,10 +493,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 				break
 			}
 		}
-		// rebindListeners goes through the component that owns the link's
-		// listener, so its bound-address check deduplicates the rebind and its
-		// lock serializes it with the config subscription. Without such a
-		// component (unit tests), bind the runner directly.
+		// The component that owns the link's listener deduplicates the rebind and
+		// serializes it with the config subscription; without one, bind directly.
 		rebindListeners := func(address string) error {
 			if hasRebinder {
 				for _, c := range started {
@@ -583,11 +531,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 				deps.Clock,
 				deps.Logger,
 				func(addr string) (string, error) {
-					// Enable the component's own rebinding first and only then
-					// read broker.listen once more. A change that arrives while
-					// suppression is being lifted is therefore either handled
-					// by the subscription or seen by this read; the component's
-					// bound-address check makes the two paths idempotent.
+					// Enable the component's rebinding before reading broker.listen
+					// again, so a change during the lift is either handled by the
+					// subscription or seen by this read; the bound-address check
+					// makes the two idempotent.
 					notifyListenBound(started, addr)
 					suppressListenRebind(started, false)
 					if opts.Listen == "" {
@@ -618,17 +565,13 @@ func Run(ctx context.Context, opts RunOptions) error {
 				},
 				func(addr, bound string, err error) {
 					logListenRebindFailure(deps.Logger, addr, err)
-					// The retry owns the reported failure while local only: a
-					// later attempt can fail on a different address or reason.
 					state := degradedStateFor(&startupFailure{
 						step: "listen", addr: addr, cause: err, system: opts.System,
 						err:   fmt.Errorf("%w: %s: %w", ErrListenUnavailable, addr, err),
 						paths: paths,
 					})
 					if bound != "" && bound != addr {
-						// link.Listen binds the new address before closing the
-						// old one, so a failed rebind leaves the old listener
-						// serving and the report must not hide it.
+						// A failed rebind leaves the old listener serving, so name it.
 						state.Reason += fmt.Sprintf("; the previous address %s is still bound", bound)
 					}
 					if b.setDegraded(state) {
@@ -654,8 +597,8 @@ func Run(ctx context.Context, opts RunOptions) error {
 			if retrier != nil {
 				retrier.stop()
 			}
-			// Cancel received-request processing before link Close waits for its
-			// handlers; a blocked inbox write must not hold shutdown open.
+			// Cancel requests before link Close waits for its handlers, so a blocked
+			// inbox write does not hold shutdown open.
 			if liveDeps.Delivery != nil {
 				liveDeps.Delivery.stop()
 			}
@@ -665,11 +608,14 @@ func Run(ctx context.Context, opts RunOptions) error {
 			b.Stop()
 			stopComponents(started)
 			_ = sock.Close(true)
+			// The configuration must close after the link has stopped and its
+			// handlers returned: the offline reply reads broker.alias afresh and
+			// would see an empty string.
 			liveCfg.Close()
 			lock.Release()
 		}
 
-		// Step 12: components that need the ready socket and link run now.
+		// Components that need the ready socket and the started link run now.
 		for _, c := range started {
 			pc, ok := c.(PostReadyComponent)
 			if !ok {
@@ -682,15 +628,10 @@ func Run(ctx context.Context, opts RunOptions) error {
 			}
 		}
 
-		// Step 13: start the periodic update check. A non-release build never
-		// checks, so the initial delay is not even armed. The check reads the
-		// configuration on every period and keeps its result in memory only.
 		if isReleaseVersion(deps.Version) {
 			b.startUpdateChecks(ctx)
 		}
 
-		// Step 14: run until cancellation, checking the lock and the local socket
-		// once per tick.
 		tick, ticker := checkTicks(opts.checkTick)
 		if ticker != nil {
 			defer ticker.Stop()
@@ -732,7 +673,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 		}
 	}
 
-	// The first startup attempt.
 	live, sf := startOnce(nil, config.PathSet{}, "", "")
 	if sf == nil {
 		return serveLive(live)
@@ -743,8 +683,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return sf.err
 	}
 
-	// Diagnostics only: bind the local socket if the failed attempt did not
-	// have one, serve the reduced interface, and retry from Load.
 	var (
 		diagSock     *LocalSocket
 		diagSvc      *degradedService
@@ -803,8 +741,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 				"reason", state.Reason,
 			)
 		case changed:
-			// Already serving diagnostics only: a retry that fails for a new
-			// reason updates the report instead of announcing another entry.
 			deps.Logger.Info(EvDegradedReasonChanged,
 				"level", localpb.DegradedLevelName(state.Level),
 				"step", state.Step,
@@ -817,8 +753,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 			return fmt.Errorf("%w: no runtime directory is known", ErrRuntimeDir)
 		}
 		if diagSock != nil {
-			// A retry can change the configured group or mode; apply it to the
-			// socket that is already serving.
 			if opts.System {
 				if err := applyLocalSocketPerms(diagSockPath, diagPaths.RuntimeDir, diagGroup, diagMode); err != nil {
 					deps.Logger.Error(evLocalSocketPermsFailed, "error", err.Error())
@@ -846,9 +780,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return nil
 	}
 
-	// rebindDiagSocket mirrors the full service's periodic check: if something
-	// removed the socket file, bind it again and serve the reduced interface on
-	// it, so the next retry finds a working local interface.
 	rebindDiagSocket := func() {
 		if diagSock == nil || diagSock.Present() {
 			return
@@ -919,20 +850,18 @@ func Run(ctx context.Context, opts RunOptions) error {
 			if live.degraded == nil {
 				deps.Logger.Info(EvDegradedLeft)
 			}
-			// Entering local only logs degraded_entered with the final level;
-			// a fieldless degraded_left here would hide which level remains.
+			// Entering local only logs degraded_entered with the final level, so no
+			// fieldless degraded_left is logged here.
 			return serveLive(live)
 		}
-		// A retry failure never exits while diagnostics only; a configuration
-		// that has become unparsable keeps the loop and updates the reason.
+		// A retry failure never exits while diagnostics only; an unparsable
+		// configuration keeps the loop and updates the reason.
 		if err := enterDiagnostics(sf); err != nil {
 			return fatalDegraded(err)
 		}
 	}
 }
 
-// applySocketPermsFor reapplies the local socket group and mode after a
-// rebind. It reads the live configuration.
 func applySocketPermsFor(cfg ConfigSource, sockPath, runtimeDir string) error {
 	group, err := cfg.Get("broker.local_socket_group")
 	if err != nil {
@@ -945,8 +874,6 @@ func applySocketPermsFor(cfg ConfigSource, sockPath, runtimeDir string) error {
 	return applyLocalSocketPerms(sockPath, runtimeDir, group.String, mode.String)
 }
 
-// effectiveGeteuid returns the geteuid the run uses: the injected one, or
-// os.Geteuid.
 func effectiveGeteuid(d Deps) func() int {
 	if d.Geteuid != nil {
 		return d.Geteuid
@@ -954,15 +881,14 @@ func effectiveGeteuid(d Deps) func() int {
 	return os.Geteuid
 }
 
-// stopComponents stops comps in reverse order.
+// Stops in reverse start order, so a component stops before the ones started
+// before it.
 func stopComponents(comps []Component) {
 	for i := len(comps) - 1; i >= 0; i-- {
 		comps[i].Stop()
 	}
 }
 
-// notifyListenBound reports the bound address to every component that forwards
-// broker.listen.
 func notifyListenBound(components []Component, address string) {
 	for _, c := range components {
 		if r, ok := c.(listenBoundReporter); ok {
@@ -971,9 +897,6 @@ func notifyListenBound(components []Component, address string) {
 	}
 }
 
-// checkTicks returns the periodic-check channel: ch when given, otherwise a
-// one-minute ticker. The ticker is returned so the caller can stop it; it is
-// nil when ch was given.
 func checkTicks(ch <-chan time.Time) (<-chan time.Time, *time.Ticker) {
 	if ch != nil {
 		return ch, nil
@@ -982,8 +905,6 @@ func checkTicks(ch <-chan time.Time) (<-chan time.Time, *time.Ticker) {
 	return t.C, t
 }
 
-// touchLockFunc returns the lock-touch function the periodic refresh uses: the
-// injected one, or AccountLock.Touch.
 func touchLockFunc(fn func(*AccountLock, time.Time) error) func(*AccountLock, time.Time) error {
 	if fn != nil {
 		return fn
@@ -991,8 +912,6 @@ func touchLockFunc(fn func(*AccountLock, time.Time) error) func(*AccountLock, ti
 	return func(l *AccountLock, now time.Time) error { return l.Touch(now) }
 }
 
-// suppressListenRebind toggles the config component's own broker.listen
-// rebinding. Run's listen retry owns the address while local only.
 func suppressListenRebind(components []Component, suppress bool) {
 	for _, c := range components {
 		if s, ok := c.(interface{ suppressListenRebind(bool) }); ok {
@@ -1001,8 +920,6 @@ func suppressListenRebind(components []Component, suppress bool) {
 	}
 }
 
-// serveLocal serves the local interface and records an unexpected error. A
-// closed listener, from Stop or from a rebind, is expected and ignored.
 func serveLocal(b *Broker, ln net.Listener, log *slog.Logger) {
 	err := b.Serve(ln)
 	if err == nil || errors.Is(err, grpc.ErrServerStopped) || errors.Is(err, net.ErrClosed) {
@@ -1011,8 +928,6 @@ func serveLocal(b *Broker, ln net.Listener, log *slog.Logger) {
 	log.Warn(evLocalServeFailed, "error", err)
 }
 
-// writeReadyLine writes one line to the readiness pipe and closes it. A nil
-// pipe is a no-op; only tests supply one.
 func writeReadyLine(w io.WriteCloser, text string) {
 	if w == nil {
 		return

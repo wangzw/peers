@@ -10,19 +10,16 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// listAgentEntry is one candidate entry together with the fields the request
-// filters compare against.
 type listAgentEntry struct {
 	entry *localpb.AgentEntry
-	alias string // the broker alias the address carries
-	name  string // normalized agent name
+	alias string
+	name  string
 }
 
-// ListAgents answers a list_agents request: the caller's own address plus every
-// agent visible to it through a shared topic, local and remote. The caller and
-// the local visible agents are reread first so that the listing carries current
-// addresses, statuses and previous names. A reread may unregister agents, so
-// the visible set is taken again after it.
+// ListAgents answers a list_agents request with the caller's own address and
+// every agent visible to it through a shared topic, local and remote, after
+// rereading the local records involved. A remote entry whose peer alias is
+// unknown is omitted. The caller must be registered.
 func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
 	self, err := b.agentFor(ctx, req.GetAgentId())
 	if err != nil {
@@ -30,7 +27,6 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 	}
 	selfID := self.id
 
-	// Reread the caller first, then each local agent visible to it.
 	vis := b.deps.Topics.VisibleAgents(selfID)
 	ids := make([]AgentID, 0, len(vis)+1)
 	ids = append(ids, selfID)
@@ -41,8 +37,8 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 	}
 	b.refreshAgents(ids)
 
-	// A reread may have unregistered the caller or one of the visible agents.
-	// A caller that is gone may not use the interface any more.
+	// A reread may have unregistered the caller, which may no longer use the
+	// interface.
 	if _, err := b.agentFor(ctx, req.GetAgentId()); err != nil {
 		return nil, toStatus(err)
 	}
@@ -51,10 +47,6 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// A listing must not silently take a name from one account and give it to
-	// another. Expire idle entries here and, when ownership moved, recompute the
-	// refs and push agent_changed to every registration stream and the roster,
-	// the same way the hourly sweep does.
 	if b.nameOwnerPushPending || b.expireNameOwnersLocked(b.deps.Clock.Now()) {
 		b.recomputeRefsLocked()
 		b.nameOwnerPushPending = false
@@ -73,7 +65,7 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 				continue
 			}
 			// The agent table, not the roster entry, is authoritative: the
-			// roster entry may lag behind the reread just performed.
+			// roster may lag behind the reread just performed.
 			ag, ok := b.agents[v.Local]
 			if !ok {
 				continue
@@ -92,8 +84,7 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 			continue
 		}
 
-		// A remote agent is listed only when its peer's alias is known; an
-		// entry without an address is not useful.
+		// A remote agent is listed only when its peer's alias is known.
 		if b.deps.Peers == nil {
 			continue
 		}
@@ -102,13 +93,12 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 			continue
 		}
 		// The ref comes from the peer, so it is untrusted: FormatAddress panics
-		// on a malformed one. Skip the entry and warn instead of letting the
-		// peer's data decide whether this process survives.
+		// on a malformed one, so skip the entry and warn.
 		if !validRef(v.Member.Ref) {
 			b.log.Warn(EvRemoteMemberInvalid, "peer", fmt.Sprintf("%x", v.Peer))
 			continue
 		}
-		// A member whose publisher requires a ref always shows one. Other
+		// A member whose publisher requires a ref always shows one; other
 		// members of the same name count only among themselves, so a
 		// ref-required collider does not add a ref to the owner's address.
 		plainDuplicates := 0
@@ -131,9 +121,9 @@ func (b *Broker) ListAgents(ctx context.Context, req *localpb.ListAgentsRequest)
 		})
 	}
 
-	// The name filter compares normalized names. An empty request field means
-	// no filter; a field that normalizes to the empty string is still a filter
-	// and matches no agent, whose names are never empty.
+	// The name filter compares normalized names; a field that normalizes to the
+	// empty string is still a filter and matches no agent, whose names are never
+	// empty.
 	nameFilter := req.GetName() != ""
 	filterName := ""
 	if nameFilter {

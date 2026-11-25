@@ -17,22 +17,22 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// Event names of the local interface limits. They are spelled out so the
-// tests still compile against the version that has no such events.
+// These pin the local interface limit event names as literals, so a change to
+// the product constants fails the test.
 const (
 	connectionLimitEventName = "local_connection_limit_reached"
 	registerLimitEventName   = "register_limit_reached"
 )
 
-// withLocalLimits lowers the local interface limits for one test. It must run
-// before newTestBroker so the Broker is built with them.
+// withLocalLimits lowers the local interface limits for one test; run it before
+// newTestBroker.
 func withLocalLimits(t *testing.T, conns, streams, regs int) {
 	t.Helper()
 	withLocalTotalLimit(t, conns, streams, regs, maxLocalConnectionsTotal)
 }
 
-// withLocalTotalLimit lowers the per-account and global connection limits for
-// one test. It must run before newTestBroker so the Broker is built with them.
+// withLocalTotalLimit also sets the Broker-wide connection total; run it before
+// newTestBroker.
 func withLocalTotalLimit(t *testing.T, conns, streams, regs, total int) {
 	t.Helper()
 	oldConns, oldStreams, oldRegs, oldTotal := localConnLimit, localStreamLimit, localRegisterLimit, localTotalConnLimit
@@ -42,7 +42,6 @@ func withLocalTotalLimit(t *testing.T, conns, streams, regs, total int) {
 	})
 }
 
-// limitLogRecords returns the runtime log records whose event is name.
 func limitLogRecords(t *testing.T, tb *testBroker, name string) []map[string]any {
 	t.Helper()
 	var out []map[string]any
@@ -54,16 +53,14 @@ func limitLogRecords(t *testing.T, tb *testBroker, name string) []map[string]any
 	return out
 }
 
-// count returns the slots uid holds; it is a test helper.
 func (l *accountLimit) count(uid uint32) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.counts[uid]
 }
 
-// TestAccountLimitCountsPerAccount pins the accounting under the connection and
-// registration limits: slots are per account key, a refusal is logged at most
-// once per account per minute, and the log is written again after a minute.
+// TestAccountLimitCountsPerAccount checks that slots are counted per account
+// key and a refusal is logged at most once per account per minute.
 func TestAccountLimitCountsPerAccount(t *testing.T) {
 	var logs syncBuffer
 	l := newAccountLimit(1, connectionLimitEventName, NewLogger(&logs, new(slog.LevelVar)))
@@ -88,8 +85,6 @@ func TestAccountLimitCountsPerAccount(t *testing.T) {
 		t.Fatalf("uid 1001 holds %d slots, want 1", got)
 	}
 
-	// Releasing the only held slot frees it, and after the log interval has
-	// passed a later refusal is recorded again.
 	l.release(1000)
 	now = now.Add(overLimitLogInterval)
 	if !l.acquire(1000, 1000) {
@@ -110,8 +105,8 @@ func TestAccountLimitCountsPerAccount(t *testing.T) {
 	}
 }
 
-// TestAccountLimitLogsOncePerMinute checks that a retrying client cannot flood
-// the runtime log: one hundred refusals within a minute write one record.
+// TestAccountLimitLogsOncePerMinute checks that many refusals within a minute
+// write one log record.
 func TestAccountLimitLogsOncePerMinute(t *testing.T) {
 	var logs syncBuffer
 	l := newAccountLimit(1, connectionLimitEventName, NewLogger(&logs, new(slog.LevelVar)))
@@ -132,7 +127,6 @@ func TestAccountLimitLogsOncePerMinute(t *testing.T) {
 	}
 }
 
-// limitLogRecordsText counts the records of one event in a raw log.
 func limitLogRecordsText(t *testing.T, raw, name string) int {
 	t.Helper()
 	n := 0
@@ -144,9 +138,8 @@ func limitLogRecordsText(t *testing.T, raw, name string) int {
 	return n
 }
 
-// TestLocalConnectionLimitRefusesExtraConnection pins that a third connection
-// from one account is refused during the handshake when the account is limited
-// to two, and that the refusal is logged once per over-limit episode.
+// TestLocalConnectionLimitRefusesExtraConnection checks that a connection past
+// the account limit is refused during the handshake and logged once.
 func TestLocalConnectionLimitRefusesExtraConnection(t *testing.T) {
 	withLocalLimits(t, 2, maxLocalStreams, maxLocalRegistrations)
 	tb := newTestBroker(t)
@@ -161,7 +154,6 @@ func TestLocalConnectionLimitRefusesExtraConnection(t *testing.T) {
 		t.Fatalf("second connection: %v", err)
 	}
 
-	// Two attempts past the limit: the log must record the episode once.
 	for i := 0; i < 2; i++ {
 		cc := newCredClient(t, tb.sock)
 		err := callHello(t, cc)
@@ -186,8 +178,8 @@ func TestLocalConnectionLimitRefusesExtraConnection(t *testing.T) {
 	}
 }
 
-// TestLocalConnectionSlotReturnsOnClose pins that a closed connection returns
-// its account's slot, so another connection is accepted afterwards.
+// TestLocalConnectionSlotReturnsOnClose checks that closing a connection
+// returns its account's slot.
 func TestLocalConnectionSlotReturnsOnClose(t *testing.T) {
 	withLocalLimits(t, 1, maxLocalStreams, maxLocalRegistrations)
 	tb := newTestBroker(t)
@@ -205,8 +197,6 @@ func TestLocalConnectionSlotReturnsOnClose(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatalf("close the first connection: %v", err)
 	}
-	// The server releases the slot when it notices the close; poll by dialing
-	// until a connection is accepted again.
 	waitForReg(t, "the connection slot to return", func() bool {
 		cc := newCredClient(t, tb.sock)
 		if err := callHello(t, cc); err != nil {
@@ -217,13 +207,11 @@ func TestLocalConnectionSlotReturnsOnClose(t *testing.T) {
 	})
 }
 
-// TestLocalStreamLimitHoldsExtraStreams pins the per-connection stream limit:
-// a second stream on a connection limited to one waits for the first to end.
+// TestLocalStreamLimitHoldsExtraStreams checks that a second stream on a
+// connection limited to one waits for the first to end.
 func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 	withLocalLimits(t, maxLocalConnections, 1, maxLocalRegistrations)
 	tb := newTestBroker(t)
-	// Warm the connection up so the server's stream limit is in effect before
-	// the streams below open.
 	if err := callHello(t, tb.conn); err != nil {
 		t.Fatalf("warm up: %v", err)
 	}
@@ -233,9 +221,6 @@ func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 		t.Fatalf("held registration reason = %v, want socket_path_missing", got)
 	}
 
-	// The deadline is the assertion: the second stream must be held until its own
-	// caller gives up. Cancelling it earlier would return a different code, and
-	// the 250ms only decides how long this test spends reaching the deadline.
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	if _, err := tb.client.Register(ctx); err == nil {
@@ -244,7 +229,6 @@ func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 		t.Fatalf("second stream: err = %v (code %v), want it held until the deadline", err, status.Code(err))
 	}
 
-	// Ending the held stream returns the slot.
 	held.cancel()
 	nextCtx, nextCancel := context.WithTimeout(context.Background(), eventTimeout)
 	defer nextCancel()
@@ -255,9 +239,8 @@ func TestLocalStreamLimitHoldsExtraStreams(t *testing.T) {
 	_ = next.CloseSend()
 }
 
-// TestRegisterLimitRefusesExtraStream pins the per-account registration
-// limit: a third open Register stream from one account is refused with
-// quota_exceeded, and the refusal is logged once.
+// TestRegisterLimitRefusesExtraStream checks that a Register stream past the
+// account limit is refused with quota_exceeded and logged once.
 func TestRegisterLimitRefusesExtraStream(t *testing.T) {
 	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 2)
 	tb := newTestBroker(t)
@@ -270,8 +253,6 @@ func TestRegisterLimitRefusesExtraStream(t *testing.T) {
 	if got := first.problem(eventTimeout); got != localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING {
 		t.Fatalf("first registration reason = %v, want socket_path_missing", got)
 	}
-	// The second registration uses another connection: the limit is per
-	// account, not per connection.
 	secondConn := newCredClient(t, tb.sock)
 	secondClient := localpb.NewLocalClient(secondConn)
 	second := startRegistrationAt(t, secondClient, "", "")
@@ -320,8 +301,6 @@ func TestRegisterLimitRefusesExtraStream(t *testing.T) {
 	}
 }
 
-// stubAccountDB replaces the caller-name lookup for one test. A uid in known
-// resolves to an account; every other uid resolves to no entry.
 func stubAccountDB(t *testing.T, known map[uint32]string) {
 	t.Helper()
 	resetUsernameCache(t)
@@ -333,8 +312,6 @@ func stubAccountDB(t *testing.T, known map[uint32]string) {
 	}
 }
 
-// credSequence returns a ReadPeerCred that hands out uids in order and repeats
-// the last one. Username is filled from the cache the Broker uses.
 func credSequence(t *testing.T, uids ...uint32) func(net.Conn) (Caller, error) {
 	t.Helper()
 	var mu sync.Mutex
@@ -351,12 +328,10 @@ func credSequence(t *testing.T, uids ...uint32) func(net.Conn) (Caller, error) {
 	}
 }
 
-// allowEveryCaller lets a test present any uid at the local interface.
 func allowEveryCaller(Caller) bool { return true }
 
-// TestGlobalConnectionLimitRefusesExtraConnection pins the broker-wide
-// connection cap: with the total limited to two, a third account's connection
-// is refused even though no account has reached its own limit.
+// TestGlobalConnectionLimitRefusesExtraConnection checks that a connection past
+// the Broker-wide total is refused even when no account reached its own limit.
 func TestGlobalConnectionLimitRefusesExtraConnection(t *testing.T) {
 	withLocalTotalLimit(t, maxLocalConnections, maxLocalStreams, maxLocalRegistrations, 2)
 	stubAccountDB(t, map[uint32]string{1000: "alice", 1001: "bob", 1002: "carol"})
@@ -390,14 +365,12 @@ func TestGlobalConnectionLimitRefusesExtraConnection(t *testing.T) {
 }
 
 // TestUnknownUIDsShareConnectionQuota checks that uids with no account entry
-// share one account's connection slots, while a normal account keeps its own.
+// share one connection quota while a real account keeps its own.
 func TestUnknownUIDsShareConnectionQuota(t *testing.T) {
 	withLocalLimits(t, 2, maxLocalStreams, maxLocalRegistrations)
 	stubAccountDB(t, map[uint32]string{1000: "alice"})
 	tb := newTestBroker(t, func(d *Deps) {
 		d.AllowCaller = allowEveryCaller
-		// Two unknown uids fill the shared bucket; the next unknown uid is
-		// refused; the last uid is a real account and still connects.
 		d.ReadPeerCred = credSequence(t, 300001, 300002, 300003, 1000)
 	})
 
@@ -419,7 +392,7 @@ func TestUnknownUIDsShareConnectionQuota(t *testing.T) {
 }
 
 // TestUnknownUIDsShareRegisterQuota checks that Register streams from uids with
-// no account entry count against one shared per-account limit.
+// no account entry count against one shared limit.
 func TestUnknownUIDsShareRegisterQuota(t *testing.T) {
 	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 2)
 	stubAccountDB(t, map[uint32]string{})
@@ -460,8 +433,7 @@ func TestUnknownUIDsShareRegisterQuota(t *testing.T) {
 }
 
 // TestRegisterSlotReturnsAfterStreamEnds checks that ending a Register stream
-// returns its account's registration slot, so the next stream from the same
-// account is accepted.
+// returns its account's slot.
 func TestRegisterSlotReturnsAfterStreamEnds(t *testing.T) {
 	withLocalLimits(t, maxLocalConnections, maxLocalStreams, 1)
 	tb := newTestBroker(t)

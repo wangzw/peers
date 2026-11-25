@@ -9,9 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// directoryOps is the part of *directory.Directory the adapter uses. It keeps
-// the adapter testable with discoveryDir and names the exact surface the
-// broker needs from the directory package.
 type directoryOps interface {
 	SetPublic(public bool) error
 	DeclarePublicTopic(name, description string) error
@@ -22,26 +19,18 @@ type directoryOps interface {
 	Reissue()
 }
 
-// directoryAdapter adapts *directory.Directory to the broker's directory
-// views: PublicTopicDirectory, BrokerCatalog, ConnectWarner and CardIssuer.
-// Every method forwards; only the public topic declaration maps errors,
-// because broker-local returns them to the client as an *Error.
 type directoryAdapter struct {
 	d directoryOps
 }
 
-// newDirectoryAdapter returns the adapter backed by d.
 func newDirectoryAdapter(d directoryOps) *directoryAdapter {
 	return &directoryAdapter{d: d}
 }
 
-// SetPublic turns the Broker's public flag on or off in the directory.
 func (a *directoryAdapter) SetPublic(public bool) error {
 	return a.d.SetPublic(public)
 }
 
-// DeclarePublicTopic declares a public topic and maps the directory's
-// sentinels onto the broker's error codes.
 func (a *directoryAdapter) DeclarePublicTopic(name, description string) error {
 	err := a.d.DeclarePublicTopic(name, description)
 	switch {
@@ -65,18 +54,14 @@ func (a *directoryAdapter) DeclarePublicTopic(name, description string) error {
 	}
 }
 
-// RetirePublicTopic withdraws a public topic declaration.
 func (a *directoryAdapter) RetirePublicTopic(name string) {
 	a.d.RetirePublicTopic(name)
 }
 
-// Reissue re-signs the Broker's card. It satisfies CardIssuer.
 func (a *directoryAdapter) Reissue() {
 	a.d.Reissue()
 }
 
-// PublicTopics returns the public topics the directory currently holds, in
-// the directory's order.
 func (a *directoryAdapter) PublicTopics() []PublicTopic {
 	topics := a.d.PublicTopics()
 	if topics == nil {
@@ -95,8 +80,6 @@ func (a *directoryAdapter) PublicTopics() []PublicTopic {
 	return out
 }
 
-// CardAddresses returns the addresses of the directory's entry for fp. The
-// entry holds only known address kinds; a missing entry yields nil.
 func (a *directoryAdapter) CardAddresses(fp pairing.Fingerprint) []config.AdvertisedAddr {
 	for _, b := range a.d.Brokers() {
 		if b.Fingerprint == fp {
@@ -106,9 +89,6 @@ func (a *directoryAdapter) CardAddresses(fp pairing.Fingerprint) []config.Advert
 	return nil
 }
 
-// NonPeers returns the directory's brokers that are not peers, as local API
-// entries. The peer-only fields are left at their zero values; ListBrokers
-// forces them again.
 func (a *directoryAdapter) NonPeers() []*localpb.BrokerInfo {
 	var out []*localpb.BrokerInfo
 	for _, b := range a.d.Brokers() {
@@ -133,15 +113,10 @@ func (a *directoryAdapter) NonPeers() []*localpb.BrokerInfo {
 	return out
 }
 
-// ConnectWarnings compares the addresses presented during pairing with the
-// directory's cards.
 func (a *directoryAdapter) ConnectWarnings(peer pairing.Peer) []*localpb.Warning {
 	return fingerprintWarnings(peer, a.d)
 }
 
-// install fills the broker's directory hooks with this adapter, including the
-// card issuer hook, so an alias or advertised-address change re-signs the card
-// (REQ-broker-discovery-016).
 func (a *directoryAdapter) install(deps *Deps) {
 	deps.Directory = a
 	deps.Catalog = a
@@ -151,8 +126,6 @@ func (a *directoryAdapter) install(deps *Deps) {
 
 var _ CardIssuer = (*directoryAdapter)(nil)
 
-// brokerStatusToProto maps the directory's broker status onto the local API.
-// An unknown status maps to UNSPECIFIED.
 func brokerStatusToProto(s directory.BrokerStatus) localpb.BrokerStatus {
 	switch s {
 	case directory.StatusConnected:

@@ -12,6 +12,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/helperpb"
 )
 
+// TestDelimitedRoundTrip checks that delimited helper messages survive a round
+// trip and that a read past the end reports io.EOF.
 func TestDelimitedRoundTrip(t *testing.T) {
 	want := []*helperpb.HelperMessage{
 		{
@@ -49,12 +51,12 @@ func TestDelimitedRoundTrip(t *testing.T) {
 		}
 	}
 
-	// A third read past the end of the stream reports io.EOF.
 	if err := protodelim.UnmarshalFrom(r, &helperpb.HelperMessage{}); err != io.EOF {
 		t.Fatalf("UnmarshalFrom past end: got %v, want io.EOF", err)
 	}
 }
 
+// TestProtocolVersionIsOne pins the helper pipe protocol version at 1.
 func TestProtocolVersionIsOne(t *testing.T) {
 	if helperpb.ProtocolVersion != 1 {
 		t.Fatalf("ProtocolVersion = %d, want 1", helperpb.ProtocolVersion)

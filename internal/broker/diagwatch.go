@@ -10,7 +10,7 @@ import (
 )
 
 // configDirWatchDebounce is how long the watcher waits after the last change
-// before waking the retry, so a burst of writes from one save is reported once.
+// before waking the retry, so a burst of writes is reported once.
 const configDirWatchDebounce = 50 * time.Millisecond
 
 // configDirSource supplies the directory events the watcher consumes.
@@ -20,7 +20,6 @@ type configDirSource interface {
 	Close() error
 }
 
-// fsnotifySource is the production source, backed by one fsnotify watcher.
 type fsnotifySource struct{ w *fsnotify.Watcher }
 
 func (s fsnotifySource) Events() <-chan fsnotify.Event { return s.w.Events }
@@ -28,8 +27,7 @@ func (s fsnotifySource) Errors() <-chan error          { return s.w.Errors }
 func (s fsnotifySource) Close() error                  { return s.w.Close() }
 
 // configDirWatch reports changes to the configuration file while a degraded
-// Broker runs diagnostics only. config's own watcher never starts when Load
-// fails, so the degraded loop watches the directory itself.
+// Broker runs diagnostics only.
 type configDirWatch struct {
 	events chan struct{}
 
@@ -41,8 +39,8 @@ type configDirWatch struct {
 	once   sync.Once
 }
 
-// newConfigDirWatch builds a watcher over source. A nil clock uses the system
-// clock; tests inject one to advance the debounce themselves.
+// newConfigDirWatch builds a watcher over source; a nil clock uses the system
+// clock.
 func newConfigDirWatch(source configDirSource, log *slog.Logger, clock Clock) *configDirWatch {
 	if log == nil {
 		log = slog.Default()
@@ -129,11 +127,10 @@ func (w *configDirWatch) run(name string) {
 			if w.log != nil {
 				w.log.Warn("degraded_config_watch_error", "error", err)
 			}
-			// A watcher error only costs the immediate retry; the minute
-			// tick still drives the loop.
+			// A watcher error only costs the immediate retry.
 		case <-timing:
-			// arm installs a new timer on the next change; keep timing nil until
-			// then so a stale firing cannot wake the loop twice.
+			// Keep timing nil until the next change so a stale firing cannot
+			// wake the loop twice.
 			timing = nil
 			select {
 			case w.events <- struct{}{}:

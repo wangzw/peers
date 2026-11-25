@@ -8,8 +8,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// statusAccessAgents registers two agents, gives them different owners, and
-// installs one peer, so a test can see whether Status filters the response.
 func statusAccessAgents(t *testing.T, tb *testBroker) (mine, other AgentID) {
 	t.Helper()
 	mine, _ = statusRegisterAgent(t, tb, "mine")
@@ -24,8 +22,9 @@ func statusAccessAgents(t *testing.T, tb *testBroker) (mine, other AgentID) {
 	return mine, other
 }
 
+// TestStatusWithoutReadAccess checks that Status without read permission returns
+// only the caller's agents while the peer list stays visible.
 func TestStatusWithoutReadAccess(t *testing.T) {
-	// REQ-broker-config-010
 	tb := newTestBroker(t)
 	mine, _ := statusAccessAgents(t, tb)
 
@@ -56,12 +55,10 @@ func TestStatusWithoutReadAccess(t *testing.T) {
 	}
 }
 
-// TestStatusWithoutCallerIdentity checks that Status does not fall back to
-// filtering by UID 0 when the context carries no caller identity: without a
-// caller it returns no agents, not the agents owned by UID 0, while the peer
-// list stays visible as it does for any caller without read permission.
+// TestStatusWithoutCallerIdentity checks that Status returns no agents when the
+// context carries no caller identity, rather than falling back to uid 0, while
+// the peer list stays visible.
 func TestStatusWithoutCallerIdentity(t *testing.T) {
-	// REQ-broker-config-010
 	tb := newTestBroker(t)
 	root, _ := statusRegisterAgent(t, tb, "root")
 
@@ -84,6 +81,8 @@ func TestStatusWithoutCallerIdentity(t *testing.T) {
 	}
 }
 
+// TestStatusWithReadAccess checks that Status returns every account's agents and
+// the peers when the caller has read permission.
 func TestStatusWithReadAccess(t *testing.T) {
 	tb := newTestBroker(t)
 	mine, other := statusAccessAgents(t, tb)

@@ -13,6 +13,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
+// TestToStatusCarriesExactlyOneErrorDetail checks that toStatus carries exactly
+// one ErrorDetail with the code, message and originating fingerprint.
 func TestToStatusCarriesExactlyOneErrorDetail(t *testing.T) {
 	err := toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_NOT_REGISTERED, "x"))
 	s, ok := status.FromError(err)
@@ -43,7 +45,6 @@ func TestToStatusCarriesExactlyOneErrorDetail(t *testing.T) {
 		t.Errorf("local error carries a fingerprint: %x", d.GetOriginatingBrokerFingerprint())
 	}
 
-	// A fingerprint set on a relayed error is carried through unchanged.
 	origin := []byte{0xde, 0xad, 0xbe, 0xef}
 	relayed, ok := status.FromError(toStatus(&Error{
 		Code:    localpb.ErrorCode_ERROR_CODE_NOT_FOUND,
@@ -66,6 +67,8 @@ func TestToStatusCarriesExactlyOneErrorDetail(t *testing.T) {
 	}
 }
 
+// TestToStatusWrappedError checks that an *Error wrapped in another error keeps
+// its code and message.
 func TestToStatusWrappedError(t *testing.T) {
 	wrapped := fmt.Errorf("wrap: %w", Errorf(localpb.ErrorCode_ERROR_CODE_NOT_FOUND, "y"))
 	err := toStatus(wrapped)
@@ -92,6 +95,8 @@ func TestToStatusWrappedError(t *testing.T) {
 	}
 }
 
+// TestToStatusPlainErrorIsInternal checks that an error that is not an *Error
+// becomes internal.
 func TestToStatusPlainErrorIsInternal(t *testing.T) {
 	err := toStatus(errors.New("boom"))
 	s, ok := status.FromError(err)
@@ -120,6 +125,8 @@ func TestToStatusPlainErrorIsInternal(t *testing.T) {
 	}
 }
 
+// TestToStatusCodeTable checks the wire error code to gRPC status code mapping
+// for every code.
 func TestToStatusCodeTable(t *testing.T) {
 	cases := []struct {
 		code localpb.ErrorCode
@@ -180,6 +187,8 @@ func TestToStatusCodeTable(t *testing.T) {
 	}
 }
 
+// TestUnknownErrorCode checks that an unknown numeric error code maps to
+// internal and renders as its decimal value.
 func TestUnknownErrorCode(t *testing.T) {
 	const code = localpb.ErrorCode(99)
 	e := Errorf(code, "m")
@@ -207,6 +216,8 @@ func TestUnknownErrorCode(t *testing.T) {
 	}
 }
 
+// TestToStatusNilAndCanceled checks that nil stays nil and context.Canceled
+// maps to Canceled without a detail.
 func TestToStatusNilAndCanceled(t *testing.T) {
 	if err := toStatus(nil); err != nil {
 		t.Errorf("toStatus(nil) = %v, want nil", err)

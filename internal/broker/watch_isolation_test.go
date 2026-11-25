@@ -12,15 +12,11 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// recordedWatch is one Watch call seen by recordingWatchRouter.
 type recordedWatch struct {
 	uid uint32
 	dir string
 }
 
-// recordingWatchRouter hands out one recording backend per account. A uid in
-// block makes that account's Watch block until the channel is closed, ignoring
-// the context, so a test controls exactly when the watch creation finishes.
 type recordingWatchRouter struct {
 	mu      sync.Mutex
 	watches []recordedWatch
@@ -87,9 +83,6 @@ func (b *recordingWatchBackend) Watch(_ context.Context, configDir string, _ fun
 	return func() {}, nil
 }
 
-// sequentialPeerCreds identifies each new local connection with the next uid,
-// starting after first. The tests start one registration per connection and
-// wait for its side effect before opening the next, so the order is fixed.
 func sequentialPeerCreds(first uint32) func(net.Conn) (Caller, error) {
 	var mu sync.Mutex
 	next := first
@@ -101,6 +94,8 @@ func sequentialPeerCreds(first uint32) func(net.Conn) (Caller, error) {
 	}
 }
 
+// TestOwnedBackendVerifiesConfigDirOwner checks that the ownership check accepts
+// the account's own directory and refuses a directory owned by root.
 func TestOwnedBackendVerifiesConfigDirOwner(t *testing.T) {
 	me := uint32(os.Geteuid())
 	own := t.TempDir()
@@ -115,6 +110,8 @@ func TestOwnedBackendVerifiesConfigDirOwner(t *testing.T) {
 	}
 }
 
+// TestWatchesArePerAccount checks that two accounts using the default
+// configuration directory do not share one watch registration.
 func TestWatchesArePerAccount(t *testing.T) {
 	router := newRecordingWatchRouter()
 	tb := newTestBroker(t, func(d *Deps) {
@@ -125,8 +122,6 @@ func TestWatchesArePerAccount(t *testing.T) {
 
 	dir := shortTempDir(t)
 
-	// Both accounts use the default configuration directory, "". They must not
-	// share one watch registration.
 	startRegistrationAt(t, tb.client, "", filepath.Join(dir, "a.sock"))
 	waitForReg(t, "the first account's watch", func() bool {
 		return router.watchCount(9001) == 1
@@ -143,11 +138,11 @@ func TestWatchesArePerAccount(t *testing.T) {
 	}
 }
 
+// TestHungWatchDoesNotBlockAnotherAccount checks that a stuck watch for one
+// account does not delay another account's watch.
 func TestHungWatchDoesNotBlockAnotherAccount(t *testing.T) {
 	router := newRecordingWatchRouter()
 	release := make(chan struct{})
-	// The first connection is account 9001 and its watch creation never
-	// returns until the test releases it.
 	router.blockFor(9001, release)
 	defer close(release)
 
@@ -163,8 +158,6 @@ func TestHungWatchDoesNotBlockAnotherAccount(t *testing.T) {
 		return router.watchCount(9001) == 1
 	})
 
-	// The second account registers the same directory string. Its watch must be
-	// created without waiting for the first account's stuck registration.
 	second := tb.newClient(t)
 	startRegistrationAt(t, second, "", filepath.Join(dir, "b.sock"))
 	waitForReg(t, "the second account's watch", func() bool {

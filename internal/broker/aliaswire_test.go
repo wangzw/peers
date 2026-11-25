@@ -10,15 +10,12 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// ownAliasOf reads the double's cache under its lock; the tests run
-// sequentially but the -race build must see no unsynchronized access.
 func ownAliasOf(p *fakePairing) string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.ownAlias
 }
 
-// callsOf copies the double's call log under its lock.
 func callsOf(p *fakePairing) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -35,8 +32,8 @@ func stringValue(s string) config.Value {
 	return config.Value{Kind: config.KindString, String: s}
 }
 
-// TestWireOwnAliasPushesInitialValue covers REQ-broker-pairing-003: the alias
-// cache is filled at startup, not only on the first change.
+// TestWireOwnAliasPushesInitialValue checks that the initial alias is pushed
+// into the pairing cache.
 func TestWireOwnAliasPushesInitialValue(t *testing.T) {
 	cfg := newFakeConfig(t.TempDir())
 	p := &fakePairing{}
@@ -49,8 +46,8 @@ func TestWireOwnAliasPushesInitialValue(t *testing.T) {
 	}
 }
 
-// TestWireOwnAliasFollowsChanges covers REQ-broker-pairing-003: a change to
-// broker.alias reaches the pairing cache.
+// TestWireOwnAliasFollowsChanges checks that a broker.alias change reaches the
+// pairing cache.
 func TestWireOwnAliasFollowsChanges(t *testing.T) {
 	cfg := newFakeConfig(t.TempDir())
 	p := &fakePairing{}
@@ -64,9 +61,6 @@ func TestWireOwnAliasFollowsChanges(t *testing.T) {
 	}
 }
 
-// racingGetConfig fires a rename after Get has read the value but before it
-// returns it, so the initial push reaches pairing after the subscriber already
-// saw the new value.
 type racingGetConfig struct {
 	*fakeConfig
 	once sync.Once
@@ -83,9 +77,8 @@ func (c *racingGetConfig) Get(key string) (config.Value, error) {
 	return v, nil
 }
 
-// TestWireOwnAliasRepushesIfChangedConcurrently covers REQ-broker-pairing-003:
-// a rename that lands between the initial read and the push must not leave the
-// stale value in the cache.
+// TestWireOwnAliasRepushesIfChangedConcurrently checks that a rename landing
+// between the initial read and the push does not leave a stale alias cached.
 func TestWireOwnAliasRepushesIfChangedConcurrently(t *testing.T) {
 	cfg := &racingGetConfig{fakeConfig: newFakeConfig(t.TempDir())}
 	p := &fakePairing{}
@@ -98,10 +91,9 @@ func TestWireOwnAliasRepushesIfChangedConcurrently(t *testing.T) {
 	}
 }
 
-// TestAliasValidatorOnlyCallsAliasConflict keeps the validator inside the lock
-// order the design allows: under the config lock it may only ask
-// AliasConflict, which takes only the pairing lock. The error must name the
-// alias but no peer fingerprint.
+// TestAliasValidatorOnlyCallsAliasConflict checks that the alias validator
+// calls only AliasConflict, and that its error names the alias without leaking
+// a fingerprint.
 func TestAliasValidatorOnlyCallsAliasConflict(t *testing.T) {
 	cfg := newFakeConfig(t.TempDir())
 	p := &fakePairing{taken: map[string]bool{"hostB": true}}
@@ -145,7 +137,6 @@ func TestAliasValidatorOnlyCallsAliasConflict(t *testing.T) {
 		}
 	}
 
-	// An empty alias must not be conflict-checked at all.
 	clearCalls(p)
 	if _, err := cfg.Set(actor, "broker.alias", stringValue("")); err != nil {
 		t.Fatalf(`Set(broker.alias=""): %v`, err)
@@ -157,8 +148,8 @@ func TestAliasValidatorOnlyCallsAliasConflict(t *testing.T) {
 	}
 }
 
-// TestAliasValidatorRegisteredOnce makes sure the conflict check is registered
-// exactly once, on broker.alias, and nowhere else.
+// TestAliasValidatorRegisteredOnce checks that wireOwnAlias registers exactly one
+// validator on broker.alias and none on broker.listen.
 func TestAliasValidatorRegisteredOnce(t *testing.T) {
 	cfg := newFakeConfig(t.TempDir())
 	p := &fakePairing{}
@@ -179,8 +170,6 @@ func TestAliasValidatorRegisteredOnce(t *testing.T) {
 	}
 }
 
-// errGetConfig makes Get fail while every other ConfigSource method still
-// delegates to the fake.
 type errGetConfig struct {
 	*fakeConfig
 	err error
@@ -190,8 +179,8 @@ func (c errGetConfig) Get(string) (config.Value, error) {
 	return config.Value{}, c.err
 }
 
-// TestWireOwnAliasGetError checks that a failed initial read surfaces and
-// leaves the cache untouched.
+// TestWireOwnAliasGetError checks that a failed initial read is returned and
+// leaves the cache empty.
 func TestWireOwnAliasGetError(t *testing.T) {
 	base := newFakeConfig(t.TempDir())
 	boom := errors.New("boom")

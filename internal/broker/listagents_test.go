@@ -19,7 +19,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// listCall performs one ListAgents call with a bounded context.
 func listCall(t *testing.T, client localpb.LocalClient, req *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -27,7 +26,6 @@ func listCall(t *testing.T, client localpb.LocalClient, req *localpb.ListAgentsR
 	return client.ListAgents(ctx, req)
 }
 
-// mustListAgents lists and fails the test on an RPC error.
 func mustListAgents(t *testing.T, tb *testBroker, req *localpb.ListAgentsRequest) *localpb.ListAgentsResponse {
 	t.Helper()
 	resp, err := listCall(t, tb.client, req)
@@ -37,14 +35,12 @@ func mustListAgents(t *testing.T, tb *testBroker, req *localpb.ListAgentsRequest
 	return resp
 }
 
-// registerListAgent registers fake on tb and returns its agent ID.
 func registerListAgent(t *testing.T, tb *testBroker, fake *fakesession.Fake) AgentID {
 	t.Helper()
 	rs := startRegistration(t, tb, fake)
 	return AgentID(rs.complete(eventTimeout).GetAgentId())
 }
 
-// joinListTopics joins the agent to each topic on the fake topic table.
 func joinListTopics(t *testing.T, tb *testBroker, id AgentID, names ...string) {
 	t.Helper()
 	for _, name := range names {
@@ -54,7 +50,6 @@ func joinListTopics(t *testing.T, tb *testBroker, id AgentID, names ...string) {
 	}
 }
 
-// listAddresses returns the entry addresses in the order the Broker sent them.
 func listAddresses(resp *localpb.ListAgentsResponse) []string {
 	out := make([]string, 0, len(resp.GetAgents()))
 	for _, entry := range resp.GetAgents() {
@@ -63,7 +58,6 @@ func listAddresses(resp *localpb.ListAgentsResponse) []string {
 	return out
 }
 
-// listEntryByAddress returns the entry whose address is addr.
 func listEntryByAddress(t *testing.T, resp *localpb.ListAgentsResponse, addr string) *localpb.AgentEntry {
 	t.Helper()
 	for _, entry := range resp.GetAgents() {
@@ -75,9 +69,9 @@ func listEntryByAddress(t *testing.T, resp *localpb.ListAgentsResponse, addr str
 	return nil
 }
 
+// TestListAgentsIncludesSelf checks that a registered session gets its own
+// address and is not listed among the other agents.
 func TestListAgentsIncludesSelf(t *testing.T) {
-	// REQ-agent-messaging-001, REQ-agent-messaging-011: a registered session
-	// gets its own address and is not listed as another agent.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "api-worker"}))
 
@@ -90,9 +84,9 @@ func TestListAgentsIncludesSelf(t *testing.T) {
 	}
 }
 
+// TestUnregisteredSessionNotListed checks that a session with a registry record
+// but no registration connection is not listed.
 func TestUnregisteredSessionNotListed(t *testing.T) {
-	// REQ-agent-messaging-002: a session that has a registry record but never
-	// registered a connection is not listed.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "api-worker"}))
 	joinListTopics(t, tb, self, "t1")
@@ -105,9 +99,9 @@ func TestUnregisteredSessionNotListed(t *testing.T) {
 	}
 }
 
+// TestListAgentsSharedTopics checks that each entry carries only the topics
+// shared with the caller.
 func TestListAgentsSharedTopics(t *testing.T) {
-	// REQ-agent-messaging-009: each entry carries the topics shared with the
-	// caller, and only those.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	peer := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "peer"}))
@@ -122,9 +116,9 @@ func TestListAgentsSharedTopics(t *testing.T) {
 	}
 }
 
+// TestListAgentsLocalDuplicateNamesGetRefs checks that two local agents with the
+// same name both carry a disambiguation ref in their address.
 func TestListAgentsLocalDuplicateNamesGetRefs(t *testing.T) {
-	// REQ-agent-messaging-004: two local agents with the same name both carry
-	// the disambiguation ref in their address.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	first := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "w"}))
@@ -161,10 +155,10 @@ func TestListAgentsLocalDuplicateNamesGetRefs(t *testing.T) {
 	}
 }
 
+// TestListAgentsRemote checks that remote agents are listed with the peer's
+// effective alias and a ref when their name is not unique, and skipped when the
+// alias is unknown.
 func TestListAgentsRemote(t *testing.T) {
-	// REQ-agent-messaging-004, REQ-agent-messaging-008: remote agents are listed
-	// with the peer's effective alias, get a ref when their name is not unique
-	// on the peer, and are skipped when the alias is unknown.
 	t.Run("alias and shared topics", func(t *testing.T) {
 		tb := newTestBroker(t)
 		self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
@@ -254,10 +248,9 @@ func TestListAgentsRemote(t *testing.T) {
 	})
 }
 
+// TestListAgentsEntriesCarryAccount checks that every entry names the account
+// that registered the agent, local or remote.
 func TestListAgentsEntriesCarryAccount(t *testing.T) {
-	// REQ-agent-messaging-008: every entry names the account that registered the
-	// agent. A local entry takes the registration account; a remote entry takes
-	// the account its publisher put on the roster. The field is display only.
 	tb := newTestBroker(t)
 	b := tb.b
 	// The fixture inserts agents directly, so the session reread would revoke
@@ -273,8 +266,8 @@ func TestListAgentsEntriesCarryAccount(t *testing.T) {
 	insertCrossAccountAgent(b, caller, "caller", 1003, 3)
 	insertCrossAccountAgent(b, owner, "worker", 1001, 1)
 	insertCrossAccountAgent(b, other, "other", 1002, 2)
-	// An agent whose account name was never looked up falls back to the
-	// decimal uid, the same fallback AgentStatusEntry.account uses.
+	// An agent whose account name was never looked up falls back to its decimal
+	// uid.
 	insertCrossAccountAgent(b, anonymous, "anon", 1004, 4)
 	b.agents[anonymous].caller.Username = ""
 	b.recomputeRefsLocked()
@@ -296,9 +289,6 @@ func TestListAgentsEntriesCarryAccount(t *testing.T) {
 		t.Fatalf("ListAgents: %v", err)
 	}
 
-	// Marshal the response instead of reading the Go field: the assertion then
-	// fails on a missing account rather than the test failing to compile against
-	// code that predates the field.
 	raw, err := protojson.Marshal(resp)
 	if err != nil {
 		t.Fatalf("protojson.Marshal: %v", err)
@@ -334,10 +324,9 @@ func TestListAgentsEntriesCarryAccount(t *testing.T) {
 	}
 }
 
+// TestListAgentsSkipsRemoteMemberWithInvalidRef checks that a remote member with
+// an invalid ref is skipped with a warning that does not carry the member's name.
 func TestListAgentsSkipsRemoteMemberWithInvalidRef(t *testing.T) {
-	// A remote member arrives from the peer, so its ref is untrusted: an
-	// invalid ref must skip that entry with a warning instead of panicking the
-	// process, and the warning must not carry the member's name.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	joinListTopics(t, tb, self, "t1")
@@ -355,8 +344,6 @@ func TestListAgentsSkipsRemoteMemberWithInvalidRef(t *testing.T) {
 		t.Fatalf("agents = %v, want only the member with a valid ref", got)
 	}
 
-	// The literal event name, not the production constant, so this test also
-	// compiles and fails against the code that panics.
 	const event = "remote_member_invalid"
 	var warnings []map[string]any
 	for _, line := range tb.logLines(t) {
@@ -379,9 +366,9 @@ func TestListAgentsSkipsRemoteMemberWithInvalidRef(t *testing.T) {
 	}
 }
 
+// TestListAgentsStatus checks that the registry status is mapped to the local
+// interface enum unchanged by the listing.
 func TestListAgentsStatus(t *testing.T) {
-	// REQ-agent-messaging-010: the status is the registry value mapped to the
-	// local interface enum, unchanged by the listing.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	alpha := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "alpha"}))
@@ -392,8 +379,7 @@ func TestListAgentsStatus(t *testing.T) {
 	joinListTopics(t, tb, bravo, "t1")
 	joinListTopics(t, tb, charlie, "t1")
 
-	// This test is about the status mapping, not the reread: keep the state set
-	// below from being overwritten by the session record.
+	// Keep the session reread from overwriting the states set below.
 	setRefreshOne(tb.b, func(*agent) {})
 	setAgentState(t, tb.b, alpha, "alpha", "busy", "")
 	setAgentState(t, tb.b, bravo, "bravo", "idle", "")
@@ -418,9 +404,9 @@ func TestListAgentsStatus(t *testing.T) {
 	}
 }
 
+// TestListAgentsRereadsBeforeListing checks that a rename made during the reread
+// shows in the same listing.
 func TestListAgentsRereadsBeforeListing(t *testing.T) {
-	// Listing rereads the caller and the local visible agents before building
-	// the entries, so a rename shows in the same response.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	peer := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "bravo"}))
@@ -459,9 +445,9 @@ func TestListAgentsRereadsBeforeListing(t *testing.T) {
 	}
 }
 
+// TestListAgentsPrevName checks that a previous name within its retention period
+// is reported and a cleared one is not.
 func TestListAgentsPrevName(t *testing.T) {
-	// REQ-agent-messaging-032: a previous name within its retention period is
-	// reported, and an expired (cleared) one is not.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	peer := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "bravo"}))
@@ -481,6 +467,8 @@ func TestListAgentsPrevName(t *testing.T) {
 	}
 }
 
+// TestListAgentsFilters checks the topic, broker and normalized name filters,
+// alone and combined.
 func TestListAgentsFilters(t *testing.T) {
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
@@ -535,17 +523,17 @@ func TestListAgentsFilters(t *testing.T) {
 		})
 	}
 
-	// Filtering decides which entries are returned; it does not trim the
-	// shared topics of the entries that remain.
+	// Filtering decides which entries are returned; it does not trim their
+	// shared topics.
 	resp := mustListAgents(t, tb, &localpb.ListAgentsRequest{AgentId: string(self), Topic: "t1"})
 	if got := listEntryByAddress(t, resp, "api-worker@hostA").GetSharedTopics(); !slices.Equal(got, []string{"t1", "t2"}) {
 		t.Fatalf("shared_topics = %v, want [t1 t2] after filtering", got)
 	}
 }
 
+// TestListAgentsLongName checks that an over-long name is truncated in the
+// address and the ref is kept.
 func TestListAgentsLongName(t *testing.T) {
-	// REQ-agent-messaging-037: an over-long name is truncated in the address
-	// and the ref is kept.
 	tb := newTestBroker(t)
 	self := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
 	long := strings.Repeat("a", 70)
@@ -579,9 +567,8 @@ func TestListAgentsLongName(t *testing.T) {
 	}
 }
 
-// TestListAgentsLongNameAddressCarriesFullRef checks that the truncated address
-// list_agents shows always carries the full twelve-character ref, and that a
-// caller can select the Agent with exactly that address.
+// TestListAgentsLongNameAddressCarriesFullRef checks that a truncated address
+// carries the full twelve-character ref and can be used to send to that agent.
 func TestListAgentsLongNameAddressCarriesFullRef(t *testing.T) {
 	tb := newTestBroker(t)
 	caller := registerListAgent(t, tb, fakesession.New(t, fakesession.Options{Name: "caller"}))
@@ -632,6 +619,8 @@ func TestListAgentsLongNameAddressCarriesFullRef(t *testing.T) {
 	}
 }
 
+// TestListAgentsNotRegistered checks that an unknown caller and a caller revoked
+// during the reread both get not_registered.
 func TestListAgentsNotRegistered(t *testing.T) {
 	t.Run("unknown agent", func(t *testing.T) {
 		tb := newTestBroker(t)

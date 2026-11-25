@@ -18,9 +18,8 @@ const MaxAddressRunes = 64
 // MaxAddressBytes is the byte limit of a formatted agent address.
 const MaxAddressBytes = 200
 
-// AgentID identifies a local agent. It is derived from the agent's inbox socket
-// path and stays the same across renames and conversation clears. The value is
-// 64 lowercase hexadecimal characters.
+// AgentID identifies a local agent: 64 lowercase hexadecimal characters derived
+// from the agent's inbox socket path.
 type AgentID string
 
 // ErrBadSocketPath is returned by AgentIDFor for a socket path that cannot
@@ -123,8 +122,6 @@ func ValidAlias(alias string) bool {
 	return aliasCharsValid(alias)
 }
 
-// aliasCharsValid reports whether alias contains only the characters an alias
-// may use, without looking at its length.
 func aliasCharsValid(alias string) bool {
 	for i := 0; i < len(alias); i++ {
 		c := alias[i]
@@ -140,43 +137,34 @@ func aliasCharsValid(alias string) bool {
 	return true
 }
 
-// FormatAddress renders an agent address as name@alias, attaching " [ref]"
-// after the name when needRef is set or the name changes under CleanSignature.
-// A result that exceeds MaxAddressRunes or MaxAddressBytes always carries the
-// ref and has the name truncated from the end rune by rune until it fits.
+// FormatAddress renders name@alias, adding " [ref]" after the name when needRef
+// is set or the name changes under CleanSignature. A result over MaxAddressRunes
+// or MaxAddressBytes carries the ref and shortens the name from the end until it
+// fits.
 //
-// A caller that may render a truncated name must pass the full twelve-character
-// ref. A truncated address is accepted for delivery only together with that
-// full ref, so the Broker gives it to every Agent whose name may not fit an
-// address (Broker.recomputeRefsLocked); a short ref would make the address
-// unusable and let a colliding short ref answer it.
+// A caller that may render a shortened name must pass the full twelve-character
+// ref: a shortened address resolves only with that full ref.
 //
-// name must already have been normalized with inbox.NormalizeName; FormatAddress
-// applies CleanSignature but does not normalize.
-//
-// ref must be 6 to 12 lowercase hexadecimal characters and alias must satisfy
-// ValidAlias. FormatAddress panics on a violation, because both are the
-// caller's own bookkeeping rather than untrusted input.
+// name must already be normalized with inbox.NormalizeName; FormatAddress
+// applies inbox.CleanSignature to it but does not normalize it. FormatAddress
+// panics on a ref that is not 6 to 12 lowercase hexadecimal characters or an
+// alias that fails ValidAlias.
 func FormatAddress(name, ref, alias string, needRef bool) string {
 	out, _ := formatAddress(name, ref, alias, needRef)
 	return out
 }
 
-// addressNameTruncates reports whether FormatAddress would shorten name when it
-// renders with this ref, alias and needRef decision.
 func addressNameTruncates(name, ref, alias string, needRef bool) bool {
 	_, truncated := formatAddress(name, ref, alias, needRef)
 	return truncated
 }
 
-// maxAddressAlias is the longest alias any viewer can use. A name that fits an
-// address at this alias fits at every shorter alias, so testing here tells
-// whether some viewer would see the name truncated.
+// maxAddressAlias is the longest alias any viewer can use, so a name that fits
+// at it fits at every shorter alias.
 func maxAddressAlias() string {
 	return strings.Repeat("a", config.AliasMaxLen)
 }
 
-// formatAddress is FormatAddress plus whether the name was shortened to fit.
 func formatAddress(name, ref, alias string, needRef bool) (string, bool) {
 	if !validRef(ref) {
 		panic("broker: FormatAddress: ref must be 6 to 12 lowercase hex characters")

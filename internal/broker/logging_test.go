@@ -11,7 +11,6 @@ import (
 	"time"
 )
 
-// decodeLogLines splits raw into lines and decodes each one as a JSON object.
 func decodeLogLines(t *testing.T, raw string) []map[string]any {
 	t.Helper()
 	raw = strings.TrimSuffix(raw, "\n")
@@ -28,8 +27,9 @@ func decodeLogLines(t *testing.T, raw string) []map[string]any {
 	return records
 }
 
+// TestRunLogLinesAreJSON checks that each run log record is one JSON object
+// with a UTC time, a level and an event, including a nested attribute group.
 func TestRunLogLinesAreJSON(t *testing.T) {
-	// REQ-broker-config-011: structured runtime logs.
 	var buf bytes.Buffer
 	var level slog.LevelVar
 	logger := NewLogger(&buf, &level)
@@ -91,8 +91,6 @@ func TestRunLogLinesAreJSON(t *testing.T) {
 	}
 }
 
-// countLogKeys counts the keys of one JSON log line. Decoding into a map would
-// hide a duplicate, so the object is read token by token.
 func countLogKeys(t *testing.T, line string) map[string]int {
 	t.Helper()
 	dec := json.NewDecoder(strings.NewReader(line))
@@ -159,7 +157,7 @@ func TestNewLoggerKeepsEventKeyUnique(t *testing.T) {
 	}
 }
 
-// TestNewLoggerWithEventAttrKeepsEventKeyUnique covers the same rule for an
+// TestNewLoggerWithEventAttrKeepsEventKeyUnique checks the same rule for an
 // event supplied through logger.With.
 func TestNewLoggerWithEventAttrKeepsEventKeyUnique(t *testing.T) {
 	var buf bytes.Buffer
@@ -181,9 +179,8 @@ func TestNewLoggerWithEventAttrKeepsEventKeyUnique(t *testing.T) {
 	}
 }
 
-// TestNewLoggerEmptyGroupEventIsEventName covers an event inside a group with
-// an empty name, which the JSON handler writes at the top level. The handler
-// must flatten the group before deciding what the event key holds.
+// TestNewLoggerEmptyGroupEventIsEventName checks that an event inside an
+// empty-name group is flattened and becomes the record's event name.
 func TestNewLoggerEmptyGroupEventIsEventName(t *testing.T) {
 	t.Run("record", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -227,8 +224,7 @@ func TestNewLoggerEmptyGroupEventIsEventName(t *testing.T) {
 }
 
 // TestNewLoggerEventInsideGroupStaysNested checks that an "event" attribute
-// written after WithGroup is scoped to the group and does not become the
-// record's event name.
+// written after WithGroup stays inside the group and does not name the record.
 func TestNewLoggerEventInsideGroupStaysNested(t *testing.T) {
 	var buf bytes.Buffer
 	var level slog.LevelVar
@@ -284,9 +280,8 @@ func TestNewLoggerKeepsCallerMessage(t *testing.T) {
 	}
 }
 
-// TestNewLoggerGroupUnderEventKeyKeepsItsData covers a group named "event".
-// A group cannot name an event, so its members move to "event_details" and
-// the message still names the record.
+// TestNewLoggerGroupUnderEventKeyKeepsItsData checks that a group named "event"
+// moves to "event_details" and the message still names the record.
 func TestNewLoggerGroupUnderEventKeyKeepsItsData(t *testing.T) {
 	t.Run("record", func(t *testing.T) {
 		var buf bytes.Buffer
@@ -341,8 +336,8 @@ func TestNewLoggerGroupUnderEventKeyKeepsItsData(t *testing.T) {
 	})
 }
 
-// TestLogTimeFormat pins the time format: a record timestamp in a fixed
-// non-UTC zone must be rendered in UTC with nanosecond precision.
+// TestLogTimeFormat checks that a timestamp in a non-UTC zone is rendered in
+// UTC with nanosecond precision.
 func TestLogTimeFormat(t *testing.T) {
 	var buf bytes.Buffer
 	var level slog.LevelVar
@@ -360,6 +355,8 @@ func TestLogTimeFormat(t *testing.T) {
 	}
 }
 
+// TestLogLevelVarFilters checks that changing the level variable filters later
+// records immediately.
 func TestLogLevelVarFilters(t *testing.T) {
 	var buf bytes.Buffer
 	var level slog.LevelVar
@@ -387,6 +384,8 @@ func TestLogLevelVarFilters(t *testing.T) {
 	}
 }
 
+// TestLoggerConcurrentWrites checks that concurrent writers produce one intact
+// line per record.
 func TestLoggerConcurrentWrites(t *testing.T) {
 	var buf bytes.Buffer
 	var level slog.LevelVar
@@ -412,6 +411,8 @@ func TestLoggerConcurrentWrites(t *testing.T) {
 	}
 }
 
+// TestParseLogLevel checks the accepted level names and that anything else is
+// an error.
 func TestParseLogLevel(t *testing.T) {
 	valid := map[string]slog.Level{
 		"debug": slog.LevelDebug,

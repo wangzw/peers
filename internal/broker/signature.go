@@ -7,18 +7,12 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// maxInboxFrameBytes is the encoded frame size a send may not exceed. A message
-// whose frame is larger is rejected with too_large before any request is sent
-// (REQ-agent-messaging-026).
 const maxInboxFrameBytes = 1_000_000
 
-// signatureFor returns the address of an Agent as a viewer whose alias for the
-// Agent's Broker is alias sees it (design-broker.md:258). ok is false when no
-// valid signature exists: the cleaned name is empty, ref is not 6 to 12
-// lowercase hexadecimal characters, or alias is malformed.
-//
-// The spelling is FormatAddress's, so the signature and the address the Broker
-// lists for the same Agent follow one rule.
+// signatureFor returns the Agent's address as seen through alias; ok is false
+// when the cleaned name is empty, ref is not 6 to 12 lowercase hex, or alias is
+// malformed. Its spelling is FormatAddress's, so a signature and a listed
+// address follow one rule.
 func signatureFor(name, ref string, unique bool, alias string) (sig string, ok bool) {
 	if inbox.CleanSignature(name) == "" {
 		return "", false
@@ -39,16 +33,11 @@ func signatureFor(name, ref string, unique bool, alias string) (sig string, ok b
 }
 
 // MaxSendFrameSize returns the encoded frame size of text under the longest
-// signature a sender named name with ref could get on any receiver. Send
-// rejects a message with too_large when the result exceeds 1 000 000
-// (REQ-agent-messaging-026).
-//
-// The sender knows every part of its signature except the alias the receiver
-// uses for its Broker, so every alias length from 1 to config.AliasMaxLen is
-// tried, with and without the ref. The longest signature is chosen by comparing
-// frame sizes with a short body: JSON escaping is per character, so the body
-// contributes the same amount to every candidate.
+// signature a sender named name with ref could get on any receiver.
 func MaxSendFrameSize(name, ref, text string) int {
+	// The alias the receiver uses is unknown, so every alias length from 1 to
+	// config.AliasMaxLen is tried with and without the ref; frame sizes with a
+	// short body rank them because JSON escaping is per character.
 	best := ""
 	bestSize := -1
 	for aliasLen := 1; aliasLen <= config.AliasMaxLen; aliasLen++ {

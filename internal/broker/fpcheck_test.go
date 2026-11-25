@@ -12,9 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// cardMap is the cardLookup test double. Like the directory it canonicalizes
-// the address stored in the card before comparing; the caller passes an
-// already canonical address.
 type cardMap map[string][]pairing.Fingerprint
 
 func (m cardMap) CardsByAddress(address string) []pairing.Fingerprint {
@@ -27,8 +24,6 @@ func (m cardMap) CardsByAddress(address string) []pairing.Fingerprint {
 	return out
 }
 
-// canonicalTestAddress mirrors the address canonicalization the directory
-// applies to an advertised address.
 func canonicalTestAddress(addr string) string {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -50,7 +45,6 @@ func fpcheckFP(b byte) pairing.Fingerprint {
 	return f
 }
 
-// fpcheckMessage is the exact warning text a mismatch at addr produces.
 func fpcheckMessage(addr string, cardFP, peerFP pairing.Fingerprint) string {
 	return fmt.Sprintf(
 		"fingerprint mismatch: the directory card of %s lists %s, but the paired Broker presented %s; directory cards are self-reported, so confirm the fingerprint with the other side",
@@ -58,6 +52,8 @@ func fpcheckMessage(addr string, cardFP, peerFP pairing.Fingerprint) string {
 	)
 }
 
+// TestFingerprintWarningsMismatchOnDialAddress checks that a mismatching card at
+// the dialed address yields one warning.
 func TestFingerprintWarningsMismatchOnDialAddress(t *testing.T) {
 	const addr = "10.0.0.1:17443"
 	dialed := fpcheckFP(1)
@@ -81,6 +77,8 @@ func TestFingerprintWarningsMismatchOnDialAddress(t *testing.T) {
 	}
 }
 
+// TestFingerprintWarningsMismatchOnAcceptorAddress checks that a mismatching card
+// at an acceptor-advertised address yields one warning.
 func TestFingerprintWarningsMismatchOnAcceptorAddress(t *testing.T) {
 	const dialAddr = "10.0.0.1:17443"
 	const acceptorAddr = "10.0.0.2:17443"
@@ -107,10 +105,8 @@ func TestFingerprintWarningsMismatchOnAcceptorAddress(t *testing.T) {
 	}
 }
 
-// TestFingerprintWarningsMismatchOnRepairedAddress reproduces a re-pairing: the
-// peer table keeps the card source across a re-pair, so the dialed address is
-// listed as SourceCard and the pairing source is deduplicated away. The
-// warning must still cover LastConnected, or a mismatching card goes unnoticed.
+// TestFingerprintWarningsMismatchOnRepairedAddress checks that LastConnected
+// still yields a warning when the dialed address is card-sourced.
 func TestFingerprintWarningsMismatchOnRepairedAddress(t *testing.T) {
 	const addr = "10.0.0.1:17443"
 	dialed := fpcheckFP(1)
@@ -132,8 +128,8 @@ func TestFingerprintWarningsMismatchOnRepairedAddress(t *testing.T) {
 	}
 }
 
-// TestFingerprintWarningsNormalizesAddress covers an address that differs only
-// in host case and a leading-zero port from the card's form.
+// TestFingerprintWarningsNormalizesAddress checks that host case and a
+// leading-zero port do not hide a match.
 func TestFingerprintWarningsNormalizesAddress(t *testing.T) {
 	const canonical = "hosta.example:17443"
 	dialed := fpcheckFP(1)
@@ -154,6 +150,8 @@ func TestFingerprintWarningsNormalizesAddress(t *testing.T) {
 	}
 }
 
+// TestFingerprintWarningsMatchNoWarning checks that matching or missing cards
+// yield no warnings.
 func TestFingerprintWarningsMatchNoWarning(t *testing.T) {
 	fp := fpcheckFP(1)
 	peer := pairing.Peer{
@@ -173,6 +171,8 @@ func TestFingerprintWarningsMatchNoWarning(t *testing.T) {
 	}
 }
 
+// TestFingerprintWarningsReportsEveryMismatchingPublisher checks that every other
+// publisher at one address yields its own warning.
 func TestFingerprintWarningsReportsEveryMismatchingPublisher(t *testing.T) {
 	const addr = "10.0.0.1:17443"
 	dialed := fpcheckFP(1)
@@ -201,6 +201,8 @@ func TestFingerprintWarningsReportsEveryMismatchingPublisher(t *testing.T) {
 	}
 }
 
+// TestFingerprintWarningsIgnoresCardSource checks that card-sourced candidates
+// are ignored and duplicate addresses deduplicated.
 func TestFingerprintWarningsIgnoresCardSource(t *testing.T) {
 	const dialAddr = "10.0.0.1:17443"
 	const cardAddr = "10.0.0.9:17443"
@@ -228,9 +230,8 @@ func TestFingerprintWarningsIgnoresCardSource(t *testing.T) {
 	}
 }
 
-// TestFingerprintWarningsDedupesCardAcrossAddresses checks that one mismatching
-// card yields one warning even when it advertises several of the peer's
-// addresses, so the result is bounded by the number of cards.
+// TestFingerprintWarningsDedupesCardAcrossAddresses checks that one card
+// advertising several of the peer's addresses yields one warning.
 func TestFingerprintWarningsDedupesCardAcrossAddresses(t *testing.T) {
 	const addr1 = "10.0.0.1:17443"
 	const addr2 = "10.0.0.2:17443"
@@ -254,8 +255,7 @@ func TestFingerprintWarningsDedupesCardAcrossAddresses(t *testing.T) {
 	}
 }
 
-// TestFingerprintWarningsCapped checks that a directory naming many publishers
-// at one address cannot grow the Connect response without bound.
+// TestFingerprintWarningsCapped checks that the warning count stops at the cap.
 func TestFingerprintWarningsCapped(t *testing.T) {
 	const addr = "10.0.0.1:17443"
 	dialed := fpcheckFP(1)

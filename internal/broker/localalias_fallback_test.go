@@ -7,8 +7,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// failingConfig returns an error from Get once fail is set, like the
-// configuration after ConfigSource.Close during shutdown.
 type failingConfig struct {
 	ConfigSource
 	fail bool
@@ -21,10 +19,8 @@ func (c *failingConfig) Get(key string) (config.Value, error) {
 	return c.ConfigSource.Get(key)
 }
 
-// TestLocalAliasKeepsLastValueAfterGetFailure checks the shutdown defence: once
-// Config.Get fails, localAlias must keep returning the last valid alias instead
-// of an empty string, which would make FormatAddress panic in an address pushed
-// while handlers finish.
+// TestLocalAliasKeepsLastValueAfterGetFailure checks that localAlias keeps
+// returning the last valid alias once Config.Get fails during shutdown.
 func TestLocalAliasKeepsLastValueAfterGetFailure(t *testing.T) {
 	cfg := &failingConfig{ConfigSource: newFakeConfig(t.TempDir())}
 	b, err := New(Deps{Config: cfg, Topics: newFakeTopics()})

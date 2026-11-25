@@ -17,18 +17,11 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// scenarioMember is one Agent a scenario Broker advertises to its peers,
-// together with the topics it shares. It stands in for one roster entry a topic
-// exchange would deliver.
 type scenarioMember struct {
 	member remoteMember
 	topics []string
 }
 
-// scenarioBroker is one delivery in a scenario: its own Agent table and its own
-// view of the topic and peer tables, connected to the others through one
-// fakeNet. The Inbox of every Agent is inboxPackage, so writes go to the
-// simulated session's socket.
 type scenarioBroker struct {
 	t        *testing.T
 	network  *scenarioNetwork
@@ -42,14 +35,13 @@ type scenarioBroker struct {
 	settings *fakeSettings
 	log      *syncBuffer
 
-	// published is what this Broker announces to every other Broker. It is
-	// guarded by the network lock.
+	// published is what this Broker announces to others; the network lock
+	// guards it.
 	published []scenarioMember
 }
 
-// scenarioNetwork keeps several scenario Brokers on one fakeNet. Brokers join in
-// creation order: the earlier Broker is the dialer towards the later one, which
-// models the pairing that assigned the roles.
+// scenarioNetwork keeps several scenario Brokers on one fakeNet; the earlier
+// Broker is the dialer towards the later one.
 type scenarioNetwork struct {
 	t       *testing.T
 	net     *fakeNet
@@ -62,8 +54,6 @@ func newScenarioNetwork(t *testing.T) *scenarioNetwork {
 	return &scenarioNetwork{t: t, net: newFakeNet(t)}
 }
 
-// defaultScenarioSettings are short enough for the tests to finish quickly and
-// long enough that a healthy round trip never hits a deadline.
 func defaultScenarioSettings() sendSettings {
 	return sendSettings{
 		RequestTimeout: 2 * time.Second,
@@ -76,8 +66,6 @@ func defaultScenarioSettings() sendSettings {
 	}
 }
 
-// broker adds one Broker to the network and registers its kind-400 handler, as
-// the assembly does before the link starts.
 func (n *scenarioNetwork) broker(fp peerID, alias string) *scenarioBroker {
 	n.t.Helper()
 
@@ -114,8 +102,6 @@ func (n *scenarioNetwork) broker(fp peerID, alias string) *scenarioBroker {
 	return b
 }
 
-// connect wires the peer tables and rosters in both directions. b is the newer
-// Broker, so other is the dialer towards b.
 func (b *scenarioBroker) connect(other *scenarioBroker) {
 	b.peers.aliases[other.alias] = other.fp
 	b.peers.effective[other.fp] = other.alias
@@ -139,22 +125,18 @@ func copyScenarioEntries(entries []scenarioMember) []deliveryRemoteEntry {
 	return out
 }
 
-// addAgent starts a simulated session, makes it a local Agent of b, and
-// announces it to every other Broker, which is what the topic exchange would
-// eventually do.
 func (b *scenarioBroker) addAgent(name string, topics ...string) (agentView, *fakesession.Fake) {
 	return b.addAgentNamed(name, "", topics...)
 }
 
-// addAgentNamed is addAgent with a previous name, used for the rename hint.
 func (b *scenarioBroker) addAgentNamed(name, prevName string, topics ...string) (agentView, *fakesession.Fake) {
 	b.t.Helper()
 
 	fake := fakesession.New(b.t, fakesession.Options{Name: name})
 	view := liveTestAgent(b.t, fake, name)
 	view.PrevName = prevName
-	// The Broker gives a name that may render truncated the full ref, so a
-	// copied address is accepted. The fixture stands in for that decision.
+	// A name that may render truncated gets the full ref so a copied address is
+	// accepted; the fixture stands in for that decision.
 	if addressNameTruncates(view.Name, view.Ref, maxAddressAlias(), false) {
 		view.Ref = view.ID[:12]
 	}
@@ -184,8 +166,6 @@ func (b *scenarioBroker) addAgentNamed(name, prevName string, topics ...string) 
 	return view, fake
 }
 
-// setEffectiveAlias changes the alias this Broker uses for a peer, standing in
-// for the peer's alias here.
 func (b *scenarioBroker) setEffectiveAlias(p peerID, alias string) {
 	b.peers.effective[p] = alias
 }
@@ -194,7 +174,6 @@ func (b *scenarioBroker) send(caller agentView, to, text string) error {
 	return b.d.Send(context.Background(), caller, to, text)
 }
 
-// requireScenarioError extracts the *Error a send returned.
 func requireScenarioError(t *testing.T, err error) *Error {
 	t.Helper()
 	if err == nil {
@@ -207,7 +186,6 @@ func requireScenarioError(t *testing.T, err error) *Error {
 	return e
 }
 
-// requireScenarioNotSent checks a result that is certainly not delivered.
 func requireScenarioNotSent(t *testing.T, label string, err error, want localpb.ErrorCode) *Error {
 	t.Helper()
 	e := requireScenarioError(t, err)
@@ -220,7 +198,6 @@ func requireScenarioNotSent(t *testing.T, label string, err error, want localpb.
 	return e
 }
 
-// scenarioRequestsWithID counts the requests carrying id.
 func scenarioRequestsWithID(t *testing.T, frames []link.Frame, id string) int {
 	t.Helper()
 	n := 0
@@ -237,8 +214,7 @@ func scenarioRequestsWithID(t *testing.T, frames []link.Frame, id string) int {
 }
 
 // TestScenarioCrossHostSignature checks that a cross-host send arrives with the
-// sender's address as the receiving Broker spells it: its own alias for the
-// sender's Broker (REQ-agent-messaging-013, REQ-agent-messaging-022).
+// sender's address as the receiving Broker spells it.
 func TestScenarioCrossHostSignature(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -277,8 +253,7 @@ func TestScenarioCrossHostSignature(t *testing.T) {
 }
 
 // TestScenarioReplyBySignature checks that replying to the received FromName
-// reaches the original sender: the address the receiver saw is a usable target
-// on the sender's Broker (REQ-agent-messaging-025's Broker-side premise).
+// reaches the original sender.
 func TestScenarioReplyBySignature(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -314,9 +289,8 @@ func TestScenarioReplyBySignature(t *testing.T) {
 	}
 }
 
-// TestScenarioCleanedNameReply checks that a name the receiver's cleaner would
-// change gets a ref in the signature, and that replying to that signature
-// reaches the name-cleaned Agent rather than a lookalike (REQ-agent-messaging-029).
+// TestScenarioCleanedNameReply checks that a name the cleaner would change carries
+// a ref and that a reply reaches the cleaned-name Agent rather than a lookalike.
 func TestScenarioCleanedNameReply(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -354,8 +328,7 @@ func TestScenarioCleanedNameReply(t *testing.T) {
 }
 
 // TestScenarioLongNameReply checks that a name too long for an address is
-// truncated with its ref and that a reply to the truncated address still
-// reaches the Agent (REQ-agent-messaging-037).
+// truncated with its ref and a reply to it still reaches the Agent.
 func TestScenarioLongNameReply(t *testing.T) {
 	longName := strings.Repeat("x", 70)
 
@@ -397,9 +370,8 @@ func TestScenarioLongNameReply(t *testing.T) {
 	}
 }
 
-// TestScenarioSameHostMatchesCrossHost checks that a local send and a cross-host
-// send report the same error code and the same fixed message prefix for the
-// same fault, so one host behaves like two (REQ-agent-messaging-028).
+// TestScenarioSameHostMatchesCrossHost checks that a local and a cross-host send
+// report the same code and fixed prefix for the same fault.
 func TestScenarioSameHostMatchesCrossHost(t *testing.T) {
 	newPair := func(t *testing.T) (*scenarioNetwork, *scenarioBroker, *scenarioBroker) {
 		t.Helper()
@@ -489,9 +461,9 @@ func TestScenarioSameHostMatchesCrossHost(t *testing.T) {
 	})
 }
 
-// TestScenarioUnknownNotUnreachable checks that a send whose replies never
-// arrive reports an unknown result, not an unreachable peer, and that the
-// target still received exactly one copy (REQ-agent-messaging-027).
+// TestScenarioUnknownNotUnreachable checks that a send whose replies never arrive
+// reports an unknown result, not an unreachable peer, and the target got one
+// copy.
 func TestScenarioUnknownNotUnreachable(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -517,9 +489,8 @@ func TestScenarioUnknownNotUnreachable(t *testing.T) {
 }
 
 // TestScenarioUnreachableNeverDelivered checks that a down link reports
-// peer_unreachable from either role and that the abandoned message is never
-// delivered once the link recovers (REQ-agent-messaging-017,
-// REQ-agent-messaging-019).
+// peer_unreachable from either role and the abandoned message is never delivered
+// after recovery.
 func TestScenarioUnreachableNeverDelivered(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -562,9 +533,8 @@ func TestScenarioUnreachableNeverDelivered(t *testing.T) {
 	}
 }
 
-// TestScenarioTargetSessionGone checks that a target whose socket vanished
-// reports inbox_unwritable, attributes it to the receiving Broker, and returns
-// within the sender's budget (REQ-agent-messaging-018).
+// TestScenarioTargetSessionGone checks that a target whose socket vanished reports
+// inbox_unwritable attributed to the receiving Broker within the sender's budget.
 func TestScenarioTargetSessionGone(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -590,17 +560,15 @@ func TestScenarioTargetSessionGone(t *testing.T) {
 	if !bytes.Equal(e.Origin, b.fp[:]) {
 		t.Fatalf("Origin = %x, want the receiving Broker's fingerprint %x", e.Origin, b.fp)
 	}
-	// REQ-agent-messaging-018: the send returns within the caller's budget. The
-	// margin absorbs the final wake-up and scheduling; it stays below the budget,
-	// so a send that ignored it still fails.
+	// The margin absorbs the final wake-up and scheduling but stays below the
+	// budget, so a send that ignored the budget still fails.
 	if elapsed > settings.RequestTimeout+250*time.Millisecond {
 		t.Fatalf("elapsed = %v, want it bounded by the %v request timeout", elapsed, settings.RequestTimeout)
 	}
 }
 
-// TestScenarioNoForwarding checks that a Broker never relays a received message
-// to another link: a name known only to the third Broker is not found
-// (architecture.md:281).
+// TestScenarioNoForwarding checks that a Broker never relays a received message to
+// another link.
 func TestScenarioNoForwarding(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -613,9 +581,8 @@ func TestScenarioNoForwarding(t *testing.T) {
 	b.addAgent("frontend", "t1")
 	conly, _ := c.addAgent("conly", "t1")
 
-	// A's roster for hostB says conly lives there, although it does not. The
-	// message must reach B (so B is the one deciding), and B must not forward
-	// it to C, where conly actually lives.
+	// A's roster for hostB wrongly says conly lives there; the message must reach
+	// B, which must not forward it to C.
 	a.topics.remote[b.fp] = append(a.topics.remote[b.fp], deliveryRemoteEntry{
 		Member: remoteMember{Name: conly.Name, Ref: conly.Ref},
 		Topics: []string{"t1"},
@@ -634,8 +601,7 @@ func TestScenarioNoForwarding(t *testing.T) {
 }
 
 // TestScenarioNoCommonTopic checks that a peer member without a shared topic is
-// rejected before any request, and the target session sees nothing
-// (REQ-agent-messaging-014).
+// rejected before any request and the target sees nothing.
 func TestScenarioNoCommonTopic(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -655,9 +621,8 @@ func TestScenarioNoCommonTopic(t *testing.T) {
 	}
 }
 
-// TestScenarioTooLargeNoRequest checks the frame-size boundary across a peer:
-// the message at the limit arrives, and one byte over the limit is rejected
-// without a request (REQ-agent-messaging-026).
+// TestScenarioTooLargeNoRequest checks that a message at the frame limit arrives
+// and one byte over is rejected without a request.
 func TestScenarioTooLargeNoRequest(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -688,8 +653,7 @@ func TestScenarioTooLargeNoRequest(t *testing.T) {
 }
 
 // TestScenarioConcurrentSendsSameSession checks that one Agent can send
-// concurrently to two Agents on one peer without losing or doubling a message
-// (design-broker.md:298).
+// concurrently to two Agents on one peer without losing or doubling a message.
 func TestScenarioConcurrentSendsSameSession(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -737,8 +701,7 @@ func TestScenarioConcurrentSendsSameSession(t *testing.T) {
 }
 
 // TestSendPeerResendSameIDAfterDrop checks that after a lost reply the sender
-// resends the same message id and the real receiver writes once
-// (REQ-agent-messaging-020).
+// resends the same message id and the receiver writes once.
 func TestSendPeerResendSameIDAfterDrop(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -775,9 +738,8 @@ func TestSendPeerResendSameIDAfterDrop(t *testing.T) {
 	}
 }
 
-// TestSendPeerUnknownWhenRepliesKeepFailing checks that a send whose replies
-// keep failing is unknown, not unreachable, and that the target wrote once
-// (REQ-agent-messaging-027, REQ-agent-messaging-020).
+// TestSendPeerUnknownWhenRepliesKeepFailing checks that a send whose replies keep
+// failing is unknown, not unreachable, and the target wrote once.
 func TestSendPeerUnknownWhenRepliesKeepFailing(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")
@@ -802,10 +764,8 @@ func TestSendPeerUnknownWhenRepliesKeepFailing(t *testing.T) {
 	}
 }
 
-// TestSendPeerNothingAfterReturn checks that a send which reported an unknown
-// result does not keep retrying in the background: a later sentinel send grows
-// only its own request count and the abandoned message stays written once
-// (REQ-agent-messaging-016, REQ-agent-messaging-019).
+// TestSendPeerNothingAfterReturn checks that a send that reported an unknown
+// result does not keep retrying in the background.
 func TestSendPeerNothingAfterReturn(t *testing.T) {
 	n := newScenarioNetwork(t)
 	a := n.broker(fakenetPeer(10), "hostA")

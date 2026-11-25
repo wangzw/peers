@@ -12,9 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// wireRecorder implements linkControl, CardIssuer and agentAddressNotifier and
-// appends every call to one shared list, so a test can assert the exact
-// forwarding order.
 type wireRecorder struct {
 	calls     []string
 	addresses []string
@@ -38,16 +35,14 @@ var (
 	_ agentAddressNotifier = (*wireRecorder)(nil)
 )
 
-// newWireLog returns a logger that renders records the way the Broker's
-// runtime logger does, plus the buffer that collects them.
 func newWireLog() (*slog.Logger, *syncBuffer) {
 	buf := &syncBuffer{}
 	return NewLogger(buf, &slog.LevelVar{}), buf
 }
 
-// TestAliasChangeAnnouncesAndReissues covers REQ-broker-pairing-003: a new
-// alias reaches the peers, a fresh card is signed, and registered agents get
-// their new addresses.
+// TestAliasChangeAnnouncesAndReissues checks that an alias change announces
+// the alias, reissues the card and updates agent addresses, tolerating a nil
+// card issuer.
 func TestAliasChangeAnnouncesAndReissues(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		f := newFakeConfig(t.TempDir())
@@ -78,8 +73,8 @@ func TestAliasChangeAnnouncesAndReissues(t *testing.T) {
 	})
 }
 
-// TestAdvertisedChangeAnnouncesAndReissues covers REQ-broker-discovery-016: a
-// changed advertised address list is announced and re-signed.
+// TestAdvertisedChangeAnnouncesAndReissues checks that a changed advertised
+// address list is announced and the card reissued.
 func TestAdvertisedChangeAnnouncesAndReissues(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 	rec := &wireRecorder{}
@@ -94,8 +89,8 @@ func TestAdvertisedChangeAnnouncesAndReissues(t *testing.T) {
 	}
 }
 
-// TestListenChangeRebinds covers REQ-broker-config-034: a new listen address
-// is bound, and a rebind failure is logged without stopping the Broker.
+// TestListenChangeRebinds checks that a listen change binds the new address,
+// and a failed rebind is logged as an error without stopping the Broker.
 func TestListenChangeRebinds(t *testing.T) {
 	t.Run("rebinds", func(t *testing.T) {
 		f := newFakeConfig(t.TempDir())
@@ -149,6 +144,8 @@ func TestListenChangeRebinds(t *testing.T) {
 	})
 }
 
+// TestSubscribesExactlyThree checks that exactly three subscriptions are
+// registered, two keys and the advertised list, and never broker.public.
 func TestSubscribesExactlyThree(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 	rec := &wireRecorder{}

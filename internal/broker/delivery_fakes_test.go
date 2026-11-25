@@ -9,20 +9,13 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// deliveryRemoteEntry is one member entry a fake visibility reports for a peer,
-// together with the topics it shares with this Broker.
 type deliveryRemoteEntry struct {
 	Member remoteMember
 	Topics []string
 }
 
-// deliveryTopics is a visibility fake. Local Agents share the topics listed for
-// their ID; a remote entry is visible to a local Agent when the two lists
-// intersect.
 type deliveryTopics struct {
-	// local maps a local Agent ID to its topics.
-	local map[string][]string
-	// remote maps a peer to the member entries it reported.
+	local  map[string][]string
 	remote map[peerID][]deliveryRemoteEntry
 }
 
@@ -64,7 +57,6 @@ func (t *deliveryTopics) RemoteMembers(peer peerID) []remoteMember {
 	return members
 }
 
-// deliveryPeers is a peer table fake.
 type deliveryPeers struct {
 	aliases   map[string]peerID
 	roles     map[peerID]pairing.Role
@@ -87,8 +79,6 @@ func (t *deliveryPeers) Role(p peerID) pairing.Role {
 	return pairing.RoleUnknown
 }
 
-// fakeSettings is a settingsSource fake whose values tests can change while a
-// test runs.
 type fakeSettings struct {
 	mu       sync.Mutex
 	settings sendSettings
@@ -139,7 +129,6 @@ func (s *fakeSettings) SetLocalAlias(alias string) {
 	s.alias = alias
 }
 
-// inboxCall is one recorded call to a recordingInbox.
 type inboxCall struct {
 	Sig      string
 	Text     string
@@ -149,9 +138,6 @@ type inboxCall struct {
 	Deadline time.Time // the deadline carried by the call's context
 }
 
-// recordingInbox is an inboxWriter fake that returns a preset sequence of
-// results and records every call. Once the sequence is exhausted its last
-// result repeats; an empty sequence returns nil.
 type recordingInbox struct {
 	mu      sync.Mutex
 	results []error
@@ -164,8 +150,8 @@ func newRecordingInbox(results ...error) *recordingInbox {
 }
 
 func (r *recordingInbox) Deliver(ctx context.Context, _ inbox.Session, sig, text, msgID string, timeout time.Duration) error {
-	// The time and the deadline are read before taking the lock so At marks
-	// the call's start and not its wait for an earlier call to finish.
+	// The time and the deadline are read before taking the lock so At marks the
+	// call's start and not its wait for an earlier call to finish.
 	at := time.Now()
 	deadline, _ := ctx.Deadline()
 
@@ -191,21 +177,18 @@ func (r *recordingInbox) Deliver(ctx context.Context, _ inbox.Session, sig, text
 	return result
 }
 
-// Calls returns a copy of the calls recorded so far.
 func (r *recordingInbox) Calls() []inboxCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]inboxCall(nil), r.calls...)
 }
 
-// Count returns the number of calls recorded so far.
 func (r *recordingInbox) Count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.calls)
 }
 
-// SetResults replaces the sequence the following calls return.
 func (r *recordingInbox) SetResults(results ...error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

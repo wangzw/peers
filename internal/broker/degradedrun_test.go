@@ -83,6 +83,8 @@ func waitForStatus(t *testing.T, sock string, check func(*localpb.StatusResponse
 	return nil
 }
 
+// TestRunDataUnavailableEntersDiagnosticsAndRecovers checks that an unavailable
+// data directory enters diagnostics only and recovers on retry.
 func TestRunDataUnavailableEntersDiagnosticsAndRecovers(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -114,7 +116,6 @@ func TestRunDataUnavailableEntersDiagnosticsAndRecovers(t *testing.T) {
 		t.Errorf("ListAgents code = %v, want broker_degraded", detail.GetCode())
 	}
 
-	// Fix the configuration and drive the minute retry by hand.
 	rt.cfg.setLoadErr(nil)
 	rt.ticks <- time.Now()
 	if got := rt.readyLine(); got != "ok\n" {
@@ -147,6 +148,9 @@ func linkAssembler(runner LinkRunner) Assembler {
 	}}
 }
 
+// TestRunDiagnosticsToLocalOnlyToNormal checks that a fixed data directory and
+// a bindable address carry a degraded run from diagnostics only through local
+// only back to normal.
 func TestRunDiagnosticsToLocalOnlyToNormal(t *testing.T) {
 	runner := newFakeRunner(&orderLog{})
 	runner.listenErr = errors.New("address already in use")
@@ -183,6 +187,8 @@ func TestRunDiagnosticsToLocalOnlyToNormal(t *testing.T) {
 	}
 }
 
+// TestRunListenFailureEntersLocalOnly checks that a listen bind failure with
+// --allow-degraded enters local only and recovers after a broker.listen change.
 func TestRunListenFailureEntersLocalOnly(t *testing.T) {
 	runner := newFakeRunner(&orderLog{})
 	runner.listenErr = errors.New("address already in use")
@@ -220,6 +226,8 @@ func TestRunListenFailureEntersLocalOnly(t *testing.T) {
 	}
 }
 
+// TestRunDiagnosticsRetryKeepsRunningOnBadConfig checks that a diagnostics-only
+// Broker stays up when the configuration becomes invalid on retry.
 func TestRunDiagnosticsRetryKeepsRunningOnBadConfig(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -233,8 +241,6 @@ func TestRunDiagnosticsRetryKeepsRunningOnBadConfig(t *testing.T) {
 		return s.GetDegraded() != nil && strings.Contains(s.GetDegraded().GetReason(), "audit")
 	})
 
-	// While already diagnostics only, a configuration that becomes invalid
-	// updates the reason instead of exiting.
 	rt.cfg.setLoadErr(fmt.Errorf("%w: broker.listen: bad", config.ErrInvalidValue))
 	rt.ticks <- time.Now()
 	waitForStatus(t, sock, func(s *localpb.StatusResponse) bool {
@@ -259,6 +265,8 @@ func TestRunDiagnosticsRetryKeepsRunningOnBadConfig(t *testing.T) {
 	}
 }
 
+// TestRunDataUnavailableWithoutAllowDegradedExits checks that a data-directory
+// failure stays fatal without --allow-degraded.
 func TestRunDataUnavailableWithoutAllowDegradedExits(t *testing.T) {
 	rt := newRunTest(t)
 	rt.cfg.setLoadErr(diagnosticsLoadErr(rt))
@@ -277,6 +285,8 @@ func TestRunDataUnavailableWithoutAllowDegradedExits(t *testing.T) {
 	lock.Release()
 }
 
+// TestRunAssemblerDataUnavailableDegrades checks that an assembler's
+// data-directory failure becomes diagnostics only with the failing step named.
 func TestRunAssemblerDataUnavailableDegrades(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -298,6 +308,8 @@ func TestRunAssemblerDataUnavailableDegrades(t *testing.T) {
 	}
 }
 
+// TestRunAssemblerNonDataFailureStaysFatal checks that an assembly failure not
+// related to the data directory stays fatal with --allow-degraded.
 func TestRunAssemblerNonDataFailureStaysFatal(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -320,6 +332,8 @@ func TestRunAssemblerNonDataFailureStaysFatal(t *testing.T) {
 	lock.Release()
 }
 
+// TestRunBeforeLockFailureExitsWithAllowDegraded checks that a failure before
+// the account lock exits even with --allow-degraded.
 func TestRunBeforeLockFailureExitsWithAllowDegraded(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -331,6 +345,8 @@ func TestRunBeforeLockFailureExitsWithAllowDegraded(t *testing.T) {
 	}
 }
 
+// TestRunLowPortIsListenFailure checks that a refused low port is reported as a
+// listen failure carrying ErrLowPortDenied.
 func TestRunLowPortIsListenFailure(t *testing.T) {
 	runner := newFakeRunner(&orderLog{})
 	rt := newRunTest(t, func(rt *runTest) {
@@ -353,6 +369,8 @@ func TestRunLowPortIsListenFailure(t *testing.T) {
 	lock.Release()
 }
 
+// TestRunLowPortDegradesLocallyAndRecovers checks that a refused low port enters
+// local only and recovers once the address is bindable.
 func TestRunLowPortDegradesLocallyAndRecovers(t *testing.T) {
 	runner := newFakeRunner(&orderLog{})
 	rt := newRunTest(t, func(rt *runTest) {
@@ -383,8 +401,8 @@ func TestRunLowPortDegradesLocallyAndRecovers(t *testing.T) {
 	}
 }
 
-// assertFatalStartup checks that Run exited with the configuration-failure
-// shape, bound no local socket and released the account lock.
+// assertFatalStartup checks that Run exited fatally, bound no local socket and
+// released the account lock.
 func assertFatalStartup(t *testing.T, rt *runTest, want error) {
 	t.Helper()
 	err := rt.waitErr()
@@ -404,11 +422,8 @@ func assertFatalStartup(t *testing.T, rt *runTest, want error) {
 	lock.Release()
 }
 
-// TestRunConfigFailuresStayFatalWithAllowDegraded pins the startup
-// classification: --allow-degraded covers only the data-directory class and a
-// listen bind failure. A configuration that cannot be parsed or validated
-// still exits, because the diagnostics interface must not be driven by
-// untrusted values.
+// TestRunConfigFailuresStayFatalWithAllowDegraded checks that a configuration
+// that cannot be parsed or validated still exits with --allow-degraded.
 func TestRunConfigFailuresStayFatalWithAllowDegraded(t *testing.T) {
 	t.Run("parse error", func(t *testing.T) {
 		rt := newRunTest(t, func(rt *runTest) { rt.opts.AllowDegraded = true })
@@ -424,9 +439,8 @@ func TestRunConfigFailuresStayFatalWithAllowDegraded(t *testing.T) {
 	})
 }
 
-// TestRunUnknownSocketGroupStaysFatalWithAllowDegraded covers the system
-// form's check after a successful Load: a group that does not exist is a
-// configuration failure, not a degraded state.
+// TestRunUnknownSocketGroupStaysFatalWithAllowDegraded checks that a system
+// Broker exits when broker.local_socket_group names a group that does not exist.
 func TestRunUnknownSocketGroupStaysFatalWithAllowDegraded(t *testing.T) {
 	name := "peers-no-such-group-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	rt := newRunTest(t, func(rt *runTest) {
@@ -455,8 +469,7 @@ func TestRunUnknownSocketGroupStaysFatalWithAllowDegraded(t *testing.T) {
 }
 
 // TestRunDegradedReasonHidesConfigValues checks that a diagnostics-only retry
-// that fails on an invalid configuration value reports the key and the error
-// class, never the value itself.
+// failing on an invalid value reports the key and class, never the value.
 func TestRunDegradedReasonHidesConfigValues(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -484,8 +497,8 @@ func TestRunDegradedReasonHidesConfigValues(t *testing.T) {
 	}
 }
 
-// recordRunner is a LinkRunner whose Listen blocks when the test asks and
-// records every address in order.
+// recordRunner is a LinkRunner whose Listen blocks on request and records every
+// address in order.
 type recordRunner struct {
 	mu     sync.Mutex
 	calls  []string
@@ -546,10 +559,9 @@ func (r *recordRunner) waitCall(t *testing.T, n int, what string) string {
 	return ""
 }
 
-// TestRunLocalOnlyRecoveryReconcilesAddressChange binds A successfully while a
-// broker.listen change to B arrives. The change is delivered while the config
-// component's rebind is suppressed, so recovery must re-read the current value
-// and bind B before it lifts suppression.
+// TestRunLocalOnlyRecoveryReconcilesAddressChange checks that a broker.listen
+// change that arrives while the retry of the original address is in progress is
+// re-read on recovery, with the last bind at the new address.
 func TestRunLocalOnlyRecoveryReconcilesAddressChange(t *testing.T) {
 	const (
 		addrA = "127.0.0.1:17443"
@@ -569,7 +581,6 @@ func TestRunLocalOnlyRecoveryReconcilesAddressChange(t *testing.T) {
 		return s.GetDegraded() != nil && strings.Contains(s.GetDegraded().GetReason(), addrA)
 	})
 
-	// The next attempt at A is held open; B is written while it runs.
 	release := runner.blockOn(addrA)
 	runner.setErr(addrA, nil)
 	if got := runner.waitCall(t, 1, "the retry at the original address"); got != addrA {
@@ -590,10 +601,9 @@ func TestRunLocalOnlyRecoveryReconcilesAddressChange(t *testing.T) {
 	}
 }
 
-// TestRunLocalOnlyRecoveryCatchesChangeAfterUnsuppress delivers a
-// broker.listen change in the window between lifting suppression and the final
-// read. The value is current but no subscriber forwarded it, so only reading
-// after unsuppression catches it.
+// TestRunLocalOnlyRecoveryCatchesChangeAfterUnsuppress checks that a
+// broker.listen change delivered between lifting suppression and the final read
+// is still bound.
 func TestRunLocalOnlyRecoveryCatchesChangeAfterUnsuppress(t *testing.T) {
 	const (
 		addrA = "127.0.0.1:17443"
@@ -634,8 +644,8 @@ func TestRunLocalOnlyRecoveryCatchesChangeAfterUnsuppress(t *testing.T) {
 }
 
 // TestRunRecoveryFailureNamesTheNewAddress checks that a rebind failure during
-// recovery reports the address that failed, not the one bound a moment ago,
-// and says the old listener is still serving.
+// recovery reports the address that failed and says the old listener still
+// serves.
 func TestRunRecoveryFailureNamesTheNewAddress(t *testing.T) {
 	const (
 		addrA = "127.0.0.1:17443"
@@ -668,15 +678,10 @@ func TestRunRecoveryFailureNamesTheNewAddress(t *testing.T) {
 		config.Value{Kind: config.KindString, String: addrA},
 		config.Value{Kind: config.KindString, String: addrA})
 
-	// Read the retry's report directly instead of polling: the immediate
-	// failure must name the new address and the listener still holding the old
-	// one.
 	deadline := time.After(eventTimeout)
 	for {
 		select {
 		case got := <-failures:
-			// Skip failures before a bind succeeded; the first one with a
-			// bound address is the reconcile that must name the new address.
 			if got[1] != addrA {
 				continue
 			}
@@ -707,8 +712,8 @@ func TestRunRecoveryFailureNamesTheNewAddress(t *testing.T) {
 	}
 }
 
-// TestRunLocalOnlyReasonFollowsRetry refreshes the reported reason when a later
-// bind attempt fails for a different reason or address.
+// TestRunLocalOnlyReasonFollowsRetry checks that the reported reason follows a
+// later bind failure at a different address or for a different reason.
 func TestRunLocalOnlyReasonFollowsRetry(t *testing.T) {
 	const (
 		addrA = "127.0.0.1:17443"
@@ -743,7 +748,7 @@ func TestRunLocalOnlyReasonFollowsRetry(t *testing.T) {
 }
 
 // TestRunComponentStartFailureStopsAllComponents checks that a failing Start
-// also stops the failing component and every component not started yet.
+// stops the failing component and every component not started yet.
 func TestRunComponentStartFailureStopsAllComponents(t *testing.T) {
 	order := &orderLog{}
 	one := &orderComponent{name: "one", order: order}
@@ -766,8 +771,8 @@ func TestRunComponentStartFailureStopsAllComponents(t *testing.T) {
 	}
 }
 
-// TestRunDiagnosticsRebindsRemovedSocket checks the periodic socket presence
-// check while diagnostics only, matching the full service.
+// TestRunDiagnosticsRebindsRemovedSocket checks that the periodic socket check
+// rebinds a removed socket while diagnostics only.
 func TestRunDiagnosticsRebindsRemovedSocket(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) { rt.opts.AllowDegraded = true })
 	rt.cfg.setLoadErr(diagnosticsLoadErr(rt))
@@ -794,7 +799,7 @@ func TestRunDiagnosticsRebindsRemovedSocket(t *testing.T) {
 
 // TestRunDiagnosticsRebindsSocketRemovedAfterListen checks that entering
 // diagnostics only recovers when the socket file is removed between ListenUnix
-// and the chmod that follows it.
+// and the chmod that follows.
 func TestRunDiagnosticsRebindsSocketRemovedAfterListen(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) { rt.opts.AllowDegraded = true })
 	rt.cfg.setLoadErr(diagnosticsLoadErr(rt))
@@ -829,9 +834,8 @@ func TestRunDiagnosticsRebindsSocketRemovedAfterListen(t *testing.T) {
 	}
 }
 
-// TestRunDiagnosticsReappliesSocketPermissions checks that changing the
-// configured socket mode takes effect on the next retry, while the socket
-// already serves diagnostics only.
+// TestRunDiagnosticsReappliesSocketPermissions checks that a changed socket mode
+// takes effect on the next retry while diagnostics only.
 func TestRunDiagnosticsReappliesSocketPermissions(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.AllowDegraded = true
@@ -863,7 +867,7 @@ func TestRunDiagnosticsReappliesSocketPermissions(t *testing.T) {
 }
 
 // TestRunDiagnosticsReasonChangeLogsUpdate checks that only the first entry
-// writes degraded_entered; a later reason writes degraded_reason_changed.
+// writes degraded_entered and a later reason writes degraded_reason_changed.
 func TestRunDiagnosticsReasonChangeLogsUpdate(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) { rt.opts.AllowDegraded = true })
 	rt.cfg.setLoadErr(diagnosticsLoadErr(rt))
@@ -882,7 +886,7 @@ func TestRunDiagnosticsReasonChangeLogsUpdate(t *testing.T) {
 	})
 
 	// The status reports the new reason before the log entry is written, so
-	// wait for the entry instead of reading the buffer once.
+	// wait for the entry.
 	waitForReg(t, "the degraded_reason_changed entry", func() bool {
 		return strings.Contains(rt.logs.String(), EvDegradedReasonChanged)
 	})
@@ -904,9 +908,9 @@ func TestRunDiagnosticsReasonChangeLogsUpdate(t *testing.T) {
 	}
 }
 
-// TestRunDiagnosticsToLocalOnlyLogsFinalLevel checks that leaving diagnostics
-// for local only does not write a fieldless degraded_left; the entry records
-// the level that remains.
+// TestRunDiagnosticsToLocalOnlyLogsFinalLevel checks that moving from
+// diagnostics to local only writes no fieldless degraded_left and records the
+// level that remains.
 func TestRunDiagnosticsToLocalOnlyLogsFinalLevel(t *testing.T) {
 	runner := newRecordRunner()
 	runner.setErr("127.0.0.1:17443", errors.New("address already in use"))
@@ -929,8 +933,8 @@ func TestRunDiagnosticsToLocalOnlyLogsFinalLevel(t *testing.T) {
 			s.GetDegraded().GetLevel() == localpb.DegradedLevel_DEGRADED_LEVEL_LOCAL_ONLY
 	})
 
-	// The status reaches local only before the second entry is written, so wait
-	// for it instead of reading the buffer once.
+	// The status reaches local only before the second entry is written, so
+	// wait for it.
 	waitForReg(t, "the local-only degraded_entered entry", func() bool {
 		return strings.Count(rt.logs.String(), EvDegradedEntered) >= 2
 	})

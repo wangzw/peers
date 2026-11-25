@@ -10,9 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestSetConfigAlias covers REQ-broker-config-002 and REQ-broker-config-006:
-// a permitted change reaches Set with the initiator and the response carries
-// the old and the new value.
+// TestSetConfigAlias checks that a permitted change reaches Set with the
+// initiator and returns the old and new values.
 func TestSetConfigAlias(t *testing.T) {
 	tb := newTestBroker(t)
 	ctx := auditCallerContext(uint32(os.Geteuid()), "alice")
@@ -52,9 +51,8 @@ func TestSetConfigAlias(t *testing.T) {
 	}
 }
 
-// TestSetConfigSecretRejectedBeforeParse covers REQ-broker-pairing-031: a
-// secret key is refused with a message independent of how the value is
-// written, before the value is parsed.
+// TestSetConfigSecretRejectedBeforeParse checks that a secret key is refused
+// before parsing, with a message that never contains the value.
 func TestSetConfigSecretRejectedBeforeParse(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.secretKeys["pairing.static_key"] = true
@@ -90,8 +88,8 @@ func TestSetConfigSecretRejectedBeforeParse(t *testing.T) {
 	}
 }
 
-// TestSetConfigParseError: an unparsable value is reported as
-// INVALID_ARGUMENT and never reaches Set, so the configuration is unchanged.
+// TestSetConfigParseError checks that an unparsable value is invalid-argument
+// and never reaches Set.
 func TestSetConfigParseError(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.parseErr = fmt.Errorf("%w: broker.alias: invalid alias", config.ErrInvalidValue)
@@ -113,9 +111,8 @@ func TestSetConfigParseError(t *testing.T) {
 	}
 }
 
-// TestSetConfigListenOverridden covers REQ-broker-config-029: broker.listen
-// is refused while --listen fixes the address, before the value is parsed,
-// and the same request succeeds without --listen.
+// TestSetConfigListenOverridden checks that broker.listen is refused before
+// parsing while --listen fixes the address, and succeeds without --listen.
 func TestSetConfigListenOverridden(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.ListenOverride = ":17444" })
 	ctx := auditCallerContext(uint32(os.Geteuid()), "alice")
@@ -144,7 +141,6 @@ func TestSetConfigListenOverridden(t *testing.T) {
 		t.Errorf("Set calls = %d, want 0", len(tb.cfg.setCalls))
 	}
 
-	// Without --listen the same request reaches Set.
 	free := newTestBroker(t)
 	_, err := free.b.SetConfig(ctx, &localpb.SetConfigRequest{
 		Key:   "broker.listen",
@@ -158,8 +154,8 @@ func TestSetConfigListenOverridden(t *testing.T) {
 	}
 }
 
-// TestSetConfigListenUnavailable covers REQ-broker-config-034: a value the
-// validator refuses as unavailable is reported as INVALID_ARGUMENT.
+// TestSetConfigListenUnavailable checks that a value the validator refuses as
+// unavailable is invalid-argument.
 func TestSetConfigListenUnavailable(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setErr = fmt.Errorf("%w: broker.listen: address %q is unavailable: x",
@@ -179,9 +175,8 @@ func TestSetConfigListenUnavailable(t *testing.T) {
 	}
 }
 
-// TestSetConfigCombination covers REQ-broker-config-032 and
-// REQ-broker-config-036: an invalid host-and-port combination and too many
-// advertised addresses are both reported as INVALID_ARGUMENT.
+// TestSetConfigCombination checks that an invalid combination and too many
+// advertised addresses are both invalid-argument.
 func TestSetConfigCombination(t *testing.T) {
 	ctx := auditCallerContext(uint32(os.Geteuid()), "alice")
 	cases := []struct {
@@ -208,6 +203,8 @@ func TestSetConfigCombination(t *testing.T) {
 	}
 }
 
+// TestSetConfigFileWriteIsInternal checks that a file write failure is an
+// internal error.
 func TestSetConfigFileWriteIsInternal(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setErr = config.ErrFileWrite
@@ -223,6 +220,8 @@ func TestSetConfigFileWriteIsInternal(t *testing.T) {
 	}
 }
 
+// TestSetConfigBadAgent checks that a bad agent_id is not-registered and
+// reaches neither ParseValue nor Set.
 func TestSetConfigBadAgent(t *testing.T) {
 	tb := newTestBroker(t)
 	ctx := auditCallerContext(uint32(os.Geteuid()), "alice")
@@ -244,6 +243,8 @@ func TestSetConfigBadAgent(t *testing.T) {
 	}
 }
 
+// TestSetConfigUnknownKey checks that an empty or unknown key is
+// invalid-argument before parsing.
 func TestSetConfigUnknownKey(t *testing.T) {
 	t.Run("empty key", func(t *testing.T) {
 		tb := newTestBroker(t)
@@ -289,9 +290,8 @@ func TestSetConfigUnknownKey(t *testing.T) {
 	})
 }
 
-// TestSetConfigLowPortDenied checks the wire error for the privileged-port
-// rule: the configuration layer refuses the change for a non-root caller, and
-// SetConfig reports it as permission_denied with the explanation intact.
+// TestSetConfigLowPortDenied checks that the privileged-port rule is reported
+// as permission_denied with the explanation intact.
 func TestSetConfigLowPortDenied(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setErr = fmt.Errorf("%w: changing broker.listen to a port below 1024 requires root", config.ErrLowPortDenied)

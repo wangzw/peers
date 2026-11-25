@@ -11,47 +11,41 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// peerID identifies a paired peer Broker.
 type peerID = pairing.Fingerprint
 
-// agentView is a read-only snapshot of one local Agent.
 type agentView struct {
-	ID        string // 64 lowercase hex chars, SHA-256 of "session:"+socket path
-	Name      string // normalized session name
-	Ref       string // current disambiguation ref, 6..12 lowercase hex, prefix of ID
-	RefPinned bool   // Ref is 12 chars because Name belongs to another account
-	// UID is the account that registered this Agent. It is 0 for a view built
-	// without an account, which together with NameOwned keeps a by-name
-	// resolution from treating such a view as the owner.
+	ID        string
+	Name      string
+	Ref       string
+	RefPinned bool
+	// UID is 0 for a view built without an account; with NameOwned it keeps
+	// by-name resolution from treating the view as the owner.
 	UID uint32
-	// NameOwnerUID is the account that owns Name, and NameOwned reports that
-	// the name owner table has an entry for it. A bare name reaches only the
-	// owner's Agents.
+	// NameOwnerUID is the account that owns Name; NameOwned reports the table
+	// has an entry for it.
 	NameOwnerUID uint32
 	NameOwned    bool
 	// PrevNameOwnerUID and PrevNameOwned do the same for PrevName.
 	PrevNameOwnerUID uint32
 	PrevNameOwned    bool
-	// RefMandatory reports that the address and signature must carry a ref
-	// because of how the name is held (see Broker.nameNeedsRefLocked).
+	// RefMandatory reports that the address and signature must carry a ref.
 	RefMandatory bool
-	PrevName     string        // previous name inside the 10-minute window, else ""
-	Session      inbox.Session // the record last read
-	Inbox        inboxWriter   // the account's session backend; writes go through it
+	PrevName     string // previous name inside the 10-minute window, else ""
+	Session      inbox.Session
+	Inbox        inboxWriter
 }
 
-// localAgents is the local Agent table a delivery reads. *Broker implements it.
+// localAgents is the local Agent table a delivery reads.
 type localAgents interface {
 	Lookup(id string) (agentView, bool)
 	All() []agentView
-	// Reread rereads the record, applies it to the table and returns the new
-	// snapshot; errAgentGone (declared by broker-local) when the Agent is gone.
+	// Reread rereads the record, applies it and returns the new snapshot; it
+	// returns errAgentGone when the Agent is gone.
 	Reread(id string) (agentView, error)
 }
 
-// remoteMember is one member entry a peer reports. Account is the publisher's
-// account name, for display only. RefRequired means the publisher requires a
-// disambiguating ref in the address; a bare name must not select it.
+// remoteMember is one member entry a peer reports; Account is for display only
+// and RefRequired means a bare name must not select it.
 type remoteMember struct {
 	Name        string
 	Ref         string
@@ -60,56 +54,45 @@ type remoteMember struct {
 	RefRequired bool
 }
 
-// visibility decides which Agents know each other. topicVisibility implements
-// it over the topic table in production.
 type visibility interface {
-	VisibleLocal(a, b string) bool // two local Agent IDs
+	VisibleLocal(a, b string) bool
 	VisibleRemote(local string, peer peerID, name, ref string) bool
-	RemoteMembers(peer peerID) []remoteMember // entries in the current intersection
+	// RemoteMembers returns the peer's entries in the current intersection.
+	RemoteMembers(peer peerID) []remoteMember
 }
 
-// peerTable is the part of the pairing peer table a delivery reads.
 type peerTable interface {
-	ResolveAlias(alias string) (peerID, bool) // committed peers only
+	// ResolveAlias resolves an alias among committed peers only.
+	ResolveAlias(alias string) (peerID, bool)
 	EffectiveAlias(p peerID) string
 	Role(p peerID) pairing.Role
 }
 
-// deliveryLink is the part of the link a delivery uses. linkAdapter implements
-// it in production.
 type deliveryLink interface {
 	Request(ctx context.Context, p peerID, f link.Frame) (reply link.Frame, sent bool, err error)
 	HandleRequest(kind link.FrameKind, h func(ctx context.Context, p peerID, f link.Frame) link.Frame)
 	Subscribe(onUp func(p peerID, salt []byte), onDown func(p peerID))
-	Established(p peerID) bool // State(p).Phase == link.PhaseEstablished
+	Established(p peerID) bool
 	Kick(p peerID)
 }
 
-// inboxWriter writes one message to an account's session backend.
-// SessionBackend implements it.
 type inboxWriter interface {
 	Deliver(ctx context.Context, s inbox.Session, sig, text, msgID string, timeout time.Duration) error
 }
 
-// sendSettings is the snapshot of the send.* configuration one operation reads
-// once.
 type sendSettings struct {
 	RequestTimeout, LinkBackoff, InboxBackoff, InboxTimeout, DedupeWindow time.Duration
 	LinkRetries, InboxRetries                                             int
 }
 
-// settingsSource supplies the send configuration, the local alias and the
-// offline switch.
 type settingsSource interface {
 	Send() sendSettings
 	LocalAlias() string
-	// Offline reports the current broker.offline value. It is read afresh on
-	// every delivery; a failed read is treated as online and logged.
+	// Offline reports the current broker.offline value, read afresh each
+	// delivery; a failed read is treated as online and logged.
 	Offline() bool
 }
 
-// deliveryDeps is everything a delivery uses. The fields are interfaces so the
-// unit tests can substitute fakes.
 type deliveryDeps struct {
 	Agents      localAgents
 	Topics      visibility
@@ -122,7 +105,6 @@ type deliveryDeps struct {
 	Log         *slog.Logger
 }
 
-// peerSend is one outgoing message to a remote peer.
 type peerSend struct {
 	Caller    agentView
 	Peer      peerID
@@ -132,8 +114,8 @@ type peerSend struct {
 	Deadline  time.Time
 }
 
-// delivery implements sending and receiving messages. Broker assembles one
-// instance and the Local Send RPC and the link request handler share it.
+// delivery implements sending and receiving messages; one instance is shared by
+// the Local Send RPC and the link request handler.
 type delivery struct {
 	deps   deliveryDeps
 	toPeer func(ctx context.Context, r peerSend) error
@@ -142,15 +124,14 @@ type delivery struct {
 	inbound *inboundLimiter
 	waiter  *linkWaiter
 
-	// lifecycle is canceled by Run before link Close. A receive handler
-	// processes on a child of it, so a blocked inbox write cannot hold link
-	// Close open past shutdown.
+	// lifecycle is canceled by Run before link Close; a receive handler runs on a
+	// child, so a blocked inbox write cannot hold Close open.
 	lifecycle context.Context
 	stopFunc  context.CancelFunc
 }
 
-// newDelivery builds a delivery around deps. It only stores the dependencies;
-// the send path is attached later by the assembly.
+// newDelivery builds a delivery around deps; the send path is attached later by
+// the assembly.
 func newDelivery(deps deliveryDeps) *delivery {
 	clock := deps.Clock
 	if clock == nil {
@@ -163,24 +144,22 @@ func newDelivery(deps deliveryDeps) *delivery {
 	})
 	d.inbound = newInboundLimiter(clock)
 	d.waiter = newLinkWaiter(deps.Link, deps.WaiterClock)
-	// A dropped link does not reset the quota: a peer could reconnect to spend
-	// another burst. Only unpairing the peer forgets its buckets.
+	// A dropped link must not reset the quota: a peer could reconnect to spend
+	// another burst; only unpairing forgets its buckets.
 	d.toPeer = d.sendToPeer
 	return d
 }
 
-// stop cancels the delivery lifecycle. Run calls it before link Close; it may
-// be called more than once.
+// stop cancels the delivery lifecycle; it may be called more than once.
 func (d *delivery) stop() {
 	if d.stopFunc != nil {
 		d.stopFunc()
 	}
 }
 
-// processContext returns the context one received request is processed on. It
-// is detached from the link, so a link drop cannot interrupt a write the sender
-// may retry, but it follows the delivery lifecycle, so stopping the delivery
-// cancels a write that would otherwise hold link Close open.
+// processContext is detached from the link but follows the delivery lifecycle,
+// so a link drop cannot interrupt a retryable write and stopping cancels a write
+// that would hold link Close open.
 func (d *delivery) processContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	if d.lifecycle == nil {
 		return context.WithoutCancel(ctx), func() {}
@@ -196,8 +175,6 @@ func (d *delivery) processContext(ctx context.Context) (context.Context, context
 	}
 }
 
-// logger returns the delivery's logger, falling back to the process default
-// when none was supplied.
 func (d *delivery) logger() *slog.Logger {
 	if d.deps.Log != nil {
 		return d.deps.Log
@@ -205,10 +182,6 @@ func (d *delivery) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// logDeliveryRefusedOwner records a by-name delivery refused because the name
-// belongs to another account. matched uids are the visible same-name Agents of
-// other accounts, and from identifies the sender: a local Agent's ref or the
-// peer fingerprint. It records no message text.
 func (d *delivery) logDeliveryRefusedOwner(name string, ownerUID uint32, matchedUIDs []uint32, from string) {
 	logger := d.logger()
 	logger.Info(EvDeliveryRefusedOwner,
@@ -219,21 +192,20 @@ func (d *delivery) logDeliveryRefusedOwner(name string, ownerUID uint32, matched
 	)
 }
 
-// notSent returns an error for a message that was certainly not delivered. The
-// fixed prefix distinguishes it from an unknown result in the message the model
-// reads.
+// notSent returns an error for a message that was certainly not delivered; its
+// fixed prefix distinguishes it from an unknown result.
 func notSent(code localpb.ErrorCode, format string, args ...any) *Error {
 	return Errorf(code, "Not sent: "+format, args...)
 }
 
 // unknownResult returns an error for a message whose outcome cannot be
-// determined. It must stay distinct from notSent (REQ-agent-messaging-027).
+// determined; it must stay distinct from notSent.
 func unknownResult(format string, args ...any) *Error {
 	return Errorf(localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN, "Delivery unknown: "+format, args...)
 }
 
-// inboxPackage implements inboxWriter with inbox.Deliver. Tests use it as the
-// Inbox of agents backed by fakesession.
+// inboxPackage implements inboxWriter with inbox.Deliver; tests use it for
+// agents backed by fakesession.
 type inboxPackage struct{}
 
 func (inboxPackage) Deliver(ctx context.Context, s inbox.Session, sig, text, msgID string, timeout time.Duration) error {

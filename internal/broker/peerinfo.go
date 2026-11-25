@@ -11,14 +11,8 @@ import (
 )
 
 // peerAddresses lists the addresses a peer Broker is known to listen on.
-//
-// For a peer this Broker dials, the acceptor advertised those addresses and
-// the directory card may carry more; the address dialed during pairing is not
-// one of them, because it is not necessarily an advertised address, and
-// SourceCard candidates are skipped because they may come from a withdrawn or
-// expired card (a valid card's addresses arrive through cardAddrs). For a peer
-// that dialed this Broker, only the card is used: this Broker never dials, so
-// the acceptor's own list is irrelevant.
+// SourceCard candidates are skipped because they can come from a withdrawn or
+// expired card; a valid card's addresses arrive through cardAddrs.
 func peerAddresses(p pairing.Peer, cardAddrs []config.AdvertisedAddr) []*localpb.AdvertisedAddress {
 	out := make([]*localpb.AdvertisedAddress, 0, len(p.Candidates)+len(cardAddrs))
 	seen := make(map[string]bool, len(p.Candidates)+len(cardAddrs))
@@ -44,7 +38,6 @@ func peerAddresses(p pairing.Peer, cardAddrs []config.AdvertisedAddr) []*localpb
 	return out
 }
 
-// linkStateToProto maps the broker's link phase onto the local API's state.
 func linkStateToProto(ph LinkPhase) localpb.LinkState {
 	switch ph {
 	case LinkDialing:
@@ -64,7 +57,6 @@ func linkStateToProto(ph LinkPhase) localpb.LinkState {
 	}
 }
 
-// peerStatusDetail is the single source of a peer's status_detail text.
 func peerStatusDetail(st PeerLinkStatus) string {
 	var detail string
 	switch st.Failure {
@@ -85,9 +77,6 @@ func peerStatusDetail(st PeerLinkStatus) string {
 	return detail
 }
 
-// effectivePeerAlias returns the alias this Broker uses for p: the local alias
-// pairing assigned when it differs from the peer's own, otherwise the peer's
-// own alias.
 func effectivePeerAlias(p pairing.Peer) string {
 	if p.LocalAlias != "" {
 		return p.LocalAlias
@@ -95,7 +84,6 @@ func effectivePeerAlias(p pairing.Peer) string {
 	return p.Alias
 }
 
-// peerBrokerInfo turns one peer and its link state into a ListBrokers entry.
 func peerBrokerInfo(p pairing.Peer, st PeerLinkStatus, cardAddrs []config.AdvertisedAddr) *localpb.BrokerInfo {
 	alias := effectivePeerAlias(p)
 	addrs := peerAddresses(p, cardAddrs)
@@ -131,8 +119,6 @@ func peerBrokerInfo(p pairing.Peer, st PeerLinkStatus, cardAddrs []config.Advert
 	}
 }
 
-// sortBrokerInfos orders brokers with peers first, then by alias, then by
-// fingerprint bytes (equal to ascending hexadecimal order).
 func sortBrokerInfos(infos []*localpb.BrokerInfo) {
 	sort.SliceStable(infos, func(i, j int) bool {
 		a, b := infos[i], infos[j]
@@ -146,9 +132,9 @@ func sortBrokerInfos(infos []*localpb.BrokerInfo) {
 	})
 }
 
-// peerView implements PeerView over the pairing and link surfaces. The
-// catalog is looked up on every call so an assembler can install it after the
-// view was built.
+// peerView implements PeerView over the pairing and link surfaces; the catalog
+// is looked up on every call so an assembler can install it after the view was
+// built.
 type peerView struct {
 	p       PairingOps
 	l       PeerLinks
@@ -157,13 +143,10 @@ type peerView struct {
 
 var _ PeerView = peerView{}
 
-// newPeerView builds the broker's peer view with a fixed catalog.
 func newPeerView(p PairingOps, l PeerLinks, c BrokerCatalog) PeerView {
 	return newPeerViewFunc(p, l, func() BrokerCatalog { return c })
 }
 
-// newPeerViewFunc builds the broker's peer view with a catalog looked up on
-// each call; nil means no directory.
 func newPeerViewFunc(p PairingOps, l PeerLinks, catalog func() BrokerCatalog) PeerView {
 	return peerView{p: p, l: l, catalog: catalog}
 }
@@ -183,7 +166,6 @@ func (v peerView) Peers(context.Context) []*localpb.BrokerInfo {
 	return v.infos()
 }
 
-// infos lists this Broker's peers as local API entries.
 func (v peerView) infos() []*localpb.BrokerInfo {
 	if v.p == nil || v.l == nil {
 		return []*localpb.BrokerInfo{}

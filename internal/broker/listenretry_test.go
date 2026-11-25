@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// manualClock is a Clock the test fires by hand, so backoff is deterministic.
 type manualClock struct {
 	mu     sync.Mutex
 	timers []*manualTimer
@@ -41,7 +40,6 @@ func (c *manualClock) AfterFunc(d time.Duration, f func()) Timer {
 	return t
 }
 
-// nextTimer waits for the timer at index n and returns it.
 func (c *manualClock) nextTimer(t *testing.T, n int) *manualTimer {
 	t.Helper()
 	deadline := time.After(eventTimeout)
@@ -95,6 +93,8 @@ func eventually(t *testing.T, what string, check func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// TestListenRetrierBackoffSequenceAndCap checks that the retrier waits one
+// second, doubles each time and caps at one minute.
 func TestListenRetrierBackoffSequenceAndCap(t *testing.T) {
 	clock := newManualClock()
 	var mu sync.Mutex
@@ -125,6 +125,8 @@ func TestListenRetrierBackoffSequenceAndCap(t *testing.T) {
 	}
 }
 
+// TestListenRetrierAddressChangeResetsBackoff checks that an address change
+// retries at once with the new address and restarts the backoff.
 func TestListenRetrierAddressChangeResetsBackoff(t *testing.T) {
 	clock := newManualClock()
 	var mu sync.Mutex
@@ -161,13 +163,14 @@ func TestListenRetrierAddressChangeResetsBackoff(t *testing.T) {
 	if got != "127.0.0.1:18000" {
 		t.Fatalf("immediate retry bound %q, want the new address", got)
 	}
-	// After the immediate attempt fails, the backoff starts again at 1s.
 	second := clock.nextTimer(t, 1)
 	if second.d != time.Second {
 		t.Fatalf("next wait = %s, want 1s after an address change", second.d)
 	}
 }
 
+// TestListenRetrierStopsAfterSuccess checks that a successful bind runs the
+// success callback with the bound address.
 func TestListenRetrierStopsAfterSuccess(t *testing.T) {
 	clock := newManualClock()
 	var mu sync.Mutex
@@ -204,6 +207,8 @@ func TestListenRetrierStopsAfterSuccess(t *testing.T) {
 	}
 }
 
+// TestListenRetrierReportsOnlyChangedReasons checks that a repeated failure
+// reason is reported once and a changed reason is reported again.
 func TestListenRetrierReportsOnlyChangedReasons(t *testing.T) {
 	clock := newManualClock()
 	var mu sync.Mutex
@@ -236,6 +241,8 @@ func TestListenRetrierReportsOnlyChangedReasons(t *testing.T) {
 	eventually(t, "the changed reason", func() bool { mu.Lock(); defer mu.Unlock(); return failures == 2 })
 }
 
+// TestListenRetrierStopsCleanly checks that Stop ends the loop without another
+// attempt.
 func TestListenRetrierStopsCleanly(t *testing.T) {
 	clock := newManualClock()
 	var mu sync.Mutex

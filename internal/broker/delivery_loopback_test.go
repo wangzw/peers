@@ -15,9 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// loopbackFixture wires two deliveries, a sender and a receiver, through one
-// loopbackLink. The receiver's kind-400 handler is registered on the link, so a
-// send crosses a real gRPC stream before it reaches the simulated session.
 type loopbackFixture struct {
 	t        *testing.T
 	link     *loopbackLink
@@ -28,8 +25,6 @@ type loopbackFixture struct {
 	session  *fakesession.Fake
 }
 
-// loopbackSettings returns send settings small enough for tests but with a
-// budget that covers a 1 MB gRPC round trip.
 func loopbackSettings(alias string) *fakeSettings {
 	return newFakeSettings(sendSettings{
 		RequestTimeout: 3 * time.Second,
@@ -42,14 +37,11 @@ func loopbackSettings(alias string) *fakeSettings {
 	}, alias)
 }
 
-// quietLogger returns a logger that keeps its output out of the test log.
 func quietLogger() *slog.Logger {
 	var level slog.LevelVar
 	return NewLogger(&bytes.Buffer{}, &level)
 }
 
-// newLoopbackFixture builds the two ends. The sender is the dialer towards the
-// receiver, with the caller's roster entry pinned to the receiver's target.
 func newLoopbackFixture(t *testing.T) *loopbackFixture {
 	t.Helper()
 
@@ -112,15 +104,13 @@ func newLoopbackFixture(t *testing.T) *loopbackFixture {
 	}
 }
 
-// send runs one send from the caller to frontend@hostB.
 func (f *loopbackFixture) send(text string) error {
 	f.t.Helper()
 	return f.sender.Send(context.Background(), f.caller, "frontend@hostB", text)
 }
 
-// TestLoopbackDeliver checks a message reaches the simulated session across a
-// real gRPC stream, with the sender's address as the from-name
-// (REQ-agent-messaging-013, REQ-agent-messaging-022, REQ-agent-messaging-015).
+// TestLoopbackDeliver checks that a message reaches the simulated session across
+// a real gRPC stream with the sender's address as the from-name.
 func TestLoopbackDeliver(t *testing.T) {
 	f := newLoopbackFixture(t)
 
@@ -143,10 +133,8 @@ func TestLoopbackDeliver(t *testing.T) {
 	}
 }
 
-// TestLoopbackMaxSizeMessage checks that a message whose longest-signature
-// frame is exactly the 1 000 000-byte limit survives the real gRPC path
-// (REQ-agent-messaging-026): the limit must not sit above what the transport
-// can carry.
+// TestLoopbackMaxSizeMessage checks that a message whose longest-signature frame
+// is exactly the 1 000 000-byte limit survives the real gRPC path.
 func TestLoopbackMaxSizeMessage(t *testing.T) {
 	f := newLoopbackFixture(t)
 
@@ -165,15 +153,11 @@ func TestLoopbackMaxSizeMessage(t *testing.T) {
 	}
 }
 
-// TestLoopbackResendAfterStreamClose checks that a request whose reply is lost
-// with the stream is resent under the same message id after the stream is
-// reopened, and that the receiver still writes one frame
-// (REQ-agent-messaging-020).
+// TestLoopbackResendAfterStreamClose checks that a request whose reply is lost is
+// resent under the same message id and the receiver writes one frame.
 func TestLoopbackResendAfterStreamClose(t *testing.T) {
 	f := newLoopbackFixture(t)
 
-	// The receiver writes the message and closes the stream before its reply
-	// can leave, so the sender sees a sent request with no reply.
 	var mu sync.Mutex
 	var ids []string
 	var calls int

@@ -18,14 +18,11 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// The config package is already on main; these assertions pin the names this
-// unit relies on.
 var (
 	_                                                 = config.ModeSystem
 	_ func(string, func(old, new config.Value) error) = config.Validate
 )
 
-// socketPerms returns the permission bits and group of path.
 func socketPerms(t *testing.T, path string) (os.FileMode, uint32) {
 	t.Helper()
 	fi, err := os.Lstat(path)
@@ -39,7 +36,6 @@ func socketPerms(t *testing.T, path string) (os.FileMode, uint32) {
 	return fi.Mode().Perm(), st.Gid
 }
 
-// currentGroup returns the primary group of the test process.
 func currentGroup(t *testing.T) *user.Group {
 	t.Helper()
 	g, err := user.LookupGroupId(strconv.Itoa(os.Getgid()))
@@ -49,6 +45,8 @@ func currentGroup(t *testing.T) *user.Group {
 	return g
 }
 
+// TestRunSystemNonRootStillNotRoot checks that a system run as a non-root
+// account exits before loading the configuration.
 func TestRunSystemNonRootStillNotRoot(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.System = true
@@ -68,6 +66,8 @@ func TestRunSystemNonRootStillNotRoot(t *testing.T) {
 	}
 }
 
+// TestRunSystemLoadsSystemMode checks that the system form loads the
+// configuration in system mode.
 func TestRunSystemLoadsSystemMode(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.System = true
@@ -95,6 +95,8 @@ func TestRunSystemLoadsSystemMode(t *testing.T) {
 	}
 }
 
+// TestRunSystemWithoutConfigWiringFails checks that the system form refuses to
+// start without the config assembler.
 func TestRunSystemWithoutConfigWiringFails(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.System = true
@@ -119,6 +121,8 @@ func TestRunSystemWithoutConfigWiringFails(t *testing.T) {
 	}
 }
 
+// TestRunSystemWithoutAccessFails checks that the system form refuses to start
+// without an assembly access checker.
 func TestRunSystemWithoutAccessFails(t *testing.T) {
 	clearAccess := &fakeAssembler{name: "clear-access", fn: func(_ context.Context, _ ConfigSource, _ *Deps, asm *Assembly) ([]Component, error) {
 		asm.Access = nil
@@ -145,6 +149,8 @@ func TestRunSystemWithoutAccessFails(t *testing.T) {
 	}
 }
 
+// TestRunSystemRejectsReplacedAccess checks that the system form refuses to
+// start when a later assembler replaces the access checker.
 func TestRunSystemRejectsReplacedAccess(t *testing.T) {
 	replaceAccess := &fakeAssembler{name: "replace-access", fn: func(_ context.Context, _ ConfigSource, _ *Deps, asm *Assembly) ([]Component, error) {
 		asm.Access = &wiringChecker{granted: true}
@@ -171,6 +177,8 @@ func TestRunSystemRejectsReplacedAccess(t *testing.T) {
 	}
 }
 
+// TestRunSystemAppliesSocketPerms checks that the system form applies the
+// configured socket group and mode and follows a later mode change.
 func TestRunSystemAppliesSocketPerms(t *testing.T) {
 	group := currentGroup(t)
 	rt := newRunTest(t, func(rt *runTest) {
@@ -205,6 +213,8 @@ func TestRunSystemAppliesSocketPerms(t *testing.T) {
 	}
 }
 
+// TestRunSystemUnknownGroupFails checks that the system form exits when
+// broker.local_socket_group names a group that does not exist.
 func TestRunSystemUnknownGroupFails(t *testing.T) {
 	name := "peers-no-such-group-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	rt := newRunTest(t, func(rt *runTest) {
@@ -228,6 +238,8 @@ func TestRunSystemUnknownGroupFails(t *testing.T) {
 	}
 }
 
+// TestApplyLocalSocketPermsGroupAndMode checks that an explicit group and mode
+// are applied to the socket file.
 func TestApplyLocalSocketPermsGroupAndMode(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	dir := filepath.Dir(path)
@@ -250,6 +262,8 @@ func TestApplyLocalSocketPermsGroupAndMode(t *testing.T) {
 	}
 }
 
+// TestApplyLocalSocketPermsDefaultsToRuntimeDirGroup checks that an empty group
+// takes the runtime directory's group.
 func TestApplyLocalSocketPermsDefaultsToRuntimeDirGroup(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	dir := filepath.Dir(path)
@@ -276,6 +290,8 @@ func TestApplyLocalSocketPermsDefaultsToRuntimeDirGroup(t *testing.T) {
 	}
 }
 
+// TestValidateSocketGroup checks that an empty or existing group is accepted and
+// a missing one is refused.
 func TestValidateSocketGroup(t *testing.T) {
 	if err := validateSocketGroup(config.Value{}, config.Value{Kind: config.KindString}); err != nil {
 		t.Errorf("validateSocketGroup(\"\") = %v, want nil", err)
@@ -289,6 +305,8 @@ func TestValidateSocketGroup(t *testing.T) {
 	}
 }
 
+// TestSocketGroupTransientLookupFailureIsAFailedCheck checks that an account
+// database failure is reported as a failed check, not a missing group.
 func TestSocketGroupTransientLookupFailureIsAFailedCheck(t *testing.T) {
 	old := lookupGroupFromDB
 	t.Cleanup(func() { lookupGroupFromDB = old })
@@ -320,6 +338,8 @@ func TestSocketGroupTransientLookupFailureIsAFailedCheck(t *testing.T) {
 	}
 }
 
+// TestWatchSocketPermsReappliesOnEitherKey checks that a change to either socket
+// key reapplies the permissions.
 func TestWatchSocketPermsReappliesOnEitherKey(t *testing.T) {
 	cfg := newFakeConfig(t.TempDir())
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -343,6 +363,8 @@ func TestWatchSocketPermsReappliesOnEitherKey(t *testing.T) {
 	}
 }
 
+// TestRunUserModeUnchanged checks that a user Broker keeps mode 0600 and
+// registers no socket-group validator.
 func TestRunUserModeUnchanged(t *testing.T) {
 	rt := newRunTest(t)
 	rt.start()

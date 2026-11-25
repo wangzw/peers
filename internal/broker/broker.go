@@ -17,19 +17,20 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// Broker serves the local interface and holds the agent table. Handler methods
-// live in the files of the work item that owns the RPC; this file owns the
-// structure, the gRPC server and the process-lifetime context.
+// Broker serves the local interface and holds the agent table.
 type Broker struct {
+	// UnimplementedLocalServer provides the forward-compatible LocalServer stubs.
 	localpb.UnimplementedLocalServer
 	deps   Deps
 	log    *slog.Logger
 	grpc   *grpc.Server
 	ctx    context.Context
 	cancel context.CancelFunc
-	mu     sync.Mutex
+	// mu guards agents, waiting, watches, events, unregHooks, gone, refreshOne,
+	// lastAlias, nextAgentSeq, nameOwners (except the fields nameOwnerState
+	// documents otherwise) and nameOwnerPushPending.
+	mu sync.Mutex
 
-	// agent table fields
 	agents     map[AgentID]*agent
 	waiting    map[*regConn]struct{}
 	watches    map[watchKey]*dirWatch
@@ -37,59 +38,42 @@ type Broker struct {
 	unregHooks []func(AgentID)
 	gone       []AgentID
 	refreshOne func(a *agent)
-	lastAlias  string // last broker.alias value read successfully, guarded by mu
+	lastAlias  string
 
-	// nextAgentSeq numbers agents in registration order, so the name owner
-	// table can tell which account registered a name first. Guarded by mu.
 	nextAgentSeq uint64
-	// nameOwners is the name ownership table and its persistence state.
-	// Guarded by mu, except for the fields nameOwnerState documents otherwise.
-	nameOwners *nameOwnerState
-	// nameOwnerPushPending reports that a read path expired a name and moved its
-	// ownership. The next snapshot rebuild recomputes the refs and pushes the
-	// change, so a query never transfers a name silently. Guarded by mu.
+	nameOwners   *nameOwnerState
+
 	nameOwnerPushPending bool
 
-	// degradedMu guards degraded, the state a --allow-degraded run reports.
+	// degradedMu guards degraded.
 	degradedMu sync.Mutex
 	degraded   *localpb.DegradedState
 
-	// configDirChecks limits an account to one unfinished ownership check.
-	// It has its own lock so a check never takes Broker.mu.
+	// configDirChecks has its own lock, so an ownership check never takes
+	// Broker.mu.
 	configDirChecks configDirCheckSet
 
-	// topicRate limits topic changes per account.
 	topicRate topicRateLimiter
 
-	// accountTopicMu serialises the per-account topic limit check with the Join
-	// it guards, so two concurrent joins on a system Broker cannot both pass
-	// while the account is one topic short of its limit.
+	// accountTopicMu serializes the per-account topic limit check with the Join
+	// it guards.
 	accountTopicMu sync.Mutex
 
-	// conns and registers bound what one account may hold on the local
-	// interface. conns is the same value the peer credentials count with.
 	conns     *accountLimit
 	registers *accountLimit
 
-	// update state is the in-memory result of the periodic release check. It
-	// is never persisted.
 	updateMu         sync.Mutex
 	updateAvailable  string
 	updateReleaseURL string
 	updateTimer      Timer
-	// updateBusy guards ApplyUpdate. It stays set after a successful install:
-	// the process is about to exit, so no second update may start.
+	// updateBusy is set for an upgrade and stays set after a successful install.
 	updateBusy atomic.Bool
-
-	// downstream state
 }
 
 // New assembles the Broker. Deps.Topics and Deps.Config are required; the
-// other nil fields take the defaults documented on Deps. The gRPC server
-// options are assembled in a fixed order: the peer credentials, then
-// versionServerOptions, then Deps.ServerOptions. Appending the version
-// interceptors before the caller's ones is what makes a rejected connection
-// get version_mismatch before the access interceptor runs.
+// other nil fields take the defaults documented on Deps. The version
+// interceptors are installed before Deps.ServerOptions so a rejected
+// connection gets version_mismatch before the access interceptor runs.
 func New(deps Deps) (*Broker, error) {
 	if deps.Topics == nil {
 		return nil, fmt.Errorf("cannot create the Broker: Deps.Topics is required")
@@ -182,10 +166,6 @@ func New(deps Deps) (*Broker, error) {
 	return b, nil
 }
 
-// checkServerOptions rejects Deps.ServerOptions that set transport credentials.
-// New installs the process-credential handshake itself, and grpc.Creds applied
-// later would replace it silently, letting any account connect to a user
-// Broker.
 func checkServerOptions(base credentials.TransportCredentials, opts []grpc.ServerOption) error {
 	if len(opts) == 0 {
 		return nil
@@ -196,11 +176,8 @@ func checkServerOptions(base credentials.TransportCredentials, opts []grpc.Serve
 	return nil
 }
 
-// serverOptionsReplaceCreds applies base and then opts to a probe server and
-// reports whether the resolved credentials are no longer base. grpc.ServerOption
-// has no accessors, so the probe's resolved field is read through reflection; it
-// is an interface field, and comparing the concrete pointer does not expose the
-// unexported value. A nil or unrecognised field fails closed.
+// grpc.ServerOption has no accessors, so this reads the probe's resolved
+// credentials through reflection; a nil or unrecognised field fails closed.
 func serverOptionsReplaceCreds(base credentials.TransportCredentials, opts []grpc.ServerOption) bool {
 	all := make([]grpc.ServerOption, 0, len(opts)+1)
 	all = append(all, grpc.Creds(base))

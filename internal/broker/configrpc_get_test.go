@@ -12,12 +12,10 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestGetConfigAll covers REQ-broker-config-001: a readable Broker returns
-// every configuration entry in dictionary order with the current values.
+// TestGetConfigAll checks that an empty key returns every entry in key order
+// with the current values.
 func TestGetConfigAll(t *testing.T) {
 	tb := newTestBroker(t)
-	// The fake seeds log.level as well; drop it so the response holds exactly
-	// the five keys this test asserts on.
 	delete(tb.cfg.values, "log.level")
 	tb.cfg.values["broker.alias"] = config.Value{Kind: config.KindString, String: "build-box"}
 	tb.cfg.values["broker.listen"] = config.Value{Kind: config.KindString, String: "127.0.0.1:7000"}
@@ -52,8 +50,8 @@ func TestGetConfigAll(t *testing.T) {
 	}
 }
 
-// TestGetConfigSecretOnlySaysSet covers REQ-broker-pairing-030: a secret key
-// is reported only as set, never with its value.
+// TestGetConfigSecretOnlySaysSet checks that a secret key is reported only as
+// set, never with its value.
 func TestGetConfigSecretOnlySaysSet(t *testing.T) {
 	tb := newTestBroker(t)
 	const secret = "S3CR3T-do-not-leak"
@@ -80,6 +78,8 @@ func TestGetConfigSecretOnlySaysSet(t *testing.T) {
 	}
 }
 
+// TestGetConfigUnknownKey checks that an unknown key is an invalid-argument
+// error naming the key.
 func TestGetConfigUnknownKey(t *testing.T) {
 	tb := newTestBroker(t)
 
@@ -93,6 +93,7 @@ func TestGetConfigUnknownKey(t *testing.T) {
 	}
 }
 
+// TestGetConfigOneKey checks that a non-empty key returns exactly that entry.
 func TestGetConfigOneKey(t *testing.T) {
 	tb := newTestBroker(t)
 

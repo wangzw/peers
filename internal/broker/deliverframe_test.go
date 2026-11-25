@@ -27,8 +27,6 @@ func testDeliverRequest() deliverRequest {
 	}
 }
 
-// validDeliverProto is a wire DeliverRequest that passes decodeDeliverRequest.
-// Tests mutate one field to build each rejection case.
 func validDeliverProto() *deliverpb.DeliverRequest {
 	return &deliverpb.DeliverRequest{
 		MessageId:       testDeliverMessageID,
@@ -55,8 +53,8 @@ func deliverFrameOf(t *testing.T, msg *deliverpb.DeliverRequest, kind link.Frame
 }
 
 // TestDeliverRequestRoundTrip checks that every field survives encoding and
-// decoding, and that the A2A body reuses the delivery identifier with role
-// ROLE_USER and one text part (plan.md section 9, A2A role and message id).
+// decoding and that the A2A body reuses the delivery identifier as one ROLE_USER
+// text part.
 func TestDeliverRequestRoundTrip(t *testing.T) {
 	want := testDeliverRequest()
 	f, err := encodeDeliverRequest(want)
@@ -109,9 +107,8 @@ func TestDeliverRequestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDecodeDeliverRequestRejects breaks one requirement at a time. A request
-// that is accepted with a malformed field would let unvalidated content reach
-// an inbox (design-broker.md:151 requires the message id to be a UUID).
+// TestDecodeDeliverRequestRejects checks that each malformed field is refused
+// with invalid_argument and the "Not sent" prefix.
 func TestDecodeDeliverRequestRejects(t *testing.T) {
 	deliverKind := link.FrameKind(deliverpb.KindDeliver)
 	cases := []struct {
@@ -170,11 +167,8 @@ func TestDecodeDeliverRequestRejects(t *testing.T) {
 	}
 }
 
-// TestReceiveOversizedSenderNameNotDeduped checks the receiver-side limit on a
-// peer-supplied name. Without it, a paired peer could send a name megabytes
-// long and have the receiver copy it into an error reply, a log line and the
-// dedupe table. The request must be rejected before the dedupe table is
-// touched, so repeated retries cannot accumulate oversized entries either.
+// TestReceiveOversizedSenderNameNotDeduped checks that an oversized peer name is
+// refused before the dedupe table is touched.
 func TestReceiveOversizedSenderNameNotDeduped(t *testing.T) {
 	f := newReceiveFixture(t, defaultReceiveSettings())
 	msg := validDeliverProto()
@@ -186,8 +180,8 @@ func TestReceiveOversizedSenderNameNotDeduped(t *testing.T) {
 	}
 }
 
-// TestDeliverResultRoundTrip checks both branches of the result oneof and that
-// a relayed origin fingerprint is not echoed back.
+// TestDeliverResultRoundTrip checks both branches of the result oneof and that a
+// relayed origin fingerprint is not echoed back.
 func TestDeliverResultRoundTrip(t *testing.T) {
 	f := encodeDeliverResult(nil)
 	if f.Kind != link.FrameKind(deliverpb.KindDeliverResult) {
@@ -225,8 +219,8 @@ func TestDeliverResultRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDecodeDeliverResultMalformed checks that a reply the sender cannot read
-// is reported as an error, never as a successful delivery.
+// TestDecodeDeliverResultMalformed checks that a reply the sender cannot read is
+// an error, never a successful delivery.
 func TestDecodeDeliverResultMalformed(t *testing.T) {
 	requestFrame, err := encodeDeliverRequest(testDeliverRequest())
 	if err != nil {
@@ -250,8 +244,7 @@ func TestDecodeDeliverResultMalformed(t *testing.T) {
 	}
 }
 
-// TestNewMessageIDIsUUIDv4 checks uniqueness and the version and variant bits
-// a sender and a dedupe table both rely on.
+// TestNewMessageIDIsUUIDv4 checks uniqueness and the version and variant bits.
 func TestNewMessageIDIsUUIDv4(t *testing.T) {
 	seen := make(map[string]struct{}, 1000)
 	for i := 0; i < 1000; i++ {
@@ -275,8 +268,8 @@ func TestNewMessageIDIsUUIDv4(t *testing.T) {
 	}
 }
 
-// TestIsRefSyntax pins the ref grammar. A looser check would let a malformed
-// ref from a peer reach FormatAddress, which panics on it.
+// TestIsRefSyntax pins the ref grammar so a malformed peer ref cannot reach
+// FormatAddress, which panics on it.
 func TestIsRefSyntax(t *testing.T) {
 	for _, s := range []string{"1a2b3c", "1a2b3c4d5e6f"} {
 		if !isRefSyntax(s) {

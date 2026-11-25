@@ -14,7 +14,7 @@ import (
 )
 
 // TestNotSentMessagePrefix pins the fixed prefix of a certainly-not-delivered
-// error. Without it a model can take a failure for a success.
+// error.
 func TestNotSentMessagePrefix(t *testing.T) {
 	err := notSent(localpb.ErrorCode_ERROR_CODE_NOT_FOUND, "x %d", 1)
 	if err.Code != localpb.ErrorCode_ERROR_CODE_NOT_FOUND {
@@ -28,9 +28,7 @@ func TestNotSentMessagePrefix(t *testing.T) {
 	}
 }
 
-// TestUnknownResultCode pins the code and prefix of an unknown result. An
-// unknown result must not be reported as a not-delivered code
-// (REQ-agent-messaging-027).
+// TestUnknownResultCode pins the code and prefix of an unknown result.
 func TestUnknownResultCode(t *testing.T) {
 	err := unknownResult("y")
 	if err.Code != localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN {
@@ -45,9 +43,8 @@ func TestUnknownResultCode(t *testing.T) {
 	}
 }
 
-// TestNotSentToStatus checks that this unit's errors go through the broker-local
-// conversion: one ErrorDetail with the same code and message and an empty
-// fingerprint.
+// TestNotSentToStatus checks that this unit's errors convert to one ErrorDetail
+// with the same code and message and an empty fingerprint.
 func TestNotSentToStatus(t *testing.T) {
 	err := notSent(localpb.ErrorCode_ERROR_CODE_NOT_VISIBLE, "z")
 	st, ok := status.FromError(toStatus(err))
@@ -73,8 +70,8 @@ func TestNotSentToStatus(t *testing.T) {
 	}
 }
 
-// TestInboxPackageDelegates checks that the inboxWriter adapter passes the
-// message id and text through to inbox.Deliver and reaches the session socket.
+// TestInboxPackageDelegates checks that the inboxWriter adapter passes the message
+// id and text through to inbox.Deliver and reaches the session socket.
 func TestInboxPackageDelegates(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
 	session, err := inbox.Lookup(fake.ConfigDir(), fake.SocketPath())

@@ -34,6 +34,8 @@ func adapterBytes(b byte) []byte {
 	return fp[:]
 }
 
+// TestAdapterDeclareErrorMapping checks that each directory declaration error
+// maps to the matching broker code and message.
 func TestAdapterDeclareErrorMapping(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -105,6 +107,8 @@ func TestAdapterDeclareErrorMapping(t *testing.T) {
 	})
 }
 
+// TestAdapterNonPeers checks that non-peer brokers are converted to local API
+// entries and peers are skipped.
 func TestAdapterNonPeers(t *testing.T) {
 	dialer := directory.KnownBroker{
 		Fingerprint: adapterFP(1),
@@ -163,6 +167,8 @@ func TestAdapterNonPeers(t *testing.T) {
 	}
 }
 
+// TestAdapterCardAddresses checks that an entry's addresses are returned by
+// fingerprint and a missing entry yields nil.
 func TestAdapterCardAddresses(t *testing.T) {
 	addresses := []config.AdvertisedAddr{
 		{Kind: config.AdvertisedKindDirect, Addr: "10.0.0.9:17443"},
@@ -183,6 +189,8 @@ func TestAdapterCardAddresses(t *testing.T) {
 	}
 }
 
+// TestAdapterPublicTopicsConverts checks that directory public topics are
+// converted field for field.
 func TestAdapterPublicTopicsConverts(t *testing.T) {
 	publisher := directory.Fingerprint{0xde, 0xad, 0xbe, 0xef}
 	d := &discoveryDir{topics: []directory.PublicTopic{
@@ -206,6 +214,8 @@ func TestAdapterPublicTopicsConverts(t *testing.T) {
 	}
 }
 
+// TestAdapterConnectWarnings checks that a card at a presented address with a
+// different fingerprint produces a mismatch warning.
 func TestAdapterConnectWarnings(t *testing.T) {
 	dialed := adapterFP(1)
 	cardOwner := adapterFP(2)
@@ -234,6 +244,8 @@ func TestAdapterConnectWarnings(t *testing.T) {
 	}
 }
 
+// TestAdapterInstallFillsHooks checks that install fills Directory, Catalog,
+// Warner and CardIssuer with the adapter.
 func TestAdapterInstallFillsHooks(t *testing.T) {
 	ad := newDirectoryAdapter(&discoveryDir{})
 	deps := &Deps{}

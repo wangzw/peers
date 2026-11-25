@@ -27,9 +27,6 @@ var (
 	_ linkControl = noopLink{}
 )
 
-// wiringChecker is an accessChecker safe for the gRPC server goroutine. The
-// package's fakeAccessChecker records without a lock, which is fine for direct
-// interceptor calls but not for a call arriving over the network.
 type wiringChecker struct {
 	mu      sync.Mutex
 	granted bool
@@ -44,7 +41,6 @@ func (c *wiringChecker) Check(_ context.Context, who Caller, path string, need A
 	return c.granted, c.err
 }
 
-// wiringIssuer records card reissues.
 type wiringIssuer struct {
 	mu sync.Mutex
 	n  int
@@ -62,8 +58,6 @@ func (i *wiringIssuer) count() int {
 	return i.n
 }
 
-// newWiringComponents runs configWiring.Assemble for cfg without going through
-// Run, and starts nothing.
 func newWiringComponents(t *testing.T, cfg ConfigSource, deps *Deps, asm *Assembly, checker accessChecker) []Component {
 	t.Helper()
 	w := &configWiring{checker: checker}
@@ -74,6 +68,8 @@ func newWiringComponents(t *testing.T, cfg ConfigSource, deps *Deps, asm *Assemb
 	return comps
 }
 
+// TestConfigWiringAddsInterceptors checks that assembling configWiring adds
+// two interceptors and that a denied call reaches neither Set nor the handler.
 func TestConfigWiringAddsInterceptors(t *testing.T) {
 	checker := &wiringChecker{}
 	var before, after int
@@ -116,6 +112,8 @@ func TestConfigWiringAddsInterceptors(t *testing.T) {
 	}
 }
 
+// TestConfigWiringDefaultsToAllowAll checks that with no checker supplied,
+// local calls are allowed.
 func TestConfigWiringDefaultsToAllowAll(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		newWiringComponents(t, d.Config, d, &Assembly{}, nil)
@@ -151,6 +149,8 @@ func TestConfigWiringDefaultsToAllowAll(t *testing.T) {
 	}
 }
 
+// TestConfigWiringUsesCardIssuer checks that an alias change reissues the
+// directory card.
 func TestConfigWiringUsesCardIssuer(t *testing.T) {
 	tb := newTestBroker(t)
 	issuer := &wiringIssuer{}
@@ -167,6 +167,8 @@ func TestConfigWiringUsesCardIssuer(t *testing.T) {
 	}
 }
 
+// TestConfigComponentRegistersListenValidator checks that Start registers only
+// the broker.listen validator and subscribes the two keys.
 func TestConfigComponentRegistersListenValidator(t *testing.T) {
 	tb := newTestBroker(t)
 	deps := &Deps{Config: tb.cfg}
@@ -194,6 +196,8 @@ func TestConfigComponentRegistersListenValidator(t *testing.T) {
 	}
 }
 
+// TestConfigComponentListenValidatorProbesNewAddress checks that the
+// registered validator rejects an address the probe refuses.
 func TestConfigComponentListenValidatorProbesNewAddress(t *testing.T) {
 	tb := newTestBroker(t)
 	deps := &Deps{Config: tb.cfg}
@@ -219,6 +223,8 @@ func TestConfigComponentListenValidatorProbesNewAddress(t *testing.T) {
 	}
 }
 
+// TestConfigWiringWithoutLinkAndDirectory checks that every change callback
+// tolerates a no-op link and card issuer.
 func TestConfigWiringWithoutLinkAndDirectory(t *testing.T) {
 	tb := newTestBroker(t)
 	deps := &Deps{Config: tb.cfg}
@@ -227,12 +233,13 @@ func TestConfigWiringWithoutLinkAndDirectory(t *testing.T) {
 	if err := comps[0].Start(context.Background(), tb.b); err != nil {
 		t.Fatalf("component Start: %v", err)
 	}
-	// Every callback must tolerate the no-op link and issuer.
 	tb.cfg.fireKey("broker.alias", stringValue("hostA"), stringValue("hostB"))
 	tb.cfg.fireKey("broker.listen", stringValue(""), stringValue("127.0.0.1:7001"))
 	tb.cfg.fireAdvertised(nil, []config.AdvertisedAddr{{Kind: config.AdvertisedKindDirect, Addr: "10.0.0.1:7000"}})
 }
 
+// TestConfigComponentStopStopsForwarding checks that changes delivered after
+// Stop are not forwarded.
 func TestConfigComponentStopStopsForwarding(t *testing.T) {
 	tb := newTestBroker(t)
 	rec := &wireRecorder{}
@@ -259,6 +266,8 @@ func TestConfigComponentStopStopsForwarding(t *testing.T) {
 	}
 }
 
+// TestDefaultAssemblersEndsWithConfig checks that configWiring is the last
+// default assembler.
 func TestDefaultAssemblersEndsWithConfig(t *testing.T) {
 	assemblers := DefaultAssemblers()
 	if len(assemblers) == 0 {
@@ -270,9 +279,9 @@ func TestDefaultAssemblersEndsWithConfig(t *testing.T) {
 	}
 }
 
-// newWiringServer builds a Broker whose server options come from configWiring
-// and serves it on an in-memory listener. The peer credentials are read from a
-// stub, because a bufconn connection carries no SO_PEERCRED.
+// newWiringServer serves a Broker whose server options come from configWiring
+// on a bufconn listener; the peer credentials come from a stub because a
+// bufconn connection carries no SO_PEERCRED.
 func newWiringServer(t *testing.T, checker accessChecker) (*fakeConfig, localpb.LocalClient) {
 	t.Helper()
 
@@ -318,10 +327,9 @@ func newWiringServer(t *testing.T, checker accessChecker) (*fakeConfig, localpb.
 	return cfg, localpb.NewLocalClient(cc)
 }
 
-// TestLocalServerEndToEndOverBufconn covers REQ-broker-config-002 and
-// REQ-broker-config-021: over a real gRPC server, a permitted caller changes
-// the configuration and reads the audit log, and a denied caller reaches
-// neither.
+// TestLocalServerEndToEndOverBufconn checks over a real gRPC server that a
+// permitted caller changes the configuration and reads the audit log while a
+// denied caller reaches neither.
 func TestLocalServerEndToEndOverBufconn(t *testing.T) {
 	t.Run("allowed", func(t *testing.T) {
 		checker := &wiringChecker{granted: true}

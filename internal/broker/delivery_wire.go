@@ -10,14 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// evConfigRead records a configuration read that failed. The delivery keeps
-// running with the documented default for the key instead of failing the
-// operation.
 const evConfigRead = "config_read"
 
-// linkAdapter exposes the part of *link.Link the delivery uses. Request,
-// HandleRequest, Subscribe and Kick come from the embedded link; Established
-// reads the link state once.
 type linkAdapter struct{ *link.Link }
 
 // Established reports whether the link to p is established.
@@ -25,8 +19,6 @@ func (a linkAdapter) Established(p peerID) bool {
 	return a.State(p).Phase == link.PhaseEstablished
 }
 
-// topicVisibility adapts the broker's TopicTable to the delivery's visibility
-// interface. The topic package is never imported here.
 type topicVisibility struct{ t TopicTable }
 
 // VisibleLocal reports whether two local Agents share a topic.
@@ -61,16 +53,12 @@ func (v topicVisibility) RemoteMembers(peer peerID) []remoteMember {
 	return out
 }
 
-// configSettings reads the send configuration through ConfigSource on every
-// call, so a reload takes effect on the next operation. A failed read falls
-// back to the documented default and is logged.
 type configSettings struct {
 	cfg ConfigSource
 	log *slog.Logger
 }
 
-// Send returns the current send settings. Every key is read afresh; values are
-// never cached across calls.
+// Send returns the current send settings, reading every key afresh.
 func (s configSettings) Send() sendSettings {
 	return sendSettings{
 		RequestTimeout: s.duration("send.request_timeout", 20*time.Second),
@@ -83,8 +71,8 @@ func (s configSettings) Send() sendSettings {
 	}
 }
 
-// LocalAlias returns the effective broker.alias value. The empty string is
-// returned when the read fails.
+// LocalAlias returns the effective broker.alias value, or "" when the read
+// fails.
 func (s configSettings) LocalAlias() string {
 	v, err := s.cfg.Get("broker.alias")
 	if err != nil {
@@ -94,9 +82,8 @@ func (s configSettings) LocalAlias() string {
 	return v.String
 }
 
-// Offline reports the current broker.offline value. It is never cached: the
-// setting changes while the Broker runs. A failed read is treated as online
-// and logged, the same way a failed duration read falls back to its default.
+// Offline reports the current broker.offline value; a failed read is treated as
+// online and logged.
 func (s configSettings) Offline() bool {
 	v, err := s.cfg.Get("broker.offline")
 	if err != nil {
@@ -106,7 +93,6 @@ func (s configSettings) Offline() bool {
 	return v.Bool
 }
 
-// duration reads a duration key, falling back to def on error.
 func (s configSettings) duration(key string, def time.Duration) time.Duration {
 	v, err := s.cfg.Get(key)
 	if err != nil {
@@ -116,7 +102,6 @@ func (s configSettings) duration(key string, def time.Duration) time.Duration {
 	return v.Duration
 }
 
-// integer reads an integer key, falling back to def on error.
 func (s configSettings) integer(key string, def int) int {
 	v, err := s.cfg.Get(key)
 	if err != nil {
@@ -126,7 +111,6 @@ func (s configSettings) integer(key string, def int) int {
 	return int(v.Int)
 }
 
-// readFailed logs one failed configuration read.
 func (s configSettings) readFailed(key string, err error) {
 	logger := s.log
 	if logger == nil {
@@ -135,16 +119,13 @@ func (s configSettings) readFailed(key string, err error) {
 	logger.Error(evConfigRead, "key", key, "error", err)
 }
 
-// agentTableAdapter adapts the Broker's agent table to localAgents. The Broker
-// is attached when the delivery component starts; before that every call
-// reports an empty table, and Reread reports errAgentGone. The pointer is
-// atomic so a handler that arrives between the link listening and the component
-// starting cannot race with the attachment.
+// agentTableAdapter adapts the Broker's agent table to localAgents; the Broker
+// is attached at component start, and the pointer is atomic so an early handler
+// does not race with it.
 type agentTableAdapter struct {
 	broker atomic.Pointer[Broker]
 }
 
-// setBroker attaches the Broker the adapter reads from.
 func (a *agentTableAdapter) setBroker(b *Broker) {
 	a.broker.Store(b)
 }
@@ -176,8 +157,8 @@ func (a *agentTableAdapter) All() []agentView {
 	return out
 }
 
-// Reread refreshes one Agent and returns the new snapshot. It reports
-// errAgentGone exactly as the Broker does.
+// Reread refreshes one Agent and returns the new snapshot, or errAgentGone as
+// the Broker does.
 func (a *agentTableAdapter) Reread(id string) (agentView, error) {
 	b := a.broker.Load()
 	if b == nil {
@@ -190,8 +171,8 @@ func (a *agentTableAdapter) Reread(id string) (agentView, error) {
 	return viewOf(s), nil
 }
 
-// viewOf converts an agent snapshot to the delivery's read-only view. A nil
-// Inbox stays nil so writeInbox can report it.
+// viewOf converts an agent snapshot to a read-only view; a nil Inbox stays nil
+// so writeInbox reports it.
 func viewOf(s agentSnapshot) agentView {
 	return agentView{
 		ID:               string(s.ID),
@@ -210,14 +191,10 @@ func viewOf(s agentSnapshot) agentView {
 	}
 }
 
-// deliveryAssembler builds the delivery from the link, topic and pairing state
-// the earlier assemblers installed, registers the delivery request handler, and
-// returns the component that attaches the Broker to the agent table adapter.
-// Registration happens here, before Run binds the link listener, so no inbound
-// request can arrive unhandled.
+// deliveryAssembler builds the delivery and registers the request handler before
+// Run binds the link listener, so no inbound request arrives unhandled.
 type deliveryAssembler struct{}
 
-// newDeliveryAssembler returns the production assembler.
 func newDeliveryAssembler() Assembler { return deliveryAssembler{} }
 
 // Name is the assembler's name in startup errors.
@@ -244,8 +221,6 @@ func (deliveryAssembler) Assemble(_ context.Context, cfg ConfigSource, deps *Dep
 	return []Component{&deliveryComponent{agents: agents, inbound: d.inbound}}, nil
 }
 
-// deliveryComponent attaches the Broker to the delivery's agent table adapter
-// when the Broker has been constructed.
 type deliveryComponent struct {
 	agents  *agentTableAdapter
 	inbound *inboundLimiter
@@ -254,18 +229,17 @@ type deliveryComponent struct {
 // Name is the component's name in startup errors.
 func (*deliveryComponent) Name() string { return "delivery" }
 
-// Start attaches the Broker. It runs before the link starts and before the
-// local socket is served, so no delivery can observe a nil Broker.
+// Start attaches the Broker before the link starts and the local socket is
+// served, so no delivery observes a nil Broker.
 func (c *deliveryComponent) Start(_ context.Context, b *Broker) error {
 	if b == nil {
-		// The wiring test starts the component without a Broker to check the
-		// request handler is installed before the link listens.
+		// The wiring test starts the component with no Broker to check the
+		// handler is installed before the link listens.
 		return nil
 	}
 	c.agents.setBroker(b)
-	// A target Agent that leaves the table cannot receive another message;
-	// dropping its buckets keeps the quota table from growing with every name
-	// that ever existed.
+	// A target that leaves the table cannot receive another message; dropping
+	// its buckets keeps the quota table bounded.
 	b.onUnregister(func(id AgentID) { c.inbound.dropTarget(string(id)) })
 	return nil
 }

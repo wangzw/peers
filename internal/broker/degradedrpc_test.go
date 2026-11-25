@@ -26,6 +26,8 @@ func degradedTestBroker(t *testing.T) *Broker {
 	return b
 }
 
+// TestBrokerStatusAndListBrokersCarryDegraded checks that Status and
+// ListBrokers return the local-only degraded state.
 func TestBrokerStatusAndListBrokersCarryDegraded(t *testing.T) {
 	b := degradedTestBroker(t)
 	state := &localpb.DegradedState{
@@ -59,6 +61,8 @@ func TestBrokerStatusAndListBrokersCarryDegraded(t *testing.T) {
 	}
 }
 
+// TestBrokerNormalOmitsDegraded checks that Status and ListBrokers omit the
+// degraded state on a normal Broker.
 func TestBrokerNormalOmitsDegraded(t *testing.T) {
 	b := degradedTestBroker(t)
 
@@ -81,6 +85,8 @@ func TestBrokerNormalOmitsDegraded(t *testing.T) {
 	}
 }
 
+// TestCreatePairingKeyRefusedLocallyOnly checks that CreatePairingKey returns
+// broker_degraded in local-only degradation but not on a normal Broker.
 func TestCreatePairingKeyRefusedLocallyOnly(t *testing.T) {
 	b := degradedTestBroker(t)
 	state := &localpb.DegradedState{
@@ -102,8 +108,6 @@ func TestCreatePairingKeyRefusedLocallyOnly(t *testing.T) {
 		}
 	}
 
-	// Normal and diagnostics-only states do not change this call's degraded
-	// behavior; the diagnostics service answers before a Broker exists.
 	b.setDegraded(nil)
 	_, err = b.CreatePairingKey(context.Background(), &localpb.CreatePairingKeyRequest{})
 	if err == nil {
@@ -114,6 +118,8 @@ func TestCreatePairingKeyRefusedLocallyOnly(t *testing.T) {
 	}
 }
 
+// TestBrokerDiagnosticsStatusIsMinimal checks that diagnostics-only Status
+// returns the version and the fault without agents or peers.
 func TestBrokerDiagnosticsStatusIsMinimal(t *testing.T) {
 	b := degradedTestBroker(t)
 	b.deps.Version = "1.2.3"
@@ -137,7 +143,6 @@ func TestBrokerDiagnosticsStatusIsMinimal(t *testing.T) {
 	}
 }
 
-// fakeSendPeers is the peer table the send decoration reads.
 type fakeSendPeers struct {
 	alias string
 	role  pairing.Role
@@ -152,9 +157,8 @@ func (f fakeSendPeers) EffectiveAlias(peerID) string { return f.alias }
 
 func (f fakeSendPeers) Role(peerID) pairing.Role { return f.role }
 
-// TestPeerUnreachableReasonOnlyForAcceptor checks the design's send rule: only
-// a peer this Broker accepted the pairing for carries the local-only reason,
-// because a dialer-side failure is not caused by the missing listener.
+// TestPeerUnreachableReasonOnlyForAcceptor checks that only an acceptor-side
+// peer_unreachable gains the local-only degraded reason.
 func TestPeerUnreachableReasonOnlyForAcceptor(t *testing.T) {
 	b := degradedTestBroker(t)
 	newUnreachable := func() error {
@@ -189,7 +193,6 @@ func TestPeerUnreachableReasonOnlyForAcceptor(t *testing.T) {
 		t.Fatalf("no peer table gained the degraded reason: %q", got)
 	}
 
-	// Normal and diagnostics-only runs leave an acceptor error alone.
 	usePeers(pairing.RoleAcceptor, true)
 	b.setDegraded(nil)
 	if got := b.decoratePeerUnreachable(newUnreachable(), "a1@hostA.peer").Error(); strings.Contains(got, reason) {
@@ -203,7 +206,6 @@ func TestPeerUnreachableReasonOnlyForAcceptor(t *testing.T) {
 		t.Fatalf("diagnostics-only run altered the error: %q", got)
 	}
 
-	// A different code is untouched.
 	b.setDegraded(&localpb.DegradedState{
 		Level:  localpb.DegradedLevel_DEGRADED_LEVEL_LOCAL_ONLY,
 		Reason: reason,

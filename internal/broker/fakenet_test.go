@@ -9,12 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// linkPair is an ordered pair of peers. The first element is the sender or the
-// caller, the second the receiver or the peer acted on.
 type linkPair [2]peerID
 
-// pairKey returns a canonical key for an unordered pair, so both ends of a link
-// read and rotate the same channel.
 func pairKey(a, b peerID) linkPair {
 	if lessPeer(a, b) {
 		return linkPair{a, b}
@@ -31,38 +27,22 @@ func lessPeer(a, b peerID) bool {
 	return false
 }
 
-// fakeNet is an in-process network of fake links between delivery instances. It
-// connects several delivery values in one process and lets a test force link
-// drops, lost replies and requests that were never sent.
 type fakeNet struct {
 	mu sync.Mutex
 
-	// ends holds one fakeEnd per Broker; an end is created on first use.
-	ends map[peerID]*fakeEnd
-	// up records whether an unordered pair is linked.
-	up map[linkPair]bool
-	// down holds the channel closed when an unordered pair goes down. Both
-	// ends watch the same channel.
-	down map[linkPair]chan struct{}
-	// reqs records the frames sent in one direction, in order.
-	reqs map[linkPair][]link.Frame
-	// kickCounts counts Kick calls in one direction.
-	kickCounts map[linkPair]int
-	// kickHooks holds the hooks run on Kick in one direction.
-	kickHooks map[linkPair][]func()
-	// drops counts the replies still to be lost in one direction.
-	drops map[linkPair]int
-	// replyHook, when set, runs when a reply reaches the caller, before the
-	// request resolves it. A test uses it to move the link at that instant.
-	replyHook func()
-	// handlerCancels holds the cancel function of every handler still running,
-	// so stop can end one a test abandoned; closed refuses later handlers.
+	ends           map[peerID]*fakeEnd
+	up             map[linkPair]bool
+	down           map[linkPair]chan struct{}
+	reqs           map[linkPair][]link.Frame
+	kickCounts     map[linkPair]int
+	kickHooks      map[linkPair][]func()
+	drops          map[linkPair]int
+	replyHook      func()
 	handlerCancels map[int]context.CancelFunc
 	nextHandler    int
 	closed         bool
 }
 
-// newFakeNet returns an empty network. All links start down.
 func newFakeNet(t *testing.T) *fakeNet {
 	t.Helper()
 	n := &fakeNet{
@@ -79,9 +59,6 @@ func newFakeNet(t *testing.T) *fakeNet {
 	return n
 }
 
-// stop cancels every handler still running and refuses later ones, so a handler
-// a test abandoned when its request ended does not outlive the test. A handler
-// context outlives the request by design, so only cleanup can end it.
 func (n *fakeNet) stop() {
 	n.mu.Lock()
 	n.closed = true
@@ -96,8 +73,6 @@ func (n *fakeNet) stop() {
 	}
 }
 
-// watchHandler registers a handler's cancel function for stop and returns the
-// id unwatchHandler takes. A handler registered after stop is canceled at once.
 func (n *fakeNet) watchHandler(cancel context.CancelFunc) int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -116,7 +91,6 @@ func (n *fakeNet) unwatchHandler(id int) {
 	delete(n.handlerCancels, id)
 }
 
-// end returns the fakeEnd of self, creating it on first use.
 func (n *fakeNet) end(self peerID) *fakeEnd {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -137,10 +111,8 @@ func (n *fakeNet) endLocked(self peerID) *fakeEnd {
 }
 
 // setUp marks the link between a and b up or down and fires the matching
-// callbacks on both ends, a first, before it returns. Callbacks fire only when
-// the state changes, like the real link's one event per transition; repeating
-// the state that already holds does nothing. Callbacks run in order and outside
-// the network lock so they may call back into it.
+// callbacks on both ends; callbacks fire only on a transition, in order and
+// outside the network lock.
 func (n *fakeNet) setUp(a, b peerID, up bool) {
 	n.mu.Lock()
 
@@ -193,24 +165,22 @@ func (n *fakeNet) setUp(a, b peerID, up bool) {
 	}
 }
 
-// dropReplies makes the next count replies from to to from disappear. The
-// handler still runs; the requester sees the link go down.
+// dropReplies loses the next count replies to requests sent from from to to;
+// the handler still runs and the requester sees the link go down.
 func (n *fakeNet) dropReplies(from, to peerID, count int) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.drops[linkPair{from, to}] = count
 }
 
-// onReply installs f to run when a reply reaches the caller, before the request
-// resolves it. A test uses it to move the link at that instant, which makes the
-// reply-versus-down race in Request deterministic.
+// onReply runs f when a reply reaches the caller, before the request resolves
+// it, making the reply-versus-down race deterministic.
 func (n *fakeNet) onReply(f func()) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.replyHook = f
 }
 
-// reachedReply runs the reply hook, if a test installed one.
 func (n *fakeNet) reachedReply() {
 	n.mu.Lock()
 	f := n.replyHook
@@ -220,7 +190,6 @@ func (n *fakeNet) reachedReply() {
 	}
 }
 
-// onKick installs f on the Kick calls self makes towards peer.
 func (n *fakeNet) onKick(self, peer peerID, f func()) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -228,22 +197,18 @@ func (n *fakeNet) onKick(self, peer peerID, f func()) {
 	n.kickHooks[key] = append(n.kickHooks[key], f)
 }
 
-// requests returns the frames sent from from to to, in order.
 func (n *fakeNet) requests(from, to peerID) []link.Frame {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return append([]link.Frame(nil), n.reqs[linkPair{from, to}]...)
 }
 
-// kicks returns how many times self called Kick towards peer.
 func (n *fakeNet) kicks(self, peer peerID) int {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	return n.kickCounts[linkPair{self, peer}]
 }
 
-// linkState reports whether the link is up and returns the channel closed when
-// it goes down.
 func (n *fakeNet) linkState(self, peer peerID) (up bool, down <-chan struct{}) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -263,7 +228,6 @@ func (n *fakeNet) recordRequest(from, to peerID, f link.Frame) {
 	n.reqs[key] = append(n.reqs[key], f)
 }
 
-// takeDrop consumes one lost reply for the direction from to to.
 func (n *fakeNet) takeDrop(from, to peerID) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -275,7 +239,7 @@ func (n *fakeNet) takeDrop(from, to peerID) bool {
 	return true
 }
 
-// fakeEnd is one Broker's view of the fake network. It implements deliveryLink.
+// fakeEnd is one Broker's view of the fake network; it implements deliveryLink.
 type fakeEnd struct {
 	net  *fakeNet
 	self peerID
@@ -288,8 +252,8 @@ type fakeEnd struct {
 
 var _ deliveryLink = (*fakeEnd)(nil)
 
-// Request follows the link contract: not established means sent is false; once
-// the frame is out, sent is true even when the reply is lost or the link drops.
+// Request follows the link contract: sent is false when the link is not
+// established and true once the frame is out, even if the reply is lost.
 func (e *fakeEnd) Request(ctx context.Context, p peerID, f link.Frame) (link.Frame, bool, error) {
 	up, down := e.net.linkState(e.self, p)
 	if !up {
@@ -302,10 +266,8 @@ func (e *fakeEnd) Request(ctx context.Context, p peerID, f link.Frame) (link.Fra
 		return link.Frame{}, true, &link.UnsupportedError{Kind: f.Kind}
 	}
 
-	// The handler runs on a context of its own, as in the real link: only the
-	// connection ending cancels it, not the caller giving up on the request.
-	// The cancel is registered with the network too, so a handler a test
-	// abandons is ended by the test's cleanup instead of outliving it.
+	// The handler runs on its own context, cancelled only when the connection
+	// ends; its cancel is registered so test cleanup ends an abandoned handler.
 	handlerCtx, cancelHandler := context.WithCancel(context.Background())
 	handlerID := e.net.watchHandler(cancelHandler)
 	go func() {
@@ -326,12 +288,8 @@ func (e *fakeEnd) Request(ctx context.Context, p peerID, f link.Frame) (link.Fra
 	select {
 	case reply := <-replies:
 		e.net.reachedReply()
-		// A link that went down before the reply was resolved wins over the
-		// reply. The down may have canceled the handler, in which case the
-		// frame it returned is not a reply the peer ever sent; and when the
-		// down and the reply are both ready, an unordered select could
-		// otherwise pick the reply and report a success for a request whose
-		// link dropped.
+		// A link that went down before the reply is resolved wins over the reply,
+		// so an unordered select cannot report success for a dropped link.
 		select {
 		case <-down:
 			return link.Frame{}, true, link.ErrLinkDown
@@ -377,7 +335,6 @@ func (e *fakeEnd) Established(p peerID) bool {
 	return up
 }
 
-// Kick counts the call and runs the hooks registered for this direction.
 func (e *fakeEnd) Kick(p peerID) {
 	n := e.net
 	key := linkPair{e.self, p}

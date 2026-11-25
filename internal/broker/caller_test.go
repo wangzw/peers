@@ -24,7 +24,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/lookupgate"
 )
 
-// resetUsernameCache replaces the cache and its seams for one test.
 func resetUsernameCache(t *testing.T) {
 	t.Helper()
 	oldLookup, oldNow := lookupUsername, usernameNow
@@ -43,9 +42,8 @@ func resetUsernameCache(t *testing.T) {
 	})
 }
 
-// testClock is a manually advanced clock. The background refresh reads the
-// clock from its own goroutine, so the time is guarded rather than a plain
-// variable the test writes.
+// testClock is a manually advanced clock; the background refresh reads it from
+// its own goroutine, so the time is guarded.
 type testClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -65,6 +63,8 @@ func (c *testClock) advance(d time.Duration) {
 	c.t = c.t.Add(d)
 }
 
+// TestUsernameForCachesUntilTTL checks that a resolved name is cached until its
+// TTL and refreshed in the background after it expires.
 func TestUsernameForCachesUntilTTL(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -86,8 +86,6 @@ func TestUsernameForCachesUntilTTL(t *testing.T) {
 		t.Errorf("lookup ran %d times inside the TTL, want 1", got)
 	}
 
-	// An expired real account keeps its cached name at once and refreshes in
-	// the background instead of making the caller wait for a lookup.
 	clock.advance(usernameCacheTTL + time.Second)
 	if got := usernameFor(7); got != "alice" {
 		t.Fatalf("usernameFor(7) after the TTL = %q, want the cached name", got)
@@ -96,7 +94,6 @@ func TestUsernameForCachesUntilTTL(t *testing.T) {
 	if got := calls.Load(); got != 2 {
 		t.Errorf("lookup ran %d times after the refresh, want 2", got)
 	}
-	// The refreshed entry is fresh again.
 	if got := usernameFor(7); got != "alice" {
 		t.Fatalf("usernameFor(7) after the refresh = %q, want alice", got)
 	}
@@ -105,7 +102,6 @@ func TestUsernameForCachesUntilTTL(t *testing.T) {
 	}
 }
 
-// waitForRefresh waits until no background refresh for uid is running.
 func waitForRefresh(t *testing.T, uid uint32) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -123,9 +119,8 @@ func waitForRefresh(t *testing.T, uid uint32) {
 	}
 }
 
-// TestUsernameForDoesNotCacheLookupFailure checks that a lookup failure
-// answers only the request that ran it: the next call asks the account
-// database again instead of reusing the failure.
+// TestUsernameForDoesNotCacheLookupFailure checks that a lookup failure answers
+// only the request that ran it.
 func TestUsernameForDoesNotCacheLookupFailure(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -153,6 +148,8 @@ func TestUsernameForDoesNotCacheLookupFailure(t *testing.T) {
 	}
 }
 
+// TestUsernameForCachesEmptyName checks that an account with an empty name is
+// cached as the decimal uid.
 func TestUsernameForCachesEmptyName(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -174,9 +171,8 @@ func TestUsernameForCachesEmptyName(t *testing.T) {
 	}
 }
 
-// TestUsernameForCoalescesConcurrentLookups: callers that miss the cache for
-// one uid at the same moment wait for a single lookup instead of each running
-// its own.
+// TestUsernameForCoalescesConcurrentLookups checks that concurrent cache misses
+// for one uid share a single lookup.
 func TestUsernameForCoalescesConcurrentLookups(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -219,9 +215,6 @@ func TestUsernameForCoalescesConcurrentLookups(t *testing.T) {
 	case <-time.After(eventTimeout):
 		t.Fatal("the lookup never started")
 	}
-	// The other callers must already be waiting on the in-flight lookup, not
-	// merely scheduled to reach it: the hook runs inside the coalescing path, so
-	// the count is the barrier the fixed sleep stood in for.
 	for i := 1; i < workers; i++ {
 		select {
 		case <-waiting:
@@ -241,7 +234,6 @@ type helloCall struct {
 	ok     bool
 }
 
-// credTestServer records what Hello sees on the caller's connection.
 type credTestServer struct {
 	localpb.UnimplementedLocalServer
 	calls chan helloCall
@@ -274,8 +266,6 @@ type credTestBroker struct {
 	path string
 }
 
-// startCredBroker starts a real gRPC server on a Unix socket. The socket path
-// is kept short because Unix socket paths are limited to about 100 bytes.
 func startCredBroker(t *testing.T, creds credentials.TransportCredentials, impl localpb.LocalServer) *credTestBroker {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "apcred")
@@ -313,6 +303,8 @@ func callHello(t *testing.T, cc *grpc.ClientConn) error {
 	return err
 }
 
+// TestCallerFromPeerCred checks that CallerFrom returns the connection's uid and
+// pid read from peer credentials.
 func TestCallerFromPeerCred(t *testing.T) {
 	srv := newCredTestServer()
 	b := startCredBroker(t, newPeerCredCreds(ReadPeerCred, func(Caller) bool { return true }, nil, nil), srv)
@@ -339,8 +331,8 @@ func TestCallerFromPeerCred(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-019: a user Broker rejects connections from other
-// accounts during the handshake, before any RPC handler runs.
+// TestUserBrokerRejectsOtherAccount checks that a user Broker rejects another
+// account's connection during the handshake before any handler runs.
 func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 	if os.Geteuid() == 4242 {
 		t.Skip("test process runs as uid 4242")
@@ -359,10 +351,8 @@ func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("Hello error = %v (code %v), want code %v", err, status.Code(err), codes.Unavailable)
 	}
-	// The window is the assertion: a handler that ran would push into the
-	// buffered channel, and watching for it is the only way to catch a start
-	// that races the handshake. A window can only miss such a start under load,
-	// not fail a correct run.
+	// The window is the assertion: a handler that started would be caught under
+	// normal load, and a correct run cannot fail here.
 	select {
 	case call := <-srv.calls:
 		t.Fatalf("Hello was called with caller %+v, want the connection rejected during the handshake", call.caller)
@@ -378,6 +368,8 @@ func TestUserBrokerRejectsOtherAccount(t *testing.T) {
 	}
 }
 
+// TestReadPeerCredErrorClosesConnection checks that a peer-credential read
+// failure fails the connection before any handler runs.
 func TestReadPeerCredErrorClosesConnection(t *testing.T) {
 	readErr := errors.New("cannot read peer credentials")
 	srv := newCredTestServer()
@@ -391,9 +383,8 @@ func TestReadPeerCredErrorClosesConnection(t *testing.T) {
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("Hello error = %v (code %v), want code %v", err, status.Code(err), codes.Unavailable)
 	}
-	// The window is the assertion: an early handler would push into the
-	// buffered channel. A window can only miss such a start under load, not
-	// fail a correct run.
+	// The window is the assertion: a handler that started would be caught under
+	// normal load, and a correct run cannot fail here.
 	select {
 	case call := <-srv.calls:
 		t.Fatalf("Hello was called with caller %+v, want the connection closed during the handshake", call.caller)
@@ -401,6 +392,8 @@ func TestReadPeerCredErrorClosesConnection(t *testing.T) {
 	}
 }
 
+// TestCallerReadOncePerConnection checks that peer credentials are read once per
+// connection.
 func TestCallerReadOncePerConnection(t *testing.T) {
 	var reads atomic.Int32
 	read := func(net.Conn) (Caller, error) {
@@ -421,6 +414,8 @@ func TestCallerReadOncePerConnection(t *testing.T) {
 	}
 }
 
+// TestAuthInfoSharedPerConnection checks that calls on one connection share an
+// AuthInfo and another connection gets its own.
 func TestAuthInfoSharedPerConnection(t *testing.T) {
 	srv := newCredTestServer()
 	b := startCredBroker(t, newPeerCredCreds(ReadPeerCred, func(Caller) bool { return true }, nil, nil), srv)
@@ -462,9 +457,8 @@ func TestAuthInfoSharedPerConnection(t *testing.T) {
 	}
 }
 
-// TestAccountKeyForUnknownUIDsShareBucket checks that uids with no account
-// entry share one account key, so a rootless container's rotating subuid
-// cannot multiply a per-account quota.
+// TestAccountKeyForUnknownUIDsShareBucket checks that uids with no account entry
+// share one account key.
 func TestAccountKeyForUnknownUIDsShareBucket(t *testing.T) {
 	resetUsernameCache(t)
 	lookupUsername = func(uid uint32) (accountdb.User, error) {
@@ -485,16 +479,16 @@ func TestAccountKeyForUnknownUIDsShareBucket(t *testing.T) {
 	}
 }
 
-// TestUnknownAccountCacheIsBounded checks that a long list of distinct uids,
-// as a rootless container's subuid rotation produces, cannot grow the negative
-// cache without bound, and that none of them enters the real-account cache.
+// TestUnknownAccountCacheIsBounded checks that rotating uids with no account
+// entry cannot grow the negative cache past its bound or enter the real-account
+// cache.
 func TestUnknownAccountCacheIsBounded(t *testing.T) {
 	resetUsernameCache(t)
 	lookupUsername = func(uint32) (accountdb.User, error) { return accountdb.User{}, accountdb.ErrNotFound }
 	usernameNow = func() time.Time { return time.Date(2026, 11, 19, 0, 0, 0, 0, time.UTC) }
 
-	// The bound is spelled out rather than read from usernameUnknownCacheMax,
-	// so a change that raises the constant cannot also raise the assertion.
+	// The bound is a literal, not usernameUnknownCacheMax, so raising the
+	// constant cannot also raise the assertion.
 	const wantMax = 1024
 	const uids = 5000
 	for i := 0; i < uids; i++ {
@@ -511,9 +505,8 @@ func TestUnknownAccountCacheIsBounded(t *testing.T) {
 	}
 }
 
-// TestUnknownAccountCacheEvictsLeastRecentlyUsed checks that a hit refreshes
-// an entry's place in the negative cache, so the uid touched most recently
-// survives a later rotation while an older one is evicted.
+// TestUnknownAccountCacheEvictsLeastRecentlyUsed checks that a hit keeps a
+// negative-cache entry while an older one is evicted.
 func TestUnknownAccountCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	resetUsernameCache(t)
 	var mu sync.Mutex
@@ -535,9 +528,7 @@ func TestUnknownAccountCacheEvictsLeastRecentlyUsed(t *testing.T) {
 	for uid := uint32(1); uid <= wantMax; uid++ {
 		usernameFor(uid)
 	}
-	// Touch uid 1, making it the most recently used entry.
 	usernameFor(1)
-	// Rotate enough new uids to evict the least recently used ones, 2 and up.
 	for uid := uint32(10001); uid < 10001+50; uid++ {
 		usernameFor(uid)
 	}
@@ -553,8 +544,7 @@ func TestUnknownAccountCacheEvictsLeastRecentlyUsed(t *testing.T) {
 }
 
 // TestUnknownAccountCacheExpiryForcesLookup checks that a negative entry past
-// its TTL is a miss, so the account database is asked again rather than the
-// denial being reused.
+// its TTL is a miss.
 func TestUnknownAccountCacheExpiryForcesLookup(t *testing.T) {
 	resetUsernameCache(t)
 	var calls int
@@ -625,9 +615,8 @@ func TestUsernameLookupConcurrencyIsBounded(t *testing.T) {
 			t.Fatalf("only %d lookups started, want %d", i, lookupgate.Concurrency)
 		}
 	}
-	// The window is the assertion: a fifth lookup that ran at once would send to
-	// started. Under load a window can miss that, never fail a correct run, so it
-	// stays; the monotonic peak checked after wg.Wait is the supplementary form.
+	// The window is the assertion: a violating run would be caught, and a
+	// correct run cannot fail here; peak is the supplementary check.
 	select {
 	case <-started:
 		close(release)
@@ -638,17 +627,13 @@ func TestUsernameLookupConcurrencyIsBounded(t *testing.T) {
 
 	close(release)
 	wg.Wait()
-	// peak is monotonic and covers the whole run, including the waiters released
-	// after the gate, so a broken gate raises it even if the window missed it.
 	if got := peak.Load(); got > lookupgate.Concurrency {
 		t.Fatalf("peak lookups = %d, want at most %d", got, lookupgate.Concurrency)
 	}
 }
 
-// TestRealAccountCacheSurvivesUnknownRotation checks that resolving a real
-// account and then rotating 2000 uids with no account entry cannot evict it
-// from the cache: with every lookup wait slot disabled, the real account still
-// connects on the fast path. The negative cache is separate and bounded.
+// TestRealAccountCacheSurvivesUnknownRotation checks that rotating many uids
+// with no account entry cannot evict a cached real account.
 func TestRealAccountCacheSurvivesUnknownRotation(t *testing.T) {
 	withHandshakeWaiterLimit(t, 0)
 	resetUsernameCache(t)
@@ -694,9 +679,6 @@ func TestRealAccountCacheSurvivesUnknownRotation(t *testing.T) {
 		t.Fatalf("negative cache holds %d entries, want at most %d", unknownSize, usernameUnknownCacheMax)
 	}
 
-	// Block any lookup from here on. Every lookup wait slot is disabled, so a
-	// connection that fell back to the lookup path is refused at once instead
-	// of reaching the blocked account database.
 	blockLookup.Store(true)
 	tb := newTestBroker(t, func(d *Deps) {
 		d.AllowCaller = allowEveryCaller
@@ -707,8 +689,6 @@ func TestRealAccountCacheSurvivesUnknownRotation(t *testing.T) {
 	}
 }
 
-// helloOnce dials the local socket and performs Hello within timeout, returning
-// any error. It is safe to call from a goroutine: it never touches testing.T.
 func helloOnce(sock string, timeout time.Duration) error {
 	cc, err := grpc.NewClient("unix://"+sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -721,10 +701,8 @@ func helloOnce(sock string, timeout time.Duration) error {
 	return err
 }
 
-// TestGlobalSlotTakenBeforeAccountLookup pins the handshake order: a connection
-// takes one of the global connection slots before it looks up the caller's
-// account. With the total limited to two and every lookup blocked, a third
-// connection must be refused at once instead of joining the lookup queue.
+// TestGlobalSlotTakenBeforeAccountLookup checks that a connection takes a global
+// slot before looking up the caller's account.
 func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 	withLocalTotalLimit(t, maxLocalConnections, maxLocalStreams, maxLocalRegistrations, 2)
 	resetUsernameCache(t)
@@ -754,7 +732,6 @@ func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 		d.ReadPeerCred = read
 	})
 
-	// Two connections take the two global slots and then block in the lookup.
 	results := make(chan error, 2)
 	for i := 0; i < 2; i++ {
 		go func() { results <- helloOnce(tb.sock, eventTimeout) }()
@@ -775,8 +752,7 @@ func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 		t.Fatalf("third connection: err = %v (code %v), want the handshake refused while the lookup queue is blocked", err, status.Code(err))
 	}
 	// The window is the assertion: a lookup that started despite the taken slots
-	// would send to lookupStarted. A window can only miss that under load, never
-	// fail a correct run.
+	// would send to lookupStarted, and a correct run cannot fail here.
 	select {
 	case uid := <-lookupStarted:
 		releaseLookups()
@@ -792,8 +768,8 @@ func TestGlobalSlotTakenBeforeAccountLookup(t *testing.T) {
 	}
 }
 
-// withHandshakeWaiterLimit shrinks the lookup wait queue for one test. It must
-// run before the Broker is built.
+// withHandshakeWaiterLimit shrinks the lookup wait queue for one test; run it
+// before the Broker is built.
 func withHandshakeWaiterLimit(t *testing.T, limit int) {
 	t.Helper()
 	old := handshakeLookupWaiters
@@ -801,11 +777,9 @@ func withHandshakeWaiterLimit(t *testing.T, limit int) {
 	t.Cleanup(func() { handshakeLookupWaiters = old })
 }
 
-// TestHandshakeCachedRealAccountSkipsLookupWait checks that a uid already
-// cached as a real account connects while every lookup wait slot is taken by
-// uids whose lookups are blocked. The cached entry is expired, so the test
-// also checks that expiry alone does not push the account into the queue and
-// that the entry is refreshed in the background.
+// TestHandshakeCachedRealAccountSkipsLookupWait checks that an expired cached
+// real account connects while every lookup wait slot is taken, and is refreshed
+// in the background.
 func TestHandshakeCachedRealAccountSkipsLookupWait(t *testing.T) {
 	withHandshakeWaiterLimit(t, 2)
 	resetUsernameCache(t)
@@ -866,15 +840,12 @@ func TestHandshakeCachedRealAccountSkipsLookupWait(t *testing.T) {
 		t.Fatalf("waiters = %d, want the queue saturated at 2", got)
 	}
 
-	// The expired cached account must take the fast path, not join the full
-	// lookup queue.
 	useReal.Store(true)
 	if err := helloOnce(tb.sock, eventTimeout); err != nil {
 		releaseLookups()
 		t.Fatalf("cached real account: %v, want it accepted while the lookup queue is full", err)
 	}
 
-	// The expired entry is refreshed without the connection having waited.
 	waitForRefresh(t, realUID)
 	usernameMu.Lock()
 	entry := usernameCache[realUID]
@@ -892,10 +863,8 @@ func TestHandshakeCachedRealAccountSkipsLookupWait(t *testing.T) {
 	}
 }
 
-// TestHandshakeLookupWaitersAreBounded checks that connections waiting for an
-// account lookup never exceed 64: with the lookup blocked and 80 unknown uids
-// connecting, exactly 64 are admitted and the rest are refused at once. A uid
-// cached as a real account still connects while the wait is full.
+// TestHandshakeLookupWaitersAreBounded checks that at most 64 connections wait
+// for an account lookup and the rest are refused at once.
 func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -944,8 +913,6 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 		go func() { results <- helloOnce(tb.sock, eventTimeout) }()
 	}
 
-	// Wait for the queue to fill, recording its peak so a bound that is
-	// exceeded even briefly fails the test.
 	deadline := time.Now().Add(eventTimeout)
 	peak := 0
 	for len(handshakeLookupWaiters) < wantWaiters {
@@ -966,7 +933,6 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 		t.Fatalf("waiters peaked at %d, want at most %d", peak, wantWaiters)
 	}
 
-	// Connections past the bound are refused, not queued.
 	refused := 0
 	for refused < connections-wantWaiters {
 		select {
@@ -982,7 +948,6 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 		}
 	}
 
-	// A uid cached as a real account connects while every wait slot is taken.
 	useReal.Store(true)
 	if err := helloOnce(tb.sock, eventTimeout); err != nil {
 		releaseLookups()
@@ -1008,10 +973,9 @@ func TestHandshakeLookupWaitersAreBounded(t *testing.T) {
 	}
 }
 
-// TestHandshakeLookupTimeoutReleasesGlobalSlot checks that a connection whose
-// account lookup cannot take a getent slot within the handshake deadline is
-// refused and returns its global slot. The gate is saturated first, which is
-// what four slow getent processes do.
+// TestHandshakeLookupTimeoutReleasesGlobalSlot checks that a lookup that cannot
+// take a gate slot is refused within the handshake deadline and returns its
+// global slot.
 func TestHandshakeLookupTimeoutReleasesGlobalSlot(t *testing.T) {
 	withLocalTotalLimit(t, maxLocalConnections, maxLocalStreams, maxLocalRegistrations, 1)
 	resetUsernameCache(t)
@@ -1050,8 +1014,6 @@ func TestHandshakeLookupTimeoutReleasesGlobalSlot(t *testing.T) {
 		t.Fatalf("a lookup ran without a getent slot: %d lookups", got)
 	}
 
-	// The timed-out connection must have returned its global slot: with the
-	// gate free again, the next connection is accepted.
 	for _, release := range held {
 		release()
 	}
@@ -1061,11 +1023,8 @@ func TestHandshakeLookupTimeoutReleasesGlobalSlot(t *testing.T) {
 	}
 }
 
-// TestUsernameLookupFailureIsNotUnknown checks that only a missing account
-// entry enters the unknown bucket. A lookup failure is not cached and fails
-// closed, never becoming an unknown account; the next request asks the account
-// database again, so a real account whose lookup failed once is resolved by
-// the next connection.
+// TestUsernameLookupFailureIsNotUnknown checks that only a missing account entry
+// enters the unknown bucket; a lookup failure is not cached and fails closed.
 func TestUsernameLookupFailureIsNotUnknown(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -1097,8 +1056,6 @@ func TestUsernameLookupFailureIsNotUnknown(t *testing.T) {
 		t.Errorf("display lookup ran %d times, want 3: a failure must not be cached", calls)
 	}
 
-	// The account database answers on the next request: the real account is
-	// resolved instead of a cached failure being reused.
 	failing = false
 	if key, err := accountKeyFor(7); err != nil || key != 7 {
 		t.Fatalf("accountKeyFor(7) after the failure = (%d, %v), want the real account", key, err)
@@ -1106,7 +1063,6 @@ func TestUsernameLookupFailureIsNotUnknown(t *testing.T) {
 	if calls != 4 {
 		t.Errorf("lookup ran %d times, want 4", calls)
 	}
-	// The successful lookup is cached as a real account.
 	if key, err := accountKeyFor(7); err != nil || key != 7 {
 		t.Fatalf("accountKeyFor(7) after the success = (%d, %v), want the real account", key, err)
 	}
@@ -1115,9 +1071,8 @@ func TestUsernameLookupFailureIsNotUnknown(t *testing.T) {
 	}
 }
 
-// TestBrokerAndHelperShareLookupGate checks that the broker's caller-name
-// lookup and the helper's account lookup share one process-wide getent gate:
-// while the helper holds every slot, the broker's lookup waits.
+// TestBrokerAndHelperShareLookupGate checks that the broker's caller-name lookup
+// and the helper's account lookup share one process-wide gate.
 func TestBrokerAndHelperShareLookupGate(t *testing.T) {
 	resetUsernameCache(t)
 
@@ -1167,10 +1122,9 @@ func TestBrokerAndHelperShareLookupGate(t *testing.T) {
 		releaseAll()
 		t.Fatal("the broker lookup ran while the helper held every process-wide lookup slot")
 	case <-time.After(200 * time.Millisecond):
-		// The window is the assertion here. The lookup gate's slots are
-		// unexported, so the only way to observe that the broker's lookup stayed
-		// out is to give it a window in which a violation would complete; a
-		// blocked lookup cannot false-fail because nothing is expected to finish.
+		// The window is the assertion: the gate's slots are unexported, so
+		// staying out is observed by giving a violation time to complete, and a
+		// blocked lookup cannot false-fail here.
 	}
 
 	releaseAll()

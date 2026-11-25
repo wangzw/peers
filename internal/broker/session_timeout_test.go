@@ -11,8 +11,6 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// signallingRereadBackend reports every Reread and returns the record
-// unchanged.
 type signallingRereadBackend struct {
 	userBackend
 	refreshed chan struct{}
@@ -26,8 +24,6 @@ func (b *signallingRereadBackend) Reread(_ context.Context, s inbox.Session) (in
 	return s, nil
 }
 
-// stoppedHelperBackend blocks its Reread until the context ends, standing in
-// for a helper the account has stopped.
 type stoppedHelperBackend struct {
 	userBackend
 	started chan struct{}
@@ -40,9 +36,6 @@ func (b *stoppedHelperBackend) Reread(ctx context.Context, _ inbox.Session) (inb
 	return inbox.Session{}, ctx.Err()
 }
 
-// countingBlockingBackend counts Reread calls and blocks the first one until
-// release, ignoring the context so that the test, not the call timeout, decides
-// when the queue may continue.
 type countingBlockingBackend struct {
 	userBackend
 	calls   atomic.Int64
@@ -64,8 +57,6 @@ func (b *countingBlockingBackend) Reread(_ context.Context, s inbox.Session) (in
 
 func (b *countingBlockingBackend) count() int64 { return b.calls.Load() }
 
-// addTrackedAgent puts one already-registered agent into the table with a watch
-// on its account's directory.
 func addTrackedAgent(b *Broker, id AgentID, uid uint32, socketPath, configDir string, pid int, backend SessionBackend) {
 	a := &agent{
 		id:         id,
@@ -84,10 +75,7 @@ func addTrackedAgent(b *Broker, id AgentID, uid uint32, socketPath, configDir st
 }
 
 // TestOneAccountEventsDoNotDelayAnother checks that an account whose helper
-// stopped does not hold up another account's registry events. The stopped
-// account has several agents and receives several pid 0 events; each reread
-// runs into its bounded call timeout, so the account's own lane stays busy long
-// enough that a single shared event goroutine would miss the test's window.
+// stopped does not hold up another account's registry events.
 func TestOneAccountEventsDoNotDelayAnother(t *testing.T) {
 	const (
 		blockedUID = 9001
@@ -125,9 +113,8 @@ func TestOneAccountEventsDoNotDelayAnother(t *testing.T) {
 	}
 }
 
-// TestRepeatedEventsForOneDirectoryCoalesce checks that events queued while one
-// reread is in flight are merged: 100 notifications for the same directory and
-// pid must not become 100 rereads.
+// TestRepeatedEventsForOneDirectoryCoalesce checks that events queued during one
+// reread are merged into at most one more reread.
 func TestRepeatedEventsForOneDirectoryCoalesce(t *testing.T) {
 	const uid = 9003
 	backend := newCountingBlockingBackend()
@@ -151,8 +138,6 @@ func TestRepeatedEventsForOneDirectoryCoalesce(t *testing.T) {
 	waitForReg(t, "the queued reread to run", func() bool {
 		return tb.b.events.handledCount() >= 2
 	})
-	// The account's lane exits after it drains the merged queue, so no event
-	// can still add a reread after this point.
 	waitForReg(t, "the account's event lane to exit", func() bool {
 		return !tb.b.events.laneActive(uid)
 	})

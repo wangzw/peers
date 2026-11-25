@@ -8,9 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// discoveryDir is the directoryOps test double, plus the lifecycle methods the
-// directory assembler needs. Every method records its call and serializes field
-// access under mu, so the assembler tests can inspect it from another goroutine.
+// discoveryDir is the directoryHandle test double; it serializes field access
+// under mu and records the calls that change state.
 type discoveryDir struct {
 	mu sync.Mutex
 
@@ -111,14 +110,12 @@ func (d *discoveryDir) RetireInactiveTopics() {
 	d.calls = append(d.calls, "RetireInactive")
 }
 
-// recordedCalls returns a copy of the call log.
 func (d *discoveryDir) recordedCalls() []string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return append([]string(nil), d.calls...)
 }
 
-// cardCallback returns the callback registered through OnCard.
 func (d *discoveryDir) cardCallback() func(fp pairing.Fingerprint, addrs []config.AdvertisedAddr) {
 	d.mu.Lock()
 	defer d.mu.Unlock()

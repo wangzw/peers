@@ -11,9 +11,7 @@ import (
 )
 
 // TestRegisterSocketSymlinkNotOwned checks that the socket owner check does not
-// follow a symlink. The record names a symlink whose target is a socket owned
-// by the caller's account; following the link would accept it, so the
-// registration must be rejected as socket_not_owned instead.
+// follow a symlink to a socket the caller's account owns.
 func TestRegisterSocketSymlinkNotOwned(t *testing.T) {
 	tb := newTestBroker(t)
 	target := fakesession.New(t, fakesession.Options{Name: "symlink-target"})
@@ -39,8 +37,7 @@ func TestRegisterSocketSymlinkNotOwned(t *testing.T) {
 }
 
 // TestRegisterRegularFileNotOwned checks that a path owned by the caller is
-// still rejected when it is not a socket. The record names a regular file; an
-// owner check without the socket type check would accept it.
+// still rejected when it is not a socket.
 func TestRegisterRegularFileNotOwned(t *testing.T) {
 	tb := newTestBroker(t)
 	path := filepath.Join(t.TempDir(), "inbox.sock")

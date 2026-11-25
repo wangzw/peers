@@ -9,8 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// newAssemblerLink returns a link that is built but never started, which is
-// enough for the topic assembler to register its frame handlers on it.
 func newAssemblerLink(t *testing.T) *link.Link {
 	t.Helper()
 	lk, err := link.New(link.Options{
@@ -25,6 +23,8 @@ func newAssemblerLink(t *testing.T) *link.Link {
 	return lk
 }
 
+// TestTopicAssemblerNeedsLink checks that Assemble without a link fails and
+// installs no topic table.
 func TestTopicAssemblerNeedsLink(t *testing.T) {
 	deps := &Deps{}
 	_, err := (topicAssembler{}).Assemble(context.Background(), nil, deps, &Assembly{})
@@ -36,6 +36,8 @@ func TestTopicAssemblerNeedsLink(t *testing.T) {
 	}
 }
 
+// TestTopicAssemblerNeedsPairing checks that Assemble without a pairing fails
+// and installs no topic table.
 func TestTopicAssemblerNeedsPairing(t *testing.T) {
 	lk := newAssemblerLink(t)
 	cfg := newFakeConfig(t.TempDir())
@@ -50,6 +52,8 @@ func TestTopicAssemblerNeedsPairing(t *testing.T) {
 	}
 }
 
+// TestTopicAssemblerFillsTopics checks that Assemble installs a table that
+// accepts joins.
 func TestTopicAssemblerFillsTopics(t *testing.T) {
 	lk := newAssemblerLink(t)
 	cfg := newFakeConfig(t.TempDir())
@@ -73,16 +77,11 @@ func TestTopicAssemblerFillsTopics(t *testing.T) {
 	}
 }
 
-// TestTopicAssemblerSelfIsPairingFingerprint checks that the assembler labels
-// its digests with asm.Pairing.Fingerprint() when the test override is unset.
-// Building a real pairing identity needs the real configuration, so the test
-// reads the fingerprint through the seam production leaves nil, then checks
-// through Assemble that a non-zero pairing fingerprint reaches topic.New as
-// Options.Self.
+// TestTopicAssemblerSelfIsPairingFingerprint checks that the registry uses the
+// pairing fingerprint when no override is set.
 func TestTopicAssemblerSelfIsPairingFingerprint(t *testing.T) {
 	asm := &Assembly{Pairing: new(pairing.Pairing)}
 
-	// The default path returns exactly the pairing's fingerprint.
 	got, err := (topicAssembler{}).selfFingerprint(asm)
 	if err != nil {
 		t.Fatalf("selfFingerprint: %v", err)
@@ -91,9 +90,8 @@ func TestTopicAssemblerSelfIsPairingFingerprint(t *testing.T) {
 		t.Fatalf("selfFingerprint = %x, want the pairing fingerprint %x", got, want)
 	}
 
-	// A non-zero fingerprint standing in for the pairing's is returned as is
-	// and reaches topic.New: the registry panics on a zero Self, so a
-	// successful Assemble proves the value was used.
+	// A zero Self panics in topic.New, so a successful Assemble proves the
+	// value was used.
 	want := link.Fingerprint{0x5a}
 	a := topicAssembler{pairingFingerprint: func(*pairing.Pairing) link.Fingerprint { return want }}
 	if resolved, err := a.selfFingerprint(asm); err != nil || resolved != want {
@@ -111,6 +109,8 @@ func TestTopicAssemblerSelfIsPairingFingerprint(t *testing.T) {
 	}
 }
 
+// TestDefaultAssemblersOrder checks that the pairing and link assembler runs
+// before the topic assembler.
 func TestDefaultAssemblersOrder(t *testing.T) {
 	as := DefaultAssemblers()
 	if len(as) < 2 {

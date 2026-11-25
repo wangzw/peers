@@ -9,10 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// recordingTarget is the minimal forwarding target these tests need: it
-// records each dial and drop and runs whatever dial callback it is handed.
-// Its methods take a mutex because the concurrency test calls them from many
-// goroutines.
 type recordingTarget struct {
 	mu      sync.Mutex
 	address string
@@ -46,6 +42,7 @@ func (r *recordingTarget) gotDropped() []pairing.Fingerprint {
 	return append([]pairing.Fingerprint(nil), r.dropped...)
 }
 
+// TestLateTransportBeforeSet checks that PairDial fails with ErrDialFailed and Drop does nothing before a target is bound.
 func TestLateTransportBeforeSet(t *testing.T) {
 	tr := &lateTransport{}
 
@@ -61,9 +58,10 @@ func TestLateTransportBeforeSet(t *testing.T) {
 		t.Fatal("PairDial ran the dial callback before a target was set")
 	}
 
-	tr.Drop(pairing.Fingerprint{3}) // must be a no-op, not a panic
+	tr.Drop(pairing.Fingerprint{3})
 }
 
+// TestLateTransportForwards checks that PairDial and Drop reach the bound target.
 func TestLateTransportForwards(t *testing.T) {
 	tr := &lateTransport{}
 	target := &recordingTarget{}
@@ -92,6 +90,7 @@ func TestLateTransportForwards(t *testing.T) {
 	}
 }
 
+// TestLateTransportSetTwicePanics checks that binding a target a second time panics.
 func TestLateTransportSetTwicePanics(t *testing.T) {
 	tr := &lateTransport{}
 	tr.set(&recordingTarget{})
@@ -106,6 +105,7 @@ func TestLateTransportSetTwicePanics(t *testing.T) {
 	tr.set(&recordingTarget{})
 }
 
+// TestLateTransportConcurrentSetAndUse checks that the transport may be used while the target is being set.
 func TestLateTransportConcurrentSetAndUse(t *testing.T) {
 	tr := &lateTransport{}
 	target := &recordingTarget{}

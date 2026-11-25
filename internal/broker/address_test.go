@@ -11,9 +11,8 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// REQ-agent-messaging-006: the agent ID is the hash of the normalized inbox
-// socket path with a fixed prefix, so a rename or a cleared conversation does
-// not change it.
+// TestAgentIDForMatchesClaudeCodeAlgorithm checks that the agent ID is the
+// hashed socket path under the fixed prefix and is unchanged by path cleaning.
 func TestAgentIDForMatchesClaudeCodeAlgorithm(t *testing.T) {
 	const socketPath = "/tmp/cc/s.sock"
 	sum := sha256.Sum256([]byte("session:" + socketPath))
@@ -44,6 +43,8 @@ func TestAgentIDForMatchesClaudeCodeAlgorithm(t *testing.T) {
 	}
 }
 
+// TestAgentIDForRejectsRelativeAndDotDot checks that an empty, relative or
+// dot-dot socket path yields ErrBadSocketPath.
 func TestAgentIDForRejectsRelativeAndDotDot(t *testing.T) {
 	for _, socketPath := range []string{"s.sock", "./s.sock", "/tmp/../s.sock", ""} {
 		id, path, err := AgentIDFor(socketPath)
@@ -63,8 +64,8 @@ func makeTestID(prefix string) AgentID {
 	return AgentID(prefix + strings.Repeat("0", 64-len(prefix)))
 }
 
-// REQ-agent-messaging-006: refs are the shortest unique prefix of 6 to 12
-// characters, stable across renames because they depend only on the IDs.
+// TestComputeRefsShortestUniquePrefix checks that refs are the shortest unique
+// prefix of 6 to 12 characters.
 func TestComputeRefsShortestUniquePrefix(t *testing.T) {
 	a0 := makeTestID("aaaaaa0")
 	a1 := makeTestID("aaaaaa1")
@@ -123,9 +124,8 @@ func TestComputeRefsShortestUniquePrefix(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-003, REQ-agent-messaging-030: names are normalized
-// before the usability test, and normalized names containing "@", "*" or
-// nothing a receiver can read stay unusable even when non-empty.
+// TestNameUsable checks that names are normalized before the usability test and
+// that empty, @, * or unreadable names stay unusable.
 func TestNameUsable(t *testing.T) {
 	cases := []struct {
 		raw    string
@@ -147,6 +147,8 @@ func TestNameUsable(t *testing.T) {
 	}
 }
 
+// TestValidAlias checks that an alias is 1 to 24 bytes of letters, digits, dot,
+// dash and underscore.
 func TestValidAlias(t *testing.T) {
 	valid := []string{
 		"a",
@@ -176,8 +178,8 @@ func TestValidAlias(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-004: the address is name@alias, with a bracketed ref only
-// when the caller asks for it.
+// TestFormatAddressUniqueName checks that an address is name@alias and carries a
+// bracketed ref only when asked.
 func TestFormatAddressUniqueName(t *testing.T) {
 	if got, want := FormatAddress("api-worker", "1a2b3c", "hostB", false), "api-worker@hostB"; got != want {
 		t.Errorf("FormatAddress without ref = %q, want %q", got, want)
@@ -187,6 +189,8 @@ func TestFormatAddressUniqueName(t *testing.T) {
 	}
 }
 
+// TestFormatAddressPanicsOnInvalidArguments checks that an invalid ref or alias
+// panics.
 func TestFormatAddressPanicsOnInvalidArguments(t *testing.T) {
 	cases := []struct {
 		what  string
@@ -210,6 +214,8 @@ func TestFormatAddressPanicsOnInvalidArguments(t *testing.T) {
 	}
 }
 
+// TestFormatAddressCleanedNameGetsRef checks that a name changed by
+// CleanSignature gets a ref.
 func TestFormatAddressCleanedNameGetsRef(t *testing.T) {
 	got := FormatAddress("a<b", "1a2b3c", "hostB", false)
 	if want := "ab [1a2b3c]@hostB"; got != want {
@@ -217,8 +223,8 @@ func TestFormatAddressCleanedNameGetsRef(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-037: a long name is truncated from the end until the
-// whole address fits both limits; the ref and alias are never truncated.
+// TestFormatAddressTruncatesLongName checks that a long name is shortened until
+// the address fits both limits, with the ref and alias kept whole.
 func TestFormatAddressTruncatesLongName(t *testing.T) {
 	const ref = "abcdef012345"
 	alias := strings.Repeat("a", 24)
@@ -257,25 +263,20 @@ func TestFormatAddressTruncatesLongName(t *testing.T) {
 	asciiName := strings.Repeat("x", 70)
 	check(t, FormatAddress(asciiName, ref, alias, false), asciiName)
 
-	// A 50-character name fits the rune limit only after truncation, so the
-	// address must carry the ref: truncation forces it even when needRef is
-	// false and the name is unchanged by CleanSignature.
 	shortName := strings.Repeat("x", 50)
 	check(t, FormatAddress(shortName, ref, alias, false), shortName)
 
-	// A four-byte character keeps the byte count meaningful beside the rune
-	// count: a name of 64 of them is 256 bytes.
 	fourByteName := strings.Repeat("\U0001F600", 70)
 	check(t, FormatAddress(fourByteName, ref, alias, false), fourByteName)
 }
 
-// REQ-agent-messaging-037: the byte limit alone truncates the name when the
-// name is built of four-byte characters, because the rune count still fits.
+// TestFormatAddressTruncatesForByteLimit checks that the byte limit alone
+// shortens a name built of four-byte characters while the rune count still fits.
 func TestFormatAddressTruncatesForByteLimit(t *testing.T) {
 	const (
 		ref   = "abcdef"
 		alias = "h"
-		char  = "\U0001F600" // four bytes in UTF-8
+		char  = "\U0001F600"
 	)
 	name := strings.Repeat(char, 50)
 	untruncated := name + " [" + ref + "]@" + alias
@@ -309,6 +310,8 @@ func TestFormatAddressTruncatesForByteLimit(t *testing.T) {
 	}
 }
 
+// TestParseAddressRoundTrip checks that ParseAddress recovers the parts of a
+// formatted address and rejects malformed input.
 func TestParseAddressRoundTrip(t *testing.T) {
 	const alias24 = "aaaaaaaaaaaaaaaaaaaaaaaa"
 

@@ -1,3 +1,5 @@
+// Package deliverpb defines the cross-Broker delivery messages and the frame
+// kinds they travel under.
 package deliverpb
 
 // Frame kinds for cross-Broker delivery payloads.

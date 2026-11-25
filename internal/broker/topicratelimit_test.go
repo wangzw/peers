@@ -10,8 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// TestTopicRateLimiter checks the token bucket directly: a burst of 64, a refill
-// of 4 each second, and independent buckets per account.
+// TestTopicRateLimiter checks the token bucket's burst, refill and per-account
+// buckets.
 func TestTopicRateLimiter(t *testing.T) {
 	rl := &topicRateLimiter{}
 	now := time.Unix(1700000000, 0)
@@ -39,9 +39,8 @@ func TestTopicRateLimiter(t *testing.T) {
 	}
 }
 
-// TestLeaveTopicRateLimited checks the LeaveTopic path: leaving a topic the
-// agent is not in still consumes a token, the 65th leave in a burst is refused
-// with quota_exceeded, and the refilled tokens work a second later.
+// TestLeaveTopicRateLimited checks that LeaveTopic consumes tokens and is
+// refused past the burst, then refills a second later.
 func TestLeaveTopicRateLimited(t *testing.T) {
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "leavelimit")
@@ -70,9 +69,8 @@ func TestLeaveTopicRateLimited(t *testing.T) {
 	}
 }
 
-// TestJoinTopicRateLimited checks the RPC path: the 65th join from one account
-// in a burst is refused with quota_exceeded and changes no membership, and a
-// second later four more succeed.
+// TestJoinTopicRateLimited checks that JoinTopic is refused past the burst
+// without changing membership and refills a second later.
 func TestJoinTopicRateLimited(t *testing.T) {
 	tb := newTestBroker(t)
 	id, rs := registerTopicAgent(t, tb, "ratelimit")

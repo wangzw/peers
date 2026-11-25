@@ -2,6 +2,8 @@ package localpb
 
 import "testing"
 
+// TestDegradedLevelNames checks the tool-result and terminal names of each
+// degraded level, including unset and unknown values.
 func TestDegradedLevelNames(t *testing.T) {
 	cases := []struct {
 		level DegradedLevel

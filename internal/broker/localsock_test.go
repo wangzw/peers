@@ -12,21 +12,15 @@ import (
 	"testing"
 )
 
-// maxUnixSocketPath is the longest path a Unix socket can bind on macOS, the
-// platform with the smallest sun_path. Linux allows 107 bytes.
+// maxUnixSocketPath is the longest Unix socket path macOS can bind, whose
+// sun_path is shorter than Linux's 107 bytes.
 const maxUnixSocketPath = 103
 
-// shortSocketDir returns the path for filename under a directory short enough
-// to bind a Unix socket. t.TempDir usually fits, but its test-name suffix can
-// push the path past the sun_path limit; in that case the socket lives in a
-// fresh directory under /tmp, which keeps the path bounded.
 func shortSocketDir(t *testing.T, filename string) string {
 	t.Helper()
 	return socketPathIn(t, t.TempDir(), filename)
 }
 
-// socketPathIn joins filename under base unless the result exceeds the
-// sun_path limit, in which case it falls back to a fresh directory under /tmp.
 func socketPathIn(t *testing.T, base, filename string) string {
 	t.Helper()
 	path := filepath.Join(base, filename)
@@ -45,6 +39,8 @@ func socketPathIn(t *testing.T, base, filename string) string {
 	return path
 }
 
+// TestShortSocketDirFallsBackForLongBase checks that a base directory too long
+// for a Unix socket path falls back under /tmp.
 func TestShortSocketDirFallsBackForLongBase(t *testing.T) {
 	base := filepath.Join(t.TempDir(), strings.Repeat("x", maxUnixSocketPath))
 	path := socketPathIn(t, base, "broker.sock")
@@ -59,6 +55,8 @@ func TestShortSocketDirFallsBackForLongBase(t *testing.T) {
 	}
 }
 
+// TestBindLocalSocketReplacesStaleSocket checks that a leftover socket is
+// replaced and the new one accepts connections.
 func TestBindLocalSocketReplacesStaleSocket(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
@@ -88,6 +86,8 @@ func TestBindLocalSocketReplacesStaleSocket(t *testing.T) {
 	}
 }
 
+// TestBindLocalSocketRefusesRegularFile checks that a regular file at the path
+// is left unchanged and reported as an error.
 func TestBindLocalSocketRefusesRegularFile(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	content := []byte("do not replace")
@@ -115,9 +115,8 @@ func TestBindLocalSocketRefusesRegularFile(t *testing.T) {
 	}
 }
 
-// TestBindLocalSocketReportsRetryLimit checks that a socket removed inside the
-// listen-to-chmod window on every attempt is reported after the full budget,
-// naming the failed attempts and logging each retry under its own event.
+// TestBindLocalSocketReportsRetryLimit checks that a socket removed on every
+// bind attempt is reported after the retry budget and each retry is logged.
 func TestBindLocalSocketReportsRetryLimit(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	var logs bytes.Buffer
@@ -152,6 +151,8 @@ func TestBindLocalSocketReportsRetryLimit(t *testing.T) {
 	}
 }
 
+// TestBindLocalSocketPermission checks that the bound socket has the requested
+// file mode.
 func TestBindLocalSocketPermission(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	sock, err := BindLocalSocket(path, 0o600, nil)
@@ -169,6 +170,8 @@ func TestBindLocalSocketPermission(t *testing.T) {
 	}
 }
 
+// TestLocalSocketCloseDoesNotRemoveReplacement checks that closing one
+// LocalSocket leaves a replacement socket at the same path in place.
 func TestLocalSocketCloseDoesNotRemoveReplacement(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	a, err := BindLocalSocket(path, 0o600, nil)
@@ -199,6 +202,8 @@ func TestLocalSocketCloseDoesNotRemoveReplacement(t *testing.T) {
 	}
 }
 
+// TestLocalSocketPresent checks that Present reports true only while the path
+// names the bound socket.
 func TestLocalSocketPresent(t *testing.T) {
 	path := shortSocketDir(t, "broker.sock")
 	sock, err := BindLocalSocket(path, 0o600, nil)

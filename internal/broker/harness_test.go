@@ -14,8 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// testBroker is a Broker serving on a Unix socket, with the package's fakes
-// attached and a client connected.
 type testBroker struct {
 	b        *Broker
 	sock     string
@@ -30,8 +28,6 @@ type testBroker struct {
 	logs     *syncBuffer
 }
 
-// newTestBroker builds the fakes, applies each mutate to the Deps, constructs
-// the Broker and serves it on a Unix socket in a fresh temporary directory.
 func newTestBroker(t *testing.T, mutate ...func(*Deps)) *testBroker {
 	t.Helper()
 
@@ -101,7 +97,6 @@ func newTestBroker(t *testing.T, mutate ...func(*Deps)) *testBroker {
 	}
 }
 
-// newClient returns a second independent connection to the same Broker.
 func (tb *testBroker) newClient(t *testing.T) localpb.LocalClient {
 	t.Helper()
 	cc, err := grpc.NewClient("unix://"+tb.sock, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -112,7 +107,6 @@ func (tb *testBroker) newClient(t *testing.T) localpb.LocalClient {
 	return localpb.NewLocalClient(cc)
 }
 
-// logLines parses the Broker's log records.
 func (tb *testBroker) logLines(t *testing.T) []map[string]any {
 	t.Helper()
 	return decodeLogLines(t, tb.logs.String())

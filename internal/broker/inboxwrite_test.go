@@ -11,8 +11,6 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// newWriteInboxDelivery builds a delivery for the writeInbox tests and returns
-// the buffer its log records go to.
 func newWriteInboxDelivery(t *testing.T, settings sendSettings) (*delivery, *bytes.Buffer) {
 	t.Helper()
 	var level slog.LevelVar
@@ -24,13 +22,12 @@ func newWriteInboxDelivery(t *testing.T, settings sendSettings) (*delivery, *byt
 	return d, buf
 }
 
-// writeInboxTarget builds a target Agent whose inbox writer is w.
 func writeInboxTarget(name string, w inboxWriter) agentView {
 	return agentView{Name: name, Session: inbox.Session{}, Inbox: w}
 }
 
 // TestWriteInboxSuccess checks that a first successful write returns written
-// after exactly one call and passes the message id through unchanged.
+// after one call and passes the message id through.
 func TestWriteInboxSuccess(t *testing.T) {
 	const msgID = "3f2a1c4e-5b6d-4e8f-9a0b-1c2d3e4f5a6b"
 	rec := newRecordingInbox()
@@ -54,9 +51,8 @@ func TestWriteInboxSuccess(t *testing.T) {
 	}
 }
 
-// TestWriteInboxRetriesNotWritten checks that a certainly-not-written failure
-// is retried exactly InboxRetries more times, with the backoff between calls
-// (REQ-agent-messaging-018).
+// TestWriteInboxRetriesNotWritten checks that a certainly-not-written failure is
+// retried InboxRetries more times with the backoff between calls.
 func TestWriteInboxRetriesNotWritten(t *testing.T) {
 	const (
 		retries = 2
@@ -86,8 +82,8 @@ func TestWriteInboxRetriesNotWritten(t *testing.T) {
 	}
 }
 
-// TestWriteInboxRecoversOnRetry checks that a retry after ErrNotWritten can
-// still succeed instead of giving up on the first failure.
+// TestWriteInboxRecoversOnRetry checks that a retry after ErrNotWritten can still
+// succeed.
 func TestWriteInboxRecoversOnRetry(t *testing.T) {
 	rec := newRecordingInbox(inbox.ErrNotWritten, nil)
 	d, _ := newWriteInboxDelivery(t, sendSettings{
@@ -107,8 +103,7 @@ func TestWriteInboxRecoversOnRetry(t *testing.T) {
 }
 
 // TestWriteInboxUncertainNoRetry checks that a possibly-written frame is never
-// retried, so the target does not receive two copies
-// (REQ-agent-messaging-020, REQ-agent-messaging-027).
+// retried, so the target does not receive two copies.
 func TestWriteInboxUncertainNoRetry(t *testing.T) {
 	rec := newRecordingInbox(inbox.ErrUncertain)
 	d, _ := newWriteInboxDelivery(t, sendSettings{
@@ -128,8 +123,7 @@ func TestWriteInboxUncertainNoRetry(t *testing.T) {
 }
 
 // TestWriteInboxStopsAtDeadline checks that no write starts at or after the
-// deadline, so a message reported as not sent cannot arrive later
-// (REQ-agent-messaging-019).
+// deadline.
 func TestWriteInboxStopsAtDeadline(t *testing.T) {
 	t.Run("deadline already passed", func(t *testing.T) {
 		rec := newRecordingInbox()
@@ -158,12 +152,8 @@ func TestWriteInboxStopsAtDeadline(t *testing.T) {
 		})
 		target := writeInboxTarget("api-worker", rec)
 
-		// The deadline here stands in for a caller's budget, but the wait for the
-		// first attempt is only bounded by the package fallback: a loaded runner
-		// must not make writeInbox observe an already-passed deadline and skip the
-		// retriable attempts this subtest checks. A run whose deadline has already
-		// passed before the first check, making zero attempts, is the case the
-		// "deadline already passed" subtest covers.
+		// The deadline is the package fallback rather than a short window, so a
+		// loaded runner still reaches the first attempt.
 		deadline := time.Now().Add(eventTimeout)
 		got := d.writeInbox(context.Background(), deadline, target, "sig", "text", "msg")
 		if got != notWritten {
@@ -181,8 +171,8 @@ func TestWriteInboxStopsAtDeadline(t *testing.T) {
 	})
 }
 
-// TestWriteInboxTimeoutCappedByRemaining checks that one attempt never gets
-// more time than is left before the deadline.
+// TestWriteInboxTimeoutCappedByRemaining checks that one attempt never gets more
+// time than is left before the deadline.
 func TestWriteInboxTimeoutCappedByRemaining(t *testing.T) {
 	rec := newRecordingInbox()
 	d, _ := newWriteInboxDelivery(t, sendSettings{
@@ -192,10 +182,8 @@ func TestWriteInboxTimeoutCappedByRemaining(t *testing.T) {
 	})
 	target := writeInboxTarget("api-worker", rec)
 
-	// The remaining time is the package fallback rather than a short test
-	// window, so a loaded runner still reaches the first attempt. It is also far
-	// below InboxTimeout, so a cap that used the configured timeout instead of
-	// the time left before the deadline passes a value this test rejects.
+	// The remaining time is far below InboxTimeout, so a cap that used the
+	// configured timeout instead of the time left fails.
 	got := d.writeInbox(context.Background(), time.Now().Add(eventTimeout), target, "sig", "text", "msg")
 	if got != written {
 		t.Fatalf("outcome = %v, want written", got)
@@ -210,7 +198,7 @@ func TestWriteInboxTimeoutCappedByRemaining(t *testing.T) {
 }
 
 // TestWriteInboxBadSignature checks that a signature defect is reported as not
-// written, logged, and not retried.
+// written, logged and not retried.
 func TestWriteInboxBadSignature(t *testing.T) {
 	rec := newRecordingInbox(inbox.ErrBadSignature)
 	d, buf := newWriteInboxDelivery(t, sendSettings{
@@ -232,9 +220,8 @@ func TestWriteInboxBadSignature(t *testing.T) {
 	}
 }
 
-// TestWriteInboxUsesTargetsBackend checks that the write goes through the
-// target's own backend, not some shared one; under a system Broker that keeps
-// the write in the target session's account (design-broker.md:232).
+// TestWriteInboxUsesTargetsBackend checks that the write goes through the target's
+// own backend.
 func TestWriteInboxUsesTargetsBackend(t *testing.T) {
 	first := newRecordingInbox()
 	second := newRecordingInbox()
@@ -267,8 +254,8 @@ func TestWriteInboxUsesTargetsBackend(t *testing.T) {
 	}
 }
 
-// TestWriteInboxNilBackend checks that a snapshot without a backend is
-// reported as not written and logged instead of crashing the Broker.
+// TestWriteInboxNilBackend checks that a snapshot without a backend is reported
+// as not written and logged instead of crashing.
 func TestWriteInboxNilBackend(t *testing.T) {
 	d, buf := newWriteInboxDelivery(t, sendSettings{
 		InboxRetries: 2,

@@ -10,9 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// peerInfos lists this Broker's peers as local API entries. ListBrokers and
-// the peer view behind Status read the same pairing and link surfaces through
-// peerView, so the two lists cannot drift apart.
 func (b *Broker) peerInfos() []*localpb.BrokerInfo {
 	return peerView{
 		p:       b.deps.Pairing,
@@ -23,8 +20,7 @@ func (b *Broker) peerInfos() []*localpb.BrokerInfo {
 
 // ListBrokers returns every Broker this Broker knows: its peers and the
 // non-peers the directory holds a card for. It needs no agent identity and no
-// permission check; permission checks for the other calls are gRPC
-// interceptors.
+// permission check.
 func (b *Broker) ListBrokers(_ context.Context, _ *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error) {
 	out := b.peerInfos()
 	if b.deps.Catalog != nil {
@@ -32,8 +28,8 @@ func (b *Broker) ListBrokers(_ context.Context, _ *localpb.ListBrokersRequest) (
 			if info == nil || b.knownPeer(info.GetFingerprint(), out) {
 				continue
 			}
-			// Copy before forcing the peer-only fields so the catalog keeps
-			// the entry it handed out.
+			// Clone before clearing the peer-only fields: the catalog keeps the
+			// entry it handed out.
 			entry := proto.Clone(info).(*localpb.BrokerInfo)
 			entry.IsPeer = false
 			entry.Role = localpb.PeerRole_PEER_ROLE_UNSPECIFIED
@@ -51,8 +47,9 @@ func (b *Broker) ListBrokers(_ context.Context, _ *localpb.ListBrokersRequest) (
 	}, nil
 }
 
-// knownPeer reports whether the fingerprint already has an entry, or belongs
-// to a peer that appeared after the peer list was built.
+// knownPeer reports whether the fingerprint has an entry, or belongs to a peer
+// that appeared after the peer list was built; such a Broker may still be in the
+// directory's NonPeers list, so IsPeer is asked again.
 func (b *Broker) knownPeer(fingerprint []byte, infos []*localpb.BrokerInfo) bool {
 	for _, info := range infos {
 		if bytes.Equal(info.GetFingerprint(), fingerprint) {

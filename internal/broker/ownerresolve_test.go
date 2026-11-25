@@ -11,13 +11,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// ownerResolveFixture is the interception scene: uid 1001 registered worker
-// first and has left, uid 1002 still holds worker, and uid 1003 observes both
-// in topic t1.
-//
-// The second account registered while the owner was still present, so the
-// end state is the same as registering after the owner left: the name belongs
-// to uid 1001 and uid 1002 carries a ref.
 func ownerResolveFixture(t *testing.T) *collisionFixture {
 	t.Helper()
 	f := newCollisionFixture(t)
@@ -26,8 +19,6 @@ func ownerResolveFixture(t *testing.T) *collisionFixture {
 	return f
 }
 
-// refreshAgents rebuilds the delivery's view of the table and the caller's
-// snapshot after a direct change.
 func (f *collisionFixture) refreshAgents() {
 	f.agents.refresh(f.b, f.inboxes)
 	if v, ok := f.agents.Lookup(string(f.callerID)); ok {
@@ -35,7 +26,6 @@ func (f *collisionFixture) refreshAgents() {
 	}
 }
 
-// rejoinOwner puts the original owner back under the same name.
 func (f *collisionFixture) rejoinOwner(t *testing.T) {
 	t.Helper()
 	f.b.mu.Lock()
@@ -45,10 +35,8 @@ func (f *collisionFixture) rejoinOwner(t *testing.T) {
 	f.refreshAgents()
 }
 
-// TestCrossAccountBareNameDoesNotReachOtherAccount is the interception
-// reproduction. The owner of "worker" has left, a second account holds the
-// same name, and a third account sends to the bare address. Before the fix the
-// message reaches the second account; after it the send reports not_found.
+// TestCrossAccountBareNameDoesNotReachOtherAccount checks that a bare name owned
+// by a departed account does not deliver to another account holding it.
 func TestCrossAccountBareNameDoesNotReachOtherAccount(t *testing.T) {
 	f := ownerResolveFixture(t)
 
@@ -124,7 +112,6 @@ func TestCrossAccountFullRefStillReachesHolder(t *testing.T) {
 	}
 }
 
-// findEventRecord returns the first log record whose event field equals want.
 func findEventRecord(t *testing.T, logs *syncBuffer, want string) map[string]any {
 	t.Helper()
 	records := decodeLogLines(t, logs.String())
@@ -137,7 +124,6 @@ func findEventRecord(t *testing.T, logs *syncBuffer, want string) map[string]any
 	return nil
 }
 
-// logUIDList reads a uid list from a decoded log record.
 func logUIDList(t *testing.T, v any) []uint32 {
 	t.Helper()
 	raw, ok := v.([]any)
@@ -349,8 +335,6 @@ func TestReceiveBareNameOwnedByAnotherAccount(t *testing.T) {
 	f.share(other.ID, "t1")
 	f.keepReread(other.ID)
 
-	// The request travels over the test link into the registered kind-400
-	// handler, the way a peer's delivery request arrives.
 	f.d.register()
 	f.net.setUp(f.peer, f.self, true)
 	frame := f.requestFrame(sender, agentView{Name: "worker"}, "hello", time.Second)

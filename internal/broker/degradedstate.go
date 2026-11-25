@@ -13,9 +13,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// degradedHolder keeps the degraded state the diagnostics-only service reads.
-// The service runs while the process has no *Broker, so the state cannot live
-// on that type.
+// degradedHolder keeps the degraded state the diagnostics-only service reads,
+// which cannot live on *Broker because that service runs without one.
 type degradedHolder struct {
 	mu    sync.Mutex
 	state *localpb.DegradedState
@@ -51,10 +50,9 @@ func cloneDegraded(state *localpb.DegradedState) *localpb.DegradedState {
 }
 
 // setDegraded records the degraded state that Status, ListBrokers and
-// CreatePairingKey report. A nil state means the Broker runs normally. The
-// value is cloned so the caller keeps ownership of its copy. It reports
-// whether the reported problem changed, so a retry can log a reason update
-// instead of repeating the entry record.
+// CreatePairingKey report; nil means the Broker runs normally. The value is
+// cloned, so the caller keeps ownership of its copy. It reports whether the
+// reported problem changed.
 func (b *Broker) setDegraded(state *localpb.DegradedState) (changed bool) {
 	b.degradedMu.Lock()
 	defer b.degradedMu.Unlock()
@@ -70,8 +68,6 @@ func (b *Broker) setDegraded(state *localpb.DegradedState) (changed bool) {
 	return oldStep != state.Step || oldReason != state.Reason
 }
 
-// degradedState returns a clone of the current degraded state, or nil while
-// the Broker runs normally.
 func (b *Broker) degradedState() *localpb.DegradedState {
 	b.degradedMu.Lock()
 	defer b.degradedMu.Unlock()
@@ -81,26 +77,23 @@ func (b *Broker) degradedState() *localpb.DegradedState {
 	return cloneDegraded(b.degraded)
 }
 
-// startupFailure is one failed startup step. Run classifies it into a
-// degraded level, or treats it as fatal when --allow-degraded was not given.
+// startupFailure is one failed startup step; Run classifies it into a degraded
+// level or treats it as fatal without --allow-degraded.
 type startupFailure struct {
 	step string
 	err  error
-	// cause is the unwrapped cause when err carries a classification
-	// sentinel, so the degraded reason does not repeat the sentinel text.
+	// cause is the unwrapped cause when err carries a classification sentinel,
+	// so the degraded reason does not repeat the sentinel text.
 	cause error
 
 	// addr is the address a listen bind failed on.
 	addr string
 
-	// system records whether the Broker runs the system form, which decides
-	// whether the repair hints need sudo.
+	// system records whether the Broker runs the system form.
 	system bool
 
-	// paths, socketGroup and socketMode describe the configuration that a
-	// failure after Load can no longer read directly. A DataUnavailableError
-	// from Load fills them; a later failure fills them from the loaded
-	// configuration before it is closed.
+	// paths, socketGroup and socketMode describe configuration a failure after
+	// Load can no longer read directly.
 	paths       config.PathSet
 	socketGroup string
 	socketMode  string
@@ -110,7 +103,7 @@ func (f *startupFailure) Error() string { return f.err.Error() }
 func (f *startupFailure) Unwrap() error { return f.err }
 
 // degradedStateFor renders the DegradedState a caller displays. The reason
-// names no configuration value or secret; the fix is one line.
+// names no configuration value or secret, and the fix is one line.
 func degradedStateFor(f *startupFailure) *localpb.DegradedState {
 	level := localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY
 	step := f.step
@@ -135,8 +128,7 @@ func degradedStateFor(f *startupFailure) *localpb.DegradedState {
 			reason = f.err.Error()
 			fix = dataFix(kind, f.paths, f.system)
 		case f.step == "config":
-			// A configuration failure during a retry names the key and the
-			// class only: the raw error can quote the configured value.
+			// The raw error can quote the configured value.
 			reason = configReason(f.err)
 			fix = genericFix(f.step, f.paths, f.system)
 		default:
@@ -170,10 +162,8 @@ func kindStep(kind dataKind) string {
 	}
 }
 
-// dataFix returns the repair hint for a data-directory class failure. Paths are
-// not configuration values, so naming them is allowed. The design table puts
-// the no-restart retry in the hint, since the Broker keeps retrying every
-// minute.
+// dataFix returns the repair hint for a data-directory failure; paths are not
+// configuration values, so naming them is allowed.
 func dataFix(kind dataKind, paths config.PathSet, system bool) string {
 	target := paths.DataDir
 	if kind == dataKindAudit && paths.AuditLog != "" {
@@ -185,7 +175,6 @@ func dataFix(kind dataKind, paths config.PathSet, system bool) string {
 	return "check the owner and permissions of " + target + ", then run " + restartCommand(system) + "; otherwise the Broker retries every minute"
 }
 
-// restartCommand is the command that restarts the Broker at this level.
 func restartCommand(system bool) string {
 	if system {
 		return "sudo peers service restart"
@@ -193,8 +182,6 @@ func restartCommand(system bool) string {
 	return "peers service restart"
 }
 
-// listenFix returns the repair hint for a listen bind failure. The low-port
-// rule has its own remedy. A system Broker's commands need sudo.
 func listenFix(err error, paths config.PathSet, system bool) string {
 	sudo := ""
 	if system {
@@ -229,9 +216,7 @@ func genericFix(step string, paths config.PathSet, system bool) string {
 	}
 }
 
-// configReason names only the configuration key and the class of failure. The
-// raw validation error can quote the configured value, which a degraded status
-// must not do.
+// configReason names only the configuration key and the class of failure.
 func configReason(err error) string {
 	switch {
 	case errors.Is(err, config.ErrInvalidValue):
@@ -264,9 +249,8 @@ func invalidValueKey(text string) string {
 	return strings.TrimSpace(rest)
 }
 
-// deriveSockPath returns the local socket path from the best available path
-// set. A failed Load leaves the package without paths, so the failure carries
-// them.
+// deriveSockPath returns the local socket path from paths, which a failed Load
+// still carries.
 func deriveSockPath(paths config.PathSet) string {
 	if paths.RuntimeDir == "" {
 		return ""

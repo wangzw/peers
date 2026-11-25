@@ -16,8 +16,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// topicCallContext bounds one topic RPC so a hung handler fails the test
-// instead of the whole run.
 func topicCallContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -25,8 +23,6 @@ func topicCallContext(t *testing.T) context.Context {
 	return ctx
 }
 
-// registerTopicAgent registers one fakesession and returns its agent ID and
-// the open registration stream.
 func registerTopicAgent(t *testing.T, tb *testBroker, name string) (string, *regStream) {
 	t.Helper()
 	fake := fakesession.New(t, fakesession.Options{Name: name})
@@ -34,8 +30,6 @@ func registerTopicAgent(t *testing.T, tb *testBroker, name string) (string, *reg
 	return rs.complete(eventTimeout).GetAgentId(), rs
 }
 
-// topicErrorDetail returns the gRPC code, the wire error code and the message
-// carried by a client-side error.
 func topicErrorDetail(t *testing.T, err error) (codes.Code, localpb.ErrorCode, string) {
 	t.Helper()
 	if err == nil {
@@ -77,7 +71,6 @@ func directoryCallsOf(d *fakeDirectory, method string) []directoryCall {
 	return out
 }
 
-// topicStepLog is the shared order log of the recording wrappers below.
 type topicStepLog struct {
 	mu    sync.Mutex
 	steps []string
@@ -95,8 +88,6 @@ func (l *topicStepLog) snapshot() []string {
 	return append([]string(nil), l.steps...)
 }
 
-// recordingDirectory records declarations and retirements into a shared step
-// log before delegating to the wrapped directory.
 type recordingDirectory struct {
 	PublicTopicDirectory
 	log *topicStepLog
@@ -112,7 +103,6 @@ func (d *recordingDirectory) RetirePublicTopic(name string) {
 	d.PublicTopicDirectory.RetirePublicTopic(name)
 }
 
-// recordingTopics records joins and leaves into the same step log.
 type recordingTopics struct {
 	TopicTable
 	log *topicStepLog
@@ -129,7 +119,7 @@ func (t *recordingTopics) Leave(agent AgentID, name string) error {
 }
 
 // TestJoinTopicQuotaExceeded checks that a join refused by the topic table's
-// limit surfaces as quota_exceeded with a complete sentence for the model.
+// limit maps to quota_exceeded with a complete sentence.
 func TestJoinTopicQuotaExceeded(t *testing.T) {
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "quota")
@@ -147,8 +137,9 @@ func TestJoinTopicQuotaExceeded(t *testing.T) {
 	}
 }
 
+// TestJoinAndListTopics checks that joining lists the joined topics in order and
+// no public topics.
 func TestJoinAndListTopics(t *testing.T) {
-	// REQ-topics-001, REQ-topics-004
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "joiner")
 	ctx := topicCallContext(t)
@@ -181,8 +172,9 @@ func TestJoinAndListTopics(t *testing.T) {
 	}
 }
 
+// TestJoinFreshTopicNeedsNoApproval checks that an agent joining a fresh topic
+// sees another agent that joined it without approval.
 func TestJoinFreshTopicNeedsNoApproval(t *testing.T) {
-	// REQ-topics-002
 	tb := newTestBroker(t)
 	idA, _ := registerTopicAgent(t, tb, "alpha")
 	idB, _ := registerTopicAgent(t, tb, "beta")
@@ -203,8 +195,8 @@ func TestJoinFreshTopicNeedsNoApproval(t *testing.T) {
 	}
 }
 
+// TestLeaveTopic checks that leaving a topic removes only that membership.
 func TestLeaveTopic(t *testing.T) {
-	// REQ-topics-003
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "leaver")
 	ctx := topicCallContext(t)
@@ -232,13 +224,15 @@ func TestLeaveTopic(t *testing.T) {
 	}
 }
 
+// TestJoinInvalidName checks that invalid names are refused without reaching the
+// topic table.
 func TestJoinInvalidName(t *testing.T) {
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "namer")
 	ctx := topicCallContext(t)
 
-	// Invalid UTF-8 cannot cross the wire: proto3 rejects it while the client
-	// marshals the request, so it is covered by TestValidTopicName instead.
+	// Invalid UTF-8 cannot cross the wire; proto3 rejects it while the client
+	// marshals.
 	bad := []string{"", strings.Repeat("a", 257), "\x00"}
 	for _, name := range bad {
 		_, err := tb.client.JoinTopic(ctx, &localpb.JoinTopicRequest{AgentId: id, Name: name})
@@ -261,12 +255,13 @@ func TestJoinInvalidName(t *testing.T) {
 		t.Fatalf("Leave calls for invalid names = %d, want 0", n)
 	}
 
-	// The upper bound itself is valid.
 	if _, err := tb.client.JoinTopic(ctx, &localpb.JoinTopicRequest{AgentId: id, Name: strings.Repeat("b", 256)}); err != nil {
 		t.Fatalf("JoinTopic(256-byte name): %v, want success", err)
 	}
 }
 
+// TestTopicCallsRequireRegistration checks that topic calls with an unknown
+// agent return not_registered.
 func TestTopicCallsRequireRegistration(t *testing.T) {
 	tb := newTestBroker(t)
 	ctx := topicCallContext(t)
@@ -293,8 +288,6 @@ func TestTopicCallsRequireRegistration(t *testing.T) {
 		}
 	}
 
-	// After the registering stream ends, the same ID is no longer known even
-	// on a fresh connection.
 	id, rs := registerTopicAgent(t, tb, "temporary")
 	rs.cancel()
 	waitForReg(t, "agent removal", func() bool { return tb.lockedAgentCount() == 0 })
@@ -307,9 +300,9 @@ func TestTopicCallsRequireRegistration(t *testing.T) {
 	}
 }
 
+// TestJoinPublicDeclaresFirst checks that a public join declares the topic
+// before joining it.
 func TestJoinPublicDeclaresFirst(t *testing.T) {
-	// REQ-topics-025, Broker side: the declaration must be visible to the
-	// directory before membership exists.
 	steps := &topicStepLog{}
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Directory = &recordingDirectory{PublicTopicDirectory: d.Directory, log: steps}
@@ -331,6 +324,8 @@ func TestJoinPublicDeclaresFirst(t *testing.T) {
 	}
 }
 
+// TestJoinPublicOnPrivateBrokerFails checks that a public join on a non-public
+// Broker is refused and joins nothing.
 func TestJoinPublicOnPrivateBrokerFails(t *testing.T) {
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "private")
@@ -354,6 +349,8 @@ func TestJoinPublicOnPrivateBrokerFails(t *testing.T) {
 	}
 }
 
+// TestJoinPublicWithNilDirectory checks that a public join without a directory is
+// refused as a non-public Broker.
 func TestJoinPublicWithNilDirectory(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.Directory = nil })
 	id, _ := registerTopicAgent(t, tb, "nodir")
@@ -379,8 +376,9 @@ func TestJoinPublicWithNilDirectory(t *testing.T) {
 	}
 }
 
+// TestRetireOnlyWhenLastPublicMemberLeaves checks that a public declaration is
+// retired only when the last public member leaves or disconnects.
 func TestRetireOnlyWhenLastPublicMemberLeaves(t *testing.T) {
-	// REQ-topics-025
 	tb := newTestBroker(t)
 	setDirectoryPublic(t, tb.dir, true)
 	idA, _ := registerTopicAgent(t, tb, "alpha")
@@ -433,6 +431,8 @@ func TestRetireOnlyWhenLastPublicMemberLeaves(t *testing.T) {
 	})
 }
 
+// TestPrivateLeaveDoesNotRetire checks that a private member leaving does not
+// retire a public declaration.
 func TestPrivateLeaveDoesNotRetire(t *testing.T) {
 	tb := newTestBroker(t)
 	setDirectoryPublic(t, tb.dir, true)
@@ -458,6 +458,8 @@ func TestPrivateLeaveDoesNotRetire(t *testing.T) {
 	}
 }
 
+// TestJoinFailureRollsBackDeclaration checks that a failed join after a public
+// declaration retires the declaration.
 func TestJoinFailureRollsBackDeclaration(t *testing.T) {
 	tb := newTestBroker(t)
 	setDirectoryPublic(t, tb.dir, true)
@@ -491,8 +493,9 @@ func TestJoinFailureRollsBackDeclaration(t *testing.T) {
 	}
 }
 
+// TestListTopicsSeparatesPublic checks that public topics list only those the
+// caller has not joined.
 func TestListTopicsSeparatesPublic(t *testing.T) {
-	// REQ-topics-013
 	tb := newTestBroker(t)
 	setDirectoryKnown(t, tb.dir, []PublicTopic{
 		{Name: "b", Description: "db"},
@@ -519,10 +522,8 @@ func TestListTopicsSeparatesPublic(t *testing.T) {
 }
 
 // TestListTopicsReportsPublisher checks that a public topic carries the
-// fingerprint of the Broker whose declaration supplied its description, the
-// alias known for it and the number of declarers.
+// publisher fingerprint, alias and declarer count.
 func TestListTopicsReportsPublisher(t *testing.T) {
-	// REQ-topics-010, REQ-topics-011
 	tb := newTestBroker(t)
 	publisher := [32]byte{0xde, 0xad, 0xbe, 0xef}
 	setDirectoryKnown(t, tb.dir, []PublicTopic{
@@ -549,6 +550,8 @@ func TestListTopicsReportsPublisher(t *testing.T) {
 	}
 }
 
+// TestPublicTopicSet checks that publicTopicSet holds one description per topic
+// from the smaller agent ID and no private topics.
 func TestPublicTopicSet(t *testing.T) {
 	tb := newTestBroker(t)
 	setDirectoryPublic(t, tb.dir, true)
@@ -601,6 +604,8 @@ func TestPublicTopicSet(t *testing.T) {
 	}
 }
 
+// TestJoinUnknownAgentIsInternal checks that ErrUnknownAgent from the topic table
+// maps to internal.
 func TestJoinUnknownAgentIsInternal(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.topics.FailJoin("t9", ErrUnknownAgent)
@@ -614,8 +619,6 @@ func TestJoinUnknownAgentIsInternal(t *testing.T) {
 	}
 }
 
-// joinWithRefill joins name, advancing the fake clock first so the per-account
-// topic-change rate never refuses the call.
 func joinWithRefill(t *testing.T, tb *testBroker, id, name string) error {
 	t.Helper()
 	tb.clock.Advance(time.Second)
@@ -623,9 +626,8 @@ func joinWithRefill(t *testing.T, tb *testBroker, id, name string) error {
 	return err
 }
 
-// TestJoinTopicPerAccountLimit checks that a system Broker refuses the topic
-// past the per-account limit with quota_exceeded and still lets the account
-// rejoin one it already has.
+// TestJoinTopicPerAccountLimit checks that a system Broker refuses a topic past
+// the per-account limit and still lets the account rejoin one it already has.
 func TestJoinTopicPerAccountLimit(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.System = true })
 	id, _ := registerTopicAgent(t, tb, "accountlimit")
@@ -649,9 +651,8 @@ func TestJoinTopicPerAccountLimit(t *testing.T) {
 	}
 }
 
-// TestUserBrokerHasNoPerAccountLimit checks that a user Broker, which serves one
-// account, does not apply the per-account limit; the registry's global limit is
-// the only one there.
+// TestUserBrokerHasNoPerAccountLimit checks that a user Broker applies no
+// per-account topic limit.
 func TestUserBrokerHasNoPerAccountLimit(t *testing.T) {
 	tb := newTestBroker(t)
 	id, _ := registerTopicAgent(t, tb, "userlimit")

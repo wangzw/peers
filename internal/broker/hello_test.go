@@ -13,7 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// callTestHello performs one Hello on client with version v.
 func callTestHello(t *testing.T, client localpb.LocalClient, v uint32) (*localpb.HelloResponse, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -21,8 +20,6 @@ func callTestHello(t *testing.T, client localpb.LocalClient, v uint32) (*localpb
 	return client.Hello(ctx, &localpb.HelloRequest{ProtocolVersion: v})
 }
 
-// wantErrorDetail asserts that err carries one ErrorDetail with code want and
-// returns it.
 func wantErrorDetail(t *testing.T, err error, want localpb.ErrorCode) *localpb.ErrorDetail {
 	t.Helper()
 	if err == nil {
@@ -44,8 +41,9 @@ func wantErrorDetail(t *testing.T, err error, want localpb.ErrorCode) *localpb.E
 	return nil
 }
 
+// TestHelloSameVersion checks that a matching protocol version completes the
+// handshake.
 func TestHelloSameVersion(t *testing.T) {
-	// REQ-broker-config-016: a matching version completes the handshake.
 	tb := newTestBroker(t)
 
 	resp, err := callTestHello(t, tb.client, localpb.ProtocolVersion)
@@ -57,9 +55,10 @@ func TestHelloSameVersion(t *testing.T) {
 	}
 }
 
+// TestHelloVersionMismatchKeepsServing checks that a version mismatch fails the
+// call with version_mismatch, is logged, and leaves the Broker serving new
+// connections.
 func TestHelloVersionMismatchKeepsServing(t *testing.T) {
-	// REQ-broker-config-016: a mismatch fails the call without stopping the
-	// Broker or closing the connection.
 	tb := newTestBroker(t)
 
 	_, err := callTestHello(t, tb.client, localpb.ProtocolVersion+1)
@@ -90,6 +89,8 @@ func TestHelloVersionMismatchKeepsServing(t *testing.T) {
 	}
 }
 
+// TestHelloUsesInjectedVersion checks that Hello accepts the version injected
+// through Deps.LocalProtocolVersion.
 func TestHelloUsesInjectedVersion(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.LocalProtocolVersion = 7 })
 
@@ -105,6 +106,8 @@ func TestHelloUsesInjectedVersion(t *testing.T) {
 	wantErrorDetail(t, err, localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH)
 }
 
+// TestNewRequiresTopicsAndConfig checks that New fails without Topics or
+// without Config.
 func TestNewRequiresTopicsAndConfig(t *testing.T) {
 	cfg := newFakeConfig(t.TempDir())
 	if _, err := New(Deps{Config: cfg}); err == nil {
@@ -117,6 +120,8 @@ func TestNewRequiresTopicsAndConfig(t *testing.T) {
 	}
 }
 
+// TestServerOptionsApplied checks that Deps.ServerOptions interceptors run on
+// the local service.
 func TestServerOptionsApplied(t *testing.T) {
 	var calls atomic.Int32
 	counting := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {

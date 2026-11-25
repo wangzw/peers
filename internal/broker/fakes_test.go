@@ -12,10 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// This file is the package's single set of test doubles. Later broker work
-// items use these and add only new doubles with their own prefixes.
-
-// syncBuffer is a bytes.Buffer safe for the logger's concurrent writers.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -70,16 +66,12 @@ func (c *fakeClock) AfterFunc(d time.Duration, f func()) Timer {
 	return t
 }
 
-// createdTimers returns how many timers have been registered so far. A test
-// uses it to wait until the code under test has scheduled a timer.
 func (c *fakeClock) createdTimers() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.created
 }
 
-// pendingTimers returns how many registered timers have neither fired nor been
-// stopped. A test uses it to tell whether a window is still open.
 func (c *fakeClock) pendingTimers() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -92,7 +84,6 @@ func (c *fakeClock) pendingTimers() int {
 	return n
 }
 
-// Stop reports whether it prevented the callback from running.
 func (t *fakeTimer) Stop() bool {
 	c := t.clock
 	c.mu.Lock()
@@ -104,8 +95,8 @@ func (t *fakeTimer) Stop() bool {
 	return true
 }
 
-// Advance moves the clock forward and runs every callback that has come due,
-// earliest deadline first. Equal deadlines keep scheduling order.
+// Advance moves the clock forward and runs every due callback, earliest deadline
+// first.
 func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
@@ -137,13 +128,11 @@ func (c *fakeClock) Advance(d time.Duration) {
 	}
 }
 
-// fakeLoadCall records one Load call.
 type fakeLoadCall struct {
 	Mode           config.Mode
 	ListenOverride string
 }
 
-// setCall records one Set call.
 type setCall struct {
 	Actor config.Actor
 	Key   string
@@ -151,7 +140,7 @@ type setCall struct {
 }
 
 // fakeConfig implements ConfigSource without touching the process-wide config
-// singleton. Only the keys the broker reads start with values.
+// singleton.
 type fakeConfig struct {
 	mu              sync.Mutex
 	runtime         string
@@ -202,8 +191,6 @@ func newFakeConfig(runtimeDir string) *fakeConfig {
 	return f
 }
 
-// setValue changes a value and synchronously calls the key's subscribers. It
-// does not run validators.
 func (f *fakeConfig) setValue(key string, v config.Value) {
 	f.mu.Lock()
 	old := f.values[key]
@@ -215,8 +202,6 @@ func (f *fakeConfig) setValue(key string, v config.Value) {
 	}
 }
 
-// setLoadErr changes the next Load result under the lock, so a test can drive
-// a retry while Run is already calling Load from another goroutine.
 func (f *fakeConfig) setLoadErr(err error) {
 	f.mu.Lock()
 	f.loadErr = err
@@ -239,8 +224,6 @@ func (f *fakeConfig) CheckRuntimeDir() error { return nil }
 
 func (f *fakeConfig) AccountLock() string { return f.lockPath }
 
-// AccountLockCandidates returns the configured candidate paths, or the single
-// lock path when a test does not name any.
 func (f *fakeConfig) AccountLockCandidates() []string {
 	if len(f.lockCandidates) > 0 {
 		return f.lockCandidates
@@ -361,17 +344,12 @@ func (f *fakeConfig) Subscribe(key string, onChange func(old, new config.Value))
 	f.subscribers[key] = append(f.subscribers[key], onChange)
 }
 
-// setValueQuietly changes a value without calling subscribers, as a change
-// whose notification was delivered while the listener was suppressed would
-// leave it: current in the configuration, never forwarded.
 func (f *fakeConfig) setValueQuietly(key string, v config.Value) {
 	f.mu.Lock()
 	f.values[key] = v
 	f.mu.Unlock()
 }
 
-// fireKey calls the callbacks registered for key without changing the stored
-// value, as a notification queued by config would.
 func (f *fakeConfig) fireKey(key string, old, new config.Value) {
 	f.mu.Lock()
 	callbacks := append([]func(old, new config.Value){}, f.subscribers[key]...)
@@ -381,8 +359,6 @@ func (f *fakeConfig) fireKey(key string, old, new config.Value) {
 	}
 }
 
-// fireAdvertised calls the advertised-address callbacks registered through
-// SubscribeAdvertised.
 func (f *fakeConfig) fireAdvertised(old, new []config.AdvertisedAddr) {
 	f.mu.Lock()
 	callbacks := append([]func(old, new []config.AdvertisedAddr){}, f.advertised...)
@@ -426,7 +402,6 @@ func copyValue(v config.Value) config.Value {
 	return v
 }
 
-// fakeSessions wraps UserRouter and records what Acquire saw.
 type fakeSessions struct {
 	mu           sync.Mutex
 	acquiredUIDs []uint32
@@ -475,15 +450,12 @@ func (f *fakeSessions) ReleaseCount() int {
 	return f.releases
 }
 
-// noWatchBackend overrides Watch to return without subscribing, so a test can
-// drive the agent table directly instead of through a registry event.
 type noWatchBackend struct{ SessionBackend }
 
 func (noWatchBackend) Watch(context.Context, string, func(int)) (func(), error) {
 	return func() {}, nil
 }
 
-// topicCall is one recorded TopicTable call.
 type topicCall struct {
 	Method   string // "join", "leave", "leave_all" or "agent_changed"
 	Agent    AgentID
@@ -493,7 +465,6 @@ type topicCall struct {
 	Status   string
 }
 
-// fakeTopics is an in-memory TopicTable with injected remote members.
 type fakeTopics struct {
 	mu           sync.Mutex
 	members      map[AgentID]map[string]bool
@@ -652,8 +623,6 @@ func (f *fakeTopics) RemoteMembers(peer [32]byte) []Member {
 	return append([]Member(nil), f.remote[peer]...)
 }
 
-// SetRemote installs the members of a peer and the shared topics of each
-// member, keyed by member name.
 func (f *fakeTopics) SetRemote(peer [32]byte, members []Member, shared map[string][]string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -664,14 +633,12 @@ func (f *fakeTopics) SetRemote(peer [32]byte, members []Member, shared map[strin
 	}
 }
 
-// FailJoin makes Join return err for name.
 func (f *fakeTopics) FailJoin(name string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.joinErrs[name] = err
 }
 
-// FailLeave makes Leave return err for name.
 func (f *fakeTopics) FailLeave(name string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -701,7 +668,6 @@ func (f *fakeTopics) LeaveCalls() []topicCall        { return f.callsOf("leave")
 func (f *fakeTopics) LeaveAllCalls() []topicCall     { return f.callsOf("leave_all") }
 func (f *fakeTopics) AgentChangedCalls() []topicCall { return f.callsOf("agent_changed") }
 
-// Roster returns the latest roster entry stored for agent.
 func (f *fakeTopics) Roster(agent AgentID) (Member, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -709,7 +675,6 @@ func (f *fakeTopics) Roster(agent AgentID) (Member, bool) {
 	return m, ok
 }
 
-// LastAgentChanged returns the latest AgentChanged call for agent.
 func (f *fakeTopics) LastAgentChanged(agent AgentID) (topicCall, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -743,14 +708,12 @@ func intersect(a, b []string) []string {
 	return shared
 }
 
-// directoryCall is one recorded PublicTopicDirectory call.
 type directoryCall struct {
 	Method      string // "declare" or "retire"
 	Name        string
 	Description string
 }
 
-// fakeDirectory is an in-memory PublicTopicDirectory.
 type fakeDirectory struct {
 	mu     sync.Mutex
 	public bool
@@ -808,8 +771,6 @@ func (f *fakeDirectory) ResetCalls() {
 	f.calls = nil
 }
 
-// fakePeers is an in-memory PeerView. Tests fill aliases and infos directly
-// before making RPCs.
 type fakePeers struct {
 	aliases map[[32]byte]string
 	infos   []*localpb.BrokerInfo

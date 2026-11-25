@@ -19,13 +19,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// eventTimeout is the package-wide fallback for a wait on an event produced by
-// the fake Local server. The waits are driven by socket callbacks and by
-// Recv/Send progress on a real Unix socket. It only decides how long a wait
-// that will never complete takes to fail: the success path selects on the
-// event itself and never spends this time, so a larger value costs nothing.
-// Thirty seconds is far above the worst normal latency under load; it is not a
-// claim that an event should take that long.
 const eventTimeout = 30 * time.Second
 
 func dial(t *testing.T, path string) *grpc.ClientConn {
@@ -71,6 +64,8 @@ func waitStreamError(t *testing.T, stream localpb.Local_RegisterClient) error {
 	}
 }
 
+// TestHelloAnswersProtocolVersion checks that Hello answers with the protocol
+// version whatever the request asks for.
 func TestHelloAnswersProtocolVersion(t *testing.T) {
 	t.Parallel()
 	path := SocketPath(t)
@@ -88,6 +83,8 @@ func TestHelloAnswersProtocolVersion(t *testing.T) {
 	}
 }
 
+// TestRegisterStream checks that a Register stream delivers its first frame,
+// answers a completion and closes Done when the client cancels.
 func TestRegisterStream(t *testing.T) {
 	t.Parallel()
 	path := SocketPath(t)
@@ -134,6 +131,8 @@ func TestRegisterStream(t *testing.T) {
 	waitDone(t, conn.Done(), "Done to close after the client cancels")
 }
 
+// TestStopRemovesSocketAndRestartWorks checks that Stop removes the socket and
+// ends the stream, and that a new server can listen on the same path.
 func TestStopRemovesSocketAndRestartWorks(t *testing.T) {
 	t.Parallel()
 	path := SocketPath(t)
@@ -170,6 +169,8 @@ func TestStopRemovesSocketAndRestartWorks(t *testing.T) {
 	}
 }
 
+// TestErrorStatus checks that ErrorStatus carries the code, message and exactly
+// one ErrorDetail.
 func TestErrorStatus(t *testing.T) {
 	t.Parallel()
 	detail := &localpb.ErrorDetail{
@@ -202,6 +203,8 @@ func TestErrorStatus(t *testing.T) {
 	}
 }
 
+// TestRestart checks that Restart ends open streams and serves again without
+// clearing the recorded calls.
 func TestRestart(t *testing.T) {
 	t.Parallel()
 	path := SocketPath(t)
@@ -258,6 +261,8 @@ func TestRestart(t *testing.T) {
 	}
 }
 
+// TestCallsRecordUnaryRequestsInOrder checks that Calls returns unary requests
+// in arrival order.
 func TestCallsRecordUnaryRequestsInOrder(t *testing.T) {
 	t.Parallel()
 	path := SocketPath(t)
@@ -294,6 +299,8 @@ func TestCallsRecordUnaryRequestsInOrder(t *testing.T) {
 	}
 }
 
+// TestSocketPath checks that SocketPath stays short and uses a fresh ap-
+// directory.
 func TestSocketPath(t *testing.T) {
 	t.Parallel()
 	path := SocketPath(t)
@@ -306,9 +313,6 @@ func TestSocketPath(t *testing.T) {
 	}
 }
 
-// blockingRegisterStream is a Local_RegisterServer whose Send blocks until the
-// test releases it. It lets a test hold one Send in flight while the Register
-// handler tries to return.
 type blockingRegisterStream struct {
 	grpc.ServerStream
 
@@ -337,8 +341,7 @@ func (s *blockingRegisterStream) Send(*localpb.RegisterResponse) error {
 }
 
 // TestRegisterWaitsForInFlightSend checks that the Register handler does not
-// return (and close Done) while a Send is still writing on the stream: grpc-go
-// forbids using a server stream after its handler has returned.
+// return while a Send is still writing on the stream.
 func TestRegisterWaitsForInFlightSend(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -376,10 +379,6 @@ func TestRegisterWaitsForInFlightSend(t *testing.T) {
 	}
 
 	conn.End()
-	// Supplement: the handler's cleanup deletes the stream from s.streams before
-	// it blocks on conn.sendMu, which the in-flight Send holds until
-	// sendRelease. Wait for that deletion, then check Done directly: Done can be
-	// closed only after the Send finishes.
 	deadline := time.Now().Add(eventTimeout)
 	for {
 		s.mu.Lock()
@@ -398,8 +397,6 @@ func TestRegisterWaitsForInFlightSend(t *testing.T) {
 		t.Fatal("the Register stream closed Done while a Send was still in flight")
 	default:
 	}
-	// Negative window: a handler that returned while the Send was still in
-	// flight shows up here.
 	select {
 	case <-handlerDone:
 		t.Fatal("the Register handler returned while a Send was still in flight")

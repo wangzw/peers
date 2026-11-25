@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// TestRunRefusesWhenFallbackLockIsHeld covers a fallback Broker that keeps
-// running after the taken preferred directory disappears. A new Broker resolves
-// to the preferred path, where its own lock is free, but must still refuse
-// because the fallback Broker holds the account lock at the other location.
+// TestRunRefusesWhenFallbackLockIsHeld checks that Run refuses to start when a
+// Broker already holds the account lock at the fallback runtime directory.
 func TestRunRefusesWhenFallbackLockIsHeld(t *testing.T) {
 	base := t.TempDir()
 	preferred := filepath.Join(base, "preferred")

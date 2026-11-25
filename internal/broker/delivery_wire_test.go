@@ -18,8 +18,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// wireConfig is a ConfigSource whose Get can be counted and made to fail per
-// key. Keys in override answer directly; the rest go to the embedded fake.
 type wireConfig struct {
 	*fakeConfig
 
@@ -31,8 +29,6 @@ type wireConfig struct {
 
 var _ ConfigSource = (*wireConfig)(nil)
 
-// newWireConfig returns a config preloaded with the send defaults and the
-// local alias, because fakeConfig answers only the keys it was given.
 func newWireConfig(t *testing.T) *wireConfig {
 	t.Helper()
 	c := &wireConfig{
@@ -85,9 +81,9 @@ func (c *wireConfig) getCount(key string) int {
 	return c.gets[key]
 }
 
+// TestConfigSettingsReadsLive checks that the delivery sees a reloaded
+// send.request_timeout on the next send.
 func TestConfigSettingsReadsLive(t *testing.T) {
-	// The delivery must see a reloaded send.request_timeout on the next send,
-	// not only the value present at startup.
 	c := newWireConfig(t)
 	s := configSettings{cfg: c}
 
@@ -103,9 +99,9 @@ func TestConfigSettingsReadsLive(t *testing.T) {
 	}
 }
 
+// TestConfigSettingsFallsBackOnError checks that a failed read keeps the
+// documented defaults and is logged.
 func TestConfigSettingsFallsBackOnError(t *testing.T) {
-	// A failed config read must keep the documented defaults instead of
-	// disabling retries or sending with a zero timeout, and it must be logged.
 	c := newWireConfig(t)
 	c.fail("send.link_retries", errors.New("read failed"))
 	c.fail("send.request_timeout", errors.New("read failed"))
@@ -128,6 +124,8 @@ func TestConfigSettingsFallsBackOnError(t *testing.T) {
 	}
 }
 
+// TestTopicVisibilityMapsTable checks that the topic-table adapter maps local
+// visibility, remote visibility and remote members.
 func TestTopicVisibilityMapsTable(t *testing.T) {
 	topics := newFakeTopics()
 	a := AgentID("agent-a")
@@ -171,8 +169,6 @@ func TestTopicVisibilityMapsTable(t *testing.T) {
 	}
 }
 
-// newWireLinkPair builds two real links whose fake peer tables know each
-// other, without connecting them. The first link dials, the second accepts.
 func newWireLinkPair(t *testing.T) (dialer, acceptor *link.Link, dialerPeers, acceptorPeers *linktest.FakePeers) {
 	t.Helper()
 	dialerPeers = linktest.NewFakePeers(t)
@@ -204,6 +200,8 @@ func newWireLinkPair(t *testing.T) (dialer, acceptor *link.Link, dialerPeers, ac
 	return dialer, acceptor, dialerPeers, acceptorPeers
 }
 
+// TestLinkAdapterEstablished checks that the link adapter reports the link
+// established and down with the real link.
 func TestLinkAdapterEstablished(t *testing.T) {
 	dialer, acceptor, dialerPeers, acceptorPeers := newWireLinkPair(t)
 	if err := acceptor.Listen("127.0.0.1:0"); err != nil {
@@ -221,10 +219,9 @@ func TestLinkAdapterEstablished(t *testing.T) {
 	waitForReg(t, "link down", func() bool { return !adapter.Established(peer) })
 }
 
+// TestDeliveryAssemblerRequiresUpstream checks that assembly fails, naming the
+// input, when the link, topic or pairing input is missing.
 func TestDeliveryAssemblerRequiresUpstream(t *testing.T) {
-	// Each of the link, topics and pairing inputs must be in place before the
-	// delivery is built; skipping one fails assembly instead of panicking on a
-	// nil dependency.
 	cases := []struct {
 		name    string
 		deps    *Deps
@@ -269,10 +266,10 @@ func TestDeliveryAssemblerRequiresUpstream(t *testing.T) {
 	}
 }
 
+// TestDeliveryAssemblerRegistersBeforeListen checks that the kind-400 handler is
+// registered during assembly, so a request after the link starts gets a kind-401
+// reply rather than an unsupported-kind reply.
 func TestDeliveryAssemblerRegistersBeforeListen(t *testing.T) {
-	// The kind-400 handler is registered during assembly. A request that
-	// arrives after the link starts must be answered with a kind-401 result,
-	// not with the link's "unsupported kind" reply.
 	remote, ours, remotePeers, ourPeers := newWireLinkPair(t)
 	deps := &Deps{
 		Topics:  newFakeTopics(),
@@ -340,6 +337,8 @@ func TestDeliveryAssemblerRegistersBeforeListen(t *testing.T) {
 	}
 }
 
+// TestDefaultAssemblersIncludesDelivery checks that DefaultAssemblers has one
+// delivery assembler running after the pairing-and-link and topic assemblers.
 func TestDefaultAssemblersIncludesDelivery(t *testing.T) {
 	asms := DefaultAssemblers()
 	deliveryIndex := -1
@@ -374,10 +373,8 @@ func TestDefaultAssemblersIncludesDelivery(t *testing.T) {
 	}
 }
 
-// TestUnregisterForgetsTargetBuckets checks that the delivery component wires
-// an Agent leaving the table to the inbound limiter: its buckets are dropped, so
-// the quota table does not grow with every Agent that ever existed. Without the
-// wiring, an ended Agent keeps its exhausted bucket forever.
+// TestUnregisterForgetsTargetBuckets checks that an Agent leaving the table drops
+// its inbound buckets so the quota table does not grow.
 func TestUnregisterForgetsTargetBuckets(t *testing.T) {
 	tb := newTestBroker(t)
 	lim := newInboundLimiter(nil)
@@ -401,8 +398,6 @@ func TestUnregisterForgetsTargetBuckets(t *testing.T) {
 		t.Fatal("take after the burst succeeded, want a refusal")
 	}
 
-	// The Agent leaves the table. The component's hook must drop its buckets,
-	// so the next take starts a fresh one instead of staying refused.
 	stream.cancel()
 	waitForReg(t, "the Agent's inbound buckets to be dropped", func() bool {
 		ok, _ := lim.take(peer, string(id))

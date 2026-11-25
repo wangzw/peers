@@ -12,8 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// errorDetailOf returns the single *localpb.ErrorDetail an error carries. It
-// fails the test when there is none or more than one.
 func errorDetailOf(t *testing.T, err error) *localpb.ErrorDetail {
 	t.Helper()
 	if err == nil {
@@ -35,6 +33,8 @@ func errorDetailOf(t *testing.T, err error) *localpb.ErrorDetail {
 	return found[0]
 }
 
+// TestFakeConfigSecretKey checks that the fake reports a secret key as set
+// without returning its value.
 func TestFakeConfigSecretKey(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 	f.secretKeys["pairing.static_key"] = true
@@ -55,6 +55,8 @@ func TestFakeConfigSecretKey(t *testing.T) {
 	}
 }
 
+// TestFakeConfigSetReturnsOld checks that the fake records the Set call and
+// returns the previous value.
 func TestFakeConfigSetReturnsOld(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 	actor := config.Actor{Account: "alice", Agent: "w@hostA"}
@@ -90,6 +92,8 @@ func TestFakeConfigSetReturnsOld(t *testing.T) {
 	}
 }
 
+// TestFakeConfigSetErrShortCircuits checks that a failed Set is returned
+// without running subscribers or changing the value.
 func TestFakeConfigSetErrShortCircuits(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 	wantErr := errors.New("injected set failure")
@@ -114,6 +118,8 @@ func TestFakeConfigSetErrShortCircuits(t *testing.T) {
 	}
 }
 
+// TestFakeConfigReadAuditSince checks that ReadAudit filters by time and
+// returns an injected read error.
 func TestFakeConfigReadAuditSince(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -143,6 +149,8 @@ func TestFakeConfigReadAuditSince(t *testing.T) {
 	}
 }
 
+// TestFakeConfigFireHelpers checks that the fire helpers deliver old and new
+// values to subscribers without changing stored values.
 func TestFakeConfigFireHelpers(t *testing.T) {
 	f := newFakeConfig(t.TempDir())
 
@@ -179,7 +187,6 @@ func TestFakeConfigFireHelpers(t *testing.T) {
 		t.Errorf("subscribedKeys = %v, want [broker.alias]", f.subscribedKeys)
 	}
 
-	// fireKey must not change the stored value.
 	stored, err := f.Get("broker.alias")
 	if err != nil {
 		t.Fatalf("Get: %v", err)

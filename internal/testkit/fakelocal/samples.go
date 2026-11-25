@@ -13,9 +13,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// AuditRequests records the limit of every Audit call the fake receives. Its
-// methods are safe for concurrent use, so a test can read the limits while the
-// fake still serves.
+// AuditRequests records the limit of every Audit call the fake receives; its
+// methods are safe for concurrent use.
 type AuditRequests struct {
 	mu     sync.Mutex
 	limits []uint32
@@ -38,9 +37,7 @@ func (r *AuditRequests) Limits() []uint32 {
 }
 
 // RecordingHandlers returns handlers for the status, audit and config-set RPCs
-// that call record with the method name before answering. A command test can
-// use it to tell which of several fake Brokers received the call without
-// naming the generated types itself.
+// that call record with the method name before answering.
 func RecordingHandlers(record func(method string)) Handlers {
 	return Handlers{
 		Status: func(context.Context, *localpb.StatusRequest) (*localpb.StatusResponse, error) {
@@ -145,9 +142,8 @@ func sampleTime(hour, minute int) *timestamppb.Timestamp {
 	return timestamppb.New(time.Date(2026, 11, 18, hour, minute, 0, 0, time.UTC))
 }
 
-// sampleStatusText is the exact terminal output for SampleStatus. The
-// subprocess tests compare the command's standard output with it, so the
-// formatting itself is checked by TestSamplesMatchTermcmdFormat.
+// sampleStatusText is the exact terminal output for SampleStatus, which the cmd
+// subprocess tests compare against.
 const sampleStatusText = "" +
 	"Agents (2):\n" +
 	"  ADDRESS      ACCOUNT  STATUS  TOPICS                    PREVIOUS NAME\n" +

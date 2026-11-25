@@ -11,10 +11,8 @@ import (
 	"syscall"
 )
 
-// LocalSocket is the Unix socket serving the local gRPC interface. It refuses
-// to overwrite anything but a leftover socket, never lets the listener's Close
-// unlink the path, and removes the path only when it still names this
-// listener's socket.
+// LocalSocket is the Unix socket serving the local gRPC interface; it removes
+// its path only when that path still names its own socket.
 type LocalSocket struct {
 	mu     sync.Mutex
 	path   string
@@ -24,20 +22,12 @@ type LocalSocket struct {
 	closed bool
 }
 
-// afterListen runs after each successful ListenUnix and before the socket's
-// mode is set. It is a test seam for removing the socket inside that window:
-// production code never sets it, and the zero value does nothing.
+// afterListen is a test seam that runs after each successful ListenUnix and
+// before the socket's mode is set.
 var afterListen = func() {}
 
-// bindAttempts bounds the retries BindLocalSocket makes when the socket file
-// disappears between its ListenUnix call and the chmod or lstat that follows.
-// That window holds only those two system calls, so one retry clears a race
-// with a single unlink; three leaves margin for a second unlucky removal while
-// a path that keeps losing its socket still fails quickly instead of looping.
 const bindAttempts = 3
 
-// attemptCountText describes how many bind attempts failed, for the error
-// returned once the attempts are spent.
 func attemptCountText(n int) string {
 	if n == 1 {
 		return "1 attempt"
@@ -46,9 +36,8 @@ func attemptCountText(n int) string {
 }
 
 // BindLocalSocket binds the local interface to path with file mode perm. A
-// stale socket left by a previous process is replaced; any other kind of file
-// at path is left alone and reported as an error. The caller must hold the
-// account lock, so that only the one running Broker ever tries this.
+// stale socket is replaced; any other file at path is left alone and reported
+// as an error. The caller must hold the account lock.
 func BindLocalSocket(path string, perm os.FileMode, logger *slog.Logger) (*LocalSocket, error) {
 	if logger == nil {
 		logger = slog.Default()
@@ -63,13 +52,10 @@ func BindLocalSocket(path string, perm os.FileMode, logger *slog.Logger) (*Local
 			return nil, fmt.Errorf("remove stale socket %s: %w", path, err)
 		}
 	case errors.Is(err, fs.ErrNotExist):
-		// Nothing to replace.
 	default:
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
 
-	// retried records whether an attempt failed and gave way to another, so a
-	// bind that finally succeeds can report the recovery once.
 	retried := false
 
 	for attempt := 1; ; attempt++ {
@@ -128,8 +114,6 @@ func (s *LocalSocket) Listener() net.Listener {
 }
 
 // Present reports whether path still names the socket this LocalSocket bound.
-// It is the check the periodic runtime-directory review makes before deciding
-// to bind again, and it guards Close from removing a replacement socket.
 func (s *LocalSocket) Present() bool {
 	fi, err := os.Lstat(s.path)
 	if err != nil {

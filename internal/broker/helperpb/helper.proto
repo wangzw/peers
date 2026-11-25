@@ -6,8 +6,8 @@ option go_package = "github.com/wangzw/peers/internal/broker/helperpb;helperpb";
 
 import "google/protobuf/duration.proto";
 
-// Broker -> account helper. Every message is one request; id is non-zero and
-// unique among the requests still in flight on the connection.
+// Broker -> account helper request; id is non-zero and unique among the
+// requests still in flight on the connection.
 message HelperRequest {
   uint64 id = 1;
   oneof op {
@@ -53,13 +53,13 @@ message DeliverRequest {
   google.protobuf.Duration timeout = 5;
 }
 
-// Cancels the Deliver request whose id is request_id. It has no response of
-// its own; the cancelled request still gets exactly one response.
+// Cancels the Deliver request whose id is request_id; it has no response of
+// its own, and the cancelled request still gets exactly one response.
 message CancelRequest {
   uint64 request_id = 1;
 }
 
-// Account helper -> Broker. The first message on a connection is Ready.
+// Account helper -> Broker; the first message on a connection is Ready.
 message HelperMessage {
   oneof body {
     Ready ready = 1;

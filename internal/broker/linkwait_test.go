@@ -13,8 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// waitLink is a minimal deliveryLink for the waiter tests. Subscribe and
-// Established have real behaviour; the other three methods are no-ops.
 type waitLink struct {
 	mu    sync.Mutex
 	up    map[peerID]bool
@@ -46,8 +44,6 @@ func (l *waitLink) Established(p peerID) bool {
 
 func (l *waitLink) Kick(peerID) {}
 
-// fireUp marks p established and runs the subscription callbacks, as the link
-// does when a handshake completes.
 func (l *waitLink) fireUp(p peerID) {
 	l.mu.Lock()
 	l.up[p] = true
@@ -60,8 +56,8 @@ func (l *waitLink) fireUp(p peerID) {
 
 var _ deliveryLink = (*waitLink)(nil)
 
-// TestLinkWaiterAlreadyUp checks that an up event recorded before the wait
-// makes it return true immediately instead of waiting for the timer.
+// TestLinkWaiterAlreadyUp checks that an up event recorded before the wait makes
+// it return true without arming a timer.
 func TestLinkWaiterAlreadyUp(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{1}
@@ -72,16 +68,12 @@ func TestLinkWaiterAlreadyUp(t *testing.T) {
 	if !w.wait(context.Background(), p, time.Second, 0) {
 		t.Fatal("wait returned false, want true")
 	}
-	// The recorded up event satisfies the wait before a timer is armed, so the
-	// fake clock must have no timer. That is the schedule-independent form of
-	// "returned without waiting for the maximum".
 	if got := clock.createdTimers(); got != 0 {
 		t.Fatalf("wait armed %d timer(s), want it to return on the recorded up event", got)
 	}
 }
 
-// TestLinkWaiterWakesOnUp checks that an up event wakes a waiting caller well
-// before the maximum, so a send does not burn its budget on the timer.
+// TestLinkWaiterWakesOnUp checks that an up event wakes a waiting caller before its maximum elapses.
 func TestLinkWaiterWakesOnUp(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{2}
@@ -103,10 +95,7 @@ func TestLinkWaiterWakesOnUp(t *testing.T) {
 	}
 }
 
-// TestLinkWaiterUpBetweenObserveAndWait checks the generation path: a caller
-// records the generation it saw at a failure, an up event lands before wait
-// registers, and the wait must still return at once instead of sleeping until
-// the timer.
+// TestLinkWaiterUpBetweenObserveAndWait checks that an up event arriving after the observed generation but before the wait returns it true.
 func TestLinkWaiterUpBetweenObserveAndWait(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{3}
@@ -119,16 +108,12 @@ func TestLinkWaiterUpBetweenObserveAndWait(t *testing.T) {
 	if !w.wait(context.Background(), p, 2*time.Second, since) {
 		t.Fatal("wait returned false, want true")
 	}
-	// The up event follows the observed generation, so the wait returns at once
-	// and never arms the fake-clock timer.
 	if got := clock.createdTimers(); got != 0 {
 		t.Fatalf("wait armed %d timer(s), want it to return on the up event that followed the observed generation", got)
 	}
 }
 
-// TestLinkWaiterIgnoresUpBeforeSince checks the other half of the rule: a wait
-// that starts from a generation observed after a failure is not satisfied by an
-// earlier up event, even though the link now reports itself as established.
+// TestLinkWaiterIgnoresUpBeforeSince checks that an up event older than the observed generation does not satisfy the wait.
 func TestLinkWaiterIgnoresUpBeforeSince(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{7}
@@ -141,8 +126,7 @@ func TestLinkWaiterIgnoresUpBeforeSince(t *testing.T) {
 	}
 }
 
-// TestLinkWaiterTimeout checks that wait gives up once the maximum elapses, so
-// the dialer's backoff still bounds the send.
+// TestLinkWaiterTimeout checks that wait returns false once its maximum elapses.
 func TestLinkWaiterTimeout(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{4}
@@ -151,8 +135,6 @@ func TestLinkWaiterTimeout(t *testing.T) {
 
 	done := make(chan bool, 1)
 	go func() { done <- w.wait(context.Background(), p, 20*time.Millisecond) }()
-	// Registration and the timer share the waiter's lock, so once the waiter is
-	// registered the timer exists and the test can advance the clock itself.
 	waitForRegistrations(t, w, p, 1)
 	clock.Advance(20 * time.Millisecond)
 	select {
@@ -165,8 +147,7 @@ func TestLinkWaiterTimeout(t *testing.T) {
 	}
 }
 
-// TestLinkWaiterContextCancel checks that a cancelled context returns false
-// instead of blocking the caller.
+// TestLinkWaiterContextCancel checks that a cancelled context returns false.
 func TestLinkWaiterContextCancel(t *testing.T) {
 	l := newWaitLink()
 	w := newLinkWaiter(l, nil)
@@ -175,9 +156,6 @@ func TestLinkWaiterContextCancel(t *testing.T) {
 	cancel()
 
 	done := make(chan bool, 1)
-	// The wait's own maximum is far above the outer fallback, so returning
-	// within it can only come from the context cancellation; a wait that ignored
-	// the context would fail the test instead of passing on its own timer.
 	go func() { done <- w.wait(ctx, peerID{5}, time.Hour) }()
 	select {
 	case ok := <-done:
@@ -189,10 +167,6 @@ func TestLinkWaiterContextCancel(t *testing.T) {
 	}
 }
 
-// staleLink models the disconnect window a real link has: the state handler
-// has not run yet, so Established keeps reporting true while the transport
-// already refuses frames. Until released, every Request fails without leaving
-// the Broker; after release, the link delivers.
 type staleLink struct {
 	mu           sync.Mutex
 	released     bool
@@ -226,7 +200,6 @@ func (l *staleLink) Subscribe(onUp func(peerID, []byte), _ func(peerID)) {
 	l.onUps = append(l.onUps, onUp)
 }
 
-// Established stays true for the whole window, exactly like the real link.
 func (l *staleLink) Established(peerID) bool { return true }
 
 func (l *staleLink) Kick(peerID) {
@@ -241,8 +214,6 @@ func (l *staleLink) kickCount() int {
 	return l.kicks
 }
 
-// release lets the transport deliver and announces the up event, as the link
-// does once the redial finishes.
 func (l *staleLink) release(p peerID) {
 	l.mu.Lock()
 	l.released = true
@@ -255,10 +226,7 @@ func (l *staleLink) release(p peerID) {
 
 var _ deliveryLink = (*staleLink)(nil)
 
-// TestSendWaitsForUpWhenEstablishedIsStale reproduces the disconnect window: the
-// transport refuses the frame (sent=false) while Established still reads true.
-// The sender must wait for the next up event instead of trusting that reading,
-// or it burns every retry before the link can come back.
+// TestSendWaitsForUpWhenEstablishedIsStale checks that a sender waits for the next up event while the transport refuses frames even though Established still reads true.
 func TestSendWaitsForUpWhenEstablishedIsStale(t *testing.T) {
 	l := newStaleLink()
 	peer := fakenetPeer(20)
@@ -283,8 +251,6 @@ func TestSendWaitsForUpWhenEstablishedIsStale(t *testing.T) {
 		LinkRetries:    3,
 		DedupeWindow:   time.Minute,
 	}, "hostA")
-	// The retry spacing is the behaviour under test, so the test advances it
-	// itself. A wall-clock timer would race a sleep-based check under load.
 	clock := newFakeClock(time.Now())
 	d := newDelivery(deliveryDeps{
 		Topics:      topics,
@@ -316,16 +282,11 @@ func TestSendWaitsForUpWhenEstablishedIsStale(t *testing.T) {
 		t.Fatal("the send never reached the transport")
 	}
 
-	// The sender must be blocked waiting for an up event now. One that reads
-	// the stale Established value never registers a wait and gives up after
-	// burning every retry, so the helper reports the send's own error.
 	waitForWaitOrDone(t, d.waiter, peer, done)
 	if got := l.kickCount(); got != 1 {
 		t.Fatalf("kicks after the first failed request = %d, want 1", got)
 	}
 
-	// One backoff later the sender may try once more. It must kick once more
-	// and wait again rather than spend the remaining retries at once.
 	clock.Advance(20 * time.Millisecond)
 	waitForKicks(t, l, 2)
 	waitForWaitOrDone(t, d.waiter, peer, done)
@@ -351,8 +312,7 @@ func TestSendWaitsForUpWhenEstablishedIsStale(t *testing.T) {
 	}
 }
 
-// TestLinkWaiterManyWaiters checks that one up event wakes every waiter of the
-// same peer, not just one.
+// TestLinkWaiterManyWaiters checks that one up event wakes every waiter of the peer.
 func TestLinkWaiterManyWaiters(t *testing.T) {
 	l := newWaitLink()
 	p := peerID{6}
@@ -380,9 +340,6 @@ func TestLinkWaiterManyWaiters(t *testing.T) {
 	}
 }
 
-// waitForWaitOrDone waits until one waiter is blocked on p. It fails with the
-// send's own error when the send gives up first, which is what a sender that
-// trusts the stale Established value does instead of waiting for an up event.
 func waitForWaitOrDone(t *testing.T, w *linkWaiter, p peerID, done <-chan error) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -405,7 +362,6 @@ func waitForWaitOrDone(t *testing.T, w *linkWaiter, p peerID, done <-chan error)
 	}
 }
 
-// waitForKicks waits until the link has been kicked n times.
 func waitForKicks(t *testing.T, l *staleLink, n int) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -417,9 +373,6 @@ func waitForKicks(t *testing.T, l *staleLink, n int) {
 	}
 }
 
-// waitForRegistrations waits until n waiters are blocked on p. It reads the
-// waiter's own bookkeeping under its mutex, so firing an up event afterwards is
-// certain to hit registered waiters and cannot be lost.
 func waitForRegistrations(t *testing.T, w *linkWaiter, p peerID, n int) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)

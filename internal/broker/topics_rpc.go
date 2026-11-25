@@ -10,17 +10,10 @@ import (
 	"github.com/wangzw/peers/internal/topic"
 )
 
-// invalidTopicNameMessage is the client-facing reason for a rejected topic
-// name. It is shared by JoinTopic and LeaveTopic.
 const invalidTopicNameMessage = "topic name must be 1 to 256 bytes of UTF-8 without control characters"
 
-// maxAccountTopics caps the distinct local topics one account may hold a member
-// in on a system Broker. A user Broker serves one account, so it uses only the
-// topic registry's global limit.
 const maxAccountTopics = 128
 
-// privateDirectory is the built-in PublicTopicDirectory used when the process
-// runs without a directory. It makes the Broker behave as not public.
 type privateDirectory struct{}
 
 func (privateDirectory) DeclarePublicTopic(string, string) error {
@@ -32,8 +25,6 @@ func (privateDirectory) RetirePublicTopic(string) {}
 
 func (privateDirectory) PublicTopics() []PublicTopic { return nil }
 
-// directory returns the configured public topic directory, substituting the
-// built-in private implementation when none is set.
 func (b *Broker) directory() PublicTopicDirectory {
 	if b.deps.Directory != nil {
 		return b.deps.Directory
@@ -41,14 +32,10 @@ func (b *Broker) directory() PublicTopicDirectory {
 	return privateDirectory{}
 }
 
-// invalidTopicNameError is the client-facing error for a name that breaks the
-// topic name rules.
 func invalidTopicNameError() *Error {
 	return Errorf(localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT, invalidTopicNameMessage)
 }
 
-// checkTopicChange validates a topic name and the account's change rate for a
-// Join or Leave. It returns the client error, or nil when the change may run.
 func (b *Broker) checkTopicChange(a *agent, name string) *Error {
 	if topic.ValidateName(name) != nil {
 		return invalidTopicNameError()
@@ -59,8 +46,6 @@ func (b *Broker) checkTopicChange(a *agent, name string) *Error {
 	return nil
 }
 
-// topicTableError maps the errors TopicTable.Join and Leave may return. An
-// unrecognized error is returned unchanged so toStatus maps it to internal.
 func topicTableError(err error, id AgentID) error {
 	switch {
 	case errors.Is(err, ErrInvalidTopicName):
@@ -75,17 +60,13 @@ func topicTableError(err error, id AgentID) error {
 	}
 }
 
-// topicQuotaExceededError is the client-facing error for a topic change refused
-// by a quota. message is a complete sentence for the model.
+// topicQuotaExceededError wraps a complete sentence for the model.
 func topicQuotaExceededError(message string) *Error {
 	return Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, "%s", message)
 }
 
-// overAccountTopicLimit reports whether joining name would give a's account
-// more than maxAccountTopics distinct local topics on a system Broker. A topic
-// the account already has a member in does not count as exceeding the limit,
-// so a repeated join stays idempotent at the limit. The caller must hold
-// b.accountTopicMu; this method takes b.mu itself.
+// overAccountTopicLimit reports whether joining name would exceed the account's
+// topic limit. The caller must hold b.accountTopicMu; this method takes b.mu.
 func (b *Broker) overAccountTopicLimit(a *agent, name string) bool {
 	if !b.deps.System {
 		return false
@@ -107,9 +88,8 @@ func (b *Broker) overAccountTopicLimit(a *agent, name string) bool {
 	return len(topics) >= maxAccountTopics
 }
 
-// JoinTopic joins the calling agent to a topic, optionally declaring the topic
-// public first. A public declaration whose join fails is rolled back so that
-// the directory never advertises a topic this agent is not a member of.
+// JoinTopic joins the calling agent to a topic, optionally declaring it public
+// first; a failed join rolls back the declaration.
 func (b *Broker) JoinTopic(ctx context.Context, req *localpb.JoinTopicRequest) (*localpb.JoinTopicResponse, error) {
 	a, err := b.agentFor(ctx, req.GetAgentId())
 	if err != nil {
@@ -160,9 +140,8 @@ func (b *Broker) JoinTopic(ctx context.Context, req *localpb.JoinTopicRequest) (
 	return &localpb.JoinTopicResponse{Topics: topics}, nil
 }
 
-// LeaveTopic removes the calling agent from a topic. If the agent had joined
-// the topic publicly and no other agent still holds it publicly, the
-// declaration is retired.
+// LeaveTopic removes the calling agent from a topic and retires its public
+// declaration when no other agent still holds the topic publicly.
 func (b *Broker) LeaveTopic(ctx context.Context, req *localpb.LeaveTopicRequest) (*localpb.LeaveTopicResponse, error) {
 	a, err := b.agentFor(ctx, req.GetAgentId())
 	if err != nil {
@@ -228,9 +207,8 @@ func (b *Broker) ListTopics(ctx context.Context, req *localpb.ListTopicsRequest)
 	}, nil
 }
 
-// recordPublicJoin remembers a successful public join on a. It reports false
-// when the agent is no longer in the table, in which case the join must be
-// rolled back.
+// recordPublicJoin remembers a successful public join and reports false when the
+// agent has left the table, in which case the join must be rolled back.
 func (b *Broker) recordPublicJoin(a *agent, name, description string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -241,8 +219,6 @@ func (b *Broker) recordPublicJoin(a *agent, name, description string) bool {
 	return true
 }
 
-// rollbackPublicDeclaration retires the declaration of name unless another
-// agent still holds it publicly, then forgets it on a.
 func (b *Broker) rollbackPublicDeclaration(a *agent, name string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()

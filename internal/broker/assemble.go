@@ -7,48 +7,43 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// Assembly carries the concrete upstream instances built by earlier
-// assemblers. Later assemblers (topic, directory, delivery) read Link and
-// Pairing instead of constructing their own.
+// Assembly carries the upstream instances earlier assemblers built; a later
+// assembler reads or replaces them.
 type Assembly struct {
-	Pairing             *pairing.Pairing
-	Link                *link.Link
-	Runner              LinkRunner
-	LinkProtocolVersion uint32 // 0: linkpb.ProtocolVersion
+	// Pairing is the pairing instance the peer assembler opened.
+	Pairing *pairing.Pairing
+	// Link is the link built by the peer assembler.
+	Link *link.Link
+	// Runner drives the link lifecycle at startup and shutdown.
+	Runner LinkRunner
+	// LinkProtocolVersion is the link protocol version; 0 means linkpb.ProtocolVersion.
+	LinkProtocolVersion uint32
 
-	// System reports that Run runs the system form. configWiring refuses to
-	// fall back to allowAllAccess in that form.
+	// System reports that Run runs the system form.
 	System bool
 
-	// Access is the configuration-file checker the system assembler builds.
-	// In user mode nil means allowAllAccess{}.
+	// Access is the access checker the system assembler builds; nil means
+	// allowAllAccess in user mode.
 	Access accessChecker
 
-	// configAssembled records that a configWiring ran, and effectiveAccess is
-	// the checker it installed. Run requires both in system mode, so a missing
-	// assembler or a checker other than Access cannot silently allow every
-	// caller.
 	configAssembled bool
 	effectiveAccess accessChecker
 }
 
 // Assembler builds one piece of upstream state before the Broker is
-// constructed. Assemblers run in order; each receives the same Assembly so a
-// later one can read or replace what an earlier one built, and the same Deps so
-// it can substitute an implementation before New copies them.
+// constructed. Assemblers run in order and share the Assembly and Deps, so a
+// later one can read or replace what an earlier one built.
 type Assembler interface {
+	// Name identifies the assembler in an error message.
 	Name() string
+	// Assemble builds its components and state and returns the components Run
+	// starts; it may replace fields in deps before New copies them.
 	Assemble(ctx context.Context, cfg ConfigSource, deps *Deps, asm *Assembly) ([]Component, error)
 }
 
-// DefaultAssemblers is used when RunOptions.Assemblers is nil. It builds pairing
-// and link first, then the topic registry, then the directory, then the
-// delivery. configWiring is last: it sees the link and the card issuer the
-// earlier assemblers built, and its subscriptions are registered after
-// pairing's own broker.alias subscription. The directory sits after the topic
-// registry because it reads the registry's public topic set on a public switch
-// change, and before configWiring because that one uses the card issuer hook
-// the directory adapter installs.
+// DefaultAssemblers returns the assemblers Run uses when
+// RunOptions.Assemblers is nil. The order must not change: the directory reads
+// the topic registry's public topic set, and configWiring must stay last.
 func DefaultAssemblers() []Assembler {
 	return []Assembler{newPeerAssembler(), topicAssembler{}, &directoryAssembler{}, newDeliveryAssembler(), &configWiring{}}
 }

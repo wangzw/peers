@@ -12,25 +12,24 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// Error is a Local interface error. Code is the wire error code; Origin is set
-// only when the error was relayed from another Broker and carries that Broker's
-// fingerprint. Handlers return an *Error (or an error wrapping one) and send it
-// to the client through toStatus.
+// Error is a Local interface error carrying a wire error code and message.
 type Error struct {
-	Code    localpb.ErrorCode
+	// Code is the wire error code.
+	Code localpb.ErrorCode
+	// Message is the human-readable description.
 	Message string
-	Origin  []byte
+	// Origin is the fingerprint of the Broker the error was relayed from; it
+	// is empty for a local error.
+	Origin []byte
 }
 
-// Error renders the code as the part of its enum name after ERROR_CODE_,
-// lowercased, followed by the message, for example "not_registered: no session
-// record". An unknown numeric code renders as its decimal value.
+// Error renders the code as its enum name after ERROR_CODE_, lowercased,
+// followed by the message; an unknown numeric code renders as its decimal
+// value.
 func (e *Error) Error() string {
 	return errorCodeName(e.Code) + ": " + e.Message
 }
 
-// errorCodeName renders a wire error code as the part of its enum name after
-// ERROR_CODE_, lowercased. An unknown numeric code renders as its decimal value.
 func errorCodeName(code localpb.ErrorCode) string {
 	return strings.ToLower(strings.TrimPrefix(code.String(), "ERROR_CODE_"))
 }
@@ -40,10 +39,9 @@ func Errorf(code localpb.ErrorCode, format string, args ...any) *Error {
 	return &Error{Code: code, Message: fmt.Sprintf(format, args...)}
 }
 
-// toStatus converts err into a gRPC status error carrying exactly one
-// localpb.ErrorDetail. An *Error anywhere in the chain keeps its code and
-// message; context.Canceled becomes codes.Canceled without a detail; any other
-// error becomes ERROR_CODE_INTERNAL with the message "internal error: ...".
+// toStatus converts err into a gRPC status carrying one ErrorDetail: an *Error
+// in the chain keeps its code and message, context.Canceled maps to Canceled
+// without a detail, and any other error becomes internal.
 func toStatus(err error) error {
 	if err == nil {
 		return nil
@@ -58,8 +56,6 @@ func toStatus(err error) error {
 			OriginatingBrokerFingerprint: e.Origin,
 		})
 		if detailErr != nil {
-			// A detail that cannot be marshaled is dropped; the caller still
-			// sees the code and message.
 			return st.Err()
 		}
 		return detailed.Err()
@@ -81,8 +77,6 @@ func toStatus(err error) error {
 	return detailed.Err()
 }
 
-// grpcCode maps a wire error code to the gRPC status code the local interface
-// reports for it. Unknown numeric codes map to codes.Internal.
 func grpcCode(code localpb.ErrorCode) codes.Code {
 	switch code {
 	case localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT,
@@ -112,8 +106,6 @@ func grpcCode(code localpb.ErrorCode) codes.Code {
 	case localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED:
 		return codes.ResourceExhausted
 	default:
-		// ERROR_CODE_INTERNAL and ERROR_CODE_UNSPECIFIED, and any code this
-		// version does not know.
 		return codes.Internal
 	}
 }

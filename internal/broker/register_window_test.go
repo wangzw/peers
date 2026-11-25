@@ -12,9 +12,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// watchGate counts the Watch calls of the backends its router hands out and
-// blocks the second call until release is closed. The second call is the agent's
-// own watch, created while the first registration attaches the agent.
+// watchGate counts Watch calls and blocks the second, the agent's own watch,
+// until release is closed.
 type watchGate struct {
 	mu      sync.Mutex
 	calls   int
@@ -44,11 +43,9 @@ func (b gatedWatchBackend) Watch(ctx context.Context, configDir string, onChange
 	return b.SessionBackend.Watch(ctx, configDir, onChange)
 }
 
-// resolvedDirSessions hands out backends that model the default configuration
-// directory: an empty configDir names dir, but the connection's watch key stays
-// empty while the registry lookup reports the resolved directory. The two keys
-// differ even though they name the same directory, so the agent's watch is a
-// second Watch call rather than a reference transferred from the connection.
+// resolvedDirSessions models the default configuration directory: an empty
+// configDir resolves to dir while the connection's watch key stays empty, so the
+// agent's watch is a second Watch call rather than a transferred reference.
 type resolvedDirSessions struct {
 	SessionRouter
 	gate *watchGate
@@ -64,8 +61,6 @@ func (s *resolvedDirSessions) Acquire(ctx context.Context, uid uint32) (SessionB
 	return gatedWatchBackend{SessionBackend: inner, gate: s.gate}, release, nil
 }
 
-// resolvedDirBackend resolves the empty configuration directory to dir, as the
-// inbox package does for the account's default directory.
 type resolvedDirBackend struct {
 	SessionBackend
 	dir string
@@ -91,7 +86,6 @@ func (b resolvedDirBackend) Watch(ctx context.Context, configDir string, onChang
 	return b.SessionBackend.Watch(ctx, b.resolve(configDir), onChange)
 }
 
-// gatedWatchSessions hands out backends whose Watch calls pass through gate.
 type gatedWatchSessions struct {
 	SessionRouter
 	gate *watchGate
@@ -120,8 +114,6 @@ func (g *watchGate) waitSecond(t *testing.T, d time.Duration) {
 	}
 }
 
-// lockedWaitAttempted reports whether every waiting connection has run its
-// first attempt, so its reason is stored and the wait timer would report it.
 func (tb *testBroker) lockedWaitAttempted() bool {
 	tb.b.mu.Lock()
 	defer tb.b.mu.Unlock()
@@ -133,10 +125,9 @@ func (tb *testBroker) lockedWaitAttempted() bool {
 	return len(tb.b.waiting) > 0
 }
 
-// lockedWaitingReported reports whether any waiting connection has sent its
-// not_registered event. The flag is set under Broker.mu by the wait timer, so
-// the fake clock's synchronous advance makes this check independent of the
-// sender goroutine.
+// lockedWaitingReported reports whether a waiting connection has sent its
+// not_registered event; the flag is set under Broker.mu, so the fake clock makes
+// the check independent of the sender goroutine.
 func (tb *testBroker) lockedWaitingReported() bool {
 	tb.b.mu.Lock()
 	defer tb.b.mu.Unlock()
@@ -148,14 +139,11 @@ func (tb *testBroker) lockedWaitingReported() bool {
 	return false
 }
 
-// TestSameKeyRegistrationKeepsItsWatch checks that a connection already
-// watching the agent's configuration directory passes that reference to the
-// agent instead of releasing it and subscribing again. A second Watch call
-// would release Broker.mu and open the window in which a registry event is not
-// applied.
+// TestSameKeyRegistrationKeepsItsWatch checks that a connection already watching
+// the agent's configuration directory passes its reference to the agent instead
+// of releasing it and subscribing again.
 func TestSameKeyRegistrationKeepsItsWatch(t *testing.T) {
 	gate := newWatchGate()
-	// Let a second Watch through rather than block it: this test only counts.
 	close(gate.release)
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Sessions = &gatedWatchSessions{SessionRouter: d.Sessions, gate: gate}
@@ -169,11 +157,9 @@ func TestSameKeyRegistrationKeepsItsWatch(t *testing.T) {
 	}
 }
 
-// TestStatusDuringFirstAgentWatchDoesNotPanic covers the window between the
-// agent entering the table and its disambiguation ref being assigned: while the
-// agent's first watch is being created, Status must see a table it can render.
-// The registration names no configuration directory, so the agent's watch is a
-// second Watch call and creating it releases Broker.mu.
+// TestStatusDuringFirstAgentWatchDoesNotPanic checks that Status can render the
+// agent table while the agent's first watch is being created, before its ref is
+// assigned.
 func TestStatusDuringFirstAgentWatchDoesNotPanic(t *testing.T) {
 	gate := newWatchGate()
 	fake := fakesession.New(t, fakesession.Options{Name: "windowed"})
@@ -199,9 +185,9 @@ func TestStatusDuringFirstAgentWatchDoesNotPanic(t *testing.T) {
 	}
 }
 
-// TestCancelDuringFirstAgentWatchReleasesEverything covers the same window from
-// the other side: a registration stream that ends while its agent's first watch
-// is being created must leave neither an agent nor a watch behind.
+// TestCancelDuringFirstAgentWatchReleasesEverything checks that a stream ending
+// while its agent's first watch is being created leaves neither an agent nor a
+// watch behind.
 func TestCancelDuringFirstAgentWatchReleasesEverything(t *testing.T) {
 	gate := newWatchGate()
 	dir := shortTempDir(t)
@@ -211,9 +197,6 @@ func TestCancelDuringFirstAgentWatchReleasesEverything(t *testing.T) {
 	})
 	rs := startRegistrationAt(t, tb.client, "", socketPath)
 
-	// Let the first attempt fail for lack of a record. The completion then runs
-	// on the registry event goroutine, so the stream's own goroutine is free to
-	// process the cancellation while the agent's watch is being created.
 	waitForReg(t, "the connection to wait", func() bool {
 		return tb.lockedWaitingCount() == 1
 	})
@@ -235,12 +218,9 @@ func TestCancelDuringFirstAgentWatchReleasesEverything(t *testing.T) {
 	})
 }
 
-// TestStatusChangeDuringAgentWatchCreationIsNotLost covers the window between
-// releasing a waiting connection's watch and the agent's own watch being ready.
-// Creating the agent's watch releases Broker.mu, so a record change in that
-// window reaches handleRegistryEvent while the agent is not in the table and the
-// connection has already stopped watching. The change must still be applied once
-// the agent attaches.
+// TestStatusChangeDuringAgentWatchCreationIsNotLost checks that a record change
+// that arrives while the agent's watch is being created is applied once the
+// agent attaches.
 func TestStatusChangeDuringAgentWatchCreationIsNotLost(t *testing.T) {
 	gate := newWatchGate()
 	fake := fakesession.New(t, fakesession.Options{Name: "windowed"})
@@ -248,15 +228,9 @@ func TestStatusChangeDuringAgentWatchCreationIsNotLost(t *testing.T) {
 		d.Sessions = &resolvedDirSessions{SessionRouter: d.Sessions, gate: gate, dir: fake.ConfigDir()}
 	})
 
-	// Naming no configuration directory leaves the connection's watch key empty
-	// while the record reports the resolved directory. The two keys differ, so
-	// the agent's watch is created with a second Watch call.
 	rs := startRegistrationAt(t, tb.client, "", fake.SocketPath())
 	gate.waitSecond(t, eventTimeout)
 
-	// The second Watch is blocked, so Broker.mu is free while the agent is not
-	// yet in the table. The change is handled by the event loop and, without a
-	// reread after the attachment, is dropped.
 	handled := tb.b.events.handledCount()
 	fake.SetStatus("busy")
 	waitForReg(t, "the status change to reach the event loop", func() bool {
@@ -273,9 +247,8 @@ func TestStatusChangeDuringAgentWatchCreationIsNotLost(t *testing.T) {
 	})
 }
 
-// TestRegisterWaitHasLowerBound checks both sides of registrationWait: a
-// report may not appear before the full wait has elapsed, and appears as soon
-// as it has.
+// TestRegisterWaitHasLowerBound checks that a report appears only after the full
+// registrationWait has elapsed.
 func TestRegisterWaitHasLowerBound(t *testing.T) {
 	dir := shortTempDir(t)
 	socketPath := filepath.Join(dir, "s.sock")
@@ -289,8 +262,8 @@ func TestRegisterWaitHasLowerBound(t *testing.T) {
 		return tb.lockedWaitAttempted()
 	})
 
-	// The literals pin the documented ten seconds: deriving the probe from
-	// registrationWait would move it along with a changed constant.
+	// The literals pin the documented ten seconds; deriving them from
+	// registrationWait would move the probe with a changed constant.
 	tb.clock.Advance(10*time.Second - time.Nanosecond)
 	if tb.lockedWaitingReported() {
 		t.Fatal("a not_registered was sent before the wait elapsed")

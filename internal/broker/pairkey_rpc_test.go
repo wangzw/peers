@@ -12,8 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// newKeyPairing returns a fakePairing whose CreateOneTimeKey answers with the
-// given result.
 func newKeyPairing(key string, expires time.Time, shown []string, err error) *fakePairing {
 	return &fakePairing{
 		keyFn: func() (string, time.Time, []string, error) {
@@ -22,14 +20,12 @@ func newKeyPairing(key string, expires time.Time, shown []string, err error) *fa
 	}
 }
 
-// pairkeyCalls copies the calls the fake has recorded so far.
 func pairkeyCalls(p *fakePairing) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.calls...)
 }
 
-// callCreatePairingKey performs one call on the test Broker's default client.
 func callCreatePairingKey(t *testing.T, tb *testBroker, req *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -37,9 +33,8 @@ func callCreatePairingKey(t *testing.T, tb *testBroker, req *localpb.CreatePairi
 	return tb.client.CreatePairingKey(ctx, req)
 }
 
-// TestCreatePairingKeyReturnsKeyAndShown covers REQ-broker-pairing-005 and
-// REQ-broker-pairing-028: the key, the expiry and every shown address come
-// back, and the shown addresses keep pairing's order.
+// TestCreatePairingKeyReturnsKeyAndShown checks that the key, the expiry and
+// every shown address come back in pairing's order.
 func TestCreatePairingKeyReturnsKeyAndShown(t *testing.T) {
 	t0 := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
 	shown := []string{"box(192.0.2.10:17443)", "box(10.0.0.5:17443)"}
@@ -67,8 +62,8 @@ func TestCreatePairingKeyReturnsKeyAndShown(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyEmptyShownStillSucceeds covers REQ-broker-pairing-028: a
-// Broker with no address to show still generates a key.
+// TestCreatePairingKeyEmptyShownStillSucceeds checks that a Broker with no
+// address to show still returns a key and an expiry.
 func TestCreatePairingKeyEmptyShownStillSucceeds(t *testing.T) {
 	p := newKeyPairing("KEY", time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC), nil, nil)
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -85,8 +80,8 @@ func TestCreatePairingKeyEmptyShownStillSucceeds(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyNotListening covers REQ-broker-pairing-036: a Broker that
-// does not listen refuses with invalid_argument and points at the other side.
+// TestCreatePairingKeyNotListening checks that a Broker that does not listen
+// returns invalid_argument and writes no audit.
 func TestCreatePairingKeyNotListening(t *testing.T) {
 	p := newKeyPairing("", time.Time{}, nil, pairing.ErrNotListening)
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -104,8 +99,8 @@ func TestCreatePairingKeyNotListening(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyOnlyOneTimeKey covers REQ-broker-pairing-025: the handler
-// only asks pairing for a one-time key and returns exactly that.
+// TestCreatePairingKeyOnlyOneTimeKey checks that the handler asks pairing for
+// exactly one one-time key.
 func TestCreatePairingKeyOnlyOneTimeKey(t *testing.T) {
 	p := newKeyPairing("K7QF-2M9X-HT4C-PWZ3", time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC), nil, nil)
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -123,10 +118,8 @@ func TestCreatePairingKeyOnlyOneTimeKey(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyAudited covers REQ-broker-config-007 and
-// REQ-broker-config-008: one pairing_key_created record names the registered
-// agent as the actor, and neither the detail nor the rest of the record leaks
-// the key.
+// TestCreatePairingKeyAudited checks that one pairing_key_created record names
+// the agent as actor and does not carry the key.
 func TestCreatePairingKeyAudited(t *testing.T) {
 	const key = "K7QF-2M9X-HT4C-PWZ3"
 	expires := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
@@ -160,8 +153,8 @@ func TestCreatePairingKeyAudited(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyBadAgentNoKey: an unknown agent_id resolves before key
-// creation, so no valid key is left behind for an unauthenticated caller.
+// TestCreatePairingKeyBadAgentNoKey checks that an unknown agent id is refused
+// before any key is created.
 func TestCreatePairingKeyBadAgentNoKey(t *testing.T) {
 	p := newKeyPairing("KEY", time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC), nil, nil)
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -173,8 +166,8 @@ func TestCreatePairingKeyBadAgentNoKey(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyWithoutPairing: with no pairing wired in, the call fails
-// with a code instead of panicking on a nil interface.
+// TestCreatePairingKeyWithoutPairing checks that a missing pairing returns
+// internal instead of panicking.
 func TestCreatePairingKeyWithoutPairing(t *testing.T) {
 	tb := newTestBroker(t)
 

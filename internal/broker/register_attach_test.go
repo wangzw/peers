@@ -10,9 +10,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// TestAttachExistingAgentRequiresSameAccount covers a registration whose socket
-// path already names an agent of another account. The connection must not
-// attach to that agent's stream; it reports socket_not_owned instead.
+// TestAttachExistingAgentRequiresSameAccount checks that a connection whose
+// socket path names another account's agent reports socket_not_owned instead of
+// attaching.
 func TestAttachExistingAgentRequiresSameAccount(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "owned-elsewhere"})

@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// TestCrossAccountOwnerAddressKeepsNoRef is the impersonation reproduction.
-// An account that registered a name first keeps the ref-free address it had
-// before a second account registered the same name; only the second account
-// carries a ref. Before the fix both accounts carry one.
+// TestCrossAccountOwnerAddressKeepsNoRef checks that the owner keeps its
+// ref-free address when a second account registers the same name and only the
+// second account carries a ref.
 func TestCrossAccountOwnerAddressKeepsNoRef(t *testing.T) {
 	f := newCollisionFixture(t)
 
@@ -34,9 +33,8 @@ func TestCrossAccountOwnerAddressKeepsNoRef(t *testing.T) {
 	}
 }
 
-// TestCrossAccountOwnerSignatureKeepsNoRef checks the same rule on the
-// signature of the owner's outgoing messages: the owner keeps the ref-free
-// signature it had before the other account arrived.
+// TestCrossAccountOwnerSignatureKeepsNoRef checks that the owner's outgoing
+// signature stays ref-free when another account registers the same name.
 func TestCrossAccountOwnerSignatureKeepsNoRef(t *testing.T) {
 	f := newCollisionFixture(t)
 	owner := f.agents.views[string(f.victimID)]
@@ -106,9 +104,8 @@ func TestCrossAccountMemberAccountSanitized(t *testing.T) {
 	}
 }
 
-// TestCrossAccountSameAccountDuplicatesCarryRef narrows the duplicate-name
-// requirement to one account: two Agents of the same account named alike both
-// carry a ref.
+// TestCrossAccountSameAccountDuplicatesCarryRef checks that two Agents of the
+// same account named alike both carry a ref.
 func TestCrossAccountSameAccountDuplicatesCarryRef(t *testing.T) {
 	tb := newTestBroker(t)
 	b := tb.b
@@ -142,7 +139,6 @@ func TestCrossAccountOwnershipTransferRemovesRef(t *testing.T) {
 	removeNameOwnerAgent(f.b, f.victimID)
 	f.agents.refresh(f.b, f.inboxes)
 
-	// While the departed owner keeps the name, the other account stays pinned.
 	snap, ok := f.b.lookupAgent(f.attackerID)
 	if !ok {
 		t.Fatal("the other account is not in the table")

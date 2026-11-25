@@ -18,12 +18,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// sendTestMsgID is the message id the send fixture injects, so a log assertion
-// can look for it.
 const sendTestMsgID = "3f2a1c4e-5b6d-4e8f-9a0b-1c2d3e4f5a6b"
 
-// sendAgents is a localAgents fake. Its name avoids the shared fakeAgents of the
-// agent-table tests so the two can land independently.
 type sendAgents struct {
 	mu        sync.Mutex
 	views     map[string]agentView
@@ -78,8 +74,6 @@ func (a *sendAgents) Reread(id string) (agentView, error) {
 
 var _ localAgents = (*sendAgents)(nil)
 
-// sendTestAgent builds an agentView the way the agent table derives one from a
-// session record.
 func sendTestAgent(name, socketPath string) agentView {
 	sum := sha256.Sum256([]byte("session:" + socketPath))
 	id := hex.EncodeToString(sum[:])
@@ -92,7 +86,6 @@ func sendTestAgent(name, socketPath string) agentView {
 	}
 }
 
-// sendFixture wires a delivery to fakes and a log buffer for the send tests.
 type sendFixture struct {
 	t        *testing.T
 	delivery *delivery
@@ -149,14 +142,12 @@ func newSendFixture(t *testing.T, settings sendSettings, alias string) *sendFixt
 	}
 }
 
-// caller registers a local Agent that sends.
 func (f *sendFixture) caller(name string) agentView {
 	v := sendTestAgent(name, "/run/user/1000/"+name+".sock")
 	f.agents.put(v)
 	return v
 }
 
-// addSession registers a local Agent backed by a simulated session.
 func (f *sendFixture) addSession(name string, mode fakesession.Mode) (agentView, *fakesession.Fake) {
 	f.t.Helper()
 	fs := fakesession.New(f.t, fakesession.Options{Name: name, Mode: mode})
@@ -171,20 +162,16 @@ func (f *sendFixture) addSession(name string, mode fakesession.Mode) (agentView,
 	return v, fs
 }
 
-// share gives a local Agent the listed topics.
 func (f *sendFixture) share(id string, topics ...string) {
 	f.topics.local[id] = topics
 }
 
-// addPeer makes alias resolve to a paired peer.
 func (f *sendFixture) addPeer(alias string, p peerID) {
 	f.peers.aliases[alias] = p
 	f.peers.roles[p] = pairing.RoleDialer
 	f.peers.effective[p] = alias
 }
 
-// sendTextAtLimit returns a body whose longest-signature frame is exactly the
-// limit. The body is repeated ASCII so each added byte adds one encoded byte.
 func sendTextAtLimit(t *testing.T, name, ref string) string {
 	t.Helper()
 	base := MaxSendFrameSize(name, ref, "")
@@ -198,10 +185,7 @@ func sendTextAtLimit(t *testing.T, name, ref string) string {
 	return text
 }
 
-// TestSendLocalDelivers checks that a same-host send returns only after the
-// target session recorded the frame, with the sender's address as its
-// from-name (REQ-agent-messaging-013, REQ-agent-messaging-015,
-// REQ-agent-messaging-028).
+// TestSendLocalDelivers checks that a same-host send returns only after the target session recorded the frame, with the sender's address as its from-name.
 func TestSendLocalDelivers(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -225,9 +209,7 @@ func TestSendLocalDelivers(t *testing.T) {
 	}
 }
 
-// TestSendLocalDuplicateSenderHasRef checks that the caller's own signature
-// carries its ref when another local Agent shares its name, even when that
-// other Agent is not visible through the shared topic (REQ-agent-messaging-028).
+// TestSendLocalDuplicateSenderHasRef checks that the caller's signature carries its ref when another local Agent shares its name, even one not visible through the shared topic.
 func TestSendLocalDuplicateSenderHasRef(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -237,8 +219,6 @@ func TestSendLocalDuplicateSenderHasRef(t *testing.T) {
 	f.share(duplicate.ID, "t2")
 	f.share(target.ID, "t1")
 
-	// The Broker sets this bit on the view it hands the delivery when another
-	// agent of the same account holds the caller's name.
 	caller.RefMandatory = true
 	f.agents.put(caller)
 
@@ -255,9 +235,7 @@ func TestSendLocalDuplicateSenderHasRef(t *testing.T) {
 	}
 }
 
-// TestSendLocalSignatureUsesLocalAlias checks that a same-host signature names
-// the receiver's alias for this Broker, not an address the caller typed
-// (architecture.md:296).
+// TestSendLocalSignatureUsesLocalAlias checks that a same-host signature names the receiver's alias for this Broker, not an address the caller typed.
 func TestSendLocalSignatureUsesLocalAlias(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "lab-a")
 	caller := f.caller("api-worker")
@@ -277,8 +255,7 @@ func TestSendLocalSignatureUsesLocalAlias(t *testing.T) {
 	}
 }
 
-// TestSendLocalNotVisible checks that two local Agents without a shared topic
-// cannot send, and nothing reaches the target (REQ-agent-messaging-014).
+// TestSendLocalNotVisible checks that two local Agents without a shared topic cannot send, and nothing reaches the target.
 func TestSendLocalNotVisible(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -295,8 +272,7 @@ func TestSendLocalNotVisible(t *testing.T) {
 	}
 }
 
-// TestSendEmptyMessage checks that an empty body is rejected before anything is
-// sent.
+// TestSendEmptyMessage checks that an empty body is rejected before anything is sent.
 func TestSendEmptyMessage(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -307,9 +283,7 @@ func TestSendEmptyMessage(t *testing.T) {
 	}
 }
 
-// TestSendTooLargeBoundary checks the inclusive limit on the longest possible
-// signature for a local and a remote target, and that an oversized message
-// sends no request and writes nothing (REQ-agent-messaging-026).
+// TestSendTooLargeBoundary checks the inclusive limit on the longest signature for a local and a remote target, and that an oversized message sends no request and writes nothing.
 func TestSendTooLargeBoundary(t *testing.T) {
 	t.Run("local", func(t *testing.T) {
 		f := newSendFixture(t, defaultSendSettings(), "hostA")
@@ -373,13 +347,10 @@ func TestSendTooLargeBoundary(t *testing.T) {
 	})
 }
 
-// TestSendUnknownAlias checks that an alias naming neither this Broker nor a
-// peer is reported as not found, not treated as local.
+// TestSendUnknownAlias checks that an alias naming neither this Broker nor a peer is reported as not found, not treated as local.
 func TestSendUnknownAlias(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
-	// A visible local frontend makes the assertion meaningful: the address is
-	// unknown by its alias alone, not because no such Agent exists.
 	target, targetSession := f.addSession("frontend", fakesession.CloseAfterRead)
 	f.share(caller.ID, "t1")
 	f.share(target.ID, "t1")
@@ -393,8 +364,7 @@ func TestSendUnknownAlias(t *testing.T) {
 	}
 }
 
-// TestSendMalformedAddress checks that an address outside the grammar is
-// reported as invalid rather than as an unknown Agent.
+// TestSendMalformedAddress checks that an address outside the grammar is reported as invalid rather than as an unknown Agent.
 func TestSendMalformedAddress(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -405,8 +375,7 @@ func TestSendMalformedAddress(t *testing.T) {
 	}
 }
 
-// TestSendRemoteDispatch checks that a peer alias dispatches one peerSend whose
-// budget starts at the send and whose message id is a UUID.
+// TestSendRemoteDispatch checks that a peer alias dispatches one peerSend whose budget starts at the send and whose message id is a UUID.
 func TestSendRemoteDispatch(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -453,8 +422,7 @@ func TestSendRemoteDispatch(t *testing.T) {
 	}
 }
 
-// TestSendLocalInboxUnwritable checks that a missing target socket is reported
-// as not written within the send budget (REQ-agent-messaging-018).
+// TestSendLocalInboxUnwritable checks that a missing target socket is reported as not written within the send budget.
 func TestSendLocalInboxUnwritable(t *testing.T) {
 	settings := defaultSendSettings()
 	settings.RequestTimeout = 500 * time.Millisecond
@@ -473,18 +441,12 @@ func TestSendLocalInboxUnwritable(t *testing.T) {
 	if got := errorCode(err); got != localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE {
 		t.Fatalf("code = %v, want inbox_unwritable", got)
 	}
-	// REQ-agent-messaging-018: the send returns within the caller's budget. The
-	// margin is the 500ms the baseline used: it absorbs the final inbox wake-up,
-	// the retry loop's cleanup and one scheduling delay under -race, and it still
-	// bounds the call at twice the budget, so a send that waits far past the
-	// budget fails.
 	if elapsed > settings.RequestTimeout+500*time.Millisecond {
 		t.Fatalf("Send took %v, want at most %v", elapsed, settings.RequestTimeout+500*time.Millisecond)
 	}
 }
 
-// TestSendLocalUncertain checks that a possibly-written frame is reported as an
-// unknown result, not as not sent (REQ-agent-messaging-027).
+// TestSendLocalUncertain checks that a possibly-written frame is reported as an unknown result, not as not sent.
 func TestSendLocalUncertain(t *testing.T) {
 	settings := defaultSendSettings()
 	settings.RequestTimeout = 500 * time.Millisecond
@@ -505,8 +467,7 @@ func TestSendLocalUncertain(t *testing.T) {
 	}
 }
 
-// TestSendLocalTargetEnded checks that a target that left the table is reported
-// as not writable and nothing is written.
+// TestSendLocalTargetEnded checks that a target that left the table is reported as not writable and nothing is written.
 func TestSendLocalTargetEnded(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -524,9 +485,7 @@ func TestSendLocalTargetEnded(t *testing.T) {
 	}
 }
 
-// TestSendLocalRefRequiredWhenDuplicate checks that two same-named local Agents
-// make a bare name ambiguous, and a ref selects one, matching cross-host
-// behaviour (REQ-agent-messaging-007, REQ-agent-messaging-028).
+// TestSendLocalRefRequiredWhenDuplicate checks that two same-named local Agents make a bare name ambiguous, and a ref selects one.
 func TestSendLocalRefRequiredWhenDuplicate(t *testing.T) {
 	f := newSendFixture(t, defaultSendSettings(), "hostA")
 	caller := f.caller("api-worker")
@@ -557,8 +516,6 @@ func TestSendLocalRefRequiredWhenDuplicate(t *testing.T) {
 		t.Fatal("the addressed duplicate recorded no frame")
 	}
 
-	// A local ref matches any ID prefix, not only the six-character ref the
-	// table happens to spell, so a longer prefix selects the same Agent.
 	if strings.HasPrefix(first.ID, second.ID[:8]) {
 		t.Fatalf("both duplicates share the eight-character ID prefix %q; the test cannot disambiguate", second.ID[:8])
 	}
@@ -574,8 +531,7 @@ func TestSendLocalRefRequiredWhenDuplicate(t *testing.T) {
 	}
 }
 
-// TestSendLogsWithoutBody checks that one send log line names the event, the
-// message id and the result, and never the body (architecture.md:255).
+// TestSendLogsWithoutBody checks that one send log line names the event, the message id and the result, and never the body.
 func TestSendLogsWithoutBody(t *testing.T) {
 	const body = "TOPSECRET-BODY"
 	f := newSendFixture(t, defaultSendSettings(), "hostA")

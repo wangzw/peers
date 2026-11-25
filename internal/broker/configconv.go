@@ -9,9 +9,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// toConfigValue converts a configuration value to its wire form. The value
-// selected by Kind is copied, including the string list. KindUnset becomes
-// nil, which leaves the field unset in the enclosing message.
 func toConfigValue(v config.Value) *localpb.ConfigValue {
 	switch v.Kind {
 	case config.KindString:
@@ -47,8 +44,6 @@ func toConfigValue(v config.Value) *localpb.ConfigValue {
 	}
 }
 
-// toAuditEventKind converts an audit event kind to its wire form. An unknown
-// kind becomes AUDIT_EVENT_KIND_UNSPECIFIED.
 func toAuditEventKind(k config.EventKind) localpb.AuditEventKind {
 	switch k {
 	case config.EventConfigSet:
@@ -84,8 +79,6 @@ func toAuditEventKind(k config.EventKind) localpb.AuditEventKind {
 	}
 }
 
-// toAuditEvent converts one audit record to its wire form. Old and New stay
-// unset when the event carries no value; MergeKey is not part of the record.
 func toAuditEvent(e config.Event) *localpb.AuditEvent {
 	out := &localpb.AuditEvent{
 		Time:    timestamppb.New(e.Time),
@@ -113,9 +106,6 @@ func toAuditEvent(e config.Event) *localpb.AuditEvent {
 	return out
 }
 
-// configErrorCode maps an error returned by the configuration API to a wire
-// error code. Errors caused by the caller become INVALID_ARGUMENT; storage
-// failures and anything unrecognized become INTERNAL.
 func configErrorCode(err error) localpb.ErrorCode {
 	switch {
 	case errors.Is(err, config.ErrUnknownKey),

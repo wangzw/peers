@@ -19,27 +19,20 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// capturedBrokerWait bounds the wait for the component that captures the
-// running Broker in a Run test. Run reaches the component's Start during
-// startup, so the bound only guards against a startup that never got there; it
-// is the same liveness bound the other startup waits use.
 const capturedBrokerWait = runWaitBound
 
-// fixedRelease is a LatestRelease fake that always reports version.
 func fixedRelease(version string) func(context.Context, *http.Client, string) (update.Release, error) {
 	return func(context.Context, *http.Client, string) (update.Release, error) {
 		return update.Release{Version: version, URL: "https://example.test/release/" + version}, nil
 	}
 }
 
-// applyUpdateAudits returns the audit records the Broker wrote.
 func applyUpdateAudits(tb *testBroker) []config.Event {
 	return append([]config.Event(nil), tb.cfg.audits...)
 }
 
-// TestApplyUpdateNeedsServiceManager covers a Broker started by hand: without a
-// service manager nothing would start the new binary, so the update is refused
-// before any lookup or download.
+// TestApplyUpdateNeedsServiceManager checks that without a service manager the
+// update is refused before any lookup, download or shutdown.
 func TestApplyUpdateNeedsServiceManager(t *testing.T) {
 	lookedUp := false
 	shutdown := false
@@ -78,7 +71,7 @@ func TestApplyUpdateNeedsServiceManager(t *testing.T) {
 }
 
 // TestApplyUpdateAlreadyLatest checks that an up-to-date Broker answers an
-// empty to_version and changes nothing.
+// empty to_version, changes nothing and releases the update slot.
 func TestApplyUpdateAlreadyLatest(t *testing.T) {
 	applied := false
 	shutdown := false
@@ -117,16 +110,13 @@ func TestApplyUpdateAlreadyLatest(t *testing.T) {
 		t.Error("an up-to-date Broker asked to shut down")
 	}
 
-	// The failed and no-op paths release the slot, so a later request runs.
 	if _, err := tb.b.ApplyUpdate(accessCallerContext(1000, "alice"), &localpb.ApplyUpdateRequest{}); err != nil {
 		t.Errorf("second ApplyUpdate: %v", err)
 	}
 }
 
-// TestApplyUpdateApplyFailure checks that a failed install leaves the running
-// process alone: no shutdown, no applied record, and an update_failed record
-// with the cause. The binary is untouched because update.Install restores it
-// when any step fails.
+// TestApplyUpdateApplyFailure checks that a failed install leaves the process
+// running and writes update_failed.
 func TestApplyUpdateApplyFailure(t *testing.T) {
 	shutdown := false
 	installs := 0
@@ -175,7 +165,6 @@ func TestApplyUpdateApplyFailure(t *testing.T) {
 		t.Error("a failed install asked the Broker to shut down")
 	}
 
-	// The slot was released, so a retry reaches the installer again.
 	if _, err := tb.b.ApplyUpdate(accessCallerContext(1000, "alice"), &localpb.ApplyUpdateRequest{}); err == nil {
 		t.Fatal("the retry succeeded, want the install failure again")
 	}
@@ -184,9 +173,8 @@ func TestApplyUpdateApplyFailure(t *testing.T) {
 	}
 }
 
-// TestApplyUpdateSucceeds covers a user Broker running under a service
-// manager: it installs the release, answers restarting, writes update_applied,
-// and starts the normal shutdown only after the grace period.
+// TestApplyUpdateSucceeds checks that a service-managed Broker installs the
+// release, writes update_applied and shuts down only after the grace period.
 func TestApplyUpdateSucceeds(t *testing.T) {
 	var mu sync.Mutex
 	var shutdowns int
@@ -242,7 +230,6 @@ func TestApplyUpdateSucceeds(t *testing.T) {
 		t.Errorf("new = %+v, want 0.1.2", applied.New)
 	}
 
-	// The answer is returned before shutdown: the grace timer has not fired.
 	if got := shutdownCount(&mu, &shutdowns); got != 0 {
 		t.Fatalf("shutdowns = %d before the grace period, want 0", got)
 	}
@@ -255,8 +242,6 @@ func TestApplyUpdateSucceeds(t *testing.T) {
 		t.Errorf("shutdowns = %d after the grace period, want 1", got)
 	}
 
-	// The slot stays taken until the process exits, so a second update does
-	// not start a download while the restart is pending.
 	_, err = tb.b.ApplyUpdate(accessCallerContext(1000, "alice"), &localpb.ApplyUpdateRequest{})
 	if code := accessErrorCode(t, err); code != localpb.ErrorCode_ERROR_CODE_UPDATE_IN_PROGRESS {
 		t.Errorf("second update code = %v, want UPDATE_IN_PROGRESS", code)
@@ -270,7 +255,7 @@ func shutdownCount(mu *sync.Mutex, count *int) int {
 }
 
 // TestApplyUpdatePassesServiceLevel checks that the post-update step runs at
-// the level of the Broker whose unit it rewrites.
+// the Broker's own service level.
 func TestApplyUpdatePassesServiceLevel(t *testing.T) {
 	for _, tc := range []struct {
 		system bool
@@ -304,8 +289,7 @@ func TestApplyUpdatePassesServiceLevel(t *testing.T) {
 }
 
 // TestApplyUpdatePostUpdateFailure checks that a failed post-update step
-// reaches the caller with its reason, leaves the old binary in place, writes
-// update_failed, and does not restart the Broker.
+// reaches the caller, writes update_failed and does not restart the Broker.
 func TestApplyUpdatePostUpdateFailure(t *testing.T) {
 	shutdown := false
 	installs := 0
@@ -347,7 +331,6 @@ func TestApplyUpdatePostUpdateFailure(t *testing.T) {
 		t.Error("a failed post-update step asked the Broker to shut down")
 	}
 
-	// The slot was released, so a retry reaches the installer again.
 	if _, err := tb.b.ApplyUpdate(accessCallerContext(1000, "alice"), &localpb.ApplyUpdateRequest{}); err == nil {
 		t.Fatal("the retry succeeded, want the post-update failure again")
 	}
@@ -356,8 +339,8 @@ func TestApplyUpdatePostUpdateFailure(t *testing.T) {
 	}
 }
 
-// TestApplyUpdateConcurrentIsAborted checks that a second request while one
-// installs gets aborted instead of racing the first.
+// TestApplyUpdateConcurrentIsAborted checks that a second request during an
+// install is aborted.
 func TestApplyUpdateConcurrentIsAborted(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -400,9 +383,8 @@ func TestApplyUpdateConcurrentIsAborted(t *testing.T) {
 	}
 }
 
-// TestRunRequestShutdownExitsNormally checks that the hook Run installs takes
-// the normal shutdown path: Run returns nil, so the command exits with its
-// normal code and the service manager starts the new binary.
+// TestRunRequestShutdownExitsNormally checks that the shutdown hook Run
+// installs makes Run return nil.
 func TestRunRequestShutdownExitsNormally(t *testing.T) {
 	captured := make(chan *Broker, 1)
 	rt := newRunTest(t, func(rt *runTest) {
@@ -433,10 +415,8 @@ func TestRunRequestShutdownExitsNormally(t *testing.T) {
 	}
 }
 
-// TestRunningUnderServiceManager checks the pid comparison. The service
-// manager query and the current pid are injected. The environment is set to
-// the values a terminal can inherit from the process that opened it, to show
-// that no environment variable decides the answer.
+// TestRunningUnderServiceManager checks that the answer depends on the service
+// manager's main pid and not on inherited environment variables.
 func TestRunningUnderServiceManager(t *testing.T) {
 	const selfPID = 4242
 	answer := func(pid int) func(bool) (int, bool) {
@@ -510,8 +490,7 @@ func TestRunningUnderServiceManager(t *testing.T) {
 }
 
 // TestRunningUnderServiceManagerAsksTheBrokersLevel checks that the query goes
-// to the service manager of the Broker's own level: the user unit for a
-// user Broker and the system unit for a system installation.
+// to the service manager of the Broker's own level.
 func TestRunningUnderServiceManagerAsksTheBrokersLevel(t *testing.T) {
 	for _, system := range []bool{false, true} {
 		t.Run(fmt.Sprintf("system=%v", system), func(t *testing.T) {

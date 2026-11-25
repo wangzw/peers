@@ -2,9 +2,8 @@ package broker
 
 import "testing"
 
-// TestEventLaneMergesByDirectoryAndPID checks the queue's merge rules: a
-// duplicate (dir, pid) is kept once, and a pid 0 event replaces every queued
-// pid event of the same directory.
+// TestEventLaneMergesByDirectoryAndPID checks that a duplicate (dir, pid) is
+// kept once and a pid 0 event replaces every queued pid event of its directory.
 func TestEventLaneMergesByDirectoryAndPID(t *testing.T) {
 	var lane eventLane
 	lane.add(registryEvent{uid: 1, dir: "/a", pid: 10})

@@ -10,10 +10,7 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// TestReceivePerPeerSessionQuota checks that one peer cannot write more than
-// the per-target burst to one Agent: the 11th message in a burst gets
-// quota_exceeded and is not written, and a resend of that id gets the same
-// result.
+// TestReceivePerPeerSessionQuota checks that one peer cannot write more than the per-target burst to one Agent, and a resend of the refused id gets the same result.
 func TestReceivePerPeerSessionQuota(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-burst.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -25,7 +22,6 @@ func TestReceivePerPeerSessionQuota(t *testing.T) {
 	rec := newRecordingInbox()
 	f.setInbox(target.ID, rec)
 
-	// A fresh bucket holds one burst.
 	const burst = 10
 	for i := 0; i < burst; i++ {
 		frame := f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(i))
@@ -53,10 +49,7 @@ func TestReceivePerPeerSessionQuota(t *testing.T) {
 	}
 }
 
-// TestReceiveQuotaSurvivesReconnect checks that dropping and re-establishing
-// the link to a peer does not hand it a fresh quota: the peer spends its burst,
-// the link goes down and comes back, and its next new message is still
-// refused. Only unpairing the peer may forget its buckets.
+// TestReceiveQuotaSurvivesReconnect checks that dropping and re-establishing the link does not hand the peer a fresh quota.
 func TestReceiveQuotaSurvivesReconnect(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-reconnect.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -74,8 +67,6 @@ func TestReceiveQuotaSurvivesReconnect(t *testing.T) {
 		wantDelivered(t, f.handle(frame))
 	}
 
-	// The peer reconnects. Under the bug, the down event deleted its bucket and
-	// the next message would be written with a fresh burst.
 	f.net.setUp(f.self, f.peer, false)
 	f.net.setUp(f.self, f.peer, true)
 
@@ -86,9 +77,7 @@ func TestReceiveQuotaSurvivesReconnect(t *testing.T) {
 	}
 }
 
-// TestReceiveQuotaIsPerPeerAndTarget checks that an exhausted quota affects
-// only the pair it belongs to: another peer may still write to the same Agent,
-// and the same peer may still write to another Agent.
+// TestReceiveQuotaIsPerPeerAndTarget checks that an exhausted quota affects only its own peer and target pair.
 func TestReceiveQuotaIsPerPeerAndTarget(t *testing.T) {
 	targetA := testAgent("frontend", "/tmp/ap-receive-quota-a.sock")
 	targetB := testAgent("backend", "/tmp/ap-receive-quota-b.sock")
@@ -111,7 +100,6 @@ func TestReceiveQuotaIsPerPeerAndTarget(t *testing.T) {
 	f.setInbox(targetA.ID, recA)
 	f.setInbox(targetB.ID, recB)
 
-	// Exhaust this peer's quota for target A.
 	for i := 0; i < inboundLimitBurst; i++ {
 		frame := f.requestFrameWithID(sender, targetA, "hello", time.Second, receiveMsgIDN(i))
 		wantDelivered(t, f.handle(frame))
@@ -119,11 +107,9 @@ func TestReceiveQuotaIsPerPeerAndTarget(t *testing.T) {
 	over := f.requestFrameWithID(sender, targetA, "hello", time.Second, receiveMsgIDN(inboundLimitBurst))
 	wantReceiveError(t, f.handle(over), localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, "")
 
-	// Another peer writing to the same Agent is unaffected.
 	other := f.requestFrameWithID(sender, targetA, "hello", time.Second, receiveMsgIDN(100))
 	wantDelivered(t, f.d.handleDeliver(context.Background(), f.other, other))
 
-	// The same peer writing to another Agent is unaffected.
 	elsewhere := f.requestFrameWithID(sender, targetB, "hello", time.Second, receiveMsgIDN(200))
 	wantDelivered(t, f.handle(elsewhere))
 
@@ -135,8 +121,7 @@ func TestReceiveQuotaIsPerPeerAndTarget(t *testing.T) {
 	}
 }
 
-// TestReceiveQuotaRefillsWithClock checks that a bucket refills one token per
-// interval and that the wait is measured on the delivery's injected clock.
+// TestReceiveQuotaRefillsWithClock checks that a bucket refills one token per interval on the delivery's injected clock.
 func TestReceiveQuotaRefillsWithClock(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-refill.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -158,8 +143,6 @@ func TestReceiveQuotaRefillsWithClock(t *testing.T) {
 	over := f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(inboundLimitBurst))
 	wantReceiveError(t, f.handle(over), localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, "")
 
-	// One second short of the documented 10-second refill, the pair is still
-	// refused.
 	clock.Advance(9 * time.Second)
 	detail := wantReceiveError(t, f.handle(f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(101))),
 		localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, "")
@@ -167,7 +150,6 @@ func TestReceiveQuotaRefillsWithClock(t *testing.T) {
 		t.Fatalf("reply message = %q, want %q", detail.GetMessage(), want)
 	}
 
-	// Past the interval the pair earns a token.
 	clock.Advance(2 * time.Second)
 	wantDelivered(t, f.handle(f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(102))))
 
@@ -176,9 +158,7 @@ func TestReceiveQuotaRefillsWithClock(t *testing.T) {
 	}
 }
 
-// TestReceiveQuotaChargedOncePerMessage checks that the inbox retries of one
-// message share the one token it took: a message written after two retries
-// still leaves nine tokens.
+// TestReceiveQuotaChargedOncePerMessage checks that the inbox retries of one message share the one token it took.
 func TestReceiveQuotaChargedOncePerMessage(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-retry.sock")
 	settings := defaultReceiveSettings()
@@ -195,14 +175,12 @@ func TestReceiveQuotaChargedOncePerMessage(t *testing.T) {
 	rec := newRecordingInbox(inbox.ErrNotWritten, inbox.ErrNotWritten, nil)
 	f.setInbox(target.ID, rec)
 
-	// The first message needs three inbox calls and one token.
 	first := f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(0))
 	wantDelivered(t, f.handle(first))
 	if got := rec.Count(); got != 3 {
 		t.Fatalf("inbox calls for the retried message = %d, want 3", got)
 	}
 
-	// Nine more messages use the remaining tokens; the next one is refused.
 	for i := 1; i < inboundLimitBurst; i++ {
 		frame := f.requestFrameWithID(sender, target, "hello", time.Second, receiveMsgIDN(i))
 		wantDelivered(t, f.handle(frame))
@@ -211,8 +189,7 @@ func TestReceiveQuotaChargedOncePerMessage(t *testing.T) {
 	wantReceiveError(t, f.handle(over), localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, "")
 }
 
-// TestInboundLimiterDropsBucketsOnUnpair checks that an unpaired peer or an
-// ended target starts again with a full bucket and leaves no entries behind.
+// TestInboundLimiterDropsBucketsOnUnpair checks that an unpaired peer or an ended target starts again with a full bucket.
 func TestInboundLimiterDropsBucketsOnUnpair(t *testing.T) {
 	peerA, peerB := fakenetPeer(20), fakenetPeer(30)
 	clock := &dedupeFakeClock{now: time.Unix(0, 0)}
@@ -251,9 +228,7 @@ func TestInboundLimiterDropsBucketsOnUnpair(t *testing.T) {
 	}
 }
 
-// TestInboundLimiterKeepsOneBucketPerPair checks that a refill does not add a
-// second bucket and that a full bucket is never stored, so the table holds only
-// the pairs that spent budget.
+// TestInboundLimiterKeepsOneBucketPerPair checks that a refill adds no second bucket and a full bucket is never stored.
 func TestInboundLimiterKeepsOneBucketPerPair(t *testing.T) {
 	peer := fakenetPeer(20)
 	clock := &dedupeFakeClock{now: time.Unix(0, 0)}

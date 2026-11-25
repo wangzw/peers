@@ -19,22 +19,18 @@ import (
 // reports why it has not completed.
 const registrationWait = 10 * time.Second
 
-// attemptReadHook, when set by a test, runs inside attempt after it has read
-// retry and before it releases attemptMu. It lets a test stop the attempt in
-// that window and deliver a registry event while the lock is held. Production
-// leaves it nil.
+// attemptReadHook, when set by a test, runs inside attempt after it reads retry
+// and before it releases attemptMu; production leaves it nil.
 var attemptReadHook atomic.Pointer[func(c *regConn)]
 
-// attemptBusyHook, when set by a test, runs when attempt finds attemptMu held,
-// after it has recorded the retry request. It lets a test wait until another
-// attempt call has handed its request to the running attempt. Production leaves
-// it nil.
+// attemptBusyHook, when set by a test, runs when attempt finds attemptMu held
+// after recording the retry request; production leaves it nil.
 var attemptBusyHook atomic.Pointer[func(c *regConn)]
 
 // Register serves one registration stream. The first frame identifies the
 // caller's inbox socket and configuration directory; later upstream frames are
-// ignored. The stream stays open while the registration waits, and after it
-// completes it carries address changes until the connection ends.
+// ignored. The stream stays open while registration waits, and afterwards it
+// carries address changes until the connection ends.
 func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 	first, err := stream.Recv()
 	if err != nil {
@@ -46,10 +42,10 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_INTERNAL,
 			"no caller identified on this connection"))
 	}
-	// Look the account up once, outside Broker.mu, and use the result both for
-	// the registration slot and for the name ownership table's per-account
-	// limit. A failed account lookup is not an unknown account: refuse the
-	// registration instead of counting it in a shared bucket.
+	// Look the account up once, outside Broker.mu, for both the registration
+	// slot and the name ownership table's per-account limit. A failed lookup is
+	// not an unknown account, so refuse instead of counting it in a shared
+	// bucket.
 	var accountKey uint32
 	if b.registers != nil || b.nameOwners != nil {
 		key, err := accountKeyFor(caller.UID)
@@ -59,9 +55,8 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 		}
 		accountKey = key
 	}
-	// Count the stream only after the first frame identified the caller, and
-	// before the session backend is acquired, so an account past its limit
-	// costs no backend work. The slot is held for the stream's lifetime.
+	// Count the stream after the caller is identified and before the backend is
+	// acquired, so an account past its limit costs no backend work.
 	if b.registers != nil {
 		if !b.registers.acquire(accountKey, caller.UID) {
 			return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
@@ -86,11 +81,9 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 		out:        newEventQueue(),
 	}
 
-	// sendCtx stops the sender when this handler ends the stream on overflow.
-	// A sender that has not started a Send returns instead of starting one. A
-	// Send already in the transport returns when the handler returns, because
-	// gRPC ends the RPC then, so the overflow path must not wait for the
-	// sender.
+	// sendCtx stops the sender when this handler ends the stream on overflow; a
+	// Send already in the transport returns when gRPC ends the RPC, so the
+	// overflow path must not wait for the sender.
 	sendCtx, cancelSend := context.WithCancel(ctx)
 	defer cancelSend()
 
@@ -132,17 +125,15 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 	b.dropConn(c)
 	c.out.close()
 	if c.out.overflowInfo() {
-		// The client stopped reading and the backlog reached its limit. End the
-		// stream instead of growing it: the connection stays open, so the client
-		// can register again. Stop the sender and return without waiting for it:
-		// it may be blocked in a Send the client is not reading, and returning
-		// ends the RPC, which releases that Send.
+		// The backlog reached its limit: end the stream so the client can
+		// register again, and return without waiting for a sender blocked in a
+		// Send the client is not reading.
 		cancelSend()
 		if release != nil {
 			release()
 		}
 		// c.id names this connection even when the refused event names no agent,
-		// so the warning always says which registration overflowed.
+		// so the warning says which registration overflowed.
 		b.log.Warn(EvRegisterEventsOverflow, "uid", c.caller.UID, "agent", shortID(c.id))
 		return toStatus(Errorf(localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED,
 			"cannot send registration events: more than %d are waiting to be read", registrationEventLimit))
@@ -154,8 +145,6 @@ func (b *Broker) Register(stream localpb.Local_RegisterServer) error {
 	return nil
 }
 
-// beginRegistration puts a new connection into the waiting set and starts the
-// lookup that may complete it.
 func (b *Broker) beginRegistration(c *regConn) {
 	if c.rawPath == "" {
 		b.mu.Lock()
@@ -170,7 +159,7 @@ func (b *Broker) beginRegistration(c *regConn) {
 
 	id, socketPath, err := AgentIDFor(c.rawPath)
 	if err != nil {
-		// A path that can never name a record waits like a missing record. It
+		// A path that can never name a record waits like a missing record and
 		// needs neither a watch nor a registry lookup.
 		b.mu.Lock()
 		b.waiting[c] = struct{}{}
@@ -185,8 +174,8 @@ func (b *Broker) beginRegistration(c *regConn) {
 	c.socketPath = socketPath
 
 	b.mu.Lock()
-	// Take the watch before the connection becomes visible to the event loop,
-	// so a registry change cannot slip in between.
+	// Take the watch before the connection becomes visible to the event loop so
+	// a registry change cannot slip in between.
 	if key, ok := b.acquireWatchLocked(c.caller.UID, c.configDir, c.backend); ok {
 		c.watchDir = key
 		c.watching = true
@@ -198,17 +187,11 @@ func (b *Broker) beginRegistration(c *regConn) {
 	b.attempt(c)
 }
 
-// attempt runs a full check of a waiting connection: lookup, socket owner,
-// usable name. Checks of one connection are serialized by c.attemptMu. A caller
-// that finds an attempt already running asks for one more pass instead of
-// waiting; this keeps the registry event goroutine from stalling behind a
-// record read and lets the running attempt apply the change it carries.
-//
-// The request is recorded before the lock is tried, and the attempt checks it
-// again after releasing the lock. A request made while the lock is held is
-// therefore seen by the run that releases it, and one made after that belongs
-// to a later call; in neither case can it fall between the read of retry and
-// the unlock and be dropped.
+// attempt runs a full check of a waiting connection, serialized by
+// c.attemptMu. A caller that finds an attempt running records a retry instead of
+// waiting, so a registry event does not stall behind a record read. The request
+// is recorded before the lock is tried and checked again after the unlock, so a
+// request made at any point is seen by its run and never dropped.
 func (b *Broker) attempt(c *regConn) {
 	c.retry.Store(true)
 	for {
@@ -226,25 +209,24 @@ func (b *Broker) attempt(c *regConn) {
 		}
 		if attached && retry && a != nil {
 			// A registry event arrived between the record read and the
-			// attachment. The agent is in the table now, so reread it and apply
-			// the change the event carries.
+			// attachment; the agent is in the table now, so reread it and apply
+			// the change.
 			b.mu.Lock()
 			refresh := b.refreshOne
 			b.mu.Unlock()
 			refresh(a)
 		}
 		c.attemptMu.Unlock()
-		// Run again when a request arrived while the lock was held. The check
-		// comes after the unlock so that a request made in the window between
-		// the read above and the unlock is not lost.
+		// Run again when a request arrived while the lock was held; the check
+		// comes after the unlock so a request made in that window is not lost.
 		if attached || !c.retry.Load() {
 			return
 		}
 	}
 }
 
-// tryComplete runs one check and reports whether it attached the connection to
-// an agent. attached is false when the connection is still waiting or has left.
+// tryComplete runs one check and reports whether it attached the connection to an
+// agent.
 func (b *Broker) tryComplete(c *regConn) (a *agent, attached bool) {
 	b.mu.Lock()
 	_, waiting := b.waiting[c]
@@ -280,32 +262,26 @@ func (b *Broker) tryComplete(c *regConn) (a *agent, attached bool) {
 	return nil, false
 }
 
-// registrationProblem is the reason and optional detail a registration attempt
-// reports for a waiting connection.
 type registrationProblem struct {
 	reason localpb.NotRegisteredReason
 	detail string
 }
 
-// inspect performs the three checks of a registration attempt. ok is true when
-// all of them pass.
+// inspect performs the lookup, socket owner and usable name checks of a
+// registration attempt; ok is true when all of them pass.
 func (b *Broker) inspect(c *regConn) (registrationProblem, inbox.Session, string, bool) {
 	callCtx, cancel := sessionCallContext(b.ctx)
 	s, err := c.backend.Lookup(callCtx, c.configDir, c.socketPath)
 	cancel()
 	if err != nil {
-		// A missing or partially written record is the ordinary waiting state
-		// and needs no warning. Every other failure does: the wait keeps
-		// retrying, so the log is the only place an administrator can see why
-		// it has not completed.
+		// A missing or partial record is the ordinary waiting state; every other
+		// failure is warned because the wait retries silently.
 		if !errors.Is(err, inbox.ErrNoRecord) && !errors.Is(err, inbox.ErrPartial) {
 			b.log.Warn(EvRegistrationWaiting, "error", err, "uid", c.caller.UID)
 		}
 		if errors.Is(err, helper.ErrUnavailable) {
-			// The account's helper could not be started or stopped answering.
-			// Report that separately from a record that exists but cannot be
-			// read, such as a permission denial, which would send the reader
-			// looking in the wrong place.
+			// A broken or unstartable helper is reported apart from an unreadable
+			// record, which would send the reader looking in the wrong place.
 			return registrationProblem{reason: localpb.NotRegisteredReason_NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED},
 				inbox.Session{}, "", false
 		}
@@ -327,24 +303,10 @@ func (b *Broker) inspect(c *regConn) (registrationProblem, inbox.Session, string
 }
 
 // completeLocked attaches a connection to its agent, creating the agent when
-// needed, and queues the registration_complete event. It returns the watch
-// stops the caller runs outside Broker.mu. Callers must hold Broker.mu.
-//
-// A new agent's watch is created before the agent enters the table. Watch
-// releases Broker.mu while it subscribes, and an agent in the table without its
-// ref would make every reader of the address panic, so the insertion, the ref
-// assignment and the registration_complete push all happen under one
-// uninterrupted hold. The connection stays in the waiting set while the watch
-// is created, so a stream that ends in that window is still seen.
-//
-// When the connection already watches the agent's configuration directory, its
-// reference is transferred to the agent: the agent's reference is taken before
-// the connection's is dropped, so the subscription never falls to zero. The
-// ownership check inside that acquisition releases Broker.mu, but the
-// connection's reference keeps the watch in place during the window, so no
-// registry event can fall between them. Otherwise the agent's watch is created
-// after the connection's is dropped, the window releases Broker.mu, and the
-// attempt is asked to reread the agent after the attachment.
+// needed, and queues the registration_complete event; it returns the watch stops
+// to run outside Broker.mu. Callers must hold Broker.mu. A new agent's watch is
+// created before the agent enters the table, so every reader of its address sees
+// a ref.
 func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func() {
 	if _, ok := b.waiting[c]; !ok {
 		return nil
@@ -357,20 +319,16 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 		var key watchKey
 		var withWatch bool
 		if sameKey {
-			// The connection already watches the agent's directory. Hand its
-			// reference over: take the agent's reference before dropping the
-			// connection's. The subscription never falls to zero; the ownership
-			// check may release Broker.mu, but the connection's reference keeps
-			// the watch in place until the agent's is taken, so no registry event
-			// can fall between the connection's watch and the agent's.
+			// Hand the connection's watch reference to the agent: take the
+			// agent's reference before dropping the connection's, so the
+			// subscription never falls to zero while the ownership check
+			// releases Broker.mu.
 			key, withWatch = b.acquireWatchLocked(agentKey.uid, agentKey.dir, c.backend)
 			stops = append(stops, b.releaseWatchLocked(c.watchDir, c.watching)...)
 		} else {
-			// Drop this connection's own watch before taking the agent's. The
-			// stop runs outside Broker.mu; until then the old subscription still
-			// covers its directory. Clearing the flags before the acquisition
-			// keeps a stream that ends during it from releasing the reference a
-			// second time.
+			// Drop this connection's own watch before taking the agent's;
+			// clearing the flags first keeps a stream that ends during the
+			// acquisition from releasing the reference twice.
 			stops = append(stops, b.releaseWatchLocked(c.watchDir, c.watching)...)
 			c.watching = false
 			c.watchDir = watchKey{}
@@ -382,10 +340,7 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 			c.waitTimer.Stop()
 			c.waitTimer = nil
 		}
-		// Broker.mu is held again after the watch creation.
-
 		if _, still := b.waiting[c]; !still {
-			// The stream ended while the watch was being created.
 			if withWatch {
 				stops = append(stops, b.releaseWatchLocked(key, true)...)
 			}
@@ -393,9 +348,8 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 		}
 		if !sameKey {
 			// Creating the watch released Broker.mu while this connection was
-			// already out of the watching set. A registry event in that window
-			// found the agent still out of the table and was not applied; ask
-			// the attempt to reread the agent once after the attachment.
+			// already out of the watching set; a registry event in that window
+			// was not applied, so the attempt rereads after the attachment.
 			c.retry.Store(true)
 		}
 		if other, raced := b.agents[c.id]; raced {
@@ -438,8 +392,7 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 	} else {
 		a := b.agents[c.id]
 		if a.caller.UID != c.caller.UID {
-			// The socket path now names an agent of another account. Attaching
-			// would make that agent's registration stream answer to a caller
+			// Attaching would make another account's agent answer to a caller
 			// that does not own its socket.
 			stops = append(stops, b.releaseWatchLocked(c.watchDir, c.watching)...)
 			c.watching = false
@@ -463,8 +416,8 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 	c.reported = false
 	c.waitDetail = ""
 
-	// Introduce the agent to the topic table before the MCP process can see
-	// registration_complete and join its default topics.
+	// Introduce the agent to the topic table before the MCP process sees
+	// registration_complete and joins its default topics.
 	b.recomputeRefsLocked()
 
 	autoJoin := true
@@ -485,7 +438,6 @@ func (b *Broker) completeLocked(c *regConn, s inbox.Session, name string) []func
 	return stops
 }
 
-// reportWaiting is the 10-second timer callback of a waiting connection.
 func (b *Broker) reportWaiting(c *regConn) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -493,9 +445,8 @@ func (b *Broker) reportWaiting(c *regConn) {
 		return
 	}
 	if !c.attempted {
-		// The first attempt is still running and waitReason is not meaningful
-		// yet. Reporting now would leak the zero reason; attempt reports as
-		// soon as it has stored one.
+		// The first attempt has not stored a reason yet; reporting now would
+		// leak the zero reason, so attempt reports once it has one.
 		c.reportDue = true
 		return
 	}
@@ -503,9 +454,8 @@ func (b *Broker) reportWaiting(c *regConn) {
 }
 
 // refuseAttachLocked records why a waiting connection cannot attach to an
-// existing agent and lets the wait report it, either now when the wait timer
-// has already fired or on the timer that is still running. The connection stays
-// in the waiting set. Callers must hold Broker.mu.
+// existing agent and lets the wait report it, now or on the running timer; the
+// connection stays in the waiting set. Callers must hold Broker.mu.
 func (b *Broker) refuseAttachLocked(c *regConn, reason localpb.NotRegisteredReason) {
 	if _, still := b.waiting[c]; !still {
 		return
@@ -518,7 +468,7 @@ func (b *Broker) refuseAttachLocked(c *regConn, reason localpb.NotRegisteredReas
 }
 
 // reportWaitingLocked sends the not_registered event for a waiting connection
-// and records that it was sent. Callers must hold Broker.mu.
+// once and records that it was sent. Callers must hold Broker.mu.
 func (b *Broker) reportWaitingLocked(c *regConn) {
 	if c.reported {
 		return
@@ -528,8 +478,6 @@ func (b *Broker) reportWaitingLocked(c *regConn) {
 	b.log.Info(EvRegistrationWaiting, "reason", reasonName(c.waitReason), "uid", c.caller.UID)
 }
 
-// dropConn removes a connection from the waiting set or from its agent. The
-// last connection of an agent unregisters it.
 func (b *Broker) dropConn(c *regConn) {
 	var stops []func()
 	b.mu.Lock()
@@ -582,22 +530,21 @@ func reasonName(reason localpb.NotRegisteredReason) string {
 }
 
 // registrationEventLimit is how many downstream events one registration stream
-// may have waiting for its sender. A client that stops reading would otherwise
-// make the Broker keep every event it produces.
+// may have waiting for its sender, so a client that stops reading cannot make
+// the Broker keep every event it produces.
 const registrationEventLimit = 64
 
 // eventQueue is the bounded, per-connection queue that feeds one sender
-// goroutine. Consecutive agent_changed events for one agent are coalesced, and
-// a push past the limit stops the queue: the Register handler ends the stream.
-// Closing it discards pending events, because by then the registration stream
-// is over.
+// goroutine. Consecutive agent_changed events for one agent are coalesced, and a
+// push past the limit stops the queue so the Register handler ends the stream;
+// closing it discards pending events.
 type eventQueue struct {
 	mu       sync.Mutex
 	items    []*localpb.RegisterResponse
 	closed   bool
-	overflow bool // an event was refused because the queue was full
+	overflow bool
 	signal   chan struct{}
-	stopped  chan struct{} // closed once overflow stops the queue
+	stopped  chan struct{}
 }
 
 func newEventQueue() *eventQueue {
@@ -608,10 +555,9 @@ func newEventQueue() *eventQueue {
 }
 
 // push queues resp and reports whether it was accepted. An agent_changed
-// replaces a trailing, not yet sent agent_changed for the same agent instead of
-// being appended, so an unread stream keeps only the latest address. An event
-// that would take the backlog past registrationEventLimit is refused, and the
-// queue stops; caller work already in progress is unaffected.
+// replaces a trailing, unsent agent_changed for the same agent, so an unread
+// stream keeps only the latest address; an event that would pass
+// registrationEventLimit is refused and the queue stops.
 func (q *eventQueue) push(resp *localpb.RegisterResponse) bool {
 	q.mu.Lock()
 	if q.closed || q.overflow {
@@ -641,7 +587,6 @@ func (q *eventQueue) push(resp *localpb.RegisterResponse) bool {
 	return true
 }
 
-// overflowInfo reports whether the queue stopped because an event did not fit.
 func (q *eventQueue) overflowInfo() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -659,7 +604,7 @@ func (q *eventQueue) close() {
 	}
 }
 
-// pop blocks until an event is queued or the queue is closed. It returns
+// pop blocks until an event is queued or the queue is closed; it returns
 // ok == false once the queue is closed and empty.
 func (q *eventQueue) pop() (*localpb.RegisterResponse, bool) {
 	for {

@@ -8,9 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/termcmd"
 )
 
-// TestSamplesMatchTermcmdFormat freezes the two sample texts used by the cmd
-// subprocess tests against the terminal formatter. A change to the formatting
-// or to the sample data that is not reflected in both places fails here.
+// TestSamplesMatchTermcmdFormat checks that the sample texts match what the
+// terminal formatter produces for the sample data.
 func TestSamplesMatchTermcmdFormat(t *testing.T) {
 	t.Parallel()
 

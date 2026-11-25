@@ -23,12 +23,8 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// sendPeerMsgID is a fixed message id so a resend can be checked to reuse it.
 const sendPeerMsgID = "3f2a1c4e-5b6d-4e8f-9a0b-1c2d3e4f5a6b"
 
-// sendPeerFixture wires a sending delivery to a fake network. The peer end
-// answers with whatever handler a test registers; no real receiving delivery is
-// involved here.
 type sendPeerFixture struct {
 	t        *testing.T
 	net      *fakeNet
@@ -82,8 +78,6 @@ func newSendPeerFixture(t *testing.T, role pairing.Role) *sendPeerFixture {
 	}
 }
 
-// caller returns a local Agent with the given name and ref, and an id that
-// starts with the ref so the ref grammar holds.
 func (f *sendPeerFixture) caller(name, ref string) agentView {
 	return agentView{
 		ID:   ref + strings.Repeat("0", 64-len(ref)),
@@ -92,12 +86,10 @@ func (f *sendPeerFixture) caller(name, ref string) agentView {
 	}
 }
 
-// share gives a local Agent the listed topics.
 func (f *sendPeerFixture) share(id string, shared ...string) {
 	f.topics.local[id] = shared
 }
 
-// member adds one roster entry for the peer.
 func (f *sendPeerFixture) member(m remoteMember, shared ...string) {
 	f.topics.remote[f.peer] = append(f.topics.remote[f.peer], deliveryRemoteEntry{
 		Member: m,
@@ -105,12 +97,10 @@ func (f *sendPeerFixture) member(m remoteMember, shared ...string) {
 	})
 }
 
-// handle registers the peer's answer to kind-400 requests.
 func (f *sendPeerFixture) handle(fn func(context.Context, peerID, link.Frame) link.Frame) {
 	f.net.end(f.peer).HandleRequest(link.FrameKind(deliverpb.KindDeliver), fn)
 }
 
-// send runs one sendToPeer with the fixture's peer and settings.
 func (f *sendPeerFixture) send(caller agentView, to, text string) error {
 	f.t.Helper()
 	addr, ok := parseTarget(to)
@@ -127,7 +117,6 @@ func (f *sendPeerFixture) send(caller agentView, to, text string) error {
 	})
 }
 
-// requireSendPeerError extracts the *Error a send returned.
 func requireSendPeerError(t *testing.T, err error) *Error {
 	t.Helper()
 	if err == nil {
@@ -140,7 +129,6 @@ func requireSendPeerError(t *testing.T, err error) *Error {
 	return e
 }
 
-// deliveredAnswer decodes the request and reports success.
 func deliveredAnswer(t *testing.T, got *deliverRequest) func(context.Context, peerID, link.Frame) link.Frame {
 	return func(_ context.Context, _ peerID, fr link.Frame) link.Frame {
 		req, err := decodeDeliverRequest(fr)
@@ -155,9 +143,7 @@ func deliveredAnswer(t *testing.T, got *deliverRequest) func(context.Context, pe
 	}
 }
 
-// TestSendPeerDelivered checks a successful delivery: the request carries the
-// address the caller wrote, so a short or absent ref reaches the receiving
-// Broker unchanged, and a positive budget (REQ-agent-messaging-013).
+// TestSendPeerDelivered checks that a successful delivery carries the address the caller wrote and a positive budget.
 func TestSendPeerDelivered(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -184,11 +170,7 @@ func TestSendPeerDelivered(t *testing.T) {
 	}
 }
 
-// TestSendPeerForwardsShortRefVerbatim is the cross-link half of the colliding
-// ref reproduction: a caller holds the owner's six-character ref, the owner has
-// left, and the only roster entry is another account's worker with a colliding
-// twelve-character ref. The sender must forward the caller's short ref, not
-// upgrade it to the member's full ref, so the receiving Broker can refuse it.
+// TestSendPeerForwardsShortRefVerbatim checks that a caller's short ref is forwarded verbatim, not upgraded to a colliding member's full ref.
 func TestSendPeerForwardsShortRefVerbatim(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -209,8 +191,6 @@ func TestSendPeerForwardsShortRefVerbatim(t *testing.T) {
 			return encodeDeliverResult(err)
 		}
 		got = req
-		// Model the receiving Broker: a short ref never selects a ref-required
-		// member, and only that member's own full ref reaches it.
 		if req.TargetRef == full {
 			return encodeDeliverResult(nil)
 		}
@@ -230,9 +210,7 @@ func TestSendPeerForwardsShortRefVerbatim(t *testing.T) {
 	}
 }
 
-// TestSendPeerPrefixNameShortRefNotFound checks the name-prefix bypass over the
-// link: a member named worker2 whose ref collides with the owner's short ref
-// must not answer an address that names worker.
+// TestSendPeerPrefixNameShortRefNotFound checks that a prefix-named member does not answer a short ref meant for another name.
 func TestSendPeerPrefixNameShortRefNotFound(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -259,9 +237,7 @@ func TestSendPeerPrefixNameShortRefNotFound(t *testing.T) {
 	}
 }
 
-// TestSendPeerErrorCarriesOrigin checks that a peer's error keeps its code and
-// message, and that the originating fingerprint is the peer, never a
-// fingerprint the peer claimed (REQ-agent-messaging-018, architecture.md:216).
+// TestSendPeerErrorCarriesOrigin checks that a peer's error keeps its code and message, with the peer's fingerprint as the origin even when the peer claims another.
 func TestSendPeerErrorCarriesOrigin(t *testing.T) {
 	setup := func(t *testing.T) *sendPeerFixture {
 		f := newSendPeerFixture(t, pairing.RoleDialer)
@@ -336,9 +312,7 @@ func TestSendPeerErrorCarriesOrigin(t *testing.T) {
 	})
 }
 
-// TestSendPeerNoRetryOnPeerError checks that a definite peer error ends the
-// send: the peer has decided, so a retry cannot change the result
-// (design-broker.md:244).
+// TestSendPeerNoRetryOnPeerError checks that a definite peer error ends the send without a retry.
 func TestSendPeerNoRetryOnPeerError(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -359,9 +333,7 @@ func TestSendPeerNoRetryOnPeerError(t *testing.T) {
 	}
 }
 
-// TestSendPeerDialerKicksAndGivesUp checks that a dialer spends its retry
-// budget on kicks and reports peer_unreachable without ever sending
-// (REQ-agent-messaging-017, REQ-agent-messaging-019).
+// TestSendPeerDialerKicksAndGivesUp checks that a dialer spends its retry budget on kicks and reports peer_unreachable without sending.
 func TestSendPeerDialerKicksAndGivesUp(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.settings.SetSettings(sendSettings{
@@ -387,18 +359,12 @@ func TestSendPeerDialerKicksAndGivesUp(t *testing.T) {
 	if n := len(f.net.requests(f.self, f.peer)); n != 0 {
 		t.Fatalf("requests = %d, want 0: nothing was ever sent", n)
 	}
-	// The retries spend three backoffs of 10, 20 and 40ms, so a send that gives
-	// up on the retry budget returns in tens of milliseconds. One second is far
-	// below the 2s send budget, so a send that waited out the budget instead of
-	// retrying fails, while a loaded runner still has plenty of room; the
-	// baseline used the same bound.
 	if elapsed >= time.Second {
 		t.Fatalf("elapsed = %v, want under 1s: retries must not wait out the 2s budget", elapsed)
 	}
 }
 
-// TestSendPeerDialerRecoversAfterKick checks that a dialer sends once the link
-// comes up through a kick.
+// TestSendPeerDialerRecoversAfterKick checks that a dialer sends once the link comes up through a kick.
 func TestSendPeerDialerRecoversAfterKick(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.settings.SetSettings(sendSettings{
@@ -426,10 +392,6 @@ func TestSendPeerDialerRecoversAfterKick(t *testing.T) {
 	}
 }
 
-// upDuringEstablishedLink reports the link down once and brings it up before
-// returning, so the up event lands after the sender read the link as down but
-// before it takes the generation for the wait. The generation is taken at the
-// start of each attempt, before Established, so this up must satisfy that wait.
 type upDuringEstablishedLink struct {
 	*fakeEnd
 	once atomic.Bool
@@ -443,10 +405,7 @@ func (l *upDuringEstablishedLink) Established(p peerID) bool {
 	return true
 }
 
-// TestSendPeerUpRaceWithGeneration checks that an up event landing after the
-// link read as down but before the wait begins still wakes the wait. A dialer
-// must not sit out one backoff, and an acceptor must not run into its deadline
-// and report peer_unreachable, when the link is already back.
+// TestSendPeerUpRaceWithGeneration checks that an up event landing before the wait begins still wakes it for both roles.
 func TestSendPeerUpRaceWithGeneration(t *testing.T) {
 	for _, role := range []pairing.Role{pairing.RoleDialer, pairing.RoleAcceptor} {
 		name, wantKicks := "dialer", 1
@@ -467,9 +426,6 @@ func TestSendPeerUpRaceWithGeneration(t *testing.T) {
 
 			lnk := &upDuringEstablishedLink{fakeEnd: f.net.end(f.self)}
 			f.delivery.deps.Link = lnk
-			// A fake waiter clock makes the criterion schedule-independent: a wait
-			// that used the up event arms no timer, while one that missed it arms
-			// a backoff timer and blocks until the outer fallback fails the test.
 			clock := newFakeClock(time.Now())
 			f.delivery.waiter = newLinkWaiter(lnk, clock)
 
@@ -498,8 +454,7 @@ func TestSendPeerUpRaceWithGeneration(t *testing.T) {
 	}
 }
 
-// TestSendPeerBackoffDoubles checks that the wait between kicks doubles: the
-// dialer must not wake the peer at a fixed short interval.
+// TestSendPeerBackoffDoubles checks that the wait between kicks doubles.
 func TestSendPeerBackoffDoubles(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.settings.SetSettings(sendSettings{
@@ -532,8 +487,7 @@ func TestSendPeerBackoffDoubles(t *testing.T) {
 	}
 }
 
-// TestSendPeerAcceptorWaitsBudget checks that an acceptor never kicks and waits
-// the full budget for the dialer to connect (REQ-agent-messaging-017).
+// TestSendPeerAcceptorWaitsBudget checks that an acceptor never kicks and waits the full budget for the dialer.
 func TestSendPeerAcceptorWaitsBudget(t *testing.T) {
 	const budget = 300 * time.Millisecond
 	f := newSendPeerFixture(t, pairing.RoleAcceptor)
@@ -543,12 +497,6 @@ func TestSendPeerAcceptorWaitsBudget(t *testing.T) {
 		LinkRetries:    3,
 	})
 
-	// REQ-agent-messaging-017: a send must return within the send time limit,
-	// which here is the 300ms budget an acceptor waits for the link. The margin
-	// is 700ms, the value the baseline already used when it bounded this budget
-	// at one second; it covers one scheduling of the waiter goroutine plus the
-	// final wake-up and error construction, while a send that waits out anything
-	// close to a real budget (the 20s default, or even 2s) still fails.
 	const margin = 700 * time.Millisecond
 	done := make(chan error, 1)
 	start := time.Now()
@@ -576,8 +524,7 @@ func TestSendPeerAcceptorWaitsBudget(t *testing.T) {
 	}
 }
 
-// TestSendPeerAcceptorDeliversWhenDialerConnects checks that an acceptor waits
-// for the peer to connect and then delivers.
+// TestSendPeerAcceptorDeliversWhenDialerConnects checks that an acceptor waits for the peer to connect and then delivers.
 func TestSendPeerAcceptorDeliversWhenDialerConnects(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleAcceptor)
 	f.settings.SetSettings(sendSettings{
@@ -590,8 +537,6 @@ func TestSendPeerAcceptorDeliversWhenDialerConnects(t *testing.T) {
 	f.member(remoteMember{Name: "frontend", Ref: "abc123"}, "t1")
 	f.handle(deliveredAnswer(t, nil))
 
-	// Wait until the acceptor is blocked on the link, then bring it up: the
-	// registration is the synchronization point, not a fixed delay.
 	done := make(chan error, 1)
 	go func() { done <- f.send(caller, "frontend@hostB", "hello") }()
 	waitForRegistrations(t, f.delivery.waiter, f.peer, 1)
@@ -607,15 +552,13 @@ func TestSendPeerAcceptorDeliversWhenDialerConnects(t *testing.T) {
 	}
 }
 
-// TestSendPeerUnsupportedReply checks that an unsupported-kind reply becomes
-// version_mismatch, is not retried and is never treated as delivered.
+// TestSendPeerUnsupportedReply checks that an unsupported-kind reply becomes version_mismatch, is not retried and is never treated as delivered.
 func TestSendPeerUnsupportedReply(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
 	caller := f.caller("api-worker", "1a2b3c")
 	f.share(caller.ID, "t1")
 	f.member(remoteMember{Name: "frontend", Ref: "abc123"}, "t1")
-	// No kind-400 handler on the peer: the fake link answers UnsupportedError.
 
 	err := f.send(caller, "frontend@hostB", "hello")
 	e := requireSendPeerError(t, err)
@@ -633,8 +576,7 @@ func TestSendPeerUnsupportedReply(t *testing.T) {
 	}
 }
 
-// TestSendPeerMalformedReply checks that a reply that cannot be decoded is an
-// unknown result, never a success.
+// TestSendPeerMalformedReply checks that a reply that cannot be decoded is an unknown result, never a success.
 func TestSendPeerMalformedReply(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -655,9 +597,6 @@ func TestSendPeerMalformedReply(t *testing.T) {
 	}
 }
 
-// unreadableReplyLink is a link that reports every request as sent but whose
-// reply cannot be read. The error is not a link drop, and the link stays
-// established throughout.
 type unreadableReplyLink struct {
 	*fakeEnd
 	requests atomic.Int32
@@ -668,10 +607,7 @@ func (l *unreadableReplyLink) Request(context.Context, peerID, link.Frame) (link
 	return link.Frame{}, true, errors.New("undecodable reply")
 }
 
-// TestSendPeerUnreadableReplyIsDeliveryUnknown checks that an error other than a
-// link drop after the frame left becomes delivery_unknown after one request:
-// only a dropped link is waited out and resent with the same id
-// (design-broker.md:259).
+// TestSendPeerUnreadableReplyIsDeliveryUnknown checks that an error other than a link drop after the frame left becomes delivery_unknown after one request.
 func TestSendPeerUnreadableReplyIsDeliveryUnknown(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -701,9 +637,7 @@ func TestSendPeerUnreadableReplyIsDeliveryUnknown(t *testing.T) {
 	}
 }
 
-// TestSendPeerRemoteAmbiguous checks that duplicate remote names fail before a
-// request is sent and list both ref-forced addresses with the peer's effective
-// alias (REQ-agent-messaging-007, REQ-agent-messaging-004).
+// TestSendPeerRemoteAmbiguous checks that duplicate remote names fail before a request is sent and list both ref-forced addresses.
 func TestSendPeerRemoteAmbiguous(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -727,8 +661,7 @@ func TestSendPeerRemoteAmbiguous(t *testing.T) {
 	}
 }
 
-// TestSendPeerRemotePrevName checks that sending to a remote Agent's previous
-// name names its current address (REQ-agent-messaging-031).
+// TestSendPeerRemotePrevName checks that sending to a remote Agent's previous name names its current address.
 func TestSendPeerRemotePrevName(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -749,8 +682,7 @@ func TestSendPeerRemotePrevName(t *testing.T) {
 	}
 }
 
-// TestSendPeerRemoteNotVisible checks that a roster member without a shared
-// topic fails before any request (REQ-agent-messaging-014).
+// TestSendPeerRemoteNotVisible checks that a roster member without a shared topic fails before any request.
 func TestSendPeerRemoteNotVisible(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleDialer)
 	f.net.setUp(f.self, f.peer, true)
@@ -768,8 +700,7 @@ func TestSendPeerRemoteNotVisible(t *testing.T) {
 	}
 }
 
-// TestSendPeerUnpairedDuringSend checks that a peer that is no longer paired is
-// not dialed.
+// TestSendPeerUnpairedDuringSend checks that a peer that is no longer paired is not dialed.
 func TestSendPeerUnpairedDuringSend(t *testing.T) {
 	f := newSendPeerFixture(t, pairing.RoleUnknown)
 
@@ -783,15 +714,12 @@ func TestSendPeerUnpairedDuringSend(t *testing.T) {
 	}
 }
 
-// peerErrorAnswer replies to a kind-400 request with one error detail, which is
-// what a receiving Broker returns for a refused delivery.
 func peerErrorAnswer(code localpb.ErrorCode, message string) func(context.Context, peerID, link.Frame) link.Frame {
 	return func(context.Context, peerID, link.Frame) link.Frame {
 		return encodeDeliverResult(&Error{Code: code, Message: message})
 	}
 }
 
-// newPeerErrorFixture sets up a paired link whose peer answers with a refusal.
 func newPeerErrorFixture(t *testing.T, code localpb.ErrorCode, message string) *sendPeerFixture {
 	t.Helper()
 	f := newSendPeerFixture(t, pairing.RoleDialer)
@@ -803,9 +731,7 @@ func newPeerErrorFixture(t *testing.T, code localpb.ErrorCode, message string) *
 	return f
 }
 
-// TestSendPeerUnrecognizedErrorIsDeliveryUnknown checks that an error code
-// outside the receiving Broker's set becomes delivery_unknown with a local
-// message, never the peer's text (design-broker.md "错误与失败语义").
+// TestSendPeerUnrecognizedErrorIsDeliveryUnknown checks that an error code outside the receiving Broker's set becomes delivery_unknown with a local message, never the peer's text.
 func TestSendPeerUnrecognizedErrorIsDeliveryUnknown(t *testing.T) {
 	const marker = "PEER-TEXT-MARKER"
 	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_PAIRING_REJECTED,
@@ -829,9 +755,7 @@ func TestSendPeerUnrecognizedErrorIsDeliveryUnknown(t *testing.T) {
 	}
 }
 
-// TestSendPeerUnspecifiedErrorIsDeliveryUnknown checks that the enum's zero
-// value, which no receiver returns on purpose, is also treated as outside the
-// receiving Broker's set.
+// TestSendPeerUnspecifiedErrorIsDeliveryUnknown checks that the enum's zero value is also treated as outside the receiving Broker's set.
 func TestSendPeerUnspecifiedErrorIsDeliveryUnknown(t *testing.T) {
 	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_UNSPECIFIED, "peer text")
 
@@ -848,8 +772,7 @@ func TestSendPeerUnspecifiedErrorIsDeliveryUnknown(t *testing.T) {
 	}
 }
 
-// TestTruncatePeerMessageRuneBoundary checks that the 512-byte cap cuts on a
-// rune boundary instead of splitting a multi-byte character.
+// TestTruncatePeerMessageRuneBoundary checks that the 512-byte cap cuts on a rune boundary instead of splitting a character.
 func TestTruncatePeerMessageRuneBoundary(t *testing.T) {
 	message := strings.Repeat("a", 511) + "é" + strings.Repeat("b", 10)
 	got := truncatePeerMessage(message)
@@ -863,16 +786,13 @@ func TestTruncatePeerMessageRuneBoundary(t *testing.T) {
 		t.Fatalf("truncatePeerMessage is %d bytes, want at most %d", len(got), peerMessageMaxBytes+3)
 	}
 
-	// A message at or below the cap is returned unchanged.
 	short := strings.Repeat("é", peerMessageMaxBytes/2)
 	if got := truncatePeerMessage(short); got != short {
 		t.Fatalf("truncatePeerMessage changed a message at the cap")
 	}
 }
 
-// TestSendPeerRecognizedErrorIsQuotedAndBounded checks that an allowed code
-// keeps its code while its message is quoted by this Broker, free of control
-// characters and bounded in length.
+// TestSendPeerRecognizedErrorIsQuotedAndBounded checks that an allowed code keeps its code while its message is quoted, free of control characters and bounded.
 func TestSendPeerRecognizedErrorIsQuotedAndBounded(t *testing.T) {
 	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE,
 		"Not sent: line one\nline two\t"+strings.Repeat("z", 10*1024))
@@ -889,8 +809,6 @@ func TestSendPeerRecognizedErrorIsQuotedAndBounded(t *testing.T) {
 	if strings.ContainsAny(e.Message, "\n\r\t") {
 		t.Fatalf("Message = %q, want no control characters", e.Message)
 	}
-	// The referenced content is capped at 512 bytes plus a trailing "...", and
-	// this fixture is ASCII, so the quoted result cannot exceed that bound.
 	if len(e.Message) > len(prefix)+520 {
 		t.Fatalf("Message is %d bytes, want it bounded", len(e.Message))
 	}
@@ -902,10 +820,7 @@ func TestSendPeerRecognizedErrorIsQuotedAndBounded(t *testing.T) {
 	}
 }
 
-// TestSendPeerQuotaExceededIsPreserved checks that the quota_exceeded a
-// receiving Broker returns for a full per-source dedupe share or an exhausted
-// inbound quota keeps its code and quoted text, so the model sees
-// quota_exceeded rather than delivery_unknown.
+// TestSendPeerQuotaExceededIsPreserved checks that quota_exceeded a receiving Broker returns keeps its code and quoted text.
 func TestSendPeerQuotaExceededIsPreserved(t *testing.T) {
 	const peerText = "Not sent: frontend is receiving too many messages from your Broker; try again in 8 seconds"
 	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_QUOTA_EXCEEDED, peerText)
@@ -927,9 +842,7 @@ func TestSendPeerQuotaExceededIsPreserved(t *testing.T) {
 	}
 }
 
-// TestSendPeerDeliveryUnknownErrorKeepsPrefix checks that a delivery_unknown
-// error keeps the outcome its code names even when the peer's message carried
-// the other lead-in.
+// TestSendPeerDeliveryUnknownErrorKeepsPrefix checks that a delivery_unknown error keeps the outcome its code names even when the peer's message carried the other lead-in.
 func TestSendPeerDeliveryUnknownErrorKeepsPrefix(t *testing.T) {
 	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN,
 		"Delivery unknown: the peer could not confirm")
@@ -945,9 +858,7 @@ func TestSendPeerDeliveryUnknownErrorKeepsPrefix(t *testing.T) {
 	}
 }
 
-// TestSendPeerUnrecognizedErrorLogsEvent checks that an unrecognized peer error
-// is recorded once at warn level with the peer fingerprint and the integer
-// code, and without the peer's message.
+// TestSendPeerUnrecognizedErrorLogsEvent checks that an unrecognized peer error is recorded once at warn level without the peer's message.
 func TestSendPeerUnrecognizedErrorLogsEvent(t *testing.T) {
 	const marker = "PEER-TEXT-MARKER"
 	f := newPeerErrorFixture(t, localpb.ErrorCode_ERROR_CODE_PAIRING_REJECTED, marker)

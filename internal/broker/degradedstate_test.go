@@ -9,9 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestDegradedFixHints pins the repair hints to the design table. The listen
-// row has a normal and a low-port variant, each with and without sudo for the
-// system form; the data rows name the path and the no-restart retry.
+// TestDegradedFixHints checks the repair hint for each listen and data failure,
+// with and without sudo for the system form.
 func TestDegradedFixHints(t *testing.T) {
 	paths := config.PathSet{
 		RuntimeDir: "/run/peers",
@@ -112,8 +111,8 @@ func TestDegradedFixHints(t *testing.T) {
 	}
 }
 
-// TestDegradedConfigReasonNamesKeyOnly checks the sanitized retry reason: the
-// key and the failure class, never the configured value.
+// TestDegradedConfigReasonNamesKeyOnly checks that a configuration failure's
+// degraded reason names the key and the failure class, never the value.
 func TestDegradedConfigReasonNamesKeyOnly(t *testing.T) {
 	cases := []struct {
 		name string
@@ -149,7 +148,7 @@ func TestDegradedConfigReasonNamesKeyOnly(t *testing.T) {
 	}
 }
 
-// TestDegradedStateLevels pins which failure becomes which level.
+// TestDegradedStateLevels checks which failure becomes which degraded level.
 func TestDegradedStateLevels(t *testing.T) {
 	listen := degradedStateFor(&startupFailure{
 		step: "listen", addr: "127.0.0.1:17443", cause: errors.New("in use"),

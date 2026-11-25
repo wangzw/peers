@@ -6,14 +6,8 @@ import (
 	"time"
 )
 
-// linkWaiter waits for the link to a peer to come up without polling. It counts
-// up events as a per-peer generation and wakes every waiter of that peer on one
-// event.
-//
-// A waiter never reads Established. While a link is dropping, its state handler
-// has not run yet and Established still reports true, so a sender that trusted
-// that reading would burn its retries inside a window where the transport
-// already refuses frames.
+// A linkWaiter never trusts Established: after a drop, until the state handler
+// runs, it still reports true.
 type linkWaiter struct {
 	mu    sync.Mutex
 	gen   map[peerID]uint64
@@ -22,10 +16,7 @@ type linkWaiter struct {
 	clock Clock
 }
 
-// newLinkWaiter subscribes to link up/down events. It must be created before
-// the link starts so that no up event is missed. A nil link yields a waiter
-// that never reports the link as established; a nil clock uses the system
-// clock.
+// newLinkWaiter must be created before the link starts so no up event is missed; a nil clock uses the system clock.
 func newLinkWaiter(l deliveryLink, clock Clock) *linkWaiter {
 	if clock == nil {
 		clock = SystemClock()
@@ -42,8 +33,6 @@ func newLinkWaiter(l deliveryLink, clock Clock) *linkWaiter {
 	return w
 }
 
-// onUp records one up event and wakes every waiter of p. A down event needs no
-// action: waiters keep waiting for the next up event.
 func (w *linkWaiter) onUp(p peerID, _ []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -54,9 +43,7 @@ func (w *linkWaiter) onUp(p peerID, _ []byte) {
 	delete(w.ch, p)
 }
 
-// generation returns how many up events have been observed for p. A caller that
-// watched a send fail passes the value it saw to wait, so only an up event that
-// follows the failure satisfies that wait.
+// generation returns the number of up events seen for p, which wait compares so only a later up satisfies its wait.
 func (w *linkWaiter) generation(p peerID) uint64 {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -64,23 +51,15 @@ func (w *linkWaiter) generation(p peerID) uint64 {
 }
 
 // wait returns true once an up event for p follows the wait, false when max
-// elapses or ctx ends first.
-//
-// A caller that observed a transport failure while the link may still have read
-// as established passes the generation it saw: only a later up satisfies the
-// wait. Without a generation, the generation at the call is the starting point,
-// and any up from then on wakes the waiter. The Established reading is never
-// consulted, so a stale established state cannot make the wait return at once.
+// elapses or ctx ends first. When since is given, only an up after that
+// generation satisfies the wait.
 func (w *linkWaiter) wait(ctx context.Context, p peerID, max time.Duration, since ...uint64) bool {
 	if w.link == nil {
 		return false
 	}
 
-	// The registration, the generation check and the timer share one lock: an
-	// up event is either counted before the check (and satisfies the wait) or
-	// sees the channel and closes it, and a caller that observes the
-	// registration also knows the timer exists. The clock is injected so a test
-	// advances time itself instead of racing a wall-clock timer.
+	// The registration, the generation check and the timer share one lock, so an
+	// up event either counts before the check or finds the channel.
 	w.mu.Lock()
 	if len(since) > 0 && w.gen[p] > since[0] {
 		w.mu.Unlock()

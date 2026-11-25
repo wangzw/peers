@@ -15,8 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// rewriteRecordSocket rewrites the messagingSocketPath field of a session
-// record in place, as a session that rebound its inbox would.
 func rewriteRecordSocket(t *testing.T, recordPath, socketPath string) {
 	t.Helper()
 	data, err := os.ReadFile(recordPath)
@@ -38,7 +36,7 @@ func rewriteRecordSocket(t *testing.T, recordPath, socketPath string) {
 }
 
 // blockingRereadBackend blocks the first Reread until the test releases it, so
-// the test can hold the event loop while the record on disk is still partial.
+// the record on disk is still partial while the event is handled.
 type blockingRereadBackend struct {
 	SessionBackend
 	started chan struct{}
@@ -61,8 +59,6 @@ func (b *blockingRereadBackend) Reread(ctx context.Context, s inbox.Session) (in
 	return next, err
 }
 
-// rereadBlockingSessions hands out one blockingRereadBackend wrapping the real
-// backend.
 type rereadBlockingSessions struct {
 	SessionRouter
 	backend *blockingRereadBackend
@@ -77,8 +73,6 @@ func (s *rereadBlockingSessions) Acquire(ctx context.Context, uid uint32) (Sessi
 	return s.backend, release, nil
 }
 
-// agentChanged returns the next registration event, which must be an
-// agent_changed.
 func agentChanged(t *testing.T, rs *regStream, d time.Duration) *localpb.AgentChangedEvent {
 	t.Helper()
 	event := rs.next(d).GetAgentChanged()
@@ -88,8 +82,8 @@ func agentChanged(t *testing.T, rs *regStream, d time.Duration) *localpb.AgentCh
 	return event
 }
 
-// REQ-agent-messaging-005: after a rename the registration stream carries the
-// new name, and the previous name is kept for the retention window.
+// TestRenameUpdatesAddressAndPrevName checks that a rename carries the new
+// address and keeps the previous name on the stream and the roster.
 func TestRenameUpdatesAddressAndPrevName(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
@@ -120,6 +114,8 @@ func TestRenameUpdatesAddressAndPrevName(t *testing.T) {
 	}
 }
 
+// TestPrevNameExpiresAfterTenMinutes checks that the previous name is cleared and
+// announced after the ten-minute retention window.
 func TestPrevNameExpiresAfterTenMinutes(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
@@ -152,6 +148,8 @@ func TestPrevNameExpiresAfterTenMinutes(t *testing.T) {
 	}
 }
 
+// TestSecondRenameRestartsPrevNameTimer checks that a second rename replaces the
+// previous name and restarts its retention timer.
 func TestSecondRenameRestartsPrevNameTimer(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "a"})
@@ -169,8 +167,7 @@ func TestSecondRenameRestartsPrevNameTimer(t *testing.T) {
 		t.Fatalf("previous_name = %q, want b", event.GetPreviousName())
 	}
 
-	// The timer of the first rename would fire here; the second rename must
-	// have stopped it.
+	// The timer of the first rename would fire here; the second must stop it.
 	tb.clock.Advance(5 * time.Minute)
 	if snap, ok := tb.b.lookupAgent(id); !ok || snap.PrevName != "b" {
 		t.Fatalf("previous name ten minutes after the first rename = %q, want b", snap.PrevName)
@@ -183,8 +180,8 @@ func TestSecondRenameRestartsPrevNameTimer(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-033: clearing the conversation leaves the agent ID, the
-// disambiguation ref, the address and the topic membership unchanged.
+// TestIDAndRefStableAcrossRenameAndClear checks that clearing the conversation
+// leaves the agent ID, ref, address and topic membership unchanged.
 func TestIDAndRefStableAcrossRenameAndClear(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
@@ -217,7 +214,7 @@ func TestIDAndRefStableAcrossRenameAndClear(t *testing.T) {
 	}
 
 	// Clearing the conversation changes neither the address nor the roster, so
-	// the registration stream saw only the rename.
+	// the stream saw only the rename.
 	rs.expectNoEvent(300 * time.Millisecond)
 
 	snap, ok := tb.b.lookupAgent(id)
@@ -238,6 +235,8 @@ func TestIDAndRefStableAcrossRenameAndClear(t *testing.T) {
 	}
 }
 
+// TestStatusChangeReachesTopic checks that a status change reaches the topic
+// table and the snapshot, an unknown status becoming empty.
 func TestStatusChangeReachesTopic(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "status"})
@@ -273,6 +272,8 @@ func TestStatusChangeReachesTopic(t *testing.T) {
 	}
 }
 
+// TestRecordRemovedUnregisters checks that removing a record unregisters the
+// agent and that restoring it completes registration again.
 func TestRecordRemovedUnregisters(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "gone"})
@@ -303,6 +304,8 @@ func TestRecordRemovedUnregisters(t *testing.T) {
 	}
 }
 
+// TestRenameToUnusableRevokes checks that renaming to an unusable name revokes
+// the registration and that a usable rename completes it again.
 func TestRenameToUnusableRevokes(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "ok"})
@@ -330,6 +333,8 @@ func TestRenameToUnusableRevokes(t *testing.T) {
 	}
 }
 
+// TestSocketPathChangeUnregisters checks that a record naming another socket
+// path, or none, unregisters the agent.
 func TestSocketPathChangeUnregisters(t *testing.T) {
 	t.Run("another path", func(t *testing.T) {
 		tb := newTestBroker(t)
@@ -363,7 +368,6 @@ func TestSocketPathChangeUnregisters(t *testing.T) {
 			t.Fatal("the log has no agent_socket_changed event")
 		}
 
-		// A session that re-registers at the new path gets the new identity.
 		rebound := fakesession.New(t, fakesession.Options{
 			ConfigDir:  fake.ConfigDir(),
 			SocketPath: newPath,
@@ -393,6 +397,8 @@ func TestSocketPathChangeUnregisters(t *testing.T) {
 	})
 }
 
+// TestPartialRecordKeepsAgent checks that a half-written record keeps the last
+// good agent state and the next full write is applied.
 func TestPartialRecordKeepsAgent(t *testing.T) {
 	blocked := &blockingRereadBackend{
 		started: make(chan struct{}),
@@ -410,8 +416,6 @@ func TestPartialRecordKeepsAgent(t *testing.T) {
 
 	fake.WritePartialRecord(`{"name":`)
 
-	// Hold the reread of the partial record until the test releases it, so the
-	// event is handled while the record is still half-written.
 	select {
 	case <-blocked.started:
 	case <-time.After(eventTimeout):
@@ -443,6 +447,8 @@ func TestPartialRecordKeepsAgent(t *testing.T) {
 	rs.expectNoEvent(300 * time.Millisecond)
 }
 
+// TestRefreshAgentsWithoutEvents checks that refreshAgents rereads a renamed agent
+// even when no registry event arrives.
 func TestRefreshAgentsWithoutEvents(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.Sessions = &fakeSessions{noWatch: true} })
 	fake := fakesession.New(t, fakesession.Options{Name: "x1"})
@@ -462,6 +468,8 @@ func TestRefreshAgentsWithoutEvents(t *testing.T) {
 	}
 }
 
+// TestRereadAgent checks that rereadAgent returns the updated snapshot and
+// errAgentGone for a removed record or an unknown id.
 func TestRereadAgent(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.Sessions = &fakeSessions{noWatch: true} })
 	fake := fakesession.New(t, fakesession.Options{Name: "x1"})
@@ -491,6 +499,8 @@ func TestRereadAgent(t *testing.T) {
 	}
 }
 
+// TestRenameChangesSiblingRefs checks that renaming one of two same-named agents
+// drops the sibling's ref and announces both changes.
 func TestRenameChangesSiblingRefs(t *testing.T) {
 	tb := newTestBroker(t)
 	first := fakesession.New(t, fakesession.Options{Name: "w"})
@@ -516,8 +526,6 @@ func TestRenameChangesSiblingRefs(t *testing.T) {
 		t.Fatalf("second address = %q, want a ref because both sessions are named w", secondSnap.Address)
 	}
 
-	// The second registration added a ref to the first agent's address, so the
-	// first stream already carries the matching agent_changed.
 	if event := agentChanged(t, firstStream, eventTimeout); event.GetAgentAddress() != firstSnap.Address {
 		t.Fatalf("agent_changed at the second registration = %q, want %q",
 			event.GetAgentAddress(), firstSnap.Address)
@@ -541,6 +549,8 @@ func TestRenameChangesSiblingRefs(t *testing.T) {
 	}
 }
 
+// TestConcurrentRenamesAndDisconnect checks that disconnecting during concurrent
+// renames leaves no agent and drops its topics once.
 func TestConcurrentRenamesAndDisconnect(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "racing"})
@@ -557,8 +567,8 @@ func TestConcurrentRenamesAndDisconnect(t *testing.T) {
 			fake.Rename(fmt.Sprintf("racing-%d", i))
 			if i == 0 {
 				close(started)
-				// Stay in the loop until the connection is cancelled, so the
-				// remaining renames overlap the disconnect.
+				// Stay until the connection is cancelled, so the remaining
+				// renames overlap the disconnect.
 				<-release
 			}
 		}

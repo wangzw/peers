@@ -14,11 +14,9 @@ const (
 )
 
 // Connect pairs with the Broker at req.Address using a one-time pairing key.
-// The address and the local alias go to pairing unchanged: it accepts both
-// address forms and decides whether the alias is usable. On success the
-// response carries the effective alias, the fingerprint, the host name taken
-// from the address and the warnings the directory hook adds. Failures map to
-// the local interface codes and, once dialing has started, leave one audit
+// The response carries the peer's effective alias, fingerprint, the host name
+// from the address and any directory fingerprint warnings. A failure returns
+// the local interface error and, once dialing has started, writes one audit
 // record.
 func (b *Broker) Connect(ctx context.Context, req *localpb.ConnectRequest) (*localpb.ConnectResponse, error) {
 	actor, err := b.auditActor(ctx, req.GetAgentId())
@@ -41,8 +39,6 @@ func (b *Broker) Connect(ctx context.Context, req *localpb.ConnectRequest) (*loc
 		if e != nil {
 			code = errorCodeName(e.Code)
 		}
-		// The pairing key is part of the request, never of the address or the
-		// error code, so it cannot reach this record.
 		b.log.Warn(EvPairingFailed, "code", code, "address", address)
 		if e != nil {
 			return nil, toStatus(e)
@@ -50,10 +46,8 @@ func (b *Broker) Connect(ctx context.Context, req *localpb.ConnectRequest) (*loc
 		return nil, toStatus(err)
 	}
 
-	// The handshake connection normally becomes the link, but if it dropped
-	// right after the handshake the dialer would wait out a backoff; Kick makes
-	// it redial at once. On an established link or for the acceptor it does
-	// nothing.
+	// Kick forces an immediate redial if the handshake connection dropped; it
+	// does nothing on an established link or on the acceptor.
 	b.deps.PeerLinks.Kick(peer.Fingerprint)
 
 	alias := effectivePeerAlias(peer)

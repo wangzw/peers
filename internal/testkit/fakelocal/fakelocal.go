@@ -1,13 +1,7 @@
 // Package fakelocal provides a scriptable fake of the Broker's Local gRPC
-// service for tests.
-//
-// A Server listens on a Unix socket, answers every RPC from a Handlers value,
-// records the unary requests it received, and lets a test take control of each
-// Register stream. It never starts a Broker and depends on no part of the
-// Broker implementation beyond the generated localpb package.
-//
-// The package is intended to be imported from test files. The plan for the
-// mcpserver unit and later units (cmd, version compatibility) extend it.
+// service for tests. A Server listens on a Unix socket, answers each RPC from a
+// Handlers value, records every unary request and the first frame of each
+// Register stream, and gives the test control of each Register stream.
 package fakelocal
 
 import (
@@ -29,8 +23,8 @@ import (
 )
 
 // SocketPath returns a short socket path in a fresh directory removed at
-// cleanup. The directory name starts with "ap-" and the path stays well below
-// the Unix socket limit of 108 bytes on Linux and 104 bytes on macOS.
+// cleanup; the path stays below the Unix socket limit of 108 bytes on Linux and
+// 104 bytes on macOS.
 func SocketPath(t testing.TB) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "ap-")
@@ -59,29 +53,43 @@ func Selector(path string) func(context.Context) (string, func() (*grpc.ClientCo
 // Handlers holds optional per-RPC behaviour. A nil field answers
 // codes.Unimplemented, except Hello, which answers localpb.ProtocolVersion.
 type Handlers struct {
-	Hello            func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error)
-	ListAgents       func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error)
-	Send             func(context.Context, *localpb.SendRequest) (*localpb.SendResponse, error)
-	JoinTopic        func(context.Context, *localpb.JoinTopicRequest) (*localpb.JoinTopicResponse, error)
-	LeaveTopic       func(context.Context, *localpb.LeaveTopicRequest) (*localpb.LeaveTopicResponse, error)
-	ListTopics       func(context.Context, *localpb.ListTopicsRequest) (*localpb.ListTopicsResponse, error)
-	ListBrokers      func(context.Context, *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error)
-	Connect          func(context.Context, *localpb.ConnectRequest) (*localpb.ConnectResponse, error)
-	Disconnect       func(context.Context, *localpb.DisconnectRequest) (*localpb.DisconnectResponse, error)
+	// Hello answers Hello; nil answers localpb.ProtocolVersion.
+	Hello func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error)
+	// ListAgents answers ListAgents.
+	ListAgents func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error)
+	// Send answers Send.
+	Send func(context.Context, *localpb.SendRequest) (*localpb.SendResponse, error)
+	// JoinTopic answers JoinTopic.
+	JoinTopic func(context.Context, *localpb.JoinTopicRequest) (*localpb.JoinTopicResponse, error)
+	// LeaveTopic answers LeaveTopic.
+	LeaveTopic func(context.Context, *localpb.LeaveTopicRequest) (*localpb.LeaveTopicResponse, error)
+	// ListTopics answers ListTopics.
+	ListTopics func(context.Context, *localpb.ListTopicsRequest) (*localpb.ListTopicsResponse, error)
+	// ListBrokers answers ListBrokers.
+	ListBrokers func(context.Context, *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error)
+	// Connect answers Connect.
+	Connect func(context.Context, *localpb.ConnectRequest) (*localpb.ConnectResponse, error)
+	// Disconnect answers Disconnect.
+	Disconnect func(context.Context, *localpb.DisconnectRequest) (*localpb.DisconnectResponse, error)
+	// CreatePairingKey answers CreatePairingKey.
 	CreatePairingKey func(context.Context, *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error)
-	GetConfig        func(context.Context, *localpb.GetConfigRequest) (*localpb.GetConfigResponse, error)
-	SetConfig        func(context.Context, *localpb.SetConfigRequest) (*localpb.SetConfigResponse, error)
-	Status           func(context.Context, *localpb.StatusRequest) (*localpb.StatusResponse, error)
-	UpdateStatus     func(context.Context, *localpb.UpdateStatusRequest) (*localpb.UpdateStatusResponse, error)
-	ApplyUpdate      func(context.Context, *localpb.ApplyUpdateRequest) (*localpb.ApplyUpdateResponse, error)
-	Audit            func(*localpb.AuditRequest, localpb.Local_AuditServer) error
+	// GetConfig answers GetConfig.
+	GetConfig func(context.Context, *localpb.GetConfigRequest) (*localpb.GetConfigResponse, error)
+	// SetConfig answers SetConfig.
+	SetConfig func(context.Context, *localpb.SetConfigRequest) (*localpb.SetConfigResponse, error)
+	// Status answers Status.
+	Status func(context.Context, *localpb.StatusRequest) (*localpb.StatusResponse, error)
+	// UpdateStatus answers UpdateStatus.
+	UpdateStatus func(context.Context, *localpb.UpdateStatusRequest) (*localpb.UpdateStatusResponse, error)
+	// ApplyUpdate answers ApplyUpdate.
+	ApplyUpdate func(context.Context, *localpb.ApplyUpdateRequest) (*localpb.ApplyUpdateResponse, error)
+	// Audit serves Audit.
+	Audit func(*localpb.AuditRequest, localpb.Local_AuditServer) error
 }
 
-// Call is one unary request a Server received, in arrival order.
 // AdminHandlers returns handlers for the six Broker administration RPCs, each
-// answering a sample whose formatted output is distinct: config list and get
-// print an entry, config set a change line, key create a key, broker list the
-// empty listing, broker connect a paired line, and broker disconnect a
+// answering a sample whose formatted output is distinct: a config entry, a
+// change line, a key, the empty broker listing, a paired line and a
 // disconnected line.
 func AdminHandlers() Handlers {
 	return Handlers{
@@ -127,8 +135,12 @@ func ApplyUpdateFailure(code codes.Code, message string) func(context.Context, *
 	}
 }
 
+// Call is one recorded request, either a unary request or the first frame of a
+// Register stream (Method "Register"), in arrival order.
 type Call struct {
-	Method  string
+	// Method is the RPC name.
+	Method string
+	// Request is the request message as received.
 	Request proto.Message
 }
 
@@ -254,7 +266,8 @@ func (s *Server) NextRegister(ctx context.Context) (*RegisterConn, error) {
 	}
 }
 
-// Calls returns every unary request received so far, in arrival order.
+// Calls returns every unary request and the first frame of each Register stream
+// received so far, in arrival order.
 func (s *Server) Calls() []Call {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,6 +291,8 @@ func (s *Server) signal() {
 
 // RegisterConn is one open Register stream, controlled by the test.
 type RegisterConn struct {
+	// First is the first RegisterRequest the client sent on this stream, as
+	// received by the server.
 	First *localpb.RegisterRequest
 
 	s      *Server

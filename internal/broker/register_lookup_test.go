@@ -18,9 +18,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// blockingAfterLookupBackend blocks after the record of the first Lookup has
-// been read, so a registry event can land between that read and the moment the
-// agent enters the table.
+// blockingAfterLookupBackend blocks after the first Lookup reads a record, so a
+// registry event can land before the agent enters the table.
 type blockingAfterLookupBackend struct {
 	SessionBackend
 	started chan struct{}
@@ -37,8 +36,6 @@ func (b *blockingAfterLookupBackend) Lookup(ctx context.Context, configDir, sock
 	return s, err
 }
 
-// lookupBlockingSessions hands out one blockingAfterLookupBackend wrapping the
-// real backend.
 type lookupBlockingSessions struct {
 	SessionRouter
 	backend *blockingAfterLookupBackend
@@ -53,8 +50,6 @@ func (s *lookupBlockingSessions) Acquire(ctx context.Context, uid uint32) (Sessi
 	return s.backend, release, nil
 }
 
-// attemptGate blocks the attempt call that reaches attemptReadHook, which runs
-// after the attempt has read retry and before it releases attemptMu.
 type attemptGate struct {
 	started chan struct{}
 	release chan struct{}
@@ -80,10 +75,9 @@ func setAttemptBusyHook(t *testing.T, fn func(c *regConn)) {
 	t.Cleanup(func() { attemptBusyHook.Store(nil) })
 }
 
-// withholdRecordBackend makes the first Lookup report a missing record even
-// though the backing backend already holds one. That keeps the registration
-// waiting without the test having to create a record after the watch exists, so
-// the only registry event the test delivers is the one it pushes itself.
+// withholdRecordBackend makes the first Lookup report a missing record though the
+// backing backend holds one, so the only registry event is the one the test
+// pushes itself.
 type withholdRecordBackend struct {
 	SessionBackend
 	once sync.Once
@@ -98,8 +92,6 @@ func (b *withholdRecordBackend) Lookup(ctx context.Context, configDir, socketPat
 	return b.SessionBackend.Lookup(ctx, configDir, socketPath)
 }
 
-// withholdRecordSessions hands out one withholdRecordBackend wrapping the real
-// backend.
 type withholdRecordSessions struct {
 	SessionRouter
 	backend *withholdRecordBackend
@@ -114,8 +106,6 @@ func (s *withholdRecordSessions) Acquire(ctx context.Context, uid uint32) (Sessi
 	return s.backend, release, nil
 }
 
-// failingLookupBackend reports a helper failure for every Lookup, the way the
-// system Broker does when the account's helper process cannot start.
 type failingLookupBackend struct {
 	SessionBackend
 	err error
@@ -125,7 +115,6 @@ func (b *failingLookupBackend) Lookup(context.Context, string, string) (inbox.Se
 	return inbox.Session{}, b.err
 }
 
-// failingLookupSessions hands out one failingLookupBackend for every account.
 type failingLookupSessions struct {
 	SessionRouter
 	err error
@@ -140,10 +129,8 @@ func (s *failingLookupSessions) Acquire(ctx context.Context, uid uint32) (Sessio
 }
 
 // TestRegisterReportsAccountHelperFailure checks that a Lookup failure wrapping
-// helper.ErrUnavailable is reported as account_helper_failed. That sentinel is
-// set when the account's helper could not start or lost its pipe, so reporting
-// session_record_not_found instead would send the reader looking for a record
-// that may well exist while the helper is the thing that failed.
+// helper.ErrUnavailable is reported as account_helper_failed instead of
+// session_record_not_found.
 func TestRegisterReportsAccountHelperFailure(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Sessions = &failingLookupSessions{
@@ -165,11 +152,8 @@ func TestRegisterReportsAccountHelperFailure(t *testing.T) {
 	}
 }
 
-// TestRegisterReportsAccountHelperTimeout covers the registration path with the
-// production call budget: sessionCallTimeout (1s) is shorter than the pool's
-// ReadyTimeout (5s), so a helper that never reports Ready ends at the caller's
-// deadline. The timeout means the helper did not start, and registration must
-// report account_helper_failed instead of a missing session record.
+// TestRegisterReportsAccountHelperTimeout checks that a helper that never
+// reports Ready makes registration report account_helper_failed.
 func TestRegisterReportsAccountHelperTimeout(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Sessions = silentHelperSessions{pool: neverReadyPool(t)}
@@ -188,8 +172,6 @@ func TestRegisterReportsAccountHelperTimeout(t *testing.T) {
 	}
 }
 
-// silentHelperSessions is the system router over a pool whose helper starts but
-// never becomes ready.
 type silentHelperSessions struct{ pool *helper.Pool }
 
 func (s silentHelperSessions) Acquire(ctx context.Context, uid uint32) (SessionBackend, func(), error) {
@@ -200,15 +182,12 @@ func (s silentHelperSessions) Acquire(ctx context.Context, uid uint32) (SessionB
 	return backend, release, nil
 }
 
-// brokerTestWriteCloser stands in for the helper's stdin.
 type brokerTestWriteCloser struct{ io.Writer }
 
 func (brokerTestWriteCloser) Close() error { return nil }
 
-// neverReadyPool starts a helper process that stays silent, as one whose
-// identity switch failed before it could report Ready. The process holds its
-// stdout open, so the Broker waits for the call deadline instead of seeing a
-// lost pipe.
+// neverReadyPool starts a helper process that stays silent and holds its stdout
+// open, so the Broker waits for the call deadline instead of seeing a lost pipe.
 func neverReadyPool(t *testing.T) *helper.Pool {
 	t.Helper()
 	pool := helper.NewPool(helper.PoolOptions{
@@ -235,11 +214,8 @@ func neverReadyPool(t *testing.T) *helper.Pool {
 	return pool
 }
 
-// TestRegisterWarnsOnLookupFailure checks that a Lookup failure that is neither
-// a missing nor a partial record leaves a Warn record in the Broker log, even
-// when it still reports session_record_not_found, such as a permission denial.
-// A failure with no trace in the log is exactly what the user is asked to find
-// there.
+// TestRegisterWarnsOnLookupFailure checks that a Lookup failure that is neither a
+// missing nor a partial record leaves a Warn record.
 func TestRegisterWarnsOnLookupFailure(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Sessions = &failingLookupSessions{
@@ -262,9 +238,8 @@ func TestRegisterWarnsOnLookupFailure(t *testing.T) {
 }
 
 // TestRegisterKeepsUnreadableRecordAsMissing checks that an error reading a
-// record that exists, such as a permission denial, stays
-// session_record_not_found. The helper ran and answered; only its own failure
-// sentinel means it could not start or talk to the Broker.
+// record that exists stays session_record_not_found, since only the helper's own
+// failure sentinel means it could not start or talk to the Broker.
 func TestRegisterKeepsUnreadableRecordAsMissing(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Sessions = &failingLookupSessions{
@@ -286,17 +261,12 @@ func TestRegisterKeepsUnreadableRecordAsMissing(t *testing.T) {
 	}
 }
 
-// TestRegisterKeepsRetryRequestedAtAttemptEnd covers the window between the
-// running attempt reading retry and releasing attemptMu: a registry event that
-// arrives in that window must still cause another pass, even though its own
-// attempt call finds the lock held. Dropping it leaves the registration waiting
-// for a later event and reporting not_registered after the whole wait.
+// TestRegisterKeepsRetryRequestedAtAttemptEnd checks that a registry event
+// arriving between the running attempt's read of retry and its unlock still
+// causes another pass.
 func TestRegisterKeepsRetryRequestedAtAttemptEnd(t *testing.T) {
 	dir := shortTempDir(t)
 	socketPath := filepath.Join(dir, "s.sock")
-	// The record exists before the watch does, so its write produces no registry
-	// event; the first Lookup withholds it until the test has the connection
-	// waiting.
 	fake := fakesession.New(t, fakesession.Options{ConfigDir: dir, SocketPath: socketPath, Name: "late"})
 	withheld := &withholdRecordBackend{}
 	tb := newTestBroker(t, func(d *Deps) {
@@ -321,9 +291,6 @@ func TestRegisterKeepsRetryRequestedAtAttemptEnd(t *testing.T) {
 		t.Fatal("the first attempt did not reach the pause")
 	}
 
-	// One registry event while the first attempt holds the lock. The event
-	// goroutine's attempt finds the lock held and hands this change to the
-	// running attempt; the test releases that attempt only after the hand-off.
 	uid := uint32(tb.b.deps.Geteuid())
 	tb.b.events.push(uid, watchKeyFor(uid, dir).dir, fake.PID())
 	select {
@@ -341,8 +308,7 @@ func TestRegisterKeepsRetryRequestedAtAttemptEnd(t *testing.T) {
 }
 
 // TestRegisterKeepsChangeMadeDuringLookup checks that a record change handled
-// while the first Lookup is in flight is not lost: the agent must end up with
-// the record's new state instead of the snapshot taken before the change.
+// while the first Lookup is in flight is applied to the attached agent.
 func TestRegisterKeepsChangeMadeDuringLookup(t *testing.T) {
 	blocked := &blockingAfterLookupBackend{
 		started: make(chan struct{}),

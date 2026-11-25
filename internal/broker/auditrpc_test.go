@@ -15,13 +15,11 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// auditStreamStub is the smallest grpc.ServerStreamingServer these tests need.
-// It records every message Audit sends and can fail a chosen Send call.
 type auditStreamStub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	sent   []*localpb.AuditEvent
-	failAt int // 1-based Send call that fails; 0: none
+	failAt int
 	sends  int
 	err    error
 }
@@ -44,7 +42,6 @@ func (s *auditStreamStub) Context() context.Context     { return s.ctx }
 func (s *auditStreamStub) SendMsg(any) error            { return nil }
 func (s *auditStreamStub) RecvMsg(any) error            { return nil }
 
-// auditTestEvents returns five events one minute apart, oldest first.
 func auditTestEvents() []config.Event {
 	base := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	events := make([]config.Event, 5)
@@ -68,8 +65,8 @@ func newAuditStream(t *testing.T) *auditStreamStub {
 	return &auditStreamStub{ctx: ctx, cancel: cancel}
 }
 
-// TestAuditStreamsInOrder covers REQ-broker-config-009: the audit stream
-// returns the whole log in time order.
+// TestAuditStreamsInOrder checks that the audit stream returns the whole log in
+// time order.
 func TestAuditStreamsInOrder(t *testing.T) {
 	tb := newTestBroker(t)
 	events := auditTestEvents()
@@ -95,8 +92,8 @@ func TestAuditStreamsInOrder(t *testing.T) {
 	}
 }
 
-// TestAuditLimitKeepsNewest covers REQ-broker-config-009: a limit keeps the
-// newest records, still sent in time order.
+// TestAuditLimitKeepsNewest checks that a limit keeps the newest records in
+// time order.
 func TestAuditLimitKeepsNewest(t *testing.T) {
 	tb := newTestBroker(t)
 	events := auditTestEvents()
@@ -117,6 +114,8 @@ func TestAuditLimitKeepsNewest(t *testing.T) {
 	}
 }
 
+// TestAuditLimitLargerThanLog checks that a limit larger than the log returns
+// every record.
 func TestAuditLimitLargerThanLog(t *testing.T) {
 	tb := newTestBroker(t)
 	events := auditTestEvents()
@@ -131,6 +130,8 @@ func TestAuditLimitLargerThanLog(t *testing.T) {
 	}
 }
 
+// TestAuditSince checks that only records at or after the given time are
+// returned.
 func TestAuditSince(t *testing.T) {
 	tb := newTestBroker(t)
 	events := auditTestEvents()
@@ -151,6 +152,8 @@ func TestAuditSince(t *testing.T) {
 	}
 }
 
+// TestAuditReadError checks that a failed log read is an internal error and
+// sends nothing.
 func TestAuditReadError(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.readAuditErr = errors.New("disk on fire")
@@ -169,6 +172,8 @@ func TestAuditReadError(t *testing.T) {
 	}
 }
 
+// TestAuditSendError checks that a failed Send stops the stream and is
+// returned.
 func TestAuditSendError(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.audits = auditTestEvents()

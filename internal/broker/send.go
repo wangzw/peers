@@ -10,13 +10,9 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// Send runs one send for caller. The returned error is nil or a *Error.
-//
-// The order is deliberate: the body, then the longest-signature frame size,
-// then the address. An oversized message must be rejected with too_large before
-// any request leaves this Broker and before any inbox write is attempted
-// (REQ-agent-messaging-026). A parsed alias that names this Broker takes the
-// local path; every other alias must resolve to a paired peer.
+// Send runs one send for caller and returns nil or a *Error. The body, the
+// longest-signature frame size and the address are checked in that order, so an
+// oversized message is rejected before any request leaves or any inbox write.
 func (d *delivery) Send(ctx context.Context, caller agentView, to, text string) (err error) {
 	start := time.Now()
 	cfg := d.deps.Settings.Send()
@@ -72,8 +68,6 @@ func (d *delivery) Send(ctx context.Context, caller agentView, to, text string) 
 	})
 }
 
-// sendLocal resolves addr among the local Agents the caller can see and writes
-// the message to the target's own inbox backend.
 func (d *delivery) sendLocal(ctx context.Context, caller agentView, addr parsedAddress, alias, text, msgID string, deadline time.Time) error {
 	all := d.deps.Agents.All()
 	cands := localCandidates(all,
@@ -82,7 +76,7 @@ func (d *delivery) sendLocal(ctx context.Context, caller agentView, addr parsedA
 		},
 		func(name, ref string, unique bool) string {
 			// A candidate with no valid signature is still listed by name; only
-			// the matched target needs a usable signature below.
+			// the matched target needs a usable signature.
 			sig, _ := signatureFor(name, ref, unique, alias)
 			return sig
 		})
@@ -105,13 +99,8 @@ func (d *delivery) sendLocal(ctx context.Context, caller agentView, addr parsedA
 		return notSent(localpb.ErrorCode_ERROR_CODE_INBOX_UNWRITABLE, "%s could not be reread: %v", name, err)
 	}
 
-	// Whether the caller's signature carries a ref follows the same decision
-	// that renders its address: the Broker already decided it over the whole
-	// table, so a duplicate outside the caller's view does not change it.
 	sig, ok := signatureFor(caller.Name, caller.Ref, !caller.RefMandatory, alias)
 	if !ok {
-		// The caller's own name and ref come from this Broker, so a failure here
-		// is a local defect, not a bad address.
 		return notSent(localpb.ErrorCode_ERROR_CODE_INTERNAL, "cannot build a signature for %q", caller.Name)
 	}
 
@@ -125,8 +114,6 @@ func (d *delivery) sendLocal(ctx context.Context, caller agentView, addr parsedA
 	}
 }
 
-// messageID returns a new message identifier, using the injected generator when
-// a test supplies one.
 func (d *delivery) messageID() string {
 	if d.deps.NewID != nil {
 		return d.deps.NewID()
@@ -134,8 +121,6 @@ func (d *delivery) messageID() string {
 	return newMessageID()
 }
 
-// logSend records one send without the body: the receiver's identity, the
-// message id and the outcome (architecture.md:255).
 func (d *delivery) logSend(caller agentView, target, msgID string, err error, elapsed time.Duration) {
 	logger := d.deps.Log
 	if logger == nil {
@@ -150,8 +135,6 @@ func (d *delivery) logSend(caller agentView, target, msgID string, err error, el
 	)
 }
 
-// sendResultName renders a send outcome for the log: delivered, or the
-// lower-case wire code name of the error.
 func sendResultName(err error) string {
 	if err == nil {
 		return "delivered"

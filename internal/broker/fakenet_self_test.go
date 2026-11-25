@@ -12,13 +12,14 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// fakenetPeer returns a distinct peer id whose first byte is tag.
 func fakenetPeer(tag byte) peerID {
 	p := peerID{}
 	p[0] = tag
 	return p
 }
 
+// TestFakeNetRequestReply checks that a request reaches the peer's handler and
+// returns its reply frame.
 func TestFakeNetRequestReply(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -50,6 +51,8 @@ func TestFakeNetRequestReply(t *testing.T) {
 	}
 }
 
+// TestFakeNetDownNotSent checks that a request on a down link reports sent=false
+// and ErrNotEstablished.
 func TestFakeNetDownNotSent(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -76,6 +79,8 @@ func TestFakeNetDownNotSent(t *testing.T) {
 	}
 }
 
+// TestFakeNetDropReplyRunsHandlerOnce checks that a dropped reply still runs the
+// handler once and reports ErrLinkDown.
 func TestFakeNetDropReplyRunsHandlerOnce(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -111,6 +116,8 @@ func TestFakeNetDropReplyRunsHandlerOnce(t *testing.T) {
 	}
 }
 
+// TestFakeNetKickHook checks that Kick counts the call and runs the hooks for
+// that direction.
 func TestFakeNetKickHook(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -134,9 +141,8 @@ func TestFakeNetKickHook(t *testing.T) {
 	}
 }
 
-// TestFakeNetCallbacksOnlyOnTransition checks that repeating a state event does
-// not repeat its callback, as the real link announces an up or down transition
-// once and not every time the state is asserted.
+// TestFakeNetCallbacksOnlyOnTransition checks that a repeated up or down state
+// fires its callback only on the transition.
 func TestFakeNetCallbacksOnlyOnTransition(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -165,9 +171,8 @@ func TestFakeNetCallbacksOnlyOnTransition(t *testing.T) {
 	}
 }
 
-// TestFakeNetHandlerContextCancelledOnDown checks that a request handler runs on
-// a context that the link cancels when it goes down, so a handler cannot outlive
-// its connection.
+// TestFakeNetHandlerContextCancelledOnDown checks that a link going down cancels
+// the request handler's context.
 func TestFakeNetHandlerContextCancelledOnDown(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -210,11 +215,8 @@ func TestFakeNetHandlerContextCancelledOnDown(t *testing.T) {
 	}
 }
 
-// TestFakeNetDownWhileResolvingReply checks that a link that goes down while a
-// reply is being resolved reports ErrLinkDown instead of delivering the reply.
-// The reply hook moves the link at the one point where the down signal and a
-// reply are both live; without a fixed order the two ready select arms race and
-// a drop can surface as a successful request.
+// TestFakeNetDownWhileResolvingReply checks that a link going down while a reply
+// is resolved reports ErrLinkDown.
 func TestFakeNetDownWhileResolvingReply(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -236,8 +238,8 @@ func TestFakeNetDownWhileResolvingReply(t *testing.T) {
 	}
 }
 
-// TestFakeNetHandlerContextOutlivesRequest checks that the caller giving up does
-// not cancel the handler: only the connection ending does, as in the real link.
+// TestFakeNetHandlerContextOutlivesRequest checks that the caller's context
+// ending does not cancel the handler.
 func TestFakeNetHandlerContextOutlivesRequest(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)
@@ -280,10 +282,8 @@ func TestFakeNetHandlerContextOutlivesRequest(t *testing.T) {
 	}
 }
 
-// TestFakeNetCleanupCancelsAbandonedHandler checks that a handler a test leaves
-// blocked after its request ends is canceled when the test's cleanup runs. The
-// handler context outlives the request by design, so without this the handler
-// goroutine would outlive the test.
+// TestFakeNetCleanupCancelsAbandonedHandler checks that test cleanup cancels a
+// handler a test left blocked.
 func TestFakeNetCleanupCancelsAbandonedHandler(t *testing.T) {
 	released := make(chan struct{})
 	t.Run("abandon", func(t *testing.T) {
@@ -324,6 +324,8 @@ func TestFakeNetCleanupCancelsAbandonedHandler(t *testing.T) {
 	}
 }
 
+// TestFakeNetUnsupported checks that an unhandled frame kind returns a
+// *link.UnsupportedError with sent=true.
 func TestFakeNetUnsupported(t *testing.T) {
 	net := newFakeNet(t)
 	a, b := fakenetPeer(1), fakenetPeer(2)

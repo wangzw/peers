@@ -21,6 +21,8 @@ var (
 	_ Assembler       = (*directoryAssembler)(nil)
 )
 
+// TestDirectoryAssemblerFillsDeps checks that Assemble opens the directory with
+// the wall clock and installs the adapter in every directory hook.
 func TestDirectoryAssemblerFillsDeps(t *testing.T) {
 	tb := newTestBroker(t)
 	dir := &discoveryDir{}
@@ -65,6 +67,8 @@ func TestDirectoryAssemblerFillsDeps(t *testing.T) {
 	}
 }
 
+// TestDirectoryAssemblerSkipsWithoutLink checks that Assemble without pairing
+// and link installs no directory.
 func TestDirectoryAssemblerSkipsWithoutLink(t *testing.T) {
 	deps := &Deps{}
 	comps, err := (&directoryAssembler{}).Assemble(context.Background(), nil, deps, &Assembly{})
@@ -79,6 +83,8 @@ func TestDirectoryAssemblerSkipsWithoutLink(t *testing.T) {
 	}
 }
 
+// TestDirectoryAssemblerIdentityErrorFailsStartup checks that an identity error
+// fails assembly before the directory is opened.
 func TestDirectoryAssemblerIdentityErrorFailsStartup(t *testing.T) {
 	for name, identityErr := range map[string]error{
 		"no identity": directory.ErrNoIdentity,
@@ -121,9 +127,8 @@ func TestDirectoryAssemblerIdentityErrorFailsStartup(t *testing.T) {
 	}
 }
 
-// TestDirectoryAssemblerOnlyWrapsDataFileErrors pins the data-directory class:
-// a failure to read directory.json is degradable, while a wiring failure from
-// Open stays fatal.
+// TestDirectoryAssemblerOnlyWrapsDataFileErrors checks that only a
+// directory.json read failure is marked data-unavailable.
 func TestDirectoryAssemblerOnlyWrapsDataFileErrors(t *testing.T) {
 	tb := newTestBroker(t)
 	asm := &Assembly{Pairing: &pairing.Pairing{}, Link: &link.Link{}}
@@ -156,6 +161,8 @@ func TestDirectoryAssemblerOnlyWrapsDataFileErrors(t *testing.T) {
 	}
 }
 
+// TestDirectoryComponentStartOrder checks that Start starts the directory then
+// applies broker.public, subscribing to broker.public and not broker.alias.
 func TestDirectoryComponentStartOrder(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setValue("broker.public", config.Value{Kind: config.KindBool, Bool: true})
@@ -184,6 +191,8 @@ func TestDirectoryComponentStartOrder(t *testing.T) {
 	}
 }
 
+// TestDirectoryComponentPublicChange checks that a broker.public change declares
+// the joined topics.
 func TestDirectoryComponentPublicChange(t *testing.T) {
 	tb := newTestBroker(t)
 	d := &discoveryDir{}
@@ -201,9 +210,8 @@ func TestDirectoryComponentPublicChange(t *testing.T) {
 	}
 }
 
-// TestDirectoryComponentPublicChangeUsesCurrentValue covers a queued
-// notification whose captured value is already stale: the callback must apply
-// the current configuration value.
+// TestDirectoryComponentPublicChangeUsesCurrentValue checks that a queued stale
+// notification applies the current broker.public value.
 func TestDirectoryComponentPublicChangeUsesCurrentValue(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setValue("broker.public", config.Value{Kind: config.KindBool, Bool: true})
@@ -213,7 +221,6 @@ func TestDirectoryComponentPublicChangeUsesCurrentValue(t *testing.T) {
 		t.Fatalf("startWith: %v", err)
 	}
 
-	// The value is already false again when the older notification arrives.
 	tb.cfg.setValue("broker.public", config.Value{Kind: config.KindBool, Bool: false})
 	tb.cfg.fireKey("broker.public",
 		config.Value{Kind: config.KindBool, Bool: false},
@@ -228,8 +235,8 @@ func TestDirectoryComponentPublicChangeUsesCurrentValue(t *testing.T) {
 	}
 }
 
-// TestDirectoryComponentClosedSetPublicLogsDebug covers shutdown: a SetPublic
-// during the closing window must not be reported as a warning.
+// TestDirectoryComponentClosedSetPublicLogsDebug checks that a SetPublic during
+// shutdown is logged at debug, not warn.
 func TestDirectoryComponentClosedSetPublicLogsDebug(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setValue("broker.public", config.Value{Kind: config.KindBool, Bool: true})
@@ -243,6 +250,8 @@ func TestDirectoryComponentClosedSetPublicLogsDebug(t *testing.T) {
 	assertDebugNotWarn(t, buf, "set_public_closed")
 }
 
+// TestDirectoryComponentOnCardRelays checks that the registered OnCard callback
+// relays a card to the pairing.
 func TestDirectoryComponentOnCardRelays(t *testing.T) {
 	fp := pairing.Fingerprint{1}
 	cp := &discoveryPairing{roles: map[pairing.Fingerprint]pairing.Role{fp: pairing.RoleDialer}}
@@ -271,8 +280,6 @@ func TestDirectoryComponentOnCardRelays(t *testing.T) {
 	}
 }
 
-// stopProbe is the timer double: it records Stop calls and whether the
-// directory had already been closed when Stop ran.
 type stopProbe struct {
 	d            *discoveryDir
 	stopped      bool
@@ -289,6 +296,8 @@ func (p *stopProbe) Stop() bool {
 	return true
 }
 
+// TestDirectoryComponentRetiresAfterTwoMinutes checks that AfterReady schedules
+// retirement after two minutes and Stop cancels it before closing.
 func TestDirectoryComponentRetiresAfterTwoMinutes(t *testing.T) {
 	d := &discoveryDir{}
 	probe := &stopProbe{d: d}
@@ -328,6 +337,8 @@ func TestDirectoryComponentRetiresAfterTwoMinutes(t *testing.T) {
 	}
 }
 
+// TestDefaultAssemblersPlacesDirectory checks that the directory assembler runs
+// right after topic and before delivery and config.
 func TestDefaultAssemblersPlacesDirectory(t *testing.T) {
 	names := make([]string, 0)
 	for _, a := range DefaultAssemblers() {

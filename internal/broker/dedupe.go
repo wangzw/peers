@@ -10,62 +10,48 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// maxDedupeEntries bounds the table. A full table refuses a new message with a
-// busy result instead of growing without bound.
 const maxDedupeEntries = 65536
 
-// maxDedupeEntriesPerSource bounds how many entries one source may hold. A
-// source at its quota has new message ids refused with quota_exceeded, so one
-// peer cannot fill the table and make every other peer's deliveries fail. It is
-// a variable only so tests can lower it; the value is fixed.
+// maxDedupeEntriesPerSource is a variable only so tests can lower it; the value
+// is fixed.
 var maxDedupeEntriesPerSource = 4096
 
-// dedupeSweepPerAcquire bounds how many entries one acquire examines for
-// expiry, spreading the cleanup over many acquires instead of sweeping the
-// whole table on every message.
+// dedupeSweepPerAcquire bounds how many entries one acquire examines for expiry.
 const dedupeSweepPerAcquire = 8
 
-// dedupeKey identifies one delivered message. Source is the fingerprint of the
-// Broker the message came from; the zero fingerprint means this Broker, which
-// this version does not use because a local send never resends a message id.
 type dedupeKey struct {
 	Source    pairing.Fingerprint
 	MessageID string
 }
 
-// dedupeEntry is one message in the dedupe table. done is closed when the
-// processing owner records the result; result is readable only after done is
-// closed. expires is zero while the entry is being processed.
+// dedupeEntry holds one message; result is readable only after done is closed,
+// and expires is zero while the entry is being processed.
 type dedupeEntry struct {
 	done    chan struct{}
 	result  *deliverpb.DeliverResult
 	expires time.Time
 }
 
-// dedupeTable maps a dedupeKey to its entry. A single mutex makes finding an
-// entry and claiming it one atomic step, so a concurrent duplicate waits for
-// the first copy instead of running it a second time.
+// dedupeTable maps a dedupeKey to its entry. A single mutex makes finding and
+// claiming an entry one atomic step, so a concurrent duplicate waits for the
+// first copy instead of running it twice.
 type dedupeTable struct {
 	mu      sync.Mutex
 	entries map[dedupeKey]*dedupeEntry
-	// sourceCounts holds the number of live entries per source, so a source's
-	// share is checked without scanning the table. It is kept in step with
-	// entries through putEntryLocked and deleteEntryLocked.
+	// sourceCounts holds the number of live entries per source and must stay in
+	// step with entries; putEntryLocked and deleteEntryLocked maintain it.
 	sourceCounts map[pairing.Fingerprint]int
 	now          func() time.Time
 	window       func() time.Duration
 
-	// nextExpiry is the earliest moment a held entry can expire, as recorded
-	// by the last full sweep and kept a true minimum by complete. When
-	// nextExpirySet is true, no entry expires before nextExpiry (a zero
-	// nextExpiry means no entry can expire yet), so a full table or a source
-	// at its quota refuses without scanning. When it is false, that check
-	// sweeps before deciding.
+	// nextExpiry is the earliest moment a held entry can expire, recorded by the
+	// last full sweep. When nextExpirySet is true, no entry expires before it (a
+	// zero value means none can expire yet), so a full table or source refuses
+	// without scanning; when false, that check sweeps first.
 	nextExpiry    time.Time
 	nextExpirySet bool
 
-	// examined counts the entries swept for expiry. A test reads it to prove
-	// that a full table does not rescan on every acquire.
+	// examined counts the entries swept for expiry; tests read it.
 	examined int
 }
 
@@ -78,9 +64,8 @@ func newDedupeTable(now func() time.Time, window func() time.Duration) *dedupeTa
 	}
 }
 
-// lookup returns the live entry held for k without claiming anything, so a
-// caller can answer a resend before running checks that only a first copy
-// needs. An expired entry is removed. ok is false when no result exists yet.
+// lookup returns the live entry for k without claiming it; an expired entry is
+// removed.
 func (t *dedupeTable) lookup(k dedupeKey) (e *dedupeEntry, ok bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -96,16 +81,9 @@ func (t *dedupeTable) lookup(k dedupeKey) (e *dedupeEntry, ok bool) {
 	return nil, false
 }
 
-// acquire returns the entry for k and whether the caller owns its processing.
-// It returns a completed entry carrying a busy result, without writing it, when
-// the table is full. A source at its own quota gets a quota_exceeded entry,
-// also without writing anything. Expiry cleanup is spread over acquires: each
-// one examines a bounded number of entries, and the key being acquired is
-// always examined itself. A table or a source full of expired results still
-// accepts new messages: the first acquire that finds it full sweeps the table
-// once, and while every entry is unexpired the sweep records the earliest
-// expiry and the table refuses without scanning until that moment. An entry
-// that is still being processed has no expiry and is never removed.
+// acquire returns the entry for k and whether the caller owns its processing; a
+// refused acquire returns a completed entry without storing it. Expiry cleanup
+// is spread over acquires, and the key being acquired is always examined.
 func (t *dedupeTable) acquire(k dedupeKey) (e *dedupeEntry, owner bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -118,9 +96,8 @@ func (t *dedupeTable) acquire(k dedupeKey) (e *dedupeEntry, owner bool) {
 		t.deleteEntryLocked(k)
 	}
 
-	// The expiry bound is a lower bound over the whole table, so it is also a
-	// valid lower bound for this source: holding it means no entry of this
-	// source can have expired, and the quota check needs no scan.
+	// The table-wide bound is also a valid bound for this source, so the quota
+	// check needs no scan.
 	if t.sourceCounts[k.Source] >= maxDedupeEntriesPerSource && !t.expiryBoundHoldsLocked(now) {
 		t.sweepAllExpiredLocked(now)
 	}
@@ -140,15 +117,13 @@ func (t *dedupeTable) acquire(k dedupeKey) (e *dedupeEntry, owner bool) {
 	return entry, true
 }
 
-// putEntryLocked writes e for k and keeps the source count in step. It must be
-// called with t.mu held.
+// putEntryLocked writes e for k; t.mu must be held.
 func (t *dedupeTable) putEntryLocked(k dedupeKey, e *dedupeEntry) {
 	t.entries[k] = e
 	t.sourceCounts[k.Source]++
 }
 
-// deleteEntryLocked removes k when it is held and keeps the source count in
-// step. It must be called with t.mu held.
+// deleteEntryLocked removes k if held; t.mu must be held.
 func (t *dedupeTable) deleteEntryLocked(k dedupeKey) {
 	if _, ok := t.entries[k]; !ok {
 		return
@@ -161,10 +136,8 @@ func (t *dedupeTable) deleteEntryLocked(k dedupeKey) {
 	}
 }
 
-// expiryBoundHoldsLocked reports whether the recorded bound proves no held
-// entry has expired: the last full sweep recorded the earliest expiry and that
-// moment has not arrived. It applies to the whole table, so it also covers one
-// source's share. It must be called with t.mu held.
+// expiryBoundHoldsLocked reports whether the recorded bound proves no held entry
+// has expired; t.mu must be held.
 func (t *dedupeTable) expiryBoundHoldsLocked(now time.Time) bool {
 	if !t.nextExpirySet {
 		return false
@@ -173,16 +146,14 @@ func (t *dedupeTable) expiryBoundHoldsLocked(now time.Time) bool {
 }
 
 // sweepAllExpiredLocked removes every expired entry and records the earliest
-// remaining expiry, so later full-table or full-source acquires refuse without
-// scanning until that moment. It must be called with t.mu held.
+// remaining expiry; t.mu must be held.
 func (t *dedupeTable) sweepAllExpiredLocked(now time.Time) {
 	t.nextExpiry = t.sweepExpiredLocked(now, len(t.entries))
 	t.nextExpirySet = true
 }
 
-// sweepExpiredLocked removes expired entries among at most examined entries, so
-// one acquire does not pay for the whole table, and returns the earliest expiry
-// among the entries it left behind. It must be called with t.mu held.
+// sweepExpiredLocked removes expired entries among at most examined entries and
+// returns the earliest remaining expiry; t.mu must be held.
 func (t *dedupeTable) sweepExpiredLocked(now time.Time, examined int) (earliest time.Time) {
 	seen := 0
 	for key, entry := range t.entries {
@@ -202,9 +173,8 @@ func (t *dedupeTable) sweepExpiredLocked(now time.Time, examined int) (earliest 
 	return earliest
 }
 
-// fullDedupeEntry is the completed entry returned for a message a full table
-// refused. It is never stored, so the message is not counted and no write
-// follows; the caller returns its busy result to the sender.
+// fullDedupeEntry is the completed, never-stored entry a full table returns to
+// refuse a message.
 func fullDedupeEntry() *dedupeEntry {
 	done := make(chan struct{})
 	close(done)
@@ -215,10 +185,8 @@ func fullDedupeEntry() *dedupeEntry {
 	}
 }
 
-// quotaDedupeEntry is the completed entry returned for a message refused
-// because its source already holds its share of the table. It is never stored,
-// so the message is not counted and no write follows; the caller returns the
-// quota result to the sender.
+// quotaDedupeEntry is the completed, never-stored entry a source at its quota
+// returns.
 func quotaDedupeEntry() *dedupeEntry {
 	done := make(chan struct{})
 	close(done)
@@ -229,10 +197,8 @@ func quotaDedupeEntry() *dedupeEntry {
 	}
 }
 
-// complete records r, sets the entry's expiry, and closes done. The entry is
-// kept until keepUntil even when the window ends first, so a resend inside the
-// sender's budget still finds the result; the zero time adds no floor. The
-// processing owner calls it exactly once.
+// complete records r, sets the entry's expiry to the window or keepUntil,
+// whichever is later, and closes done; the processing owner calls it once.
 func (t *dedupeTable) complete(e *dedupeEntry, r *deliverpb.DeliverResult, keepUntil time.Time) {
 	t.mu.Lock()
 	e.result = r
@@ -240,9 +206,8 @@ func (t *dedupeTable) complete(e *dedupeEntry, r *deliverpb.DeliverResult, keepU
 	if keepUntil.After(e.expires) {
 		e.expires = keepUntil
 	}
-	// A completion can add an expiry earlier than the recorded bound, as when
-	// a different window applied to this entry. Keep the bound a true minimum
-	// so the no-scan refusal stays correct.
+	// A completion can add an expiry earlier than the recorded bound, as when a
+	// different window applied to this entry; keep the bound a true minimum.
 	if t.nextExpirySet && (t.nextExpiry.IsZero() || e.expires.Before(t.nextExpiry)) {
 		t.nextExpiry = e.expires
 	}
@@ -250,10 +215,8 @@ func (t *dedupeTable) complete(e *dedupeEntry, r *deliverpb.DeliverResult, keepU
 	close(e.done)
 }
 
-// wait blocks until e completes or ctx ends; ok is false when ctx ended first.
-// A result already recorded wins over a context that ended: the non-blocking
-// check before the select makes that ordering deterministic, so a duplicate
-// does not turn into an unknown result just because its context also ended.
+// wait blocks until e completes or ctx ends; a recorded result wins over a
+// context that ended.
 func (e *dedupeEntry) wait(ctx context.Context) (r *deliverpb.DeliverResult, ok bool) {
 	select {
 	case <-e.done:
@@ -268,8 +231,6 @@ func (e *dedupeEntry) wait(ctx context.Context) (r *deliverpb.DeliverResult, ok 
 	}
 }
 
-// len returns the number of entries currently held, including those being
-// processed.
 func (t *dedupeTable) len() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()

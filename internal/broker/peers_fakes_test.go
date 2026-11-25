@@ -10,9 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// This file holds the doubles for peer management: the pairing surface, the
-// link surface, the broker catalog and the Connect warner.
-
 var (
 	_ PairingOps    = (*pairing.Pairing)(nil)
 	_ OwnAliasSync  = (*pairing.Pairing)(nil)
@@ -23,8 +20,6 @@ var (
 	_ ConnectWarner = (*fakeWarner)(nil)
 )
 
-// fakePairing is an in-memory PeerStore. Tests set connectFn and keyFn to drive
-// the two calls that reach the network; everything else works on the peer list.
 type fakePairing struct {
 	mu    sync.Mutex
 	peers []pairing.Peer
@@ -34,7 +29,7 @@ type fakePairing struct {
 	unpairErr error
 
 	ownAlias string
-	taken    map[string]bool // AliasConflict's answers
+	taken    map[string]bool
 	calls    []string
 	keys     []string // keys Connect received; kept out of calls so logs stay key-free
 }
@@ -157,8 +152,6 @@ func (f *fakePairing) AliasConflict(alias string) bool {
 	return f.taken[alias]
 }
 
-// fakePeerLinks is an in-memory PeerLinks. PairDial calls pairDialFn when set;
-// Status answers from the map. calls records Kick and Drop only.
 type fakePeerLinks struct {
 	mu         sync.Mutex
 	status     map[pairing.Fingerprint]PeerLinkStatus
@@ -194,7 +187,6 @@ func (f *fakePeerLinks) Status(fp pairing.Fingerprint) PeerLinkStatus {
 	return f.status[fp]
 }
 
-// fakeCatalog is an in-memory BrokerCatalog.
 type fakeCatalog struct {
 	cards    map[pairing.Fingerprint][]config.AdvertisedAddr
 	nonPeers []*localpb.BrokerInfo
@@ -208,7 +200,6 @@ func (f *fakeCatalog) NonPeers() []*localpb.BrokerInfo {
 	return append([]*localpb.BrokerInfo(nil), f.nonPeers...)
 }
 
-// fakeWarner returns fixed warnings and remembers every peer it saw.
 type fakeWarner struct {
 	warnings []*localpb.Warning
 	got      []pairing.Peer
@@ -219,7 +210,6 @@ func (f *fakeWarner) ConnectWarnings(peer pairing.Peer) []*localpb.Warning {
 	return f.warnings
 }
 
-// auditsOf returns the audit events of one kind, in write order.
 func auditsOf(cfg *fakeConfig, kind config.EventKind) []config.Event {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
@@ -232,8 +222,6 @@ func auditsOf(cfg *fakeConfig, kind config.EventKind) []config.Event {
 	return out
 }
 
-// withPeers installs the pairing and link doubles, and a PeerView that reads
-// them so Status shows the same peers as ListBrokers.
 func withPeers(p *fakePairing, l *fakePeerLinks) func(*Deps) {
 	return func(d *Deps) {
 		d.Pairing = p
@@ -242,7 +230,6 @@ func withPeers(p *fakePairing, l *fakePeerLinks) func(*Deps) {
 	}
 }
 
-// fp returns the fingerprint whose 32 bytes are all b.
 func fp(b byte) pairing.Fingerprint {
 	var f pairing.Fingerprint
 	for i := range f {

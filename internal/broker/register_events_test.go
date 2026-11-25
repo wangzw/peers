@@ -15,13 +15,10 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// overflowEventName is the runtime log event written when a registration
-// stream's downstream backlog exceeds its limit. It is spelled out here so the
-// test still compiles against the version that has no such event.
 const overflowEventName = "register_events_overflow"
 
-// maxQueuedEvents is the documented downstream backlog limit of one
-// registration stream.
+// maxQueuedEvents is the documented backlog limit, written here so a change to
+// registrationEventLimit fails this test.
 const maxQueuedEvents = 64
 
 func changedResponse(id AgentID, address string) *localpb.RegisterResponse {
@@ -47,8 +44,6 @@ func problemResponse() *localpb.RegisterResponse {
 	return notRegisteredResponse(localpb.NotRegisteredReason_NOT_REGISTERED_REASON_SESSION_RECORD_NOT_FOUND, "")
 }
 
-// queueAddresses returns the agent addresses of the queued agent_changed
-// events, oldest first.
 func queueAddresses(q *eventQueue) []string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -61,9 +56,8 @@ func queueAddresses(q *eventQueue) []string {
 	return out
 }
 
-// TestEventQueueCoalescesAgentChanges pins the merge rule: a pushed
-// agent_changed replaces an unsent agent_changed for the same agent in place,
-// and changes for different agents stay separate.
+// TestEventQueueCoalescesAgentChanges checks that an agent_changed replaces an
+// unsent one for the same agent while different agents stay separate.
 func TestEventQueueCoalescesAgentChanges(t *testing.T) {
 	q := newEventQueue()
 	first := testAgentID("aaaaaa1")
@@ -92,9 +86,8 @@ func TestEventQueueCoalescesAgentChanges(t *testing.T) {
 	}
 }
 
-// TestEventQueueKeepsOtherEvents pins that merging touches only a trailing
-// agent_changed: a registration_complete directly before one survives, and
-// other events keep their order.
+// TestEventQueueKeepsOtherEvents checks that merging touches only a trailing
+// agent_changed, leaving other events in order.
 func TestEventQueueKeepsOtherEvents(t *testing.T) {
 	q := newEventQueue()
 	first := testAgentID("aaaaaa2")
@@ -119,7 +112,7 @@ func TestEventQueueKeepsOtherEvents(t *testing.T) {
 	}
 }
 
-// TestEventQueueCapsBacklog pins that the queue refuses events past its limit
+// TestEventQueueCapsBacklog checks that the queue refuses events past its limit
 // instead of growing with everything the client has not read.
 func TestEventQueueCapsBacklog(t *testing.T) {
 	q := newEventQueue()
@@ -132,9 +125,8 @@ func TestEventQueueCapsBacklog(t *testing.T) {
 }
 
 // stalledRegisterStream is a Local_RegisterServer whose Send blocks until the
-// test releases it, so events pushed while one Send is in flight pile up in the
-// registration's downstream queue. Recv returns the first frame and then waits
-// for the context, like a client that keeps its side of the stream open.
+// test releases it, so events pushed while a Send is in flight pile up in the
+// downstream queue.
 type stalledRegisterStream struct {
 	grpc.ServerStream
 
@@ -169,8 +161,6 @@ func (s *stalledRegisterStream) Send(*localpb.RegisterResponse) error {
 	}
 }
 
-// stalledRegistration is one Register handler running on a stream whose first
-// Send blocks, so later events pile up in its downstream queue.
 type stalledRegistration struct {
 	tb         *testBroker
 	stream     *stalledRegisterStream
@@ -178,11 +168,9 @@ type stalledRegistration struct {
 	handlerErr chan error
 }
 
-// startStalledRegistration serves Register on a stream whose first Send blocks
-// until the test closes sendRelease or the stream context ends, and waits for
-// the registration to attach. The Register goroutine cancels the stream
-// context once the handler returns, which is what gRPC does when an RPC ends:
-// a Send blocked in the transport then returns.
+// startStalledRegistration serves Register on a stream whose first Send blocks,
+// and waits for the registration to attach. The Register goroutine cancels the
+// stream context when the handler returns, as gRPC does when an RPC ends.
 func startStalledRegistration(t *testing.T, name string) (*stalledRegistration, AgentID) {
 	t.Helper()
 	tb := newTestBroker(t)
@@ -233,9 +221,9 @@ func startStalledRegistration(t *testing.T, name string) (*stalledRegistration, 
 	return r, id
 }
 
-// fillRegistrationBacklog queues maxQueuedEvents events plus one more, which
-// the queue refuses. The events name no agent, so only the connection itself
-// can name the overflow.
+// fillRegistrationBacklog queues maxQueuedEvents events plus one more, which the
+// queue refuses; the events name no agent, so only the connection can name the
+// overflow.
 func fillRegistrationBacklog(r *stalledRegistration) {
 	for i := 0; i < maxQueuedEvents; i++ {
 		r.conn.out.push(problemResponse())
@@ -243,8 +231,6 @@ func fillRegistrationBacklog(r *stalledRegistration) {
 	r.conn.out.push(problemResponse())
 }
 
-// assertOverflowLog checks the single overflow warning: it is a WARN for this
-// account that names the connection's agent.
 func assertOverflowLog(t *testing.T, tb *testBroker, id AgentID) {
 	t.Helper()
 	var overflow map[string]any
@@ -267,16 +253,12 @@ func assertOverflowLog(t *testing.T, tb *testBroker, id AgentID) {
 	}
 }
 
-// TestRegisterEndsStreamWhenEventBacklogExceedsLimit pins the behaviour of an
-// unread registration stream: once more than maxQueuedEvents events wait for
-// the sender, the Broker ends the stream with quota_exceeded and records one
-// warning, instead of keeping the backlog in memory without bound. The test
-// never releases the blocked Send: the handler must return without waiting for
-// a client that stopped reading.
+// TestRegisterEndsStreamWhenEventBacklogExceedsLimit checks that an unread
+// stream ends with quota_exceeded and one warning once its backlog passes the
+// limit, without waiting for the blocked sender.
 func TestRegisterEndsStreamWhenEventBacklogExceedsLimit(t *testing.T) {
 	r, id := startStalledRegistration(t, "backlog")
 
-	// The sender is stuck in its first Send, so these events stay queued.
 	fillRegistrationBacklog(r)
 
 	select {
@@ -311,9 +293,8 @@ func TestRegisterEndsStreamWhenEventBacklogExceedsLimit(t *testing.T) {
 	assertOverflowLog(t, r.tb, id)
 }
 
-// TestRegisterOverflowLogNamesTheAgent pins the warning's agent field when the
-// refused event names no agent. Releasing the blocked Send here lets a handler
-// that waits for its sender still finish, so this test isolates the log field.
+// TestRegisterOverflowLogNamesTheAgent checks that the overflow warning names the
+// connection's agent when the refused event names no agent.
 func TestRegisterOverflowLogNamesTheAgent(t *testing.T) {
 	r, id := startStalledRegistration(t, "backlog-log")
 

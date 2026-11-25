@@ -13,7 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// dedupeFakeClock is a manually advanced clock for the dedupe table tests.
 type dedupeFakeClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -35,9 +34,8 @@ func deliveredResult() *deliverpb.DeliverResult {
 	return &deliverpb.DeliverResult{Result: &deliverpb.DeliverResult_Delivered{Delivered: &deliverpb.Delivered{}}}
 }
 
-// TestDedupeFirstOwns checks that the first acquire owns the key and a second
-// one gets the same entry without ownership. A duplicate that runs the write
-// again would deliver the same message twice (REQ-agent-messaging-020).
+// TestDedupeFirstOwns checks that a second acquire gets the first one's entry
+// without ownership.
 func TestDedupeFirstOwns(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -59,9 +57,8 @@ func TestDedupeFirstOwns(t *testing.T) {
 	}
 }
 
-// TestDedupeConcurrentSingleOwner checks that finding and claiming an entry is
-// atomic: exactly one of many concurrent acquires owns it, and every other
-// caller waits for that one's result.
+// TestDedupeConcurrentSingleOwner checks that exactly one of many concurrent
+// acquires owns the key and the rest wait for its result.
 func TestDedupeConcurrentSingleOwner(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -117,9 +114,8 @@ func TestDedupeConcurrentSingleOwner(t *testing.T) {
 	}
 }
 
-// TestDedupeExpiry checks that a result is kept for the whole window, and that
-// one acquire after expiry removes every expired entry, not only the key it
-// was asked for.
+// TestDedupeExpiry checks that a result is kept for the window and one acquire
+// after expiry removes every expired entry.
 func TestDedupeExpiry(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -149,9 +145,8 @@ func TestDedupeExpiry(t *testing.T) {
 	}
 }
 
-// TestDedupeInProgressNeverExpires checks that an entry cannot be removed
-// while its owner is still writing; a duplicate arriving then must wait for
-// that write rather than start another one.
+// TestDedupeInProgressNeverExpires checks that an in-progress entry is never
+// removed, so a duplicate waits for the write rather than starting another.
 func TestDedupeInProgressNeverExpires(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -172,9 +167,8 @@ func TestDedupeInProgressNeverExpires(t *testing.T) {
 	}
 }
 
-// TestDedupeWindowReadAtCompletion checks that the expiry is computed from the
-// window in effect when the result is recorded, not from construction time or
-// from the window at acquire time.
+// TestDedupeWindowReadAtCompletion checks that expiry is computed from the window
+// in effect when the result is recorded.
 func TestDedupeWindowReadAtCompletion(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	window := time.Minute
@@ -195,9 +189,7 @@ func TestDedupeWindowReadAtCompletion(t *testing.T) {
 }
 
 // TestDedupeWaitPrefersResult checks that a recorded result wins over a context
-// that ended afterwards: wait returns the result instead of reporting ok ==
-// false, so a duplicate never becomes an unknown result once the first copy has
-// finished.
+// that ended, so a duplicate never becomes an unknown result.
 func TestDedupeWaitPrefersResult(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -219,7 +211,7 @@ func TestDedupeWaitPrefersResult(t *testing.T) {
 }
 
 // TestDedupeWaitContextEnds checks that a waiter returns when its own context
-// ends, even though the owner has not recorded a result.
+// ends before a result is recorded.
 func TestDedupeWaitContextEnds(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -236,8 +228,8 @@ func TestDedupeWaitContextEnds(t *testing.T) {
 	}
 }
 
-// TestDedupeSourcesAreDistinct checks that the same message id from two
-// different peers is two different messages.
+// TestDedupeSourcesAreDistinct checks that the same message id from two peers is
+// two different entries.
 func TestDedupeSourcesAreDistinct(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -258,10 +250,6 @@ func TestDedupeSourcesAreDistinct(t *testing.T) {
 	}
 }
 
-// fillDedupe adds n completed entries with the given expiry, each from a
-// different source so the fill reaches the table limit without hitting the
-// per-source quota. It writes the map directly so a test can do that without
-// 65536 acquires.
 func fillDedupe(tbl *dedupeTable, n int, expires time.Time) {
 	tbl.mu.Lock()
 	defer tbl.mu.Unlock()
@@ -278,10 +266,8 @@ func fillDedupe(tbl *dedupeTable, n int, expires time.Time) {
 	}
 }
 
-// TestDedupeFullTableRefusesNewKey checks that the table holds at most
-// maxDedupeEntries entries: a message arriving at the limit is not written and
-// gets a not-sent result whose text says the Broker is temporarily holding too
-// many messages.
+// TestDedupeFullTableRefusesNewKey checks that a table at maxDedupeEntries
+// returns a not-sent busy result without writing the new key.
 func TestDedupeFullTableRefusesNewKey(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -315,9 +301,8 @@ func TestDedupeFullTableRefusesNewKey(t *testing.T) {
 	}
 }
 
-// TestDedupeFullTableReclaimsExpiredEntries checks that a full table sweeps all
-// expired entries once, so a table full of expired results still accepts a new
-// message instead of reporting busy forever.
+// TestDedupeFullTableReclaimsExpiredEntries checks that a full table of expired
+// entries sweeps them once and accepts a new message.
 func TestDedupeFullTableReclaimsExpiredEntries(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -333,10 +318,8 @@ func TestDedupeFullTableReclaimsExpiredEntries(t *testing.T) {
 }
 
 // TestDedupeFullTableDoesNotRescanUnlessExpiryNears checks that a full table of
-// unexpired entries sweeps once, records the earliest expiry, and refuses the
-// next message without examining the table again before that moment. A rescan
-// on every acquire would examine maxDedupeEntries entries under the table lock
-// for every message while the table stays full.
+// unexpired entries refuses without rescanning until the recorded earliest
+// expiry.
 func TestDedupeFullTableDoesNotRescanUnlessExpiryNears(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -359,9 +342,8 @@ func TestDedupeFullTableDoesNotRescanUnlessExpiryNears(t *testing.T) {
 	}
 }
 
-// TestDedupeFullTableRescansAtEarliestExpiry checks that the recorded expiry is
-// only a delay: once it arrives, the table sweeps again and accepts a new
-// message instead of refusing forever.
+// TestDedupeFullTableRescansAtEarliestExpiry checks that the recorded expiry only
+// delays the sweep, which then accepts a new message.
 func TestDedupeFullTableRescansAtEarliestExpiry(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -382,7 +364,7 @@ func TestDedupeFullTableRescansAtEarliestExpiry(t *testing.T) {
 }
 
 // TestDedupeCleanupIsAmortized checks that one acquire examines only a bounded
-// number of entries for expiry instead of sweeping the whole table.
+// number of entries for expiry.
 func TestDedupeCleanupIsAmortized(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -399,8 +381,7 @@ func TestDedupeCleanupIsAmortized(t *testing.T) {
 }
 
 // TestDedupeExpiredKeyIsNeverReturned checks that the key being acquired is
-// examined itself, so a bounded sweep that did not reach it cannot hand back an
-// expired entry to a resend.
+// examined itself, so a bounded sweep cannot return an expired entry.
 func TestDedupeExpiredKeyIsNeverReturned(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })
@@ -421,15 +402,12 @@ func TestDedupeExpiredKeyIsNeverReturned(t *testing.T) {
 	}
 }
 
-// perSourceDedupeLimit is the documented per-source share of the dedupe table
-// (design-broker.md, dedupe table). It is spelled here instead of using the
-// implementation constant so the reproduction test compiles against the code
-// before the quota exists.
+// perSourceDedupeLimit is the per-source share, spelled separately from the
+// implementation constant so the test does not track it.
 const perSourceDedupeLimit = 4096
 
-// TestDedupePerSourceQuota checks that one source holding its share of the
-// table has new message ids refused with quota_exceeded, without an entry being
-// written, while another source still acquires normally.
+// TestDedupePerSourceQuota checks that a source at its share is refused with
+// quota_exceeded while another source still acquires.
 func TestDedupePerSourceQuota(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Hour })
@@ -477,9 +455,8 @@ func TestDedupePerSourceQuota(t *testing.T) {
 	}
 }
 
-// TestDedupePerSourceQuotaReleasesExpired checks that a source's expired
-// entries free its quota, so a source that was over the limit is not refused
-// forever.
+// TestDedupePerSourceQuotaReleasesExpired checks that a source's expired entries
+// free its quota.
 func TestDedupePerSourceQuotaReleasesExpired(t *testing.T) {
 	clock := &dedupeFakeClock{now: time.Unix(1000, 0)}
 	tbl := newDedupeTable(clock.Now, func() time.Duration { return time.Minute })

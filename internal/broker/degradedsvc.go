@@ -17,8 +17,8 @@ import (
 
 // degradedService answers the local interface while the Broker runs
 // diagnostics only. It serves a duplicate of the local socket listener, so
-// stopping it closes every connection it accepted and returns while the
-// original listener stays open for the full service.
+// stopping it closes every connection it accepted while the original listener
+// stays open for the full service.
 type degradedService struct {
 	localpb.UnimplementedLocalServer
 
@@ -27,8 +27,7 @@ type degradedService struct {
 	protocol uint32
 	log      *slog.Logger
 
-	// registers bounds the Register streams one account may hold while the
-	// Broker runs diagnostics only, with the same limit the full service uses.
+	// registers bounds the Register streams one account may hold.
 	registers *accountLimit
 
 	srv  *grpc.Server
@@ -39,7 +38,7 @@ type degradedService struct {
 
 // startDegradedService serves the diagnostics-only interface on ln. The
 // returned service's Stop closes its connections and its duplicate listener;
-// ln itself remains bound and accepting.
+// ln stays bound and accepting.
 func startDegradedService(
 	ln net.Listener,
 	state func() *localpb.DegradedState,
@@ -64,15 +63,13 @@ func startDegradedService(
 		log.Warn(EvConnectionRejected, "uid", c.UID, "pid", c.PID)
 	}, conns)
 
-	// The version interceptors must run before the degraded ones, so a
-	// connection already refused by Hello sees version_mismatch rather than
+	// Version interceptors run before the degraded ones, so calls on a
+	// connection Hello already refused see version_mismatch rather than
 	// broker_degraded.
 	opts := []grpc.ServerOption{
 		grpc.Creds(creds),
 		grpc.ConnectionTimeout(localHandshakeTimeout),
-		// The diagnostics-only service carries the same per-connection stream
-		// limit as the full one, so a client cannot use it to open streams
-		// without bound while the Broker is degraded.
+		// Same per-connection stream limit as the full service.
 		grpc.MaxConcurrentStreams(uint32(localStreamLimit)),
 		grpc.WaitForHandlers(true),
 	}
@@ -104,8 +101,8 @@ func startDegradedService(
 	return s, nil
 }
 
-// Stop closes every connection the degraded service accepted and stops using
-// its duplicate listener. The original listener is unaffected.
+// Stop closes every connection the degraded service accepted; the original
+// listener is unaffected.
 func (s *degradedService) Stop() {
 	if s == nil {
 		return
@@ -117,8 +114,8 @@ func (s *degradedService) Stop() {
 }
 
 // duplicateListener returns a second listener over the same bound UNIX socket.
-// The original listener keeps its pollable file descriptor, because the test
-// below never puts it into blocking mode.
+// The original listener keeps its pollable file descriptor because it is never
+// put into blocking mode.
 func duplicateListener(ln net.Listener) (net.Listener, error) {
 	ul, ok := ln.(*net.UnixListener)
 	if !ok {
@@ -149,8 +146,6 @@ func duplicateListener(ln net.Listener) (net.Listener, error) {
 	return net.FileListener(f)
 }
 
-// Hello performs the local protocol version handshake on a diagnostics-only
-// Broker. Its behavior matches the full Broker's Hello.
 func (s *degradedService) Hello(ctx context.Context, req *localpb.HelloRequest) (*localpb.HelloResponse, error) {
 	v := s.protocol
 	if v == 0 {
@@ -159,8 +154,6 @@ func (s *degradedService) Hello(ctx context.Context, req *localpb.HelloRequest) 
 	return answerHello(ctx, v, req.GetProtocolVersion(), s.log)
 }
 
-// Status reports only the current version and the failure while diagnostics
-// only.
 func (s *degradedService) Status(context.Context, *localpb.StatusRequest) (*localpb.StatusResponse, error) {
 	return &localpb.StatusResponse{
 		CurrentVersion: s.version,
@@ -168,8 +161,6 @@ func (s *degradedService) Status(context.Context, *localpb.StatusRequest) (*loca
 	}, nil
 }
 
-// Register answers a registration with not_registered/broker_degraded and
-// keeps the stream open until the client goes away.
 func (s *degradedService) Register(stream localpb.Local_RegisterServer) error {
 	if _, err := stream.Recv(); err != nil {
 		return err

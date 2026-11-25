@@ -14,8 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// updateCheckCalls returns a LatestRelease fake that reports every lookup on
-// the returned channel.
 func updateCheckCalls() (func(context.Context, *http.Client, string) (update.Release, error), <-chan struct{}) {
 	calls := make(chan struct{}, 16)
 	return func(context.Context, *http.Client, string) (update.Release, error) {
@@ -24,8 +22,6 @@ func updateCheckCalls() (func(context.Context, *http.Client, string) (update.Rel
 	}, calls
 }
 
-// expectCheck fails unless the next check runs within no time, because the
-// fake clock runs callbacks synchronously during Advance.
 func expectCheck(t *testing.T, calls <-chan struct{}, want bool) {
 	t.Helper()
 	select {
@@ -40,6 +36,8 @@ func expectCheck(t *testing.T, calls <-chan struct{}, want bool) {
 	}
 }
 
+// TestUpdateCheckWaitsThenRepeatsAtInterval checks that the first check waits
+// the initial delay and later checks repeat at the default interval.
 func TestUpdateCheckWaitsThenRepeatsAtInterval(t *testing.T) {
 	latest, calls := updateCheckCalls()
 	tb := newTestBroker(t, func(d *Deps) {
@@ -63,10 +61,8 @@ func TestUpdateCheckWaitsThenRepeatsAtInterval(t *testing.T) {
 	expectCheck(t, calls, true)
 }
 
-// TestUpdateCheckDefaultInitialDelayIsOneMinute pins the product default: a
-// release build waits exactly one minute before its first check. It uses the
-// literal minute instead of the updateCheckInitialDelay symbol, so a change to
-// the test hook cannot silently move the release default.
+// TestUpdateCheckDefaultInitialDelayIsOneMinute pins the release default at
+// exactly one minute.
 func TestUpdateCheckDefaultInitialDelayIsOneMinute(t *testing.T) {
 	latest, calls := updateCheckCalls()
 	tb := newTestBroker(t, func(d *Deps) {
@@ -77,6 +73,8 @@ func TestUpdateCheckDefaultInitialDelayIsOneMinute(t *testing.T) {
 	t.Cleanup(cancel)
 	tb.b.startUpdateChecks(ctx)
 
+	// Keep the literal time.Minute: this pins the release default, so
+	// updateCheckInitialDelay() would make the test compare the hook to itself.
 	tb.clock.Advance(time.Minute - time.Nanosecond)
 	expectCheck(t, calls, false)
 
@@ -84,6 +82,8 @@ func TestUpdateCheckDefaultInitialDelayIsOneMinute(t *testing.T) {
 	expectCheck(t, calls, true)
 }
 
+// TestUpdateCheckDisabledSkipsLookups checks that a disabled check makes no
+// lookup and re-enabling takes effect at the next period.
 func TestUpdateCheckDisabledSkipsLookups(t *testing.T) {
 	latest, calls := updateCheckCalls()
 	tb := newTestBroker(t, func(d *Deps) {
@@ -101,17 +101,13 @@ func TestUpdateCheckDisabledSkipsLookups(t *testing.T) {
 	tb.clock.Advance(updateCheckDefaultInterval)
 	expectCheck(t, calls, false)
 
-	// Turning the check back on takes effect at the next period, without a
-	// restart.
 	tb.cfg.setValue("update.check", config.Value{Kind: config.KindBool, Bool: true})
 	tb.clock.Advance(updateCheckDefaultInterval)
 	expectCheck(t, calls, true)
 }
 
-// TestUpdateCheckDisabledClearsAvailableVersion covers the decision that
-// turning update.check off clears the result already held: status and
-// UpdateStatus report no available version at once, without advancing the
-// clock to the next period or restarting the Broker.
+// TestUpdateCheckDisabledClearsAvailableVersion checks that disabling the
+// check clears the available version at once.
 func TestUpdateCheckDisabledClearsAvailableVersion(t *testing.T) {
 	latest := func(context.Context, *http.Client, string) (update.Release, error) {
 		return update.Release{Version: "0.1.2", URL: "https://example.test/release"}, nil
@@ -158,9 +154,8 @@ func TestUpdateCheckDisabledClearsAvailableVersion(t *testing.T) {
 	}
 }
 
-// TestUpdateCheckConcurrentWithStatusReads runs the periodic check's writes
-// while Status and UpdateStatus read the same Broker from other goroutines, so
-// the race detector covers the shared update state.
+// TestUpdateCheckConcurrentWithStatusReads checks that periodic update checks
+// concurrent with Status and UpdateStatus reads do not race.
 func TestUpdateCheckConcurrentWithStatusReads(t *testing.T) {
 	latest := func(context.Context, *http.Client, string) (update.Release, error) {
 		return update.Release{Version: "0.1.2", URL: "https://example.test/release"}, nil
@@ -210,6 +205,8 @@ func TestUpdateCheckConcurrentWithStatusReads(t *testing.T) {
 	}
 }
 
+// TestUpdateCheckUsesNewIntervalAfterNextPeriod checks that a changed interval
+// applies from the period after the next check.
 func TestUpdateCheckUsesNewIntervalAfterNextPeriod(t *testing.T) {
 	latest, calls := updateCheckCalls()
 	tb := newTestBroker(t, func(d *Deps) {
@@ -223,8 +220,6 @@ func TestUpdateCheckUsesNewIntervalAfterNextPeriod(t *testing.T) {
 	tb.clock.Advance(updateCheckInitialDelay())
 	expectCheck(t, calls, true)
 
-	// The check already scheduled uses the old interval; the period after it
-	// uses the new one.
 	tb.cfg.setValue("update.check_interval", config.Value{Kind: config.KindDuration, Duration: 2 * time.Hour})
 	tb.clock.Advance(updateCheckDefaultInterval)
 	expectCheck(t, calls, true)
@@ -235,6 +230,8 @@ func TestUpdateCheckUsesNewIntervalAfterNextPeriod(t *testing.T) {
 	expectCheck(t, calls, true)
 }
 
+// TestUpdateCheckSkipsNonReleaseBuilds checks that a non-release build never
+// checks and reports no available version.
 func TestUpdateCheckSkipsNonReleaseBuilds(t *testing.T) {
 	for _, version := range []string{"", "dev", "e2e", "0.1.0-SNAPSHOT"} {
 		t.Run(version, func(t *testing.T) {
@@ -262,6 +259,8 @@ func TestUpdateCheckSkipsNonReleaseBuilds(t *testing.T) {
 	}
 }
 
+// TestUpdateCheckFailureOnlyLogsAtDebug checks that a failed check logs only
+// at debug, writes no audit and leaves other calls working.
 func TestUpdateCheckFailureOnlyLogsAtDebug(t *testing.T) {
 	latest := func(context.Context, *http.Client, string) (update.Release, error) {
 		return update.Release{}, errors.New("network is down")
@@ -293,12 +292,13 @@ func TestUpdateCheckFailureOnlyLogsAtDebug(t *testing.T) {
 		t.Errorf("update failure wrote %d audit events, want none", len(tb.cfg.audits))
 	}
 
-	// The failed check does not affect the other local calls.
 	if _, err := tb.client.Status(context.Background(), &localpb.StatusRequest{}); err != nil {
 		t.Fatalf("Status after a failed update check: %v", err)
 	}
 }
 
+// TestUpdateCheckStoresOnlyNewerRelease checks that only a newer release is
+// stored and reported.
 func TestUpdateCheckStoresOnlyNewerRelease(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -357,6 +357,8 @@ func TestUpdateCheckStoresOnlyNewerRelease(t *testing.T) {
 	}
 }
 
+// TestUpdateStatusNeedsNoAgentIdentity checks that UpdateStatus answers without
+// an agent identity.
 func TestUpdateStatusNeedsNoAgentIdentity(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Version = "0.1.1"
@@ -369,7 +371,6 @@ func TestUpdateStatusNeedsNoAgentIdentity(t *testing.T) {
 	tb.b.startUpdateChecks(ctx)
 	tb.clock.Advance(updateCheckInitialDelay())
 
-	// No agent registration and no configuration access precede this call.
 	resp, err := tb.client.UpdateStatus(context.Background(), &localpb.UpdateStatusRequest{})
 	if err != nil {
 		t.Fatalf("UpdateStatus: %v", err)

@@ -6,6 +6,8 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
+// TestMapLinkPhase checks the mapping from every link phase, including an
+// unknown value.
 func TestMapLinkPhase(t *testing.T) {
 	tests := []struct {
 		name string
@@ -30,6 +32,8 @@ func TestMapLinkPhase(t *testing.T) {
 	}
 }
 
+// TestMapLinkFailure checks the mapping from every link failure, with unknown and
+// unhandled reasons mapping to none.
 func TestMapLinkFailure(t *testing.T) {
 	tests := []struct {
 		name string
@@ -56,6 +60,8 @@ func TestMapLinkFailure(t *testing.T) {
 	}
 }
 
+// TestPeerLinkStatusVersionDetail checks that the detail names the peer's version
+// only for an incompatible version.
 func TestPeerLinkStatusVersionDetail(t *testing.T) {
 	tests := []struct {
 		name string

@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// testClockFileEnv names a file whose content is a time.ParseDuration string,
-// such as "144h", added to the clock the directory reads. It is consulted only
-// by builds carrying the peers_testenv tag.
 const testClockFileEnv = "PEERS_TEST_CLOCK_FILE"
 
 func init() {
@@ -23,13 +20,9 @@ func init() {
 	wallClock = offsetClock(path)
 }
 
-// offsetClock returns a clock that adds the duration stored in path to the
-// current time. The file is re-read whenever its modification time or size
-// changes, so a test can move time forward by rewriting the file.
-//
-// A missing or unparsable file yields an offset of zero. A warning is logged
-// once when the file becomes unusable, and the warning is armed again only
-// after a later read succeeds.
+// offsetClock returns a clock that adds the duration in path to the current
+// time, re-reading the file when its size or modification time changes. A
+// missing or unparsable file yields an offset of zero.
 func offsetClock(path string) func() time.Time {
 	var (
 		mu       sync.Mutex
@@ -71,7 +64,6 @@ func offsetClock(path string) func() time.Time {
 	}
 }
 
-// readClockOffset parses the single duration line held by path.
 func readClockOffset(path string) (time.Duration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

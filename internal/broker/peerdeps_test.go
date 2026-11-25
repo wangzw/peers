@@ -12,6 +12,8 @@ import (
 // peers_fakes_test.go fail the build if pairing no longer satisfies PeerStore.
 func TestPairingSatisfiesPeerStore(t *testing.T) {}
 
+// TestFakePairingUnpairRemoves checks that the fake's Unpair removes the peer
+// from every lookup.
 func TestFakePairingUnpairRemoves(t *testing.T) {
 	p := &fakePairing{peers: []pairing.Peer{
 		{Fingerprint: fp(1), Alias: "one"},
@@ -36,6 +38,8 @@ func TestFakePairingUnpairRemoves(t *testing.T) {
 	}
 }
 
+// TestFakePairingCallsOmitKey checks that the fake's call log never contains the
+// pairing key.
 func TestFakePairingCallsOmitKey(t *testing.T) {
 	p := &fakePairing{}
 	// The double has no connectFn, so this fails after recording the call; the

@@ -8,8 +8,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// recordingAssembler records the link protocol version Run placed in the
-// shared Assembly before the assemblers ran.
 type recordingAssembler struct {
 	seen chan uint32
 }
@@ -23,10 +21,9 @@ func (a *recordingAssembler) Assemble(_ context.Context, _ ConfigSource, _ *Deps
 	return nil, nil
 }
 
+// TestRunPassesProtocolVersions checks that Run passes the local protocol
+// version to Hello and the link protocol version to the assemblers.
 func TestRunPassesProtocolVersions(t *testing.T) {
-	// REQ-broker-config-016: RunOptions.LocalProtocolVersion decides what Hello
-	// answers on the local socket, and RunOptions.LinkProtocolVersion reaches
-	// the assembler through the shared Assembly.
 	rec := &recordingAssembler{seen: make(chan uint32, 1)}
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.opts.LocalProtocolVersion = 3
@@ -59,8 +56,9 @@ func TestRunPassesProtocolVersions(t *testing.T) {
 	wantErrorDetail(t, err, localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH)
 }
 
+// TestHelloZeroVersionRejected checks that an unset protocol version is a
+// mismatch, not a wildcard.
 func TestHelloZeroVersionRejected(t *testing.T) {
-	// REQ-broker-config-016: an unset version is a mismatch, not a wildcard.
 	tb := newTestBroker(t)
 
 	_, err := callTestHello(t, tb.client, 0)

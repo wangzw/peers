@@ -6,10 +6,9 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// ConfigSource is the broker's injection point for configuration. Its method
-// set mirrors the exported functions of the config package, so the production
-// implementation delegates to the process-wide config singleton while tests
-// substitute a fake. The broker never calls the config package directly.
+// ConfigSource is the broker's injection point for configuration. Its methods
+// mirror the exported functions of the config package; the broker never calls
+// the config package directly.
 type ConfigSource interface {
 	// CheckRuntimeDir creates and verifies the runtime directory.
 	CheckRuntimeDir() error
@@ -29,7 +28,7 @@ type ConfigSource interface {
 	Get(key string) (config.Value, error)
 	// All returns every configuration entry.
 	All() []config.Entry
-	// Set validates and stores a value, returning the effective value.
+	// Set validates and stores a value, returning the previous value.
 	Set(actor config.Actor, key string, v config.Value) (config.Value, error)
 	// ParseValue parses text according to the YAML type of the key.
 	ParseValue(key, text string) (config.Value, error)
@@ -39,7 +38,7 @@ type ConfigSource interface {
 	// ProbeListen checks whether the Broker can listen on addr.
 	ProbeListen(addr string) error
 	// CheckLowPort applies the privileged-port rule to the loaded
-	// configuration. The broker calls it in the listen-binding step.
+	// configuration.
 	CheckLowPort() error
 	// Subscribe registers a callback for changes to a key. It panics if
 	// called before Load.
@@ -53,15 +52,11 @@ type ConfigSource interface {
 	ReadAudit(since time.Time) ([]config.Event, error)
 }
 
-// packageConfig implements ConfigSource by delegating to the config package.
 type packageConfig struct{}
 
 var _ ConfigSource = packageConfig{}
 
-// PackageConfig returns the ConfigSource backed by the config package. The
-// broker's unit tests never use it, because the config package is a
-// process-wide singleton whose runtime and home directories cannot be
-// redirected.
+// PackageConfig returns the ConfigSource backed by the config package.
 func PackageConfig() ConfigSource { return packageConfig{} }
 
 func (packageConfig) CheckRuntimeDir() error { return config.CheckRuntimeDir() }

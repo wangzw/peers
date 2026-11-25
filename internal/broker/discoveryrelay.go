@@ -10,29 +10,19 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// publicSwitch is the part of the directory the public switch relay drives:
-// the broker's own public flag and its public topic declarations.
 type publicSwitch interface {
 	SetPublic(public bool) error
 	DeclarePublicTopic(name, description string) error
 	RetirePublicTopic(name string)
 }
 
-// cardPairing is the part of the peer table that accepts the advertised
-// addresses carried by a directory card.
 type cardPairing interface {
 	Role(fp pairing.Fingerprint) pairing.Role
 	UpdateCardAddresses(fp pairing.Fingerprint, addrs []config.AdvertisedAddr)
 }
 
-// publicChanged applies a new value of broker.public to the directory.
-//
-// Becoming public re-declares every topic this broker had declared publicly
-// before. The set is snapshotted first and read again after the declarations;
-// topics that left it in between are retired, so a declaration is never left
-// behind by a topic that was dropped while the broker was private. Becoming
-// private only clears the public flag; the directory withdraws the broker's
-// card and announcements on its own.
+// publicChanged snapshots the public topics and declares them, then reads the
+// set again; topics that left meanwhile are retired so no declaration remains.
 func publicChanged(sw publicSwitch, topics func() map[string]string, public bool, log *slog.Logger) {
 	if log == nil {
 		log = slog.Default()
@@ -71,8 +61,7 @@ func publicChanged(sw publicSwitch, topics func() map[string]string, public bool
 }
 
 // logSetPublicFailure reports a failed SetPublic. ErrClosed means the directory
-// was already closed, which happens when a queued configuration notification
-// arrives during shutdown; that is expected and logged at debug level.
+// was closed during shutdown, which is logged at debug rather than as a failure.
 func logSetPublicFailure(log *slog.Logger, public bool, err error) {
 	if errors.Is(err, directory.ErrClosed) {
 		log.Debug("set_public_closed", "public", public, "error", err)
@@ -81,9 +70,6 @@ func logSetPublicFailure(log *slog.Logger, public bool, err error) {
 	log.Warn("set_public_failed", "public", public, "error", err)
 }
 
-// relayCard hands the addresses carried by a directory card to the peer table.
-// Only a card published by a peer this broker dials is recorded; cards from
-// acceptor peers and from non-peers are ignored.
 func relayCard(p cardPairing, fp pairing.Fingerprint, addrs []config.AdvertisedAddr) {
 	if p.Role(fp) != pairing.RoleDialer {
 		return

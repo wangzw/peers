@@ -10,15 +10,12 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// The Broker warns about the session registry's frame protocol version, which
-// inbox.Session carries. Keep the dependency visible at compile time so the
-// tests do not silently stop covering the field if inbox drops it.
+// Keep the session registry's frame protocol field visible at compile time, so
+// these tests fail if inbox drops it.
 var _ int = inbox.Session{}.PeerProtocol
 
-// sessionProtocolEvent is the user-visible event name the tests pin.
 const sessionProtocolEvent = "session_protocol_unrecognized"
 
-// sessionProtocolLogs returns every session_protocol_unrecognized record.
 func sessionProtocolLogs(t *testing.T, tb *testBroker) []map[string]any {
 	t.Helper()
 	var out []map[string]any
@@ -30,7 +27,6 @@ func sessionProtocolLogs(t *testing.T, tb *testBroker) []map[string]any {
 	return out
 }
 
-// peerProtocolOf reads the peer_protocol field of one log record.
 func peerProtocolOf(t *testing.T, rec map[string]any) int {
 	t.Helper()
 	v, ok := rec["peer_protocol"].(float64)
@@ -40,8 +36,6 @@ func peerProtocolOf(t *testing.T, rec map[string]any) int {
 	return int(v)
 }
 
-// writeSessionPeerProtocol rewrites the peerProtocol field of a session record
-// in place, as a session speaking another frame protocol would.
 func writeSessionPeerProtocol(t *testing.T, recordPath string, protocol any) {
 	t.Helper()
 	data, err := os.ReadFile(recordPath)
@@ -62,8 +56,8 @@ func writeSessionPeerProtocol(t *testing.T, recordPath string, protocol any) {
 	}
 }
 
-// TestSessionProtocolWarnOnce pins that an unknown registry protocol version
-// is logged once per agent and value, not on every reread.
+// TestSessionProtocolWarnOnce checks that an unknown registry protocol version
+// is logged once per agent and value.
 func TestSessionProtocolWarnOnce(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{
@@ -85,7 +79,6 @@ func TestSessionProtocolWarnOnce(t *testing.T) {
 		t.Fatalf("agent = %v, want the short Agent ID %q", got, want)
 	}
 
-	// A reread that still sees version 2 must not warn again.
 	drainNotify(tb.topics.notify)
 	fake.Rename("proto-renamed")
 	select {
@@ -106,8 +99,8 @@ func TestSessionProtocolWarnOnce(t *testing.T) {
 	}
 }
 
-// TestSessionProtocolWarnOnChange pins that a new unknown value is logged
-// again, not only the first one seen at registration.
+// TestSessionProtocolWarnOnChange checks that a new unknown protocol value is
+// logged again.
 func TestSessionProtocolWarnOnChange(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{
@@ -135,7 +128,7 @@ func TestSessionProtocolWarnOnChange(t *testing.T) {
 	}
 }
 
-// TestSessionProtocolNoWarn pins that the supported version and a missing
+// TestSessionProtocolNoWarn checks that the supported version and a missing
 // version are not reported as unrecognized.
 func TestSessionProtocolNoWarn(t *testing.T) {
 	for _, tc := range []struct {
@@ -158,8 +151,8 @@ func TestSessionProtocolNoWarn(t *testing.T) {
 	}
 }
 
-// TestSessionProtocolDoesNotBlockRegistration pins that the warning is not a
-// registration error.
+// TestSessionProtocolDoesNotBlockRegistration checks that an unrecognized
+// protocol version still registers the agent.
 func TestSessionProtocolDoesNotBlockRegistration(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{

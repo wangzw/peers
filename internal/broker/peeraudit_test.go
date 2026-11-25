@@ -17,16 +17,14 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// auditCallerContext builds the context a local connection carries, without a
-// real gRPC server.
 func auditCallerContext(uid uint32, username string) context.Context {
 	p := &peer.Peer{AuthInfo: &callerAuthInfo{caller: Caller{UID: uid, Username: username}}}
 	return peer.NewContext(context.Background(), p)
 }
 
-// auditRegister registers a fake session and returns its agent ID and address.
-// The registration stream stays open until the test ends, because closing it
-// unregisters the agent.
+// auditRegister registers a fake session and returns its agent id and address;
+// the stream stays open until the test ends because closing it unregisters the
+// agent.
 func auditRegister(t *testing.T, tb *testBroker, name string) (id, address string) {
 	t.Helper()
 
@@ -69,11 +67,12 @@ func auditRegister(t *testing.T, tb *testBroker, name string) (id, address strin
 	}
 }
 
+// TestAuditActorEmptyAgent checks that an empty agent id gives an actor from the
+// caller's identity, not the process's.
 func TestAuditActorEmptyAgent(t *testing.T) {
 	tb := newTestBroker(t)
 	// A fixed non-root uid keeps the assertion meaningful when the test process
-	// runs as root: the actor must carry the caller's identity, not the
-	// process's uid.
+	// runs as root.
 	const callerUID = 1234
 	ctx := auditCallerContext(callerUID, "alice")
 
@@ -87,6 +86,8 @@ func TestAuditActorEmptyAgent(t *testing.T) {
 	}
 }
 
+// TestAuditActorRegisteredAgent checks that a registered agent id gives the
+// caller's account and the agent's address.
 func TestAuditActorRegisteredAgent(t *testing.T) {
 	tb := newTestBroker(t)
 	ctx := auditCallerContext(uint32(os.Geteuid()), "alice")
@@ -110,6 +111,8 @@ func TestAuditActorRegisteredAgent(t *testing.T) {
 	}
 }
 
+// TestAuditActorUnknownAgent checks that an unknown agent id returns
+// not_registered.
 func TestAuditActorUnknownAgent(t *testing.T) {
 	tb := newTestBroker(t)
 	ctx := auditCallerContext(uint32(os.Geteuid()), "alice")
@@ -124,6 +127,8 @@ func TestAuditActorUnknownAgent(t *testing.T) {
 	}
 }
 
+// TestConnectEventSucceeded checks that a successful Connect yields a
+// pairing_succeeded record with the effective alias.
 func TestConnectEventSucceeded(t *testing.T) {
 	actor := config.Actor{Account: "alice", Agent: "api-worker@hostA"}
 	peer := pairing.Peer{Alias: "hostB", LocalAlias: "b2"}
@@ -149,6 +154,8 @@ func TestConnectEventSucceeded(t *testing.T) {
 	}
 }
 
+// TestConnectEventFailures checks that every failure after dialing yields a
+// pairing_failed record with the matching reason text.
 func TestConnectEventFailures(t *testing.T) {
 	const address = "198.51.100.4:17443"
 	actor := config.Actor{Account: "alice", Agent: "api-worker@hostA"}
@@ -232,6 +239,8 @@ func TestConnectEventFailures(t *testing.T) {
 	}
 }
 
+// TestConnectEventArgumentErrorsNotAudited checks that argument, alias and
+// cancellation errors are not audited.
 func TestConnectEventArgumentErrorsNotAudited(t *testing.T) {
 	actor := config.Actor{Account: "alice"}
 	tests := []error{
@@ -248,6 +257,8 @@ func TestConnectEventArgumentErrorsNotAudited(t *testing.T) {
 	}
 }
 
+// TestAuditEventsNeverCarryKey checks that neither a success nor a failure
+// record carries the pairing key.
 func TestAuditEventsNeverCarryKey(t *testing.T) {
 	const key = "K7QF-2M9X-HT4C-PWZ3"
 	actor := config.Actor{Account: "alice", Agent: "api-worker@hostA"}
@@ -276,6 +287,8 @@ func TestAuditEventsNeverCarryKey(t *testing.T) {
 	}
 }
 
+// TestPairingKeyCreatedEvent checks that the pairing_key_created record names
+// the actor and carries only the UTC expiry.
 func TestPairingKeyCreatedEvent(t *testing.T) {
 	actor := config.Actor{Account: "alice", Agent: "api-worker@hostA"}
 	expires := time.Date(2026, 11, 18, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))

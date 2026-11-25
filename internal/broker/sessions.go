@@ -7,50 +7,51 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// sessionCallTimeout bounds one call into a SessionBackend. In the system form
-// every such call crosses a helper process running as the account, and an
-// account's registry events are handled by one serial goroutine: a helper the
-// account stopped must not hold that goroutine indefinitely, because every
-// later event of the same account queues behind it.
+// sessionCallTimeout bounds one SessionBackend call, because an account's
+// registry events are handled by one serial goroutine: a helper the account
+// stopped must not hold that goroutine and every later event behind it.
 const sessionCallTimeout = time.Second
 
-// sessionCallContext bounds ctx by sessionCallTimeout. Callers cancel it as soon
-// as the call returns.
+// sessionCallContext bounds ctx by sessionCallTimeout for one SessionBackend
+// call.
 func sessionCallContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(ctx, sessionCallTimeout)
 }
 
-// SessionBackend performs inbox operations for one account. A user
-// Broker calls the inbox package directly in the same process; a system
-// Broker routes every call to a helper process running as the target account.
-// Callers pass the ctx of the Local RPC being served; implementations that talk
-// to a helper process must propagate it, and implementations that call inbox
-// in-process may ignore it where inbox has no context to accept.
+// SessionBackend performs inbox operations for one account: in-process for a
+// user Broker, through a helper process running as the account for a system
+// Broker. Callers pass the ctx of the Local RPC being served; an implementation
+// that talks to a helper process must propagate it.
 type SessionBackend interface {
+	// Lookup returns the session record whose socket path is socketPath in
+	// configDir.
 	Lookup(ctx context.Context, configDir, socketPath string) (inbox.Session, error)
+	// Reread returns the current record for a session.
 	Reread(ctx context.Context, s inbox.Session) (inbox.Session, error)
+	// Watch calls onChange for each change in configDir and returns a function
+	// that stops watching.
 	Watch(ctx context.Context, configDir string, onChange func(pid int)) (stop func(), err error)
+	// Deliver writes the signed message to the session's inbox socket, bounded
+	// by timeout.
 	Deliver(ctx context.Context, s inbox.Session, sig, text, msgID string, timeout time.Duration) error
 }
 
-// SessionRouter hands out the SessionBackend of an account. Acquire returns a
-// release function that the caller must call when it stops using the backend;
-// release is never nil, and calling it more than once is safe. A router may
-// share one backend between concurrent holders, so release ends the holder's
-// interest rather than tearing the backend down immediately.
+// SessionRouter hands out the SessionBackend of an account.
 type SessionRouter interface {
+	// Acquire returns the backend for uid and a release function the caller
+	// must call when it stops using it; release is never nil and may be called
+	// more than once. A router may share one backend between concurrent
+	// holders, so release ends this caller's use rather than tearing the
+	// backend down.
 	Acquire(ctx context.Context, uid uint32) (b SessionBackend, release func(), err error)
 }
 
-// UserRouter returns the router of a user Broker, which serves exactly
-// one account and therefore drives the inbox package in-process.
-// It is used when Deps.Sessions is nil.
+// UserRouter returns the router of a user Broker, which drives the inbox
+// package in-process; it is used when Deps.Sessions is nil.
 func UserRouter() SessionRouter {
 	return userRouter{}
 }
 
-// userBackend is the SessionBackend of a user Broker. Every method calls
-// the corresponding inbox function and returns its result unchanged.
 type userBackend struct{}
 
 func (userBackend) Lookup(_ context.Context, configDir, socketPath string) (inbox.Session, error) {
@@ -69,9 +70,6 @@ func (userBackend) Deliver(ctx context.Context, s inbox.Session, sig, text, msgI
 	return inbox.Deliver(ctx, s, sig, text, msgID, timeout)
 }
 
-// userRouter serves every uid with the in-process backend. The peer-credential
-// handshake has already refused connections from other accounts, so no uid
-// check belongs here.
 type userRouter struct{}
 
 func (userRouter) Acquire(context.Context, uint32) (SessionBackend, func(), error) {

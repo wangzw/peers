@@ -12,14 +12,14 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// fingerprintBytes returns a standalone copy of fp(b)'s bytes.
 func fingerprintBytes(b byte) []byte {
 	f := fp(b)
 	return f[:]
 }
 
+// TestPeerInfoDialerConnected checks a dialer's addresses from the acceptor and
+// the card, its connected status and its role.
 func TestPeerInfoDialerConnected(t *testing.T) {
-	// REQ-broker-discovery-012, REQ-broker-discovery-013, REQ-broker-discovery-014.
 	p := pairing.Peer{
 		Fingerprint: fp(1),
 		Alias:       "hostB",
@@ -49,8 +49,6 @@ func TestPeerInfoDialerConnected(t *testing.T) {
 	}
 
 	t.Run("source card only", func(t *testing.T) {
-		// A SourceCard candidate may come from a withdrawn or expired card;
-		// the addresses of a valid card are supplied through cardAddrs.
 		withCard := pairing.Peer{
 			Fingerprint: fp(1),
 			Alias:       "hostB",
@@ -69,8 +67,6 @@ func TestPeerInfoDialerConnected(t *testing.T) {
 	})
 
 	t.Run("card merges and dedupes", func(t *testing.T) {
-		// Card addresses extend the acceptor's list; one already known from a
-		// candidate appears once, and the card's new address comes last.
 		card := []config.AdvertisedAddr{
 			{Kind: config.AdvertisedKindDirect, Addr: "203.0.113.5:17443"},
 			{Kind: config.AdvertisedKindDirect, Addr: "198.51.100.8:17443"},
@@ -88,8 +84,9 @@ func TestPeerInfoDialerConnected(t *testing.T) {
 	})
 }
 
+// TestPeerInfoAcceptorWithoutCard checks that an acceptor without a card has no
+// addresses and is not directly reachable.
 func TestPeerInfoAcceptorWithoutCard(t *testing.T) {
-	// REQ-broker-discovery-012, REQ-broker-discovery-013.
 	p := pairing.Peer{Fingerprint: fp(2), Alias: "hostC", Role: pairing.RoleAcceptor}
 	got := peerBrokerInfo(p, PeerLinkStatus{Phase: LinkWaiting}, nil)
 	want := &localpb.BrokerInfo{
@@ -109,6 +106,8 @@ func TestPeerInfoAcceptorWithoutCard(t *testing.T) {
 	}
 }
 
+// TestPeerInfoAcceptorWithCard checks that an acceptor with a card uses the
+// card's direct addresses and is connectable.
 func TestPeerInfoAcceptorWithCard(t *testing.T) {
 	p := pairing.Peer{
 		Fingerprint: fp(3),
@@ -134,8 +133,9 @@ func TestPeerInfoAcceptorWithCard(t *testing.T) {
 	}
 }
 
+// TestPeerInfoDialerBackoffConnectable checks that a dialer in backoff with a
+// known address is connectable.
 func TestPeerInfoDialerBackoffConnectable(t *testing.T) {
-	// REQ-broker-discovery-013.
 	p := pairing.Peer{
 		Fingerprint: fp(4),
 		Alias:       "hostB",
@@ -153,8 +153,9 @@ func TestPeerInfoDialerBackoffConnectable(t *testing.T) {
 	}
 }
 
+// TestPeerStatusDetailRejected checks that a not-a-peer rejection explains
+// re-pairing and maps to REJECTED.
 func TestPeerStatusDetailRejected(t *testing.T) {
-	// REQ-broker-pairing-035.
 	st := PeerLinkStatus{Phase: LinkRejected, Failure: FailureNotAPeer}
 	detail := peerStatusDetail(st)
 	if !strings.Contains(detail, "no longer recognizes this Broker") || !strings.Contains(detail, "pair again") {
@@ -165,6 +166,8 @@ func TestPeerStatusDetailRejected(t *testing.T) {
 	}
 }
 
+// TestPeerStatusDetailTable checks the status detail text for each failure
+// reason.
 func TestPeerStatusDetailTable(t *testing.T) {
 	tests := []struct {
 		name string
@@ -211,6 +214,8 @@ func TestPeerStatusDetailTable(t *testing.T) {
 	}
 }
 
+// TestLinkStateToProtoTable checks the mapping from every link phase to the
+// local API state.
 func TestLinkStateToProtoTable(t *testing.T) {
 	tests := []struct {
 		phase LinkPhase
@@ -231,6 +236,8 @@ func TestLinkStateToProtoTable(t *testing.T) {
 	}
 }
 
+// TestPeerViewEffectiveAlias checks the effective alias of a peer and of a
+// non-peer.
 func TestPeerViewEffectiveAlias(t *testing.T) {
 	pr := &fakePairing{peers: []pairing.Peer{
 		{Fingerprint: fp(2), Alias: "hostB", LocalAlias: "lab-b"},
@@ -244,6 +251,8 @@ func TestPeerViewEffectiveAlias(t *testing.T) {
 	}
 }
 
+// TestPeerViewInfosReadsCatalogEachTime checks that each listing reads the
+// catalog, so a later catalog still supplies addresses.
 func TestPeerViewInfosReadsCatalogEachTime(t *testing.T) {
 	p := pairing.Peer{Fingerprint: fp(2), Alias: "hostC", Role: pairing.RoleAcceptor}
 	pr := &fakePairing{peers: []pairing.Peer{p}}
@@ -276,6 +285,8 @@ func TestPeerViewInfosReadsCatalogEachTime(t *testing.T) {
 	}
 }
 
+// TestSortBrokerInfos checks that peers sort first, then alias, then fingerprint
+// bytes.
 func TestSortBrokerInfos(t *testing.T) {
 	infos := []*localpb.BrokerInfo{
 		{Alias: "zeta", Fingerprint: fingerprintBytes(9), IsPeer: false},
@@ -296,7 +307,6 @@ func TestSortBrokerInfos(t *testing.T) {
 	}
 }
 
-// aliasesOf formats the listing order for failure messages.
 func aliasesOf(infos []*localpb.BrokerInfo) []string {
 	out := make([]string, len(infos))
 	for i, info := range infos {

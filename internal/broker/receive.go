@@ -19,42 +19,27 @@ const EvDeliver = "deliver"
 // EvDeliver when broker.offline refused the request.
 const EvDeliveryRefusedOffline = "delivery_refused_offline"
 
-// register installs the kind-400 handler. It is called once, before the link
-// starts, so no request can arrive unhandled.
+// register installs the kind-400 handler; it must run before the link starts so no request arrives unhandled.
 func (d *delivery) register() {
 	d.deps.Link.HandleRequest(link.FrameKind(deliverpb.KindDeliver), d.handleDeliver)
 }
 
 // handleDeliver processes one kind-400 delivery request and returns the kind-401
-// result frame. Validation failures never enter the dedupe table; a request that
-// does enters it once, and a duplicate waits for the first copy's result.
-//
-// Processing runs on a context detached from the link: a link drop must not
-// interrupt a write that the sender may retry (design-broker.md:259). The
-// dedupe entry is completed in a deferred function so a panic during processing
-// cannot leave a duplicate waiting forever.
+// result. The dedupe entry is completed in a deferred function so a panic
+// cannot leave a duplicate waiting.
 func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame) (reply link.Frame) {
 	start := time.Now()
 
 	req, decodeErr := decodeDeliverRequest(f)
 	if decodeErr != nil {
-		// Even a request rejected before decoding logs one line: the event is
-		// the only record that the peer tried to deliver something.
 		d.logDeliver(peer, deliverRequest{}, resultLabel(errorRecord(decodeErr)), start)
 		return encodeDeliverResult(decodeErr)
 	}
 
 	// Offline is checked after decoding and before the dedupe table, so a
-	// refused message id can still be delivered after going online. The
-	// configuration is read for every request; a change takes effect on the
-	// next one without subscribing.
+	// refused message id can still be delivered after going online.
 	if d.deps.Settings.Offline() {
 		d.logDeliveryRefusedOffline(peer, req)
-		// LocalAlias reads broker.alias afresh and would return the empty
-		// string on a failed read, unlike Broker.localAlias, which keeps the
-		// last valid value for registration streams that outlive the link.
-		// The failure cannot happen on this path: Run closes the configuration
-		// only after the link has stopped and its handlers have returned.
 		return encodeDeliverResult(Errorf(localpb.ErrorCode_ERROR_CODE_BROKER_OFFLINE,
 			"Broker %s is offline and refuses messages from other hosts", d.deps.Settings.LocalAlias()))
 	}
@@ -62,10 +47,7 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 	key := dedupeKey{Source: peer, MessageID: req.MessageID}
 
 	// A recorded result answers a resend whatever the sender's visibility is
-	// now: the first copy already passed the roster check, and the answer must
-	// stay the same (REQ-agent-messaging-020). Looking up before that check is
-	// what keeps an idempotent resend from turning into not_visible once the
-	// sender leaves the intersection.
+	// now, so the lookup runs before the roster check.
 	if entry, ok := d.dedupe.lookup(key); ok {
 		return d.answerHeld(ctx, peer, req, entry, start)
 	}
@@ -73,8 +55,8 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 	members := d.deps.Topics.RemoteMembers(peer)
 	refsByName, senderFound, senderRefRequired := remoteSenderRoster(members, req.SenderName, req.SenderRef)
 	if !senderFound {
-		// A concurrent copy may have claimed the id between the lookup and
-		// here; its result still wins over this rejection.
+		// A concurrent copy may have claimed the id; its result wins over this
+		// rejection.
 		if entry, ok := d.dedupe.lookup(key); ok {
 			return d.answerHeld(ctx, peer, req, entry, start)
 		}
@@ -91,11 +73,8 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 		return d.answerHeld(ctx, peer, req, entry, start)
 	}
 
-	// The entry must outlive the sender's budget even when dedupe_window is
-	// shorter, or a resend inside the budget would write the message again.
-	// The expiry is compared on the dedupe table's clock, so keepUntil is
-	// measured on that clock too: the wall clock would keep the entry for the
-	// difference between the two readings.
+	// keepUntil must outlive the sender's budget even when dedupe_window is
+	// shorter, and is measured on the dedupe table's clock, not the wall clock.
 	settings := d.deps.Settings.Send()
 	keepUntil := d.dedupe.now().Add(min(req.Remaining, settings.RequestTimeout))
 
@@ -121,7 +100,6 @@ func (d *delivery) handleDeliver(ctx context.Context, peer peerID, f link.Frame)
 	return replyForResult(res)
 }
 
-// answerHeld returns the recorded result of an entry this request did not own.
 func (d *delivery) answerHeld(ctx context.Context, peer peerID, req deliverRequest, entry *dedupeEntry, start time.Time) link.Frame {
 	res, ok := entry.wait(ctx)
 	if !ok {
@@ -131,18 +109,13 @@ func (d *delivery) answerHeld(ctx context.Context, peer peerID, req deliverReque
 	return replyForResult(res)
 }
 
-// remoteSenderRoster indexes the peer's announced members by name and reports
-// whether the sender's name and ref are among them, and whether the sender's
-// entry requires a ref in every signature.
 func remoteSenderRoster(members []remoteMember, name, ref string) (map[string]map[string]struct{}, bool, bool) {
 	refsByName := make(map[string]map[string]struct{}, len(members))
 	found := false
 	senderRefRequired := false
 	for _, m := range members {
-		// A ref-required member shares the name but must not add a ref to the
-		// owner's signature: the owner stays ref-free next to it. Only members
-		// whose publisher does not require a ref take part in the uniqueness
-		// count.
+		// Only members whose publisher does not require a ref take part in the
+		// uniqueness count.
 		if !m.RefRequired {
 			if refsByName[m.Name] == nil {
 				refsByName[m.Name] = make(map[string]struct{})
@@ -157,19 +130,14 @@ func remoteSenderRoster(members []remoteMember, name, ref string) (map[string]ma
 	return refsByName, found, senderRefRequired
 }
 
-// processDeliver runs the checks and the write for one owned delivery request.
-// The sender is already known to be a member; refsByName carries that roster
-// for the uniqueness rule of the signature. It resolves the target only among
-// local Agents: a received message is never forwarded to another link
-// (architecture.md:281).
+// processDeliver runs the checks and the inbox write for one owned delivery request, resolving the target among local Agents only: a received message is never forwarded to another link.
 func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverRequest, refsByName map[string]map[string]struct{}, senderRefRequired bool, start time.Time) *deliverpb.DeliverResult {
 	alias := d.deps.Peers.EffectiveAlias(peer)
 	addr := func(name, ref string, unique bool) string {
 		sig, ok := signatureFor(name, ref, unique, alias)
 		if !ok {
-			// The alias of a peer that has just been unpaired is empty, so no
-			// address can be spelled; the request is rejected below for the
-			// same reason. Keep the name for the error text.
+			// An unpaired peer has an empty alias, so no address can be spelled;
+			// the name part is kept for the error text.
 			return inboxNamePart(name, ref, unique)
 		}
 		return trimAlias(sig)
@@ -187,8 +155,6 @@ func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverR
 		return errorRecord(perr)
 	}
 
-	// A member whose publisher requires a ref always carries one in the
-	// signature, the same rule remoteCandidates applies to its address.
 	sig, ok := signatureFor(req.SenderName, req.SenderRef,
 		len(refsByName[req.SenderName]) == 1 && !senderRefRequired, alias)
 	if !ok {
@@ -196,8 +162,7 @@ func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverR
 	}
 
 	// The sender checks the longest possible signature, but the receiver is the
-	// last check before the write: a request over the limit must not reach an
-	// inbox (REQ-agent-messaging-026).
+	// last size check before the write; it must not be dropped as redundant.
 	if size := inbox.FrameSize(sig, req.Text); size > maxInboxFrameBytes {
 		return errorRecord(notSent(localpb.ErrorCode_ERROR_CODE_TOO_LARGE,
 			"message encodes to %d bytes with the receiver's signature; the limit is %d",
@@ -217,7 +182,7 @@ func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverR
 	}
 
 	// The quota is taken once per message, after every check has passed and
-	// before the write. The inbox retries below share this one token.
+	// before the write; the inbox retries below share this one token.
 	if ok, retryAfter := d.inbound.take(peer, target.ID); !ok {
 		secs := inboundRetrySeconds(retryAfter)
 		unit := "seconds"
@@ -239,8 +204,6 @@ func (d *delivery) processDeliver(ctx context.Context, peer peerID, req deliverR
 	}
 }
 
-// inboxNamePart spells the name part of an address without an alias: the
-// cleaned name, with the ref when the name is not unique.
 func inboxNamePart(name, ref string, unique bool) string {
 	s := inbox.CleanSignature(name)
 	if !unique && ref != "" {
@@ -249,7 +212,6 @@ func inboxNamePart(name, ref string, unique bool) string {
 	return s
 }
 
-// trimAlias drops the "@alias" suffix from an address, leaving the name part.
 func trimAlias(sig string) string {
 	if i := strings.LastIndex(sig, "@"); i >= 0 {
 		return sig[:i]
@@ -257,13 +219,11 @@ func trimAlias(sig string) string {
 	return sig
 }
 
-// deliveredRecord is a successful DedupeRecord result.
 func deliveredRecord() *deliverpb.DeliverResult {
 	return &deliverpb.DeliverResult{Result: &deliverpb.DeliverResult_Delivered{Delivered: &deliverpb.Delivered{}}}
 }
 
-// errorRecord is a failed DedupeRecord result. The origin fingerprint is never
-// put on the wire: the receiver speaks for itself only.
+// errorRecord builds a failed result; the origin fingerprint is never put on the wire.
 func errorRecord(e *Error) *deliverpb.DeliverResult {
 	return &deliverpb.DeliverResult{Result: &deliverpb.DeliverResult_Error{Error: &localpb.ErrorDetail{
 		Code:    e.Code,
@@ -271,8 +231,7 @@ func errorRecord(e *Error) *deliverpb.DeliverResult {
 	}}}
 }
 
-// replyForResult turns a recorded result back into the kind-401 frame. A result
-// this version cannot read becomes delivery_unknown, never a success.
+// replyForResult turns a recorded result into a kind-401 frame; an unreadable result becomes delivery_unknown, never success.
 func replyForResult(res *deliverpb.DeliverResult) link.Frame {
 	switch result := res.GetResult().(type) {
 	case *deliverpb.DeliverResult_Delivered:
@@ -285,8 +244,6 @@ func replyForResult(res *deliverpb.DeliverResult) link.Frame {
 	return encodeDeliverResult(unknownResult("the recorded result is unreadable"))
 }
 
-// resultLabel names a result for the runtime log: "delivered" or the lowercase
-// wire code name.
 func resultLabel(res *deliverpb.DeliverResult) string {
 	switch result := res.GetResult().(type) {
 	case *deliverpb.DeliverResult_Delivered:
@@ -298,9 +255,6 @@ func resultLabel(res *deliverpb.DeliverResult) string {
 	}
 }
 
-// logDeliveryRefusedOffline records a request refused because broker.offline
-// is set. It is the only line for that request, and it records no message text
-// (architecture.md:279).
 func (d *delivery) logDeliveryRefusedOffline(peer peerID, req deliverRequest) {
 	logger := d.logger()
 	logger.Debug(EvDeliveryRefusedOffline,
@@ -311,8 +265,6 @@ func (d *delivery) logDeliveryRefusedOffline(peer peerID, req deliverRequest) {
 	)
 }
 
-// logDeliver records one delivery event. It records no message text
-// (architecture.md:279).
 func (d *delivery) logDeliver(peer peerID, req deliverRequest, result string, start time.Time) {
 	logger := d.logger()
 	attrs := []any{

@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+// TestOffsetClockReadsFile checks that the offset clock adds the duration in its
+// file and picks up a rewrite.
 func TestOffsetClockReadsFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "clock")
 	if err := os.WriteFile(path, []byte("48h"), 0o600); err != nil {
@@ -21,7 +23,6 @@ func TestOffsetClockReadsFile(t *testing.T) {
 		t.Fatalf("clock = %v, want within 1s of %v", got, want)
 	}
 
-	// Shrinking the content must be observed on the next call.
 	if err := os.WriteFile(path, []byte("0s"), 0o600); err != nil {
 		t.Fatalf("rewriting the clock file: %v", err)
 	}
@@ -31,6 +32,8 @@ func TestOffsetClockReadsFile(t *testing.T) {
 	}
 }
 
+// TestOffsetClockMissingFile checks that a missing clock file yields offset
+// zero.
 func TestOffsetClockMissingFile(t *testing.T) {
 	clock := offsetClock(filepath.Join(t.TempDir(), "absent"))
 
@@ -40,6 +43,8 @@ func TestOffsetClockMissingFile(t *testing.T) {
 	}
 }
 
+// TestOffsetClockInvalidContentFallsBack checks that invalid content yields
+// offset zero and a later valid rewrite is picked up.
 func TestOffsetClockInvalidContentFallsBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "clock")
 	if err := os.WriteFile(path, []byte("not a duration"), 0o600); err != nil {
@@ -52,7 +57,6 @@ func TestOffsetClockInvalidContentFallsBack(t *testing.T) {
 		t.Fatalf("clock with invalid content = %v, want within 1s of %v", got, now)
 	}
 
-	// A valid rewrite must be picked up after the invalid content.
 	if err := os.WriteFile(path, []byte("24h"), 0o600); err != nil {
 		t.Fatalf("rewriting the clock file: %v", err)
 	}

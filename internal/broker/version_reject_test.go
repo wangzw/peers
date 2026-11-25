@@ -16,9 +16,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// callTestListAgents performs one ListAgents on client. When agentID is given,
-// the request names that agent; a rejected connection needs no ID because the
-// interceptor refuses the call before the handler reads it.
 func callTestListAgents(t *testing.T, client localpb.LocalClient, agentID ...string) (*localpb.ListAgentsResponse, error) {
 	t.Helper()
 	var id string
@@ -30,7 +27,6 @@ func callTestListAgents(t *testing.T, client localpb.LocalClient, agentID ...str
 	return client.ListAgents(ctx, &localpb.ListAgentsRequest{AgentId: id})
 }
 
-// callTestListBrokers performs one ListBrokers on client.
 func callTestListBrokers(t *testing.T, client localpb.LocalClient) (*localpb.ListBrokersResponse, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -38,15 +34,10 @@ func callTestListBrokers(t *testing.T, client localpb.LocalClient) (*localpb.Lis
 	return client.ListBrokers(ctx, &localpb.ListBrokersRequest{})
 }
 
-// rejectedRegister opens a Register stream, sends the first frame for f and
-// returns the error the stream receives.
-//
-// A rejected connection is answered with a trailers-only version_mismatch, so
-// Header returns once the Broker has refused the stream. Waiting for that
-// answer before the first Send makes the refusal win the race on every runner:
-// Send then reports io.EOF because the stream already ended, and the caller
-// must read the real status from Recv. Without the wait the interleaving
-// depends on scheduling, and macOS runners hit it intermittently.
+// rejectedRegister opens a Register stream and returns the error it receives. It
+// waits for Header before the first Send: a rejected connection answers with a
+// trailers-only version_mismatch, and without the wait the refusal races the
+// Send on some runners.
 func rejectedRegister(t *testing.T, client localpb.LocalClient, f *fakesession.Fake) error {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -55,26 +46,20 @@ func rejectedRegister(t *testing.T, client localpb.LocalClient, f *fakesession.F
 	if err != nil {
 		return err
 	}
-	// Header reports no error for a trailers-only response; the status is left
-	// for Recv.
 	_, _ = stream.Header()
 	if err := stream.Send(&localpb.RegisterRequest{
 		InboxSocketPath: f.SocketPath(),
 		ClaudeConfigDir: f.ConfigDir(),
 	}); err != nil && !errors.Is(err, io.EOF) {
-		// A bidi Send reports io.EOF when the Broker had already ended the
-		// stream, and carries no status of its own. That is the normal outcome
-		// for a rejected connection once the refusal has arrived, so fall
-		// through to Recv, which holds the real error.
 		return err
 	}
 	_, err = stream.Recv()
 	return err
 }
 
+// TestRejectedConnStaysRejected checks that after Hello rejects a version every
+// other call on that connection fails with version_mismatch.
 func TestRejectedConnStaysRejected(t *testing.T) {
-	// REQ-broker-config-016: after Hello rejects a version, every other call on
-	// that connection fails with version_mismatch.
 	tb := newTestBroker(t)
 	f := fakesession.New(t, fakesession.Options{Name: "a"})
 
@@ -108,11 +93,9 @@ func TestRejectedConnStaysRejected(t *testing.T) {
 	}
 }
 
+// TestRejectionCarriesNoBrokerVersionField checks that the version_mismatch
+// detail carries only the code and the message.
 func TestRejectionCarriesNoBrokerVersionField(t *testing.T) {
-	// REQ-broker-config-016: the version_mismatch detail carries the code and
-	// the message only. It has no field for the Broker's protocol version, so
-	// a client that reads the structured detail alone learns no version. The
-	// fakelocal fake in mcpserver models exactly these two fields.
 	tb := newTestBroker(t)
 
 	_, err := callTestHello(t, tb.client, 2)
@@ -129,9 +112,9 @@ func TestRejectionCarriesNoBrokerVersionField(t *testing.T) {
 	}
 }
 
+// TestOtherConnectionsUnaffected checks that a rejected connection leaves other
+// connections and registered agents unaffected.
 func TestOtherConnectionsUnaffected(t *testing.T) {
-	// REQ-broker-config-016: a rejected connection does not affect other
-	// connections or registered agents.
 	tb := newTestBroker(t)
 	f := fakesession.New(t, fakesession.Options{Name: "a"})
 
@@ -155,8 +138,6 @@ func TestOtherConnectionsUnaffected(t *testing.T) {
 		t.Fatal("Hello{2} succeeded, want a version mismatch")
 	}
 
-	// Another call on the registered connection still succeeds and reports the
-	// same self address.
 	afterList, err := callTestListAgents(t, y, string(id))
 	if err != nil {
 		t.Fatalf("ListAgents on the registered connection after the rejection: %v", err)
@@ -191,9 +172,9 @@ func TestOtherConnectionsUnaffected(t *testing.T) {
 	}
 }
 
+// TestRejectedConnHelloStillAnswers checks that a matching Hello answers on a
+// rejected connection but does not clear the mark.
 func TestRejectedConnHelloStillAnswers(t *testing.T) {
-	// REQ-broker-config-016: a matching Hello later answers on the rejected
-	// connection but does not clear the mark.
 	tb := newTestBroker(t)
 
 	if _, err := callTestHello(t, tb.client, 2); err == nil {
@@ -212,9 +193,9 @@ func TestRejectedConnHelloStillAnswers(t *testing.T) {
 	wantErrorDetail(t, err, localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH)
 }
 
+// TestRejectionLoggedOnce checks that a rejection is logged once, not on every
+// rejected call.
 func TestRejectionLoggedOnce(t *testing.T) {
-	// REQ-broker-config-016: the rejection is logged once, not on every
-	// rejected call.
 	tb := newTestBroker(t)
 
 	if _, err := callTestHello(t, tb.client, 2); err == nil {
@@ -241,7 +222,6 @@ func TestRejectionLoggedOnce(t *testing.T) {
 	}
 }
 
-// methodRecorder records the full method names that reach an interceptor.
 type methodRecorder struct {
 	mu      sync.Mutex
 	methods []string
@@ -259,9 +239,9 @@ func (r *methodRecorder) list() []string {
 	return append([]string(nil), r.methods...)
 }
 
+// TestVersionInterceptorRunsBeforeAccessCheck checks that the version
+// interceptor rejects a call before the access interceptor sees it.
 func TestVersionInterceptorRunsBeforeAccessCheck(t *testing.T) {
-	// REQ-broker-config-016: the version interceptors run before the access
-	// interceptor, so a rejected connection never reaches a permission check.
 	rec := new(methodRecorder)
 	accessUnary := func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 		rec.record(info.FullMethod)
@@ -294,6 +274,8 @@ func TestVersionInterceptorRunsBeforeAccessCheck(t *testing.T) {
 	}
 }
 
+// TestVersionServerOptionsAreChained checks that versionServerOptions returns
+// both a unary and a stream interceptor.
 func TestVersionServerOptionsAreChained(t *testing.T) {
 	if got, want := len(versionServerOptions()), 2; got != want {
 		t.Fatalf("versionServerOptions() returned %d options, want %d", got, want)

@@ -13,19 +13,16 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// Event names for the system local socket permission changes. They are not in
-// logging.go because only the system form emits them.
+// Event names for the system local socket permission changes.
 const (
 	evLocalSocketPermsApplied = "local_socket_perms_applied"
 	evLocalSocketPermsFailed  = "local_socket_perms_failed"
 )
 
-// lookupGroupFromDB is a seam for tests; production always uses accountdb.
 var lookupGroupFromDB = accountdb.LookupGroup
 
 // applyLocalSocketPerms sets the group and mode of the system Broker's local
-// socket. group "" means the group of runtimeDir. mode is the octal text of
-// broker.local_socket_mode.
+// socket; an empty group means the group of runtimeDir.
 func applyLocalSocketPerms(socketPath, runtimeDir, group, mode string) error {
 	var gid int
 	if group == "" {
@@ -62,7 +59,6 @@ func applyLocalSocketPerms(socketPath, runtimeDir, group, mode string) error {
 	return nil
 }
 
-// validateSocketGroup is registered with cfg.Validate("broker.local_socket_group") in system mode.
 func validateSocketGroup(_, new config.Value) error {
 	if new.String == "" {
 		return nil
@@ -76,7 +72,6 @@ func validateSocketGroup(_, new config.Value) error {
 	return nil
 }
 
-// checkSocketGroupAtStartup returns an ErrInvalidConfig error when the configured group does not exist.
 func checkSocketGroupAtStartup(cfg ConfigSource) error {
 	v, err := cfg.Get("broker.local_socket_group")
 	if err != nil {
@@ -88,7 +83,6 @@ func checkSocketGroupAtStartup(cfg ConfigSource) error {
 	return nil
 }
 
-// watchSocketPerms reapplies the permissions whenever either key changes.
 func watchSocketPerms(cfg ConfigSource, apply func() error, logger *slog.Logger) {
 	reapply := func() {
 		if err := apply(); err != nil {

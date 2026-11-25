@@ -7,9 +7,9 @@ import (
 )
 
 // aliasConflictCheck returns the validation function for broker.alias. The
-// function runs under the config lock, so it may call only AliasConflict,
-// which takes just the pairing lock; any other pairing query could deadlock
-// against a concurrent config access. An empty alias is never a conflict.
+// returned function runs under the config lock, so it may call only
+// AliasConflict, which takes just the pairing lock; any other pairing query
+// could deadlock against a concurrent config access.
 func aliasConflictCheck(p OwnAliasSync) func(old, new config.Value) error {
 	return func(_, new config.Value) error {
 		if new.String == "" {
@@ -22,13 +22,10 @@ func aliasConflictCheck(p OwnAliasSync) func(old, new config.Value) error {
 	}
 }
 
-// wireOwnAlias keeps pairing's own-alias cache in step with broker.alias. It
-// subscribes first, registers the conflict check, and then pushes the current
-// effective value once, so a change between subscription and first read is not
-// lost and the cache is populated before any link can handshake. A rename that
-// lands between a read and its push would otherwise leave the stale value in
-// the cache, so each push is followed by a fresh read and repeated until two
-// reads agree.
+// wireOwnAlias keeps pairing's own-alias cache in step with broker.alias.
+// Subscribing before the first read keeps a change from being lost, and
+// pushing until two reads agree keeps a concurrent rename from leaving the
+// cached value stale.
 func wireOwnAlias(cfg ConfigSource, p OwnAliasSync) error {
 	cfg.Subscribe("broker.alias", func(_, new config.Value) {
 		p.SetOwnAlias(new.String)

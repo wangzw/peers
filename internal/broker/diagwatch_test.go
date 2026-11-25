@@ -18,7 +18,6 @@ func testWatchLogger() *slog.Logger {
 	return NewLogger(io.Discard, level)
 }
 
-// fakeConfigDirSource delivers the watcher's events from the test.
 type fakeConfigDirSource struct {
 	events chan fsnotify.Event
 	errors chan error
@@ -50,10 +49,7 @@ func TestConfigDirWatchReportsChanges(t *testing.T) {
 }
 
 // TestConfigDirWatchDebouncesBurst checks that changes inside one debounce
-// window produce one wake, and that a later change starts a new window. The
-// events and the clock are driven by the test, so the result does not depend on
-// when the watcher goroutine is scheduled: with a real clock, a burst whose
-// events were processed on both sides of the window woke the retry twice.
+// window wake the retry once and a later change starts a new window.
 func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 	const name = "config.yaml"
 	clock := newFakeClock(time.Now())
@@ -65,9 +61,8 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 	go w.run(name)
 	t.Cleanup(w.stopNow)
 
-	// noWake fails on a wake left in the buffer. Call it after a send to the
-	// unbuffered source: that send completes only when the watcher is back at
-	// select, so any wake produced earlier has already been sent.
+	// noWake fails on a wake left in the buffer; call it after a send to the
+	// unbuffered source.
 	noWake := func() {
 		t.Helper()
 		select {
@@ -77,8 +72,7 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 		}
 	}
 
-	// change delivers one event. The send returning proves the watcher read
-	// it; waiting for the new timer proves the debounce was armed.
+	// change delivers one event and waits for the debounce to be armed.
 	change := func() {
 		t.Helper()
 		want := clock.createdTimers() + 1
@@ -87,7 +81,6 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 		noWake()
 	}
 
-	// waitWake consumes one wake, bounded only so a broken watcher fails.
 	waitWake := func() {
 		t.Helper()
 		select {
@@ -97,8 +90,6 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 		}
 	}
 
-	// An event for another file, and one of a kind the watcher ignores, do not
-	// arm the debounce.
 	before := clock.createdTimers()
 	source.events <- fsnotify.Event{Name: "other.yaml", Op: fsnotify.Write}
 	source.events <- fsnotify.Event{Name: name, Op: fsnotify.Chmod}
@@ -107,7 +98,6 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 		t.Fatalf("ignored events armed the debounce: timers registered = %d, want %d", got, before+1)
 	}
 
-	// The window ends one debounce after the change, not earlier.
 	clock.Advance(configDirWatchDebounce - 1)
 	if got := clock.pendingTimers(); got != 1 {
 		t.Fatalf("timers before the window ended = %d, want 1", got)
@@ -116,9 +106,6 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 	clock.Advance(1)
 	waitWake()
 
-	// A later change restarts the window: half a window after the first change
-	// and another half plus a nanosecond later, the last change's window is
-	// still open. A deadline counted from the first change would have fired.
 	change()
 	clock.Advance(configDirWatchDebounce / 2)
 	change()
@@ -130,9 +117,6 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 	clock.Advance(configDirWatchDebounce/2 - 1)
 	waitWake()
 
-	// Changes inside one window wake the retry once. The send after the window
-	// is the barrier for the assertion: it completes only after the watcher is
-	// back at select, so a second wake produced by the burst would be visible.
 	change()
 	change()
 	change()
@@ -146,7 +130,6 @@ func TestConfigDirWatchDebouncesBurst(t *testing.T) {
 	}
 	change()
 
-	// A change after the window starts a new one.
 	clock.Advance(configDirWatchDebounce)
 	waitWake()
 	noWake()
@@ -165,7 +148,7 @@ func waitForTimers(t *testing.T, clock *fakeClock, want int) {
 }
 
 // TestConfigDirWatchStopClosesCleanly checks that stopping closes the watcher
-// and that a write afterwards neither wakes the retry nor blocks shutdown.
+// and a later write neither wakes the retry nor blocks shutdown.
 func TestConfigDirWatchStopClosesCleanly(t *testing.T) {
 	dir := t.TempDir()
 	configFile := filepath.Join(dir, "config.yaml")
@@ -182,8 +165,7 @@ func TestConfigDirWatchStopClosesCleanly(t *testing.T) {
 	if err := os.WriteFile(configFile, []byte("broker:\n  listen: ''\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile after stop: %v", err)
 	}
-	// The window is the assertion: a wake after stop would be a violation. A
-	// window can only miss one under load, never fail a correct run, so it stays.
+	// The window is the assertion: a wake after stop would be a violation.
 	select {
 	case <-w.events:
 		t.Fatal("a write after stop woke the retry")
@@ -192,8 +174,8 @@ func TestConfigDirWatchStopClosesCleanly(t *testing.T) {
 	w.stopNow() // idempotent
 }
 
-// TestConfigDirWatchWithoutConfigFileIsInert covers a Load failure that left no
-// configuration path: the watcher is inert and the minute tick still retries.
+// TestConfigDirWatchWithoutConfigFileIsInert checks that a Load failure with no
+// configuration path leaves the watcher inert while the minute tick retries.
 func TestConfigDirWatchWithoutConfigFileIsInert(t *testing.T) {
 	w := startConfigDirWatch("", testWatchLogger())
 	select {

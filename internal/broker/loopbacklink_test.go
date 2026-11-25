@@ -16,17 +16,13 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// maxLoopbackMessageSize is the gRPC message limit of the loopback link. It is
-// the same as the link implementation's 4 MiB, so a frame that passes the
-// too_large check has room on the wire.
+// maxLoopbackMessageSize must match the link implementation's 4 MiB message
+// limit, so a frame that passes too_large has room on the wire.
 const maxLoopbackMessageSize = 4 << 20
 
 // loopbackLink implements deliveryLink over a real linkpb.Link gRPC stream on
-// 127.0.0.1. The client side sends requests; the server side dispatches them to
-// the registered handlers. Both ends share one object, so a delivery test can
-// use the same value as the sender's link and as the receiver's link.
-//
-// It is test-only: production code must use the real *link.Link.
+// 127.0.0.1; both ends share one object, so a test can use it as both sender and
+// receiver link. It is test-only; production uses *link.Link.
 type loopbackLink struct {
 	linkpb.UnimplementedLinkServer
 
@@ -44,8 +40,8 @@ type loopbackLink struct {
 	up           bool
 	pending      map[uint64]chan *linkpb.Frame
 
-	// sendMu serializes Send on both streams: gRPC allows one sender per
-	// stream, and handler goroutines reply concurrently.
+	// sendMu serializes Send on both streams: gRPC allows one sender per stream,
+	// and handler goroutines reply concurrently.
 	sendMu sync.Mutex
 	nextID atomic.Uint64
 
@@ -56,9 +52,6 @@ type loopbackLink struct {
 
 var _ deliveryLink = (*loopbackLink)(nil)
 
-// newLoopbackLink starts a linkpb server on 127.0.0.1, connects a client, opens
-// one stream and returns the link. Requests dispatched to handlers carry remote
-// as the requesting peer.
 func newLoopbackLink(t *testing.T, remote peerID) *loopbackLink {
 	t.Helper()
 
@@ -104,9 +97,8 @@ func newLoopbackLink(t *testing.T, remote peerID) *loopbackLink {
 	return l
 }
 
-// Connect serves the server side of the bidirectional stream: it hands every
-// request frame to the registered handler in a new goroutine and answers an
-// unregistered kind with the link's unsupported reply.
+// Connect runs the server side of the stream, handing each request frame to its
+// handler and answering an unregistered kind as unsupported.
 func (l *loopbackLink) Connect(stream linkpb.Link_ConnectServer) error {
 	for {
 		f, err := stream.Recv()
@@ -120,7 +112,6 @@ func (l *loopbackLink) Connect(stream linkpb.Link_ConnectServer) error {
 	}
 }
 
-// dispatch starts the handler for one request frame and sends its reply.
 func (l *loopbackLink) dispatch(stream linkpb.Link_ConnectServer, f *linkpb.Frame) {
 	handler := l.handler(link.FrameKind(f.GetKind()))
 	if handler == nil {
@@ -142,7 +133,6 @@ func (l *loopbackLink) dispatch(stream linkpb.Link_ConnectServer, f *linkpb.Fram
 	}()
 }
 
-// unsupportedLoopbackFrame builds the reply for a kind no handler registered.
 func unsupportedLoopbackFrame(req *linkpb.Frame) *linkpb.Frame {
 	payload, err := proto.Marshal(&linkpb.Unsupported{RequestKind: req.GetKind()})
 	if err != nil {
@@ -156,18 +146,17 @@ func unsupportedLoopbackFrame(req *linkpb.Frame) *linkpb.Frame {
 	}
 }
 
-// reply sends f on the server stream. A stream closed by the test makes Send
-// fail; the test relies on that, so the error is not reported.
+// reply sends f on the server stream; a stream the test closed makes Send fail,
+// which the test relies on, so the error is ignored.
 func (l *loopbackLink) reply(stream linkpb.Link_ConnectServer, f *linkpb.Frame) {
 	l.sendMu.Lock()
 	defer l.sendMu.Unlock()
 	_ = stream.Send(f)
 }
 
-// Request sends a kind-400 frame and waits for its reply. The sent result
-// follows the link contract: false before the frame was written, true once it
-// was. A stream that is down before the write yields ErrNotEstablished; a
-// stream that ends after the write yields ErrLinkDown.
+// Request sends a kind-400 frame and waits for its reply; the sent flag is false
+// before the write and true after, and a stream ending after the write yields
+// ErrLinkDown.
 func (l *loopbackLink) Request(ctx context.Context, _ peerID, f link.Frame) (link.Frame, bool, error) {
 	l.mu.Lock()
 	stream := l.stream
@@ -212,7 +201,6 @@ func (l *loopbackLink) Request(ctx context.Context, _ peerID, f link.Frame) (lin
 	}
 }
 
-// loopbackReply converts a wire reply into the deliveryLink result.
 func loopbackReply(kind link.FrameKind, reply *linkpb.Frame) (link.Frame, bool, error) {
 	if reply.GetKind() == linkpb.KindUnsupported {
 		refused := &linkpb.Unsupported{}
@@ -224,15 +212,13 @@ func loopbackReply(kind link.FrameKind, reply *linkpb.Frame) (link.Frame, bool, 
 	return link.Frame{Kind: reply.GetKind(), Payload: reply.GetPayload()}, true, nil
 }
 
-// forget drops the pending entry of id. The receiver may already have removed
-// it; deleting a missing key is harmless.
+// forget drops the pending entry of id; deleting a missing key is harmless.
 func (l *loopbackLink) forget(id uint64) {
 	l.mu.Lock()
 	delete(l.pending, id)
 	l.mu.Unlock()
 }
 
-// recv reads replies for the client stream and wakes the matching Request.
 func (l *loopbackLink) recv(stream linkpb.Link_ConnectClient, down chan struct{}) {
 	for {
 		f, err := stream.Recv()
@@ -256,9 +242,6 @@ func (l *loopbackLink) recv(stream linkpb.Link_ConnectClient, down chan struct{}
 	}
 }
 
-// endStream marks down as the current stream ending: it clears the stream,
-// cancels it and fails every waiting Request. A stale down channel from an
-// earlier stream is ignored.
 func (l *loopbackLink) endStream(down chan struct{}) {
 	l.mu.Lock()
 	if l.streamDown != down {
@@ -283,8 +266,6 @@ func (l *loopbackLink) endStream(down chan struct{}) {
 	}
 }
 
-// closeStream tears down the current client stream. A Request waiting on it
-// returns sent true with ErrLinkDown, and Established turns false.
 func (l *loopbackLink) closeStream() {
 	l.mu.Lock()
 	down := l.streamDown
@@ -294,8 +275,8 @@ func (l *loopbackLink) closeStream() {
 	}
 }
 
-// reopen builds a new client stream and fires the onUp callbacks. It is the
-// dialer's redial, so Kick calls it too.
+// reopen builds a new client stream and fires the onUp callbacks; it is the
+// dialer's redial, also used by Kick.
 func (l *loopbackLink) reopen() {
 	l.mu.Lock()
 	if l.up {
@@ -332,15 +313,14 @@ func (l *loopbackLink) HandleRequest(kind link.FrameKind, h func(context.Context
 	l.handlers[kind] = h
 }
 
-// handler returns the handler for kind, or nil when none is registered.
 func (l *loopbackLink) handler(kind link.FrameKind) func(context.Context, peerID, link.Frame) link.Frame {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.handlers[kind]
 }
 
-// Subscribe records the up callbacks. Down callbacks are recorded but never
-// run: the tests wait for an explicit reopen.
+// Subscribe records the up callbacks; down callbacks are ignored because tests
+// wait for an explicit reopen.
 func (l *loopbackLink) Subscribe(onUp func(peerID, []byte), onDown func(peerID)) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

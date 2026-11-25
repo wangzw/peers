@@ -4,9 +4,8 @@ package broker
 
 import "time"
 
-// updateCheckInitialDelay returns how long a Broker waits after startup before
-// its first periodic update check. Release builds always wait one minute;
-// builds carrying the peers_testenv tag may shorten it.
+// updateCheckInitialDelay returns the wait before the first periodic update
+// check. Release builds wait one minute; peers_testenv builds may shorten it.
 func updateCheckInitialDelay() time.Duration {
 	return time.Minute
 }

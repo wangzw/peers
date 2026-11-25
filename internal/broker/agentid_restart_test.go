@@ -6,11 +6,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// TestAgentIDStableAcrossRestartReq037 checks REQ-broker-config-037: when the
-// Broker process exits and a new one starts, a session that registers again on
-// the same inbox socket path gets the same Agent ID (design-mcpserver.md,
-// "重新登记"). The ID must come from the socket path, so an ID taken from a
-// random value or an in-process counter fails this test.
+// TestAgentIDStableAcrossRestartReq037 checks that a session registering on the
+// same inbox socket path gets the same agent ID after the Broker restarts, and
+// that the ID is derived from the socket path.
 func TestAgentIDStableAcrossRestartReq037(t *testing.T) {
 	first := newTestBroker(t)
 	session := fakesession.New(t, fakesession.Options{Name: "stable"})

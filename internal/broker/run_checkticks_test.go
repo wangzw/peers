@@ -5,11 +5,8 @@ import (
 	"time"
 )
 
-// TestCheckTicksReturnsStoppableTicker pins the contract Run depends on: an
-// injected channel comes back with a nil ticker, while a real ticker is
-// returned non-nil so the deferred Stop actually runs. A nil ticker for the
-// real case would leave time.NewTicker's ticker unstopped for the rest of the
-// process, and the caller cannot notice by watching Run's output.
+// TestCheckTicksReturnsStoppableTicker checks that an injected channel comes
+// back with a nil ticker while a real ticker comes back non-nil and stoppable.
 func TestCheckTicksReturnsStoppableTicker(t *testing.T) {
 	injected := make(chan time.Time)
 	tick, ticker := checkTicks(injected)

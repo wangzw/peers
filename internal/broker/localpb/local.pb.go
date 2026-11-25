@@ -32,14 +32,13 @@ const (
 	NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_NOT_OWNED         NotRegisteredReason = 3
 	NotRegisteredReason_NOT_REGISTERED_REASON_SOCKET_PATH_MISSING      NotRegisteredReason = 4
 	// NOT_REGISTERED_REASON_BROKER_DEGRADED answers a registration while the
-	// Broker runs degraded with diagnostics only. detail carries the cause, the
-	// same text as StatusResponse.degraded.reason. The stream stays open.
+	// Broker runs degraded with diagnostics only; detail repeats
+	// StatusResponse.degraded.reason and the stream stays open.
 	NotRegisteredReason_NOT_REGISTERED_REASON_BROKER_DEGRADED NotRegisteredReason = 5
-	// NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED answers a registration when
-	// the account's helper process could not be started, including a failure to
-	// look up the account before starting it, or stopped answering. This is
-	// distinct from a missing session record. The stream stays open and the
-	// Broker retries like it does for a missing record.
+	// NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED answers a registration when the
+	// account's helper process could not start, including an account lookup
+	// failure, or stopped answering; it is distinct from a missing session
+	// record, the stream stays open and the Broker retries.
 	NotRegisteredReason_NOT_REGISTERED_REASON_ACCOUNT_HELPER_FAILED NotRegisteredReason = 6
 )
 
@@ -513,8 +512,8 @@ const (
 	ErrorCode_ERROR_CODE_VERSION_MISMATCH  ErrorCode = 13
 	ErrorCode_ERROR_CODE_QUOTA_EXCEEDED    ErrorCode = 14
 	ErrorCode_ERROR_CODE_INTERNAL          ErrorCode = 15
-	// ERROR_CODE_NOT_UNDER_SERVICE_MANAGER answers an update the Broker cannot
-	// supervise: without a service manager it cannot start the new binary again.
+	// ERROR_CODE_NOT_UNDER_SERVICE_MANAGER answers an update from a Broker that
+	// no service manager supervises.
 	ErrorCode_ERROR_CODE_NOT_UNDER_SERVICE_MANAGER ErrorCode = 16
 	// ERROR_CODE_UPDATE_IN_PROGRESS answers a second update while one runs.
 	ErrorCode_ERROR_CODE_UPDATE_IN_PROGRESS ErrorCode = 17
@@ -903,9 +902,9 @@ func (x *RegistrationComplete) GetAutoJoin() bool {
 type RegistrationProblem struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Reason NotRegisteredReason    `protobuf:"varint,1,opt,name=reason,proto3,enum=internal.broker.localpb.NotRegisteredReason" json:"reason,omitempty"`
-	// Detail names the specific cause when the reason alone is too general, such
-	// as which character makes a session name unusable. Empty when the reason is
-	// all the Broker can tell.
+	// detail names the specific cause when the reason alone is too general, such
+	// as which character makes a session name unusable; it is empty when the
+	// reason says all the Broker can tell.
 	Detail        string `protobuf:"bytes,2,opt,name=detail,proto3" json:"detail,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1740,9 +1739,7 @@ func (*ListBrokersRequest) Descriptor() ([]byte, []int) {
 type ListBrokersResponse struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Brokers []*BrokerInfo          `protobuf:"bytes,1,rep,name=brokers,proto3" json:"brokers,omitempty"`
-	// local is this Broker's own state. It is always set by a Broker that knows
-	// the field; an older Broker leaves it unset, which reads as online and not
-	// degraded.
+	// local is this Broker's own state; the answering Broker always sets it.
 	Local         *LocalBrokerState `protobuf:"bytes,2,opt,name=local,proto3" json:"local,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1792,14 +1789,14 @@ func (x *ListBrokersResponse) GetLocal() *LocalBrokerState {
 	return nil
 }
 
-// LocalBrokerState is what list_brokers and broker list show about the Broker
-// that answers, as opposed to its peers.
+// LocalBrokerState is what list_brokers and broker list show about the
+// answering Broker.
 type LocalBrokerState struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// offline is the value of broker.offline.
 	Offline bool `protobuf:"varint,1,opt,name=offline,proto3" json:"offline,omitempty"`
 	// degraded is unset unless the Broker runs degraded; it then holds the same
-	// value as StatusResponse.degraded, so broker list can print the Fix line.
+	// value as StatusResponse.degraded.
 	Degraded      *DegradedState `protobuf:"bytes,2,opt,name=degraded,proto3" json:"degraded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2817,11 +2814,9 @@ type StatusResponse struct {
 	// when there is none. current_version is the version this Broker runs.
 	AvailableVersion string `protobuf:"bytes,3,opt,name=available_version,json=availableVersion,proto3" json:"available_version,omitempty"`
 	CurrentVersion   string `protobuf:"bytes,4,opt,name=current_version,json=currentVersion,proto3" json:"current_version,omitempty"`
-	// offline is the value of broker.offline. False while diagnostics only,
-	// because the configuration is not in effect then.
+	// offline is the value of broker.offline; it is false while diagnostics only.
 	Offline bool `protobuf:"varint,5,opt,name=offline,proto3" json:"offline,omitempty"`
-	// degraded is unset while the Broker runs normally. With diagnostics only,
-	// agents and peers are empty and only current_version is filled besides it.
+	// degraded is unset while the Broker runs normally.
 	Degraded      *DegradedState `protobuf:"bytes,6,opt,name=degraded,proto3" json:"degraded,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3115,7 +3110,7 @@ type ApplyUpdateResponse struct {
 	// to_version is empty when no newer release exists, and nothing changed.
 	ToVersion string `protobuf:"bytes,2,opt,name=to_version,json=toVersion,proto3" json:"to_version,omitempty"`
 	// restarting is true when the new binary is installed and the Broker is
-	// about to exit so that the service manager starts it again.
+	// about to exit.
 	Restarting    bool `protobuf:"varint,3,opt,name=restarting,proto3" json:"restarting,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

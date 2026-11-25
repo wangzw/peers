@@ -10,10 +10,8 @@ import (
 )
 
 // peerDeliveryErrorCodes is the set of error codes a receiving Broker returns
-// from its delivery handler. A code outside this set is not trusted: the peer
-// may be a different version, or a faulty one, and the send reports an unknown
-// result under delivery_unknown instead. Every code the receiver can return
-// belongs here; adding one there requires adding it here.
+// from its delivery handler; a code outside it becomes delivery_unknown, so a
+// code the receiver adds must be added here.
 var peerDeliveryErrorCodes = map[localpb.ErrorCode]bool{
 	localpb.ErrorCode_ERROR_CODE_NOT_FOUND:        true,
 	localpb.ErrorCode_ERROR_CODE_AMBIGUOUS:        true,
@@ -26,16 +24,9 @@ var peerDeliveryErrorCodes = map[localpb.ErrorCode]bool{
 	localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN: true,
 }
 
-// peerMessageMaxBytes bounds the peer's message that this Broker quotes back.
-// The receiving Broker already bounds its own text, but a different or faulty
-// peer must not be able to make this Broker's error unbounded.
+// peerMessageMaxBytes bounds the peer message this Broker quotes so a faulty peer cannot make the error unbounded.
 const peerMessageMaxBytes = 512
 
-// peerError turns one error detail a peer returned into this Broker's error.
-// An allowed code keeps its code, and its message is quoted under a local
-// lead-in so the peer's text is presented as the peer's words. Any other code
-// becomes delivery_unknown with fixed local text, and the peer's message is not
-// repeated; only the peer fingerprint and the integer code are logged.
 func (d *delivery) peerError(peer peerID, alias string, detail *localpb.ErrorDetail) *Error {
 	origin := peerFingerprintBytes(peer)
 	code := detail.GetCode()
@@ -62,8 +53,6 @@ func (d *delivery) peerError(peer peerID, alias string, detail *localpb.ErrorDet
 	}
 }
 
-// trimPeerResultPrefix removes the result lead-in the peer may have put on its
-// message, because this Broker adds its own.
 func trimPeerResultPrefix(message string) string {
 	for _, prefix := range []string{"Not sent: ", "Delivery unknown: "} {
 		if strings.HasPrefix(message, prefix) {
@@ -73,8 +62,6 @@ func trimPeerResultPrefix(message string) string {
 	return message
 }
 
-// truncatePeerMessage cuts message to peerMessageMaxBytes on a rune boundary,
-// marking the cut with "...".
 func truncatePeerMessage(message string) string {
 	if len(message) <= peerMessageMaxBytes {
 		return message
@@ -86,8 +73,6 @@ func truncatePeerMessage(message string) string {
 	return message[:cut] + "..."
 }
 
-// logPeerDeliveryErrorUnrecognized records a code outside peerDeliveryErrorCodes
-// at warn level. The peer's message is deliberately not recorded.
 func (d *delivery) logPeerDeliveryErrorUnrecognized(peer peerID, code localpb.ErrorCode) {
 	if d.deps.Log == nil {
 		return

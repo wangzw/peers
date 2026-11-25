@@ -12,100 +12,73 @@ import (
 	"github.com/wangzw/peers/internal/topic"
 )
 
-// agent is one local agent. The socket path is its identity; every registration
-// connection for that path is attached to the same agent. All fields except
+// agent is one local agent identified by its socket path; every registration
+// connection at that path attaches to the same agent. All fields except
 // refreshMu are guarded by Broker.mu.
 type agent struct {
-	id         AgentID
-	ref        string
-	socketPath string // normalized
-	caller     Caller // of the first registering connection
-	// accountKey is the account this agent's names count against for the name
-	// ownership table's per-account limit, the accountKeyFor result of
-	// caller.UID computed once at registration so no lookup runs under
-	// Broker.mu.
-	accountKey uint32
-	backend    SessionBackend
-	session    inbox.Session // last good record
-	name       string        // normalized
-	status     string        // verbatim from the record
-	// refPinned reports that name belongs to another account. Agents of an
-	// account that does not own the name carry a full 12-character ref, so a
-	// shorter ref left over from the owner cannot select them.
-	refPinned bool
-	// refMandatory reports that the address and signature of this agent must
-	// carry a ref: another account owns the name, or this account holds it with
-	// more than one agent, or (when no account owns it) the table carries it
-	// more than once. recomputeRefsLocked keeps it current so a change can be
-	// pushed to the registration streams and the topic table.
+	id           AgentID
+	ref          string
+	socketPath   string
+	caller       Caller
+	accountKey   uint32
+	backend      SessionBackend
+	session      inbox.Session
+	name         string
+	status       string
+	refPinned    bool
 	refMandatory bool
-	// seq is the agent's registration order, used to tell which account first
-	// held a contested name. It starts at 1 and never repeats.
-	seq        uint64
-	prevName   string
-	prevNameAt time.Time
-	prevTimer  Timer
-	// lastAddress is the display address last pushed to the registration
-	// streams. The address changes when the ref changes and also when the
-	// number of agents carrying the name changes, so it is compared instead of
-	// the ref alone.
+	// seq is the registration order; it starts at 1 and never repeats.
+	seq         uint64
+	prevName    string
+	prevNameAt  time.Time
+	prevTimer   Timer
 	lastAddress string
-	public      map[string]string // topic name -> description, joined publicly
+	public      map[string]string
 	conns       map[*regConn]struct{}
 	refreshMu   sync.Mutex
 
-	// introduced reports whether Topics.AgentChanged has been called for this
-	// agent at least once. The first call carries the initial roster entry and
-	// is not mirrored to the registration streams.
 	introduced bool
-	// watchDir is the Broker.watches key this agent holds a reference on, and
-	// watching says whether it holds one at all. The key carries the owner uid
-	// and may have an empty directory (the account's default configuration
-	// directory), so the flag is separate.
+	// watching cannot be derived from watchDir: the key carries the owner uid
+	// and may have an empty directory, so root's default directory gives the
+	// zero watchKey.
 	watchDir watchKey
 	watching bool
 
-	// warnedPeerProtocol is the last session registry frame protocol version
-	// logged as unrecognized; 0 means none has been logged.
 	warnedPeerProtocol int
 }
 
 // regConn is one registration stream. Fields other than attemptMu are guarded
 // by Broker.mu; attemptMu serializes the record lookup of this connection.
 type regConn struct {
-	caller Caller
-	// accountKey is the accountKeyFor result of caller.UID, computed by Register
-	// before the connection joins the table, so the name ownership table can
-	// count this account without a lookup under Broker.mu.
+	caller     Caller
 	accountKey uint32
 	rawPath    string
 	id         AgentID
-	socketPath string // normalized, empty when invalid
+	socketPath string
 	configDir  string
 	backend    SessionBackend
-	release    func() // from SessionRouter.Acquire, called once when the stream ends
-	agent      *agent // nil while waiting
+	release    func()
+	agent      *agent
 	waitReason localpb.NotRegisteredReason
-	waitDetail string // specific explanation for waitReason, "" when unknown
-	attempted  bool   // attempt has stored waitReason; the timer must not report before it
-	reportDue  bool   // the wait timer fired before the first attempt stored a reason
-	reported   bool   // a not_registered has been sent for the current wait
+	waitDetail string
+	attempted  bool // an attempt has stored waitReason; the timer must not report before that
+	reportDue  bool
+	reported   bool
 	waitTimer  Timer
-	watchDir   watchKey // Broker.watches key this connection holds; watching says whether it holds one
+	watchDir   watchKey
 	watching   bool
 	out        *eventQueue
 
 	attemptMu sync.Mutex
-	// retry asks the running attempt to reread the agent after it attaches: a
-	// registry event arrived while the attempt was reading the record, or the
-	// agent's watch was created while Broker.mu was released, so the record may
-	// have changed between that read and the attachment.
+	// retry asks the running attempt to reread the agent after it attaches,
+	// because a registry event or watch creation may have changed the record
+	// since it was read.
 	retry atomic.Bool
 }
 
-// dirWatch is one shared inbox.Watch registration for a configuration
-// directory. creating is true while a Watch call is in flight so that another
-// acquirer can wait for its result instead of starting a second watcher.
+// dirWatch is one shared inbox.Watch registration for a configuration directory;
+// creating is true while a Watch call is in flight so another acquirer waits
+// instead of starting a second watcher.
 type dirWatch struct {
 	stop     func()
 	refs     int
@@ -113,29 +86,23 @@ type dirWatch struct {
 	wait     chan struct{}
 }
 
-// agentSnapshot is the read-only view of an agent handed to RPC handlers.
 type agentSnapshot struct {
-	ID           AgentID
-	Name         string
-	Ref          string
-	RefPinned    bool
-	RefMandatory bool
-	PrevName     string
-	Address      string
-	Caller       Caller
-	Session      inbox.Session
-	Inbox        SessionBackend
-	// NameOwnerUID is the account that owns Name, and NameOwned reports that
-	// the name owner table has an entry for it.
-	NameOwnerUID uint32
-	NameOwned    bool
-	// PrevNameOwnerUID and PrevNameOwned do the same for PrevName, so a rename
-	// hint is limited to the account that owns the previous name.
+	ID               AgentID
+	Name             string
+	Ref              string
+	RefPinned        bool
+	RefMandatory     bool
+	PrevName         string
+	Address          string
+	Caller           Caller
+	Session          inbox.Session
+	Inbox            SessionBackend
+	NameOwnerUID     uint32
+	NameOwned        bool
 	PrevNameOwnerUID uint32
 	PrevNameOwned    bool
 }
 
-// lookupAgent returns a snapshot of the agent with the given ID.
 func (b *Broker) lookupAgent(id AgentID) (agentSnapshot, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -145,8 +112,8 @@ func (b *Broker) lookupAgent(id AgentID) (agentSnapshot, bool) {
 	}
 	snap := b.snapshotLocked(a)
 	if b.nameOwnerPushPending {
-		// A read expired a name and moved ownership. Push the change before the
-		// caller sees the table, then take the snapshot again with the new refs.
+		// A read may have expired a name and moved ownership; push the change
+		// and take the snapshot again with the new refs.
 		b.recomputeRefsLocked()
 		b.nameOwnerPushPending = false
 		if a, ok = b.agents[id]; ok {
@@ -156,7 +123,6 @@ func (b *Broker) lookupAgent(id AgentID) (agentSnapshot, bool) {
 	return snap, true
 }
 
-// allAgents returns snapshots of every local agent, sorted by ID.
 func (b *Broker) allAgents() []agentSnapshot {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -170,8 +136,8 @@ func (b *Broker) allAgents() []agentSnapshot {
 	}
 	out := snapshot()
 	if b.nameOwnerPushPending {
-		// A snapshot expired a name and moved ownership. Push the change and
-		// rebuild, so the caller sees the post-change refs rather than a mix.
+		// A snapshot may have expired a name and moved ownership; push the
+		// change and rebuild so the caller sees the post-change refs.
 		b.recomputeRefsLocked()
 		b.nameOwnerPushPending = false
 		out = snapshot()
@@ -179,6 +145,7 @@ func (b *Broker) allAgents() []agentSnapshot {
 	return out
 }
 
+// snapshotLocked builds a's snapshot. Callers must hold Broker.mu.
 func (b *Broker) snapshotLocked(a *agent) agentSnapshot {
 	now := b.deps.Clock.Now()
 	ownerUID, owned := b.nameOwnerOfLocked(a.name, now)
@@ -214,8 +181,8 @@ func (b *Broker) onUnregister(f func(id AgentID)) {
 	b.unregHooks = append(b.unregHooks, f)
 }
 
-// publicTopicSet returns the current public topic declarations as a topic name
-// to description map, taking the first description seen in Agent-ID order.
+// publicTopicSet returns the public topic declarations as a name-to-description
+// map, taking the first description in Agent-ID order.
 func (b *Broker) publicTopicSet() map[string]string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -235,8 +202,8 @@ func (b *Broker) publicTopicSet() map[string]string {
 	return out
 }
 
-// refreshAgents rereads the given agents in order. IDs that have left the table
-// are skipped. The reread runs outside Broker.mu.
+// refreshAgents rereads the given agents in order, skipping IDs that left the
+// table; the reread runs outside Broker.mu.
 func (b *Broker) refreshAgents(ids []AgentID) {
 	b.mu.Lock()
 	fn := b.refreshOne
@@ -268,10 +235,9 @@ func (b *Broker) agentFor(ctx context.Context, id string) (*agent, error) {
 	return a, nil
 }
 
-// localAlias returns the Broker's effective alias. Config.Get fails once the
-// configuration has been closed during shutdown, while registration handlers may
-// still render addresses; the last valid value is kept so that those addresses
-// never lose the alias. Callers must hold Broker.mu.
+// localAlias returns the effective alias. Once Config.Get fails during shutdown
+// it keeps the last valid value so addresses still render. Callers must hold
+// Broker.mu.
 func (b *Broker) localAlias() string {
 	v, err := b.deps.Config.Get("broker.alias")
 	if err != nil {
@@ -283,7 +249,7 @@ func (b *Broker) localAlias() string {
 	return v.String
 }
 
-// addressOf renders the address of a. Callers must hold Broker.mu.
+// addressOf renders a's address. Callers must hold Broker.mu.
 func (b *Broker) addressOf(a *agent) string {
 	return b.formatAddressLocked(a, b.nameNeedsRefLocked(a))
 }
@@ -294,19 +260,15 @@ func (b *Broker) formatAddressLocked(a *agent, needRef bool) string {
 	return FormatAddress(a.name, a.ref, b.localAlias(), needRef)
 }
 
-// nameNeedsRefLocked reports whether a must show a ref because of how its name
-// is held. FormatAddress still adds one when the cleaned name differs or the
-// address does not fit. Callers must hold Broker.mu.
+// nameNeedsRefLocked reports whether a's address must carry a ref. Callers must
+// hold Broker.mu.
 func (b *Broker) nameNeedsRefLocked(a *agent) bool {
 	_, needRef := b.nameRefFlagsLocked(a, b.deps.Clock.Now())
 	return needRef
 }
 
-// nameRefFlagsLocked reports whether a's name belongs to another account, which
-// pins its ref, and whether a must show a ref in its address and signature. An
-// owned name needs a ref when it belongs to another account or when the owning
-// account holds it with more than one agent; a name no account owns falls back
-// to the whole-table duplicate count. Callers must hold Broker.mu.
+// nameRefFlagsLocked returns whether a's name is owned by another account and
+// whether its address must carry a ref. Callers must hold Broker.mu.
 func (b *Broker) nameRefFlagsLocked(a *agent, now time.Time) (pinned, needRef bool) {
 	owner, ok := b.nameOwnerOfLocked(a.name, now)
 	if !ok {
@@ -318,7 +280,7 @@ func (b *Broker) nameRefFlagsLocked(a *agent, now time.Time) (pinned, needRef bo
 	return false, b.ownerNameCountLocked(a.name, owner) > 1
 }
 
-// nameCountLocked counts the agents that carry name. Callers must hold
+// nameCountLocked returns how many agents carry name. Callers must hold
 // Broker.mu.
 func (b *Broker) nameCountLocked(name string) int {
 	n := 0
@@ -330,7 +292,7 @@ func (b *Broker) nameCountLocked(name string) int {
 	return n
 }
 
-// ownerNameCountLocked counts the agents named name that belong to uid. Callers
+// ownerNameCountLocked returns how many of uid's agents carry name. Callers
 // must hold Broker.mu.
 func (b *Broker) ownerNameCountLocked(name string, uid uint32) int {
 	n := 0
@@ -342,20 +304,12 @@ func (b *Broker) ownerNameCountLocked(name string, uid uint32) int {
 	return n
 }
 
-// recomputeRefsLocked recalculates every agent's disambiguation ref and whether
-// it must show that ref. An agent whose name belongs to another account is
-// pinned to the full 12-character prefix of its ID: only that account may use a
-// shorter ref. An agent whose name cannot fit an address, for any viewer alias,
-// also keeps the full prefix, because a truncated address is accepted only
-// together with the full ref. An agent seen for the first time is introduced to
-// the topic table with its initial roster entry and does not get an
-// agent_changed event.
-// An existing agent whose ref or need for a ref changed is pushed to the topic
-// table; one whose display address changed is pushed to each of its
-// registration streams. The display address changes when the ref changes, when
-// the need for a ref changes, and when another agent starts or stops sharing a
-// held name, which adds or removes the " [ref]" suffix. Callers must hold
-// Broker.mu.
+// recomputeRefsLocked recalculates every agent's ref and whether it must show
+// one, then pushes the change to the topic table and to each registration
+// stream; a newly seen agent is introduced with its initial roster entry and no
+// agent_changed event. An agent whose name belongs to another account, or that
+// cannot fit an address under any alias, keeps the full 12-character prefix of
+// its ID. Callers must hold Broker.mu.
 func (b *Broker) recomputeRefsLocked() {
 	ids := make([]AgentID, 0, len(b.agents))
 	for id := range b.agents {
@@ -366,9 +320,8 @@ func (b *Broker) recomputeRefsLocked() {
 	for id, a := range b.agents {
 		ref := refs[id]
 		pinned, needRef := b.nameRefFlagsLocked(a, now)
-		// A rendered address that shortens its name must carry the full ref:
-		// delivery accepts the shortened name only together with it. Use the
-		// longest alias so the decision holds for every viewer.
+		// A shortened name is accepted only with the full ref; use the longest
+		// alias so the decision holds for every viewer.
 		if pinned || addressNameTruncates(a.name, ref, maxAddressAlias(), needRef) {
 			ref = shortID(id)
 		}
@@ -395,10 +348,8 @@ func (b *Broker) recomputeRefsLocked() {
 	}
 }
 
-// memberLocked renders a's roster entry with the given ref and pin state.
-// Account is the registering account's name, for display only. RefRequired
-// marks a member whose name belongs to another account, so a peer shows a ref
-// for it. Callers must hold Broker.mu.
+// memberLocked builds a's roster entry; pinned marks a name that belongs to
+// another account. Callers must hold Broker.mu.
 func (b *Broker) memberLocked(a *agent, ref string, pinned bool) Member {
 	return Member{
 		Name:        a.name,
@@ -410,9 +361,9 @@ func (b *Broker) memberLocked(a *agent, ref string, pinned bool) Member {
 	}
 }
 
-// unregisterLocked removes a from the table and clears its topic memberships.
-// It returns the watch stops the caller must run outside Broker.mu. Callers
-// must hold Broker.mu.
+// unregisterLocked removes a from the table and its topic memberships and
+// returns the watch stops to run outside Broker.mu. Callers must hold
+// Broker.mu.
 func (b *Broker) unregisterLocked(a *agent) []func() {
 	delete(b.agents, a.id)
 	b.releaseNameOwnerLocked(a.name, a.caller.UID, b.deps.Clock.Now())
@@ -440,8 +391,7 @@ func (b *Broker) unregisterLocked(a *agent) []func() {
 }
 
 // retireOrphanedPublicTopicsLocked retires the public topics in names that no
-// other agent joined publicly, then forgets them on a. Callers must hold
-// Broker.mu.
+// other agent uses and clears them from a. Callers must hold Broker.mu.
 func (b *Broker) retireOrphanedPublicTopicsLocked(a *agent, names []string) {
 	for _, name := range names {
 		if b.publicTopicInUseLocked(name) {
@@ -456,6 +406,8 @@ func (b *Broker) retireOrphanedPublicTopicsLocked(a *agent, names []string) {
 	}
 }
 
+// publicTopicInUseLocked reports whether any agent has declared the public
+// topic name. Callers must hold Broker.mu.
 func (b *Broker) publicTopicInUseLocked(name string) bool {
 	for _, other := range b.agents {
 		if _, ok := other.public[name]; ok {
@@ -465,9 +417,8 @@ func (b *Broker) publicTopicInUseLocked(name string) bool {
 	return false
 }
 
-// unlockAndNotify releases Broker.mu, runs the watch stops, then calls the
-// unregistration hooks for agents that left the table. Callers must hold
-// Broker.mu.
+// unlockAndNotify releases Broker.mu, which the caller must hold, then runs the
+// watch stops and the unregistration hooks for agents that left the table.
 func (b *Broker) unlockAndNotify(stops []func()) {
 	gone := b.gone
 	b.gone = nil
@@ -483,17 +434,14 @@ func (b *Broker) unlockAndNotify(stops []func()) {
 }
 
 // acquireWatchLocked takes a reference on the inbox watch of configDir for uid,
-// creating the watch when it is the first reference. Both the ownership check
-// and Watch run outside Broker.mu, and it returns with Broker.mu held again.
-// The returned key is the Broker.watches key; ok is false when configDir does
-// not belong to uid, or the watch could not be created, and no reference is
-// held. Callers must hold Broker.mu.
+// creating the watch on the first reference. The caller must hold Broker.mu on
+// entry and it returns with Broker.mu held; ok is false when configDir does not
+// belong to uid or the watch could not be created. The ownership check and
+// Watch run outside Broker.mu.
 func (b *Broker) acquireWatchLocked(uid uint32, configDir string, backend SessionBackend) (key watchKey, ok bool) {
 	if v, verifies := backend.(configDirVerifier); verifies {
-		// The check reads the account database and stats a path the caller
-		// chose. Releasing Broker.mu here keeps a blocking path from stopping
-		// every account's registration; the check is bounded so it cannot
-		// block this caller forever either.
+		// The check reads the account database and stats a caller-chosen path,
+		// so it runs bounded and outside Broker.mu.
 		b.mu.Unlock()
 		err := verifyConfigDirBounded(b.ctx, uid, &b.configDirChecks, v, configDir)
 		b.mu.Lock()
@@ -538,9 +486,9 @@ func (b *Broker) acquireWatchLocked(uid uint32, configDir string, backend Sessio
 	}
 }
 
-// releaseWatchLocked drops one reference on key. It returns the stop function
-// when the last reference went away; the caller runs it outside Broker.mu.
-// present says whether the caller actually holds a reference.
+// releaseWatchLocked drops one reference on key and returns the stop to run
+// outside Broker.mu when the last reference goes; present reports whether the
+// caller holds a reference.
 func (b *Broker) releaseWatchLocked(key watchKey, present bool) []func() {
 	if !present {
 		return nil
@@ -561,7 +509,7 @@ func (b *Broker) releaseWatchLocked(key watchKey, present bool) []func() {
 }
 
 // topicStatus maps a session registry status to the value the topic table
-// carries. Unknown values become the empty string.
+// carries; unknown values become the empty string.
 func topicStatus(s string) string {
 	switch s {
 	case "idle", "busy", "waiting", "shell":
@@ -571,7 +519,6 @@ func topicStatus(s string) string {
 	}
 }
 
-// statusToProto maps a session registry status to the local interface enum.
 func statusToProto(s string) localpb.AgentStatus {
 	switch s {
 	case "idle":
@@ -587,9 +534,7 @@ func statusToProto(s string) localpb.AgentStatus {
 	}
 }
 
-// shortID returns the first 12 characters of id, or id itself when it is
-// shorter. It names an agent in a log field and gives an agent whose name
-// belongs to another account its full-prefix ref.
+// shortID returns the first 12 characters of id, or id itself when shorter.
 func shortID(id AgentID) string {
 	if len(id) > 12 {
 		return string(id[:12])

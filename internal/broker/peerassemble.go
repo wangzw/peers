@@ -9,12 +9,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// peerAssembler builds pairing and link and connects them to each other and to
-// the Broker's peer surfaces. It only constructs instances: Run binds the
-// listener and starts link after the local socket is ready.
-//
-// The three constructor seams exist so unit tests can substitute doubles; the
-// production values are newPeerAssembler's defaults.
+// peerAssembler builds pairing and link and connects them to the Broker's peer
+// surfaces. It only constructs instances; Run binds the listener and starts link
+// after the local socket is ready.
 type peerAssembler struct {
 	openPairing func(t pairing.Transport) (PeerStore, *pairing.Pairing, error)
 	newLink     func(opts link.Options) (*link.Link, error)
@@ -23,7 +20,6 @@ type peerAssembler struct {
 
 var _ Assembler = (*peerAssembler)(nil)
 
-// newPeerAssembler returns the production assembler.
 func newPeerAssembler() *peerAssembler {
 	return &peerAssembler{
 		openPairing: func(t pairing.Transport) (PeerStore, *pairing.Pairing, error) {
@@ -44,16 +40,15 @@ func newPeerAssembler() *peerAssembler {
 func (*peerAssembler) Name() string { return "pairing and link" }
 
 // Assemble opens pairing, wires broker.alias into it, builds link over the same
-// pairing instance, binds the late transport, and fills both Deps and the
-// Assembly. The alias wiring happens before link exists so no link can
-// handshake while pairing's alias cache is still empty.
+// pairing instance, binds the late transport, and fills Deps and Assembly. The
+// alias is wired before link exists so no link can handshake with an empty alias
+// cache.
 func (a *peerAssembler) Assemble(ctx context.Context, cfg ConfigSource, deps *Deps, asm *Assembly) ([]Component, error) {
 	lt := &lateTransport{}
 	store, concrete, err := a.openPairing(lt)
 	if err != nil {
-		// Only the identity files and the peer table live in the data
-		// directory. A configuration read failure in this package is a
-		// different class and stays fatal.
+		// Only the identity and the peer table live in the data directory; a
+		// configuration failure here stays fatal.
 		switch {
 		case errors.Is(err, pairing.ErrIdentity):
 			err = wrapDataUnavailable(dataKindIdentity, err)

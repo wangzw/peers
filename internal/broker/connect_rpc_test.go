@@ -21,9 +21,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// connectHandlerDone signals once the Connect handler has returned. A client
-// that cancels its own context sees Canceled before the server handler finishes,
-// so a test that asserts on the audit log has to wait for this signal first.
+// connectHandlerDone signals once the Connect handler has returned; a client
+// that cancels its own context sees Canceled before the server handler
+// finishes, so a test asserting on the audit log waits for this signal first.
 func connectHandlerDone() (grpc.ServerOption, <-chan struct{}) {
 	done := make(chan struct{})
 	var once sync.Once
@@ -37,8 +37,6 @@ func connectHandlerDone() (grpc.ServerOption, <-chan struct{}) {
 	return opt, done
 }
 
-// waitConnectHandlerDone waits for the Connect handler to return, failing the
-// test if it does not within the deadline.
 func waitConnectHandlerDone(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
@@ -48,7 +46,6 @@ func waitConnectHandlerDone(t *testing.T, done <-chan struct{}) {
 	}
 }
 
-// callTestConnect performs one Connect on the test Broker.
 func callTestConnect(t *testing.T, tb *testBroker, req *localpb.ConnectRequest) (*localpb.ConnectResponse, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -56,35 +53,30 @@ func callTestConnect(t *testing.T, tb *testBroker, req *localpb.ConnectRequest) 
 	return tb.client.Connect(ctx, req)
 }
 
-// connectPairingCalls copies the fake pairing's call log.
 func connectPairingCalls(p *fakePairing) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.calls...)
 }
 
-// connectKeys copies the keys the fake pairing's Connect received.
 func connectKeys(p *fakePairing) []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return append([]string(nil), p.keys...)
 }
 
-// connectLinkCalls copies the fake link's Kick and Drop log.
 func connectLinkCalls(l *fakePeerLinks) []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return append([]string(nil), l.calls...)
 }
 
-// connectAuditEvents copies every audit event the fake config received.
 func connectAuditEvents(tb *testBroker) []config.Event {
 	tb.cfg.mu.Lock()
 	defer tb.cfg.mu.Unlock()
 	return append([]config.Event(nil), tb.cfg.audits...)
 }
 
-// connectSuccessPeer is the peer a successful pairing reports.
 func connectSuccessPeer() pairing.Peer {
 	return pairing.Peer{
 		Fingerprint: fp(7),
@@ -94,16 +86,15 @@ func connectSuccessPeer() pairing.Peer {
 	}
 }
 
-// connectFunc returns a connectFn that reports the given result.
 func connectFunc(peer pairing.Peer, shownHost string, err error) func(context.Context, string, string, string) (pairing.Peer, string, error) {
 	return func(context.Context, string, string, string) (pairing.Peer, string, error) {
 		return peer, shownHost, err
 	}
 }
 
+// TestConnectPassesArgumentsThrough checks that the address, the pairing key
+// and the local alias reach pairing unchanged.
 func TestConnectPassesArgumentsThrough(t *testing.T) {
-	// REQ-broker-pairing-010: both address forms, the pairing key and the local
-	// alias go to pairing unchanged.
 	p := &fakePairing{connectFn: connectFunc(connectSuccessPeer(), "", nil)}
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
 
@@ -124,9 +115,9 @@ func TestConnectPassesArgumentsThrough(t *testing.T) {
 	}
 }
 
+// TestConnectSuccessResponse checks that a successful Connect returns the
+// effective alias, the fingerprint and the shown host, and kicks the link.
 func TestConnectSuccessResponse(t *testing.T) {
-	// REQ-broker-pairing-010: the response carries the effective alias, the
-	// fingerprint and the host name from the address; the link is kicked.
 	p := &fakePairing{connectFn: connectFunc(connectSuccessPeer(), "hostA", nil)}
 	links := &fakePeerLinks{}
 	tb := newTestBroker(t, withPeers(p, links))
@@ -153,6 +144,8 @@ func TestConnectSuccessResponse(t *testing.T) {
 	}
 }
 
+// TestConnectAddressWithoutHostHasEmptyShownHost checks that an address without
+// a host yields an empty shown host.
 func TestConnectAddressWithoutHostHasEmptyShownHost(t *testing.T) {
 	p := &fakePairing{connectFn: connectFunc(connectSuccessPeer(), "", nil)}
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -166,9 +159,9 @@ func TestConnectAddressWithoutHostHasEmptyShownHost(t *testing.T) {
 	}
 }
 
+// TestConnectNeedsLocalAlias checks that an alias conflict returns
+// needs_local_alias without an audit record or a link call.
 func TestConnectNeedsLocalAlias(t *testing.T) {
-	// REQ-broker-pairing-004: an alias conflict is needs_local_alias, not a
-	// recorded pairing failure.
 	p := &fakePairing{connectFn: connectFunc(pairing.Peer{}, "", pairing.ErrNeedsLocalAlias)}
 	links := &fakePeerLinks{}
 	tb := newTestBroker(t, withPeers(p, links))
@@ -184,9 +177,9 @@ func TestConnectNeedsLocalAlias(t *testing.T) {
 	}
 }
 
+// TestConnectRejectedCarriesReason checks that a refusal reason reaches the
+// caller and the audit record, and the key never reaches the log.
 func TestConnectRejectedCarriesReason(t *testing.T) {
-	// REQ-broker-pairing-011: the refusal reason reaches the caller and the
-	// audit record.
 	const detailText = "the pairing key is invalid, expired or already used"
 	const address = "198.51.100.4:17443"
 	const key = "K7QF-2M9X-HT4C-PWZ3"
@@ -212,6 +205,8 @@ func TestConnectRejectedCarriesReason(t *testing.T) {
 	}
 }
 
+// TestConnectUnreachable checks that an unreachable peer returns peer_unreachable
+// and one pairing_failed record.
 func TestConnectUnreachable(t *testing.T) {
 	p := &fakePairing{connectFn: connectFunc(pairing.Peer{}, "", pairing.ErrPeerUnreachable)}
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -228,6 +223,8 @@ func TestConnectUnreachable(t *testing.T) {
 	}
 }
 
+// TestConnectInvalidAddressNotAudited checks that an invalid address returns
+// invalid_argument with no audit record or link call.
 func TestConnectInvalidAddressNotAudited(t *testing.T) {
 	p := &fakePairing{connectFn: connectFunc(pairing.Peer{}, "", pairing.ErrInvalidAddress)}
 	links := &fakePeerLinks{}
@@ -244,6 +241,8 @@ func TestConnectInvalidAddressNotAudited(t *testing.T) {
 	}
 }
 
+// TestConnectBadAgentHasNoSideEffect checks that an unknown agent id returns
+// not_registered before pairing is called.
 func TestConnectBadAgentHasNoSideEffect(t *testing.T) {
 	p := &fakePairing{connectFn: connectFunc(connectSuccessPeer(), "", nil)}
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -263,10 +262,9 @@ func TestConnectBadAgentHasNoSideEffect(t *testing.T) {
 	}
 }
 
+// TestConnectSucceededAudited checks that a successful Connect writes one
+// pairing_succeeded record naming the agent, without the pairing key.
 func TestConnectSucceededAudited(t *testing.T) {
-	// REQ-broker-config-007, REQ-broker-config-008: one pairing_succeeded
-	// record names the agent, and neither the audit nor the log carries the
-	// pairing key.
 	const key = "K7QF-2M9X-HT4C-PWZ3"
 	p := &fakePairing{connectFn: connectFunc(connectSuccessPeer(), "hostA", nil)}
 	tb := newTestBroker(t, withPeers(p, &fakePeerLinks{}))
@@ -311,6 +309,8 @@ func TestConnectSucceededAudited(t *testing.T) {
 	}
 }
 
+// TestConnectWarningsFromWarner checks that the warner's warnings are returned
+// on success and not consulted on failure.
 func TestConnectWarningsFromWarner(t *testing.T) {
 	warn := &localpb.Warning{
 		Kind:    localpb.WarningKind_WARNING_KIND_FINGERPRINT_MISMATCH,
@@ -350,6 +350,8 @@ func TestConnectWarningsFromWarner(t *testing.T) {
 	})
 }
 
+// TestConnectCanceled checks that a canceled request returns Canceled and writes
+// no audit record.
 func TestConnectCanceled(t *testing.T) {
 	p := &fakePairing{connectFn: connectFunc(pairing.Peer{}, "", context.Canceled)}
 	opt, handlerDone := connectHandlerDone()
@@ -367,9 +369,9 @@ func TestConnectCanceled(t *testing.T) {
 	}
 }
 
+// TestConnectCancellationReachesPairing checks that a canceled request context
+// reaches pairing instead of dialing on a detached context.
 func TestConnectCancellationReachesPairing(t *testing.T) {
-	// The request context has to reach pairing: a canceled call must make the
-	// in-flight Connect return instead of dialing on a detached context.
 	started := make(chan struct{})
 	returned := make(chan struct{})
 	p := &fakePairing{connectFn: func(ctx context.Context, _, _, _ string) (pairing.Peer, string, error) {
@@ -417,6 +419,8 @@ func TestConnectCancellationReachesPairing(t *testing.T) {
 	}
 }
 
+// TestConnectWithoutPairing checks that Connect returns internal when no pairing
+// is wired in.
 func TestConnectWithoutPairing(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) { d.PeerLinks = &fakePeerLinks{} })
 
@@ -424,6 +428,8 @@ func TestConnectWithoutPairing(t *testing.T) {
 	wantErrorDetail(t, err, localpb.ErrorCode_ERROR_CODE_INTERNAL)
 }
 
+// TestConnectWithoutPeerLinks checks that Connect returns internal and does not
+// call pairing when the link is missing.
 func TestConnectWithoutPeerLinks(t *testing.T) {
 	p := &fakePairing{}
 	tb := newTestBroker(t, func(d *Deps) { d.Pairing = p })

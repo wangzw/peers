@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// TestInboundLimitIntervalUsesTestOverride proves that a peers_testenv build
-// reads PEERS_TEST_INBOUND_LIMIT_INTERVAL as a Go duration.
+// TestInboundLimitIntervalUsesTestOverride checks that a peers_testenv build reads PEERS_TEST_INBOUND_LIMIT_INTERVAL as a Go duration.
 func TestInboundLimitIntervalUsesTestOverride(t *testing.T) {
 	t.Setenv(testInboundLimitIntervalEnv, "1h")
 	if got, want := inboundLimitInterval(), time.Hour; got != want {
@@ -16,8 +15,7 @@ func TestInboundLimitIntervalUsesTestOverride(t *testing.T) {
 	}
 }
 
-// TestInboundLimitIntervalFallsBackWhenInvalid proves that an unset, unparsable
-// or non-positive PEERS_TEST_INBOUND_LIMIT_INTERVAL keeps the release default.
+// TestInboundLimitIntervalFallsBackWhenInvalid checks that an unset, unparsable or non-positive override keeps the release default.
 func TestInboundLimitIntervalFallsBackWhenInvalid(t *testing.T) {
 	for _, value := range []string{"", "not-a-duration", "5", "0s", "-1s"} {
 		t.Run(value, func(t *testing.T) {

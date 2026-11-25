@@ -18,8 +18,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// nameOwnerTest is a Broker built only for the name ownership table: no local
-// interface, a fake clock and a data directory that may be empty.
 type nameOwnerTest struct {
 	b     *Broker
 	clock *fakeClock
@@ -27,8 +25,6 @@ type nameOwnerTest struct {
 	cfg   *fakeConfig
 }
 
-// nameOwnerConfig reports dataDir as the data directory on top of the fake
-// configuration. The rest of ConfigSource is unchanged.
 type nameOwnerConfig struct {
 	*fakeConfig
 	dataDir string
@@ -45,8 +41,6 @@ func newNameOwnerTest(t *testing.T, dataDir string) *nameOwnerTest {
 	return newNameOwnerTestAt(t, dataDir, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
-// newNameOwnerTestAt builds the same Broker with the clock starting at now, so
-// a restart test can reboot at the moment the previous Broker stopped.
 func newNameOwnerTestAt(t *testing.T, dataDir string, now time.Time) *nameOwnerTest {
 	t.Helper()
 	clock := newFakeClock(now)
@@ -68,9 +62,7 @@ func newNameOwnerTestAt(t *testing.T, dataDir string, now time.Time) *nameOwnerT
 	return &nameOwnerTest{b: b, clock: clock, logs: logs, cfg: cfg}
 }
 
-// addNameOwnerAgent inserts an agent into the table without going through
-// registration, so a test can build a multi-account table. Callers must hold
-// Broker.mu.
+// addNameOwnerAgent adds an agent to b's table. Callers must hold Broker.mu.
 func addNameOwnerAgent(b *Broker, name string, uid uint32, seq uint64) AgentID {
 	id := AgentID(fmt.Sprintf("%064x", seq+1))
 	b.agents[id] = &agent{
@@ -85,7 +77,6 @@ func addNameOwnerAgent(b *Broker, name string, uid uint32, seq uint64) AgentID {
 	return id
 }
 
-// removeNameOwnerAgent takes an agent out through the real unregistration path.
 func removeNameOwnerAgent(b *Broker, id AgentID) {
 	b.mu.Lock()
 	a := b.agents[id]
@@ -97,29 +88,20 @@ func removeNameOwnerAgent(b *Broker, id AgentID) {
 	b.unlockAndNotify(stops)
 }
 
-// recordNameOwner records name for a test account whose key is its uid, the way
-// a real account counts.
 func recordNameOwner(b *Broker, name string, uid uint32) {
 	recordNameOwnerKey(b, name, uid, uid)
 }
 
-// recordNameOwnerKey records name for uid counting it against key, so a test
-// can make uids with no account entry share unknownAccountKey.
 func recordNameOwnerKey(b *Broker, name string, uid, key uint32) {
 	b.mu.Lock()
 	b.recordNameOwnerLocked(name, uid, key, b.deps.Clock.Now())
 	b.mu.Unlock()
 }
 
-// seedNameOwner writes an entry directly, as a table loaded from disk would
-// hold it, and marks the table dirty. A file without account_key is counted by
-// uid, so the seeded record's key is its uid.
 func seedNameOwner(b *Broker, name string, uid uint32, at time.Time) {
 	seedNameOwnerKey(b, name, uid, uid, at)
 }
 
-// seedNameOwnerKey writes an entry that counts against key, so a test can seed
-// one written for a uid with no account entry.
 func seedNameOwnerKey(b *Broker, name string, uid, key uint32, at time.Time) {
 	b.mu.Lock()
 	b.nameOwners.records[name] = nameOwnerRecord{uid: uid, key: key, lastHeld: at}
@@ -134,7 +116,6 @@ func nameOwnerEntry(b *Broker, name string) (uid uint32, lastHeld time.Time, ok 
 	return rec.uid, rec.lastHeld, ok
 }
 
-// nameOwnerKey returns the account key an entry counts against.
 func nameOwnerKey(b *Broker, name string) (key uint32, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -147,8 +128,8 @@ func (tb *testBroker) nameOwnerEntry(t *testing.T, name string) (uid uint32, las
 	return nameOwnerEntry(tb.b, name)
 }
 
-// TestNameOwnerKeepsFirstAccount covers the rule that a second account
-// registering a name after the owner left does not take it over.
+// TestNameOwnerKeepsFirstAccount checks that a second account registering a name
+// after the owner left does not take it over.
 func TestNameOwnerKeepsFirstAccount(t *testing.T) {
 	nb := newNameOwnerTest(t, "")
 	b := nb.b
@@ -161,7 +142,6 @@ func TestNameOwnerKeepsFirstAccount(t *testing.T) {
 
 	removeNameOwnerAgent(b, first)
 
-	// uid 1001 has just left; uid 1002 registers the same name.
 	b.mu.Lock()
 	addNameOwnerAgent(b, "worker", 1002, 2)
 	b.mu.Unlock()
@@ -280,8 +260,6 @@ func TestNameOwnerLimitEvictsOldestIdle(t *testing.T) {
 		}
 	}
 
-	// Hold e2, then ask for a second new name: e3 is the oldest idle entry and
-	// must go, while the held e2 stays.
 	b.mu.Lock()
 	addNameOwnerAgent(b, "e2", 1001, 2)
 	b.mu.Unlock()
@@ -383,9 +361,7 @@ func TestNameOwnerQuotaIsPerAccount(t *testing.T) {
 }
 
 // TestNameOwnerUnknownUIDsShareLimit checks that uids with no account entry
-// count against one shared account key: N such uids get one account's share of
-// the table between them, not N shares. Counting by uid would record every one
-// of them, so the old rule fails this test.
+// share one account's quota under the unknown-account bucket.
 func TestNameOwnerUnknownUIDsShareLimit(t *testing.T) {
 	resetUsernameCache(t)
 	lookupUsername = func(uint32) (accountdb.User, error) {
@@ -416,8 +392,6 @@ func TestNameOwnerUnknownUIDsShareLimit(t *testing.T) {
 		names = append(names, name)
 	}
 
-	// Every entry is idle, so each name past the shared share evicts the oldest
-	// one and exactly the last limit names remain.
 	want := append([]string(nil), names[len(names)-limit:]...)
 
 	b.mu.Lock()
@@ -473,8 +447,6 @@ func TestNameOwnerPersistsAndReloads(t *testing.T) {
 	nb.clock.Advance(30 * time.Minute)
 	writeAt := nb.clock.Now()
 
-	// A third entry at the new instant triggers a write. The held entry must
-	// be stored with the write time, the idle entry with its last held time.
 	seedNameOwner(b, "yankee", 1002, writeAt)
 	nb.b.Stop()
 
@@ -527,7 +499,6 @@ func TestNameOwnerPersistsAndReloads(t *testing.T) {
 		t.Fatalf("second account last_held = %q, want %q", got, want)
 	}
 
-	// A new Broker with the same data directory reads the table back.
 	reloaded := newNameOwnerTest(t, dataDir)
 	for _, tc := range []struct {
 		name string
@@ -712,10 +683,8 @@ func TestNameOwnerLastHeldOnUnregister(t *testing.T) {
 	}
 }
 
-// TestNameOwnerHeldEntrySurvivesRestart registers a name, keeps it held for
-// eight days across the hourly sweeps, stops the Broker and starts a new one.
-// The account that registers first after the restart must not take the name:
-// the sweeps kept the last held time on disk fresh.
+// TestNameOwnerHeldEntrySurvivesRestart checks that the hourly sweeps keep a
+// held name's last-held time fresh so a restart does not release it.
 func TestNameOwnerHeldEntrySurvivesRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	nb := newNameOwnerTest(t, dataDir)
@@ -729,14 +698,11 @@ func TestNameOwnerHeldEntrySurvivesRestart(t *testing.T) {
 	// because a still-pending first write happens to carry a fresh timestamp.
 	b.flushNameOwners()
 
-	// Advance one hour at a time so every hourly sweep runs.
 	for i := 0; i < 8*24; i++ {
 		nb.clock.Advance(time.Hour)
 	}
 	b.Stop()
 
-	// Reboot at the moment the previous Broker stopped; uid 1002 registers
-	// worker first.
 	restarted := newNameOwnerTestAt(t, dataDir, nb.clock.Now())
 	restarted.b.mu.Lock()
 	addNameOwnerAgent(restarted.b, "worker", 1002, 5)
@@ -789,8 +755,6 @@ func TestNameOwnerExpiryOnListPushesAgentChanged(t *testing.T) {
 	rs := startRegistration(t, tb, fake)
 	id := AgentID(rs.complete(eventTimeout).GetAgentId())
 
-	// A departed account owns the name, one minute short of the retention. The
-	// recompute makes this agent pinned and pushes one agent_changed.
 	tb.b.mu.Lock()
 	tb.b.nameOwners.records["worker"] = nameOwnerRecord{
 		uid:      9999,

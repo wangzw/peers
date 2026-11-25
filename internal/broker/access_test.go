@@ -18,24 +18,19 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// accessTestConfigPath is the configuration file path every test checker sees.
 const accessTestConfigPath = "/fake/config.yaml"
 
-// accessCallerContext builds a context carrying a caller identity the way a
-// local connection would.
 func accessCallerContext(uid uint32, username string) context.Context {
 	info := &callerAuthInfo{caller: Caller{UID: uid, GID: uid, Username: username}}
 	return peer.NewContext(context.Background(), &peer.Peer{AuthInfo: info})
 }
 
-// accessCheckCall records one call the fake checker received.
 type accessCheckCall struct {
 	who  Caller
 	path string
 	need Access
 }
 
-// fakeAccessChecker records every decision it is asked for.
 type fakeAccessChecker struct {
 	granted bool
 	err     error
@@ -47,7 +42,6 @@ func (c *fakeAccessChecker) Check(_ context.Context, who Caller, path string, ne
 	return c.granted, c.err
 }
 
-// accessErrorCode returns the localpb error code carried by err.
 func accessErrorCode(t *testing.T, err error) localpb.ErrorCode {
 	t.Helper()
 	if err == nil {
@@ -66,7 +60,6 @@ func accessErrorCode(t *testing.T, err error) localpb.ErrorCode {
 	return localpb.ErrorCode_ERROR_CODE_UNSPECIFIED
 }
 
-// accessStreamStub is the smallest grpc.ServerStream these tests need.
 type accessStreamStub struct {
 	ctx context.Context
 }
@@ -78,20 +71,20 @@ func (s *accessStreamStub) Context() context.Context     { return s.ctx }
 func (s *accessStreamStub) SendMsg(any) error            { return nil }
 func (s *accessStreamStub) RecvMsg(any) error            { return nil }
 
-// runAccessUnary drives one unary interceptor the way gRPC would.
 func runAccessUnary(interceptor grpc.UnaryServerInterceptor, ctx context.Context, method string, handler grpc.UnaryHandler) error {
 	_, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{FullMethod: method}, handler)
 	return err
 }
 
-// runAccessStream drives one stream interceptor the way gRPC would.
 func runAccessStream(interceptor grpc.StreamServerInterceptor, ctx context.Context, method string, handler grpc.StreamHandler) error {
 	return interceptor(nil, &accessStreamStub{ctx: ctx}, &grpc.StreamServerInfo{FullMethod: method}, handler)
 }
 
-// accessPath is the configPath function passed to interceptors under test.
 func accessPath() string { return accessTestConfigPath }
 
+// TestMethodAccessCoversServiceDesc checks that every call in the Local service
+// has an access rule and that the system checker accepts every rule that needs
+// a permission.
 func TestMethodAccessCoversServiceDesc(t *testing.T) {
 	want := len(localpb.Local_ServiceDesc.Methods) + len(localpb.Local_ServiceDesc.Streams)
 	if len(methodAccess) != want {
@@ -110,9 +103,6 @@ func TestMethodAccessCoversServiceDesc(t *testing.T) {
 		}
 	}
 
-	// The system form installs systemChecker. Every rule that needs a
-	// permission must be expressible through it; a rule it does not recognize
-	// would answer internal instead of checking the configuration file.
 	t.Run("system mode", func(t *testing.T) {
 		access := &fakeHelperAccess{}
 		checker := systemChecker{c: access}
@@ -132,9 +122,8 @@ func TestMethodAccessCoversServiceDesc(t *testing.T) {
 	})
 }
 
-// TestAccessRulesMatchDesign covers REQ-broker-config-021, REQ-broker-config-022
-// and REQ-broker-config-023: each Local RPC needs the permission the design
-// lists.
+// TestAccessRulesMatchDesign checks the permission every Local RPC requires
+// against the documented table.
 func TestAccessRulesMatchDesign(t *testing.T) {
 	want := map[string]accessRule{
 		localpb.Local_Hello_FullMethodName:            {need: AccessNone},
@@ -170,8 +159,8 @@ func TestAccessRulesMatchDesign(t *testing.T) {
 	}
 }
 
-// TestNoneMethodsSkipChecker covers REQ-broker-config-023: registration,
-// listing and messaging do not need permission on the configuration file.
+// TestNoneMethodsSkipChecker checks that calls needing no permission reach the
+// handler without consulting the checker.
 func TestNoneMethodsSkipChecker(t *testing.T) {
 	none := []string{
 		localpb.Local_Hello_FullMethodName,
@@ -216,8 +205,8 @@ func TestNoneMethodsSkipChecker(t *testing.T) {
 	}
 }
 
-// TestWriteDeniedDoesNotReachHandler covers REQ-broker-config-021: without
-// write permission a writing RPC is rejected and the handler does not run.
+// TestWriteDeniedDoesNotReachHandler checks that a writing call without write
+// permission is rejected and its handler does not run.
 func TestWriteDeniedDoesNotReachHandler(t *testing.T) {
 	methods := []string{
 		localpb.Local_SetConfig_FullMethodName,
@@ -272,8 +261,8 @@ func TestWriteDeniedDoesNotReachHandler(t *testing.T) {
 	}
 }
 
-// TestReadDenied covers REQ-broker-config-022 and REQ-broker-config-009:
-// without read permission GetConfig and the Audit stream are rejected.
+// TestReadDenied checks that GetConfig and the Audit stream are rejected
+// without read permission.
 func TestReadDenied(t *testing.T) {
 	ctx := accessCallerContext(1000, "alice")
 	checker := &fakeAccessChecker{granted: false}
@@ -318,8 +307,8 @@ func TestReadDenied(t *testing.T) {
 	}
 }
 
-// TestStatusDeniedIsFiltered covers REQ-broker-config-010: without read
-// permission Status returns only the caller's own agents.
+// TestStatusDeniedIsFiltered checks that Status is answered without read
+// permission and its handler sees the decision.
 func TestStatusDeniedIsFiltered(t *testing.T) {
 	for _, granted := range []bool{false, true} {
 		t.Run(fmt.Sprintf("granted=%v", granted), func(t *testing.T) {
@@ -347,9 +336,9 @@ func TestStatusDeniedIsFiltered(t *testing.T) {
 	}
 }
 
+// TestCheckerErrorIsInternal checks that a failing checker is answered internal
+// rather than permission_denied.
 func TestCheckerErrorIsInternal(t *testing.T) {
-	// A refused faccessat2 (EPERM) is a broken check, not a denial: the
-	// interceptor must answer internal instead of permission_denied.
 	checker := &fakeAccessChecker{err: fmt.Errorf("helper: access check: %w", unix.EPERM)}
 	handled := 0
 	err := runAccessUnary(accessUnaryInterceptor(checker, accessPath),
@@ -376,9 +365,8 @@ func TestCheckerErrorIsInternal(t *testing.T) {
 	}
 }
 
-// TestCheckerNoSlotIsQuotaExceeded covers the refusal when every permission
-// check slot is taken: the Broker is running and busy, so the call is a quota
-// refusal with a sentence the model can act on, not an internal failure.
+// TestCheckerNoSlotIsQuotaExceeded checks that a checker out of slots is
+// answered quota_exceeded, not internal.
 func TestCheckerNoSlotIsQuotaExceeded(t *testing.T) {
 	checker := &fakeAccessChecker{err: fmt.Errorf("helper: access check: %w", helper.ErrNoCheckSlot)}
 	handled := 0
@@ -407,9 +395,8 @@ func TestCheckerNoSlotIsQuotaExceeded(t *testing.T) {
 	}
 }
 
-// TestCallerMissingIsInternal covers the branch for a context that carries no
-// caller identity: every RPC that needs a permission is answered internal
-// before the checker runs.
+// TestCallerMissingIsInternal checks that a call needing a permission without a
+// caller identity is answered internal before the checker runs.
 func TestCallerMissingIsInternal(t *testing.T) {
 	checker := &fakeAccessChecker{granted: true}
 	handled := 0
@@ -487,6 +474,8 @@ func TestStreamHandlerGetsDecidedContext(t *testing.T) {
 	}
 }
 
+// TestUnknownMethodIsInternal checks that a method outside the table is
+// answered internal.
 func TestUnknownMethodIsInternal(t *testing.T) {
 	handled := 0
 	err := runAccessUnary(accessUnaryInterceptor(&fakeAccessChecker{granted: true}, accessPath),
@@ -510,6 +499,8 @@ func TestUnknownMethodIsInternal(t *testing.T) {
 	}
 }
 
+// TestAllowAllAccess checks that the user Broker's checker allows both read and
+// write for any path.
 func TestAllowAllAccess(t *testing.T) {
 	checker := allowAllAccess{}
 	for _, need := range []Access{AccessRead, AccessWrite} {

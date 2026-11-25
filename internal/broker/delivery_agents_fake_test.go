@@ -12,21 +12,17 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// fakeAgents is a localAgents fake backed by a map of agentViews. Its Reread
-// mirrors the parts of Broker.rereadAgent the delivery path depends on: an
+// fakeAgents is a localAgents fake whose Reread mirrors Broker.rereadAgent: an
 // unknown or vanished record is errAgentGone, a partial record keeps the last
-// good snapshot, and a complete record replaces the snapshot with the
-// normalized name the record carries.
+// snapshot, and a complete record replaces it with the normalized name.
 type fakeAgents struct {
 	mu   sync.Mutex
 	byID map[string]agentView
-	// rereadErr forces the result of Reread for an ID: a non-nil error is
-	// handled like the matching inbox.Reread result, and nil reports a
-	// successful reread that returns the current snapshot unchanged.
+	// rereadErr forces Reread's result for an ID; nil reports a successful reread
+	// returning the current snapshot.
 	rereadErr map[string]error
 }
 
-// newFakeAgents returns a fakeAgents holding views, keyed by ID.
 func newFakeAgents(views ...agentView) *fakeAgents {
 	f := &fakeAgents{byID: make(map[string]agentView, len(views))}
 	for _, view := range views {
@@ -72,8 +68,8 @@ func (f *fakeAgents) Reread(id string) (agentView, error) {
 	return f.applyRereadLocked(id, view, next, err)
 }
 
-// applyRereadLocked stores the reread result the way Broker.refreshAgent
-// treats it. Callers must hold f.mu.
+// applyRereadLocked stores the reread result as Broker.refreshAgent does; f.mu
+// must be held.
 func (f *fakeAgents) applyRereadLocked(id string, view agentView, next inbox.Session, err error) (agentView, error) {
 	switch {
 	case err == nil:
@@ -91,10 +87,6 @@ func (f *fakeAgents) applyRereadLocked(id string, view agentView, next inbox.Ses
 	}
 }
 
-// testAgent builds an empty-table snapshot for socketPath. The ID is derived
-// the way the Broker derives Agent IDs, and the ref is the shortest prefix the
-// table assigns to a unique name. Session carries only the socket path; use
-// liveTestAgent when the record must be readable.
 func testAgent(name, socketPath string) agentView {
 	sum := sha256.Sum256([]byte("session:" + socketPath))
 	id := hex.EncodeToString(sum[:])
@@ -107,9 +99,6 @@ func testAgent(name, socketPath string) agentView {
 	}
 }
 
-// liveTestAgent returns testAgent for a running fakesession, with Session
-// replaced by the record inbox.Lookup reads so that fakeAgents.Reread can
-// follow the record.
 func liveTestAgent(t *testing.T, fake *fakesession.Fake, name string) agentView {
 	t.Helper()
 	view := testAgent(name, fake.SocketPath())
@@ -123,10 +112,8 @@ func liveTestAgent(t *testing.T, fake *fakesession.Fake, name string) agentView 
 
 var _ localAgents = (*fakeAgents)(nil)
 
-// TestFakeAgentsRereadGone checks that the fake reports a removed record the
-// same way the Broker does. A fake that kept returning the last snapshot would
-// make the delivery tests that depend on an Agent disappearing pass for the
-// wrong reason.
+// TestFakeAgentsRereadGone checks that the fake reports a removed record as
+// errAgentGone, as the Broker does.
 func TestFakeAgentsRereadGone(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
 	view := liveTestAgent(t, fake, "api-worker")
@@ -139,9 +126,8 @@ func TestFakeAgentsRereadGone(t *testing.T) {
 	}
 }
 
-// TestFakeAgentsRereadRenamed checks that the fake applies the record's new
-// name through inbox.NormalizeName, as the Broker does. A fake that kept the
-// old name would hide rename bugs in the delivery tests.
+// TestFakeAgentsRereadRenamed checks that the fake applies a renamed record's new
+// name through inbox.NormalizeName.
 func TestFakeAgentsRereadRenamed(t *testing.T) {
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
 	view := liveTestAgent(t, fake, "api-worker")

@@ -6,8 +6,7 @@ import (
 )
 
 // TestRunSetsListenOverride checks that Run copies RunOptions.Listen into
-// Deps.ListenOverride after Load, so the assemblers and the broker built from
-// the same Deps see the --listen value this run started with.
+// Deps.ListenOverride after Load.
 func TestRunSetsListenOverride(t *testing.T) {
 	cases := []struct {
 		name   string

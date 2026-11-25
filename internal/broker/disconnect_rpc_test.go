@@ -11,8 +11,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// disconnectTestPeer builds a dialer peer with the given fingerprint and
-// self-reported alias.
 func disconnectTestPeer(f pairing.Fingerprint, alias string) pairing.Peer {
 	return pairing.Peer{Fingerprint: f, Alias: alias, Role: pairing.RoleDialer}
 }
@@ -38,8 +36,8 @@ func disconnectHasCall(calls []string, want string) bool {
 	return false
 }
 
+// TestDisconnectByAlias checks that Disconnect by alias unpairs the peer.
 func TestDisconnectByAlias(t *testing.T) {
-	// REQ-broker-pairing-021: disconnecting a peer removes the pairing.
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}
 	tb := newTestBroker(t, withPeers(p, l))
@@ -55,9 +53,9 @@ func TestDisconnectByAlias(t *testing.T) {
 	}
 }
 
+// TestDisconnectByFingerprint checks that a full fingerprint identifies the peer
+// without its alias.
 func TestDisconnectByFingerprint(t *testing.T) {
-	// REQ-broker-pairing-021: the fingerprint identifies the peer when its
-	// effective alias is not at hand.
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}
 	tb := newTestBroker(t, withPeers(p, l))
@@ -71,6 +69,8 @@ func TestDisconnectByFingerprint(t *testing.T) {
 	}
 }
 
+// TestDisconnectUnknown checks that an unknown alias, fingerprint, prefix or
+// non-hex value returns not_found without unpairing.
 func TestDisconnectUnknown(t *testing.T) {
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}
@@ -97,6 +97,8 @@ func TestDisconnectUnknown(t *testing.T) {
 	}
 }
 
+// TestDisconnectEmpty checks that an empty broker reference returns
+// invalid_argument.
 func TestDisconnectEmpty(t *testing.T) {
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}
@@ -109,9 +111,9 @@ func TestDisconnectEmpty(t *testing.T) {
 	}
 }
 
+// TestDisconnectDoesNotDropDirectly checks that the handler leaves link closing
+// to pairing and never drops the link itself.
 func TestDisconnectDoesNotDropDirectly(t *testing.T) {
-	// The link is closed by pairing through the injected Transport.Drop, not by
-	// the handler.
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}
 	tb := newTestBroker(t, withPeers(p, l))
@@ -126,9 +128,9 @@ func TestDisconnectDoesNotDropDirectly(t *testing.T) {
 	}
 }
 
+// TestDisconnectAuditsAliasBeforeRemoval checks that the unpaired record names
+// the peer by its alias from before removal.
 func TestDisconnectAuditsAliasBeforeRemoval(t *testing.T) {
-	// REQ-broker-config-007: the unpaired record names the peer by the alias it
-	// had before removal.
 	p := &fakePairing{peers: []pairing.Peer{
 		{Fingerprint: fp(2), Alias: "hostB", LocalAlias: "lab-b", Role: pairing.RoleDialer},
 	}}
@@ -162,6 +164,8 @@ func TestDisconnectAuditsAliasBeforeRemoval(t *testing.T) {
 	}
 }
 
+// TestDisconnectUnpairErrorNotAudited checks that a failed Unpair returns
+// internal and writes no unpaired record.
 func TestDisconnectUnpairErrorNotAudited(t *testing.T) {
 	p := &fakePairing{
 		peers:     []pairing.Peer{disconnectTestPeer(fp(2), "hostB")},
@@ -177,6 +181,8 @@ func TestDisconnectUnpairErrorNotAudited(t *testing.T) {
 	}
 }
 
+// TestDisconnectBadAgentNoSideEffect checks that an unknown agent id returns
+// not_registered before any pairing call or audit.
 func TestDisconnectBadAgentNoSideEffect(t *testing.T) {
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}
@@ -192,6 +198,8 @@ func TestDisconnectBadAgentNoSideEffect(t *testing.T) {
 	}
 }
 
+// TestResolvePeerRef checks alias and fingerprint resolution and the rejection
+// of empty, unknown and prefix references.
 func TestResolvePeerRef(t *testing.T) {
 	p := &fakePairing{peers: []pairing.Peer{
 		disconnectTestPeer(fp(2), "hostB"),
@@ -236,9 +244,8 @@ func TestResolvePeerRef(t *testing.T) {
 	}
 }
 
-// TestDisconnectForgetsInboundBuckets checks that unpairing a peer is what
-// clears its inbound quota. A link drop keeps the buckets so a reconnect cannot
-// refresh them; unpairing starts the peer over.
+// TestDisconnectForgetsInboundBuckets checks that unpairing a peer clears its
+// inbound quota.
 func TestDisconnectForgetsInboundBuckets(t *testing.T) {
 	p := &fakePairing{peers: []pairing.Peer{disconnectTestPeer(fp(2), "hostB")}}
 	l := &fakePeerLinks{}

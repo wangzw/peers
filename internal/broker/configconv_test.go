@@ -10,6 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
+// TestToConfigValueEachKind checks that every value kind converts to the
+// matching wire oneof.
 func TestToConfigValueEachKind(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -170,6 +172,8 @@ func TestToConfigValueEachKind(t *testing.T) {
 	}
 }
 
+// TestToConfigValueEmptyStringList checks that an empty string list converts
+// to an empty string_list_value.
 func TestToConfigValueEmptyStringList(t *testing.T) {
 	got := toConfigValue(config.Value{Kind: config.KindStringList})
 	if got == nil {
@@ -184,6 +188,8 @@ func TestToConfigValueEmptyStringList(t *testing.T) {
 	}
 }
 
+// TestToConfigValueCopiesStrings checks that the converted value owns a copy
+// of the string list.
 func TestToConfigValueCopiesStrings(t *testing.T) {
 	in := []string{"alpha", "beta"}
 	got := toConfigValue(config.Value{Kind: config.KindStringList, Strings: in})
@@ -195,6 +201,8 @@ func TestToConfigValueCopiesStrings(t *testing.T) {
 	}
 }
 
+// TestAuditEventKindMappingIsComplete checks that every audit event kind maps
+// to a distinct wire kind and an unknown kind to UNSPECIFIED.
 func TestAuditEventKindMappingIsComplete(t *testing.T) {
 	kinds := []config.EventKind{
 		config.EventConfigSet,
@@ -230,11 +238,8 @@ func TestAuditEventKindMappingIsComplete(t *testing.T) {
 	}
 }
 
-// TestUpdateAuditEventNumbersMatchTheProtocol pins the numbers the update
-// events were assigned on the local protocol. The audit log and the design use
-// the event names; the numbers are what a peer that reads the wire sees, so a
-// renumbering must be a deliberate protocol change rather than a side effect
-// of editing the enum.
+// TestUpdateAuditEventNumbersMatchTheProtocol checks that the update audit
+// events keep their assigned local-protocol numbers.
 func TestUpdateAuditEventNumbersMatchTheProtocol(t *testing.T) {
 	cases := []struct {
 		kind   config.EventKind
@@ -254,9 +259,8 @@ func TestUpdateAuditEventNumbersMatchTheProtocol(t *testing.T) {
 	}
 }
 
-// TestToAuditEventSecretChange covers REQ-broker-config-006 and
-// REQ-broker-config-008: a secret key change is audited without either value,
-// so the key itself never reaches the audit stream.
+// TestToAuditEventSecretChange checks that a secret key change is audited
+// without either value.
 func TestToAuditEventSecretChange(t *testing.T) {
 	got := toAuditEvent(config.Event{
 		Event: config.EventConfigFileChanged,
@@ -276,6 +280,8 @@ func TestToAuditEventSecretChange(t *testing.T) {
 	}
 }
 
+// TestToAuditEventPeerAndCount checks that the peer reference, count and time
+// survive the conversion.
 func TestToAuditEventPeerAndCount(t *testing.T) {
 	var fingerprint [32]byte
 	for i := range fingerprint {
@@ -310,9 +316,8 @@ func TestToAuditEventPeerAndCount(t *testing.T) {
 	}
 }
 
-// TestToAuditEventCopiesOldAndNewValues uses two values that differ in kind
-// and content, so an implementation that drops one of them, swaps them or
-// writes the old value into both fields cannot pass.
+// TestToAuditEventCopiesOldAndNewValues checks that the old and new values are
+// converted into separate wire values.
 func TestToAuditEventCopiesOldAndNewValues(t *testing.T) {
 	old := config.Value{Kind: config.KindString, String: "old.example:17443"}
 	newValue := config.Value{Kind: config.KindInt, Int: 17444}
@@ -340,6 +345,8 @@ func TestToAuditEventCopiesOldAndNewValues(t *testing.T) {
 	}
 }
 
+// TestToAuditEventCopiesActorAccountDetail checks that actor, account and
+// detail survive the conversion.
 func TestToAuditEventCopiesActorAccountDetail(t *testing.T) {
 	got := toAuditEvent(config.Event{
 		Event:   config.EventConfigSet,
@@ -358,6 +365,8 @@ func TestToAuditEventCopiesActorAccountDetail(t *testing.T) {
 	}
 }
 
+// TestConfigErrorCode checks that each configuration sentinel maps to the
+// expected wire error code, wrapped or not.
 func TestConfigErrorCode(t *testing.T) {
 	tests := []struct {
 		name string

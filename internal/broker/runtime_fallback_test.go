@@ -7,9 +7,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestRunLogsRuntimeDirFallback covers the startup notice: when the preferred
-// runtime directory belongs to another account and the fallback is used, the
-// run log names the taken path, its owner and the fallback path.
+// TestRunLogsRuntimeDirFallback checks that the run log names the taken runtime
+// directory, its owner and the fallback path.
 func TestRunLogsRuntimeDirFallback(t *testing.T) {
 	rt := newRunTest(t, func(rt *runTest) {
 		rt.cfg.runtimeFallback = &config.RuntimeDirFallback{

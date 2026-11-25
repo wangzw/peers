@@ -138,8 +138,8 @@ func (Access) EnumDescriptor() ([]byte, []int) {
 	return file_internal_broker_helperpb_helper_proto_rawDescGZIP(), []int{1}
 }
 
-// Broker -> account helper. Every message is one request; id is non-zero and
-// unique among the requests still in flight on the connection.
+// Broker -> account helper request; id is non-zero and unique among the
+// requests still in flight on the connection.
 type HelperRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -630,8 +630,8 @@ func (x *DeliverRequest) GetTimeout() *durationpb.Duration {
 	return nil
 }
 
-// Cancels the Deliver request whose id is request_id. It has no response of
-// its own; the cancelled request still gets exactly one response.
+// Cancels the Deliver request whose id is request_id; it has no response of
+// its own, and the cancelled request still gets exactly one response.
 type CancelRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	RequestId     uint64                 `protobuf:"varint,1,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
@@ -676,7 +676,7 @@ func (x *CancelRequest) GetRequestId() uint64 {
 	return 0
 }
 
-// Account helper -> Broker. The first message on a connection is Ready.
+// Account helper -> Broker; the first message on a connection is Ready.
 type HelperMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Body:

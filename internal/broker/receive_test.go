@@ -16,12 +16,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// receiveMsgID is the message id every request in these tests carries unless a
-// test builds its own frame.
 const receiveMsgID = "3f2a1c4e-5b6d-4e8f-9a0b-1c2d3e4f5a6b"
 
-// receiveFixture wires a receiving delivery to the package fakes. The link is a
-// fakeNet end so a test can prove the receiver never forwards anything.
 type receiveFixture struct {
 	t        *testing.T
 	d        *delivery
@@ -91,7 +87,6 @@ func newReceiveFixture(t *testing.T, settings sendSettings, views ...agentView) 
 	}
 }
 
-// member adds one roster entry for the peer, sharing the listed topics.
 func (f *receiveFixture) member(m remoteMember, shared ...string) {
 	f.topics.remote[f.peer] = append(f.topics.remote[f.peer], deliveryRemoteEntry{
 		Member: m,
@@ -99,13 +94,10 @@ func (f *receiveFixture) member(m remoteMember, shared ...string) {
 	})
 }
 
-// share gives a local Agent the listed topics.
 func (f *receiveFixture) share(id string, topics ...string) {
 	f.topics.local[id] = topics
 }
 
-// keepReread makes Reread return the stored snapshot without consulting a
-// session record.
 func (f *receiveFixture) keepReread(id string) {
 	f.agents.mu.Lock()
 	defer f.agents.mu.Unlock()
@@ -115,7 +107,6 @@ func (f *receiveFixture) keepReread(id string) {
 	f.agents.rereadErr[id] = nil
 }
 
-// setInbox replaces one Agent's inbox writer.
 func (f *receiveFixture) setInbox(id string, w inboxWriter) {
 	f.agents.mu.Lock()
 	defer f.agents.mu.Unlock()
@@ -124,13 +115,11 @@ func (f *receiveFixture) setInbox(id string, w inboxWriter) {
 	f.agents.byID[id] = view
 }
 
-// requestFrame builds a kind-400 frame.
 func (f *receiveFixture) requestFrame(sender remoteMember, target agentView, text string, remaining time.Duration) link.Frame {
 	f.t.Helper()
 	return f.requestFrameWithID(sender, target, text, remaining, receiveMsgID)
 }
 
-// requestFrameWithID builds a kind-400 frame carrying id.
 func (f *receiveFixture) requestFrameWithID(sender remoteMember, target agentView, text string, remaining time.Duration, id string) link.Frame {
 	f.t.Helper()
 	frame, err := encodeDeliverRequest(deliverRequest{
@@ -148,8 +137,6 @@ func (f *receiveFixture) requestFrameWithID(sender remoteMember, target agentVie
 	return frame
 }
 
-// receiveMsgIDN returns the receiveMsgID with its last hexadecimal group
-// replaced, so a test can build many distinct ids that are still UUIDs.
 func receiveMsgIDN(n int) string {
 	return fmt.Sprintf("3f2a1c4e-5b6d-4e8f-9a0b-1c2d3e4f%04x", n)
 }
@@ -159,7 +146,6 @@ func (f *receiveFixture) handle(frame link.Frame) link.Frame {
 	return f.d.handleDeliver(context.Background(), f.peer, frame)
 }
 
-// wantDelivered checks that frame is a successful kind-401 result.
 func wantDelivered(t *testing.T, frame link.Frame) {
 	t.Helper()
 	detail, err := decodeDeliverResult(frame)
@@ -171,8 +157,6 @@ func wantDelivered(t *testing.T, frame link.Frame) {
 	}
 }
 
-// wantReceiveError checks that frame carries code and, when prefix is not
-// empty, a message starting with it.
 func wantReceiveError(t *testing.T, frame link.Frame, code localpb.ErrorCode, prefix string) *localpb.ErrorDetail {
 	t.Helper()
 	detail, err := decodeDeliverResult(frame)
@@ -191,9 +175,7 @@ func wantReceiveError(t *testing.T, frame link.Frame, code localpb.ErrorCode, pr
 	return detail
 }
 
-// TestReceiveDelivers checks that a valid request reaches the target session
-// with the sender's receiver-view signature and the request's message id
-// (REQ-agent-messaging-013, REQ-agent-messaging-022).
+// TestReceiveDelivers checks that a valid request reaches the target session with the sender's receiver-view signature and the request's message id.
 func TestReceiveDelivers(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	target := liveTestAgent(t, session, "frontend")
@@ -218,8 +200,7 @@ func TestReceiveDelivers(t *testing.T) {
 	}
 }
 
-// TestReceiveUsesLocalAliasForPeer checks that the signature uses this Broker's
-// effective alias for the peer (REQ-agent-messaging-022).
+// TestReceiveUsesLocalAliasForPeer checks that the signature uses this Broker's effective alias for the peer.
 func TestReceiveUsesLocalAliasForPeer(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	target := liveTestAgent(t, session, "frontend")
@@ -241,8 +222,7 @@ func TestReceiveUsesLocalAliasForPeer(t *testing.T) {
 	}
 }
 
-// TestReceiveSenderNotInRoster checks that a sender this link did not announce
-// is refused without a write.
+// TestReceiveSenderNotInRoster checks that a sender this link did not announce is refused without a write.
 func TestReceiveSenderNotInRoster(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-frontend.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -260,8 +240,7 @@ func TestReceiveSenderNotInRoster(t *testing.T) {
 	}
 }
 
-// TestReceiveSenderRefMustMatch checks that the sender's ref must match the
-// roster entry exactly.
+// TestReceiveSenderRefMustMatch checks that the sender's ref must match the roster entry exactly.
 func TestReceiveSenderRefMustMatch(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-frontend.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -273,8 +252,7 @@ func TestReceiveSenderRefMustMatch(t *testing.T) {
 	wantReceiveError(t, reply, localpb.ErrorCode_ERROR_CODE_NOT_VISIBLE, "Not sent")
 }
 
-// TestReceiveTargetNotVisibleToSender checks that a target the sender shares no
-// topic with is not written to (REQ-agent-messaging-014).
+// TestReceiveTargetNotVisibleToSender checks that a target the sender shares no topic with is not written to.
 func TestReceiveTargetNotVisibleToSender(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-frontend.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -295,8 +273,7 @@ func TestReceiveTargetNotVisibleToSender(t *testing.T) {
 	}
 }
 
-// TestReceiveAmbiguityOnlyAmongVisible checks that a duplicate name hidden from
-// the sender does not make the visible match ambiguous.
+// TestReceiveAmbiguityOnlyAmongVisible checks that a duplicate name hidden from the sender does not make the visible match ambiguous.
 func TestReceiveAmbiguityOnlyAmongVisible(t *testing.T) {
 	visible := testAgent("frontend", "/tmp/ap-receive-visible.sock")
 	hidden := testAgent("frontend", "/tmp/ap-receive-hidden.sock")
@@ -324,9 +301,7 @@ func TestReceiveAmbiguityOnlyAmongVisible(t *testing.T) {
 	}
 }
 
-// TestReceiveAmbiguousListsNoAlias checks that an ambiguous local name lists
-// every visible match without an alias and names this Broker: the receiver does
-// not know the sender's alias for it (design-broker.md:276).
+// TestReceiveAmbiguousListsNoAlias checks that an ambiguous local name lists every visible match without an alias and names this Broker.
 func TestReceiveAmbiguousListsNoAlias(t *testing.T) {
 	first := testAgent("frontend", "/tmp/ap-receive-first.sock")
 	second := testAgent("frontend", "/tmp/ap-receive-second.sock")
@@ -349,8 +324,7 @@ func TestReceiveAmbiguousListsNoAlias(t *testing.T) {
 	}
 }
 
-// TestReceiveNeverForwards checks that a target that exists only on another
-// peer is not forwarded there (architecture.md:281).
+// TestReceiveNeverForwards checks that a target that exists only on another peer is not forwarded there.
 func TestReceiveNeverForwards(t *testing.T) {
 	f := newReceiveFixture(t, defaultReceiveSettings())
 	sender := remoteMember{Name: "api-worker", Ref: "1a2b3c"}
@@ -360,8 +334,6 @@ func TestReceiveNeverForwards(t *testing.T) {
 		Topics: []string{"t1"},
 	})
 
-	// Bring the link to the other peer up first: a forwarding bug then shows up
-	// as a recorded request instead of a request that never left a down link.
 	f.net.setUp(f.self, f.other, true)
 
 	reply := f.handle(f.requestFrame(sender, agentView{Name: "elsewhere"}, "hello", time.Second))
@@ -371,9 +343,7 @@ func TestReceiveNeverForwards(t *testing.T) {
 	}
 }
 
-// TestReceiveDuplicateReturnsFirstResult checks that a second copy of the same
-// message returns the first result and is not written again
-// (REQ-agent-messaging-020).
+// TestReceiveDuplicateReturnsFirstResult checks that a second copy of the same message returns the first result and is not written again.
 func TestReceiveDuplicateReturnsFirstResult(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	target := liveTestAgent(t, session, "frontend")
@@ -392,8 +362,6 @@ func TestReceiveDuplicateReturnsFirstResult(t *testing.T) {
 	}
 }
 
-// blockingInbox blocks its first call until release or the context ends, then
-// returns nil. It records how many calls it saw.
 type blockingInbox struct {
 	mu      sync.Mutex
 	calls   int
@@ -436,8 +404,6 @@ func (b *blockingInbox) count() int {
 	return b.calls
 }
 
-// doneTrackingContext reports the first call to Done, so a test can tell that a
-// duplicate has passed the dedupe table and is waiting for the first result.
 type doneTrackingContext struct {
 	context.Context
 	once      sync.Once
@@ -449,8 +415,7 @@ func (c *doneTrackingContext) Done() <-chan struct{} {
 	return c.Context.Done()
 }
 
-// TestReceiveConcurrentDuplicates checks that concurrent copies run one write
-// and both get the first result (REQ-agent-messaging-020).
+// TestReceiveConcurrentDuplicates checks that concurrent copies run one write and both get the first result.
 func TestReceiveConcurrentDuplicates(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-concurrent.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -469,8 +434,6 @@ func TestReceiveConcurrentDuplicates(t *testing.T) {
 	waiter := &doneTrackingContext{Context: context.Background(), firstDone: make(chan struct{})}
 	go func() { replies <- f.d.handleDeliver(waiter, f.peer, frame) }()
 
-	// Release the owner only after the second copy has passed the dedupe table
-	// and is waiting for the first result.
 	select {
 	case <-waiter.firstDone:
 	case <-time.After(eventTimeout):
@@ -486,9 +449,7 @@ func TestReceiveConcurrentDuplicates(t *testing.T) {
 	}
 }
 
-// TestReceiveLinkDropDoesNotCancelWrite checks that a handler context ending
-// during the write does not make the write fail, and that the recorded result
-// is returned to a retry (design-broker.md:259).
+// TestReceiveLinkDropDoesNotCancelWrite checks that a handler context ending during the write does not make it fail, and a retry gets the recorded result.
 func TestReceiveLinkDropDoesNotCancelWrite(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-drop.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -522,8 +483,7 @@ func TestReceiveLinkDropDoesNotCancelWrite(t *testing.T) {
 	}
 }
 
-// TestReceiveInboxUnwritable checks that a certainly-not-written inbox yields
-// inbox_unwritable after InboxRetries+1 attempts (REQ-agent-messaging-018).
+// TestReceiveInboxUnwritable checks that a certainly-not-written inbox yields inbox_unwritable after InboxRetries+1 attempts.
 func TestReceiveInboxUnwritable(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-unwritable.sock")
 	settings := defaultReceiveSettings()
@@ -544,8 +504,7 @@ func TestReceiveInboxUnwritable(t *testing.T) {
 	}
 }
 
-// TestReceiveTargetEnded checks that an Agent whose record disappeared yields
-// inbox_unwritable without a write (REQ-agent-messaging-018).
+// TestReceiveTargetEnded checks that an Agent whose record disappeared yields inbox_unwritable without a write.
 func TestReceiveTargetEnded(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-ended.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -566,8 +525,7 @@ func TestReceiveTargetEnded(t *testing.T) {
 	}
 }
 
-// TestReceiveUncertain checks that an uncertain write is reported as
-// delivery_unknown and not retried (REQ-agent-messaging-027).
+// TestReceiveUncertain checks that an uncertain write is reported as delivery_unknown and not retried.
 func TestReceiveUncertain(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-uncertain.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -586,8 +544,7 @@ func TestReceiveUncertain(t *testing.T) {
 	}
 }
 
-// TestReceiveBudgetCapped checks that the local request timeout caps the
-// sender's budget and no attempt starts after the deadline.
+// TestReceiveBudgetCapped checks that the local request timeout caps the sender's budget and no attempt starts after the deadline.
 func TestReceiveBudgetCapped(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-budget.sock")
 	settings := defaultReceiveSettings()
@@ -605,13 +562,6 @@ func TestReceiveBudgetCapped(t *testing.T) {
 
 	frame := f.requestFrame(sender, target, "hello", time.Hour)
 
-	// The caller's clock starts before the request reaches the receiver; the
-	// receiver's budget starts when it receives the request. Wait longer than
-	// one retry interval so the two clocks are clearly apart. This is not a
-	// fixed sleep waiting for an event: nothing has to finish, and every
-	// assertion below must hold for any offset. The wait only makes the offset
-	// large and deterministic, so a deadline measured from the caller's start
-	// is crossed by a retry on every run.
 	callerLead := settings.InboxBackoff + 5*time.Millisecond
 	time.Sleep(callerLead)
 	reply := f.handle(frame)
@@ -622,26 +572,15 @@ func TestReceiveBudgetCapped(t *testing.T) {
 		t.Fatal("no inbox call was made before the deadline")
 	}
 
-	// The receiver fixes one deadline for the request. Every attempt must
-	// carry that same deadline: recomputing it from the current time on each
-	// retry would let an attempt run past the request's budget while still
-	// starting before its own freshly computed deadline.
 	deadline := calls[0].Deadline
 	if deadline.IsZero() {
 		t.Fatal("inbox call carried no deadline")
 	}
-	// The first attempt starts at the receiver's start, so the time left at
-	// that call shows whether the request budget was capped by the local
-	// timeout.
 	if left := deadline.Sub(calls[0].At); left > settings.RequestTimeout {
 		t.Fatalf("first inbox call had %v until the deadline, want at most the %v request timeout", left, settings.RequestTimeout)
 	}
 
 	for _, call := range calls {
-		// The receiver starts its clock when it receives the request, which
-		// is after the test's start. Assert against the deadline the receiver
-		// enforced, which it passes to the call as the context deadline,
-		// instead of a deadline measured from before the handler was entered.
 		if call.Deadline.IsZero() {
 			t.Fatal("inbox call carried no deadline")
 		}
@@ -657,8 +596,7 @@ func TestReceiveBudgetCapped(t *testing.T) {
 	}
 }
 
-// TestReceiveZeroBudget checks that a sender with no time left gets
-// inbox_unwritable and no write happens (REQ-agent-messaging-019).
+// TestReceiveZeroBudget checks that a sender with no time left gets inbox_unwritable and no write happens.
 func TestReceiveZeroBudget(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-zero.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -680,9 +618,7 @@ func TestReceiveZeroBudget(t *testing.T) {
 	}
 }
 
-// TestReceiveSignatureForDuplicateSender checks that the receiver adds the
-// sender's ref when the peer reports two members with the same name
-// (REQ-agent-messaging-004).
+// TestReceiveSignatureForDuplicateSender checks that the receiver adds the sender's ref when the peer reports two members with the same name.
 func TestReceiveSignatureForDuplicateSender(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	target := liveTestAgent(t, session, "frontend")
@@ -704,8 +640,7 @@ func TestReceiveSignatureForDuplicateSender(t *testing.T) {
 	}
 }
 
-// TestReceiveLogsWithoutBody checks that the runtime log records the delivery
-// event and message id but never the body (architecture.md:279).
+// TestReceiveLogsWithoutBody checks that the runtime log records the delivery event and message id but never the body.
 func TestReceiveLogsWithoutBody(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-log.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -730,8 +665,7 @@ func TestReceiveLogsWithoutBody(t *testing.T) {
 	}
 }
 
-// TestReceiveForgedEnvelopeInBody checks that a forged attribution envelope in
-// the text does not change the frame's sender (REQ-agent-messaging-023).
+// TestReceiveForgedEnvelopeInBody checks that a forged attribution envelope in the text does not change the frame's sender.
 func TestReceiveForgedEnvelopeInBody(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	target := liveTestAgent(t, session, "frontend")
@@ -753,16 +687,13 @@ func TestReceiveForgedEnvelopeInBody(t *testing.T) {
 	}
 }
 
-// panicInbox panics on every write, standing in for a broken backend.
 type panicInbox struct{}
 
 func (panicInbox) Deliver(context.Context, inbox.Session, string, string, string, time.Duration) error {
 	panic("receive test: inbox writer panicked")
 }
 
-// TestReceivePanicCompletesDedupe checks that a panic during processing still
-// completes the dedupe entry with an unknown result, so a retry does not wait
-// forever.
+// TestReceivePanicCompletesDedupe checks that a panic during processing still completes the dedupe entry with an unknown result.
 func TestReceivePanicCompletesDedupe(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-panic.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -791,9 +722,7 @@ func TestReceivePanicCompletesDedupe(t *testing.T) {
 	}
 }
 
-// TestReceiveDedupeOutlivesShortWindow checks that a result outlives a
-// dedupe_window shorter than the sender's budget: a resend inside the budget
-// must still hit the entry instead of writing the message a second time.
+// TestReceiveDedupeOutlivesShortWindow checks that a result outlives a dedupe_window shorter than the sender's budget.
 func TestReceiveDedupeOutlivesShortWindow(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-window.sock")
 	settings := defaultReceiveSettings()
@@ -819,9 +748,7 @@ func TestReceiveDedupeOutlivesShortWindow(t *testing.T) {
 	}
 }
 
-// TestReceiveRefusedWhileOffline checks that a peer delivery is refused with
-// broker_offline without a write, a dedupe entry or a regular delivery log
-// line (REQ-agent-messaging-039).
+// TestReceiveRefusedWhileOffline checks that a peer delivery is refused with broker_offline without a write, a dedupe entry or a regular delivery log line.
 func TestReceiveRefusedWhileOffline(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-offline.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -862,9 +789,7 @@ func TestReceiveRefusedWhileOffline(t *testing.T) {
 	}
 }
 
-// TestReceiveOfflineRefusalLeavesMessageIDDeliverable checks that the refusal
-// happens before the dedupe table: going online lets the same message id
-// deliver, so a sender may retry it.
+// TestReceiveOfflineRefusalLeavesMessageIDDeliverable checks that the refusal happens before the dedupe table, so going online lets the same id deliver.
 func TestReceiveOfflineRefusalLeavesMessageIDDeliverable(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-offline-retry.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -893,8 +818,7 @@ func TestReceiveOfflineRefusalLeavesMessageIDDeliverable(t *testing.T) {
 	}
 }
 
-// TestReceiveOfflineTakesEffectImmediately checks that a runtime change of
-// broker.offline applies to the next delivery without a restart.
+// TestReceiveOfflineTakesEffectImmediately checks that a runtime change of broker.offline applies to the next delivery without a restart.
 func TestReceiveOfflineTakesEffectImmediately(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-offline-toggle.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -918,8 +842,7 @@ func TestReceiveOfflineTakesEffectImmediately(t *testing.T) {
 	}
 }
 
-// TestReceiveDecodeFailureWhileOffline checks that an undecodable request still
-// takes the existing invalid_argument path and keeps its deliver log line.
+// TestReceiveDecodeFailureWhileOffline checks that an undecodable request still takes the invalid_argument path and keeps its deliver log line.
 func TestReceiveDecodeFailureWhileOffline(t *testing.T) {
 	f := newReceiveFixture(t, defaultReceiveSettings())
 	f.settings.SetOffline(true)
@@ -936,8 +859,7 @@ func TestReceiveDecodeFailureWhileOffline(t *testing.T) {
 	}
 }
 
-// TestReceiveRegisterInstallsHandler checks that register routes kind-400
-// requests on the link to handleDeliver.
+// TestReceiveRegisterInstallsHandler checks that register routes kind-400 requests on the link to handleDeliver.
 func TestReceiveRegisterInstallsHandler(t *testing.T) {
 	session := fakesession.New(t, fakesession.Options{Name: "frontend"})
 	target := liveTestAgent(t, session, "frontend")
@@ -963,8 +885,7 @@ func TestReceiveRegisterInstallsHandler(t *testing.T) {
 	}
 }
 
-// TestReceiveMalformedRequestNotDeduped checks that a request rejected at
-// decode time is not entered into the dedupe table.
+// TestReceiveMalformedRequestNotDeduped checks that a request rejected at decode time is not entered into the dedupe table.
 func TestReceiveMalformedRequestNotDeduped(t *testing.T) {
 	f := newReceiveFixture(t, defaultReceiveSettings())
 	reply := f.handle(link.Frame{Kind: link.FrameKind(deliverpb.KindDeliver), Payload: []byte("not a protobuf")})
@@ -974,8 +895,7 @@ func TestReceiveMalformedRequestNotDeduped(t *testing.T) {
 	}
 }
 
-// TestReceiveErrorReplyKind checks that every reply is a kind-401 frame, even
-// when the request could not be decoded.
+// TestReceiveErrorReplyKind checks that every reply is a kind-401 frame, even when the request could not be decoded.
 func TestReceiveErrorReplyKind(t *testing.T) {
 	f := newReceiveFixture(t, defaultReceiveSettings())
 	bad := link.Frame{Kind: link.FrameKind(deliverpb.KindDeliver)}
@@ -985,9 +905,7 @@ func TestReceiveErrorReplyKind(t *testing.T) {
 	}
 }
 
-// TestReceiveOversizedFrame checks that the receiver rechecks the frame size
-// with the signature it will actually write and refuses an oversized request
-// without a write (REQ-agent-messaging-026).
+// TestReceiveOversizedFrame checks that the receiver rechecks the frame size with the signature it will write and refuses an oversized request without a write.
 func TestReceiveOversizedFrame(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-oversized.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -1006,8 +924,7 @@ func TestReceiveOversizedFrame(t *testing.T) {
 	}
 }
 
-// TestReceiveUnpairedPeerRejected checks that a peer whose pairing has been
-// removed, so this Broker has no alias for it, is refused before any write.
+// TestReceiveUnpairedPeerRejected checks that a peer whose pairing was removed is refused before any write.
 func TestReceiveUnpairedPeerRejected(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-unpaired.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -1027,8 +944,7 @@ func TestReceiveUnpairedPeerRejected(t *testing.T) {
 	}
 }
 
-// TestReceiveDecodeFailureLogs checks that a request rejected at decode time
-// still records one deliver event.
+// TestReceiveDecodeFailureLogs checks that a request rejected at decode time still records one deliver event.
 func TestReceiveDecodeFailureLogs(t *testing.T) {
 	f := newReceiveFixture(t, defaultReceiveSettings())
 	f.handle(link.Frame{Kind: link.FrameKind(deliverpb.KindDeliver), Payload: []byte("not a protobuf")})
@@ -1042,8 +958,7 @@ func TestReceiveDecodeFailureLogs(t *testing.T) {
 	}
 }
 
-// TestReceiveDuplicateLogs checks that a duplicate request records its own
-// deliver event next to the first copy's.
+// TestReceiveDuplicateLogs checks that a duplicate request records its own deliver event next to the first copy's.
 func TestReceiveDuplicateLogs(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-dup-log.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -1066,10 +981,7 @@ func TestReceiveDuplicateLogs(t *testing.T) {
 	}
 }
 
-// TestReceiveInvisibleSenderNotDeduped checks that a delivery whose sender is
-// not on the peer's roster is refused without occupying a dedupe entry: a peer
-// that is not a member must not be able to fill the table with ids that can
-// never be delivered.
+// TestReceiveInvisibleSenderNotDeduped checks that a delivery whose sender is not on the peer's roster is refused without occupying a dedupe entry.
 func TestReceiveInvisibleSenderNotDeduped(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-invisible.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -1095,9 +1007,7 @@ func TestReceiveInvisibleSenderNotDeduped(t *testing.T) {
 	}
 }
 
-// TestReceivePerSourceQuota checks that one source filling its share of the
-// dedupe table refuses only its own further messages, with quota_exceeded, and
-// leaves another source's delivery unaffected.
+// TestReceivePerSourceQuota checks that one source filling its share of the dedupe table refuses only its own messages and leaves another source unaffected.
 func TestReceivePerSourceQuota(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-quota.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)
@@ -1114,10 +1024,7 @@ func TestReceivePerSourceQuota(t *testing.T) {
 	f.share(target.ID, "t1")
 	f.setInbox(target.ID, newRecordingInbox())
 
-	// The documented per-source limit (design-broker.md, dedupe table).
 	const perSource = 4096
-	// This case fills the dedupe table, not the inbound quota: advance the
-	// quota clock past one interval per message so every write gets a token.
 	clock := &dedupeFakeClock{now: time.Unix(0, 0)}
 	f.d.inbound = newInboundLimiter(clock.Now)
 	for i := 0; i < perSource; i++ {
@@ -1138,11 +1045,7 @@ func TestReceivePerSourceQuota(t *testing.T) {
 	wantDelivered(t, f.d.handleDeliver(context.Background(), f.other, other))
 }
 
-// TestReceiveResendAfterVisibilityLossReturnsResult checks that an id already
-// in the table answers a resend with its recorded result after the sender has
-// left the intersection. The visibility check now runs before a claim, so it
-// must not run before the lookup of an existing result
-// (REQ-agent-messaging-020).
+// TestReceiveResendAfterVisibilityLossReturnsResult checks that an id already in the table answers a resend after the sender has left the intersection.
 func TestReceiveResendAfterVisibilityLossReturnsResult(t *testing.T) {
 	target := testAgent("frontend", "/tmp/ap-receive-visloss.sock")
 	f := newReceiveFixture(t, defaultReceiveSettings(), target)

@@ -17,8 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// statusRegisterAgent registers a fake session and returns its agent ID. The
-// registration stream stays open until the test ends.
 func statusRegisterAgent(t *testing.T, tb *testBroker, name string) (AgentID, *fakesession.Fake) {
 	t.Helper()
 	fake := fakesession.New(t, fakesession.Options{Name: name})
@@ -27,8 +25,6 @@ func statusRegisterAgent(t *testing.T, tb *testBroker, name string) (AgentID, *f
 	return mustAgentID(t, fake.SocketPath()), fake
 }
 
-// statusCurrentUsername returns the account name the peer credentials hand to
-// the Broker for this test process.
 func statusCurrentUsername(t *testing.T) string {
 	t.Helper()
 	uid := strconv.Itoa(os.Geteuid())
@@ -39,8 +35,9 @@ func statusCurrentUsername(t *testing.T) string {
 	return u.Username
 }
 
+// TestStatusListsAgentsAndTopics checks that Status lists each agent with its
+// account and topics.
 func TestStatusListsAgentsAndTopics(t *testing.T) {
-	// REQ-broker-config-010
 	tb := newTestBroker(t)
 	alphaID, _ := statusRegisterAgent(t, tb, "alpha")
 	betaID, _ := statusRegisterAgent(t, tb, "beta")
@@ -84,6 +81,7 @@ func TestStatusListsAgentsAndTopics(t *testing.T) {
 	}
 }
 
+// TestStatusIncludesPeers checks that Status carries the peer list.
 func TestStatusIncludesPeers(t *testing.T) {
 	tb := newTestBroker(t)
 	info := &localpb.BrokerInfo{Alias: "hostB", IsPeer: true}
@@ -101,14 +99,13 @@ func TestStatusIncludesPeers(t *testing.T) {
 	}
 }
 
+// TestStatusListsAllAgents checks that Status does not filter agents by account
+// before the permission interceptor decides.
 func TestStatusListsAllAgents(t *testing.T) {
 	tb := newTestBroker(t)
 	mineID, _ := statusRegisterAgent(t, tb, "mine")
 	otherID, _ := statusRegisterAgent(t, tb, "other")
 
-	// Pretend the second agent belongs to a different account. Status must not
-	// prune by account: the permission filter of the configuration unit runs
-	// inside this handler later.
 	tb.b.mu.Lock()
 	tb.b.agents[otherID].caller.UID = 4242
 	tb.b.mu.Unlock()
@@ -129,6 +126,7 @@ func TestStatusListsAllAgents(t *testing.T) {
 	}
 }
 
+// TestStatusDoesNotReread checks that Status does not reread session records.
 func TestStatusDoesNotReread(t *testing.T) {
 	tb := newTestBroker(t)
 	statusRegisterAgent(t, tb, "worker")
@@ -145,7 +143,7 @@ func TestStatusDoesNotReread(t *testing.T) {
 }
 
 // TestStatusReportsOffline checks that Status carries the current
-// broker.offline value (REQ-broker-config-068).
+// broker.offline value.
 func TestStatusReportsOffline(t *testing.T) {
 	tb := newTestBroker(t)
 
@@ -168,8 +166,7 @@ func TestStatusReportsOffline(t *testing.T) {
 }
 
 // TestBrokerOfflineLogsFailedRead checks that a failed broker.offline read is
-// logged like configSettings.Offline and still answers online
-// (REQ-broker-config-068).
+// logged and still answers online.
 func TestBrokerOfflineLogsFailedRead(t *testing.T) {
 	c := newWireConfig(t)
 	c.fail("broker.offline", errors.New("read failed"))
@@ -185,6 +182,8 @@ func TestBrokerOfflineLogsFailedRead(t *testing.T) {
 	}
 }
 
+// TestStatusNeedsNoAgent checks that Status answers on a Broker with no
+// registration.
 func TestStatusNeedsNoAgent(t *testing.T) {
 	tb := newTestBroker(t)
 

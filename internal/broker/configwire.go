@@ -9,31 +9,23 @@ import (
 	"github.com/wangzw/peers/internal/link"
 )
 
-// linkControl is the part of the link package that configuration changes
-// drive. The link assembler passes its *link.Link.
 type linkControl interface {
 	Listen(address string) error
 	AnnounceAlias()
 	AnnounceAddresses()
 }
 
-// agentAddressNotifier is the Broker behaviour that recomputes every local
-// agent's address and pushes an agent_changed event on all registered streams.
 type agentAddressNotifier interface {
 	localAliasChanged()
 }
 
 // subscribeConfigChanges registers the callbacks that forward configuration
-// changes to link, directory and the local agent table. When stopped is set,
-// each callback returns without forwarding: a change config delivers during
-// shutdown must not reach a listener that is already closing or log its
-// failure.
-//
-// Config calls subscribers one at a time, in the order the changes were
-// submitted, so the forwarding below runs serially in that same order. The
-// alias callback and the advertised-address callback both reissue the card;
-// when one change touches both, Reissue runs twice, because config does not
-// reveal that the two notifications belong to the same submission.
+// changes to link, directory and the local agent table. Config delivers changes
+// one at a time in submission order, so these callbacks run serially in that
+// order. When stopped is set they drop changes instead of forwarding them to
+// closing components. A change touching both alias and advertised addresses
+// reissues the card twice: the two callbacks each reissue, and config does not
+// say that two notifications belong to one change.
 func subscribeConfigChanges(cfg ConfigSource, l linkControl, d CardIssuer, a agentAddressNotifier, log *slog.Logger, stopped *atomic.Bool) {
 	cfg.Subscribe("broker.listen", func(_, new config.Value) {
 		if stopped.Load() {
@@ -62,10 +54,10 @@ func subscribeConfigChanges(cfg ConfigSource, l linkControl, d CardIssuer, a age
 	})
 }
 
-// logListenRebindFailure records a failed broker.listen rebind. A link closed
-// by shutdown answers with link.ErrClosed; that is the expected outcome of a
-// change delivered between close and the components stopping, so it is logged
-// at debug instead of as an error. Every other failure is an error.
+// logListenRebindFailure logs a failed broker.listen rebind. A link closed by
+// shutdown answers with link.ErrClosed, the expected outcome of a change
+// delivered during shutdown, so that case logs at debug; every other failure
+// is an error.
 func logListenRebindFailure(log *slog.Logger, address string, err error) {
 	if errors.Is(err, link.ErrClosed) {
 		log.Debug("listen_rebind_failed", "address", address, "error", err)
@@ -74,8 +66,6 @@ func logListenRebindFailure(log *slog.Logger, address string, err error) {
 	log.Error("listen_rebind_failed", "address", address, "error", err)
 }
 
-// reissueCard re-signs the own card. A nil issuer means the Broker runs
-// without a directory, so there is nothing to re-sign.
 func reissueCard(d CardIssuer) {
 	if d != nil {
 		d.Reissue()

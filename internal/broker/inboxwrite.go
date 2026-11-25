@@ -8,7 +8,6 @@ import (
 	"github.com/wangzw/peers/internal/inbox"
 )
 
-// writeOutcome is the result of writing one message into a session's inbox.
 type writeOutcome int
 
 const (
@@ -22,13 +21,6 @@ const (
 	uncertain
 )
 
-// writeInbox writes one message to target's inbox before deadline, retrying a
-// certainly-not-written failure up to send.inbox_retries times. The local send
-// path and a peer's deliver request share this function.
-//
-// Each attempt is bounded by the smaller of send.inbox_timeout and the time
-// left before deadline. Between attempts it waits send.inbox_backoff, again
-// capped by the remaining budget, so the last attempt starts before deadline.
 func (d *delivery) writeInbox(ctx context.Context, deadline time.Time, target agentView, sig, text, msgID string) writeOutcome {
 	settings := d.deps.Settings.Send()
 
@@ -74,8 +66,6 @@ func (d *delivery) writeInbox(ctx context.Context, deadline time.Time, target ag
 	return notWritten
 }
 
-// logInboxError records an inbox write failure that left nothing written. It
-// records neither the signature nor the message text.
 func (d *delivery) logInboxError(event string, target agentView) {
 	d.logger().Error(event, "target", target.Name)
 }

@@ -8,7 +8,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// readPeerCred reads the peer's credentials with SO_PEERCRED.
 func readPeerCred(conn *net.UnixConn) (Caller, error) {
 	raw, err := conn.SyscallConn()
 	if err != nil {

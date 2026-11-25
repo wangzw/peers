@@ -19,8 +19,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// regStream is one open Register stream with a pump that is the only Recv
-// caller, so tests can bound each wait independently.
+// regStream is one open Register stream with a pump that is the only Recv caller,
+// so tests can bound each wait independently.
 type regStream struct {
 	t      *testing.T
 	stream localpb.Local_RegisterClient
@@ -115,9 +115,8 @@ func (rs *regStream) problem(d time.Duration) localpb.NotRegisteredReason {
 	return rs.problemEvent(d).GetReason()
 }
 
-// expectNoEvent fails when the stream yields an event within d. The window is
-// the assertion and is deliberately short: a negative window can only miss an
-// event under load, never fail a correct run, so it is not a flake source.
+// expectNoEvent fails when the stream yields an event within d; the deliberately
+// short window can only miss an event under load, never fail a correct run.
 func (rs *regStream) expectNoEvent(d time.Duration) {
 	rs.t.Helper()
 	select {
@@ -219,6 +218,8 @@ func drainNotify(ch chan struct{}) {
 	}
 }
 
+// TestRegisterCompletes checks that a registration completes with the agent's ID,
+// address and auto-join setting and introduces the agent to the topic table.
 func TestRegisterCompletes(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "api-worker"})
@@ -239,6 +240,8 @@ func TestRegisterCompletes(t *testing.T) {
 	}
 }
 
+// TestRegisterIntroducesAgentBeforeComplete checks that the agent is known to the
+// topic table by the time registration_complete reaches the client.
 func TestRegisterIntroducesAgentBeforeComplete(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "joiner"})
@@ -256,6 +259,9 @@ func TestRegisterIntroducesAgentBeforeComplete(t *testing.T) {
 	})
 }
 
+// TestRegisterHoldsOneAcquire checks that a stream acquires one session backend
+// and releases it at the end, and that an acquire failure ends the stream with
+// Internal.
 func TestRegisterHoldsOneAcquire(t *testing.T) {
 	t.Run("one acquire per stream", func(t *testing.T) {
 		tb := newTestBroker(t)
@@ -290,6 +296,8 @@ func TestRegisterHoldsOneAcquire(t *testing.T) {
 	})
 }
 
+// TestRegisterNormalizesName checks that the session name is normalized in the
+// agent's address.
 func TestRegisterNormalizesName(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: " API Worker "})
@@ -301,6 +309,8 @@ func TestRegisterNormalizesName(t *testing.T) {
 	}
 }
 
+// TestRegisterAutoJoinFromConfig checks that topics.auto_join sets the
+// registration_complete auto-join value.
 func TestRegisterAutoJoinFromConfig(t *testing.T) {
 	tb := newTestBroker(t)
 	tb.cfg.setValue("topics.auto_join", config.Value{Kind: config.KindBool, Bool: false})
@@ -313,6 +323,8 @@ func TestRegisterAutoJoinFromConfig(t *testing.T) {
 	}
 }
 
+// TestRegisterEmptySocketPathReportsAtOnce checks that an empty socket path
+// reports socket_path_missing without waiting.
 func TestRegisterEmptySocketPathReportsAtOnce(t *testing.T) {
 	tb := newTestBroker(t)
 	rs := startRegistrationAt(t, tb.client, shortTempDir(t), "")
@@ -322,6 +334,9 @@ func TestRegisterEmptySocketPathReportsAtOnce(t *testing.T) {
 	}
 }
 
+// TestRegisterInvalidSocketPathWaits checks that a relative or uncleanable
+// socket path waits as a missing record, takes no watch and keeps the stream
+// open.
 func TestRegisterInvalidSocketPathWaits(t *testing.T) {
 	for _, socketPath := range []string{"rel/s.sock", "/tmp/../s.sock"} {
 		t.Run(socketPath, func(t *testing.T) {
@@ -349,6 +364,8 @@ func TestRegisterInvalidSocketPathWaits(t *testing.T) {
 	}
 }
 
+// TestRegisterWaitsThenReportsMissingRecord checks that a missing record waits,
+// reports session_record_not_found, then completes when the record appears.
 func TestRegisterWaitsThenReportsMissingRecord(t *testing.T) {
 	dir := shortTempDir(t)
 	socketPath := filepath.Join(dir, "s.sock")
@@ -370,6 +387,8 @@ func TestRegisterWaitsThenReportsMissingRecord(t *testing.T) {
 	}
 }
 
+// TestRegisterUnusableName checks that unusable session names report
+// name_unusable and complete once the name becomes usable.
 func TestRegisterUnusableName(t *testing.T) {
 	for _, name := range []string{"a@b", "*x", "", "\"<>\""} {
 		t.Run(name, func(t *testing.T) {
@@ -398,7 +417,7 @@ func TestRegisterUnusableName(t *testing.T) {
 }
 
 // TestRegisterUnusableNameDetail checks that a not_registered event with the
-// NAME_UNUSABLE reason names what made the name unusable, not just the enum.
+// name_unusable reason states what made the name unusable.
 func TestRegisterUnusableNameDetail(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -430,9 +449,6 @@ func TestRegisterUnusableNameDetail(t *testing.T) {
 	}
 }
 
-// blockingLookupBackend makes the first Lookup wait until release is closed, so
-// a test can fire the wait timer while the first attempt is still inside the
-// registry lookup.
 type blockingLookupBackend struct {
 	SessionBackend
 	started chan struct{}
@@ -448,7 +464,6 @@ func (b *blockingLookupBackend) Lookup(ctx context.Context, configDir, socketPat
 	return b.SessionBackend.Lookup(ctx, configDir, socketPath)
 }
 
-// blockingSessions hands out one blockingLookupBackend wrapping the real one.
 type blockingSessions struct {
 	SessionRouter
 	backend *blockingLookupBackend
@@ -463,10 +478,9 @@ func (s *blockingSessions) Acquire(ctx context.Context, uid uint32) (SessionBack
 	return s.backend, release, nil
 }
 
-// TestRegisterWaitTimerCarriesFirstAttemptReason pins the ordering between the
-// first attempt and the wait timer: when the timer fires before the attempt has
-// stored a reason, the eventual report must still carry the reason the attempt
-// found, never the zero NotRegisteredReason.
+// TestRegisterWaitTimerCarriesFirstAttemptReason checks that a wait timer firing
+// before the first attempt stores a reason still reports the attempt's reason,
+// not the zero value.
 func TestRegisterWaitTimerCarriesFirstAttemptReason(t *testing.T) {
 	blocked := &blockingLookupBackend{
 		started: make(chan struct{}),
@@ -484,8 +498,8 @@ func TestRegisterWaitTimerCarriesFirstAttemptReason(t *testing.T) {
 		t.Fatal("the first attempt did not reach the registry lookup")
 	}
 
-	// The wait timer fires while the first attempt is still inside the lookup.
-	// It may not report a reason that no attempt has established.
+	// The wait timer fires while the first attempt is still inside the lookup
+	// and may not report a reason no attempt has established.
 	tb.clock.Advance(10 * time.Second)
 	close(blocked.release)
 
@@ -494,6 +508,8 @@ func TestRegisterWaitTimerCarriesFirstAttemptReason(t *testing.T) {
 	}
 }
 
+// TestRegisterSocketNotOwned checks that a socket owned by another account
+// reports socket_not_owned.
 func TestRegisterSocketNotOwned(t *testing.T) {
 	tb := newTestBroker(t, func(d *Deps) {
 		d.Geteuid = func() int { return 4242 }
@@ -515,12 +531,8 @@ func TestRegisterSocketNotOwned(t *testing.T) {
 	}
 }
 
-// TestRegisterSameSocketSharesAgent checks that several connections on one
-// socket path share one agent.
-//
-// REQ-agent-messaging-035: a sub-agent's connection joins its parent's agent.
-// REQ-topics-022: the last connection closing removes the agent and its topic
-// membership.
+// TestRegisterSameSocketSharesAgent checks that connections on one socket path
+// share one agent and that only the last one closing removes it.
 func TestRegisterSameSocketSharesAgent(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "shared"})
@@ -565,8 +577,8 @@ func TestRegisterSameSocketSharesAgent(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-034: disabling the MCP server unregisters the agent, and
-// re-enabling it on the same socket path gets the same identity.
+// TestReRegisterGetsSameID checks that re-registering on the same socket path
+// gets the same agent identity.
 func TestReRegisterGetsSameID(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "again"})
@@ -596,6 +608,8 @@ func TestReRegisterGetsSameID(t *testing.T) {
 	}
 }
 
+// TestRegisterIgnoresLaterUpstreamFrames checks that frames after the first do
+// not change the registered agent.
 func TestRegisterIgnoresLaterUpstreamFrames(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "first"})
@@ -627,8 +641,8 @@ func TestRegisterIgnoresLaterUpstreamFrames(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-036: a headless session registers like any other; fields
-// such as kind do not affect registration.
+// TestRegisterHeadlessSession checks that a headless session registers like any
+// other, its extra record fields making no difference.
 func TestRegisterHeadlessSession(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{
@@ -643,9 +657,8 @@ func TestRegisterHeadlessSession(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-012: a session that ends leaves the agent list within
-// five seconds (the wait below allows three), and
-// REQ-broker-config-014: the Broker keeps serving with an empty agent table.
+// TestBrokerKeepsRunningWithEmptyTable checks that an ended session leaves the
+// agent table and the Broker keeps serving calls.
 func TestBrokerKeepsRunningWithEmptyTable(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "transient"})
@@ -661,6 +674,8 @@ func TestBrokerKeepsRunningWithEmptyTable(t *testing.T) {
 	}
 }
 
+// TestWaitingConnReleasesWatch checks that a cancelled waiting connection
+// releases its configuration-directory watch.
 func TestWaitingConnReleasesWatch(t *testing.T) {
 	dir := shortTempDir(t)
 	socketPath := filepath.Join(dir, "s.sock")
@@ -676,6 +691,9 @@ func TestWaitingConnReleasesWatch(t *testing.T) {
 	})
 }
 
+// TestConcurrentRegisterAndDisconnect checks that concurrent connections share
+// one agent and that when all disconnect the agent is removed and its topics are
+// left once.
 func TestConcurrentRegisterAndDisconnect(t *testing.T) {
 	const n = 20
 	tb := newTestBroker(t)

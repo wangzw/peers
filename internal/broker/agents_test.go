@@ -14,8 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// setAgentState replaces an agent's name, status and previous name without
-// pushing events. Later work items use it to build a table state directly.
 func setAgentState(t *testing.T, b *Broker, id AgentID, name, status, prevName string) {
 	t.Helper()
 	b.mu.Lock()
@@ -29,8 +27,6 @@ func setAgentState(t *testing.T, b *Broker, id AgentID, name, status, prevName s
 	a.prevName = prevName
 }
 
-// setRefreshOne replaces the per-agent reread hook. Later work items use it to
-// observe refreshAgents without the session-tracking implementation.
 func setRefreshOne(b *Broker, fn func(a *agent)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -64,6 +60,8 @@ func addTestAgent(b *Broker, id AgentID) *regConn {
 	return c
 }
 
+// TestRecomputeRefsPushesChanges checks that recomputing refs introduces agents
+// silently and then pushes the ref and address changes of a removal.
 func TestRecomputeRefsPushesChanges(t *testing.T) {
 	tb := newTestBroker(t)
 	b := tb.b
@@ -114,9 +112,6 @@ func TestRecomputeRefsPushesChanges(t *testing.T) {
 	}
 }
 
-// nextAgentChanged returns the next registration event, which must be an
-// agent_changed. It is local to this file so the tests here do not depend on
-// the session-tracking helpers added later.
 func nextAgentChanged(t *testing.T, rs *regStream, d time.Duration) *localpb.AgentChangedEvent {
 	t.Helper()
 	event := rs.next(d).GetAgentChanged()
@@ -126,10 +121,9 @@ func nextAgentChanged(t *testing.T, rs *regStream, d time.Duration) *localpb.Age
 	return event
 }
 
-// TestSameNameRegistrationPushesSiblingAddress covers the display address of a
-// sibling: registering a second agent with the same name adds a disambiguation
-// ref to the first agent's address, which the first registration stream must
-// hear about even though the first agent's ref does not change.
+// TestSameNameRegistrationPushesSiblingAddress checks that registering a second
+// agent with the same name pushes the new disambiguated address to the first
+// agent's stream even though its ref does not change.
 func TestSameNameRegistrationPushesSiblingAddress(t *testing.T) {
 	tb := newTestBroker(t)
 	first := fakesession.New(t, fakesession.Options{Name: "w"})
@@ -153,9 +147,8 @@ func TestSameNameRegistrationPushesSiblingAddress(t *testing.T) {
 	}
 }
 
-// TestSameNameUnregistrationPushesSiblingAddress covers the other direction:
-// once the second agent is gone, the first agent's address drops its ref, and
-// the first stream must hear about that too.
+// TestSameNameUnregistrationPushesSiblingAddress checks that the first agent's
+// stream hears when a same-named sibling leaves and its address drops the ref.
 func TestSameNameUnregistrationPushesSiblingAddress(t *testing.T) {
 	tb := newTestBroker(t)
 	first := fakesession.New(t, fakesession.Options{Name: "w"})
@@ -176,6 +169,8 @@ func TestSameNameUnregistrationPushesSiblingAddress(t *testing.T) {
 	}
 }
 
+// TestLookupAndAllAgents checks that lookupAgent and allAgents return the
+// registered agents and that unregistering one leaves the other.
 func TestLookupAndAllAgents(t *testing.T) {
 	tb := newTestBroker(t)
 	one := fakesession.New(t, fakesession.Options{Name: "one"})
@@ -221,6 +216,8 @@ func TestLookupAndAllAgents(t *testing.T) {
 	}
 }
 
+// TestOnUnregisterCalledOutsideLock checks that an unregistration hook runs
+// outside Broker.mu.
 func TestOnUnregisterCalledOutsideLock(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "leaver"})
@@ -252,6 +249,8 @@ func regCallerContext(uid uint32) context.Context {
 	})
 }
 
+// TestAgentForChecksAccount checks that agentFor refuses an agent of another
+// account and an unknown id.
 func TestAgentForChecksAccount(t *testing.T) {
 	tb := newTestBroker(t)
 	fake := fakesession.New(t, fakesession.Options{Name: "mine"})
@@ -277,6 +276,8 @@ func TestAgentForChecksAccount(t *testing.T) {
 	}
 }
 
+// TestRefreshAgentsCallsHookInOrder checks that refreshAgents rereads the
+// requested agents in order and skips unknown IDs.
 func TestRefreshAgentsCallsHookInOrder(t *testing.T) {
 	tb := newTestBroker(t)
 	var ids []AgentID
@@ -308,6 +309,8 @@ func TestRefreshAgentsCallsHookInOrder(t *testing.T) {
 	}
 }
 
+// TestStatusValueMapping checks that session statuses map to the topic value
+// and the local interface enum, with unknown values empty or unspecified.
 func TestStatusValueMapping(t *testing.T) {
 	cases := []struct {
 		status string

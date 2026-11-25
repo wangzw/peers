@@ -4,9 +4,8 @@ package broker
 
 import "time"
 
-// inboundLimitInterval returns the time between refills of one inbound quota
-// token. Release builds always use defaultInboundLimitInterval; builds carrying
-// the peers_testenv tag may lengthen it.
+// inboundLimitInterval returns the release refill interval; only a peers_testenv
+// build can change it, through PEERS_TEST_INBOUND_LIMIT_INTERVAL.
 func inboundLimitInterval() time.Duration {
 	return defaultInboundLimitInterval
 }
