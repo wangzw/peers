@@ -17,65 +17,53 @@ import (
 	"unicode"
 )
 
-// getentTimeout bounds one getent invocation from start to result. The account
-// database can sit behind a network service, so an unbounded call could hold a
-// Broker request forever.
 const getentTimeout = 5 * time.Second
 
-// getentWait is the bound getentQuery applies. Production uses getentTimeout;
-// tests shorten it to exercise the timeout path.
+// getentWait is the bound getentQuery applies; production uses getentTimeout
+// and tests shorten it to exercise the timeout path.
 var getentWait = getentTimeout
 
-// getentOutputLimit bounds the stdout and stderr kept from one getent run. A
-// broken NSS module must not be able to grow the Broker's memory.
 const getentOutputLimit = 64 << 10
 
 // getentWaitDelay bounds how long Wait waits for the output pipes after the
-// process exits or the context is done. A lingering grandchild that inherited
+// process exits or the context is done; a lingering grandchild that inherited
 // the pipe must not defeat the timeout.
 const getentWaitDelay = 2 * time.Second
 
-// getentPipeWait is the pipe wait execGetent applies. Production uses
-// getentWaitDelay; tests shorten it so the lingering-pipe test proves the bound
-// without spending the full two seconds under -race. LookupBound keeps the
-// production value, so callers sizing a wait are unaffected.
+// getentPipeWait is the pipe wait execGetent applies; production uses
+// getentWaitDelay, and LookupBound reads that constant rather than this test
+// seam.
 var getentPipeWait = getentWaitDelay
 
 // LookupBound is the upper bound one account lookup can take in production:
 // one getent invocation plus the pipe wait after a timeout. Callers sizing a
-// wait around a startup step that performs a lookup derive it from this.
+// wait around a lookup derive it from this.
 const LookupBound = getentTimeout + getentWaitDelay
 
-// getentPaths are the absolute paths probed for getent, in order. PATH is
-// never consulted: a Broker that runs as root must not execute a getent found
-// through an environment variable. Tests replace the list with a fake script.
+// getentPaths are the absolute paths probed for getent, in order; PATH is
+// never consulted, so a Broker running as root cannot execute a getent found
+// through the environment.
 var getentPaths = []string{"/usr/bin/getent", "/bin/getent"}
 
-// getentResult is the outcome of one getent process.
 type getentResult struct {
 	stdout   []byte
 	stderr   []byte
 	exitCode int
 }
 
-// runGetent is the executor seam. Tests use it to observe or replace how a
-// getent process is started; production always uses execGetent.
+// runGetent is the executor seam; production uses execGetent and tests replace
+// it.
 var runGetent = execGetent
 
-// errGetentMissing reports that no getent executable was found at an absolute
-// path.
 var errGetentMissing = errors.New("getent executable not found")
 
-// errGetentTimeout reports that getent exceeded getentWait.
 var errGetentTimeout = errors.New("getent timed out")
 
-// errGetentOutput reports that getent produced more output than
-// getentOutputLimit.
 var errGetentOutput = errors.New("getent output limit exceeded")
 
 // cappedBuffer keeps at most limit bytes and records whether more arrived.
-// Beyond the limit it keeps draining, so the child cannot block on a full
-// pipe; the overflow is reported after Wait.
+// Beyond the limit it keeps draining so the child cannot block on a full pipe,
+// reporting the overflow after Wait.
 type cappedBuffer struct {
 	buf      bytes.Buffer
 	limit    int
@@ -92,8 +80,6 @@ func (w *cappedBuffer) Write(p []byte) (int, error) {
 	return w.buf.Write(p)
 }
 
-// The exported functions dispatch through these variables so the platform
-// files can pick the implementation at compile time.
 var (
 	lookupUID   = getentLookupUID
 	lookupName  = getentLookupName
@@ -172,18 +158,15 @@ func getentGroupIDs(u User) ([]uint32, error) {
 		return nil, ErrNotFound
 	}
 	warnFallback("initgroups "+u.Name, err)
-	// The local source may answer for a different account with the same name.
-	// osUserGroupIDs checks the uid; when that check or the lookup itself fails,
-	// the temporary failure is reported, never turned into ErrNotFound.
+	// The local source may answer for a different account with the same name;
+	// osUserGroupIDs checks the uid, and a failed check or lookup stays a
+	// temporary failure, never ErrNotFound.
 	if ids, fallbackErr := osUserGroupIDs(u); fallbackErr == nil {
 		return ids, nil
 	}
 	return nil, fmt.Errorf("%w: %w", errUnavailable, err)
 }
 
-// lookupResult handles the tail shared by every getent lookup: a missing entry
-// is ErrNotFound, any other failure is logged and retried with fallback, and
-// the original transient failure wins when the fallback has no entry either.
 func lookupResult[T any](request string, err error, fallback func() (T, error)) (T, error) {
 	var zero T
 	if errors.Is(err, ErrNotFound) {
@@ -197,9 +180,6 @@ func lookupResult[T any](request string, err error, fallback func() (T, error)) 
 	return zero, unavailableAfterFallback(err, fallbackErr)
 }
 
-// unavailableAfterFallback reports the original transient failure when the
-// local fallback has no entry either. A temporary failure must not be
-// reported as a missing account.
 func unavailableAfterFallback(transient, fallbackErr error) error {
 	if errors.Is(fallbackErr, ErrNotFound) {
 		return fmt.Errorf("%w: %v", errUnavailable, transient)
@@ -208,8 +188,8 @@ func unavailableAfterFallback(transient, fallbackErr error) error {
 }
 
 // getentQuery runs getent with args and returns its standard output. The
-// caller supplies "--" before an account name or uid so a key that starts with
-// a dash cannot become an option.
+// caller passes "--" before a name or uid so a key starting with a dash cannot
+// become an option.
 func getentQuery(args ...string) ([]byte, error) {
 	path, ok := getentExecutable()
 	if !ok {
@@ -241,7 +221,6 @@ func getentQuery(args ...string) ([]byte, error) {
 	}
 }
 
-// getentExecutable returns the first executable getent at an absolute path.
 func getentExecutable() (string, bool) {
 	for _, path := range getentPaths {
 		if !strings.HasPrefix(path, "/") {
@@ -256,8 +235,6 @@ func getentExecutable() (string, bool) {
 	return "", false
 }
 
-// execGetent runs path with args and an environment of exactly LANG=C. getent
-// is started directly, never through a shell.
 func execGetent(ctx context.Context, path string, args []string) (getentResult, error) {
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = []string{"LANG=C"}
@@ -269,9 +246,8 @@ func execGetent(ctx context.Context, path string, args []string) (getentResult, 
 
 	err := cmd.Run()
 	res := getentResult{stdout: stdout.buf.Bytes(), stderr: stderr.buf.Bytes()}
-	// A killed process yields an *exec.ExitError with status -1. Check the
-	// context first so a timeout is reported as one instead of as an exit
-	// status.
+	// A killed process yields an *exec.ExitError with status -1, so the
+	// context is checked first to report a timeout as one.
 	if ctx.Err() != nil {
 		return res, ctx.Err()
 	}
@@ -289,15 +265,11 @@ func execGetent(ctx context.Context, path string, args []string) (getentResult, 
 	return res, err
 }
 
-// errUnavailable reports that a lookup failed for a reason other than a
-// missing entry: the database could not be read, or an answer could not be
-// trusted. Callers must treat it as a failed check, not as a missing account.
+// errUnavailable reports a lookup failure other than a missing entry: the
+// database could not be read or an answer could not be trusted, and callers
+// must treat it as a failed check, not a missing account.
 var errUnavailable = errors.New("account database unavailable")
 
-// validateName rejects names that must never reach a subprocess argument.
-// Colon and whitespace are refused because they cannot occur in a sane account
-// name and would change the meaning of a colon-separated or space-separated
-// entry; NUL cannot be passed to exec at all.
 func validateName(name string) error {
 	if name == "" {
 		return errors.New("cannot use an empty account name")
@@ -308,9 +280,6 @@ func validateName(name string) error {
 	return nil
 }
 
-// oneLine returns the single non-empty line of out. Everything else is an
-// error: a lookup answering with several entries is not trusted, because the
-// first line might not correspond to the request.
 func oneLine(out []byte) (string, error) {
 	s := string(out)
 	line := strings.TrimSuffix(s, "\n")
@@ -323,7 +292,6 @@ func oneLine(out []byte) (string, error) {
 	return line, nil
 }
 
-// parsePasswd parses one getent passwd entry.
 func parsePasswd(out []byte) (User, error) {
 	line, err := oneLine(out)
 	if err != nil {
@@ -351,7 +319,6 @@ func parsePasswd(out []byte) (User, error) {
 	return User{Name: fields[0], UID: uid, GID: gid, Home: home}, nil
 }
 
-// parseGroup parses one getent group entry and returns its name and gid.
 func parseGroup(out []byte) (string, uint32, error) {
 	line, err := oneLine(out)
 	if err != nil {
@@ -372,8 +339,6 @@ func parseGroup(out []byte) (string, uint32, error) {
 	return name, gid, nil
 }
 
-// parseInitgroups parses the single line of getent initgroups. The first field
-// is the account name; the remaining fields are decimal gids.
 func parseInitgroups(out []byte, name string) ([]uint32, error) {
 	line, err := oneLine(out)
 	if err != nil {
@@ -395,8 +360,7 @@ func parseInitgroups(out []byte, name string) ([]uint32, error) {
 }
 
 // warnFallback records that the preferred lookup failed and os/user is used
-// instead. The design requires this warning: falling back can make an account
-// that the C library resolves invisible to the Broker.
+// instead.
 func warnFallback(request string, err error) {
 	slog.Warn("accountdb_lookup_fallback", "request", request, "error", err.Error())
 }

@@ -1,10 +1,7 @@
 // Package accountdb looks up accounts and groups in the system account
-// database. On Linux that is what the C library's NSS configuration
-// resolves, so entries from sources such as LDAP, SSSD or extrausers are
-// visible; /etc/passwd and /etc/group alone are not treated as the whole
-// database.
-//
-// The package depends only on the standard library.
+// database, which on Linux is what the NSS configuration resolves, so entries
+// from sources such as LDAP or SSSD are visible. It depends only on the
+// standard library.
 package accountdb
 
 import (
@@ -17,30 +14,43 @@ import (
 
 // User is one entry of the account database.
 type User struct {
+	// Name is the account name.
 	Name string
-	UID  uint32
-	GID  uint32
+	// UID is the numeric account id.
+	UID uint32
+	// GID is the primary group id.
+	GID uint32
+	// Home is the account's home directory; only the getent lookup checks that it
+	// is absolute, and the os/user path does not.
 	Home string
 }
 
 // ErrNotFound reports that the account database has no entry for the request.
 var ErrNotFound = errors.New("account not found")
 
-// LookupUID returns the account with the given uid.
+// LookupUID returns the account with the given uid. It returns ErrNotFound
+// only when the account database reports no such account; a failed lookup is
+// a different error.
 func LookupUID(uid uint32) (User, error) { return lookupUID(uid) }
 
-// LookupName returns the account with the given name.
+// LookupName returns the account with the given name. It returns ErrNotFound
+// only when the account database reports no such account; a failed lookup is
+// a different error.
 func LookupName(name string) (User, error) { return lookupName(name) }
 
-// LookupGroup returns the gid of the group with the given name.
+// LookupGroup returns the gid of the group with the given name. It returns
+// ErrNotFound only when the account database reports no such group; a failed
+// lookup is a different error.
 func LookupGroup(name string) (gid uint32, err error) { return lookupGroup(name) }
 
 // GroupIDs returns the account's groups, supplementary groups and primary
-// group together, sorted and without duplicates.
+// group together, sorted and without duplicates. It returns ErrNotFound only
+// when the account database reports no such account; a failed lookup is a
+// different error.
 func GroupIDs(u User) ([]uint32, error) { return groupIDs(u) }
 
-// parseDecimal32 parses a decimal 32-bit id. Only digits are accepted, so a
-// sign or surrounding space cannot slip through.
+// parseDecimal32 accepts only digits, so a sign or surrounding space cannot
+// slip through.
 func parseDecimal32(s string) (uint32, error) {
 	if s == "" {
 		return 0, errors.New("empty id")
@@ -57,8 +67,6 @@ func parseDecimal32(s string) (uint32, error) {
 	return uint32(v), nil
 }
 
-// normalizeGroupIDs adds the primary gid, removes duplicates and sorts the
-// result.
 func normalizeGroupIDs(primary uint32, ids []uint32) []uint32 {
 	seen := make(map[uint32]struct{}, len(ids)+1)
 	out := make([]uint32, 0, len(ids)+1)
@@ -77,9 +85,6 @@ func normalizeGroupIDs(primary uint32, ids []uint32) []uint32 {
 	return out
 }
 
-// The os/user implementations serve as the platform implementation outside
-// Linux and as the fallback on Linux. With CGO_ENABLED=0 they read only
-// /etc/passwd and /etc/group.
 func osUserLookupUID(uid uint32) (User, error) {
 	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
 	if err != nil {
@@ -129,8 +134,8 @@ func osUserGroupIDs(u User) ([]uint32, error) {
 		}
 		return nil, fmt.Errorf("cannot look up user %s: %w", u.Name, err)
 	}
-	// The local source may hold a different account with the same name. Its
-	// groups belong to that account, not to the one being looked up.
+	// The local source may hold a different account with the same name, whose
+	// groups are not the requested account's.
 	uid, err := parseDecimal32(account.Uid)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read account %s: invalid uid %q: %w", u.Name, account.Uid, err)

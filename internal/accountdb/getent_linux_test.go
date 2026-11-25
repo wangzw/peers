@@ -17,8 +17,6 @@ import (
 	"time"
 )
 
-// writeScript writes body as an executable shell script into dir and returns
-// its path.
 func writeScript(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
@@ -29,8 +27,6 @@ func writeScript(t *testing.T, dir, name, body string) string {
 	return path
 }
 
-// installFakeGetent makes the fake script at path the only getent the package
-// probes, and restores the real list when the test ends.
 func installFakeGetent(t *testing.T, path string) {
 	t.Helper()
 	old := getentPaths
@@ -38,8 +34,6 @@ func installFakeGetent(t *testing.T, path string) {
 	t.Cleanup(func() { getentPaths = old })
 }
 
-// fakeGetentWithOutput installs a fake getent that records its arguments in
-// marker and writes output. It returns the marker path.
 func fakeGetentWithOutput(t *testing.T, output string) (path, marker string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -54,7 +48,6 @@ func fakeGetentWithOutput(t *testing.T, output string) (path, marker string) {
 	return path, marker
 }
 
-// assertArgs checks the arguments the fake getent received.
 func assertArgs(t *testing.T, marker string, want ...string) {
 	t.Helper()
 	data, err := os.ReadFile(marker)
@@ -72,6 +65,8 @@ func currentUID(t *testing.T) uint32 {
 	return uint32(os.Getuid())
 }
 
+// TestLookupUIDPasswdEntry checks that a uid lookup resolves a getent passwd
+// entry.
 func TestLookupUIDPasswdEntry(t *testing.T) {
 	_, marker := fakeGetentWithOutput(t, "alice:x:4242:4343:Alice:/home/alice:/bin/bash\n")
 
@@ -86,6 +81,8 @@ func TestLookupUIDPasswdEntry(t *testing.T) {
 	assertArgs(t, marker, "passwd", "--", "4242")
 }
 
+// TestLookupNamePasswdEntry checks that a name lookup resolves a getent passwd
+// entry.
 func TestLookupNamePasswdEntry(t *testing.T) {
 	_, marker := fakeGetentWithOutput(t, "alice:x:4242:4343:Alice:/home/alice:/bin/bash\n")
 
@@ -100,6 +97,8 @@ func TestLookupNamePasswdEntry(t *testing.T) {
 	assertArgs(t, marker, "passwd", "--", "alice")
 }
 
+// TestLookupGroupEntry checks that a group lookup resolves a getent group
+// entry.
 func TestLookupGroupEntry(t *testing.T) {
 	_, marker := fakeGetentWithOutput(t, "staff:x:777:\n")
 
@@ -113,6 +112,8 @@ func TestLookupGroupEntry(t *testing.T) {
 	assertArgs(t, marker, "group", "--", "staff")
 }
 
+// TestGroupIDsIncludesPrimaryAndDeduplicates checks that GroupIDs includes the
+// primary gid and removes duplicates.
 func TestGroupIDsIncludesPrimaryAndDeduplicates(t *testing.T) {
 	_, marker := fakeGetentWithOutput(t, "alice               7 8 7\n")
 
@@ -127,6 +128,8 @@ func TestGroupIDsIncludesPrimaryAndDeduplicates(t *testing.T) {
 	assertArgs(t, marker, "initgroups", "--", "alice")
 }
 
+// TestGetentExitTwoIsNotFound checks that getent exit status 2 maps to
+// ErrNotFound for every lookup.
 func TestGetentExitTwoIsNotFound(t *testing.T) {
 	path := writeScript(t, t.TempDir(), "getent", "exit 2\n")
 	installFakeGetent(t, path)
@@ -147,9 +150,8 @@ func TestGetentExitTwoIsNotFound(t *testing.T) {
 	}
 }
 
+// TestGetentUsesAbsolutePath checks that a getent on PATH is never run.
 func TestGetentUsesAbsolutePath(t *testing.T) {
-	// A getent on PATH must never run, even though the test process has PATH
-	// pointing at one.
 	pathDir := t.TempDir()
 	pathMarker := filepath.Join(pathDir, "ran")
 	writeScript(t, pathDir, "getent", fmt.Sprintf("touch %q\n", pathMarker))
@@ -167,6 +169,8 @@ func TestGetentUsesAbsolutePath(t *testing.T) {
 	}
 }
 
+// TestGetentRunsWithEmptyEnvironment checks that getent runs with only LANG=C
+// in its environment.
 func TestGetentRunsWithEmptyEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "environment")
@@ -187,6 +191,8 @@ func TestGetentRunsWithEmptyEnvironment(t *testing.T) {
 	}
 }
 
+// TestGetentSeparatesKeyWithDashDash checks that a key starting with a dash is
+// passed after "--".
 func TestGetentSeparatesKeyWithDashDash(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "args")
@@ -204,6 +210,8 @@ func TestGetentSeparatesKeyWithDashDash(t *testing.T) {
 	assertArgs(t, marker, "passwd", "--", "-alice")
 }
 
+// TestInvalidNamesNeverReachGetent checks that invalid names are rejected
+// before getent runs.
 func TestInvalidNamesNeverReachGetent(t *testing.T) {
 	path, marker := fakeGetentWithOutput(t, "alice:x:4242:4343::/home/alice:/bin/sh\n")
 
@@ -226,9 +234,9 @@ func TestInvalidNamesNeverReachGetent(t *testing.T) {
 	}
 }
 
+// TestGetentRejectsMultipleLines checks that an answer with several lines is
+// rejected and the lookup falls back to os/user.
 func TestGetentRejectsMultipleLines(t *testing.T) {
-	// Both lines are well formed on their own and the first one carries the
-	// requested uid, so only the one-line rule can reject the answer.
 	fakeGetentWithOutput(t, "evil:x:"+strconv.FormatUint(uint64(currentUID(t)), 10)+":0::/evil:/bin/sh\n"+
 		"evil2:x:"+strconv.FormatUint(uint64(currentUID(t)), 10)+":0::/evil2:/bin/sh\n")
 
@@ -245,6 +253,8 @@ func TestGetentRejectsMultipleLines(t *testing.T) {
 	}
 }
 
+// TestGetentRejectsInconsistentOrMalformedEntries checks that a mismatched or
+// malformed passwd entry falls back to os/user.
 func TestGetentRejectsInconsistentOrMalformedEntries(t *testing.T) {
 	uid := currentUID(t)
 	want, err := osUserLookupUID(uid)
@@ -275,6 +285,8 @@ func TestGetentRejectsInconsistentOrMalformedEntries(t *testing.T) {
 	}
 }
 
+// TestGetentTimeoutIsReportedAndFallsBack checks that a getent timeout is
+// reported and the lookup falls back with a warning.
 func TestGetentTimeoutIsReportedAndFallsBack(t *testing.T) {
 	oldWait := getentWait
 	getentWait = 50 * time.Millisecond
@@ -308,6 +320,8 @@ func TestGetentTimeoutIsReportedAndFallsBack(t *testing.T) {
 	}
 }
 
+// TestMissingGetentFallsBack checks that without getent local accounts still
+// resolve and an absent account is a temporary failure.
 func TestMissingGetentFallsBack(t *testing.T) {
 	old := getentPaths
 	getentPaths = []string{"/nonexistent/accountdb-getent-a", "/nonexistent/accountdb-getent-b"}
@@ -331,9 +345,9 @@ func TestMissingGetentFallsBack(t *testing.T) {
 	}
 }
 
+// TestLookupNameRejectsANumericKeyResolvingToAnotherName checks that a numeric
+// name that resolves to a different account is rejected.
 func TestLookupNameRejectsANumericKeyResolvingToAnotherName(t *testing.T) {
-	// getent treats a numeric key as a uid, so asking for the name "0" returns
-	// root's entry. The name comparison is what rejects it.
 	fakeGetentWithOutput(t, "root:x:0:0:root:/root:/bin/sh\n")
 
 	if u, err := LookupName("0"); err == nil {
@@ -341,6 +355,8 @@ func TestLookupNameRejectsANumericKeyResolvingToAnotherName(t *testing.T) {
 	}
 }
 
+// TestLookupUIDRejectsAReturnedUIDThatDiffers checks that a returned uid that
+// differs is rejected as a failed check, not a missing account.
 func TestLookupUIDRejectsAReturnedUIDThatDiffers(t *testing.T) {
 	fakeGetentWithOutput(t, "root:x:0:0:root:/root:/bin/sh\n")
 
@@ -349,13 +365,13 @@ func TestLookupUIDRejectsAReturnedUIDThatDiffers(t *testing.T) {
 	if err == nil {
 		t.Fatalf("LookupUID(%d) = %+v, want an error", absent, u)
 	}
-	// The mismatched answer is not trusted; the local fallback has no entry,
-	// so the failure is a failed check rather than a missing account.
 	if !errors.Is(err, errUnavailable) || errors.Is(err, ErrNotFound) {
 		t.Fatalf("LookupUID(%d) = %+v, %v, want errUnavailable", absent, u, err)
 	}
 }
 
+// TestLookupGroupRejectsMalformedEntries checks that a malformed group entry
+// falls back to os/user.
 func TestLookupGroupRejectsMalformedEntries(t *testing.T) {
 	name := currentGroupName(t)
 	want, err := osUserLookupGroup(name)
@@ -384,6 +400,8 @@ func TestLookupGroupRejectsMalformedEntries(t *testing.T) {
 	}
 }
 
+// TestGroupIDsTransientFailureIsUnavailable checks that a transient getent
+// failure in GroupIDs is unavailable, not ErrNotFound.
 func TestGroupIDsTransientFailureIsUnavailable(t *testing.T) {
 	name := "accountdb-no-such-user-" + strconv.FormatUint(uint64(time.Now().UnixNano()), 10)
 	for _, c := range []struct {
@@ -421,6 +439,8 @@ func TestGroupIDsTransientFailureIsUnavailable(t *testing.T) {
 	}
 }
 
+// TestLocalGroupFallbackChecksUID checks that the local group fallback rejects
+// an account whose uid differs.
 func TestLocalGroupFallbackChecksUID(t *testing.T) {
 	u, err := osUserLookupUID(currentUID(t))
 	if err != nil {
@@ -437,9 +457,9 @@ func TestLocalGroupFallbackChecksUID(t *testing.T) {
 	}
 }
 
+// TestLookupGroupRejectsANumericKeyResolvingToAnotherName checks that a
+// numeric group name that resolves to a different group is rejected.
 func TestLookupGroupRejectsANumericKeyResolvingToAnotherName(t *testing.T) {
-	// getent treats a numeric key as a gid, so asking for the group name "0"
-	// returns root's group.
 	fakeGetentWithOutput(t, "root:x:0:\n")
 
 	if gid, err := LookupGroup("0"); err == nil {
@@ -447,6 +467,7 @@ func TestLookupGroupRejectsANumericKeyResolvingToAnotherName(t *testing.T) {
 	}
 }
 
+// TestGetentOutputLimit checks that output beyond the limit is rejected.
 func TestGetentOutputLimit(t *testing.T) {
 	path := writeScript(t, t.TempDir(), "getent", fmt.Sprintf(
 		"head -c %d /dev/zero | tr '\\0' a\n", getentOutputLimit+1))
@@ -458,21 +479,13 @@ func TestGetentOutputLimit(t *testing.T) {
 	}
 }
 
-// getentLingeringPipeMargin is the headroom the lingering-pipe test allows
-// getentQuery to return above the pipe wait. The wait is the product's
-// getentPipeWait: two seconds in production, shortened in this test so the
-// deadline follows the product timer instead of fixing a limit of its own.
-// What decides pass from fail is the fake getent's child, which holds the
-// output pipe for ten seconds; the margin therefore only has to keep the whole
-// bound below ten seconds while still leaving room for the child to be reaped
-// and for scheduling under -race. Five seconds does both: even the production
-// two-second pipe wait plus this margin is seven seconds, and the shortened
-// test value lands at 5.1 seconds.
+// getentLingeringPipeMargin keeps the pipe wait plus this margin below the ten
+// seconds the fake getent child holds the pipe, so the test can tell whether
+// WaitDelay took effect.
 const getentLingeringPipeMargin = 5 * time.Second
 
-// TestGetentPipeWaitDefaultsToTheProductBound proves the test seam starts at
-// the production WaitDelay, so shortening it in one test cannot silently change
-// what release builds enforce.
+// TestGetentPipeWaitDefaultsToTheProductBound checks that the pipe-wait seam
+// starts at the product bound.
 func TestGetentPipeWaitDefaultsToTheProductBound(t *testing.T) {
 	if want := 2 * time.Second; getentWaitDelay != want {
 		t.Fatalf("getentWaitDelay = %v, want the %v product bound", getentWaitDelay, want)
@@ -482,15 +495,9 @@ func TestGetentPipeWaitDefaultsToTheProductBound(t *testing.T) {
 	}
 }
 
+// TestGetentWaitDelayBoundsALingeringPipe checks that WaitDelay closes an
+// output pipe still held by a lingering child.
 func TestGetentWaitDelayBoundsALingeringPipe(t *testing.T) {
-	// The child inherits stdout and outlives the shell, so the output pipe
-	// stays open after getent has exited. WaitDelay must close it. The child
-	// records its pid so the test can kill what the shell leaves behind.
-	//
-	// The seam is shortened here because the wait itself is the product timer;
-	// the deadline below tracks whatever value the seam holds. A test that
-	// spent the full two seconds would only add dead time on the failing and
-	// passing paths alike.
 	oldWait := getentPipeWait
 	getentPipeWait = 100 * time.Millisecond
 	t.Cleanup(func() { getentPipeWait = oldWait })
@@ -529,6 +536,8 @@ func TestGetentWaitDelayBoundsALingeringPipe(t *testing.T) {
 	}
 }
 
+// TestLookupUIDTransientFailureIsUnavailable checks that a failing getent
+// makes a uid lookup unavailable rather than missing.
 func TestLookupUIDTransientFailureIsUnavailable(t *testing.T) {
 	installFakeGetent(t, writeScript(t, t.TempDir(), "getent", "exit 1\n"))
 
@@ -542,6 +551,8 @@ func TestLookupUIDTransientFailureIsUnavailable(t *testing.T) {
 	}
 }
 
+// TestLookupNameTransientFailureIsUnavailable checks that a failing getent
+// makes a name lookup unavailable rather than missing.
 func TestLookupNameTransientFailureIsUnavailable(t *testing.T) {
 	installFakeGetent(t, writeScript(t, t.TempDir(), "getent", "exit 1\n"))
 
@@ -555,6 +566,8 @@ func TestLookupNameTransientFailureIsUnavailable(t *testing.T) {
 	}
 }
 
+// TestLookupGroupTransientFailureIsUnavailable checks that a failing getent
+// makes a group lookup unavailable rather than missing.
 func TestLookupGroupTransientFailureIsUnavailable(t *testing.T) {
 	installFakeGetent(t, writeScript(t, t.TempDir(), "getent", "exit 1\n"))
 
