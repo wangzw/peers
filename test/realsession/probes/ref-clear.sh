@@ -7,11 +7,6 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# ref-clear answers the Roadmap's Items to verify section and exercises
-# REQ-agent-messaging-006 and REQ-agent-messaging-033: the disambiguation ref
-# must match the one Claude Code's own session list shows, and it must survive
-# /rename and /clear; a message held before /clear must reach the conversation
-# created by /clear.
 
 PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 OBSERVER_PROMPT='Use your built-in tool for listing the other Claude Code sessions on this machine and print its raw output verbatim. Do not do anything else.'
@@ -27,7 +22,6 @@ after_socket=''
 assistant_turns=0
 RS_HOLD_CALL_WAIT="${RS_HOLD_CALL_WAIT:-10}"
 
-# wait_socket polls the session registry until the named session has a socket.
 wait_socket() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -40,7 +34,6 @@ wait_socket() {
 	return 1
 }
 
-# wait_socket_gone polls until the named session is no longer registered.
 wait_socket_gone() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -53,7 +46,6 @@ wait_socket_gone() {
 	return 1
 }
 
-# wait_status_contains polls the Broker's Agent table for a literal fragment.
 wait_status_contains() {
 	local fragment="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -67,7 +59,6 @@ wait_status_contains() {
 	return 1
 }
 
-# wait_excerpt polls rs_excerpt until it copies at least one matching record.
 wait_excerpt() {
 	local marker="$1" file="$2" seconds="$3"
 	local deadline=$((SECONDS + seconds))
@@ -82,13 +73,10 @@ wait_excerpt() {
 	[[ -s "$OUT/$file" ]]
 }
 
-# pid_running reports whether a background job is still running.
 pid_running() {
 	kill -0 "$1" 2>/dev/null
 }
 
-# wait_pid_deadline PID DEADLINE polls until PID exits, and returns 0 if it has
-# exited by DEADLINE (a $SECONDS value).
 wait_pid_deadline() {
 	local pid="$1" deadline="$2"
 	while ((SECONDS < deadline)); do
@@ -100,7 +88,6 @@ wait_pid_deadline() {
 	! pid_running "$pid"
 }
 
-# session_sockets prints the inbox socket path of every session record.
 session_sockets() {
 	local file
 	for file in "$R"/cfg/sessions/*.json; do
@@ -111,13 +98,10 @@ session_sockets() {
 	done | sort -u
 }
 
-# list_session_records prints the project record files that currently exist.
 list_session_records() {
 	find "$R/cfg/projects" -type f -name '*.jsonl' 2>/dev/null | sort || true
 }
 
-# list_record_offsets writes "path<TAB>line-count" for every session record, so
-# a later read can take only the lines appended after this snapshot.
 list_record_offsets() {
 	local file
 	while IFS= read -r file; do
@@ -126,9 +110,7 @@ list_record_offsets() {
 	done < <(list_session_records)
 }
 
-# wait_excerpt_after_offsets polls only the lines appended after OFFSETS and
-# copies those matching MARKER to $OUT/$file. Reading from the saved line count
-# keeps an older record, such as the /rename line, from satisfying the wait.
+# Reading from the saved line count keeps an older record, such as the /rename line, from satisfying the wait.
 wait_excerpt_after_offsets() {
 	local marker="$1" offsets="$2" file="$3" seconds="$4"
 	local deadline=$((SECONDS + seconds)) out path start
@@ -151,8 +133,6 @@ wait_excerpt_after_offsets() {
 	return 1
 }
 
-# assistant_after_marker reports whether an assistant record follows the first
-# record containing MARKER in FILE.
 assistant_after_marker() {
 	local file="$1" marker="$2" line
 	line="$(grep -nF -- "$marker" "$file" 2>/dev/null | head -n 1 | cut -d: -f1)"
@@ -160,8 +140,6 @@ assistant_after_marker() {
 	tail -n +"$line" "$file" 2>/dev/null | grep -qF -- '"type":"assistant"'
 }
 
-# wait_new_record_file polls until a record file exists that is not listed in
-# SNAPSHOT, and prints its path.
 wait_new_record_file() {
 	local snapshot="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -177,8 +155,6 @@ wait_new_record_file() {
 	return 1
 }
 
-# wait_pending_in_new_record polls for a record file created after /clear that
-# carries the held message, and copies its matching lines to $OUT.
 wait_pending_in_new_record() {
 	local seconds="$1"
 	local deadline=$((SECONDS + seconds))
@@ -205,13 +181,11 @@ wait_pending_in_new_record() {
 	[[ -s "$OUT/pending-in-new-record.jsonl" ]]
 }
 
-# address_text FILE NAME prints NAME's ref-bearing address on hostB.
 address_text() {
 	local file="$1" name="$2"
 	grep -oE "${name} \\[[0-9a-f]{6,12}\\]@hostB" "$file" | head -n 1 || true
 }
 
-# address_ref FILE NAME prints the ref inside NAME's address.
 address_ref() {
 	local file="$1" name="$2"
 	local addr
@@ -222,13 +196,11 @@ address_ref() {
 	printf '%s\n' "$addr" | sed -E 's/^.*\[([0-9a-f]{6,12})\]@hostB$/\1/'
 }
 
-# ref_of_path FILE PATH prints the short ref rsprobe ref computed for PATH.
 ref_of_path() {
 	local file="$1" path="$2"
 	awk -v p="$path" '$1 == p { print $3; exit }' "$file"
 }
 
-# bracket_ref TEXT NAME prints the ref in "NAME [ref]" inside the given text.
 bracket_ref() {
 	local text="$1" name="$2"
 	local match
@@ -247,9 +219,7 @@ status_snapshot() {
 
 rs_tmux_start
 rs_window ref-clear-a claude --model haiku -n 'a<b' --permission-mode default --append-system-prompt "$PROMPT"
-# The observer prompt asks for the built-in ListAgents tool. Pre-approve that
-# one tool with --allowedTools and keep the permission mode at default, so the
-# call does not open an approval dialog and no other tool is pre-approved.
+# Pre-approve only ListAgents and keep the mode at default, so the call opens no approval dialog and no other tool is pre-approved.
 rs_window ref-clear-observer claude --model haiku -n rs-observer --permission-mode default --append-system-prompt "$PROMPT" --allowedTools ListAgents
 rs_agent ref-peer
 
@@ -274,9 +244,7 @@ if ! rs_wait_ready ref-clear-observer 45; then
 fi
 rs_obs_mode ref-clear-observer
 
-# X0 is computed over every session socket and X1 comes from the Broker's own
-# table, so both agents and the simulated one must be registered before either
-# is read; a half-built table would compare two different candidate sets.
+# X0 uses every session socket and X1 the Broker's table, so all three Agents must be registered first or the two sets differ.
 if ! wait_status_contains 'ab [' 30; then
 	rs_obs "a<b was not in the Agent table within 30 seconds"
 	exit 1
@@ -290,7 +258,6 @@ if ! wait_status_contains 'ref-peer@hostB' 15; then
 	exit 1
 fi
 
-# Step 2: the address of a<b carries a ref because the name is cleaned to ab.
 before_socket="$(rs_socket_of 'a<b')"
 status_snapshot status-1.txt
 x1_address="$(address_text "$OUT/status-1.txt" ab)"
@@ -304,7 +271,6 @@ fi
 "$R/run" rsprobe ref "${sockets[@]}" >"$OUT/ref.txt"
 x0="$(ref_of_path "$OUT/ref.txt" "$before_socket" || true)"
 
-# Step 3: the built-in session list's own ref for a<b.
 rs_send_prompt ref-clear-observer "$OBSERVER_PROMPT" 'listing the other Claude Code sessions' 60
 if wait_excerpt 'a<b' observer-y1.jsonl 90; then
 	y1="$(bracket_ref "$(cat "$OUT/observer-y1.jsonl")" 'a<b' || true)"
@@ -315,7 +281,6 @@ else
 fi
 rs_excerpt 'listing the other Claude Code sessions' observer-y1-prompt.jsonl
 
-# Step 4: rename and clear keep the socket path and the ref.
 rs_keys ref-clear-a '/rename c<d' Enter
 if wait_socket 'c<d' 15; then
 	rs_obs "a<b was renamed to c<d in the session registry"
@@ -336,10 +301,7 @@ if ! rs_call ref-peer list_agents '{}' >"$OUT/list-agents-after-clear.json"; the
 	rs_obs "ref-peer list_agents failed after /clear"
 fi
 
-# Step 5: the built-in list must show the same ref under the new name. Only the
-# lines appended by this observer turn are read: the earlier /rename and /clear
-# records also contain c<d, and matching them would end the wait before the
-# second listing exists.
+# Read only lines this observer turn appends: earlier /rename and /clear records also hold c<d and would end the wait too early.
 list_record_offsets >"$WORK/observer-offsets-before-y2.txt"
 rs_send_prompt ref-clear-observer "$OBSERVER_PROMPT" 'listing the other Claude Code sessions' 60
 if wait_excerpt_after_offsets 'c<d [' "$WORK/observer-offsets-before-y2.txt" observer-y2.jsonl 90; then
@@ -350,13 +312,7 @@ else
 	rs_obs "the session list output for c<d did not appear within 90 seconds"
 fi
 
-# Step 6: observation of the explicit hold policy, not a criterion. It records
-# whether send_message returns at once, what the recipient shows, and what
-# /clear does to a held message. Only this step changes the shared settings
-# file; it is backed up to $OUT with its sha256, restored by the EXIT trap, and
-# the two digests must match. The hold-time send_message runs in the background
-# under RS_HOLD_CALL_WAIT, because whether it returns at once is itself an
-# observation.
+# This step is observation only and is the only one that changes the shared settings file; the file is backed up with its sha256 and must be restored to the same digest. The hold-time send_message runs in the background because whether it returns at once is itself an observation.
 rs_keys ref-clear-a '/exit' Enter
 if ! wait_socket_gone 'c<d' 15; then
 	rs_obs "c<d was still registered 15 seconds after /exit"
@@ -367,15 +323,14 @@ settings_backup="$OUT/settings.before.json"
 settings_before_sha=''
 settings_after_sha=''
 
-# settings_sha256 PATH prints the file's sha256 digest.
 settings_sha256() {
 	sha256sum "$1" | awk '{print $1}'
 }
 
-# restore_settings puts the original settings file back and verifies its
-# sha256. It runs explicitly before step 7 and through the library's EXIT hook
-# otherwise, so a failed step 7 still restores the file and captures the
-# windows.
+# restore_settings puts the original settings file back and verifies its sha256.
+# It runs explicitly before the accept-policy session restarts and through the
+# library's EXIT hook otherwise, so a failure still restores the file and
+# captures the windows.
 restore_settings() {
 	if ! cp "$settings_backup" "$settings_file"; then
 		rs_obs "could not restore settings.json from $settings_backup"
@@ -412,9 +367,7 @@ if ! rs_wait_ready ref-clear-clr 45; then
 	exit 1
 fi
 rs_obs_mode ref-clear-clr
-# Background the hold-time call so the pane and the approval can be watched
-# while it runs. RS_HOLD_CALL_WAIT bounds how long its reply is awaited; the
-# timing and outcome are written to send-pending-timing.txt.
+# RS_HOLD_CALL_WAIT bounds how long the background call's reply is awaited; the timing and outcome are written to send-pending-timing.txt.
 send_started=$SECONDS
 send_deadline=$((send_started + RS_HOLD_CALL_WAIT))
 rs_call ref-peer send_message '{"to":"clr@hostB","message":"pending-before-clear"}' >"$OUT/send-pending.json" &
@@ -442,8 +395,7 @@ if ! pid_running "$send_pid"; then
 	send_returned_before_approval=yes
 fi
 
-# Approve the held message after /clear. The Enter key is the approval key as
-# observed in the pending-message bar; the captures record whether it worked.
+# Enter is the approval key in the pending-message bar; the captures record whether it worked.
 rs_keys ref-clear-clr Enter
 send_outcome=''
 send_status=''
@@ -486,8 +438,6 @@ if [[ ! -s "$OUT/pending-in-new-record.jsonl" ]]; then
 	rs_obs "hold observation: /clear discarded the held notice and the message did not reach the new conversation"
 fi
 
-# Count assistant records in the files created after /clear, which shows whether
-# the held message started a model turn in the new conversation.
 while IFS= read -r record; do
 	[[ -n "$record" ]] || continue
 	count="$(grep -cF -- '"type":"assistant"' "$record" || true)"
@@ -498,12 +448,7 @@ done <"$OUT/records-new-after-clear.txt"
 restore_settings
 rs_obs "restored settings.json after step 6 and verified its sha256 ($settings_after_sha)"
 
-# Step 7 (REQ-agent-messaging-033 criterion): under the default accept policy a
-# message that arrives while the session is busy must appear in the conversation
-# created by /clear and be handled there. Step 6 started clr while settings.json
-# said hold; restore_settings has put the original file back, and clr is
-# restarted so the default policy is read at startup rather than assumed to
-# reload. --allowedTools covers the one tool the prompt asks for.
+# clr is restarted rather than relying on a reload, so the default policy is read at startup.
 rs_keys ref-clear-clr '/exit' Enter
 if ! wait_socket_gone clr 15; then
 	rs_obs "clr was still registered 15 seconds after /exit before step 7"
@@ -520,10 +465,7 @@ if ! rs_wait_ready ref-clear-accept 45; then
 fi
 rs_obs_mode ref-clear-accept
 
-# The session's record file may appear only when the first prompt is submitted,
-# so the snapshot is taken after the sleep tool is on screen and before the
-# message is sent. A file that appears later is then a post-/clear file rather
-# than the session's own record.
+# A session's record file appears only when its first prompt is submitted, so the snapshot is taken after the sleep tool is on screen and before the message is sent.
 rs_send_prompt ref-clear-accept 'Run "sleep 20" with the Bash tool, then reply done.' 'Run "sleep 20"' 60
 if ! rs_wait_pane ref-clear-accept 'sleep 20' 20; then
 	rs_obs "the sleep 20 tool call was not visible before sending queued-before-clear"
@@ -551,11 +493,7 @@ if ! rs_call ref-peer send_message '{"to":"clr@hostB","message":"queued-before-c
 	rs_obs "ref-peer send_message queued-before-clear failed"
 fi
 
-# Submit /clear while the tool is still running. The composer shows
-# "ctrl+x ctrl+s to send now" while a turn is busy, so the queued command is
-# sent now instead of waiting for the tool to finish. A new record file proves
-# it ran; when it did not, the command is submitted again once the turn goes
-# idle, before the model can finish handling the message.
+# While a turn is busy the composer queues /clear; ctrl+x ctrl+s sends it now, and a new record file proves it ran.
 queued_clear_during_tool=no
 queued_clear_after_tool=no
 rs_keys ref-clear-accept '/clear' Enter
@@ -573,10 +511,7 @@ fi
 sleep 1
 rs_snap ref-clear-accept queued-clear.txt
 
-# Whether the message was already handled before /clear is recorded separately:
-# in that case the run cannot answer whether an unprocessed message survives
-# /clear, and the criterion is reported as such rather than as a failed
-# delivery.
+# A message handled before /clear is recorded separately, so the criterion reports an unanswerable run rather than a failed delivery.
 message_processed_before_clear=no
 while IFS= read -r record; do
 	[[ -n "$record" ]] || continue
@@ -587,8 +522,7 @@ while IFS= read -r record; do
 done <"$WORK/records-before-queued.txt"
 rs_excerpt 'queued-before-clear' queued-before-clear.jsonl
 
-# Poll only the record files created after the snapshot. The criterion is
-# satisfied when the message is there and an assistant record follows it.
+# Poll only files created after the snapshot; the criterion holds when the message is there and an assistant record follows it.
 queued_criterion='unverifiable'
 queued_message_file=''
 queued_assistant_ok=no
@@ -665,6 +599,5 @@ rs_obs "queued-before-clear criterion: $queued_criterion (clear_during_tool=$que
 	printf 'queued_assistant_ok=%s\n' "$queued_assistant_ok"
 } >"$OUT/refs.txt"
 
-# No pane capture can stand in for a model turn; the run fails when the observer
-# prompt never reached a conversation or no model call was recorded.
+# A pane capture cannot stand in for a model turn; the run fails when the observer prompt reached no conversation.
 rs_require_model_turn 'listing the other Claude Code sessions' 1

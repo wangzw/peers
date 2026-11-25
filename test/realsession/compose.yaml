@@ -1,5 +1,3 @@
-# The peer host used by the cross-host probes. It runs a Broker that reports
-# the alias hostA and a few simulated Agents; no Claude Code session runs here.
 name: peers-rs
 
 services:

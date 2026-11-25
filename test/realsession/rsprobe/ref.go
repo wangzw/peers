@@ -15,12 +15,12 @@ func init() {
 	register("ref", cmdRef)
 }
 
-// errBadSocketPath marks a path broker.AgentIDFor would reject: an empty path,
-// a relative path, or a path containing a ".." element.
+// errBadSocketPath marks a path broker.AgentIDFor rejects: empty, relative, or
+// containing a dot-dot element.
 var errBadSocketPath = errors.New("inbox socket path must be absolute and must not contain a dot-dot element")
 
-// cmdRef implements the "ref" subcommand. A bad path is a usage error, so it
-// exits 2 rather than the generic subcommand failure code 1.
+// cmdRef implements the ref subcommand; a bad path is a usage error, so it
+// exits 2 rather than the generic 1.
 func cmdRef(args []string) error {
 	return runRefCommand(args, os.Stdout, os.Stderr, os.Exit)
 }
@@ -35,10 +35,8 @@ func runRefCommand(args []string, stdout, stderr io.Writer, exit func(int)) erro
 	return nil
 }
 
-// agentID derives the Agent identifier for an inbox socket path. It matches
-// broker.AgentIDFor value for value: it rejects the same paths and hashes
-// "session:" followed by the cleaned path. It returns the cleaned path's ID;
-// the caller keeps printing the path as given.
+// agentID derives the same identifier as broker.AgentIDFor: it rejects the same
+// paths and hashes "session:" plus the cleaned path.
 func agentID(socketPath string) (string, error) {
 	if socketPath == "" || !filepath.IsAbs(socketPath) {
 		return "", errBadSocketPath
@@ -52,9 +50,8 @@ func agentID(socketPath string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// shortRefs returns the disambiguation ref of every id: the shortest prefix of
-// 6 to 12 characters that no other id shares, or 12 characters when the first
-// 12 characters still collide.
+// shortRefs returns each id's disambiguator: the shortest unique prefix, 6 to
+// 12 characters, or 12 when the first 12 collide.
 func shortRefs(ids []string) map[string]string {
 	refs := make(map[string]string, len(ids))
 	for _, id := range ids {
@@ -84,10 +81,8 @@ func shortRefs(ids []string) map[string]string {
 	return refs
 }
 
-// runRef implements "rsprobe ref <socket path>...": one line per path with the
-// first 12 characters of its id and its short ref among all the given paths.
-// Every path is validated before anything is printed, so one bad argument
-// produces no partial output.
+// runRef prints one line per path; every path is validated before anything is
+// printed, so one bad argument yields no partial output.
 func runRef(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: rsprobe ref <socket path>")

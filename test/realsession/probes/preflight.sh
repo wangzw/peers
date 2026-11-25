@@ -7,19 +7,16 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# The preflight probe checks that the runner isolation holds, that a session
-# can authenticate, and where a session record keeps the name of the sender it
-# identified. It follows the plan's "environment preflight and authentication
-# baseline" item.
+# The preflight probe checks that the runner isolation holds, that a session can
+# authenticate, and where a session record keeps the name of the sender it
+# identified.
 
-# 1. The peer server is configured by the workflow's prepare step.
 if ! "$R/run" claude mcp list >"$OUT/mcp-list.txt"; then
 	echo "preflight: claude mcp list failed" >&2
 fi
 
-# 2. Start the calibration session with the low-call-count prompt. The
-# permission mode is pinned to default so auto mode cannot answer a prompt the
-# probe means to observe.
+# The permission mode is pinned to default so auto mode cannot answer a prompt
+# the probe means to observe.
 rs_tmux_start
 rs_window calib claude --model haiku -n rs-calib \
 	--permission-mode default \
@@ -31,7 +28,6 @@ if ! rs_wait_ready calib 30; then
 fi
 rs_obs_mode calib
 
-# 3. Wait for the session to bind its inbox and appear in the Broker's table.
 socket=""
 deadline=$((SECONDS + 15))
 while ((SECONDS < deadline)); do
@@ -46,8 +42,7 @@ if [[ -z "$socket" ]]; then
 	echo "preflight: rs-calib did not register an inbox socket" >&2
 	exit 1
 fi
-# A failing status is recorded as one observation and does not stop the run,
-# so the frame and the reply below still gather the authentication baseline.
+# A failing status is recorded as one observation and does not stop the run.
 status_note=""
 if ! "$R/run" rsprobe status >"$OUT/status.txt"; then
 	status_note="rsprobe status failed"
@@ -58,13 +53,10 @@ if [[ -n "$status_note" ]]; then
 	rs_obs "$status_note; continuing so the authentication baseline is still gathered"
 fi
 
-# 4. Write one frame directly to the session's inbox.
 "$R/run" rsprobe frame --socket "$socket" --from-name calib@x --body calib-body-1
 
-# 5. The session answers the cross-session frame. The answer is read from the
-# transcript; the pane capture is auxiliary evidence only. The one exception is
-# a transcript that yields no assistant text at all, which is reported rather
-# than hidden behind a pane match.
+# The answer is read from the transcript, not the pane; only a transcript that
+# yields no assistant text at all falls back to a pane match.
 ok_status=0
 rs_wait_reply 'ok' calib-ok-record.jsonl 60 || ok_status=$?
 if ((ok_status != 0)); then
@@ -79,12 +71,10 @@ fi
 rs_snap calib pane.txt
 rs_excerpt calib-body-1 calib-record.jsonl
 
-# 6. Authentication baseline: one real model call. The session must answer the
-# prompt with the agreed string, and the environment's model-call counter must
-# end above zero. A TUI that merely started proves nothing about the token, so
-# either half missing fails the probe. The prompt goes through rs_send_prompt;
-# the answer is evidence only when an assistant message in the transcript
-# carries it, and the pane is not accepted as a substitute.
+# Authentication baseline: the reply must appear in an assistant transcript
+# record and the model-call counter must end above zero. A TUI that merely
+# started proves nothing about the token, and the pane is not accepted as a
+# substitute.
 preflight_reply='rs-preflight-ok'
 if ! rs_send_prompt calib "Reply with exactly $preflight_reply and nothing else."; then
 	echo "preflight: rs-calib did not accept the reply prompt" >&2

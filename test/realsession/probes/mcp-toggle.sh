@@ -7,32 +7,16 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# Probe mcp-toggle answers the Roadmap's Items to verify section and accepts
-# REQ-agent-messaging-034.
-#
-# Step 1 disables and enables a stub MCP server that records its signals and
-# keeps running after them. It shows which signals Claude Code sends, in which
-# order and with what spacing, and whether the process ends with SIGKILL.
-# Step 2 disables and enables the real peer server. The Broker must drop the
-# Agent while the server is off and register it again with the same agent id
-# and name when the server comes back.
-#
-# /mcp is driven through its documented argument form, "/mcp disable <name>"
-# and "/mcp enable <name>", rather than by navigating the server list. The
-# command's argument hint in v2.1.311 names exactly this form, and it keeps the
-# probe independent of an arrow-key sequence this script cannot discover
-# beforehand. Every step still captures the pane before and after the action.
 
+# v2.1.311's /mcp argument hint names "/mcp disable <name>" and "/mcp enable <name>", so the probe uses that form instead of arrow-key navigation.
 mkdir -p "$OUT"
 rs_tmux_start
 
-# --- helpers ---------------------------------------------------------------
 
 mt_status_json() {
 	"$R/run" rsprobe status --json
 }
 
-# mt_wait_start waits until the sigstub log holds count start events.
 mt_wait_start() {
 	local count="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) found
@@ -49,8 +33,7 @@ mt_wait_start() {
 	return 1
 }
 
-# mt_wait_new_stub waits until the log holds a start event from a pid other
-# than old_pid. The re-enabled stub truncates the log when it opens it.
+# The re-enabled stub truncates the log when it opens it, so a start event from a different pid means the new stub began.
 mt_wait_new_stub() {
 	local old_pid="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) pid
@@ -67,8 +50,6 @@ mt_wait_new_stub() {
 	return 1
 }
 
-# mt_wait_address waits until the Broker lists (present=yes) or drops
-# (present=no) an Agent whose address starts with prefix.
 mt_wait_address() {
 	local prefix="$1" present="$2" seconds="$3"
 	local deadline=$((SECONDS + seconds)) json got
@@ -88,8 +69,6 @@ mt_wait_address() {
 	return 1
 }
 
-# mt_wait_topic waits until the Agent whose address starts with prefix carries
-# the named topic.
 mt_wait_topic() {
 	local prefix="$1" topic="$2" seconds="$3"
 	local deadline=$((SECONDS + seconds)) json
@@ -105,8 +84,6 @@ mt_wait_topic() {
 	return 1
 }
 
-# mt_wait_socket waits until the session name has written its inbox socket
-# path to the session registry.
 mt_wait_socket() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -119,15 +96,11 @@ mt_wait_socket() {
 	return 1
 }
 
-# mt_wait_prompt waits until the TUI is back at the empty input prompt, which
-# is the point at which typed keys reach the slash command line. The shared
-# readiness predicate covers every version's hint and refuses to call a dialog
-# screen ready.
+# Typed keys reach the slash command line only at the empty input prompt, and the shared readiness predicate refuses to call a dialog screen ready.
 mt_wait_prompt() {
 	rs_wait_ready "$1" "$2"
 }
 
-# --- step 1: the signal sequence -------------------------------------------
 
 jq -n --arg bin "$R/bin/rsprobe" --arg log "$OUT/sig.jsonl" \
 	'{mcpServers: {stub: {command: $bin, args: ["sigstub", "--log", $log]}}}' \
@@ -146,8 +119,7 @@ stub_pid="$(jq -r -s '[.[] | select(.event == "start")][0].pid // 0' "$OUT/sig.j
 stub_socket="$(jq -r -s '[.[] | select(.event == "start")][0].messaging_socket // ""' "$OUT/sig.jsonl")"
 rs_obs "step 1: first stub pid=$stub_pid messaging_socket=${stub_socket:-<empty>}"
 
-# Attach strace as root: the tmux server daemonizes, so this shell is not an
-# ancestor of the stub and unprivileged ptrace is refused on Ubuntu.
+# Attach strace as root: the tmux server daemonizes, so this shell is not an ancestor of the stub and Ubuntu refuses unprivileged ptrace.
 sudo -n strace -f -tt -e trace=none -p "$stub_pid" -o "$OUT/strace.txt" &
 strace_pid=$!
 
@@ -177,14 +149,12 @@ rs_keys tog-stub '/mcp disable stub' Enter
 sleep 2
 rs_snap tog-stub pane-stub-disabled.txt
 
-# The re-enabled stub opens the same log path with O_TRUNC, so keep the first
-# process's events before that can happen.
+# The re-enabled stub opens the same log path with O_TRUNC, so keep the first process's events before that can happen.
 if [[ -f "$OUT/sig.jsonl" ]]; then
 	cp "$OUT/sig.jsonl" "$OUT/sig-first.jsonl"
 fi
 
-# The stub should be SIGKILLed once it has ignored SIGINT and SIGTERM, which
-# ends strace. Bound the wait in case the signal sequence never finishes.
+# After SIGINT and SIGTERM the stub is expected to be SIGKILLed, which ends strace; the wait is bounded anyway.
 for _ in {1..50}; do
 	if ! ps -p "$strace_pid" >/dev/null 2>&1; then
 		break
@@ -218,7 +188,6 @@ else
 fi
 rs_snap tog-stub pane-stub-enabled.txt
 
-# Keep the signal evidence under the artifact name the plan names.
 if [[ -f "$OUT/sig-first.jsonl" ]]; then
 	cp "$OUT/sig-first.jsonl" "$OUT/sig.jsonl"
 fi
@@ -246,7 +215,6 @@ if [[ -f "$OUT/strace.txt" ]]; then
 	done
 fi
 
-# --- step 2: deregistration and registration -------------------------------
 
 rs_window tog claude --model haiku -n tog --permission-mode default --allowedTools mcp__peer__join_topic
 
@@ -362,7 +330,5 @@ fi
 	printf 'peer enabled to registered\t%s\n' "$enable_ms"
 } >"$OUT/timings.tsv"
 
-# The join prompt is the probe's only model prompt; the slash commands are not.
-# Without this check a run that never submitted the prompt can report a topic
-# from a stale table and still look successful.
+# The join prompt is the probe's model prompt; without this check a run that never submitted it could report a topic from a stale table.
 rs_require_model_turn 'Call mcp__peer__join_topic with name tog-manual' 1

@@ -1,8 +1,5 @@
 //go:build linux
 
-// The fork-each test reads the writer's pid with SO_PEERCRED, which only
-// Linux exposes through golang.org/x/sys/unix.
-
 package main
 
 import (
@@ -22,12 +19,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// frameChildTimeout bounds one frame written by a freshly executed subprocess.
-// Each --fork-each frame re-executes this test binary, so process cold start,
-// not the socket write, dominates the wait.
+// frameChildTimeout bounds one frame written by a freshly executed subprocess,
+// where process cold start dominates the wait.
 const frameChildTimeout = 10 * time.Second
 
-// decodeFrame decodes one newline-terminated verbatim frame.
 func decodeFrame(t *testing.T, raw []byte) verbatimFrame {
 	t.Helper()
 	if !bytes.HasSuffix(raw, []byte("\n")) {
@@ -40,9 +35,11 @@ func decodeFrame(t *testing.T, raw []byte) verbatimFrame {
 	return frame
 }
 
+// TestVerbatimFrameKeepsNameBytes checks that a name survives byte for byte in
+// verbatim mode and the frame fields keep their order.
 func TestVerbatimFrameKeepsNameBytes(t *testing.T) {
-	// A U+2028 and a quote both survive byte for byte: verbatim mode exists to
-	// test what the receiver does with names the Broker would have cleaned.
+	// A U+2028 and a quote both survive byte for byte; verbatim mode tests
+	// names the Broker would have cleaned.
 	name := "a b\"c"
 	frame, err := buildVerbatimFrame(name, "hello", "msg-1")
 	if err != nil {
@@ -64,6 +61,8 @@ func TestVerbatimFrameKeepsNameBytes(t *testing.T) {
 	}
 }
 
+// TestLibraryModeQuotesName checks that library mode quotes a backslash in the
+// sender name.
 func TestLibraryModeQuotesName(t *testing.T) {
 	path, lines := listenOnce(t)
 	var stdout strings.Builder
@@ -92,9 +91,9 @@ func TestLibraryModeQuotesName(t *testing.T) {
 	}
 }
 
+// TestBodyClosingTagEscaped checks that a closing envelope tag in the body
+// cannot end the envelope early.
 func TestBodyClosingTagEscaped(t *testing.T) {
-	// REQ-agent-messaging-023: the body must not be able to close the envelope
-	// and claim another sender.
 	frame, err := buildVerbatimFrame("n", "seen </cross-session-message> here", "msg-2")
 	if err != nil {
 		t.Fatalf("buildVerbatimFrame: %v", err)
@@ -106,9 +105,9 @@ func TestBodyClosingTagEscaped(t *testing.T) {
 	}
 }
 
+// TestForkEachUsesDistinctPids checks that --fork-each writes each frame from a
+// different child process.
 func TestForkEachUsesDistinctPids(t *testing.T) {
-	// Build the command so the parent process really re-executes rsprobe; the
-	// child writers must each be their own process.
 	bin := filepath.Join(t.TempDir(), "rsprobe")
 	build := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := build.CombinedOutput(); err != nil {
@@ -169,9 +168,9 @@ func TestForkEachUsesDistinctPids(t *testing.T) {
 	}
 }
 
-// listenOnce starts a unix listener and returns the path plus a channel that
-// receives the first line written to it. The connection is closed after the
-// newline is read, which is what the frame writer waits for.
+// listenOnce starts a unix listener and returns its path and a channel
+// receiving the first line written to it. The listener closes the connection
+// after reading the newline, which the frame writer waits for.
 func listenOnce(t *testing.T) (string, <-chan string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "inbox.sock")
@@ -195,7 +194,6 @@ func listenOnce(t *testing.T) (string, <-chan string) {
 	return path, lines
 }
 
-// receiveLine waits for the listener's line.
 func receiveLine(t *testing.T, lines <-chan string) string {
 	t.Helper()
 	select {
@@ -208,7 +206,7 @@ func receiveLine(t *testing.T, lines <-chan string) string {
 }
 
 // peerPIDChecked reads the connecting process's pid with SO_PEERCRED and
-// reports why it could not, unlike the agent's peerPID, which falls back to 0.
+// reports why it could not.
 func peerPIDChecked(conn net.Conn) (int, error) {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {

@@ -7,23 +7,15 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# inbound.sh answers the Roadmap's Items to verify section. The
-# receiver's permission mode is the variable under test: an ordinary receiver
-# delivers an undeclared sender's message directly, while a receiver started with
-# --dangerously-skip-permissions holds it for per-message approval. The probe
-# therefore runs both a default receiver and a bypass receiver, records each
-# bottom-bar mode text, and compares their outcomes. The bypass session is the
-# subject of this probe, not a way to skip approvals; the permissions probe
-# still never starts one.
-# It also gathers evidence for REQ-agent-messaging-015, 016, 021 and 024.
+# The receiver's permission mode is the variable under test: an ordinary
+# receiver delivers an undeclared sender's message directly, while a receiver
+# started with --dangerously-skip-permissions holds it for per-message approval.
+# The bypass session is the subject of this probe, not a way to skip approvals.
 
 PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 
-# The handshake-time dialog of the pinned Claude Code version. The first option
-# is "Deny — drop it and tell the sender it was declined" and opens focused, so
-# Enter denies; the second is "Deliver this message to Claude", reached with
-# Down, so Down then Enter approves. Only the fragments needed to recognise the
-# dialog and its two actions are matched here.
+# The handshake dialog opens focused on "Deny", so Enter denies; "Deliver this
+# message to Claude" is reached with Down, so Down then Enter approves.
 HANDSHAKE_TITLE='Held message from another session'
 HANDSHAKE_APPROVE='Deliver this message to Claude'
 HANDSHAKE_DENY='Deny'
@@ -59,14 +51,11 @@ refuse_send_ok=no
 refuse_message_visible=no
 idle_wake_turn=no
 
-# now_ms and now_iso stamp the two ends of the REQ-agent-messaging-015 capture.
 now_ms() { date +%s%3N; }
 now_iso() { date -u +%Y-%m-%dT%H:%M:%S.%3NZ; }
 
 # settings_restore restores the shared settings file and fails the run when its
-# sha256 differs from the backup. It is registered with rs_on_exit, so the
-# library runs it in order with the other cleanups and still captures the
-# windows of a failed run.
+# sha256 differs from the backup.
 settings_restore() {
 	local ok=0 before after
 	if ((settings_touched == 1)); then
@@ -88,7 +77,6 @@ settings_restore() {
 }
 rs_on_exit settings_restore
 
-# wait_socket waits until the named session has registered its inbox socket.
 wait_socket() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -101,7 +89,6 @@ wait_socket() {
 	return 1
 }
 
-# wait_socket_gone waits until the named session leaves the registry.
 wait_socket_gone() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -114,7 +101,6 @@ wait_socket_gone() {
 	return 1
 }
 
-# session_id_of prints the sessionId in the registry record named $1.
 session_id_of() {
 	local name="$1" file
 	for file in "$R"/cfg/sessions/*.json; do
@@ -127,9 +113,9 @@ session_id_of() {
 	return 1
 }
 
-# excerpt_session copies the records of one session through rs_excerpt. The
-# marker is the registry's sessionId, so records of other sessions, such as the
-# sender's own turn, cannot be mistaken for the target's.
+# excerpt_session copies one session's records through rs_excerpt, using its
+# sessionId as the marker so another session's records are not mistaken for the
+# target's.
 excerpt_session() {
 	local name="$1" file="$2" sid
 	sid="$(session_id_of "$name" 2>/dev/null || true)"
@@ -141,14 +127,12 @@ excerpt_session() {
 	rs_excerpt "$sid" "$file"
 }
 
-# count_matches prints the number of fixed-string matches in a file.
 count_matches() {
 	local file="$1" pattern="$2" count
 	count="$(grep -cF -- "$pattern" "$file" 2>/dev/null || true)"
 	printf '%s\n' "${count:-0}"
 }
 
-# wait_session_marker polls one session's records for a fixed marker.
 wait_session_marker() {
 	local name="$1" marker="$2" file="$3" seconds="$4"
 	local deadline=$((SECONDS + seconds))
@@ -164,9 +148,8 @@ wait_session_marker() {
 }
 
 # has_peer_turn reports whether a record file holds the marker as a delivered
-# peer turn. The hold notice and the queue entry both carry the message text, so
-# a plain grep would mistake a held message for a delivered one; only a user
-# record whose origin or turn origin is "peer" is a delivered turn.
+# peer turn. A plain grep would mistake a held message for a delivered one, so
+# only a user record whose origin or turn origin is "peer" counts.
 has_peer_turn() {
 	local file="$1" marker="$2"
 	jq -Rre --arg marker "$marker" '
@@ -181,10 +164,10 @@ has_peer_turn() {
 	' "$file" >/dev/null 2>&1
 }
 
-# wait_sid_peer_turn polls one session's records for a delivered peer turn that
-# contains marker. The caller passes the sessionId cached at startup, so a
-# registry entry that changes or disappears later cannot make the poll miss a
-# record that is already in the transcript.
+# wait_sid_peer_turn polls one session's records for a delivered peer turn
+# containing marker; the caller passes the sessionId cached at startup, so a
+# registry entry that changes later cannot make the poll miss a record already in
+# the transcript.
 wait_sid_peer_turn() {
 	local sid="$1" marker="$2" file="$3" seconds="$4"
 	local deadline=$((SECONDS + seconds))
@@ -198,10 +181,9 @@ wait_sid_peer_turn() {
 	return 1
 }
 
-# peer_turn_origin prints the sender fields a delivered peer turn recorded:
-# from, verified pid and the claimed name. An own-child writer and a writer
-# outside the session's process tree differ here, which is the evidence for how
-# the receiver classified the writer.
+# peer_turn_origin prints the sender fields a delivered peer turn recorded: from,
+# verified pid and the claimed name; an own-child writer and one outside the
+# session's process tree differ here.
 peer_turn_origin() {
 	local file="$1" marker="$2"
 	jq -Rr --arg marker "$marker" '
@@ -218,10 +200,8 @@ peer_turn_origin() {
 }
 
 # wait_session_reply polls one session's records until an assistant message's
-# trimmed text equals the expected string. The library's rs_wait_reply reads
-# every session, so a short expected word such as "ok" could match another
-# session's text or a substring like "broker"; this helper reads only the
-# target session's transcript.
+# trimmed text equals the expected string. It reads only the target session's
+# transcript, because a short word such as "ok" could match another session.
 wait_session_reply() {
 	local name="$1" expected="$2" file="$3" seconds="$4"
 	local sid deadline src
@@ -254,17 +234,15 @@ wait_session_reply() {
 	return 1
 }
 
-# usage_total prints the environment's model-call counter, or nothing when it
-# cannot be read.
 usage_total() {
 	"$R/run" rsprobe env usage --root "$R" 2>/dev/null |
 		sed -n 's/^total //p' | tail -n 1
 }
 
-# find_broker_pid prints the pid of the user Broker rs_start_broker
-# started. It runs as "<exe> service run"; the executable and the first two
-# arguments are matched instead of a command-line substring, so another
-# Broker's arguments cannot make the choice ambiguous.
+# find_broker_pid prints the pid of the user Broker rs_start_broker started. It
+# matches the executable and the first two arguments ("service run") rather than
+# a command-line substring, so another Broker's arguments cannot make the choice
+# ambiguous.
 find_broker_pid() {
 	local proc exe second third
 	for proc in /proc/[0-9]*; do
@@ -281,7 +259,6 @@ find_broker_pid() {
 	return 1
 }
 
-# write_broker_chain records the Broker and each ancestor up to pid 1.
 write_broker_chain() {
 	local pid="$1" out="$OUT/broker-chain.txt" chain_pid depth=0
 	chain_pid="$pid"
@@ -294,13 +271,13 @@ write_broker_chain() {
 	ps -o pid=,ppid=,sid=,uid=,comm=,args= -p 1 >>"$out" 2>/dev/null || true
 }
 
-# depth_frame_command writes a helper into $WORK and prints a fixed-size
-# command that runs it. The helper recurses by invoking itself, so each level's
-# argv stays the same size and the writer ends up DEPTH shell processes below
-# the session. A "sh -c 'sh -c ...'" chain grows without bound because every
-# level re-escapes the previous level's backslashes: the 13-level command is
-# over 128 KiB, past the kernel's per-argument limit. The marker is assembled
-# inside the helper, so the typed command never contains "depth-N".
+# depth_frame_command writes a helper into $WORK and prints a fixed-size command
+# that runs it. The helper recurses by invoking itself, so each level's argv
+# stays the same size and the writer ends up DEPTH shell processes below the
+# session; a nested "sh -c" chain grows without bound because each level
+# re-escapes the previous level's backslashes, past the kernel's per-argument
+# limit at 13 levels. The marker is assembled inside the helper, so the typed
+# command never contains "depth-N".
 depth_frame_command() {
 	local depth="$1" number="$2" socket="$3" helper="$WORK/depth-frame.sh"
 	cat >"$helper" <<EOF
@@ -352,12 +329,9 @@ write_inbound_policy() {
 
 rs_tmux_start
 
-# --- step 1: Broker process relation (REQ-agent-messaging-024) --------------
-#
-# The Broker is started by rs_start_broker before any session exists, so it is
-# not a descendant of a session. The environment and parent chain recorded here
-# show that relation, which is what makes the receiver's inbound control apply
-# to messages the Broker writes.
+# The Broker is started before any session exists, so it is not a descendant of a
+# session; the parent chain recorded here shows that relation, which makes the
+# receiver's inbound control apply to messages the Broker writes.
 
 if ! "$R/run" rsprobe env check --root "$R" >"$OUT/env-check.txt" 2>&1; then
 	rs_obs "rsprobe env check failed; another Broker may hold the account lock"
@@ -414,17 +388,8 @@ esac
 
 rs_agent inb-sender
 
-# --- step 2: permission-mode classes and writer ancestry (roadmap 84-86) ---
 
-# The receiver's permission mode is the variable under test. A receiver that
-# prompts for permissions delivers an undeclared sender's message directly; a
-# receiver started with bypassPermissions holds it for per-message approval
-# (REF-claude-code-cross-session-messaging, ADR-adr-inbox-delivery-without-
-# auth-token). Both receivers get the same frame kinds so the outcomes can be
-# compared, and each bottom-bar mode text is recorded. The permissions probe
-# still never starts a bypass session; here the mode is the subject.
 
-# 2-default: an ordinary receiver delivers directly.
 rs_window inb-default claude --model haiku -n inb-default \
 	--permission-mode default \
 	--append-system-prompt "$PROMPT" \
@@ -445,10 +410,10 @@ if [[ -z "$default_session_id" ]]; then
 	exit 1
 fi
 
-# 2a-default: a frame written by a descendant is trusted and starts a turn.
+# A frame written by a descendant is trusted and starts a turn.
 rs_pane_idle inb-default 30 || true
-# The body is assembled by the shell so the typed ! command is not itself a
-# record that carries "from-descendant-default".
+# Assemble the body in the shell so the typed ! command is not itself a record
+# that carries "from-descendant-default".
 rs_send_shell inb-default "$R/bin/rsprobe frame --socket $default_socket --from-name child@x --body \"\$(printf 'from-%s' descendant-default)\"" '--from-name child@x' 60
 if wait_sid_peer_turn "$default_session_id" from-descendant-default step2a-default-descendant-record.jsonl 60; then
 	rs_obs "2-default a: a frame from a descendant reached the conversation"
@@ -457,7 +422,7 @@ else
 fi
 rs_snap inb-default step2a-default-descendant.txt
 
-# 2b-default: a Broker-written frame is delivered directly, with no dialog.
+# A Broker-written frame is delivered directly, with no dialog.
 rs_pane_idle inb-default 30 || true
 if rs_call inb-sender send_message '{"to":"inb-default@hostB","message":"from-broker-default"}' >"$OUT/send-2b-default.txt"; then
 	rs_obs "2-default b: the simulated sender returned success"
@@ -482,9 +447,9 @@ default_origin="$(peer_turn_origin "$OUT/step2b-default-record.jsonl" 'from-brok
 	printf 'origin=%s\n' "$default_origin"
 } >"$OUT/step2b-default.txt"
 
-# 2-bypass: a receiver started with bypassPermissions holds an undeclared
-# sender's frame and opens the approval dialog. A frame from its own child is
-# still delivered, because process evidence marks the writer as trusted.
+# A receiver started with bypassPermissions holds an undeclared sender's frame
+# and opens the approval dialog. A frame from its own child is still delivered,
+# because process evidence marks the writer as trusted.
 rs_window inb-bypass claude --model haiku -n inb-bypass \
 	--dangerously-skip-permissions \
 	--append-system-prompt "$PROMPT" \
@@ -505,7 +470,6 @@ if [[ -z "$bypass_session_id" ]]; then
 	exit 1
 fi
 
-# 2a-bypass: the own-child frame is delivered even in bypass mode.
 rs_pane_idle inb-bypass 30 || true
 rs_send_shell inb-bypass "$R/bin/rsprobe frame --socket $bypass_socket --from-name child@x --body \"\$(printf 'from-%s' descendant-bypass)\"" '--from-name child@x' 60
 if wait_sid_peer_turn "$bypass_session_id" from-descendant-bypass step2a-bypass-descendant-record.jsonl 60; then
@@ -517,9 +481,8 @@ fi
 bypass_child_origin="$(peer_turn_origin "$OUT/step2a-bypass-descendant-record.jsonl" 'from-descendant-bypass' || true)"
 rs_snap inb-bypass step2a-bypass-descendant.txt
 
-# 2b-bypass (REQ-agent-messaging-015): the Broker frame is held by the
-# handshake dialog. The capture runs immediately after the send call returns,
-# and both timestamps are recorded.
+# The Broker frame is held by the handshake dialog; the capture runs immediately
+# after the send call returns, and both timestamps are recorded.
 rs_pane_idle inb-bypass 30 || true
 if rs_call inb-sender send_message '{"to":"inb-bypass@hostB","message":"from-broker"}' >"$OUT/send-2b.txt"; then
 	send_return_ms="$(now_ms)"
@@ -576,13 +539,12 @@ after_assistant="$(count_matches "$OUT/step2b-after-approval.jsonl" '"type":"ass
 	printf 'assistant_records_after_approval=%s\n' "$after_assistant"
 } >"$OUT/step2b-handshake.txt"
 
-# 2d: keep the dialog text, including any reason or waiting period it shows.
 grep -E 'Held message|Deny|Deliver this message|expire|wait|second|minute' \
 	"$OUT/handshake-held-2b.txt" >"$OUT/held-dialog-2b.txt" 2>/dev/null || true
 rs_obs "2d: the handshake dialog text is in handshake-held-2b.txt"
 
-# 2c: the receiver's ancestry limit in the bypass case. The 13-level writer is
-# expected to be held and the 11-level writer to be accepted.
+# The receiver's ancestry limit in the bypass case: the 13-level writer is
+# expected to be held and the 11-level writer accepted.
 rs_pane_idle inb-bypass 30 || true
 rs_send_shell inb-bypass "$(depth_frame_command 13 13 "$bypass_socket")" 'depth-frame.sh' 60
 depth13_outcome="$(wait_hold_or_record inb-bypass "$bypass_session_id" depth-13 step2c-depth-13.jsonl 120)"
@@ -625,9 +587,9 @@ rs_pane_idle inb-bypass 30 || true
 } >"$OUT/step2c-depth.txt"
 rs_obs "2c: depth-13 outcome $depth13_outcome, depth-11 outcome $depth11_outcome"
 
-# 2e: an idle session starts a turn on its own (REQ-agent-messaging-021). This
-# runs before any inbound policy is written, so the receiver is under the
-# default class rule rather than a policy left over from an earlier step.
+# An idle session starts a turn on its own. This runs before any inbound policy
+# is written, so the receiver is under the default rule rather than a policy left
+# over from an earlier step.
 rs_pane_idle inb-first 60 || true
 excerpt_session inb-first step4-before.jsonl || true
 before_assistant="$(count_matches "$OUT/step4-before.jsonl" '"type":"assistant"')"
@@ -655,20 +617,17 @@ rs_snap inb-first step4-idle-wake.txt
 } >"$OUT/step4-idle-wake-result.txt"
 rs_obs "2e: idle-wake started a turn $idle_wake_turn"
 
-# --- step 3: inbound policy (REQ-015, 016, 024) -----------------------------
 
-# The shared settings file may be rewritten by this probe only, and only with
-# a backup plus the two sha256 values. The EXIT hook restores it and fails the
-# run on a mismatch. The idle-wake check (2e) already ran under the untouched
-# file, so no policy written here is relied on after this section.
+# The shared settings file may be rewritten only with a backup plus the two
+# sha256 values; the EXIT hook restores it and fails the run on a mismatch.
 sha_before="$(sha256sum "$R/cfg/settings.json" | awk '{print $1}')"
 cp "$R/cfg/settings.json" "$settings_backup"
 printf '%s\n' "$sha_before" >"$OUT/settings.before.sha256"
 settings_touched=1
 rs_obs "backed up settings.json with sha256 $sha_before"
 
-# 3a: explicit hold. One message is sent by a real sender session, so the
-# sender's own records can show later whether a notification arrived.
+# Explicit hold: one message is sent by a real sender session, so the sender's
+# own records can show later whether a notification arrived.
 write_inbound_policy hold
 rs_window inb-hold claude --model haiku -n inb-hold \
 	--permission-mode default \
@@ -716,9 +675,9 @@ if grep -qF -- 'delivered to the recipient' "$OUT/step3a-sender-turn.jsonl"; the
 fi
 rs_snap inb-src step3a-sender.txt
 
-# Every prompt typed by this probe goes through rs_send_prompt, so a run whose
-# prompt never reached the model cannot pass. The marker is the second prompt's
-# text, and the counter must have grown past its pre-prompt reading.
+# The marker is the second prompt's text, and the counter must have grown past
+# its pre-prompt reading, so a run whose prompt never reached the model cannot
+# pass.
 if [[ "$usage_before_sender" =~ ^[0-9]+$ ]]; then
 	sender_min_usage=$((usage_before_sender + 1))
 else
@@ -726,10 +685,9 @@ else
 fi
 rs_require_model_turn 'Using mcp__peer__send_message' "$sender_min_usage"
 
-# The explicit hold is an observation, not a criterion (the ruling after the
-# first ref-clear run): the sender returns immediately, the receiver shows a
-# hold notice, and no per-message approval appears. Per-message approval and
-# denial are measured on the handshake dialog in 2b and 2c.
+# The explicit hold is an observation, not a criterion: the sender returns
+# immediately, the receiver shows a hold notice, and no per-message approval
+# appears; per-message approval and denial are measured on the handshake dialog.
 if ! rs_wait_pane inb-hold 'Held|[Cc]ross-session|pending|waiting' 30; then
 	rs_obs "3a: no held warning appeared in inb-hold within 30 seconds"
 fi
@@ -771,8 +729,8 @@ fi
 } >"$OUT/step3a-hold-observation.txt"
 rs_obs "3a observation: sender replied $hold_sender_reply with delivery result $hold_sender_delivery_result; hold notice at sender done $hold_notice_at_sender_done, per-message dialog $hold_dialog, notice after Enter $hold_notice_after_enter, message in records $hold_model_received"
 
-# 3b: switching to accept releases the held message in one shot. The release
-# is shown both by the model turn and by the "policy-accepts" log line.
+# Switching to accept releases the held message in one shot, shown by both the
+# model turn and the "policy-accepts" log line.
 write_inbound_policy accept
 accept_ms="$(now_ms)"
 accept_iso="$(now_iso)"
@@ -811,7 +769,7 @@ fi
 } >"$OUT/step3b-release.txt"
 rs_obs "3b: policy-accepts line $release_policy_accepts, model received $release_model_received, transcript reply ok $reply_ok"
 
-# 3c: for three minutes the sender's session must see no follow-up records.
+# For three minutes the sender's session must see no follow-up records.
 rs_pane_idle inb-src 60 || true
 excerpt_session inb-src step3c-sender-before.jsonl || true
 before_lines="$(wc -l <"$OUT/step3c-sender-before.jsonl" | tr -d ' ')"
@@ -839,7 +797,7 @@ rs_snap inb-src step3c-sender-after.txt
 } >"$OUT/step3c-no-notification.txt"
 rs_obs "3c: sender records before $before_lines after $after_lines, notified $notified"
 
-# 3d: refuse drops the message without showing it to the conversation.
+# Refuse drops the message without showing it to the conversation.
 rs_keys inb-hold '/exit' Enter
 wait_socket_gone inb-hold 15 || true
 write_inbound_policy refuse
@@ -874,7 +832,6 @@ rs_snap inb-refuse step3d-refuse.txt
 } >"$OUT/step3d-refuse-result.txt"
 rs_obs "3d: send success $refuse_send_ok, message in session $refuse_message_visible"
 
-# The EXIT hook restores the shared settings and checks its sha256.
 
 {
 	printf 'broker_pid=%s\n' "$broker_pid"
@@ -905,6 +862,6 @@ rs_obs "3d: send success $refuse_send_ok, message in session $refuse_message_vis
 
 rs_obs "probe finished"
 
-# The list_agents prompt is the first model prompt the probe types; a run that
-# never submitted it, or that recorded no model call at all, is a false pass.
+# The list_agents prompt is the first model prompt the probe types, so a run
+# that never submitted it records no model call and is a false pass.
 rs_require_model_turn 'Call mcp__peer__list_agents and show the raw result.' 1

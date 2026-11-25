@@ -6,10 +6,8 @@ import (
 	"github.com/wangzw/peers/internal/broker"
 )
 
-// TestAgentIDMatchesBroker compares rsprobe's identifier with the Broker's for
-// the same paths. The probe correlates refs in status output with the Broker's
-// Agent IDs, so the two derivations must agree value for value, including the
-// path cleaning the Broker applies before hashing.
+// TestAgentIDMatchesBroker checks that rsprobe derives the same Agent identifier
+// as the Broker for the same paths.
 func TestAgentIDMatchesBroker(t *testing.T) {
 	paths := []string{
 		"/tmp/rs/a.sock",

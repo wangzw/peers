@@ -22,13 +22,8 @@ import (
 )
 
 const (
-	// inboxReadTimeout bounds how long a sender may take to write its line.
-	// A loaded runner can delay the write, so it uses the package fallback.
-	inboxReadTimeout = eventTimeout
-	// controlReadTimeout bounds how long a control client may take to send its
-	// request line, keeping shutdown from waiting on an idle connection.
+	inboxReadTimeout   = eventTimeout
 	controlReadTimeout = 15 * time.Second
-	// controlDialTimeout bounds connecting to an agent's control socket.
 	controlDialTimeout = 5 * time.Second
 )
 
@@ -38,8 +33,6 @@ func init() {
 	register("agent set", cmdAgentSet)
 }
 
-// agentRecord is the session record the simulated Agent writes, in the shape
-// Claude Code uses: the registry keyed by pid, with the inbox socket path.
 type agentRecord struct {
 	PID                 int    `json:"pid"`
 	Name                string `json:"name"`
@@ -47,7 +40,6 @@ type agentRecord struct {
 	MessagingSocketPath string `json:"messagingSocketPath"`
 }
 
-// controlRequest is one line on the control socket.
 type controlRequest struct {
 	Op     string          `json:"op"`
 	Tool   string          `json:"tool,omitempty"`
@@ -56,7 +48,6 @@ type controlRequest struct {
 	Status string          `json:"status,omitempty"`
 }
 
-// controlResponse is the one-line answer to a control request.
 type controlResponse struct {
 	OK       bool   `json:"ok"`
 	Text     string `json:"text,omitempty"`
@@ -64,7 +55,6 @@ type controlResponse struct {
 	Returned string `json:"returned,omitempty"`
 }
 
-// recvEntry is one line of the inbox receive log.
 type recvEntry struct {
 	T        string `json:"t"`
 	PeerPID  int    `json:"peer_pid"`
@@ -72,8 +62,6 @@ type recvEntry struct {
 	Content  string `json:"content"`
 }
 
-// inboxFrame carries the content of a user frame; other frame types decode to
-// an empty content but are still logged.
 type inboxFrame struct {
 	Message struct {
 		Content string `json:"content"`
@@ -94,7 +82,6 @@ func cmdAgentSet(args []string) error {
 	return runAgentSet(args, os.Stdout)
 }
 
-// agentServer is one running simulated Agent.
 type agentServer struct {
 	ctx        context.Context
 	recordPath string
@@ -109,9 +96,10 @@ type agentServer struct {
 	wg       sync.WaitGroup
 }
 
-// runAgentRun implements "rsprobe agent run": it registers a session record,
-// listens on an inbox socket, starts a real "peers mcp" process for the
-// tools and serves the control socket until ctx is cancelled.
+// runAgentRun creates the control socket last, after the MCP process is
+// connected: callers treat the control socket's appearance as the readiness
+// signal, so moving the listen earlier would let them call in before the tools
+// exist.
 func runAgentRun(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("agent run", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -201,8 +189,6 @@ func runAgentRun(ctx context.Context, args []string) error {
 	return nil
 }
 
-// shutdown releases every resource the Agent acquired. It is safe to call
-// after a partial start.
 func (s *agentServer) shutdown() {
 	if s.ctl != nil {
 		_ = s.ctl.Close()
@@ -240,8 +226,8 @@ func (s *agentServer) acceptInbox() {
 	}
 }
 
-// handleInbox reads one frame line, records it and closes the connection so
-// the sender sees the receiver has taken the frame.
+// handleInbox reads one frame line and closes the connection, which the sender
+// reads as acknowledgment.
 func (s *agentServer) handleInbox(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadDeadline(time.Now().Add(inboxReadTimeout))
@@ -285,7 +271,6 @@ func (s *agentServer) acceptControl() {
 	}
 }
 
-// handleControl serves one request line and one response line per connection.
 func (s *agentServer) handleControl(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetReadDeadline(time.Now().Add(controlReadTimeout))
@@ -312,7 +297,6 @@ func (s *agentServer) handleControl(conn net.Conn) {
 	}
 }
 
-// callTool invokes one MCP tool and reports its text content.
 func (s *agentServer) callTool(req controlRequest) controlResponse {
 	started := time.Now().UTC()
 	resp := controlResponse{Started: started.Format(time.RFC3339Nano)}
@@ -336,7 +320,6 @@ func (s *agentServer) callTool(req controlRequest) controlResponse {
 	return resp
 }
 
-// setRecord rewrites the session record in place.
 func (s *agentServer) setRecord(req controlRequest) controlResponse {
 	switch {
 	case req.Name != "" && req.Status != "":
@@ -368,7 +351,6 @@ func writeControlResponse(conn net.Conn, resp controlResponse) {
 	_ = json.NewEncoder(conn).Encode(resp)
 }
 
-// readAgentRecord reads a session record.
 func readAgentRecord(path string) (agentRecord, error) {
 	var record agentRecord
 	data, err := os.ReadFile(path)
@@ -381,8 +363,8 @@ func readAgentRecord(path string) (agentRecord, error) {
 	return record, nil
 }
 
-// writeAgentRecord truncates and rewrites an existing record, preserving its
-// inode the way Claude Code's in-place rewrites do.
+// writeAgentRecord truncates and rewrites the record in place, keeping its
+// inode as Claude Code does.
 func writeAgentRecord(path string, record agentRecord) error {
 	data, err := json.Marshal(record)
 	if err != nil {
@@ -394,9 +376,6 @@ func writeAgentRecord(path string, record agentRecord) error {
 	return nil
 }
 
-// agentChildEnv is the MCP process environment: the current environment with
-// every inherited Claude Code session variable removed, then the two variables
-// the MCP server needs.
 func agentChildEnv(socketPath, configDir string) []string {
 	env := os.Environ()
 	out := make([]string, 0, len(env)+2)
@@ -413,8 +392,6 @@ func agentChildEnv(socketPath, configDir string) []string {
 	)
 }
 
-// fromNameOf returns the raw from-name attribute from the first line of an
-// attribution envelope, or "" when there is none.
 func fromNameOf(content string) string {
 	line, _, _ := strings.Cut(content, "\n")
 	const attr = `from-name="`
@@ -430,12 +407,10 @@ func fromNameOf(content string) string {
 	return rest[:end]
 }
 
-// peerCredentialUnsupported explains why a sender's pid cannot be recorded.
 const peerCredentialUnsupported = "peer credentials are not available on this platform"
 
-// recordedPeerPID returns the peer pid to write to the receive log. It reports
-// an unsupported platform on warn and records 0 for an unknown sender; a frame
-// is still logged, because accepting it never depends on its credentials.
+// recordedPeerPID returns the sender's pid, or 0 when it cannot be read;
+// accepting a frame never depends on its credentials.
 func recordedPeerPID(conn net.Conn, read func(net.Conn) (int, error), warn io.Writer) int {
 	pid, err := read(conn)
 	if err == nil {
@@ -447,7 +422,6 @@ func recordedPeerPID(conn net.Conn, read func(net.Conn) (int, error), warn io.Wr
 	return 0
 }
 
-// textContent joins the text blocks of a tool result.
 func textContent(content []mcp.Content) string {
 	texts := make([]string, 0, len(content))
 	for _, item := range content {
@@ -458,7 +432,6 @@ func textContent(content []mcp.Content) string {
 	return strings.Join(texts, "\n")
 }
 
-// runAgentCall implements "rsprobe agent call --ctl CTL <tool> [<json>]".
 func runAgentCall(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent call", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -493,7 +466,6 @@ func runAgentCall(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// runAgentSet implements "rsprobe agent set --ctl CTL (--name X | --status Y)".
 func runAgentSet(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent set", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -538,7 +510,6 @@ func runAgentSet(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// exchangeControl sends one request to a control socket and reads its answer.
 func exchangeControl(ctl string, req controlRequest) (*controlResponse, error) {
 	conn, err := net.DialTimeout("unix", ctl, controlDialTimeout)
 	if err != nil {

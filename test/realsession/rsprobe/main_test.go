@@ -8,6 +8,7 @@ import (
 	"testing"
 )
 
+// TestDispatch checks command dispatch, usage output and exit codes.
 func TestDispatch(t *testing.T) {
 	var calls []string
 	register("x", func(args []string) error {
@@ -29,7 +30,6 @@ func TestDispatch(t *testing.T) {
 
 	var stderr bytes.Buffer
 
-	// The two-word key wins over the one-word key.
 	if code := dispatch([]string{"x", "y", "1"}, &stderr); code != 0 {
 		t.Fatalf("dispatch(x y 1) = %d, want 0 (stderr %q)", code, stderr.String())
 	}
@@ -37,7 +37,6 @@ func TestDispatch(t *testing.T) {
 		t.Fatalf("calls = %q, want [x y:1]", calls)
 	}
 
-	// An unknown two-word key falls back to the one-word key.
 	calls = nil
 	if code := dispatch([]string{"x", "z"}, &stderr); code != 0 {
 		t.Fatalf("dispatch(x z) = %d, want 0 (stderr %q)", code, stderr.String())
@@ -46,7 +45,6 @@ func TestDispatch(t *testing.T) {
 		t.Fatalf("calls = %q, want [x:z]", calls)
 	}
 
-	// An unknown command prints every key in sorted order.
 	stderr.Reset()
 	if code := dispatch([]string{"nope"}, &stderr); code != 2 {
 		t.Fatalf("dispatch(nope) = %d, want 2", code)
@@ -65,7 +63,6 @@ func TestDispatch(t *testing.T) {
 		t.Fatalf("usage = %q, want %q", got, want.String())
 	}
 
-	// A failing subcommand exits 1 with the error on standard error.
 	stderr.Reset()
 	if code := dispatch([]string{"fail"}, &stderr); code != 1 {
 		t.Fatalf("dispatch(fail) = %d, want 1", code)

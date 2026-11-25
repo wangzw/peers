@@ -1,12 +1,10 @@
 #!/bin/sh
-# hosta-init.sh prepares the peer host container. It writes the container's
-# Broker configuration and the simulated Agents' configuration, starts the
-# Broker in the background, and prints the container IP on standard output.
-#
-# The script runs as root inside the container, so the Broker keeps its
-# runtime directory at /run/peers and its data under /root/.peers.
+# hosta-init.sh prepares the peer host container: it writes the Broker and
+# simulated Agent configuration, starts the Broker, and prints the container IP.
 set -eu
 
+# The container runs as root, so the Broker's runtime directory is /run/peers,
+# not the per-uid /tmp/peers-<uid>.
 BROKER_SOCKET=/run/peers/broker.sock
 
 mkdir -p /root/.peers /rs/cfg/sessions /rs/work
@@ -27,9 +25,8 @@ EOF
 peers service run --user >/rs/broker.log 2>&1 &
 broker_pid=$!
 
-# The Broker prints its readiness on standard error; the probe only needs the
-# socket, so poll for it. This is a script, not a test: at most 10 seconds in
-# steps of 100 milliseconds.
+# Wait for the socket: the Broker announces readiness only on standard error,
+# which goes to the log.
 attempt=0
 while [ ! -S "$BROKER_SOCKET" ]; do
 	attempt=$((attempt + 1))
@@ -45,5 +42,5 @@ while [ ! -S "$BROKER_SOCKET" ]; do
 	sleep 0.1
 done
 
-# Print only the address so the caller can capture it directly.
+# Print only the address: the caller captures the whole output as the container IP.
 hostname -i | awk '{print $1}'

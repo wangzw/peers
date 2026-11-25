@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# lib.sh is sourced by every real-session probe script. It wraps tmux, the
-# simulated Agents, the peer host container and the evidence helpers. Probe
-# scripts only write $OUT, $R/ctl, $R/debug and $WORK, and read process
-# environments through rs_proc_vars, which works only on Linux.
+# lib.sh is sourced by every real-session probe script and provides the tmux,
+# simulated Agent, peer host container and evidence helpers.
 
 set -euo pipefail
 
@@ -13,50 +11,40 @@ OUT="$R/out/$PROBE"
 WORK="$R/work/$PROBE"
 TMUX_SERVER=peers-rs
 
-# RS_COMPOSE is resolved from this script's location rather than the caller's
-# working directory, so every probe finds the peer host compose file whether the
-# workflow runs it from the repository root or a developer runs it from /tmp.
+# Resolve the compose file from this script's location, not the caller's working
+# directory, so every probe finds it from any working directory.
 RS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 RS_COMPOSE="$RS_REPO_ROOT/test/realsession/compose.yaml"
 
-# RS_ROOT is required by the compose file for its bind mounts, and Compose
-# interpolates the file for every command, not only up. Export it once so the
-# exec and status calls carry it too.
+# Compose interpolates RS_ROOT for every command, not only up, so export it once
+# and the exec calls carry it too.
 export RS_ROOT="$R"
 
-# RS_BROKER_PID is the Broker rs_start_broker started; empty when it started
-# none. RS_BROKER_HOOKED keeps the stop hook registered once. RS_BROKER_LOG
-# overrides the evidence log path when a probe needs another file.
 RS_BROKER_PID=""
 RS_BROKER_HOOKED=0
 RS_BROKER_LOG=""
 
-# RS_CONTAINER_WAIT bounds how long a probe waits for a started process, on
-# the host or inside the peer host container, to create its control socket.
-# The bound covers a cold container start and an external process start; it is
-# not the 3-second rule the Go tests use.
+# RS_CONTAINER_WAIT bounds how long a probe waits for a started process, on the
+# host or inside the peer host container, to create its control socket; it
+# covers a cold container start and an external process start, so it is not the
+# Go tests' 3-second rule.
 RS_CONTAINER_WAIT=10
 
-# RS_HOLD_CALL_WAIT bounds the background send_message call a ref-clear probe
-# makes under the hold policy. Whether the call returns at once is itself an
-# observation, so the bound only keeps the probe from waiting forever. The
-# default is 10 seconds; an environment value overrides it.
+# RS_HOLD_CALL_WAIT bounds the ref-clear probe's background send_message under
+# the hold policy; whether the call returns at once is the observation, so the
+# bound only prevents waiting forever.
 RS_HOLD_CALL_WAIT="${RS_HOLD_CALL_WAIT:-10}"
 
-# rs_on_exit registers a cleanup hook. Probe scripts register their cleanup
-# with it instead of installing their own EXIT trap, so the library's single
-# trap always runs every registered cleanup before it captures the windows of a
-# failed run. Hooks run in registration order; one that returns non-zero makes
-# the final exit status non-zero.
+# rs_on_exit registers a cleanup hook, run in registration order; a non-zero
+# hook makes the exit status non-zero. Probes register cleanups here rather than
+# installing their own EXIT trap, which would replace the library's.
 RS_EXIT_HOOKS=()
 rs_on_exit() {
 	RS_EXIT_HOOKS+=("$1")
 }
 
-# rs_run_exit_hooks is the only EXIT trap. It runs the registered cleanups,
-# then copies every window's pane into $OUT when the script is failing, so a
-# failed run leaves a transcript of each window even if a cleanup failed or an
-# earlier trap would otherwise have replaced this one.
+# rs_run_exit_hooks is the only EXIT trap; it runs the registered cleanups and,
+# on failure, captures every window into $OUT.
 rs_run_exit_hooks() {
 	local status=$? hook
 	if ((${#RS_EXIT_HOOKS[@]} > 0)); then
@@ -75,56 +63,39 @@ rs_run_exit_hooks() {
 }
 trap rs_run_exit_hooks EXIT
 
-# rs_tmux_start starts the dedicated tmux server under the sanitized wrapper.
 rs_tmux_start() {
 	"$R/run" tmux -L "$TMUX_SERVER" -f /dev/null new-session -d -s base -c "$WORK"
 }
 
-# rs_window opens a window named $1 that runs the remaining arguments.
 rs_window() {
 	local window="$1"
 	shift
 	tmux -L "$TMUX_SERVER" new-window -d -n "$window" -c "$WORK" "$R/run" "$@"
 }
 
-# rs_keys sends keys to a window.
 rs_keys() {
 	local window="$1"
 	shift
 	tmux -L "$TMUX_SERVER" send-keys -t "$window" "$@"
 }
 
-# rs_keys_literal sends text to a window character by character, without key
-# name lookup. A command containing spaces or shell punctuation is typed as it
-# is written, not parsed as a sequence of key names.
+# rs_keys_literal sends text literally, without tmux key-name lookup, so spaces
+# and shell punctuation are typed as written.
 rs_keys_literal() {
 	local window="$1" text="$2"
 	tmux -L "$TMUX_SERVER" send-keys -t "$window" -l -- "$text"
 }
 
-# rs_snap writes a pane capture to $OUT/$2.
 rs_snap() {
 	local window="$1" file="$2"
 	tmux -L "$TMUX_SERVER" capture-pane -p -t "$window" >"$OUT/$file"
 }
 
-# rs_grep_status prints grep's exit status for a search over the pane text: 0
-# when it matched, 1 when it did not, and 2 or more when it could not run.
-# Callers that draw a conclusion from the result branch on this status instead
-# of on grep's truthiness, because a search that could not run says nothing
-# about the pane.
-#
-# The pane goes through process substitution so the status is grep's own. A
-# plain "printf ... | grep -q" under pipefail reports the writer's SIGPIPE
-# instead whenever the pane has content after the matching line: bash's printf
-# writes line by line, grep -q exits as soon as it matches, and the next write
-# fails with EPIPE and kills printf with SIGPIPE, so the pipeline returns 141
-# even though grep matched. That is what left the trust dialog unanswered with
-# "rc=2 sends=0"; it does not need a large pane, only content after the match.
-# The callers' retry on grep's exit 2 remains as a defense against a search
-# that could not run, but it is not the cause of that failure.
-#
-# Usage: rs_grep_status PANE GREP_ARG...
+# rs_grep_status prints grep's exit status over the pane text: 0 matched, 1 no
+# match, and 2 or more when the search could not run. The pane goes through
+# process substitution so the status is grep's own: under pipefail a plain
+# "printf ... | grep -q" reports the writer's SIGPIPE when the pane has content
+# after the match.
 rs_grep_status() {
 	local pane="$1" st=0
 	shift
@@ -132,7 +103,6 @@ rs_grep_status() {
 	printf '%s\n' "$st"
 }
 
-# rs_wait_pane polls the pane until the extended regular expression matches.
 rs_wait_pane() {
 	local window="$1" pattern="$2" seconds="$3"
 	local deadline=$((SECONDS + seconds))
@@ -149,8 +119,6 @@ rs_wait_pane() {
 	return 1
 }
 
-# rs_wait_pane_literal polls the pane until it contains text as a literal
-# substring, and keeps the pane in $OUT/timeout-$window.txt on a timeout.
 rs_wait_pane_literal() {
 	local window="$1" text="$2" seconds="$3"
 	local deadline=$((SECONDS + seconds)) pane=""
@@ -166,10 +134,10 @@ rs_wait_pane_literal() {
 	return 1
 }
 
-# rs_wait_turn_idle waits until no turn has been running for one second. The
-# "esc to interrupt" hint is used instead of the readiness criteria because
-# 2.1.311 rotates the idle footer hints: "? for shortcuts" and "! for shell
-# mode" take turns, so either can be absent while the session is idle.
+# rs_wait_turn_idle waits until no turn has been running for one second. It uses
+# the "esc to interrupt" hint instead of a readiness criterion because Claude
+# Code 2.1.311 rotates the idle footer hints, so a criterion can be absent while
+# the session is idle.
 rs_wait_turn_idle() {
 	local window="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) pane="" quiet=0 st=0
@@ -184,8 +152,8 @@ rs_wait_turn_idle() {
 				return 0
 			fi
 			;;
-		# The search could not run: this poll is no evidence of a quiet
-		# turn, so the run of quiet polls restarts rather than counting it.
+		# A search that could not run is no evidence of a quiet turn, so the
+		# run of quiet polls restarts.
 		*) quiet=0 ;;
 		esac
 		sleep 0.2
@@ -193,15 +161,11 @@ rs_wait_turn_idle() {
 	return 1
 }
 
-# rs_submit_line submits one line to a session's composer. It waits for the
-# previous turn to end, types the text literally (send-keys -l), waits until the
-# composer echoes NEEDLE, pauses 0.3 seconds, and sends Enter as a second tmux
-# write. 2.1.311 reads a text-and-Enter burst as one paste: the Enter stays in
-# the composer as a newline and the line never submits. Prompts and bash-mode
-# commands both go through this one path.
-#
-# Usage: rs_submit_line WINDOW TEXT NEEDLE [READY_SECONDS]
-# READY_SECONDS bounds the idle wait and defaults to 60 seconds.
+# rs_submit_line submits text to a session's composer: it waits for the previous
+# turn to end, types literally, waits until the composer echoes NEEDLE, and sends
+# Enter as a second tmux write. The separate write matters because Claude Code
+# 2.1.311 folds a text-and-Enter burst into one paste, leaving a newline in the
+# composer.
 rs_submit_line() {
 	local window="$1" text="$2" needle="$3" seconds="${4:-60}"
 	if ! rs_wait_turn_idle "$window" "$seconds"; then
@@ -214,18 +178,15 @@ rs_submit_line() {
 		rs_obs "$window: the composer did not echo the typed text"
 		return 1
 	fi
-	# The text is on screen; the pause keeps the last keystroke and Enter in
-	# separate reads so the TUI does not fold them into one paste.
+	# Pause so the last keystroke and Enter arrive in separate reads and the TUI
+	# does not fold them into one paste.
 	sleep 0.3
 	rs_keys "$window" Enter
 }
 
-# rs_send_prompt submits one prompt through rs_submit_line.
-#
-# Usage: rs_send_prompt WINDOW PROMPT [NEEDLE] [READY_SECONDS]
-# NEEDLE defaults to the first 24 characters of PROMPT. A prompt that wraps far
-# enough for its beginning to scroll off the composer needs a NEEDLE taken from
-# the part that stays visible.
+# rs_send_prompt submits one prompt through rs_submit_line. NEEDLE defaults to
+# the first 24 characters of PROMPT; a prompt whose beginning scrolls off the
+# composer needs a NEEDLE taken from the part that stays visible.
 rs_send_prompt() {
 	local window="$1" prompt="$2" needle="${3:-}" seconds="${4:-60}"
 	if [[ -z "$needle" ]]; then
@@ -234,11 +195,9 @@ rs_send_prompt() {
 	rs_submit_line "$window" "$prompt" "$needle" "$seconds"
 }
 
-# rs_send_shell submits one bash-mode command through rs_submit_line. The
-# caller passes the command without the leading "!". NEEDLE defaults to the
-# first 24 characters of the "!" line.
-#
-# Usage: rs_send_shell WINDOW COMMAND [NEEDLE] [READY_SECONDS]
+# rs_send_shell submits one bash-mode command through rs_submit_line; pass it
+# without the leading "!", and NEEDLE defaults to the first 24 characters of the
+# "!" line.
 rs_send_shell() {
 	local window="$1" command="$2" needle="${3:-}" seconds="${4:-60}"
 	if [[ -z "$needle" ]]; then
@@ -247,7 +206,6 @@ rs_send_shell() {
 	rs_submit_line "$window" "! $command" "$needle" "$seconds"
 }
 
-# rs_wait_file polls until the path exists.
 rs_wait_file() {
 	local path="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -263,7 +221,6 @@ rs_wait_file() {
 	return 1
 }
 
-# rs_socket_of prints the inbox socket path registered for a session name.
 rs_socket_of() {
 	local name="$1" file
 	for file in "$R"/cfg/sessions/*.json; do
@@ -278,7 +235,6 @@ rs_socket_of() {
 	return 1
 }
 
-# rs_agent starts a simulated Agent in the background and waits for its control socket.
 rs_agent() {
 	local name="$1" dir="${2:-$WORK}"
 	"$R/run" rsprobe agent run \
@@ -289,11 +245,9 @@ rs_agent() {
 		--recv-log "$OUT/$name.recv.jsonl" \
 		--peers "$R/bin/peers" \
 		>>"$OUT/agents.log" 2>&1 &
-	# An external process starting is slower than the Go tests' 3-second rule.
 	rs_wait_file "$R/ctl/$name.sock" "$RS_CONTAINER_WAIT"
 }
 
-# rs_call calls a tool on a simulated Agent and appends the reply to calls.jsonl.
 rs_call() {
 	local name="$1" tool="$2" args="${3-}" reply
 	if [[ -z "$args" ]]; then
@@ -304,7 +258,6 @@ rs_call() {
 	printf '%s\n' "$reply"
 }
 
-# rs_excerpt copies the session records and debug lines that mention a marker.
 rs_excerpt() {
 	local marker="$1" file="$2" src
 	: >"$OUT/$file"
@@ -317,10 +270,10 @@ rs_excerpt() {
 	fi
 }
 
-# rs_reply_excerpt writes the raw assistant records whose text contains marker
-# to $OUT/$file. Only assistant records are read: a prompt that asks for a
-# string is echoed in a user record, so matching the whole transcript would
-# treat the prompt itself as the answer.
+# rs_reply_excerpt writes the raw assistant records whose text contains marker;
+# only assistant records are read, because a prompt that asks for a string is
+# echoed in a user record and matching the whole transcript would take the
+# prompt for the answer.
 rs_reply_excerpt() {
 	local marker="$1" file="$2" src
 	: >"$OUT/$file"
@@ -340,9 +293,6 @@ rs_reply_excerpt() {
 	done < <(find "$R/cfg/projects" -type f -name '*.jsonl' -print0 2>/dev/null)
 }
 
-# rs_assistant_text_present reports whether any session transcript holds
-# assistant text. It tells a missing reply apart from a transcript whose
-# structure yields no assistant text at all.
 rs_assistant_text_present() {
 	local src
 	while IFS= read -r -d '' src; do
@@ -362,12 +312,11 @@ rs_assistant_text_present() {
 	return 1
 }
 
-# rs_wait_reply polls the session transcripts until an assistant message's text
-# contains marker, and writes the matching records to $OUT/$file. The pane is
-# not part of the decision, because it can show the prompt that echoes the
-# requested string. It returns 0 once MIN records match (default 1), 1 when
-# assistant text was read but the marker never appeared, and 2 when no
-# assistant text could be read at all.
+# rs_wait_reply polls the session transcripts until MIN (default 1) assistant
+# records contain marker and writes them to $OUT/$file. The pane is not
+# consulted, because it can show the prompt that echoes the requested string; it
+# returns 0 on a match, 1 when assistant text was read but the marker never
+# appeared, and 2 when no assistant text could be read at all.
 rs_wait_reply() {
 	local marker="$1" file="$2" seconds="$3" min="${4:-1}"
 	local deadline=$((SECONDS + seconds)) count=0
@@ -390,11 +339,9 @@ rs_wait_reply() {
 	return 2
 }
 
-# rs_proc_vars prints selected variables of a process without dumping the rest.
-# A missing variable prints as "<NAME> absent"; a variable set to the empty
-# string prints as "<NAME>=". The two cases are not the same: an unset variable
-# and an empty one mean different things to a probe. Linux only: it reads
-# /proc/<pid>/environ, which macOS does not provide.
+# rs_proc_vars prints selected variables of a process: a missing variable prints
+# as "<NAME> absent" and an empty one as "<NAME>=". Linux only, since it reads
+# /proc/<pid>/environ.
 rs_proc_vars() {
 	local pid="$1" var line environ
 	shift
@@ -420,11 +367,9 @@ rs_proc_vars() {
 }
 
 # socket_owner_pid prints the pid of the process listening on the Unix socket at
-# path. Linux reads the pid ss reports for that socket; macOS has no ss, so lsof
-# is asked for the bound endpoint. lsof marks a connected client's name with a
-# leading "->", and only the exact bound name matches, so a client that merely
-# holds the socket is not mistaken for the listener. Either way a socket left by
-# another process is not taken for the one the probe started.
+# path. On macOS lsof marks a connected client's name with a leading "->", and
+# only the exact bound name matches, so a client that merely holds the socket is
+# not mistaken for the listener.
 socket_owner_pid() {
 	local path="$1"
 	if [[ "$(uname -s)" == Darwin ]]; then
@@ -442,10 +387,9 @@ socket_owner_pid() {
 		}'
 }
 
-# rs_start_broker starts the account's user Broker and waits for the
-# socket that process serves. The MCP server no longer starts a Broker, so every
-# probe that uses one calls this before it starts a session. The log goes to
-# $OUT/broker.log, and the Broker is stopped when the probe exits.
+# rs_start_broker starts the account's user Broker and waits for the socket it
+# serves. Every probe that uses a Broker calls it before starting a session, and
+# the Broker is stopped when the probe exits.
 rs_start_broker() {
 	local log="${RS_BROKER_LOG:-$OUT/broker.log}"
 	local sock deadline owner
@@ -486,7 +430,6 @@ rs_start_broker() {
 	return 1
 }
 
-# rs_stop_broker stops the Broker rs_start_broker started, if any.
 rs_stop_broker() {
 	if [[ -n "${RS_BROKER_PID:-}" ]]; then
 		kill "$RS_BROKER_PID" 2>/dev/null || true
@@ -495,13 +438,11 @@ rs_stop_broker() {
 	fi
 }
 
-# rs_hosta_up starts the peer host container and records its address.
 rs_hosta_up() {
 	docker compose -f "$RS_COMPOSE" up -d
 	HOSTA_IP="$(docker compose -f "$RS_COMPOSE" exec -T hosta /hosta-init.sh)"
 }
 
-# rs_hosta_agent starts a simulated Agent inside the container.
 rs_hosta_agent() {
 	local name="$1" deadline
 	docker compose -f "$RS_COMPOSE" exec -d -T hosta \
@@ -522,7 +463,6 @@ rs_hosta_agent() {
 	docker compose -f "$RS_COMPOSE" exec -T hosta test -S "/rs/$name.ctl"
 }
 
-# rs_hosta_call calls a tool on a simulated Agent inside the container.
 rs_hosta_call() {
 	local name="$1" tool="$2" args="${3-}" reply
 	if [[ -z "$args" ]]; then
@@ -533,11 +473,9 @@ rs_hosta_call() {
 	printf '%s\n' "$reply"
 }
 
-# rs_artifact_label prints a name that an artifact upload accepts. Agents may
-# be named after signatures that contain characters upload-artifact rejects,
-# such as the "<" in a<b, or characters that break when the artifact is
-# unpacked on Windows, such as a backslash. Every unsafe byte is percent-
-# encoded, so distinct names stay distinct.
+# rs_artifact_label percent-encodes every byte outside [A-Za-z0-9._-], because an
+# upload-artifact name rejects characters such as "<" and Windows unpacking
+# rejects a backslash; distinct names stay distinct.
 rs_artifact_label() {
 	local s="$1" out="" ch enc i
 	local LC_ALL=C
@@ -555,7 +493,7 @@ rs_artifact_label() {
 }
 
 # rs_hosta_recv copies a container-side receive log out, naming the local file
-# through rs_artifact_label so the Agent name cannot make the upload fail.
+# through rs_artifact_label so the Agent name cannot break the upload.
 rs_hosta_recv() {
 	local name="$1"
 	docker compose -f "$RS_COMPOSE" exec -T hosta cat "/rs/$name.recv.jsonl" \
@@ -569,8 +507,8 @@ rs_pair_text() {
 }
 
 # rs_pair_hosta pairs the runner Broker with hosta and checks its alias. Both
-# tools return a JSON object in .text; anything else fails the probe instead of
-# falling back to whatever text arrived.
+# tools return a JSON object in .text; anything else fails the probe rather than
+# using whatever text arrived.
 rs_pair_hosta() {
 	local key reply text alias
 	rs_hosta_agent pairer
@@ -599,18 +537,14 @@ rs_pair_hosta() {
 	fi
 }
 
-# rs_obs appends a timestamped observation.
 rs_obs() {
 	printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$OUT/observations.txt"
 }
 
-# rs_require_model_turn makes a probe fail when its prompts never reached the
-# model. It requires the environment's model-call counter to be at least MIN and
-# some session transcript to hold a user record containing MARKER, and records
-# the counter and both verdicts in observations.txt. Probes call it last, so a
+# rs_require_model_turn fails a probe when its prompts never reached the model:
+# the environment's model-call counter must be at least MIN (default 1) and some
+# transcript must hold a user record containing MARKER. Probes call it last, so a
 # run whose prompt never submitted cannot pass on a pane capture alone.
-#
-# Usage: rs_require_model_turn MARKER [MIN]
 rs_require_model_turn() {
 	local marker="$1" min="${2:-1}"
 	local usage total found=no src
@@ -650,26 +584,21 @@ rs_require_model_turn() {
 }
 
 # RS_READY_DIALOG_RE matches the startup dialogs and selection menus that must
-# not be on screen when a session is called ready. The trust dialog and the
-# bypass-permissions warning are dismissed by rs_wait_ready; the remaining
-# markers only keep readiness from being declared over an unknown menu.
+# not be on screen when a session is called ready.
 RS_READY_DIALOG_RE='Quick safety check|Yes, I trust this folder|Do you trust the files|Yes, I trust|Yes, I accept|Enter to confirm'
 
 # rs_ready_criterion prints the readiness criterion the pane satisfies and
-# returns 0, or returns 1 when the pane shows no composer or still shows a
-# dialog. The three criteria are the ones Claude Code prints: older versions
-# end the hint with "? for shortcuts", 2.1.311 ends the permission-mode line
-# with "(shift+tab to cycle)", and the empty composer shows a placeholder that
-# starts with Try ". A bare "❯" is not a criterion: it is visible behind a
-# dialog as well.
+# returns 0, or 1 when the pane shows no composer or still shows a dialog. The
+# three criteria are "? for shortcuts", "(shift+tab to cycle)" and a Try "
+# placeholder; a bare "❯" is not one, since it is visible behind a dialog too.
 rs_ready_criterion() {
 	local pane="$1" st=0
 	st="$(rs_grep_status "$pane" -qiE -- "$RS_READY_DIALOG_RE")"
 	case "$st" in
 	0) return 1 ;;
 	1) ;;
-	# The search could not run, so a dialog cannot be ruled out; call the
-	# pane not ready rather than ready over a screen it could not inspect.
+	# A search that could not run cannot rule out a dialog, so the pane is not
+	# ready.
 	*) return 1 ;;
 	esac
 	if [[ "$(rs_grep_status "$pane" -qF -- '? for shortcuts')" == 0 ]]; then
@@ -687,40 +616,22 @@ rs_ready_criterion() {
 	return 1
 }
 
-# RS_TRUST_DIALOG_RE matches the workspace trust dialog. It is kept separate
-# from RS_READY_DIALOG_RE so rs_dismiss_trust_dialog can tell whether the
-# dialog it answered has left the pane.
+# RS_TRUST_DIALOG_RE matches the workspace trust dialog.
 RS_TRUST_DIALOG_RE='Quick safety check|Yes, I trust this folder|Do you trust the files|Yes, I trust'
 
 # RS_TRUST_DIALOG_RESEND_BUDGET bounds, in seconds, how long
-# rs_dismiss_trust_dialog keeps resending when the caller passes no bound. The
-# dialog has cleared after one or two 0.5-second bursts; ten seconds leaves
-# room for a loaded runner, where a capture and the redraw can each take
-# seconds, while staying under half of the smallest readiness budget a probe
-# passes to rs_wait_ready, so a timeout there still leaves time for one retry.
+# rs_dismiss_trust_dialog keeps resending when the caller passes no bound. Keep
+# it under half of the smallest readiness budget a probe passes, so a timeout
+# there still leaves time for one retry.
 RS_TRUST_DIALOG_RESEND_BUDGET=10
 
-# rs_accept_trust_dialog sends the keys that answer the workspace trust dialog
-# shown in the pane, and returns 0. It returns 2 without pressing anything when
-# the dialog is on screen but neither known option carries the cursor: another
-# screen may be underneath, and a blind Enter could confirm the wrong choice.
-# It returns 3 when a search over the pane could not run: the cursor is then
-# unknown, not absent, and the caller retries instead of refusing the dialog.
-# That retry is a defense against a search that could not run; it is not the
-# cause of the broken-pipe failure above.
-# It is separate from rs_wait_ready so the key choice can be tested without a
-# tmux server.
-#
-# The pane is searched through rs_grep_status so the answer comes from grep's
-# own status. Under pipefail a plain "printf ... | grep -q" reports the
-# writer's SIGPIPE instead: printf keeps writing after grep -q exits on the
-# match, the failed write kills printf, and the pipeline returns 141 as if the
-# option were absent. That is what made this check return 2 without a key.
-#
-# The dialog focuses "No, exit" when the probe root resolves through a symlink,
-# which /tmp does on macOS (/private/tmp); Enter alone would then end the
-# session. The cursor moves to the trust entry only when the marker sits on the
-# refusal, so the Linux behavior is unchanged.
+# rs_accept_trust_dialog sends the keys that answer the workspace trust dialog.
+# It returns 0 after pressing, 2 without pressing when the dialog is on screen
+# but neither option carries the cursor, and 3 when a search over the pane could
+# not run. The dialog focuses "No, exit" when the probe root resolves through a
+# symlink, as /tmp does on macOS (/private/tmp), so Enter alone would end the
+# session; the cursor moves to the trust entry only when the marker sits on the
+# refusal.
 rs_accept_trust_dialog() {
 	local window="$1" pane="$2" st=0
 	st="$(rs_grep_status "$pane" -qF -- '❯ No, exit')"
@@ -743,34 +654,22 @@ rs_accept_trust_dialog() {
 	esac
 }
 
-# rs_dismiss_trust_dialog sends the trust keys until the dialog leaves the
-# pane, and prints how many key bursts that took. It returns 0 once the dialog
-# is gone, 1 when the dialog is still there at the deadline, and 2 when a
-# recognized dialog carries the cursor on neither known option.
+# rs_dismiss_trust_dialog sends the trust keys until the dialog leaves the pane
+# and prints how many key bursts that took. It returns 0 once the dialog is gone,
+# 1 when it is still there at the deadline, and 2 when a recognized dialog
+# carries the cursor on neither known option.
 #
-# The pane is captured again before every send. Claude Code draws the dialog
-# before it starts reading keys and may discard a burst that arrives while it
-# switches the terminal to raw mode: on the macOS runner the frame captured a
-# second later still showed the cursor on "No, exit", so the first burst had
-# not been processed. The re-capture also keeps a second Down Enter from
-# landing on the next screen if the first burst did take effect and only the
-# redraw lagged.
+# Capture the pane again before every send: Claude Code may discard a burst that
+# arrives while it switches the terminal to raw mode, and a stale capture could
+# send the next burst to the following screen.
 #
-# The deadline is checked only after a burst has been sent. SECONDS counts
-# wall-clock time, so a clock step can put the deadline behind the helper
-# before its first iteration; checking first made it print "failed after 0"
-# without pressing a key. One attempt is always made, and the deadline bounds
-# only the resends that follow it.
+# Check the deadline only after a burst has been sent: SECONDS counts wall-clock
+# time and can step behind the deadline before the first iteration, so one
+# attempt is always made.
 #
-# A capture that fails says nothing about the dialog, so its empty output is
-# not read as the dialog leaving. The capture is retried within the budget, and
-# success is reported only from a capture that succeeded and showed no dialog.
-# A search over the pane that could not run is treated the same way: it says
-# nothing about the dialog, so it is retried too, and neither "gone" nor an
-# unknown focus is reported from it. Only a search that ran and found no match
-# ends the wait successfully. That retry is a defense against a search that
-# could not run; the flake it was added with came from the writer's SIGPIPE,
-# not from grep's exit status.
+# A failed capture or a search that could not run says nothing about the dialog,
+# so neither ends the wait; only a search that ran and found no match reports the
+# dialog gone.
 rs_dismiss_trust_dialog() {
 	local window="$1" seconds="${2:-$RS_TRUST_DIALOG_RESEND_BUDGET}" deadline pane="" sends=0 rc=0 st=0
 	deadline=$((SECONDS + seconds))
@@ -821,10 +720,9 @@ rs_dismiss_trust_dialog() {
 }
 
 # rs_wait_ready polls a window until the TUI reaches its input composer and no
-# dialog is on screen. A trust dialog is accepted by choosing its trust entry;
-# the bypass-permissions warning opens focused on "No, exit", so it is accepted
-# with Down then Enter. The criterion that matched is written to
-# observations.txt, because which hint a version prints is itself evidence.
+# dialog is on screen. The bypass-permissions warning opens focused on "No,
+# exit", so it is accepted with Down then Enter, and the matching criterion is
+# written to observations.txt.
 rs_wait_ready() {
 	local window="$1" seconds="${2:-60}"
 	local deadline=$((SECONDS + seconds)) pane="" criterion="" dialogs=0 dialog_bursts=0
@@ -870,10 +768,9 @@ rs_wait_ready() {
 }
 
 # rs_mode_text prints the permission-mode line from a window's bottom bar.
-# 2.1.311 writes a line ending in "(shift+tab to cycle)"; older versions wrote
-# "? for shortcuts" with no mode. An empty result means the version or the
-# screen state prints no mode line; rs_obs_mode records that fact rather than
-# guessing a mode.
+# Claude Code 2.1.311 writes a line ending in "(shift+tab to cycle)"; older
+# versions wrote "? for shortcuts" with no mode, and an empty result means no
+# mode line was printed.
 rs_mode_text() {
 	local window="$1" pane line=""
 	pane="$(tmux -L "$TMUX_SERVER" capture-pane -p -t "$window" 2>/dev/null || true)"
@@ -884,9 +781,6 @@ rs_mode_text() {
 	printf '%s\n' "$line" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//'
 }
 
-# rs_obs_mode records the permission-mode text a session shows after startup.
-# A session that prints no mode line is recorded as such instead of being
-# assigned a mode the probe did not see.
 rs_obs_mode() {
 	local window="$1" line
 	line="$(rs_mode_text "$window")"
@@ -898,17 +792,17 @@ rs_obs_mode() {
 }
 
 # rs_pane_idle waits until the window is back at its composer and no turn is
-# running. The "esc to interrupt" hint marks a running turn, which the
-# readiness criteria alone would not exclude.
+# running; the "esc to interrupt" hint marks a running turn, which the readiness
+# criteria alone do not exclude.
 rs_pane_idle() {
 	local window="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) pane="" st=0
 	while ((SECONDS < deadline)); do
 		pane="$(tmux -L "$TMUX_SERVER" capture-pane -p -t "$window" 2>/dev/null || true)"
 		st="$(rs_grep_status "$pane" -qF -- 'esc to interrupt')"
-		# Only a search that ran and found the hint absent, together with a
-		# ready composer, means idle. A hint that matched (0) or a search
-		# that could not run (2 or more) says the turn may be running.
+		# Only a search that ran and found the hint absent, with a ready
+		# composer, means idle; a match or a search that could not run leaves the
+		# turn possibly running.
 		if ((st == 1)) && rs_ready_criterion "$pane" >/dev/null; then
 			return 0
 		fi

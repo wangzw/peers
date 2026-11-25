@@ -12,13 +12,12 @@ import (
 	"time"
 )
 
-// sigstubHelperEnv marks the re-executed test binary as the sigstub child. The
-// value is the log path to pass to the subcommand.
+// sigstubHelperEnv marks the re-executed test binary as the sigstub child; its
+// value is the log path.
 const sigstubHelperEnv = "RSPROBE_SIGSTUB_LOG"
 
-// TestSigstubHelper is the child half of TestSigstubLogsAndIgnoresSignals. The
-// parent re-executes the test binary with only this test selected, and the
-// helper serves "rsprobe sigstub". It never returns on its own.
+// TestSigstubHelper serves "rsprobe sigstub" as the child half of
+// TestSigstubLogsAndIgnoresSignals, and skips otherwise.
 func TestSigstubHelper(t *testing.T) {
 	logPath := os.Getenv(sigstubHelperEnv)
 	if logPath == "" {
@@ -30,6 +29,8 @@ func TestSigstubHelper(t *testing.T) {
 	}
 }
 
+// TestSigstubLogsAndIgnoresSignals checks that the stub logs start and signal
+// events and stays alive after them.
 func TestSigstubLogsAndIgnoresSignals(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "sigstub.jsonl")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestSigstubHelper$")
@@ -128,9 +129,6 @@ func waitUntil(timeout time.Duration, cond func() bool) bool {
 	return cond()
 }
 
-// readSigstubEvents returns the complete records currently in the log. A line
-// that cannot be decoded (a partially written last line) is skipped; the next
-// poll sees it whole.
 func readSigstubEvents(path string) []sigstubEvent {
 	f, err := os.Open(path)
 	if err != nil {

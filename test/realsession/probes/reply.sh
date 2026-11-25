@@ -7,12 +7,10 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# reply.sh asks whether a real session, once the peer MCP server is installed
-# and documented, answers an Agent address with mcp__peer__send_message. A
-# simulated Agent on the peer host sends the same three messages to a sonnet
-# session and a haiku session; every turn's tool calls and every reply that
-# reached the sender are kept as evidence. The script does not judge; the probe
-# record weighs the two models' answers.
+# reply.sh asks whether a real session answers an Agent address with
+# mcp__peer__send_message. A simulated Agent on the peer host sends the same
+# three messages to a sonnet and a haiku session; the script records evidence
+# and does not judge.
 
 readonly SENDER=api-worker
 readonly SENDER_ADDRESS="api-worker@hostA"
@@ -27,8 +25,6 @@ messages=(
 	"Ping. Reply with pong."
 )
 
-# rs_reply_state prints the Broker's status for a session, or nothing while
-# the session is not listed.
 rs_reply_state() {
 	local name="$1"
 	local line=""
@@ -36,8 +32,6 @@ rs_reply_state() {
 	printf '%s\n' "$line" | sed -n 's/.*status=\([a-z]*\).*/\1/p'
 }
 
-# rs_reply_wait_registered waits for the session record to carry a socket path
-# and for the Broker to list the session, then prints the socket path.
 rs_reply_wait_registered() {
 	local name="$1"
 	local deadline=$((SECONDS + REGISTER_WAIT))
@@ -73,8 +67,8 @@ rs_reply_session_id() {
 }
 
 # rs_reply_dump_registry keeps the raw session registry in $OUT when a record
-# carries no sessionId. The missing field is itself the observation, so the
-# registry is stored as written instead of widening the transcript excerpt.
+# carries no sessionId; the missing field is itself the observation, so the
+# registry is stored as written.
 rs_reply_dump_registry() {
 	local name="$1"
 	local file=""
@@ -88,13 +82,11 @@ rs_reply_dump_registry() {
 	done
 }
 
-# rs_reply_recv_count prints how many replies the sender has received so far.
 rs_reply_recv_count() {
 	docker compose -f test/realsession/compose.yaml exec -T hosta \
 		wc -l "/rs/$SENDER.recv.jsonl" | awk '{print $1}'
 }
 
-# rs_reply_recv_since prints the sender's replies from a given line number on.
 rs_reply_recv_since() {
 	local from="$1"
 	docker compose -f test/realsession/compose.yaml exec -T hosta \
@@ -102,7 +94,7 @@ rs_reply_recv_since() {
 }
 
 # rs_reply_wait_turn waits until the sender received a reply or until the turn
-# the message started has visibly ended. A session that never becomes busy and
+# the message started has visibly ended; a session that never becomes busy and
 # never answers times out.
 rs_reply_wait_turn() {
 	local name="$1"
@@ -150,7 +142,6 @@ rs_reply_wait_idle() {
 	return 1
 }
 
-# rs_reply_wait_sender waits until the peer Agent is visible from the runner.
 rs_reply_wait_sender() {
 	local deadline=$((SECONDS + SENDER_WAIT))
 	local reply=""
@@ -295,7 +286,7 @@ rs_snap reply-s pane-reply-s.txt
 rs_snap reply-h pane-reply-h.txt
 rs_obs "reply probe finished"
 
-# The probe types no prompt: the peer host's sender starts each turn. The second
-# message is sent to both sessions, so its text must appear as a user record and
-# the environment must count at least one model call.
+# The probe types no prompt, since the peer host's sender starts each turn, so
+# the second message's text must appear as a user record and the counter must
+# show at least one model call.
 rs_require_model_turn 'Quick question: what is 2+2?' 1

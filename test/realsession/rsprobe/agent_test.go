@@ -20,14 +20,8 @@ import (
 )
 
 const (
-	// agentReadyTimeout bounds a simulated Agent's startup. The Agent runs
-	// this test binary as its stub MCP server, so a subprocess cold start
-	// dominates the wait; it uses the package fallback.
 	agentReadyTimeout = eventTimeout
-	// agentSendTimeout bounds the library client that writes one frame. A
-	// loaded runner can delay the write past a few seconds, so it uses the
-	// package fallback too.
-	agentSendTimeout = eventTimeout
+	agentSendTimeout  = eventTimeout
 )
 
 // TestMain turns the test binary into the stand-in MCP server the simulated
@@ -39,13 +33,10 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// stubEchoIn is the single argument of the stub echo tool.
 type stubEchoIn struct {
 	Text string `json:"text"`
 }
 
-// runStubMCP serves one tool, echo, which returns the requested text together
-// with the session environment variables the Agent passed to the MCP process.
 func runStubMCP() int {
 	server := mcp.NewServer(&mcp.Implementation{Name: "rsprobe-stub", Version: "0"}, nil)
 	mcp.AddTool[stubEchoIn, any](
@@ -61,7 +52,6 @@ func runStubMCP() int {
 	return 0
 }
 
-// stubEchoText builds the echo tool's answer.
 func stubEchoText(text string) string {
 	lines := []string{
 		text,
@@ -74,7 +64,6 @@ func stubEchoText(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-// testAgent is one simulated Agent started in the test process.
 type testAgent struct {
 	dir    string
 	ctl    string
@@ -87,16 +76,10 @@ type testAgent struct {
 	runErr   error
 }
 
-// maxSocketPathBytes is the largest path the tests bind a socket to. macOS
-// allows 104 bytes in sun_path including the terminating NUL; the limit is
-// left a little lower so a path that fits here fits on every platform.
+// maxSocketPathBytes is the largest socket path the tests bind, kept below
+// macOS's 104-byte sun_path limit.
 const maxSocketPathBytes = 100
 
-// testSocketDir returns a directory in which socketName can be bound. The
-// agent derives its inbox socket from the control socket's directory, so both
-// live here. t.TempDir() sits under /var/folders on macOS, where a PID-named
-// socket path exceeds sun_path, so a too-long path falls back to a fresh
-// directory under /tmp that is removed when the test ends.
 func testSocketDir(t *testing.T, base, socketName string) string {
 	t.Helper()
 	if len(filepath.Join(base, socketName)) <= maxSocketPathBytes {
@@ -110,8 +93,6 @@ func testSocketDir(t *testing.T, base, socketName string) string {
 	return dir
 }
 
-// startTestAgent starts runAgentRun in a goroutine and waits until its control
-// socket exists.
 func startTestAgent(t *testing.T) *testAgent {
 	t.Helper()
 	executable, err := os.Executable()
@@ -172,6 +153,8 @@ func startTestAgent(t *testing.T) *testAgent {
 	return agent
 }
 
+// TestTestSocketDirKeepsAShortBase checks that a base path that fits is
+// returned unchanged.
 func TestTestSocketDirKeepsAShortBase(t *testing.T) {
 	base, err := os.MkdirTemp("/tmp", "rs-test-")
 	if err != nil {
@@ -184,6 +167,8 @@ func TestTestSocketDirKeepsAShortBase(t *testing.T) {
 	}
 }
 
+// TestTestSocketDirFallsBackWhenThePathIsLong checks that an over-long base
+// path falls back to a directory under /tmp.
 func TestTestSocketDirFallsBackWhenThePathIsLong(t *testing.T) {
 	base := t.TempDir()
 	for len(filepath.Join(base, "1234.inbox.sock")) <= maxSocketPathBytes {
@@ -202,7 +187,6 @@ func TestTestSocketDirFallsBackWhenThePathIsLong(t *testing.T) {
 	}
 }
 
-// recordPath is where the Agent writes this process's session record.
 func (a *testAgent) recordPath() string {
 	return filepath.Join(a.dir, "sessions", strconv.Itoa(os.Getpid())+".json")
 }
@@ -238,6 +222,8 @@ func (a *testAgent) readRecord(t *testing.T) agentRecord {
 	return record
 }
 
+// TestAgentRunWritesRecordAndForwardsCalls checks the session record and that a
+// tool call reaches the MCP process without inheriting the parent session.
 func TestAgentRunWritesRecordAndForwardsCalls(t *testing.T) {
 	// The MCP process must not inherit a parent session's identity.
 	t.Setenv("CLAUDE_CODE_CHILD_SESSION", "1")
@@ -283,6 +269,8 @@ func TestAgentRunWritesRecordAndForwardsCalls(t *testing.T) {
 	}
 }
 
+// TestAgentRecvLog checks that a frame is logged with its sender name and body,
+// and the peer pid on Linux.
 func TestAgentRecvLog(t *testing.T) {
 	agent := startTestAgent(t)
 
@@ -292,11 +280,10 @@ func TestAgentRecvLog(t *testing.T) {
 		Priority: ccsock.PriorityNext,
 		FromName: "sender",
 	})
-	// The Agent closes the connection once it has read the frame. On macOS the
-	// library waits 150ms before its half-close, so the peer is usually gone by
-	// then and shutdown reports ENOTCONN even though the frame was delivered.
-	// The receive log below, not the half-close result, is what this test
-	// checks.
+	// The Agent closes the connection after reading the frame, and the library
+	// half-closes only afterwards, so on macOS shutdown reports ENOTCONN even
+	// though the frame was delivered; the receive log, not the send result, is
+	// what this test checks.
 	if err != nil && (runtime.GOOS != "darwin" || !errors.Is(err, syscall.ENOTCONN)) {
 		t.Fatalf("sending a frame: %v", err)
 	}
@@ -332,9 +319,8 @@ func TestAgentRecvLog(t *testing.T) {
 	}
 }
 
-// TestRecordedPeerPIDReportsUnsupported exercises the off-Linux branch on
-// Linux by injecting the credential reader: the frame still gets logged with
-// peer_pid 0, and the reason is printed once.
+// TestRecordedPeerPIDReportsUnsupported checks that an unsupported credential
+// reader logs peer_pid 0 and prints the reason once.
 func TestRecordedPeerPIDReportsUnsupported(t *testing.T) {
 	var warn bytes.Buffer
 	pid := recordedPeerPID(nil, func(net.Conn) (int, error) {
@@ -348,6 +334,8 @@ func TestRecordedPeerPIDReportsUnsupported(t *testing.T) {
 	}
 }
 
+// TestRecordedPeerPIDReturnsTheReadPID checks that a successful read returns
+// the pid without warning.
 func TestRecordedPeerPIDReturnsTheReadPID(t *testing.T) {
 	var warn bytes.Buffer
 	pid := recordedPeerPID(nil, func(net.Conn) (int, error) {
@@ -361,6 +349,8 @@ func TestRecordedPeerPIDReturnsTheReadPID(t *testing.T) {
 	}
 }
 
+// TestRecordedPeerPIDSwallowsOtherErrors checks that a read error other than
+// unsupported returns 0 without warning.
 func TestRecordedPeerPIDSwallowsOtherErrors(t *testing.T) {
 	var warn bytes.Buffer
 	pid := recordedPeerPID(nil, func(net.Conn) (int, error) {
@@ -374,9 +364,8 @@ func TestRecordedPeerPIDSwallowsOtherErrors(t *testing.T) {
 	}
 }
 
-// TestPeerPIDReportsThePeerProcess connects a Unix socket to a listener in this
-// process and checks that the peer pid is this process. Linux reads the pid
-// with SO_PEERCRED and macOS with LOCAL_PEERPID.
+// TestPeerPIDReportsThePeerProcess checks that a unix socket reports this
+// process as its peer pid.
 func TestPeerPIDReportsThePeerProcess(t *testing.T) {
 	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
 		t.Skipf("peer credentials are not implemented on %s", runtime.GOOS)
@@ -425,6 +414,8 @@ func TestPeerPIDReportsThePeerProcess(t *testing.T) {
 	}
 }
 
+// TestAgentSetRewritesInPlace checks that name and status updates rewrite the
+// session record in place.
 func TestAgentSetRewritesInPlace(t *testing.T) {
 	agent := startTestAgent(t)
 

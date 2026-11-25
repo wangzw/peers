@@ -7,15 +7,10 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# This probe answers REQ-agent-messaging-036 and confirms that a headless
-# session which skips permission prompts receives no messages. Claude Code
-# 2.1.311 rejects stream-json input and output unless --verbose is given, so
-# both headless commands below carry it.
 
+# Claude Code 2.1.311 rejects stream-json input and output unless --verbose is given.
 stream_args=(-p --model haiku --input-format stream-json --output-format stream-json --verbose)
 
-# wait_registered polls the session registry until a session name has an inbox
-# socket path.
 wait_registered() {
 	local name="$1" seconds="$2" deadline
 	deadline=$((SECONDS + seconds))
@@ -27,7 +22,6 @@ wait_registered() {
 	done
 }
 
-# wait_status polls rsprobe status until the given address shows up.
 wait_status() {
 	local address="$1" seconds="$2" deadline
 	deadline=$((SECONDS + seconds))
@@ -39,11 +33,7 @@ wait_status() {
 	done
 }
 
-# stream_mode prints the permissionMode that a session's stream-json init
-# record reports. A headless session has no bottom bar to read, so the init
-# record is where its mode text lives. The value is polled because the record
-# may not be flushed yet when the session first registers; when the version
-# reports no mode the result is the literal "none", not a guessed mode.
+# A headless session has no bottom bar; its permission mode comes from the stream-json init record, which may not be flushed at first.
 stream_mode() {
 	local file="$1" deadline=$((SECONDS + 10)) mode=""
 	while ((SECONDS < deadline)); do
@@ -57,7 +47,6 @@ stream_mode() {
 	printf '%s\n' none
 }
 
-# usage_total prints the number of distinct assistant calls recorded so far.
 usage_total() {
 	local out total
 	out="$("$R/run" rsprobe env usage --root "$R" 2>/dev/null || true)"
@@ -65,8 +54,7 @@ usage_total() {
 	printf '%s\n' "${total:-0}"
 }
 
-# stop_headless closes the session's stdin before this call, then waits for the
-# process to exit and kills it if it lingers.
+# Callers close the session's stdin before stop_headless; it waits for the process, then kills it if it lingers.
 stop_headless() {
 	local pid="$1" deadline
 	deadline=$((SECONDS + 30))
@@ -82,12 +70,8 @@ stop_headless() {
 rs_agent hl-rx
 rs_obs "hl-rx started; it receives the message sent from the headless session"
 
-# Both headless sessions start in $WORK, as the tmux sessions rs_window creates
-# do. The project config there declares topics: [rs-probe], which is the topic
-# the simulated Agents join; started from the repository root instead, a
-# session derives its topic from the git remote and never sees them.
+# Both headless sessions start in $WORK, whose project config declares topics: [rs-probe]; from the repository root a session derives its topic from the git remote instead.
 
-# Step 1: a headless session becomes an Agent and can send a message.
 hl_in="$R/ctl/hl.in"
 rm -f "$hl_in"
 mkfifo "$hl_in"
@@ -152,10 +136,7 @@ if [[ -z "$from_name" ]]; then
 fi
 rs_obs "hl-rx received from-headless with from_name=${from_name}"
 
-# Step 2: a headless session which skips permission prompts receives nothing.
-# This is the one deliberate exception to pinning --permission-mode default:
-# skipping permission confirmation is the condition the step measures
-# (REQ-agent-messaging-036), so the mode must not be overridden.
+# The one exception to pinning --permission-mode default: skipping permission confirmation is the condition under test, so this mode must not be overridden.
 bypass_in="$R/ctl/hl-bypass.in"
 rm -f "$bypass_in"
 mkfifo "$bypass_in"
@@ -220,8 +201,5 @@ stop_headless "$bypass_pid"
 rs_obs "hl-bypass processed the message: ${processed}; new assistant turns after send: ${turn_seen}"
 rs_obs "headless probe finished"
 
-# This probe has no tmux composer: both sessions read stream-json from a FIFO,
-# so rs_send_prompt does not apply. The step-1 user line is the probe's own
-# prompt, and it must appear in a user record while the usage counter is above
-# zero; otherwise the stream output alone proves no model turn happened.
+# There is no tmux composer, so the probe's own prompt must appear as a user line with a model call counted.
 rs_require_model_turn 'Send the message "from-headless"' 1

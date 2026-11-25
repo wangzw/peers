@@ -12,13 +12,13 @@ import (
 )
 
 const (
-	// matchEventGap separates the two poll events in the matchEvents test so
-	// one notify event can cover only the earlier of them.
+	// matchEventGap separates the two poll events in the matchEvents test so one
+	// notify event can cover only the earlier of them.
 	matchEventGap = 10 * time.Second
 )
 
-// watchLog collects events from the watcher and wakes waiters when one
-// arrives, so the test never depends on a fixed sleep.
+// watchLog collects events from the watcher and wakes waiters when one arrives,
+// so the test never depends on a fixed sleep.
 type watchLog struct {
 	mu     sync.Mutex
 	events []event
@@ -85,6 +85,8 @@ func notifyIs(file string, opPart string) func(event) bool {
 	}
 }
 
+// TestWatchNoMissesOnInPlaceRewrites checks that in-place rewrites, creates and
+// removes produce no unmatched poll observations.
 func TestWatchNoMissesOnInPlaceRewrites(t *testing.T) {
 	dir := t.TempDir()
 	log := newWatchLog()
@@ -157,6 +159,8 @@ func TestWatchNoMissesOnInPlaceRewrites(t *testing.T) {
 	}
 }
 
+// TestMatchEventsReportsMiss checks that a poll event outside the window of any
+// notify event is reported as a miss.
 func TestMatchEventsReportsMiss(t *testing.T) {
 	base := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
 	polls := []event{

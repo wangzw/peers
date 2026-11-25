@@ -19,12 +19,8 @@ import (
 )
 
 const (
-	// frameWriteTimeout bounds one frame write, from connecting to the receiver
-	// closing the connection after it has taken the line.
 	frameWriteTimeout = 5 * time.Second
 
-	// frameEnvelopeTag is the element a receiving Claude Code session recognizes
-	// as an attributed peer message.
 	frameEnvelopeTag = "cross-session-message"
 )
 
@@ -36,9 +32,8 @@ func cmdFrame(args []string) error {
 	return runFrame(args, os.Stdout)
 }
 
-// verbatimFrame mirrors the transport library's userFrame, including field
-// order. The receiver decodes JSON, but matching the library keeps the bytes
-// comparable with what the Broker actually sends.
+// verbatimFrame mirrors the transport library's userFrame including field
+// order, so frames stay comparable with what the Broker sends.
 type verbatimFrame struct {
 	MsgV     int             `json:"msgV"`
 	MsgID    string          `json:"msg_id"`
@@ -52,10 +47,9 @@ type verbatimPayload struct {
 	Content string `json:"content"`
 }
 
-// buildVerbatimFrame returns one newline-terminated frame whose envelope carries
-// fromName byte for byte: no cleaning and no quoting, so a probe can observe
-// exactly how the receiver treats a hostile or unusual sender name. An empty
-// fromName omits the attribute, as the transport library does with no name.
+// buildVerbatimFrame writes fromName byte for byte, without cleaning or
+// quoting, so a probe can observe how the receiver treats a hostile name; an
+// empty fromName omits the attribute.
 func buildVerbatimFrame(fromName, body, msgID string) ([]byte, error) {
 	var envelope strings.Builder
 	envelope.WriteString("<")
@@ -85,13 +79,11 @@ func buildVerbatimFrame(fromName, body, msgID string) ([]byte, error) {
 }
 
 // escapeFrameBody neutralizes a closing envelope tag in the body so the body
-// cannot end the attribution envelope early. REQ-agent-messaging-023.
+// cannot end the attribution envelope early.
 func escapeFrameBody(body string) string {
 	return strings.ReplaceAll(body, "</"+frameEnvelopeTag, `<\/`+frameEnvelopeTag)
 }
 
-// runFrame implements "rsprobe frame --socket S --from-name N --body B
-// [--mode verbatim|library] [--count K] [--fork-each] [--interval D]".
 func runFrame(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("frame", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -142,10 +134,8 @@ func runFrame(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// runFrameForkEach writes every frame through a fresh child process so each
-// frame's writer has its own pid, which is what the receiver's peer-credential
-// view reports. {i} is expanded here because the child always runs with
-// --count 1; {pid} is left for the child, whose pid is the one that matters.
+// runFrameForkEach writes each frame through a fresh child so every frame has
+// its own writer pid; {i} is expanded here and {pid} is left to the child.
 func runFrameForkEach(stdout io.Writer, socket, fromName, body, mode string, count int, interval time.Duration) error {
 	failed := 0
 	for seq := 1; seq <= count; seq++ {
@@ -166,7 +156,6 @@ func runFrameForkEach(stdout io.Writer, socket, fromName, body, mode string, cou
 		if line == "" {
 			line = "- 0 error:child produced no output 0"
 		} else if fields := strings.SplitN(line, " ", 2); len(fields) == 2 {
-			// The child numbered its single frame 1; renumber it here.
 			line = fields[1]
 		}
 		if _, werr := fmt.Fprintf(stdout, "%d %s\n", seq, line); werr != nil {
@@ -185,8 +174,6 @@ func runFrameForkEach(stdout io.Writer, socket, fromName, body, mode string, cou
 	return nil
 }
 
-// writeOneFrame writes a single frame and reports its message id, elapsed time
-// and error.
 func writeOneFrame(mode, socketPath, fromName, body string) (string, time.Duration, error) {
 	msgID, err := newFrameUUID()
 	if err != nil {
@@ -213,9 +200,8 @@ func writeOneFrame(mode, socketPath, fromName, body string) (string, time.Durati
 	}
 }
 
-// writeVerbatimFrame connects, writes one complete line, half-closes and waits
-// for the receiver to close its side. Waiting turns a receiver that rejects the
-// frame into an error instead of a silent success.
+// writeVerbatimFrame writes one line and waits for the receiver to close, so a
+// receiver that rejects the frame becomes an error rather than a silent success.
 func writeVerbatimFrame(socketPath string, line []byte) error {
 	conn, err := net.DialTimeout("unix", socketPath, frameWriteTimeout)
 	if err != nil {
@@ -241,15 +227,13 @@ func writeVerbatimFrame(socketPath string, line []byte) error {
 	return nil
 }
 
-// expandFrameBody substitutes the per-frame placeholders.
 func expandFrameBody(body string, seq, pid int) string {
 	body = strings.ReplaceAll(body, "{i}", strconv.Itoa(seq))
 	return strings.ReplaceAll(body, "{pid}", strconv.Itoa(pid))
 }
 
-// writeFrameLine prints one result line: sequence, message id, writer pid,
-// outcome and elapsed milliseconds. Error text stays on the line, so newlines
-// in it are folded into spaces.
+// writeFrameLine prints one result line; newlines in an error are folded into
+// spaces so it stays on one line.
 func writeFrameLine(w io.Writer, seq int, msgID string, pid int, err error, elapsed time.Duration) error {
 	status := "ok"
 	if err != nil {
@@ -259,7 +243,6 @@ func writeFrameLine(w io.Writer, seq int, msgID string, pid int, err error, elap
 	return werr
 }
 
-// newFrameUUID returns a random version 4 UUID in canonical form.
 func newFrameUUID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

@@ -17,7 +17,6 @@ import (
 	"time"
 )
 
-// envTestClaude writes an executable that reports the given version line.
 func envTestClaude(t *testing.T, versionLine string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "claude")
@@ -37,8 +36,6 @@ func envTestPeers(t *testing.T) string {
 	return path
 }
 
-// envTestInit builds a complete probe root whose Broker data directory is a
-// temporary path, never the account's ~/.peers.
 func envTestInit(t *testing.T) (root, home string) {
 	t.Helper()
 	base := t.TempDir()
@@ -56,6 +53,8 @@ func envTestInit(t *testing.T) (root, home string) {
 	return root, home
 }
 
+// TestEnvInitLayout checks the directories, settings, wrapper and permissions
+// env init writes.
 func TestEnvInitLayout(t *testing.T) {
 	root, home := envTestInit(t)
 
@@ -198,10 +197,8 @@ func TestEnvInitLayout(t *testing.T) {
 		}
 	}
 
-	// No token value may be written to disk. The wrapper's indirection names
-	// the variable inside a quoted reference, which this pattern ignores. The
-	// copied executables under bin/ are skipped: they are byte copies of
-	// pre-existing binaries, not environment files init generated.
+	// No token value may be written to disk; the copied executables under bin/
+	// are skipped because they are byte copies of pre-existing binaries.
 	leaked := regexp.MustCompile(`CLAUDE_CODE_OAUTH_TOKEN=([^\s"$][^\s]*)`)
 	binPrefix := filepath.Join(root, "bin") + string(os.PathSeparator)
 	for _, tree := range []string{root, home} {
@@ -227,6 +224,8 @@ func TestEnvInitLayout(t *testing.T) {
 	}
 }
 
+// TestEnvInitRejectsWrongVersion checks that env init refuses a Claude Code
+// version other than the pinned one.
 func TestEnvInitRejectsWrongVersion(t *testing.T) {
 	base := t.TempDir()
 	err := runEnvInit([]string{
@@ -243,6 +242,8 @@ func TestEnvInitRejectsWrongVersion(t *testing.T) {
 	}
 }
 
+// TestEnvInitRefusesExistingPeersHome checks that env init leaves an existing
+// Broker data directory untouched.
 func TestEnvInitRefusesExistingPeersHome(t *testing.T) {
 	base := t.TempDir()
 	home := filepath.Join(base, "existing")
@@ -276,6 +277,8 @@ func TestEnvInitRefusesExistingPeersHome(t *testing.T) {
 	}
 }
 
+// TestRunWrapperStripsSessionEnv checks that the run wrapper drops inherited
+// session variables and passes the token through.
 func TestRunWrapperStripsSessionEnv(t *testing.T) {
 	root, _ := envTestInit(t)
 
@@ -309,6 +312,8 @@ func TestRunWrapperStripsSessionEnv(t *testing.T) {
 	}
 }
 
+// TestEnvCheckNeverPrintsToken checks that env check reports token presence
+// without printing its value.
 func TestEnvCheckNeverPrintsToken(t *testing.T) {
 	root, _ := envTestInit(t)
 
@@ -336,10 +341,8 @@ func TestEnvCheckNeverPrintsToken(t *testing.T) {
 	}
 }
 
-// TestEnvLockHoldersSkipsSelf checks that the lock checker does not count its
-// own open descriptor as a holder. Env check opens the lock file to test it, so
-// without the exclusion a running Broker always looked like two holders, one of
-// them the checker.
+// TestEnvLockHoldersSkipsSelf checks that the holder scan excludes the process
+// that opened the lock to test it.
 func TestEnvLockHoldersSkipsSelf(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
@@ -356,11 +359,8 @@ func TestEnvLockHoldersSkipsSelf(t *testing.T) {
 	}
 }
 
-// TestEnvLockHoldersFindsAnotherHolder checks that the scan attributes the lock
-// to a process that actually holds it, not merely that it omits the caller. A
-// child shell opens the file and waits on stdin, so its descriptor stays open
-// for the whole scan. The test runs on Linux, where the scan reads /proc, and
-// on macOS, where it asks lsof.
+// TestEnvLockHoldersFindsAnotherHolder checks that a child process holding the
+// lock is reported as a holder.
 func TestEnvLockHoldersFindsAnotherHolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "broker.lock")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
@@ -395,7 +395,6 @@ func TestEnvLockHoldersFindsAnotherHolder(t *testing.T) {
 	}
 }
 
-// containsPID reports whether pids contains want.
 func containsPID(pids []int, want int) bool {
 	for _, pid := range pids {
 		if pid == want {
@@ -405,9 +404,8 @@ func containsPID(pids []int, want int) bool {
 	return false
 }
 
-// TestEnvLsofPIDsParsesTheHolderScan checks the parser behind the macOS scan.
-// lsof prints one p line per process and one or more n lines per open file, so
-// a process with several descriptors on the lock must appear once.
+// TestEnvLsofPIDsParsesTheHolderScan checks the lsof parser, including that a
+// process with several descriptors appears once.
 func TestEnvLsofPIDsParsesTheHolderScan(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -456,10 +454,8 @@ func TestEnvLsofPIDsParsesTheHolderScan(t *testing.T) {
 	}
 }
 
-// TestEnvSameExecutableResolvesSymlinks checks that the path lsof reports and
-// the path the probe root names are compared after resolving symlinks. On
-// macOS lsof reports /private/tmp/... while the probe root is written as
-// /tmp/..., and the same holds for any symlinked directory.
+// TestEnvSameExecutableResolvesSymlinks checks that executables are compared
+// after resolving symlinks, including /tmp against /private/tmp.
 func TestEnvSameExecutableResolvesSymlinks(t *testing.T) {
 	root := t.TempDir()
 	exe := filepath.Join(root, "peers")
@@ -485,8 +481,8 @@ func TestEnvSameExecutableResolvesSymlinks(t *testing.T) {
 		t.Errorf("envSameExecutable matched an empty path")
 	}
 
-	// The literal macOS shape: the probe root under /tmp and the canonical
-	// path under /private/tmp. On Linux both spellings are the same path.
+	// The probe root under /tmp and its canonical path under /private/tmp are
+	// the same executable.
 	tmpRoot, err := os.MkdirTemp("/tmp", "rsprobe-exe-")
 	if err != nil {
 		t.Fatalf("creating the /tmp root: %v", err)
@@ -505,10 +501,8 @@ func TestEnvSameExecutableResolvesSymlinks(t *testing.T) {
 	}
 }
 
-// TestEnvBrokerLockFreeRejectsAForeignHolder runs the whole lock check with the
-// lock held by another process. The holder is this test binary re-executed, so
-// its executable is not the probe's peers and the check must report a
-// foreign holder rather than accept the lock as the probe's own.
+// TestEnvBrokerLockFreeRejectsAForeignHolder checks that a lock held by another
+// executable is reported as foreign.
 func TestEnvBrokerLockFreeRejectsAForeignHolder(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
@@ -558,9 +552,8 @@ func TestEnvBrokerLockFreeRejectsAForeignHolder(t *testing.T) {
 	}
 }
 
-// TestEnvBrokerLockHolderHelper is not a test of its own. The parent re-executes
-// the test binary with this name to hold the lock in another process; without
-// the environment variable it skips.
+// TestEnvBrokerLockHolderHelper holds the lock in a child process for
+// TestEnvBrokerLockFreeRejectsAForeignHolder, and skips otherwise.
 func TestEnvBrokerLockHolderHelper(t *testing.T) {
 	path := os.Getenv("RSPROBE_LOCK_HOLDER_PATH")
 	if path == "" {
@@ -580,10 +573,8 @@ func TestEnvBrokerLockHolderHelper(t *testing.T) {
 	_ = file.Close()
 }
 
-// TestEnvDarwinProbePIDs checks the ps parser the macOS cleanup uses. It must
-// select only executables under R/bin, ignore other commands, skip the process
-// running the cleanup itself, and not treat a sibling directory whose name
-// starts with "bin" as the probe's bin directory.
+// TestEnvDarwinProbePIDs checks the ps parser selects only executables under
+// R/bin and skips self.
 func TestEnvDarwinProbePIDs(t *testing.T) {
 	root := filepath.Join(string(os.PathSeparator), "private", "tmp", "peers-rs")
 	prefix := filepath.Join(root, "bin") + string(os.PathSeparator)
@@ -608,6 +599,8 @@ func TestEnvDarwinProbePIDs(t *testing.T) {
 	}
 }
 
+// TestUsageCountsDistinctMessageIDs checks that usage counts distinct assistant
+// message ids per file and model.
 func TestUsageCountsDistinctMessageIDs(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "cfg", "projects", "some-project")
@@ -641,6 +634,8 @@ func TestUsageCountsDistinctMessageIDs(t *testing.T) {
 	}
 }
 
+// TestCleanKeepsOut checks that env clean removes the probe root's contents but
+// keeps out/.
 func TestCleanKeepsOut(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "rs")
 	home := filepath.Join(t.TempDir(), "home", ".peers")
@@ -683,6 +678,8 @@ func TestCleanKeepsOut(t *testing.T) {
 	}
 }
 
+// TestCleanPassesRSRootToCompose checks that env clean passes RS_ROOT to docker
+// compose.
 func TestCleanPassesRSRootToCompose(t *testing.T) {
 	base := t.TempDir()
 
@@ -696,7 +693,6 @@ func TestCleanPassesRSRootToCompose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A fake docker records the environment it receives, then succeeds.
 	record := filepath.Join(base, "docker-env.txt")
 	binDir := filepath.Join(base, "fakebin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {

@@ -12,7 +12,7 @@ import (
 
 var commands = map[string]func(args []string) error{}
 
-// register adds a subcommand. It is called from init functions only.
+// register adds a subcommand; it is called only from init functions.
 func register(name string, run func(args []string) error) {
 	if _, dup := commands[name]; dup {
 		panic("rsprobe: duplicate command " + name)
@@ -47,9 +47,8 @@ func dispatch(args []string, stderr io.Writer) int {
 	return 2
 }
 
-// exitError carries the exit code a subcommand needs beyond the default 1. The
-// scan-secret command uses 2 for an unreadable directory so the workflow can
-// tell a scan failure from a token hit.
+// exitError carries a subcommand's exit code beyond the default 1; scan-secret
+// uses 2 so a scan failure is distinguishable from a token hit.
 type exitError struct {
 	code int
 	err  error
@@ -59,7 +58,6 @@ func (e *exitError) Error() string { return e.err.Error() }
 
 func (e *exitError) Unwrap() error { return e.err }
 
-// ExitCode reports the process exit code for this error.
 func (e *exitError) ExitCode() int { return e.code }
 
 func report(err error, stderr io.Writer) int {

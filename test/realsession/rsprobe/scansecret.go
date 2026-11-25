@@ -14,15 +14,13 @@ import (
 	"strings"
 )
 
-// secretPrefix is the fixed prefix of a Claude Code OAuth token. Fragments are
-// taken after it, so a token split or truncated at any point still matches
-// through the bytes that remain.
+// secretPrefix is the fixed prefix of a Claude Code OAuth token; fragments are
+// taken after it.
 const secretPrefix = "sk-ant-oat01-"
 
-// fragmentLength is the length of the shortest run of token bytes searched for.
-// Sixteen bytes are long enough not to collide with ordinary text and short
-// enough to catch a token cut by a line break, a log truncation or a field
-// boundary.
+// fragmentLength is the shortest run of token bytes searched for: long enough
+// not to collide with ordinary text, short enough to catch a token split by a
+// line break or field boundary.
 const fragmentLength = 16
 
 func init() {
@@ -33,11 +31,9 @@ func cmdScanSecret(args []string) error {
 	return runScanSecret(args, os.Stdout)
 }
 
-// runScanSecret implements "rsprobe scan-secret --dir D --env VAR". A hit
-// prints each matching file and returns exit code 1; a clean tree returns 0.
-// An argument or environment problem, or a scan that cannot complete because a
-// directory or file cannot be read, returns 2: the caller must treat a scan
-// that did not run as a failure, never as a clean tree.
+// runScanSecret scans a directory for the token: a hit prints each file and
+// exits 1, a clean tree exits 0. A scan that could not run exits 2, so the
+// caller never mistakes it for a clean tree.
 func runScanSecret(args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("scan-secret", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -73,11 +69,9 @@ func runScanSecret(args []string, stdout io.Writer) error {
 	return &exitError{code: 1, err: errors.New("the directory contains the token")}
 }
 
-// scanSecretDir returns the regular files below dir that contain the token or
-// any transformation of it in secretPatterns. A symbolic link or any other
-// non-regular entry is an error, not something to skip: an entry the scan
-// cannot read is evidence the scan did not cover, so the caller must fail
-// closed rather than upload it unchecked.
+// scanSecretDir returns the regular files containing the token or one of its
+// encodings; a non-regular entry is an error, not skipped, so the caller fails
+// closed rather than uploads it unchecked.
 func scanSecretDir(dir, token string) ([]string, error) {
 	patterns := secretPatterns(token)
 	var hits []string
@@ -109,15 +103,10 @@ func scanSecretDir(dir, token string) ([]string, error) {
 	return hits, nil
 }
 
-// secretPatterns returns the byte strings whose presence in a file means the
-// token leaked. Besides the whole token they cover
-//
-//   - every fragmentLength-byte run after the fixed prefix, which catches a
-//     token wrapped by a line break or cut short;
-//   - the standard and URL-safe base64 encodings of the token at each of the
-//     three byte alignments, without padding, which catches the token embedded
-//     in another value;
-//   - the query and path URL encodings.
+// secretPatterns returns the byte strings whose presence means the token
+// leaked: the whole token, every fragmentLength-byte fragment after the prefix,
+// the standard and URL-safe base64 encodings at each of the three byte
+// alignments without padding, and the query and path URL encodings.
 func secretPatterns(token string) [][]byte {
 	seen := map[string]bool{}
 	var patterns [][]byte
@@ -140,10 +129,9 @@ func secretPatterns(token string) [][]byte {
 		raw := []byte(token[offset:])
 		for _, encoding := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {
 			encoded := encoding.EncodeToString(raw)
-			// Only the groups of three whole bytes encode the same way no
-			// matter what surrounds them. A trailing partial group is merged
-			// with whatever follows the token in the enclosing value, so keep
-			// just the complete groups, a multiple of four characters.
+			// Only complete groups of three bytes encode the same regardless of
+			// what surrounds them; a trailing partial group merges with whatever
+			// follows the token, so keep a multiple of four characters.
 			add([]byte(encoded[:len(encoded)/4*4]))
 		}
 	}

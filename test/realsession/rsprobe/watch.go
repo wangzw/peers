@@ -17,16 +17,12 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// watchMatchWindow is how far a poll observation may be from a notify event
-// for the two to count as the same change.
 const watchMatchWindow = time.Second
 
 func init() {
 	register("watch", cmdWatch)
 }
 
-// event is one observation of a registry directory. Src is "notify" for
-// fsnotify events and "poll" for the periodic directory scan.
 type event struct {
 	T    time.Time `json:"t"`
 	Src  string    `json:"src"`
@@ -34,9 +30,9 @@ type event struct {
 	File string    `json:"file"`
 }
 
-// matchEvents returns the poll observations that no notify event on the same
-// file covers within window. Matching by time as well as by name keeps an
-// earlier notify event from hiding a later change the watcher missed.
+// matchEvents returns the poll observations no notify event on the same file
+// covers within window, comparing time so an earlier event cannot hide a later
+// change.
 func matchEvents(polls, notifies []event, window time.Duration) []event {
 	var misses []event
 	for _, poll := range polls {
@@ -61,7 +57,6 @@ func matchEvents(polls, notifies []event, window time.Duration) []event {
 	return misses
 }
 
-// fileState is what the poll scan compares between runs.
 type fileState struct {
 	size    int64
 	modTime time.Time
@@ -72,10 +67,9 @@ func (s fileState) same(other fileState) bool {
 	return s.size == other.size && s.hash == other.hash && s.modTime.Equal(other.modTime)
 }
 
-// watcher records fsnotify events for a directory alongside a periodic scan
-// that observes the same changes independently. It deliberately does not use
-// internal/inbox's watcher: this is a reference the inbox watcher is measured
-// against.
+// watcher records fsnotify events alongside an independent periodic scan; it
+// deliberately does not use the inbox watcher, because it is the reference that
+// watcher is measured against.
 type watcher struct {
 	dir      string
 	interval time.Duration
@@ -87,8 +81,6 @@ type watcher struct {
 	notifies []event
 }
 
-// newWatcher starts watching dir. The directory must already exist. The
-// initial scan only records the baseline; it emits no events.
 func newWatcher(dir string, interval time.Duration, now func() time.Time, onEvent func(event) error) (*watcher, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -126,7 +118,6 @@ func newWatcher(dir string, interval time.Duration, now func() time.Time, onEven
 	return w, nil
 }
 
-// run records events until ctx is cancelled or the watcher fails.
 func (w *watcher) run(ctx context.Context) error {
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
@@ -161,8 +152,6 @@ func (w *watcher) run(ctx context.Context) error {
 	}
 }
 
-// scan compares the directory against the previous scan and emits one poll
-// event per created, modified or removed file when report is set.
 func (w *watcher) scan(report bool) error {
 	entries, err := os.ReadDir(w.dir)
 	if err != nil {
@@ -238,7 +227,6 @@ func (w *watcher) emit(e event) error {
 	return w.onEvent(e)
 }
 
-// collected returns copies of the recorded events.
 func (w *watcher) collected() (polls, notifies []event) {
 	return append([]event(nil), w.polls...), append([]event(nil), w.notifies...)
 }
@@ -248,8 +236,7 @@ func (w *watcher) close() {
 }
 
 // opNames renders an fsnotify operation set as Create|Write|Remove|Rename|Chmod
-// names. fsnotify's own String has a leading "|" and only emits the names that
-// are set, so the names are built here.
+// names; fsnotify's String has a leading "|", so the names are built here.
 func opNames(op fsnotify.Op) string {
 	known := []struct {
 		op   fsnotify.Op
@@ -273,8 +260,8 @@ func opNames(op fsnotify.Op) string {
 	return strings.Join(names, "|")
 }
 
-// cmdWatch is registered as "watch". A run with misses exits with code 3,
-// which the shared dispatch cannot express through its error report.
+// cmdWatch exits with code 3 on misses, which the shared dispatch cannot express
+// through its error report.
 func cmdWatch(args []string) error {
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
@@ -289,9 +276,6 @@ func cmdWatch(args []string) error {
 	return nil
 }
 
-// executeWatch implements "rsprobe watch --dir D --out L [--poll DURATION]".
-// It records notify and poll events until interrupt fires, then reports how
-// many poll observations no notify event covered.
 func executeWatch(args []string, stdout io.Writer, interrupt <-chan os.Signal) (int, error) {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

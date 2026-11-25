@@ -9,9 +9,8 @@ import (
 	"strconv"
 )
 
-// envLockHolders finds the processes that have lockPath open, excluding self.
-// The caller opens the lock file to test the lock, so its own descriptor would
-// otherwise make the checker look like a holder.
+// envLockHolders finds processes with lockPath open, excluding self, which
+// already holds a descriptor for the lock test.
 func envLockHolders(lockPath string, self int) []int {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
@@ -43,7 +42,7 @@ func envLockHolders(lockPath string, self int) []int {
 }
 
 // envProcessExe returns the executable path of pid, or "" when it cannot be
-// read, for example because the process has exited.
+// read.
 func envProcessExe(pid int) string {
 	exe, err := os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	if err != nil {

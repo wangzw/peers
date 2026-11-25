@@ -7,13 +7,11 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# This probe checks REQ-agent-messaging-035: a subagent acts as its parent
-# session's Agent. It also checks whether an inline MCP server declared in a
-# subagent definition starts a second process that inherits the parent's inbox
-# socket path. Only $OUT, $R/ctl, $R/debug, $WORK and the agent definition
-# required by the plan (R/cfg/agents/peer-inline.md) are written.
+# The probe checks that a subagent acts as its parent session's Agent, and
+# whether an inline MCP server declared in a subagent definition starts a second
+# process that inherits the parent's inbox socket path. It writes only $OUT,
+# $R/ctl, $R/debug, $WORK and the agent definition at $R/cfg/agents/peer-inline.md.
 
-# session_pid prints the pid recorded for a session name.
 session_pid() {
 	local name="$1" file
 	for file in "$R"/cfg/sessions/*.json; do
@@ -26,7 +24,6 @@ session_pid() {
 	return 1
 }
 
-# wait_session waits for a session record to appear and prints its pid.
 wait_session() {
 	local name="$1" seconds="$2" pid
 	local deadline=$((SECONDS + seconds))
@@ -40,7 +37,6 @@ wait_session() {
 	return 1
 }
 
-# wait_new_session waits until the name is recorded under a pid other than old_pid.
 wait_new_session() {
 	local name="$1" old="$2" seconds="$3" pid
 	local deadline=$((SECONDS + seconds))
@@ -54,7 +50,6 @@ wait_new_session() {
 	return 1
 }
 
-# wait_session_gone waits until no session record carries the name.
 wait_session_gone() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -67,7 +62,6 @@ wait_session_gone() {
 	return 1
 }
 
-# proc_ppid prints the parent pid from /proc/<pid>/stat.
 proc_ppid() {
 	local pid="$1" stat rest ppid
 	stat="$(<"/proc/$pid/stat")" || return 1
@@ -77,8 +71,8 @@ proc_ppid() {
 	printf '%s\n' "$ppid"
 }
 
-# is_descendant reports whether pid descends from ancestor within 12 levels,
-# the depth Claude Code walks when it looks for the peer process.
+# is_descendant reports whether pid descends from ancestor within 12 levels, the
+# depth Claude Code walks when looking for the peer process.
 is_descendant() {
 	local pid="$1" ancestor="$2" depth=0
 	while [[ -n "$pid" && "$pid" != "0" ]] && ((depth <= 12)); do
@@ -91,7 +85,6 @@ is_descendant() {
 	return 1
 }
 
-# mcp_pids_under prints the peers mcp processes below a session process.
 mcp_pids_under() {
 	local ancestor="$1" dir pid cmd
 	for dir in /proc/[0-9]*; do
@@ -108,7 +101,6 @@ mcp_pids_under() {
 	done
 }
 
-# wait_mcp_count waits until at least want MCP processes exist below pid.
 wait_mcp_count() {
 	local pid="$1" want="$2" seconds="$3" count
 	local deadline=$((SECONDS + seconds))
@@ -122,7 +114,6 @@ wait_mcp_count() {
 	return 1
 }
 
-# wait_status_entry waits for the Broker's Agent table to list name@hostB.
 wait_status_entry() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -135,14 +126,12 @@ wait_status_entry() {
 	return 1
 }
 
-# recv_has reports whether the receive log contains a marker.
 recv_has() {
 	local marker="$1" file="$OUT/sub-rx.recv.jsonl"
 	[[ -s "$file" ]] || return 1
 	jq -e --arg marker "$marker" 'select(.content | contains($marker))' "$file" >/dev/null 2>&1
 }
 
-# from_name_for prints the from_name of the first received frame with a marker.
 from_name_for() {
 	local marker="$1" file="$OUT/sub-rx.recv.jsonl"
 	[[ -s "$file" ]] || return 0
@@ -150,7 +139,6 @@ from_name_for() {
 		sed -n '1p' || true
 }
 
-# status_max prints the largest sub-main count in a status-counts file.
 status_max() {
 	local file="$1"
 	if [[ ! -s "$file" ]]; then
@@ -160,14 +148,12 @@ status_max() {
 	awk -F'\t' 'NR > 1 && $2 + 0 > max { max = $2 + 0 } END { print max + 0 }' "$file"
 }
 
-# status_all_one reports whether every status poll saw exactly one entry.
 status_all_one() {
 	local file="$1"
 	[[ -s "$file" ]] || return 1
 	awk -F'\t' 'NR > 1 { n++; if ($2 + 0 != 1) bad = 1 } END { exit (n > 0 && !bad) ? 0 : 1 }' "$file"
 }
 
-# launch_submain starts the interactive session that runs the subagents.
 launch_submain() {
 	rs_window sub-main claude --model haiku -n sub-main \
 		--permission-mode default \
@@ -175,9 +161,8 @@ launch_submain() {
 		--debug-file "$R/debug/sub-main.debug"
 }
 
-# wait_prompt waits for the input composer. The shared predicate accepts a
-# first-run dialog and requires it to be gone before the prompt counts, so a
-# bare prompt glyph behind a dialog no longer passes.
+# wait_prompt waits for the input composer; rs_wait_ready dismisses a first-run
+# dialog first, so a bare prompt glyph behind a dialog does not count.
 wait_prompt() {
 	if ! rs_wait_ready sub-main 90; then
 		rs_obs "sub-main never reached an input prompt"
@@ -195,8 +180,8 @@ wait_status_entry sub-rx 30 || {
 	exit 1
 }
 
-# Step 1: a subagent in the shared process must send through the main session's
-# Agent, and the main session must stay a single Agent while it runs.
+# A subagent in the shared process must send through the main session's Agent,
+# and the main session must stay a single Agent while it runs.
 launch_submain
 main_pid="$(wait_session sub-main 60)" || {
 	rs_obs "sub-main never wrote a session record"
@@ -240,8 +225,8 @@ fi
 rs_excerpt from-subagent step1-records.jsonl
 step1_from="$(from_name_for from-subagent)"
 
-# Step 2: an inline MCP server in a subagent definition starts a second process
-# whose CLAUDE_CODE_MESSAGING_SOCKET must equal the main session's socket.
+# An inline MCP server in a subagent definition starts a second process whose
+# CLAUDE_CODE_MESSAGING_SOCKET must equal the main session's socket.
 mkdir -p "$R/cfg/agents"
 cat >"$R/cfg/agents/peer-inline.md" <<EOF
 ---
@@ -355,7 +340,7 @@ status_all_one "$OUT/status-counts-step2.tsv" || verdict=FAIL
 } >"$OUT/verdict.txt"
 rs_obs "REQ-agent-messaging-035: $verdict (subagent probe)"
 
-# Both step prompts ask the main session for a subagent turn. The first session
-# is killed before step 2, but its transcript remains, so the first prompt is a
-# stable marker for "the probe reached the model at least once".
+# The first session is killed before the second session starts but its transcript
+# remains, so the first prompt is a stable marker for "the probe reached the
+# model at least once".
 rs_require_model_turn 'Launch a subagent with your agent/task tool' 1

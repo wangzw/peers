@@ -3,38 +3,18 @@
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# Probe: inbox binding timing and the child-session variables.
-#
-# It answers the Roadmap's Items to verify section: does an MCP server process
-# ever start without the inbox socket path in its process variables, and does a
-# child session inherit the parent's CLAUDE_CODE_MESSAGING_SOCKET? The first two
-# steps start sessions without input and reach no model. The third step asks
-# the parent session to run fixed commands with its Bash tool and to start a
-# child session from that shell, under bypass permissions so no approval
-# dialog blocks the command. Those turns are model calls, and the runner
-# counts them in usage.txt.
-#
-# The step does not use shell mode ("!"). 2.1.311 sends every ! command and
-# its output to the model, and the follow-up turn inspects the result with its
-# own Bash calls, which raise approval dialogs under the default permission
-# mode and leave the probe typing into a dialog.
-#
-# Claude Code 2.1.311 rejects stream-json input and output unless --verbose is
-# given, so every headless command below carries it.
 
 BROKER_SOCK="/tmp/peers-$(id -u)/broker.sock"
 TSV="$OUT/binding.tsv"
+# Claude Code 2.1.311 rejects stream-json input and output unless --verbose is given.
 headless_args=(-p --model haiku --input-format stream-json --output-format stream-json --verbose)
 
-# remove_fifo removes the child session's FIFO from the evidence directory, so
-# an upload never sees a special file. The library's cleanup chain still
-# captures the windows of a failed run after this cleanup.
+# remove_fifo keeps the child FIFO out of the evidence directory, which an upload cannot carry.
 remove_fifo() {
 	rm -f "$OUT/child.in"
 }
 rs_on_exit remove_fifo
 
-# wait_record_socket prints the first non-empty inbox socket path for a name.
 wait_record_socket() {
 	local name="$1" seconds="$2" deadline socket
 	deadline=$((SECONDS + seconds))
@@ -48,7 +28,6 @@ wait_record_socket() {
 	return 1
 }
 
-# record_present reports whether the session registry has a record for a name.
 record_present() {
 	local name="$1" file
 	for file in "$R"/cfg/sessions/*.json; do
@@ -60,7 +39,6 @@ record_present() {
 	return 1
 }
 
-# proc_is_peers_mcp reports whether a process runs "peers mcp".
 proc_is_peers_mcp() {
 	local pid="$1" cmd0
 	local -a argv=()
@@ -72,7 +50,6 @@ proc_is_peers_mcp() {
 	[[ "${argv[1]}" == "mcp" ]]
 }
 
-# find_mcp_pid searches the process tree under $1 for the MCP server.
 find_mcp_pid() {
 	local root="$1" child
 	if proc_is_peers_mcp "$root"; then
@@ -88,7 +65,6 @@ find_mcp_pid() {
 	return 1
 }
 
-# wait_mcp_pid retries find_mcp_pid until the server process appears.
 wait_mcp_pid() {
 	local root="$1" seconds="$2" deadline pid
 	deadline=$((SECONDS + seconds))
@@ -102,13 +78,11 @@ wait_mcp_pid() {
 	return 1
 }
 
-# pane_pid_of prints the PID of the process in a tmux window.
 pane_pid_of() {
 	local window="$1"
 	tmux -L "$TMUX_SERVER" list-panes -t "$window" -F '#{pane_pid}' 2>/dev/null | head -n 1
 }
 
-# close_window waits for an exited window and kills a stuck one.
 close_window() {
 	local window="$1" deadline
 	deadline=$((SECONDS + 10))
@@ -121,13 +95,10 @@ close_window() {
 	tmux -L "$TMUX_SERVER" kill-window -t "$window" >/dev/null 2>&1 || true
 }
 
-# status_addresses prints one Agent address per line. An unreachable Broker
-# prints nothing.
 status_addresses() {
 	"$R/run" rsprobe status --json 2>/dev/null | jq -r '.agents[]?.address // empty' 2>/dev/null || true
 }
 
-# status_lists reports whether rsprobe status names a session.
 status_lists() {
 	local name="$1" address
 	while IFS= read -r address; do
@@ -139,13 +110,10 @@ status_lists() {
 	return 1
 }
 
-# count_addresses counts the non-empty lines of an address list on stdin.
 count_addresses() {
 	awk 'NF { n++ } END { print n + 0 }'
 }
 
-# read_proc_var classifies one variable through rs_proc_vars: absent, empty,
-# value, or unreadable when the process is gone.
 read_proc_var() {
 	local pid="$1" name="$2" line
 	PV_STATE=unreadable
@@ -163,7 +131,6 @@ read_proc_var() {
 	esac
 }
 
-# check_session records one started session in binding.tsv.
 check_session() {
 	local mode="$1" iter="$2" name="$3" root="$4"
 	local socket="" mcp="" class="" state="" value="" status=no socket_present=no
@@ -201,18 +168,12 @@ check_session() {
 		"${mcp:--}" "$state" "${value:--}" "$class" "$status" >>"$TSV"
 }
 
-# count_mode_class counts TSV rows of one mode and one classification.
 count_mode_class() {
 	awk -F'\t' -v mode="$1" -v class="$2" \
 		'NR > 1 && $1 == mode && $9 == class { n++ } END { print n + 0 }' "$TSV"
 }
 
-# send_prompt_command submits a prompt through the shared rs_send_prompt helper
-# and waits for the file the prompt asks the model to write. The helper types the
-# text literally, waits for the composer to echo it, pauses, and sends Enter in a
-# second write; 2.1.311 folds a text-and-Enter burst into one paste and never
-# submits it. The prompt is typed once; when the marker never appears the probe
-# fails and keeps the pane instead of typing the prompt again.
+# 2.1.311 folds a text-and-Enter burst into one paste and never submits it, so the prompt goes through rs_send_prompt.
 send_prompt_command() {
 	local window="$1" prompt="$2" needle="$3" marker="$4" seconds="$5"
 	if ! rs_send_prompt "$window" "$prompt" "$needle" 60; then
@@ -226,8 +187,7 @@ send_prompt_command() {
 	fi
 }
 
-# stop_headless closes stdin before this call, then waits for the process and
-# kills it if it lingers.
+# Callers close the session's stdin before stop_headless; it waits for the process, then kills it if it lingers.
 stop_headless() {
 	local pid="$1" deadline
 	deadline=$((SECONDS + 15))
@@ -240,12 +200,8 @@ stop_headless() {
 	wait "$pid" 2>/dev/null || true
 }
 
-# --- setup -----------------------------------------------------------------
 
-# Start the Broker explicitly so its stderr goes to the evidence directory
-# instead of /dev/null. Registration is judged from rsprobe status and the
-# child session socket only: this log records successful registrations alone,
-# so it is kept as raw evidence and is not read by the checks.
+# Start the Broker explicitly so its stderr lands in broker.log as raw evidence; the checks do not read that log.
 "$R/run" peers service run --user 2>"$OUT/broker.log" &
 if ! rs_wait_file "$BROKER_SOCK" 15; then
 	echo "binding: the Broker socket $BROKER_SOCK did not appear (see $OUT/broker.log)" >&2
@@ -257,7 +213,6 @@ printf 'mode\titer\tname\trecord_socket\tsocket_present\tmcp_pid\tenv_state\tenv
 
 rs_tmux_start
 
-# --- step 1: 20 interactive starts -----------------------------------------
 
 for i in {1..20}; do
 	name="bind-$i"
@@ -281,7 +236,6 @@ interactive_none="$(count_mode_class interactive no-mcp-process)"
 interactive_unreadable="$(count_mode_class interactive unreadable)"
 rs_obs "interactive: with-path=$interactive_match no-path=$((interactive_absent + interactive_empty)) mismatch=$interactive_mismatch no-mcp-process=$interactive_none unreadable=$interactive_unreadable (absent=$interactive_absent empty=$interactive_empty)"
 
-# --- step 2: 10 headless starts --------------------------------------------
 
 for i in {1..10}; do
 	name="bindh-$i"
@@ -305,11 +259,13 @@ headless_none="$(count_mode_class headless no-mcp-process)"
 headless_unreadable="$(count_mode_class headless unreadable)"
 rs_obs "headless: with-path=$headless_match no-path=$((headless_absent + headless_empty)) mismatch=$headless_mismatch no-mcp-process=$headless_none unreadable=$headless_unreadable (absent=$headless_absent empty=$headless_empty)"
 
-# --- step 3: a child session started from the parent's shell ----------------
 
+# The fixed commands run through the Bash tool, not shell mode ("!"): 2.1.311
+# sends every ! command and its output to the model, and the follow-up turn
+# inspects the result with its own Bash calls, which raise approval dialogs
+# under the default permission mode and leave the probe typing into a dialog.
 parent_name=parent
-# Bypass permissions, because the fixed commands below run through the Bash
-# tool and a default-mode approval dialog would stop the session.
+# Bypass permissions: the fixed commands run through the Bash tool, and a default-mode approval dialog would stop the session.
 rs_window "$parent_name" claude --model haiku -n "$parent_name" --permission-mode bypassPermissions
 if ! parent_socket="$(wait_record_socket "$parent_name" 20)"; then
 	echo "binding: the parent session did not publish an inbox socket path" >&2
@@ -321,10 +277,6 @@ if ! rs_wait_ready "$parent_name" 45; then
 	exit 1
 fi
 rs_obs_mode "$parent_name"
-# The shell-mode attempt showed that 2.1.311 renders its prompt prefix as "!"
-# followed by U+00A0 and a space, so a literal match on "! " misses it. The
-# fact is kept even though this step now uses the Bash tool: it is the version
-# behaviour that made the earlier attempt fail to submit.
 rs_obs "2.1.311 shell-mode composer renders the prefix as '!' U+00A0 ' '; an ASCII-space match on the prefix does not match"
 parent_deadline=$((SECONDS + 10))
 while ! status_lists "$parent_name"; do
@@ -347,13 +299,9 @@ if ! send_prompt_command "$parent_name" "$env_prompt" "First task" "$env_file" 6
 fi
 
 rm -f "$OUT/child.in" "$OUT/child.pid" "$OUT/child.out"
-# The trailing sleep keeps the Bash tool call alive while the probe reads the
-# child's process environment, so the shell that started the child is still
-# running. The FIFO writer is started in the same call and inherits the same
-# lifetime.
+# The trailing sleep keeps the Bash tool call, and the FIFO writer it started, alive while the probe reads the child's environment.
 child_command="cd $WORK && rm -f $OUT/child.in $OUT/child.pid $OUT/child.out && mkfifo $OUT/child.in && (sleep 600 > $OUT/child.in &) && (claude -p --model haiku --input-format stream-json --output-format stream-json --verbose -n child-of-parent < $OUT/child.in > $OUT/child.out 2>&1 & echo \$! > $OUT/child.pid) && sleep 90"
-# The prompt is long enough that the composer shows only its last lines, so
-# the readiness needle comes from the end of the command, which stays visible.
+# The composer shows only the prompt's last lines, so the readiness needle comes from the end of the command.
 child_prompt="Second task: use the Bash tool to run exactly this command, with no changes and no other commands: $child_command"
 if ! send_prompt_command "$parent_name" "$child_prompt" "sleep 90" "$OUT/child.pid" 90; then
 	echo "binding: the parent session did not start the child session" >&2
@@ -456,7 +404,6 @@ fi
 
 rs_obs "child session: record=$child_record socket=${child_record_socket:--} mcp=${child_mcp:--} env_state=$child_state env=${child_value:--} verdict=$child_verdict agents=$agents_before_count->$agents_after_count new=$new_agents_count parent_listed=$parent_listed child_listed=$child_listed"
 
-# --- teardown ---------------------------------------------------------------
 
 if [[ -n "$child_root" ]] && kill -0 "$child_root" 2>/dev/null; then
 	kill "$child_root" 2>/dev/null || true
@@ -469,6 +416,5 @@ close_window "$parent_name"
 
 rs_obs "binding probe finished"
 
-# The parent session's first task is a model prompt; a run that never submitted
-# it, or that recorded no model call at all, is a false pass.
+# A run that never submitted the first task, or recorded no model call, would be a false pass.
 rs_require_model_turn 'First task: use the Bash tool' 1

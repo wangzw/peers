@@ -38,8 +38,6 @@ func (f *fakeStatusServer) Status(context.Context, *localpb.StatusRequest) (*loc
 	return &localpb.StatusResponse{Agents: f.agents, Peers: f.peers}, nil
 }
 
-// startFakeStatusServer serves fake on a unix socket in a temporary directory
-// and returns the socket path.
 func startFakeStatusServer(t *testing.T, fake *fakeStatusServer) string {
 	t.Helper()
 	socket := filepath.Join(t.TempDir(), "broker.sock")
@@ -54,6 +52,8 @@ func startFakeStatusServer(t *testing.T, fake *fakeStatusServer) string {
 	return socket
 }
 
+// TestStatusAgainstFakeServer checks the status output, that Hello sends the
+// protocol version and that Status is called.
 func TestStatusAgainstFakeServer(t *testing.T) {
 	id1 := testAgentID("abcdef0123")
 	id2 := testAgentID("abcdef0199")

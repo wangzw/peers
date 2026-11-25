@@ -3,13 +3,6 @@
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# broker-down answers REQ-agent-messaging-038. It holds the account Broker's
-# listen address and starts the Broker from a terminal to observe the start
-# failure. It then starts a session and calls list_agents: the MCP service must
-# stay connected, and the call must report that no Broker is available together
-# with the ways to start one. After the address is released the user starts the
-# Broker by hand; the same call must succeed without reconnecting the MCP
-# service.
 
 PORT=27443
 RUNTIME_DIR="/tmp/peers-$(id -u)"
@@ -29,8 +22,6 @@ cleanup() {
 }
 rs_on_exit cleanup
 
-# broker_pids prints the pids whose executable is R/bin/peers and whose
-# arguments start with "service run".
 broker_pids() {
 	local dir pid exe arg1 arg2
 	for dir in /proc/[0-9]*; do
@@ -47,8 +38,7 @@ broker_pids() {
 	done
 }
 
-# lock_holders prints the pids that have the account lock file open. The Broker
-# releases the flock when it exits, so an empty list means the lock is free.
+# An empty list means the lock is free: the Broker releases its flock when it exits.
 lock_holders() {
 	local dir pid fd target
 	for dir in /proc/[0-9]*; do
@@ -63,7 +53,6 @@ lock_holders() {
 	done
 }
 
-# wait_for polls a predicate every 200 ms for the given number of seconds.
 wait_for() {
 	local seconds="$1" check="$2"
 	local deadline=$((SECONDS + seconds))
@@ -76,10 +65,7 @@ wait_for() {
 	"$check"
 }
 
-# mcp_pids prints the pids whose executable is R/bin/peers and whose first
-# argument is "mcp". The MCP service process is the one Claude Code keeps for
-# the session; its pid staying the same across recovery is the file evidence
-# that the session never reconnected the service.
+# A pid that stays the same across recovery is the evidence that the session never reconnected the service.
 mcp_pids() {
 	local dir pid exe arg1
 	for dir in /proc/[0-9]*; do
@@ -95,9 +81,7 @@ mcp_pids() {
 	done
 }
 
-# usage_total prints the model-call counter. An unreadable counter prints 0 so
-# the caller's arithmetic still works; rs_require_model_turn reports the
-# unreadable value as a failure on its own.
+# An unreadable counter prints 0 so arithmetic still works; rs_require_model_turn still fails the run.
 usage_total() {
 	local out total
 	out="$("$R/run" rsprobe env usage --root "$R" 2>/dev/null || true)"
@@ -116,8 +100,6 @@ no_lock_holder() {
 	[[ -z "$(lock_holders)" ]]
 }
 
-# wait_for_record polls the session records until a line contains the marker.
-# The marker is not copied anywhere here; evidence is taken with rs_excerpt.
 wait_for_record() {
 	local marker="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) file
@@ -132,8 +114,6 @@ wait_for_record() {
 	return 1
 }
 
-# Step 1: stop the Broker the runner may already have, and confirm the account
-# lock is free before the listen address is held.
 existing="$(broker_pids)"
 if [[ -n "$existing" ]]; then
 	rs_obs "stopping the running Broker: $(printf '%s' "$existing" | tr '\n' ' ')"
@@ -149,13 +129,13 @@ if [[ -n "$existing" ]]; then
 else
 	rs_obs "no Broker was running before the probe"
 fi
+# The account lock must be free before the listen address is held.
 if ! wait_for 10 no_lock_holder; then
 	rs_obs "the account lock is still held after the Broker stopped"
 	exit 1
 fi
 rs_obs "account lock released"
 
-# Step 2: hold 127.0.0.1:$PORT so a Broker cannot bind it.
 "$R/run" python3 -c '
 import socket
 
@@ -179,8 +159,7 @@ until grep -q '^occupying$' "$OUT/occupier.log" 2>/dev/null; do
 done
 rs_obs "port $PORT is held by pid $occupier_pid"
 
-# Step 3: a terminal start must fail on the held address, before any session
-# exists. The config names 127.0.0.1:27443.
+# The config names 127.0.0.1:27443, so holding that port makes the start fail.
 terminal_rc=0
 "$R/run" peers service run --user >"$OUT/terminal-start.stdout" 2>"$OUT/terminal-start.stderr" || terminal_rc=$?
 printf '%s\n' "$terminal_rc" >"$OUT/terminal-start.exit"
@@ -194,8 +173,6 @@ if ! grep -qF -- "$TERMINAL_ERROR_MARKER" "$OUT/terminal-start.stderr"; then
 fi
 rs_obs "the terminal Broker start failed with exit 4 and named the unavailable address"
 
-# Step 4: start the interactive session. The MCP server it spawns finds no
-# Broker and must not start one.
 rs_tmux_start
 rs_window down claude --model haiku -n down --permission-mode default --allowedTools mcp__peer__list_agents
 
@@ -220,17 +197,13 @@ if ! rs_wait_ready down 60; then
 fi
 rs_obs_mode down
 
-# The MCP server must not have started a Broker in place of the one that could
-# not bind its address.
 if [[ -n "$(broker_pids)" ]]; then
 	rs_obs "a Broker process is running after the session started: $(broker_pids | tr '\n' ' ')"
 	exit 1
 fi
 rs_obs "no Broker process is running after the session started"
 
-# Capture the MCP view: peer must show as available even though no Broker is
-# running. Claude Code 2.1.311's /mcp list marks an available server as
-# "✔ peer   N tools" and does not print "connected".
+# Claude Code 2.1.311's /mcp list shows an available server as "✔ peer   N tools", not "connected".
 sleep 2
 rs_keys down '/mcp'
 rs_keys down Enter
@@ -245,8 +218,7 @@ rs_snap down mcp-before.txt
 rs_keys down Escape
 sleep 1
 
-# The MCP service process is recorded before recovery, so the after-recovery
-# pid set can show that the same process stayed connected.
+# Record the service pid set before recovery so the after-recovery set can show the same process stayed connected.
 mcp_pids | sort >"$OUT/mcp-pids-before.txt"
 mcp_before="$(tr '\n' ' ' <"$OUT/mcp-pids-before.txt")"
 if [[ -z "${mcp_before// /}" ]]; then
@@ -256,8 +228,6 @@ if [[ -z "${mcp_before// /}" ]]; then
 fi
 rs_obs "MCP service process before recovery: $mcp_before"
 
-# Step 5: the first call must report that no Broker is available and name the
-# ways to start one.
 rs_send_prompt down "$PROMPT" 'Call mcp__peer__list_agents' 60
 rs_obs "submitted the first list_agents prompt while no Broker was running"
 if ! wait_for_record "$ERROR_MARKER" 120; then
@@ -275,9 +245,7 @@ for want in 'peers service install' 'peers service run'; do
 done
 rs_obs "the first list_agents result reports that no Broker is available and names both startup methods"
 
-# The first prompt must be a real model turn, not a pane echo. Wait for the
-# turn to end (pacing only) and freeze the usage baseline before the second
-# prompt, so the second prompt can be required to add its own call.
+# Freeze the usage baseline after the first turn so the second prompt must add its own model call.
 if ! rs_wait_turn_idle down 120; then
 	rs_obs "the first list_agents turn did not end within 120s; the usage baseline may be early"
 fi
@@ -285,8 +253,6 @@ rs_require_model_turn "$PROMPT" 1
 usage_after_first="$(usage_total)"
 rs_obs "usage total after the first prompt: $usage_after_first"
 
-# Step 6: release the address and start the Broker by hand. No reconnection is
-# done in Claude Code.
 kill "$occupier_pid" 2>/dev/null || true
 wait "$occupier_pid" 2>/dev/null || true
 occupier_pid=""
@@ -323,7 +289,6 @@ while IFS= read -r pid; do
 	fi
 done <"$OUT/broker-pids.txt"
 
-# Step 7: the same prompt must now succeed.
 rs_send_prompt down "$PROMPT" 'Call mcp__peer__list_agents' 60
 rs_obs "submitted the same list_agents prompt after recovery"
 if ! wait_for_record "$SUCCESS_MARKER" 120; then
@@ -334,9 +299,7 @@ fi
 rs_excerpt "$SUCCESS_MARKER" list-agents-recovered.jsonl
 rs_obs "the second list_agents result lists session down"
 
-# Step 8: capture the MCP view again. It must still list peer as available
-# without any manual reconnection. The turn is waited out first so the slash
-# command is not typed into a running turn.
+# Wait the turn out first so the slash command is not typed into a running turn.
 if ! rs_wait_turn_idle down 120; then
 	rs_obs "the second list_agents turn did not end within 120s before the /mcp view"
 fi
@@ -352,9 +315,7 @@ fi
 rs_snap down mcp-after.txt
 rs_keys down Escape
 
-# The MCP service process must be the same one that was recorded before
-# recovery. A different pid would mean the service exited and Claude Code
-# started it again, which is a reconnection the session should not need.
+# A different pid would mean the service exited and Claude Code started it again.
 mcp_pids | sort >"$OUT/mcp-pids-after.txt"
 mcp_after="$(tr '\n' ' ' <"$OUT/mcp-pids-after.txt")"
 rs_obs "MCP service process after recovery: $mcp_after"
@@ -365,8 +326,5 @@ else
 	exit 1
 fi
 
-# Both list_agents prompts are user-visible model turns. A run whose prompt
-# never submitted can still show the MCP view and a stale Broker socket, so the
-# probe ends only when each prompt is in a user record and the usage counter
-# grew after the second one.
+# A run whose prompt never submitted can still show the MCP view and a stale Broker socket; the second call must add a model turn.
 rs_require_model_turn "$PROMPT" $((usage_after_first + 1))

@@ -3,28 +3,20 @@
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# This probe answers the Roadmap's Items to verify section for a real receiving
-# session. Messages that pass through one Broker share that Broker's token
-# bucket, because the Broker is the process that writes them and the frames
-# carry no reply address. The counts below come from the user records of the
-# session transcript; the deduped deliveries are also kept as excerpts through
-# rs_excerpt.
+# Messages through one Broker share its token bucket; the counts come from the session transcript's user records.
 
 LOW_CALL_PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 SLEEP_PROMPT='Run "sleep 60" with the Bash tool, then reply done.'
 TARGET='rl-rx@hostB'
 
-# The estimate for this probe is 10 model calls; the dispatcher stops it when
-# the measured count exceeds twice that.
+# The probe's own budget check stops it when the model-call count exceeds twice this estimate.
 RL_CALL_ESTIMATE=10
 RL_CALL_BUDGET=$((RL_CALL_ESTIMATE * 2))
 
-# rl_now_ms prints the current time in milliseconds.
 rl_now_ms() {
 	date +%s%3N
 }
 
-# rl_wait_broker polls the local RPC until the Broker answers.
 rl_wait_broker() {
 	local seconds="$1"
 	local deadline=$((SECONDS + seconds))
@@ -37,7 +29,6 @@ rl_wait_broker() {
 	"$R/run" rsprobe status >/dev/null 2>&1
 }
 
-# rl_wait_socket polls until the session record has a messaging socket path.
 rl_wait_socket() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -50,13 +41,11 @@ rl_wait_socket() {
 	rs_socket_of "$name" >/dev/null 2>&1
 }
 
-# rl_status_is reports whether the named Agent currently has the wanted status.
 rl_status_is() {
 	local name="$1" want="$2"
 	"$R/run" rsprobe status 2>/dev/null | grep -qE -- " ${name}@[^ ]* status=${want}( |\$)"
 }
 
-# rl_wait_status polls until the Agent has the wanted status.
 rl_wait_status() {
 	local name="$1" want="$2" seconds="$3"
 	local deadline=$((SECONDS + seconds))
@@ -69,13 +58,11 @@ rl_wait_status() {
 	rl_status_is "$name" "$want"
 }
 
-# rl_agent_known reports whether the Agent appears in the Broker's table.
 rl_agent_known() {
 	local name="$1"
 	"$R/run" rsprobe status 2>/dev/null | grep -qE -- " ${name}@[^ ]* status="
 }
 
-# rl_wait_agent polls until the simulated Agent has registered.
 rl_wait_agent() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds))
@@ -88,7 +75,6 @@ rl_wait_agent() {
 	rl_agent_known "$name"
 }
 
-# rl_user_text prints the text of every user record in one transcript.
 rl_user_text() {
 	local file="$1"
 	jq -r '
@@ -98,8 +84,6 @@ rl_user_text() {
 	' "$file" 2>/dev/null || true
 }
 
-# rl_arrived counts the user records whose text is exactly one line equal to
-# the given body.
 rl_arrived() {
 	local body="$1" file count=0 n
 	while IFS= read -r -d '' file; do
@@ -109,7 +93,6 @@ rl_arrived() {
 	printf '%s\n' "$count"
 }
 
-# rl_total_user_lines counts the user records' text lines across transcripts.
 rl_total_user_lines() {
 	local file total=0 n
 	while IFS= read -r -d '' file; do
@@ -119,10 +102,7 @@ rl_total_user_lines() {
 	printf '%s\n' "$total"
 }
 
-# rl_queue_counts prints "depth enqueued dequeued removed" for the session
-# prompt queue. Claude Code records an enqueue, dequeue or remove operation for
-# every message it queues, so a positive depth means messages are still waiting
-# to be processed even when the Agent's status is idle.
+# Each queued message records an enqueue, dequeue or remove operation, so a positive depth means messages still wait even when the Agent is idle.
 rl_queue_counts() {
 	local file op e=0 d=0 r=0
 	while IFS= read -r -d '' file; do
@@ -137,15 +117,11 @@ rl_queue_counts() {
 	printf '%s %s %s %s\n' "$((e - d - r))" "$e" "$d" "$r"
 }
 
-# rl_model_calls prints the number of distinct model calls so far, or nothing
-# when the usage command cannot produce a count.
 rl_model_calls() {
 	"$R/run" rsprobe env usage --root "$R" 2>/dev/null \
 		| awk '$1 == "total" { value = $2 } END { if (value != "") print value }' || true
 }
 
-# rl_check_budget stops the probe and reports when the model call count
-# exceeds twice the estimate for this probe.
 rl_check_budget() {
 	local calls
 	calls="$(rl_model_calls)"
@@ -160,8 +136,6 @@ rl_check_budget() {
 	fi
 }
 
-# rl_wait_quiescent waits for five consecutive idle seconds with no new user
-# record line, so queued deliveries have reached their final transcript.
 rl_wait_quiescent() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) current last=-1 stable=0
@@ -181,9 +155,7 @@ rl_wait_quiescent() {
 	return 1
 }
 
-# rl_wait_drained waits until the session is idle and its prompt queue has been
-# empty for five consecutive seconds. An idle status alone is not enough: a
-# turn that received messages can end while those messages are still queued.
+# An idle status alone is not enough: a turn that received messages can end while they are still queued.
 rl_wait_drained() {
 	local name="$1" seconds="$2"
 	local deadline=$((SECONDS + seconds)) counts last="" stable=0 depth
@@ -204,8 +176,6 @@ rl_wait_drained() {
 	return 1
 }
 
-# rl_send_checked sends one message through a simulated Agent and records a
-# failed tool result without stopping the burst.
 rl_send_checked() {
 	local sender="$1" body="$2" out ok
 	out="$(rs_call "$sender" send_message "{\"to\":\"$TARGET\",\"message\":\"$body\"}")"
@@ -217,9 +187,6 @@ rl_send_checked() {
 	return 0
 }
 
-# rl_burst_range sends count distinct messages numbered first through
-# first+count-1 from the two simulated senders in alternation and reports how
-# many calls did not return success.
 rl_burst_range() {
 	local prefix="$1" first="$2" count="$3" i body sender failed=0
 	for ((i = first; i < first + count; i++)); do
@@ -239,13 +206,10 @@ rl_burst_range() {
 	fi
 }
 
-# rl_burst sends distinct numbered messages from the two simulated senders in
-# alternation and reports how many calls did not return success.
 rl_burst() {
 	rl_burst_range "$1" 1 "$2"
 }
 
-# rl_write_arrivals records one line per expected body with its record count.
 rl_write_arrivals() {
 	local prefix="$1" total="$2" i n
 	: >"$OUT/arrivals-$prefix.tsv"
@@ -255,7 +219,6 @@ rl_write_arrivals() {
 	done
 }
 
-# rl_write_queue records the queue counts under the given label.
 rl_write_queue() {
 	rl_queue_counts >"$OUT/queue-$1.txt"
 }
@@ -270,8 +233,6 @@ rl_write_bodies() {
 	done < <(find "$R/cfg/projects" -type f -name '*.jsonl' -print0 2>/dev/null)
 }
 
-# rl_count_arrivals counts the distinct numbered bodies that arrived at least
-# once.
 rl_count_arrivals() {
 	local prefix="$1" total="$2" i n arrived_count=0
 	for ((i = 1; i <= total; i++)); do
@@ -283,8 +244,7 @@ rl_count_arrivals() {
 	printf '%s\n' "$arrived_count"
 }
 
-# A test sources this script with RS_SOURCE_ONLY=1 to exercise the helpers
-# above without starting the probe.
+# A test sources this script with RS_SOURCE_ONLY=1 to exercise the helpers above without starting the probe.
 if [[ "${RS_SOURCE_ONLY:-}" == "1" ]]; then
 	return 0
 fi
@@ -313,8 +273,6 @@ rl_wait_agent rl-s1 15
 rl_wait_agent rl-s2 15
 rs_obs "simulated senders rl-s1 and rl-s2 registered"
 
-# Step 1: while the receiver is busy, send 40 distinct messages through the
-# Broker in under five seconds. They share the Broker's token bucket.
 rs_send_prompt rl-rx "$SLEEP_PROMPT" 'Run "sleep 60"' 60
 rl_wait_status rl-rx busy 30
 burst_start="$(rl_now_ms)"
@@ -333,12 +291,7 @@ N1="$(rl_count_arrivals rl 40)"
 rs_obs "step 1: N1=$N1 of 40 distinct rl bodies arrived"
 rl_check_budget
 
-# Step 2: keep sending until the receiver throttles, wait ten seconds, then
-# send 15 messages. The bucket holds 30 tokens and refills at 0.5 per second,
-# so a 40-message burst sent in a few seconds necessarily ends with the
-# receiver dropping messages; the accepted count below confirms the bucket was
-# exhausted. Ten seconds later it holds about 5 tokens, so about 5 of the 15
-# sends should arrive.
+# The bucket holds 30 tokens and refills at 0.5 per second: a 40-message burst exhausts it, and ten seconds later about 5 of 15 sends should arrive.
 rs_send_prompt rl-rx "$SLEEP_PROMPT" 'Run "sleep 60"' 60
 rl_wait_status rl-rx busy 30
 burst_start="$(rl_now_ms)"
@@ -367,8 +320,7 @@ rs_obs "step 2: $N2_exhaust of 40 exhausting sends arrived, so throttling occurr
 rs_obs "step 2: N2=$N2 of 15 distinct rf bodies arrived (expected about 5, +-1)"
 rl_check_budget
 
-# Step 3: duplicate content from one sender is dropped; identical text with a
-# different signature is not, because the envelope differs.
+# Identical text from one sender is dropped as a duplicate; the same text from another sender differs in the envelope and is not.
 rl_send_checked rl-s1 dup-same || rs_obs "step 3: send dup-same failed"
 sleep 1
 rl_send_checked rl-s1 dup-same || rs_obs "step 3: second send dup-same failed"
@@ -383,8 +335,7 @@ rs_excerpt dup-same dedup-same.jsonl
 rs_excerpt dup-x dedup-x.jsonl
 rl_check_budget
 
-# Step 4: 60 direct frames from separate writer processes are exempt from the
-# per-sender rate limit; the receiver's queue keeps at most 50.
+# 60 direct frames from separate writer processes are exempt from the per-sender rate limit; the receiver's queue keeps at most 50.
 rs_send_prompt rl-rx "$SLEEP_PROMPT" 'Run "sleep 60"' 60
 rl_wait_status rl-rx busy 30
 socket="$(rs_socket_of rl-rx)"
@@ -412,11 +363,7 @@ rl_check_budget
 	printf 'frames_status=%s\n' "$frame_status"
 } >"$OUT/counts-early.txt"
 
-# The per-step counts above are taken as soon as the Agent looks idle, but
-# Claude Code can keep peer messages in its prompt queue past the end of the
-# turn that received them. Wait for the queue to drain and count again, so a
-# late delivery is counted with its own burst instead of disappearing into a
-# later one.
+# Counts taken at idle can miss messages still in the prompt queue; count again after the queue drains.
 if rl_wait_drained rl-rx 120; then
 	rs_obs "final: the prompt queue drained"
 else
@@ -445,12 +392,9 @@ rl_write_bodies final
 	printf 'queue_final=%s\n' "$(rl_queue_counts)"
 } >"$OUT/counts.txt"
 
-# Summarize the Broker's own send outcomes for the agent calls.
 if [[ -f "$OUT/broker.log" ]]; then
 	grep -o '"result":"[^"]*"' "$OUT/broker.log" | sort | uniq -c >"$OUT/broker-sends.txt" || true
 fi
 
-# The receiver's turns are the probe's subject, and every burst is delivered
-# while it runs. A run whose sleep prompt never submitted would still count
-# arrivals, so the prompt must be in a user record and usage above zero.
+# A run whose sleep prompt never submitted would still count arrivals, so the prompt must be in a user record with a model call counted.
 rs_require_model_turn 'Run "sleep 60" with the Bash tool' 1

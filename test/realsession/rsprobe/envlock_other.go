@@ -2,15 +2,13 @@
 
 package main
 
-// envLockHolders finds the processes that have lockPath open, excluding self.
-// The scan is unimplemented on this platform; the lock check then reports an
-// unknown holder instead of guessing.
+// envLockHolders returns nil on this platform, so the lock check reports an
+// unknown holder rather than guessing.
 func envLockHolders(string, int) []int {
 	return nil
 }
 
-// envProcessExe returns the executable path of pid, or "" when the platform
-// offers no way to read it.
+// envProcessExe returns "" on this platform.
 func envProcessExe(int) string {
 	return ""
 }

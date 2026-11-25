@@ -11,17 +11,15 @@ import (
 	"testing"
 )
 
-// testToken stands in for a Claude Code OAuth token. It is chosen so its
-// standard and URL-safe base64 encodings differ: it contains bytes that encode
-// to "+" and "/", which the URL-safe alphabet writes as "-" and "_". A token
-// without those bytes would let a scanner that implements only one alphabet
-// pass the other's tests.
+// testToken is chosen so its standard and URL-safe base64 encodings differ.
 const testToken = secretPrefix + "TJFiz4soCmZ9cpvnpKnA1h??~~4PmBxdU"
 
-// otherToken is the same length class but shares no body bytes with testToken,
-// so none of its encodings can be mistaken for a leak of testToken.
+// otherToken shares no body bytes with testToken, so none of its encodings can
+// be mistaken for a leak.
 const otherToken = secretPrefix + "QqWwEeRrTtYyUuIiOoPpAaSsDdFfGgHhJjKkLlZzXxCcVvBbNnMm"
 
+// TestTestTokenEncodingsDiffer checks the test token's standard and URL-safe
+// encodings actually differ.
 func TestTestTokenEncodingsDiffer(t *testing.T) {
 	standard := base64.RawStdEncoding.EncodeToString([]byte(testToken))
 	urlSafe := base64.RawURLEncoding.EncodeToString([]byte(testToken))
@@ -35,11 +33,6 @@ func TestTestTokenEncodingsDiffer(t *testing.T) {
 	}
 }
 
-// encodeAt returns content whose base64 encoding holds token at the given
-// three-byte alignment. When embedded is true the token has bytes before and
-// after it in the encoded value; that is what exposes a trailing partial group
-// that a standalone encoding would hide. offset picks how many of the token's
-// leading bytes share a group with the bytes before it.
 func encodeAt(token string, offset int, urlSafe, embedded bool) string {
 	encoding := base64.RawStdEncoding
 	if urlSafe {
@@ -57,7 +50,6 @@ func encodeAt(token string, offset int, urlSafe, embedded bool) string {
 	return encoding.EncodeToString(blob)
 }
 
-// scanOne writes content to a fresh directory and returns the number of hits.
 func scanOne(t *testing.T, content, token string) (int, error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -68,6 +60,8 @@ func scanOne(t *testing.T, content, token string) (int, error) {
 	return len(hits), err
 }
 
+// TestScanSecretDir checks that the whole token, a split token and a truncated
+// fragment are found but another token is not.
 func TestScanSecretDir(t *testing.T) {
 	body := strings.TrimPrefix(testToken, secretPrefix)
 	tests := []struct {
@@ -94,11 +88,8 @@ func TestScanSecretDir(t *testing.T) {
 	}
 }
 
-// TestScanSecretDirEncodings covers both base64 alphabets at each of the three
-// alignments, with the token alone and embedded between other bytes, and a
-// miss for each combination. The embedded cases are the regression: without
-// trimming the encoding to whole groups the trailing partial group no longer
-// appears once the token is followed by other bytes.
+// TestScanSecretDirEncodings checks both base64 alphabets at each alignment,
+// standalone and embedded, with a hit and a miss for each combination.
 func TestScanSecretDirEncodings(t *testing.T) {
 	encodings := []struct {
 		name    string
@@ -143,6 +134,8 @@ func TestScanSecretDirEncodings(t *testing.T) {
 	}
 }
 
+// TestScanSecretDirURLEncoding checks the query and path URL encodings are
+// found and another token's are not.
 func TestScanSecretDirURLEncoding(t *testing.T) {
 	const token = secretPrefix + "a+b/c=d e"
 	tests := []struct {
@@ -168,9 +161,8 @@ func TestScanSecretDirURLEncoding(t *testing.T) {
 	}
 }
 
-// TestScanSecretRejectsSymlinks checks that an entry the scanner cannot read is
-// a scan failure (exit 2), not something it skips: a skipped entry would be
-// uploaded without ever being scanned.
+// TestScanSecretRejectsSymlinks checks that a non-regular entry is a scan
+// failure (exit 2), not something skipped.
 func TestScanSecretRejectsSymlinks(t *testing.T) {
 	const env = "RSPROBE_TEST_TOKEN"
 	t.Setenv(env, testToken)
@@ -203,6 +195,8 @@ func TestScanSecretRejectsSymlinks(t *testing.T) {
 	}
 }
 
+// TestScanSecretCommand checks the hit, clean, missing-directory and
+// argument-error exit codes.
 func TestScanSecretCommand(t *testing.T) {
 	const env = "RSPROBE_TEST_TOKEN"
 	t.Setenv(env, testToken)

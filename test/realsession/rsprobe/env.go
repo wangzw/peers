@@ -20,8 +20,6 @@ import (
 	"github.com/wangzw/peers/internal/procsig"
 )
 
-// probeNames lists the probes the real-session workflow accepts. It is the
-// source the script checks compare against.
 var probeNames = []string{
 	"selftest",
 	"preflight",
@@ -39,7 +37,6 @@ var probeNames = []string{
 	"ratelimit",
 }
 
-// pinnedClaudeVersion is the Claude Code version every probe runs against.
 const pinnedClaudeVersion = "2.1.311"
 
 func init() {
@@ -65,8 +62,8 @@ func cmdEnvClean(args []string) error {
 	return runEnvClean(args, os.Stdout)
 }
 
-// envAccountHome mirrors config.accountHomeDir: the account's real home, with
-// os.UserHomeDir as the fallback.
+// envAccountHome mirrors the Broker's home resolution, falling back to
+// os.UserHomeDir.
 func envAccountHome() (string, error) {
 	if u, err := user.Current(); err == nil && u.HomeDir != "" {
 		return u.HomeDir, nil
@@ -74,8 +71,6 @@ func envAccountHome() (string, error) {
 	return os.UserHomeDir()
 }
 
-// envDefaultPeersHome is the Broker data directory the probes use when
-// --peers-home is not given.
 func envDefaultPeersHome() (string, error) {
 	home, err := envAccountHome()
 	if err != nil {
@@ -87,7 +82,6 @@ func envDefaultPeersHome() (string, error) {
 	return filepath.Join(home, ".peers"), nil
 }
 
-// envCurrentUser returns the account name the run wrapper exports.
 func envCurrentUser() string {
 	if u, err := user.Current(); err == nil && u.Username != "" {
 		return u.Username
@@ -98,8 +92,6 @@ func envCurrentUser() string {
 	return "root"
 }
 
-// runEnvInit implements "rsprobe env init --root R --claude-bin B
-// --peers-bin A [--peers-home H]".
 func runEnvInit(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("env init", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -138,8 +130,8 @@ func runEnvInit(args []string, stdout io.Writer) error {
 		return err
 	}
 
-	// Refuse before touching anything when the Broker data directory already
-	// exists: a stray local run must not overwrite the developer's config.
+	// Refuse before creating anything when the Broker data directory exists, so
+	// a stray local run cannot overwrite the developer's config.
 	if _, err := os.Stat(homePath); err == nil {
 		return fmt.Errorf("refusing to touch existing %s", homePath)
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -240,7 +232,6 @@ func runEnvInit(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// envCopyExecutable copies src to dst with an executable mode.
 func envCopyExecutable(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -293,21 +284,14 @@ func envWriteJSON(path string, v any) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// envRunScript renders the wrapper that starts every probe process with a
-// clean, reproducible environment. The OAuth token is passed by reference from
-// the caller's environment and never written into the file.
-//
-// The PATH lists both Homebrew prefixes so that tmux and jq resolve on an
-// Apple-silicon (/opt/homebrew) as well as an Intel (/usr/local) macOS runner;
-// the extra directory is harmless on Linux.
+// envRunScript renders the wrapper that starts a probe in a clean environment;
+// the OAuth token is passed by reference and never written into the file.
 func envRunScript(root, name string) string {
 	return fmt.Sprintf(`#!/bin/sh
 exec env -i HOME=%s/home USER=%s LOGNAME=%s PATH=%s/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin TERM=xterm-256color LANG=C.UTF-8 CLAUDE_CONFIG_DIR=%s/cfg DISABLE_AUTOUPDATER=1 CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN" "$@"
 `, root, name, name, root, root)
 }
 
-// runEnvCheck implements "rsprobe env check --root R". It prints one line per
-// item and returns an error when any item failed.
 func runEnvCheck(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("env check", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -404,8 +388,8 @@ func runEnvCheck(args []string, stdout io.Writer) error {
 		fail(detail)
 	}
 
-	// inotify exists only on Linux; a macOS Broker watches the registry with
-	// kqueue. Say so instead of reporting an unreadable limit as a value.
+	// inotify is Linux-only; a macOS Broker watches with kqueue, so say that
+	// instead of reporting a value.
 	if runtime.GOOS == "linux" {
 		limit := strings.TrimSpace(string(mustReadFile("/proc/sys/fs/inotify/max_user_instances")))
 		if limit == "" {
@@ -430,8 +414,8 @@ func mustReadFile(path string) []byte {
 	return data
 }
 
-// envWrappedEnvNames runs R/run /usr/bin/env and returns the set of variable
-// names. The output is parsed in memory and never printed.
+// envWrappedEnvNames returns the variable names the run wrapper exports; the
+// output is parsed in memory and never printed.
 func envWrappedEnvNames(root string) (map[string]bool, error) {
 	out, err := exec.Command(filepath.Join(root, "run"), "/usr/bin/env").Output()
 	if err != nil {
@@ -446,14 +430,12 @@ func envWrappedEnvNames(root string) (map[string]bool, error) {
 	return names, nil
 }
 
-// envBrokerLockPath names the account's Broker lock. It is a seam so tests can
-// run the check against a temporary lock instead of the runtime directory.
+// envBrokerLockPath names the account's Broker lock; tests replace it to point
+// at a temporary file.
 var envBrokerLockPath = func() string {
 	return filepath.Join(fmt.Sprintf("/tmp/peers-%d", os.Getuid()), "broker.lock")
 }
 
-// envBrokerLockFree tests the account's Broker lock. It returns false with a
-// reason when a process other than this probe's own peers holds it.
 func envBrokerLockFree(root string) (bool, string) {
 	lockPath := envBrokerLockPath()
 	f, err := os.OpenFile(lockPath, os.O_RDWR, 0)
@@ -486,10 +468,6 @@ func envBrokerLockFree(root string) (bool, string) {
 	return true, ""
 }
 
-// envLsofPIDs parses lsof's "p" and "n" field output for the processes that
-// have a file open. The macOS holder scan asks lsof for the lock path and hands
-// the output here; one p line precedes each process's n lines, so a process
-// with several descriptors on the file appears once.
 func envLsofPIDs(output string, self int) []int {
 	var pids []int
 	for _, line := range strings.Split(output, "\n") {
@@ -505,10 +483,9 @@ func envLsofPIDs(output string, self int) []int {
 	return pids
 }
 
-// envSameExecutable reports whether two paths name the same executable. The
-// kernel and lsof report canonical paths while the probe names $R, which on
-// macOS sits under the /tmp symlink, so both sides are resolved before the
-// comparison.
+// envSameExecutable reports whether two paths name the same executable. Both
+// sides are resolved because lsof reports canonical paths while the probe names
+// $R under the /tmp symlink.
 func envSameExecutable(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -516,8 +493,6 @@ func envSameExecutable(a, b string) bool {
 	return envResolvedPath(a) == envResolvedPath(b)
 }
 
-// envResolvedPath resolves symlinks, falling back to the given path when the
-// file cannot be resolved, for example because the process has exited.
 func envResolvedPath(path string) string {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -526,8 +501,6 @@ func envResolvedPath(path string) string {
 	return resolved
 }
 
-// envCountInotify counts the inotify instances held by this account's
-// processes, for the record only.
 func envCountInotify() int {
 	uid := os.Getuid()
 	entries, err := os.ReadDir("/proc")
@@ -590,7 +563,6 @@ type envUsageRow struct {
 	count int
 }
 
-// runEnvUsage implements "rsprobe env usage --root R [--since RFC3339]".
 func runEnvUsage(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("env usage", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -630,8 +602,6 @@ func runEnvUsage(args []string, stdout io.Writer) error {
 	return err
 }
 
-// envCollectUsage counts the distinct assistant message ids in the session
-// records, grouped by file and model.
 func envCollectUsage(root string, since time.Time) ([]envUsageRow, int, error) {
 	projects := filepath.Join(root, "cfg", "projects")
 	per := make(map[envUsageKey]map[string]struct{})
@@ -702,7 +672,6 @@ func envCollectUsage(root string, since time.Time) ([]envUsageRow, int, error) {
 	return rows, len(global), nil
 }
 
-// runEnvClean implements "rsprobe env clean --root R [--peers-home H]".
 func runEnvClean(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("env clean", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -748,8 +717,8 @@ func runEnvClean(args []string, stdout io.Writer) error {
 		_, _ = fmt.Fprintln(stdout, "docker: not found, skipping")
 	} else {
 		cmd := exec.Command("docker", "compose", "-f", compose, "down", "-v", "--timeout", "1")
-		// The compose file requires RS_ROOT for its volume mounts, so the
-		// environment root is passed along with the rest of the environment.
+		// The compose file requires RS_ROOT for its volume mounts, so it is
+		// passed along with the rest of the environment.
 		cmd.Env = envWithOverride(os.Environ(), "RS_ROOT", rootPath)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			_, _ = fmt.Fprintf(stdout, "docker compose: %v: %s\n", err, strings.TrimSpace(string(out)))
@@ -777,8 +746,6 @@ func runEnvClean(args []string, stdout io.Writer) error {
 	return nil
 }
 
-// envWithOverride returns env with key set to value, replacing any earlier
-// entry for the same key.
 func envWithOverride(env []string, key, value string) []string {
 	prefix := key + "="
 	out := make([]string, 0, len(env)+1)
@@ -790,9 +757,6 @@ func envWithOverride(env []string, key, value string) []string {
 	return append(out, prefix+value)
 }
 
-// envKillProbeProcesses stops every process started from the probe: binaries
-// under R/bin and processes whose HOME is R/home. Linux reads /proc; macOS has
-// none, so it matches the executable path in ps output.
 func envKillProbeProcesses(root string, stdout io.Writer) {
 	binPrefix := filepath.Join(root, "bin") + string(os.PathSeparator)
 	if runtime.GOOS == "darwin" {
@@ -833,8 +797,6 @@ func envKillProbeProcesses(root string, stdout io.Writer) {
 	envTerminate(pids, stdout)
 }
 
-// envTerminate stops pids with SIGTERM, waits up to two seconds, then uses
-// SIGKILL on whatever is left.
 func envTerminate(pids []int, stdout io.Writer) {
 	if len(pids) == 0 {
 		return
@@ -857,9 +819,6 @@ func envTerminate(pids []int, stdout io.Writer) {
 	_, _ = fmt.Fprintf(stdout, "stopped %d probe process(es)\n", len(pids))
 }
 
-// envDarwinProbePIDs returns the pids in ps output whose command starts with
-// binPrefix, excluding self. Each line is "pid command"; the command field is
-// argv[0] of the process, which the run wrapper sets to the copied binary.
 func envDarwinProbePIDs(psOutput, binPrefix string, self int) []int {
 	var pids []int
 	for _, line := range strings.Split(psOutput, "\n") {
@@ -878,8 +837,6 @@ func envDarwinProbePIDs(psOutput, binPrefix string, self int) []int {
 	return pids
 }
 
-// envKillDarwinProcesses lists processes with ps, picks the probe executables
-// and terminates them.
 func envKillDarwinProcesses(binPrefix string, stdout io.Writer) {
 	out, err := exec.Command("ps", "-ax", "-ww", "-o", "pid=,command=").Output()
 	if err != nil {
@@ -888,9 +845,9 @@ func envKillDarwinProcesses(binPrefix string, stdout io.Writer) {
 	envTerminate(envDarwinProbePIDs(string(out), binPrefix, os.Getpid()), stdout)
 }
 
-// envRemoveAll removes path, retrying briefly: on macOS a process that was
-// just stopped can create a file between the directory scan and the removal,
-// which makes RemoveAll report "directory not empty".
+// envRemoveAll retries briefly because a process stopped just before can
+// recreate a file during the removal, making RemoveAll report a non-empty
+// directory.
 func envRemoveAll(path string) error {
 	var err error
 	for i := 0; i < 5; i++ {

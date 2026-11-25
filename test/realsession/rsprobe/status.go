@@ -16,9 +16,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// statusTimeout bounds the Hello and Status calls to the local Broker. The
-// local socket answers at once; the bound is the package fallback and only
-// decides how long a Broker that never answers takes to fail.
+// statusTimeout bounds the Hello and Status calls; it only decides how long a
+// Broker that never answers takes to fail.
 const statusTimeout = eventTimeout
 
 func init() {
@@ -29,8 +28,6 @@ func cmdStatus(args []string) error {
 	return runStatus(args, os.Stdout)
 }
 
-// runStatus implements "rsprobe status [--socket PATH] [--json]". It reads the
-// Broker's Agent table and peers without touching any session record.
 func runStatus(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -58,13 +55,10 @@ func runStatus(args []string, stdout io.Writer) error {
 	return writeStatus(stdout, resp)
 }
 
-// defaultSocketPath is where a user Broker listens for the current uid.
 func defaultSocketPath() string {
 	return fmt.Sprintf("/tmp/peers-%d/broker.sock", os.Getuid())
 }
 
-// fetchStatus connects to the Broker's local socket, performs the version
-// handshake and returns the Status response.
 func fetchStatus(path string) (*localpb.StatusResponse, error) {
 	conn, err := grpc.NewClient("unix://"+path, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -91,8 +85,6 @@ func fetchStatus(path string) (*localpb.StatusResponse, error) {
 	return resp, nil
 }
 
-// writeStatus prints one line per Agent followed by one line per peer. The
-// short refs are computed across all Agents in the response.
 func writeStatus(w io.Writer, resp *localpb.StatusResponse) error {
 	ids := make([]string, 0, len(resp.GetAgents()))
 	for _, agent := range resp.GetAgents() {
@@ -125,8 +117,8 @@ func brokerStatusLabel(v localpb.BrokerStatus) string {
 	return enumLabel(localpb.BrokerStatus_name, "BROKER_STATUS_", int32(v))
 }
 
-// enumLabel renders a proto enum value the way the terminal status command
-// does: the label without its shared prefix, in lower case.
+// enumLabel renders a proto enum value without its shared prefix, in lower
+// case, as the terminal status command does.
 func enumLabel(names map[int32]string, prefix string, v int32) string {
 	if name, ok := names[v]; ok {
 		return strings.ToLower(strings.TrimPrefix(name, prefix))

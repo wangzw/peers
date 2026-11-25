@@ -19,11 +19,8 @@ const (
 	probeScriptsDir         = "../probes"
 )
 
-// TestRealSessionWorkflowShape checks the parts of the workflow that decide
-// when a probe runs, what it may do, and where its evidence may be uploaded.
-// Both jobs are checked: the Linux job keeps the apt-installed tools, and the
-// macOS job installs tmux and jq through Homebrew. Each job runs only for its
-// own branch prefix, so adding the macOS job leaves the Linux triggers intact.
+// TestRealSessionWorkflowShape checks the workflow triggers, permissions, and
+// each job's steps, token scoping and scan-before-upload order.
 func TestRealSessionWorkflowShape(t *testing.T) {
 	doc := loadRealSessionWorkflow(t)
 
@@ -92,7 +89,6 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				t.Errorf("jobs.%s.env.R = %q, want %q", tc.job, got, tc.root)
 			}
 
-			// The token reaches exactly the steps that need it, and no other.
 			steps := asSlice(t, job["steps"], "jobs."+tc.job+".steps")
 			const wantToken = "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
 			var tokenSteps []string
@@ -118,9 +114,6 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				t.Errorf("%s: steps with CLAUDE_CODE_OAUTH_TOKEN = %v, want %v", tc.job, tokenSteps, wantTokenSteps)
 			}
 
-			// The setup steps touch the network and have hung before; each
-			// carries a timeout so a stuck download fails the run instead of
-			// holding the job until the workflow timeout.
 			for name, want := range map[string]int{
 				"Install tools":       10,
 				"Install Claude Code": 10,
@@ -137,8 +130,6 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				}
 			}
 
-			// The install step names the package manager its runner family
-			// provides; the macOS job must not fall back to apt packages.
 			install := findWorkflowStepByName(t, steps, "Install tools")
 			installRun := asString(t, install["run"], "Install tools run")
 			if !strings.Contains(installRun, tc.tools) {
@@ -148,10 +139,8 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				t.Errorf("the macOS job installs packages with apt-get or sudo")
 			}
 
-			// The scan is the main defense: it runs before the upload, removes
-			// the evidence on a hit, and fails when the token is empty. It runs
-			// even when an earlier step failed, so a failed probe still leaves
-			// evidence.
+			// The scan runs before the upload and even after a failed probe,
+			// so a failed probe still leaves evidence.
 			scanIndex := findWorkflowStepIndex(t, steps, "Scan the evidence for the token")
 			uploadIndex := findWorkflowStepIndexByUses(t, steps, "actions/upload-artifact@")
 			if scanIndex > uploadIndex {
@@ -170,8 +159,7 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				`-z "$CLAUDE_CODE_OAUTH_TOKEN"`,
 				`"$RUNNER_TEMP/build/rsprobe" scan-secret --dir "$R/out" --env CLAUDE_CODE_OAUTH_TOKEN`,
 				`rm -rf "$R/out"`,
-				// A scan that could not run (exit 2, for argument, environment
-				// or unreadable-entry problems) fails the step like a hit, so
+				// A scan that could not run fails the step like a hit, so
 				// nothing is uploaded unscanned.
 				`if [ "$status" -ne 0 ]; then`,
 				`the evidence scan failed`,
@@ -181,10 +169,8 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				}
 			}
 
-			// The upload runs only after a passing scan and only when the job
-			// was not cancelled; that way a failed probe still uploads its
-			// evidence, while a token hit or a cancelled run leaves nothing
-			// behind.
+			// The upload runs only after a passing scan while the job is not
+			// cancelled, so a failed probe still uploads its evidence.
 			upload := asMap(t, steps[uploadIndex], "upload step")
 			const wantUploadIf = "${{ !cancelled() && steps.scan.outcome == 'success' }}"
 			if got := asString(t, upload["if"], "upload-artifact if"); got != wantUploadIf {
@@ -205,8 +191,6 @@ func TestRealSessionWorkflowShape(t *testing.T) {
 				t.Errorf("%s: upload-artifact retention-days = %v, want 7", tc.job, with["retention-days"])
 			}
 
-			// Each job strips its own branch prefix before the shared case
-			// list, so the Linux and macOS jobs accept different branch names.
 			selectStep := findWorkflowStepByName(t, steps, "Select the probe")
 			selectRun := asString(t, selectStep["run"], "Select the probe run")
 			if !strings.Contains(selectRun, "${GITHUB_REF_NAME#"+tc.prefix+"}") {
@@ -239,7 +223,6 @@ func TestProbeScriptsDoNotDumpEnvironment(t *testing.T) {
 		}
 	}
 
-	// The check must report a script that turns on shell tracing.
 	dir := t.TempDir()
 	bad := filepath.Join(dir, "bad.sh")
 	if err := os.WriteFile(bad, []byte("#!/usr/bin/env bash\nset -x\n"), 0o600); err != nil {
@@ -253,8 +236,6 @@ func TestProbeScriptsDoNotDumpEnvironment(t *testing.T) {
 		t.Fatalf("the check does not report a script containing set -x")
 	}
 
-	// Each forbidden form is caught, while reading named variables and the
-	// workflow's env blocks are not.
 	for _, line := range []string{
 		"set -x",
 		"printenv",
@@ -283,8 +264,7 @@ func TestProbeScriptsDoNotDumpEnvironment(t *testing.T) {
 		}
 	}
 	// The run-wrapper form is the most likely way the token reaches the
-	// evidence: env is not at the start of a command segment, so a check that
-	// only matches a segment-initial env would miss it.
+	// evidence, because env is not at the start of a command segment.
 	t.Run("run wrapper env redirect", func(t *testing.T) {
 		const line = `"$R/run" env >"$OUT/x"`
 		if findings := environmentDumpFindings(line, false); len(findings) == 0 {
@@ -322,9 +302,7 @@ func TestProbeScriptsDoNotDumpEnvironment(t *testing.T) {
 }
 
 // TestProbeScriptsUseTheLibraryCleanupChain checks that probe scripts register
-// cleanup with rs_on_exit instead of installing their own trap. A script that
-// installs its own trap replaces the library's, so a failing step would no
-// longer capture the windows or run the other registered cleanups.
+// cleanup with rs_on_exit instead of installing their own trap.
 func TestProbeScriptsUseTheLibraryCleanupChain(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join(probeScriptsDir, "*.sh"))
 	if err != nil {
@@ -347,11 +325,8 @@ func TestProbeScriptsUseTheLibraryCleanupChain(t *testing.T) {
 	}
 }
 
-// TestProbeNamesMatchScripts checks that every probe script that exists is a
-// known probe, and that the workflow's case list is exactly probeNames.
-//
-// The reverse direction is asserted too: every name in probeNames must have a
-// script under probes/, with lib.sh the only exception.
+// TestProbeNamesMatchScripts checks that the probe scripts and the Linux workflow
+// case list equal probeNames and the macOS case list is a subset of it.
 func TestProbeNamesMatchScripts(t *testing.T) {
 	known := make(map[string]bool, len(probeNames))
 	for _, name := range probeNames {
@@ -407,8 +382,6 @@ func TestProbeNamesMatchScripts(t *testing.T) {
 		}
 	}
 
-	// The macOS job runs a subset of the same probes. Every name it accepts
-	// must be a known probe, and the two this unit runs must be present.
 	macOSNames := workflowCaseNamesInJob(t, doc, "probe-macos")
 	if len(macOSNames) == 0 {
 		t.Errorf("jobs.probe-macos Select the probe has no case labels")
@@ -430,11 +403,8 @@ func TestProbeNamesMatchScripts(t *testing.T) {
 	}
 }
 
-// TestLibResolvesComposeFromScriptLocation checks that lib.sh finds
-// test/realsession/compose.yaml from its own location rather than the caller's
-// working directory. The workflow runs a probe from the repository root, but a
-// developer may start one anywhere; a relative -f path then fails with "no
-// configuration file provided".
+// TestLibResolvesComposeFromScriptLocation checks that lib.sh finds the compose
+// file from its own location, not the caller's working directory.
 func TestLibResolvesComposeFromScriptLocation(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -443,7 +413,6 @@ func TestLibResolvesComposeFromScriptLocation(t *testing.T) {
 	root := t.TempDir()
 	env := make([]string, 0, len(os.Environ())+3)
 	for _, kv := range os.Environ() {
-		// Drop any ambient value so a pre-fix lib.sh cannot pass by accident.
 		if strings.HasPrefix(kv, "RS_COMPOSE=") {
 			continue
 		}
@@ -475,10 +444,7 @@ func TestLibResolvesComposeFromScriptLocation(t *testing.T) {
 	}
 }
 
-// TestLibExportsRSRoot checks that every docker compose call a probe makes
-// inherits RS_ROOT. The compose file requires it for its bind mounts, and
-// Compose interpolates the file for exec and status calls as well as up, so a
-// probe that sets the variable only on the first call fails at the next one.
+// TestLibExportsRSRoot checks that lib.sh exports RS_ROOT for docker compose.
 func TestLibExportsRSRoot(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -487,7 +453,6 @@ func TestLibExportsRSRoot(t *testing.T) {
 	root := t.TempDir()
 	var env []string
 	for _, kv := range os.Environ() {
-		// Drop any ambient value so a pre-fix lib.sh cannot pass by accident.
 		if strings.HasPrefix(kv, "RS_ROOT=") {
 			continue
 		}
@@ -508,9 +473,8 @@ func TestLibExportsRSRoot(t *testing.T) {
 	}
 }
 
-// TestSocketOwnerPIDDarwin checks the macOS branch of socket_owner_pid. macOS
-// has no ss, so the helper asks lsof for the bound endpoint; a connected
-// client's name carries a leading "->" and must not be taken for the listener.
+// TestSocketOwnerPIDDarwin checks that the macOS branch selects the listener,
+// not a connected client with a leading arrow.
 func TestSocketOwnerPIDDarwin(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -570,12 +534,8 @@ func TestSocketOwnerPIDDarwin(t *testing.T) {
 	}
 }
 
-// TestRsAcceptTrustDialogChoosesTheFocusableEntry checks how the library
-// answers the workspace trust dialog. On macOS the probe root's /tmp resolves
-// to /private/tmp, so the trust entry written for the literal path does not
-// match and Claude Code shows the dialog with "No, exit" focused; pressing
-// Enter then ends the session instead of starting it. The helper must move to
-// the trust entry in that case and keep the plain Enter otherwise.
+// TestRsAcceptTrustDialogChoosesTheFocusableEntry checks the keys sent for a
+// focused refusal, a focused trust entry and an unknown focus.
 func TestRsAcceptTrustDialogChoosesTheFocusableEntry(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -592,9 +552,6 @@ func TestRsAcceptTrustDialogChoosesTheFocusableEntry(t *testing.T) {
 		t.Fatalf("writing the tmux stub: %v", err)
 	}
 
-	// The macOS dialog focuses "No, exit"; a dialog that focuses the trust
-	// entry keeps the old single Enter; a dialog whose cursor is on neither
-	// known option must not be answered at all.
 	refusalFocused := "Quick safety check\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm"
 	trustFocused := "Do you trust the files in this folder?\n ❯ Yes, I trust this folder\n"
 	unknownFocused := "Quick safety check\n   No, exit\n   Yes, I trust this folder\n"
@@ -625,17 +582,9 @@ func TestRsAcceptTrustDialogChoosesTheFocusableEntry(t *testing.T) {
 	}
 }
 
-// TestRsAcceptTrustDialogSurvivesABrokenPipe checks that the focus search is
-// read from grep's own status when the pane writer gets SIGPIPE. bash's printf
-// writes the pane line by line; grep -q exits as soon as it matches, and while
-// the pane still has content to send the next write fails with EPIPE and kills
-// printf with SIGPIPE. Under pipefail a plain "printf ... | grep -q" then
-// returns 141, not grep's 0, and the trust dialog was left unanswered with
-// "rc=2 sends=0". This pane is about 1MB, far beyond the pipe buffer, and puts
-// the focused refusal on its first line, so the writer always has content left
-// when grep exits. No write delay or strace is needed, so the test also runs on
-// macOS. The injected-exit-2 tests cover a search that could not run; this one
-// covers the broken pipe they cannot produce.
+// TestRsAcceptTrustDialogSurvivesABrokenPipe checks that a SIGPIPE in the pane
+// writer does not hide grep's match when the pane is larger than the pipe
+// buffer.
 func TestRsAcceptTrustDialogSurvivesABrokenPipe(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -652,9 +601,8 @@ func TestRsAcceptTrustDialogSurvivesABrokenPipe(t *testing.T) {
 		t.Fatalf("writing the tmux stub: %v", err)
 	}
 
-	// The focused refusal is on the first line, so grep -q matches in its
-	// first read. The padding is about 1MB, far beyond the 64KB pipe buffer,
-	// so printf still holds content when grep exits and its next write breaks.
+	// The focused refusal is on the first line and the padding is about 1MB,
+	// beyond the pipe buffer, so the writer still holds content when grep exits.
 	var pane strings.Builder
 	pane.WriteString("Quick safety check\n ❯ No, exit\n   Yes, I trust this folder\n")
 	for pane.Len() < 1<<20 {
@@ -692,11 +640,8 @@ func TestRsAcceptTrustDialogSurvivesABrokenPipe(t *testing.T) {
 	}
 }
 
-// TestRsDismissTrustDialogResendsWhenTheFirstBurstIsDropped checks the retry
-// around the trust dialog. Claude Code draws the dialog before it reads keys,
-// so a burst sent right after the first capture can be discarded and the next
-// frame still shows "No, exit". The helper must resend until the frame
-// changes, and report how many bursts it took so the evidence shows the retry.
+// TestRsDismissTrustDialogResendsWhenTheFirstBurstIsDropped checks that a
+// dropped first burst is resent and the retry count is reported.
 func TestRsDismissTrustDialogResendsWhenTheFirstBurstIsDropped(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -709,8 +654,6 @@ func TestRsDismissTrustDialogResendsWhenTheFirstBurstIsDropped(t *testing.T) {
 	}
 	counter := filepath.Join(root, "bursts")
 	record := filepath.Join(root, "keys.txt")
-	// The stub drops the first burst: the first two captures show the dialog,
-	// and each send-keys call advances the counter.
 	stub := `#!/bin/sh
 case "$3" in
 capture-pane)
@@ -758,11 +701,7 @@ esac
 }
 
 // TestRsDismissTrustDialogSendsBeforeAnElapsedDeadline checks that a spent
-// budget does not turn the helper into a no-op. The helper derives its
-// deadline from bash's SECONDS, which counts wall-clock time; a zero budget
-// makes the deadline already past at the loop's first check, the condition
-// that made CI report "failed after 0" with no keys pressed. The helper must
-// still capture the pane and send one burst before it reports the timeout.
+// budget still sends one burst before reporting the timeout.
 func TestRsDismissTrustDialogSendsBeforeAnElapsedDeadline(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -817,9 +756,8 @@ esac
 	}
 }
 
-// TestRsDismissTrustDialogFailsWhenTheDialogNeverLeaves checks the deadline
-// path: a stub keeps the dialog on screen, so the helper must stop at the
-// limit and report failure instead of resending forever.
+// TestRsDismissTrustDialogFailsWhenTheDialogNeverLeaves checks that a dialog
+// that stays on screen stops the helper at the limit.
 func TestRsDismissTrustDialogFailsWhenTheDialogNeverLeaves(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -875,11 +813,7 @@ esac
 }
 
 // TestRsDismissTrustDialogRetriesWhenTheCaptureFails checks that a failed pane
-// capture is not mistaken for the dialog leaving. tmux can fail to capture,
-// and its empty output used to end the wait as a successful dismissal. The
-// helper must retry within the budget, report success only from a capture that
-// succeeded and showed no dialog, and fail at the deadline when the capture
-// keeps failing.
+// capture is retried and never reported as a dismissal.
 func TestRsDismissTrustDialogRetriesWhenTheCaptureFails(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -894,8 +828,6 @@ func TestRsDismissTrustDialogRetriesWhenTheCaptureFails(t *testing.T) {
 		}
 		captures := filepath.Join(root, "captures")
 		record := filepath.Join(root, "keys.txt")
-		// The first capture fails, the second shows the dialog, and the
-		// third shows the pane after the dismissal.
 		stub := `#!/bin/sh
 case "$3" in
 capture-pane)
@@ -996,13 +928,8 @@ func realGrepPath(t *testing.T) string {
 	return path
 }
 
-// TestRsDismissTrustDialogRetriesWhenTheFocusCheckFails checks that a search
-// that could not run is not read as an unknown focus. grep exits 2 when it
-// cannot run, and under a loaded runner that failure made the helper report
-// "rc=2 sends=0" without pressing any key, so the wait ended before the dialog
-// was answered. A failed search says nothing about the cursor: the helper must
-// retry within its budget, and a later search that runs must still dismiss the
-// dialog with one burst.
+// TestRsDismissTrustDialogRetriesWhenTheFocusCheckFails checks that a grep that
+// could not run is retried and still dismisses the dialog.
 func TestRsDismissTrustDialogRetriesWhenTheFocusCheckFails(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1015,8 +942,6 @@ func TestRsDismissTrustDialogRetriesWhenTheFocusCheckFails(t *testing.T) {
 	}
 	record := filepath.Join(root, "keys.txt")
 	sends := filepath.Join(root, "sends")
-	// The dialog leaves only after a burst reaches the pane, so a retry that
-	// presses nothing still sees the dialog on its next capture.
 	tmuxStub := `#!/bin/sh
 case "$3" in
 capture-pane)
@@ -1036,8 +961,6 @@ esac
 	if err := os.WriteFile(filepath.Join(bin, "tmux"), []byte(tmuxStub), 0o755); err != nil {
 		t.Fatalf("writing the tmux stub: %v", err)
 	}
-	// Fail the first focus search with grep's "could not run" status and run
-	// every other search for real.
 	marker := filepath.Join(root, "failed-once")
 	grepStub := `#!/bin/sh
 if [ "$1" = "-qF" ] && [ ! -e '` + marker + `' ]; then
@@ -1075,10 +998,8 @@ exec '` + realGrepPath(t) + `' "$@"
 	}
 }
 
-// TestRsAcceptTrustDialogRetriesWhenTheFocusSearchFails checks the contract a
-// failed search gets from rs_accept_trust_dialog: 3, meaning the cursor is
-// unknown and the caller must retry, not 2, which would tell the caller the
-// dialog carries no known focus and stop it from pressing any key.
+// TestRsAcceptTrustDialogRetriesWhenTheFocusSearchFails checks that a failed
+// focus search returns 3 (retry) and presses no key.
 func TestRsAcceptTrustDialogRetriesWhenTheFocusSearchFails(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1126,8 +1047,7 @@ exec '` + realGrepPath(t) + `' "$@"
 }
 
 // TestRsWaitTurnIdleDoesNotCountAFailedSearchAsQuiet checks that a search that
-// could not run is not counted as a quiet poll. Five such polls used to add up
-// to an idle verdict about a pane the helper had never inspected.
+// could not run is not counted as a quiet poll.
 func TestRsWaitTurnIdleDoesNotCountAFailedSearchAsQuiet(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1174,10 +1094,8 @@ exec '` + realGrepPath(t) + `' "$@"
 	}
 }
 
-// TestRsReadyCriterionDoesNotTrustAFailedDialogSearch checks that a pane is
-// not called ready when the search that rules out a dialog could not run. The
-// guard used to fall through on a failed search, so a criterion visible behind
-// a dialog it never inspected could end the wait as ready.
+// TestRsReadyCriterionDoesNotTrustAFailedDialogSearch checks that a pane is not
+// called ready when the dialog search could not run.
 func TestRsReadyCriterionDoesNotTrustAFailedDialogSearch(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1217,8 +1135,7 @@ exec '` + realGrepPath(t) + `' "$@"
 }
 
 // TestRsPaneIdleDoesNotTrustAFailedTurnSearch checks that a pane is not called
-// idle when the search for the running-turn hint could not run. The retry
-// around that search must not turn a failed check into an idle verdict.
+// idle when the running-turn search could not run.
 func TestRsPaneIdleDoesNotTrustAFailedTurnSearch(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1267,9 +1184,8 @@ exec '` + realGrepPath(t) + `' "$@"
 	}
 }
 
-// TestRsDismissTrustDialogRefusesAnUnknownFocus checks that a recognized
-// dialog whose cursor is on neither known option fails immediately without
-// pressing a key, so a blind Enter cannot confirm another screen.
+// TestRsDismissTrustDialogRefusesAnUnknownFocus checks that a dialog with the
+// cursor on neither option fails without pressing a key.
 func TestRsDismissTrustDialogRefusesAnUnknownFocus(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1314,10 +1230,8 @@ esac
 	}
 }
 
-// TestRsHostaRecvWritesArtifactSafeName checks the local receive-log name. The
-// Agent name may contain characters an artifact upload rejects, such as the
-// "<" in "a<b", and the log of such an Agent must still be uploadable without
-// colliding with another Agent's log.
+// TestRsHostaRecvWritesArtifactSafeName checks that receive-log names are safe
+// for an artifact upload and distinct per Agent.
 func TestRsHostaRecvWritesArtifactSafeName(t *testing.T) {
 	lib, err := filepath.Abs(filepath.Join(probeScriptsDir, "lib.sh"))
 	if err != nil {
@@ -1365,12 +1279,8 @@ func TestRsHostaRecvWritesArtifactSafeName(t *testing.T) {
 	}
 }
 
-// TestRsProcVarsReportsAbsence checks that rs_proc_vars distinguishes a
-// missing variable from one set to the empty string. A probe treats the two
-// differently, so the helper must not print both as NAME=. The helper reads
-// /proc/<pid>/environ, which only Linux provides; the probe runner is Linux,
-// so every other platform skips this test instead of failing on a missing
-// /proc.
+// TestRsProcVarsReportsAbsence checks that rs_proc_vars distinguishes an unset
+// variable from one set to the empty string.
 func TestRsProcVarsReportsAbsence(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("rs_proc_vars reads /proc/<pid>/environ, which only Linux provides")
@@ -1382,8 +1292,6 @@ func TestRsProcVarsReportsAbsence(t *testing.T) {
 	root := t.TempDir()
 	cmd := exec.Command("bash", "-c", `source "$1"; rs_proc_vars "$$" RS_PRESENT RS_EMPTY RS_ABSENT`, "bash", lib)
 	cmd.Dir = root
-	// A fixed environment makes the absent variable reliably absent; bash
-	// records it in /proc/<pid>/environ exactly as given.
 	cmd.Env = []string{
 		"R=" + root,
 		"PROBE=selftest",
@@ -1401,10 +1309,8 @@ func TestRsProcVarsReportsAbsence(t *testing.T) {
 	}
 }
 
-// TestRsWaitReplyReadsAssistantTextOnly checks the shared reply predicate:
-// the prompt echo in a user record must not count as an answer, only text
-// blocks count, and a transcript without assistant text is reported as its
-// own result so a probe can say it fell back to the pane.
+// TestRsWaitReplyReadsAssistantTextOnly checks that only assistant text counts
+// as a reply and no assistant text gives a distinct result.
 func TestRsWaitReplyReadsAssistantTextOnly(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("rs_wait_reply parses transcripts with jq")
@@ -1496,10 +1402,7 @@ func TestRsWaitReplyReadsAssistantTextOnly(t *testing.T) {
 }
 
 // TestRatelimitWriteArrivalsCallArity checks that every rl_write_arrivals call
-// passes the positional parameters its definition reads. The probe failed on
-// the runner with "$3: unbound variable": the function had a label parameter
-// that the call sites never supplied, and the mismatch only surfaced after the
-// first burst had run.
+// passes as many arguments as its definition reads.
 func TestRatelimitWriteArrivalsCallArity(t *testing.T) {
 	path := filepath.Join(probeScriptsDir, "ratelimit.sh")
 	data, err := os.ReadFile(path)
@@ -1542,11 +1445,8 @@ func TestRatelimitWriteArrivalsCallArity(t *testing.T) {
 	}
 }
 
-// TestRatelimitQueueCounts checks the queue-depth helper the ratelimit probe
-// uses to decide that the receiver has finished processing delivered messages.
-// Claude Code records enqueue, dequeue and remove operations in the session
-// transcript; a positive depth means messages are still waiting, so an idle
-// session is not yet quiescent.
+// TestRatelimitQueueCounts checks the queue-depth counts from a transcript's
+// enqueue, dequeue and remove records.
 func TestRatelimitQueueCounts(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("the transcript helper parses records with jq")
@@ -1591,9 +1491,8 @@ func TestRatelimitQueueCounts(t *testing.T) {
 }
 
 // environmentDumpFindings returns the non-comment lines that dump an
-// environment or enable shell tracing. allowProcEnvReads exempts only the
-// /proc/<pid>/environ read in lib.sh, whose rs_proc_vars helper needs it; any
-// other environment read, including /usr/bin/env, is reported everywhere.
+// environment or enable shell tracing; allowProcEnvReads exempts only the
+// /proc/<pid>/environ read that lib.sh's rs_proc_vars needs.
 func environmentDumpFindings(text string, allowProcEnvReads bool) []string {
 	patterns := []*regexp.Regexp{
 		regexp.MustCompile(`\bset\s+-[a-zA-Z]*x\b`),
@@ -1606,11 +1505,9 @@ func environmentDumpFindings(text string, allowProcEnvReads bool) []string {
 		regexp.MustCompile(`\bbash\s+-[a-zA-Z]*x\b`),
 		regexp.MustCompile(`(^|[;&|(]\s*|\bthen\s+|\bdo\s+)set\s*($|[;&|)])`),
 		regexp.MustCompile(`(^|[;&|(]\s*|\bthen\s+|\bdo\s+)export\s*($|[;&|)])`),
-		// A bare env anywhere on the line is a dump when it is followed by a
-		// redirection or the end of the line. The form '"$R/run" env >file'
-		// is the most likely way a token reaches the evidence: env is not at
-		// the start of a command segment, so the segment-relative patterns
-		// above miss it.
+		// A bare env anywhere on the line is a dump when followed by a
+		// redirection or the end of the line; the run-wrapper form
+		// '"$R/run" env >file' is why it must be matched anywhere.
 		regexp.MustCompile(`\benv\s*(>|$)`),
 		regexp.MustCompile(`/usr/bin/env\b`),
 	}
@@ -1630,9 +1527,8 @@ func environmentDumpFindings(text string, allowProcEnvReads bool) []string {
 	return findings
 }
 
-// stripShellComment removes a comment, which in shell and YAML starts at a
-// '#' that is at the beginning of the line or follows whitespace. A '#' inside
-// a word such as ${GITHUB_REF_NAME#probe/} is not a comment.
+// stripShellComment removes a shell or YAML comment starting at a '#' at the
+// line start or after whitespace; a '#' inside a word is not a comment.
 func stripShellComment(line string) string {
 	for i := 0; i < len(line); i++ {
 		if line[i] != '#' {
@@ -1676,7 +1572,6 @@ func findWorkflowStepByName(t *testing.T, steps []any, name string) map[string]a
 	return nil
 }
 
-// findWorkflowStepIndex returns the position of the step with this name.
 func findWorkflowStepIndex(t *testing.T, steps []any, name string) int {
 	t.Helper()
 	for i, raw := range steps {
@@ -1689,8 +1584,6 @@ func findWorkflowStepIndex(t *testing.T, steps []any, name string) int {
 	return -1
 }
 
-// findWorkflowStepIndexByUses returns the position of the step using an action
-// whose name starts with prefix.
 func findWorkflowStepIndexByUses(t *testing.T, steps []any, prefix string) int {
 	t.Helper()
 	for i, raw := range steps {
@@ -1703,8 +1596,8 @@ func findWorkflowStepIndexByUses(t *testing.T, steps []any, prefix string) int {
 	return -1
 }
 
-// unknownProbeExitCode returns the exit code of the case branch that handles
-// an unknown probe. The second result is false when no such branch exists.
+// unknownProbeExitCode returns the exit code of the case branch for an unknown
+// probe, and false when there is none.
 func unknownProbeExitCode(t *testing.T, doc map[string]any) (int, bool) {
 	t.Helper()
 	probe := realSessionProbeJob(t, doc)

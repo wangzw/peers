@@ -6,14 +6,12 @@ import (
 	"testing"
 )
 
-// testAgentID pads prefix to the 64 hexadecimal characters of a real Agent ID.
 func testAgentID(prefix string) string {
 	return prefix + strings.Repeat("0", 64-len(prefix))
 }
 
+// TestAgentIDKnownVectors checks agent IDs against fixed known values.
 func TestAgentIDKnownVectors(t *testing.T) {
-	// REQ-agent-messaging-006: the ref must use the same algorithm as Claude
-	// Code's session list, which is the SHA-256 of "session:" plus the path.
 	cases := []struct {
 		path string
 		want string
@@ -32,10 +30,9 @@ func TestAgentIDKnownVectors(t *testing.T) {
 	}
 }
 
+// TestRefRejectsBadPath checks that a path the Broker rejects fails the whole
+// command before it prints anything.
 func TestRefRejectsBadPath(t *testing.T) {
-	// A path the Broker would refuse must not get an identifier, because the
-	// Broker never registers an Agent under it. A bad argument anywhere on the
-	// command line fails the whole command before it prints anything.
 	for _, args := range [][]string{
 		{"relative.sock"},
 		{"/tmp/../x.sock"},
@@ -51,6 +48,8 @@ func TestRefRejectsBadPath(t *testing.T) {
 	}
 }
 
+// TestRefCommandExitsTwoOnBadPath checks that a bad path exits 2 with the path
+// on standard error.
 func TestRefCommandExitsTwoOnBadPath(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := -1
@@ -68,6 +67,8 @@ func TestRefCommandExitsTwoOnBadPath(t *testing.T) {
 	}
 }
 
+// TestRefCommandKeepsExitOnGoodPath checks that a good path prints its
+// disambiguator without exiting.
 func TestRefCommandKeepsExitOnGoodPath(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exited := false
@@ -82,6 +83,8 @@ func TestRefCommandKeepsExitOnGoodPath(t *testing.T) {
 	}
 }
 
+// TestShortRefs checks the shortest unique prefix and the 12-character cap when
+// prefixes collide.
 func TestShortRefs(t *testing.T) {
 	id1 := "abcdef0123000000000000000000000000000000000000000000000000000000"
 	id2 := "abcdef0199000000000000000000000000000000000000000000000000000000"

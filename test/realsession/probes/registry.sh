@@ -7,39 +7,17 @@ if ! rs_start_broker; then
 	exit 1
 fi
 
-# registry.sh probes whether the Broker follows the Claude Code session
-# registry reliably on Linux and macOS, and whether a renamed session is listed
-# under its new name with its previous name.
+# On macOS /tmp is a symlink to /private/tmp and Claude Code keys workspace trust by the resolved path, so the probe root must be under /private/tmp or every session stops at the trust dialog.
 #
-# The measurements that only Linux can make (the inotify instance count and
-# limit, and strace) are skipped on macOS and recorded as skipped; a macOS
-# Broker watches the directory with kqueue, and the probe reads the Broker's
-# open file descriptors only as a note, not as a criterion.
+# rsprobe status reads only the Broker's in-memory table, so it shows exactly what the notification path applied.
 #
-# On macOS /tmp is a symlink to /private/tmp and Claude Code keys its workspace
-# trust by the resolved path, so the macOS runner puts the probe root under
-# /private/tmp; otherwise every session would stop at the trust dialog before
-# registering. The probe records the reason in observations.txt.
-#
-# The pre-push check of the plan ("Status must not reread records") holds: the
-# Status handler in internal/broker/status.go reads only the in-memory table,
-# and the Reread matches under internal/broker are in delivery, send, receive,
-# listagents and tracking. rsprobe status therefore shows exactly what the
-# notification path applied.
-#
-# The probe reads the registry through two independent witnesses: rsprobe watch
-# scans the directory itself and compares its poll observations with fsnotify
-# notifications, and rsprobe status reports the Broker's table.
+# The probe reads the registry through two independent witnesses: rsprobe watch scans the directory itself, and rsprobe status reports the Broker's table.
 
 PROMPT='When a cross-session message arrives, reply with the single word ok and do nothing else. Do not call any tool unless the user explicitly asks.'
 
-# REG_OS selects the platform-specific process and clock helpers below.
 REG_OS="$(uname -s)"
 
-# REG_REFLECT_LIMIT_MS is the criterion for a rename or an exit to appear in
-# the Broker's list: one second, from the real-session plan for
-# REQ-agent-messaging-005 and REQ-agent-messaging-010. The measured elapsed
-# value also covers the command and the 0.2-second poll granularity.
+# The budget for a rename or an exit to appear in the Broker's list; the measured elapsed value also covers the command and the 0.2-second poll granularity.
 REG_REFLECT_LIMIT_MS=1000
 
 if [[ "$REG_OS" == Darwin ]]; then
@@ -48,16 +26,12 @@ fi
 
 printf 'op\tsubject\tattempt\telapsed_ms\tdetail\n' >"$OUT/timings.tsv"
 
-# reg_status prints the Broker's Agent table. A transient failure prints
-# nothing; the polling callers retry until their deadline.
+# A transient failure prints nothing; the polling callers retry until their deadline.
 reg_status() {
 	"$R/run" rsprobe status 2>>"$OUT/status.err" || true
 }
 
-# reg_line_of reads a status table on standard input and prints the line of the
-# Agent whose address carries name. Addresses are "name@alias" or
-# "name [ref]@alias"; comparing the name exactly keeps reg-a from matching
-# reg-a2 and ab from matching a hexadecimal short ref.
+# Addresses are "name@alias" or "name [ref]@alias"; comparing the name exactly keeps reg-a from matching reg-a2 and ab from matching a hex disambiguator.
 reg_line_of() {
 	awk -v want="$1" '
 		/^peer / { next }
@@ -69,7 +43,6 @@ reg_line_of() {
 		}'
 }
 
-# reg_line_present reports whether the table lists name.
 reg_line_present() {
 	local name="$1" table line
 	table="$(reg_status)"
@@ -77,7 +50,6 @@ reg_line_present() {
 	[[ -n "$line" ]]
 }
 
-# reg_wait_present waits until the table lists name.
 reg_wait_present() {
 	local name="$1" seconds="$2" deadline
 	deadline=$((SECONDS + seconds))
@@ -90,8 +62,7 @@ reg_wait_present() {
 	reg_line_present "$name"
 }
 
-# reg_now_ms prints the current time in milliseconds. GNU date prints %3N;
-# BSD date, which macOS ships, does not, so Darwin reads the clock from python3.
+# GNU date prints %3N; BSD date, which macOS ships, does not, so Darwin reads the clock from python3.
 reg_now_ms() {
 	if [[ "$REG_OS" == Darwin ]]; then
 		python3 -c 'import time; print(int(time.time() * 1000))'
@@ -100,18 +71,10 @@ reg_now_ms() {
 	fi
 }
 
-# reg_timing appends one row to timings.tsv.
 reg_timing() {
 	printf '%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" >>"$OUT/timings.tsv"
 }
 
-# reg_measure_present polls until name is listed and records the elapsed
-# milliseconds plus the previous-name field. The first poll runs immediately,
-# as the plan requires for the rename measurement. It returns 0 when the
-# criterion holds, 1 when name never appeared, 2 when it was listed without the
-# previous name WANT_PREV, and 3 when it took longer than the limit. A non-empty
-# WANT_PREV is checked only after name is found, so the evidence still carries
-# the observed previous name.
 reg_measure_present() {
 	local name="$1" op="$2" attempt="$3" seconds="$4" start="$5" want_prev="${6:-}"
 	local deadline table line now elapsed prev
@@ -146,10 +109,7 @@ reg_measure_present() {
 	done
 }
 
-# reg_measure_gone polls until name is no longer listed. A table that does not
-# parse (for example while the Broker restarts) is not taken as removal. It
-# returns 0 when the removal met the limit, 1 when name was still listed at the
-# deadline, and 2 when the removal took longer than the limit.
+# A table that does not parse, for example while the Broker restarts, is not taken as removal.
 reg_measure_gone() {
 	local name="$1" op="$2" attempt="$3" seconds="$4" start="$5"
 	local deadline table line now elapsed
@@ -181,9 +141,6 @@ reg_measure_gone() {
 	done
 }
 
-# reg_require_present and reg_require_gone turn a criterion result into the
-# probe's exit status: any non-zero measurement result fails the probe after
-# the measurement has written its observation and timing row.
 reg_require_present() {
 	local rc=0
 	reg_measure_present "$@" || rc=$?
@@ -196,9 +153,7 @@ reg_require_gone() {
 	((rc == 0)) || exit 1
 }
 
-# reg_call_error invokes a tool whose refusal is the observation. rs_call from
-# lib.sh cannot record it: under set -e it stops before writing the answer of a
-# failing call, and step 4 expects the refusal to the old address as evidence.
+# rs_call cannot record a refusal: under set -e it stops before writing a failing call's answer, and the rename check needs that answer as evidence.
 reg_call_error() {
 	local name="$1" tool="$2" args="$3" reply rc=0
 	reply="$("$R/run" rsprobe agent call --ctl "$R/ctl/$name.sock" "$tool" "$args" 2>>"$OUT/agent-call.err")" || rc=$?
@@ -207,9 +162,6 @@ reg_call_error() {
 	printf '%s\n' "$reply"
 }
 
-# reg_broker_pid prints the pid of the Broker rs_start_broker started. It runs
-# as "<exe> service run" with its standard error in $OUT/broker.log. Linux
-# reads /proc; macOS has none, so Darwin matches the command line with pgrep.
 reg_broker_pid() {
 	if [[ "$REG_OS" == Darwin ]]; then
 		local pid
@@ -233,13 +185,11 @@ reg_broker_pid() {
 	return 1
 }
 
-# Step 2: watch the registry independently of the Broker.
 "$R/run" rsprobe watch --dir "$R/cfg/sessions" --out "$OUT/watch.jsonl" \
 	>"$OUT/watch-summary.txt" 2>"$OUT/watch.err" &
 WATCH_PID=$!
 rs_obs "watching $R/cfg/sessions (watch pid $WATCH_PID)"
 
-# Step 3: start three interactive sessions and wait until all are registered.
 rs_tmux_start
 rs_window reg-a claude --model haiku -n reg-a --permission-mode default --append-system-prompt "$PROMPT" --debug-file "$R/debug/reg-a.debug"
 rs_window reg-b claude --model haiku -n reg-b --permission-mode default --append-system-prompt "$PROMPT" --allowedTools "Bash(sleep:*)" --debug-file "$R/debug/reg-b.debug"
@@ -251,8 +201,7 @@ for name in reg-a reg-b reg-c; do
 		exit 1
 	fi
 done
-# Registration happens before the composer accepts keys; the rename and prompt
-# below must not be typed into a starting session.
+# Registration happens before the composer accepts keys, so the rename and prompt below must not be typed into a starting session.
 for name in reg-a reg-b reg-c; do
 	if ! rs_wait_ready "$name" 30; then
 		rs_snap "$name" "ready-$name-timeout.txt" || true
@@ -264,8 +213,6 @@ done
 reg_status >"$OUT/status-initial.txt"
 rs_obs "reg-a, reg-b and reg-c registered"
 
-# Step 4: rename reg-a, then check the Broker and the simulated Agent see the
-# new name and reject the old address.
 start="$(reg_now_ms)"
 rs_keys reg-a '/rename reg-a2' Enter
 reg_require_present reg-a2 rename 1 5 "$start" reg-a
@@ -285,7 +232,6 @@ else
 	exit 1
 fi
 
-# Step 5: reg-b runs a sleeping Bash command; record idle -> busy -> idle.
 start="$(reg_now_ms)"
 rs_send_prompt reg-b 'Run the shell command "sleep 20" with the Bash tool, then reply done.' 'Run the shell command'
 busy_seen=0
@@ -315,7 +261,6 @@ elif ((idle_seen == 0)); then
 	rs_obs "reg-b stayed busy past the 60s deadline"
 fi
 
-# Step 6: an unusable name is not registered; renaming to a usable one is.
 rs_window invalid claude --model haiku -n 'a@b' --permission-mode default --append-system-prompt "$PROMPT" --allowedTools mcp__peer__list_agents --debug-file "$R/debug/invalid.debug"
 if ! rs_wait_ready invalid 45; then
 	rs_obs "the a@b session did not reach its input prompt within 45s"
@@ -338,16 +283,13 @@ if ! rs_pane_idle invalid 30; then
 fi
 start="$(reg_now_ms)"
 rs_keys invalid '/rename ab' Enter
-# The a@b session is not listed before the rename, so there is no previous
-# name to require; the limit still applies.
+# The a@b session is not listed before the rename, so there is no previous name to require; the limit still applies.
 reg_require_present ab rename-invalid 1 5 "$start"
 
-# Step 7: end reg-c and measure when Status drops it.
 start="$(reg_now_ms)"
 rs_keys reg-c '/exit' Enter
 reg_require_gone reg-c exit 1 5 "$start"
 
-# Step 8: repeat the rename and exit measurements nine more times.
 for attempt in 2 3 4 5 6 7 8 9 10; do
 	if ((attempt % 2 == 0)); then
 		new_name=reg-a
@@ -377,10 +319,6 @@ for attempt in 2 3 4 5 6 7 8 9 10; do
 	reg_require_gone "$exit_name" exit "$attempt" 5 "$start"
 done
 
-# Record the inotify capacity and how many instances the Broker holds. macOS
-# has neither inotify nor strace: its Broker watches with kqueue, so both
-# measurements are recorded as skipped, and the Broker's open descriptors are
-# recorded only as a note.
 if [[ "$REG_OS" == Darwin ]]; then
 	{
 		printf 'inotify_max_user_instances=skipped (Linux only)\n'
@@ -420,7 +358,6 @@ else
 	} >"$OUT/inotify.txt"
 fi
 
-# Step 9: stop the watcher and record what it saw.
 reg_status >"$OUT/status-final.txt"
 kill -INT "$WATCH_PID" 2>/dev/null || true
 watch_rc=0
@@ -442,6 +379,5 @@ if ((watch_rc != 0)); then
 fi
 rs_obs "watch exited with rc=$watch_rc: $watch_summary"
 
-# The status prompt is the first model prompt the probe types; a run that never
-# submitted it, or that recorded no model call at all, is a false pass.
+# A run that never submitted the status prompt, or recorded no model call, would be a false pass.
 rs_require_model_turn 'Run the shell command' 1

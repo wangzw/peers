@@ -9,11 +9,9 @@ import (
 	"strings"
 )
 
-// envLockHolders finds the processes that have lockPath open, excluding self.
-// macOS has no /proc, so lsof is asked for the path; it exits 1 when no process
-// matches, which is not an error here. The caller opens the lock file to test
-// the lock, so its own descriptor would otherwise make the checker look like a
-// holder.
+// envLockHolders finds processes with lockPath open, excluding self, which
+// already holds a descriptor for the lock test; on macOS it asks lsof, whose
+// exit status 1 means no match.
 func envLockHolders(lockPath string, self int) []int {
 	out, err := exec.Command("lsof", "-w", "-Fpn", lockPath).Output()
 	if err != nil {
@@ -26,8 +24,7 @@ func envLockHolders(lockPath string, self int) []int {
 }
 
 // envProcessExe returns the executable path of pid, or "" when it cannot be
-// read, for example because the process has exited. lsof reports the program
-// text file as an n field.
+// read; on macOS lsof reports it as an n field.
 func envProcessExe(pid int) string {
 	out, err := exec.Command("lsof", "-w", "-a", "-p", strconv.Itoa(pid), "-d", "txt", "-Fn").Output()
 	if err != nil {

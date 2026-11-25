@@ -9,8 +9,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// peerPID reads the pid of the process at the other end of a unix connection
-// with LOCAL_PEERPID.
+// peerPID returns the pid of the peer at the other end of a unix connection,
+// read with LOCAL_PEERPID.
 func peerPID(conn net.Conn) (int, error) {
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
