@@ -7,10 +7,50 @@ import (
 	"os/user"
 	"slices"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/wangzw/peers/internal/accountdb"
 )
+
+// TestLookupAccountLookupFailureIsNotMissing checks that a failing uid lookup is an error, not ErrNoAccount, and names the uid.
+func TestLookupAccountLookupFailureIsNotMissing(t *testing.T) {
+	old := lookupUIDFromDB
+	t.Cleanup(func() { lookupUIDFromDB = old })
+
+	lookupUIDFromDB = func(uint32) (accountdb.User, error) {
+		return accountdb.User{}, errors.New("account database unavailable")
+	}
+
+	_, err := LookupAccount(7)
+	if err == nil {
+		t.Fatal("LookupAccount succeeded with a failing account lookup")
+	}
+	if errors.Is(err, ErrNoAccount) {
+		t.Errorf("LookupAccount error = %v, want a failed lookup, not ErrNoAccount", err)
+	}
+	if got := err.Error(); !strings.Contains(got, "cannot look up uid 7") {
+		t.Errorf("LookupAccount error = %q, want it to name the uid", got)
+	}
+}
+
+// TestLookupAccountMissingGroupsIsNoAccount checks that a group table the account database does not have makes the account ErrNoAccount.
+func TestLookupAccountMissingGroupsIsNoAccount(t *testing.T) {
+	oldUID, oldGroups := lookupUIDFromDB, groupIDsFromDB
+	t.Cleanup(func() { lookupUIDFromDB, groupIDsFromDB = oldUID, oldGroups })
+
+	lookupUIDFromDB = func(uint32) (accountdb.User, error) {
+		return accountdb.User{Name: "alice", UID: 7, GID: 9, Home: "/home/alice"}, nil
+	}
+	groupIDsFromDB = func(accountdb.User) ([]uint32, error) {
+		return nil, fmt.Errorf("%w: group 9", accountdb.ErrNotFound)
+	}
+
+	_, err := LookupAccount(7)
+	if !errors.Is(err, ErrNoAccount) {
+		t.Errorf("LookupAccount error = %v, want ErrNoAccount", err)
+	}
+}
 
 func TestLookupAccountTemporaryFailureIsNotMissing(t *testing.T) {
 	oldUID, oldGroups := lookupUIDFromDB, groupIDsFromDB

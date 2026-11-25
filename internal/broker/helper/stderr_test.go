@@ -87,6 +87,40 @@ func TestHelperStderrOtherLineDuringStopStaysWarn(t *testing.T) {
 	}
 }
 
+// TestHelperStderrTruncatesLongUnterminatedLine checks that a line longer than the limit is logged truncated and the next line starts fresh.
+func TestHelperStderrTruncatesLongUnterminatedLine(t *testing.T) {
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	w := newHelperStderr(log, 4242, nil)
+
+	line := strings.Repeat("x", maxHelperStderrLine+10)
+	n, err := w.Write([]byte(line))
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if n != len(line) {
+		t.Fatalf("Write = %d, want %d", n, len(line))
+	}
+	out := buf.String()
+	if !strings.Contains(out, "(truncated)") {
+		t.Fatalf("log %q does not contain the truncation marker", out)
+	}
+	if !strings.Contains(out, strings.Repeat("x", maxHelperStderrLine)) {
+		t.Fatalf("log does not hold the first %d bytes of the line", maxHelperStderrLine)
+	}
+	if strings.Contains(out, strings.Repeat("x", maxHelperStderrLine+1)) {
+		t.Fatal("log holds more than the line limit")
+	}
+
+	// The buffer is reset after truncation, so the next line starts fresh.
+	if _, err := w.Write([]byte("next line\n")); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if got := buf.String(); !strings.Contains(got, "next line") {
+		t.Fatalf("log %q does not contain the line after a truncated one", got)
+	}
+}
+
 func TestProcessHelperStderrIsTaggedWithAccount(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
