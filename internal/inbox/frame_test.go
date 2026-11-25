@@ -63,6 +63,19 @@ func TestREQAgentMessaging026_Boundary(t *testing.T) {
 	}
 }
 
+// TestSanitizeForEnvelope_RemovesControlCharacters pins the branch that drops a
+// control rune: a signature carrying one must lose it rather than reach the
+// wire with a byte the transport library would refuse.
+func TestSanitizeForEnvelope_RemovesControlCharacters(t *testing.T) {
+	if got := sanitizeForEnvelope("a\x07b\x1bc"); got != "abc" {
+		t.Fatalf("sanitizeForEnvelope with control characters = %q, want %q", got, "abc")
+	}
+	// Positive control: characters that are not control survive verbatim.
+	if got := sanitizeForEnvelope("plain-name"); got != "plain-name" {
+		t.Fatalf("sanitizeForEnvelope(%q) = %q, want it unchanged", "plain-name", got)
+	}
+}
+
 func TestFrameSize_EnvelopeTagEscaping(t *testing.T) {
 	const sig = "worker"
 	// escaped is the text the transport library receives for each input. It is

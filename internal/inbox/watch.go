@@ -104,6 +104,14 @@ var testWatchAfterStatBeforeAdd atomic.Pointer[func()]
 // concurrent Stop calls deterministic. Production leaves it nil.
 var testWatchBeforeStopWait func()
 
+// testWatchBeforePendingWait, when set by a test, runs in Watch after it has
+// found a watcher creation for its directory still in flight and before it
+// waits for that creation. It makes the wait deterministic: a test starts the
+// waiter only while the creator is blocked, so the waiter certainly takes the
+// in-flight path instead of building a second watcher. Production leaves it
+// nil.
+var testWatchBeforePendingWait func()
+
 // callbackEntry is one registration. stopped is guarded by watcher.mu: notify
 // tests it and records an in-flight invocation under that same lock, so once
 // stop has set stopped no further invocation can begin. running counts the
@@ -263,6 +271,9 @@ func Watch(configDir string, onChange func(int)) (stop func(), err error) {
 		}
 		if pending := sharedWatcherCreations[dir]; pending != nil {
 			sharedWatchersMu.Unlock()
+			if testWatchBeforePendingWait != nil {
+				testWatchBeforePendingWait()
+			}
 			<-pending.done
 			if pending.err != nil {
 				return nil, pending.err
