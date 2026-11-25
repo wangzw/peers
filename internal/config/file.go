@@ -653,13 +653,17 @@ func configFileDirMode(mode Mode) os.FileMode {
 	return 0o700
 }
 
+// openConfigFileForWrite opens the configuration file. It is a seam: a real
+// test file cannot produce the create race or the mode failure.
+var openConfigFileForWrite = os.OpenFile
+
 // writeConfigFile rewrites path in place: existing ownership, group, mode and
 // ACLs stay in place because the same inode is reused. A new file is created
 // with mode 0600. O_NOFOLLOW makes a path that is a symbolic link fail instead
 // of truncating the link's target, which could be a file outside the
 // configuration directory.
 func writeConfigFile(path string, data []byte, mode Mode) error {
-	f, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
+	f, err := openConfigFileForWrite(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("%w: %s: %v", ErrFileWrite, path, err)
@@ -667,10 +671,10 @@ func writeConfigFile(path string, data []byte, mode Mode) error {
 		if mkErr := os.MkdirAll(filepath.Dir(path), configFileDirMode(mode)); mkErr != nil {
 			return fmt.Errorf("%w: %s: %v", ErrFileWrite, path, mkErr)
 		}
-		f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o600)
+		f, err = openConfigFileForWrite(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|unix.O_NOFOLLOW, 0o600)
 		if err != nil {
 			if errors.Is(err, os.ErrExist) {
-				f, err = os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
+				f, err = openConfigFileForWrite(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
 			}
 			if err != nil {
 				return fmt.Errorf("%w: %s: %v", ErrFileWrite, path, err)
