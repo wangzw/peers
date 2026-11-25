@@ -277,6 +277,7 @@ func TestApplyRejectsNonReleaseVersion(t *testing.T) {
 			target, before := newTarget(t, original, 0o750)
 
 			err := Apply(context.Background(), ApplyOptions{
+				Client:  noNetworkClient(t),
 				Target:  target,
 				Version: version,
 				GOOS:    "linux",
@@ -305,6 +306,7 @@ func TestApplyRejectsSymlinkTarget(t *testing.T) {
 	}
 
 	err := Apply(context.Background(), ApplyOptions{
+		Client:  noNetworkClient(t),
 		Target:  link,
 		Version: "0.2.0",
 		GOOS:    "linux",
