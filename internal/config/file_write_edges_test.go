@@ -54,11 +54,9 @@ func TestWriteConfigFileReportsDirectoryCreationFailure(t *testing.T) {
 	}
 }
 
-// TestWriteConfigFileReportsTruncateFailure checks that a file that opens but
-// cannot be truncated is reported as ErrFileWrite with the target path. The
-// seam returns the target opened read-only: truncating a descriptor without
-// write access fails on both linux and darwin, whereas a FIFO makes darwin
-// report the later seek instead.
+// TestWriteConfigFileReportsTruncateFailure checks that a truncate failure of
+// the config write reports ErrFileWrite with the target path and leaves the
+// content unchanged.
 func TestWriteConfigFileReportsTruncateFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	original := []byte("existing: value\n")
@@ -73,6 +71,7 @@ func TestWriteConfigFileReportsTruncateFailure(t *testing.T) {
 
 	old := openConfigFileForWrite
 	t.Cleanup(func() { openConfigFileForWrite = old })
+	// A FIFO would make darwin report the later seek instead of truncate.
 	openConfigFileForWrite = func(string, int, os.FileMode) (*os.File, error) {
 		return readOnly, nil
 	}
