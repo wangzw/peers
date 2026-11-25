@@ -211,3 +211,20 @@ func assertEqualText(t *testing.T, got, want string) {
 	}
 	t.Fatalf("output does not match golden (want %d bytes, got %d)", len(want), len(got))
 }
+
+// TestLaunchAgentPlistRejectsAnInvalidLogPath checks that the log path is
+// validated like the executable, since both are embedded in the plist.
+func TestLaunchAgentPlistRejectsAnInvalidLogPath(t *testing.T) {
+	for _, logPath := range []string{"relative.log", "/tmp/peers\n.log"} {
+		out, err := LaunchAgentPlist(goldenExe, logPath)
+		if err == nil {
+			t.Fatalf("LaunchAgentPlist accepted the log path %q", logPath)
+		}
+		if out != "" {
+			t.Errorf("LaunchAgentPlist returned a plist for the rejected log path %q", logPath)
+		}
+		if !strings.Contains(err.Error(), "log path") {
+			t.Errorf("LaunchAgentPlist(%q) error = %q, want it to name the log path", logPath, err)
+		}
+	}
+}
