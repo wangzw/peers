@@ -14,7 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// KeyKind is the type of a configuration key.
+// KeyKind is a configuration key's type.
 type KeyKind uint8
 
 const (
@@ -30,9 +30,9 @@ type keySpec struct {
 	Name     string
 	Kind     KeyKind
 	Default  Value
-	Dynamic  bool // default is computed by defaultAlias
+	Dynamic  bool
 	Secret   bool
-	Doc      string // one English line describing the key, for the generated template
+	Doc      string
 	MinInt   int64
 	MaxInt   int64
 	HasMax   bool
@@ -40,9 +40,8 @@ type keySpec struct {
 	Validate func(Value) error
 }
 
-// listenAddr is the normalized form of broker.listen.
 type listenAddr struct {
-	set  bool // false means do not listen
+	set  bool // false means not listening
 	all  bool // true means every local address
 	host string
 	port int
@@ -96,8 +95,6 @@ func positiveDuration() func(Value) error {
 
 var logLevels = map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 
-// keyTable is the complete set of configuration keys. Order is irrelevant;
-// allKeyNames sorts.
 var keyTable = map[string]*keySpec{
 	"broker.alias": {
 		Name: "broker.alias", Kind: keyString, Dynamic: true,
@@ -334,7 +331,7 @@ func validateValue(spec *keySpec, v Value) error {
 		return errors.New("type does not match the key")
 	}
 	if spec.Secret && spec.Name == "pairing.static_key" && v.String == "" {
-		return nil // empty means unset and is always valid
+		return nil
 	}
 	if spec.Validate != nil {
 		if err := spec.Validate(v); err != nil {
@@ -373,22 +370,13 @@ func validSocketMode(s string) error {
 	return nil
 }
 
-// crossKeyGroups lists the keys that constrain one another. Set and reload
-// judge a group as a whole: the group's members take their new values
-// together, or every member keeps its old value. The listen/advertise group is
-// handled separately because it also depends on the effective listen address
-// and the default-route enumeration.
 var crossKeyGroups = [][]string{
 	{"link.reconnect_min", "link.reconnect_max"},
 	{"link.keepalive_interval", "link.keepalive_timeout"},
 }
 
-// addressGroupKeys are the keys that together determine the effective listen
-// address and the advertised address list. Set and reload judge them as one
-// group.
 var addressGroupKeys = []string{"broker.listen", "broker.advertise", "broker.advertise_extra"}
 
-// isAddressGroupKey reports whether key belongs to the address group.
 func isAddressGroupKey(name string) bool {
 	for _, key := range addressGroupKeys {
 		if key == name {
@@ -398,8 +386,8 @@ func isAddressGroupKey(name string) bool {
 	return false
 }
 
-// groupForKey returns the cross-key group containing key, or nil when key has
-// no group. The returned slice must not be modified.
+// groupForKey returns key's cross-key group; the returned slice must not be
+// modified.
 func groupForKey(key string) []string {
 	for _, group := range crossKeyGroups {
 		for _, name := range group {
@@ -411,10 +399,6 @@ func groupForKey(key string) []string {
 	return nil
 }
 
-// validateCrossKeys enforces the constraints that involve more than one key.
-// They are pure value rules, so they live here rather than in a Validate
-// callback registered by another package. It checks every group, which is
-// harmless because a caller's candidate map always holds all keys.
 func validateCrossKeys(values map[string]Value) error {
 	minV, okMin := values["link.reconnect_min"]
 	maxV, okMax := values["link.reconnect_max"]
@@ -429,8 +413,6 @@ func validateCrossKeys(values map[string]Value) error {
 	return nil
 }
 
-// crossKeyError reports whether the candidate value for key violates its
-// group's cross-key rule given the other current values.
 func crossKeyError(values map[string]Value, key string) error {
 	if groupForKey(key) == nil {
 		return nil
@@ -465,7 +447,6 @@ func parsePort(s string) (int, error) {
 	return port, nil
 }
 
-// splitHostPort accepts "host:port", ":port" and "[v6]:port".
 func splitHostPort(s string) (host, port string, err error) {
 	if strings.HasPrefix(s, "[") {
 		end := strings.Index(s, "]")
@@ -484,8 +465,6 @@ func splitHostPort(s string) (host, port string, err error) {
 	return s[:i], s[i+1:], nil
 }
 
-// parseNode converts one YAML node to a Value according to spec. It checks
-// only the type, not the value.
 func parseNode(spec *keySpec, n *yaml.Node, fromSetConfig bool) (Value, error) {
 	n = resolveAliasNode(n)
 	if n == nil {
@@ -567,8 +546,8 @@ func resolveAliasNode(n *yaml.Node) *yaml.Node {
 	return n
 }
 
-// ParseValue parses the raw SetConfig text for key into a Value. It checks the
-// YAML type only; value and combination checks belong to Set.
+// ParseValue parses the text in a SetConfig request into a Value by the key's
+// type. It checks only the type, not the value or the combination.
 func ParseValue(key, text string) (Value, error) {
 	spec, ok := lookupKey(key)
 	if !ok {

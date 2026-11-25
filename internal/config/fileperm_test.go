@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestRootOnlyWritableFor covers the owner-and-mode rule shared by the
-// platform implementations. The owner is a parameter precisely so the
-// root-owned cases can run without a root-owned file.
+// TestRootOnlyWritableFor checks the owner-and-mode rule across root-owned,
+// group-writable and other-owner cases.
 func TestRootOnlyWritableFor(t *testing.T) {
 	cases := []struct {
 		name string

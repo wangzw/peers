@@ -13,6 +13,8 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// TestNotifierDeliversInOrder checks that the notifier calls callbacks in
+// submission order.
 func TestNotifierDeliversInOrder(t *testing.T) {
 	n := newNotifier(testLogger())
 	defer n.close()
@@ -33,6 +35,8 @@ func TestNotifierDeliversInOrder(t *testing.T) {
 	}
 }
 
+// TestNotifierRecoversFromPanic checks that a panicking callback does not stop
+// later callbacks.
 func TestNotifierRecoversFromPanic(t *testing.T) {
 	n := newNotifier(testLogger())
 	defer n.close()
@@ -46,13 +50,8 @@ func TestNotifierRecoversFromPanic(t *testing.T) {
 	}
 }
 
-// TestNotifierCloseRunsCallbacksEnqueuedBeforeClose checks the guarantee that
-// makes Close safe: every callback enqueued before close is called, in
-// submission order, and close returns only after the queue has drained. The
-// first callback blocks until the test releases it. The release waits for the
-// closeMarked hook, so the two callbacks behind it are certainly still queued
-// when close starts; a close that drops the queue therefore fails every time,
-// not only when the scheduler happens to leave work behind.
+// TestNotifierCloseRunsCallbacksEnqueuedBeforeClose checks that close runs the
+// callbacks enqueued before it in order and drops those enqueued after.
 func TestNotifierCloseRunsCallbacksEnqueuedBeforeClose(t *testing.T) {
 	n := newNotifier(testLogger()).(*asyncNotifier)
 	closeMarked := make(chan struct{})
@@ -126,6 +125,8 @@ func TestNotifierCloseRunsCallbacksEnqueuedBeforeClose(t *testing.T) {
 	}
 }
 
+// TestNotifierCloseIsIdempotentAndDropsLateWork checks that close can be called
+// twice and that work enqueued afterwards is dropped and logged.
 func TestNotifierCloseIsIdempotentAndDropsLateWork(t *testing.T) {
 	var logs bytes.Buffer
 	n := newNotifier(slog.New(slog.NewTextHandler(&logs, nil)))
@@ -133,9 +134,8 @@ func TestNotifierCloseIsIdempotentAndDropsLateWork(t *testing.T) {
 	n.close()
 	n.close()
 
-	// enqueue runs synchronously and sees the closed flag, so the drop is
-	// asserted from the log entry it writes rather than by waiting for a
-	// callback that must never happen.
+	// enqueue sees the closed flag, so the drop is asserted from the log entry it
+	// writes rather than by waiting for a callback that must never happen.
 	ran := make(chan struct{}, 1)
 	n.enqueue(func() { ran <- struct{}{} })
 	select {
@@ -148,6 +148,8 @@ func TestNotifierCloseIsIdempotentAndDropsLateWork(t *testing.T) {
 	}
 }
 
+// TestPackageAPIWithoutLoad checks the behaviour of the exported functions
+// before Load.
 func TestPackageAPIWithoutLoad(t *testing.T) {
 	Close()
 	if _, err := Get("broker.alias"); err == nil {

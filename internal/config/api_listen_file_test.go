@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// ListenFromFile supplies the listen value the service installer checks before
-// it registers a unit. It must apply the same defaults and reject the same
-// syntax as a Broker loading the file.
+// TestListenFromFile checks that ListenFromFile applies the same defaults and
+// syntax rules as a Broker loading the file.
 func TestListenFromFile(t *testing.T) {
 	cases := []struct {
 		name    string

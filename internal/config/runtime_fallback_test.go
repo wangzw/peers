@@ -7,12 +7,8 @@ import (
 	"testing"
 )
 
-// runtimeFallbackCases is the shared scenario table. The mcpserver package
-// carries the same cases, because the two packages implement the rule
-// separately and must agree on the location.
-//
-// setup builds the preferred and fallback trees; wantFallback names whether a
-// usable fallback exists; configErr names whether config must refuse startup.
+// runtimeFallbackCases is shared with the mcpserver package, which implements
+// the same rule separately, so the two must agree on the location.
 var runtimeFallbackCases = []struct {
 	name         string
 	setup        func(t *testing.T, preferred, fallback string)
@@ -111,8 +107,8 @@ func writeFile(t *testing.T, path string) {
 	}
 }
 
-// TestRuntimeDirFallbackTable pins where the runtime directory is, per the
-// shared scenarios.
+// TestRuntimeDirFallbackTable checks that the runtime directory follows each
+// fallback case and reports an error when no fallback is available.
 func TestRuntimeDirFallbackTable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fallback rule applies to non-root accounts")
@@ -180,10 +176,9 @@ func TestEnsureRuntimeDirUsesTheFallback(t *testing.T) {
 	}
 }
 
-// TestEnsureRuntimeDirRefusesOwnedPreferredWithLoosePermissions covers the one
-// case that does not use the fallback: a preferred directory this account owns
-// with permissions that are too wide. The account can fix it, so the ordinary
-// rule still refuses startup.
+// TestEnsureRuntimeDirRefusesOwnedPreferredWithLoosePermissions checks that a
+// preferred directory this account owns with loose permissions is refused
+// instead of falling back.
 func TestEnsureRuntimeDirRefusesOwnedPreferredWithLoosePermissions(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fallback rule applies to non-root accounts")
@@ -206,10 +201,8 @@ func TestEnsureRuntimeDirRefusesOwnedPreferredWithLoosePermissions(t *testing.T)
 	}
 }
 
-// TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied covers the owner
-// comparison itself: a directory this account does not own counts as taken even
-// though it is a plain directory. The root directory stands in for the other
-// account's directory, so the test needs no root and no chown.
+// TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied checks that a plain
+// directory owned by another account counts as occupied.
 func TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fallback rule applies to non-root accounts")
@@ -236,11 +229,9 @@ func TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied(t *testing.T) {
 	}
 }
 
-// TestEnsureRuntimeDirReResolvesWhenThePreferredPathIsTakenInBetween covers the
-// race the creation path handles: the preferred directory looks free when it is
-// resolved and belongs to another account by the time it is created. The owner
-// lookup is replaced so the same directory plays both states, which lets the
-// test run without root.
+// TestEnsureRuntimeDirReResolvesWhenThePreferredPathIsTakenInBetween checks that
+// the runtime directory is re-resolved when the preferred path is taken before
+// it is created.
 func TestEnsureRuntimeDirReResolvesWhenThePreferredPathIsTakenInBetween(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fallback rule applies to non-root accounts")
@@ -259,8 +250,6 @@ func TestEnsureRuntimeDirReResolvesWhenThePreferredPathIsTakenInBetween(t *testi
 		if info.Name() != filepath.Base(preferred) {
 			return oldOwner(info)
 		}
-		// The first lookup keeps the preferred path; every later one sees it
-		// as another account's directory.
 		lookups++
 		if lookups == 1 {
 			return euid, true

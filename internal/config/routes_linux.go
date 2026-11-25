@@ -14,17 +14,14 @@ import (
 	"strings"
 )
 
-// Linux route flag and address flag values (linux/rtnetlink.h and
-// linux/if_addr.h).
+// Route and address flags from linux/rtnetlink.h and linux/if_addr.h;
+// IFA_F_TEMPORARY and IFA_F_SECONDARY share the same bit.
 const (
 	rtfUp           = 0x0001
 	ifaFTemporary   = 0x0001 // IFA_F_TEMPORARY == IFA_F_SECONDARY
 	rtScopeUniverse = 0x00   // RT_SCOPE_UNIVERSE: a global address
 )
 
-// defaultRouteAddresses returns the addresses of the interfaces carrying the
-// default routes. IPv4 addresses come first, then IPv6 addresses; within a
-// family the addresses are sorted by value so the result is stable.
 func defaultRouteAddresses() ([]netip.Addr, error) {
 	return defaultRouteAddressesFrom(os.ReadFile, interfaceAddresses)
 }
@@ -37,9 +34,6 @@ func interfaceAddresses(name string) ([]net.Addr, error) {
 	return iface.Addrs()
 }
 
-// defaultRouteAddressesFrom is the testable core of defaultRouteAddresses.
-// The two function arguments let tests supply fixed proc files and fixed
-// interface addresses without touching the host network.
 func defaultRouteAddressesFrom(readFile func(string) ([]byte, error), ifaceAddrs func(string) ([]net.Addr, error)) ([]netip.Addr, error) {
 	routeData, err := readFile("/proc/net/route")
 	if err != nil {
@@ -77,15 +71,14 @@ func defaultRouteAddressesFrom(readFile func(string) ([]byte, error), ifaceAddrs
 		}
 	}
 
-	// A host with IPv6 disabled has no /proc/net/ipv6_route. The absence means
-	// there is no default IPv6 route, so the IPv6 part of the list is empty and
-	// this is not an error.
+	// A host with IPv6 disabled has no /proc/net/ipv6_route, so a missing file
+	// means no IPv6 default route rather than an error; other read failures are
+	// errors.
 	var iface6 string
 	var ok6 bool
 	v6Data, v6Err := readFile("/proc/net/ipv6_route")
 	switch {
 	case errors.Is(v6Err, os.ErrNotExist):
-		// No IPv6 route table: leave ok6 false.
 	case v6Err != nil:
 		return nil, fmt.Errorf("cannot read /proc/net/ipv6_route: %w", v6Err)
 	default:
@@ -125,11 +118,9 @@ func defaultRouteAddressesFrom(readFile func(string) ([]byte, error), ifaceAddrs
 	return out, nil
 }
 
-// parseProcNetRoute returns the interface of the lowest-metric default IPv4
-// route. A default route has a zero destination and mask and is up. It does
-// not need RTF_GATEWAY: a route that names only a device (`ip route add
-// default dev wg0`) carries RTF_UP alone and still counts. Ties keep the
-// earlier line.
+// parseProcNetRoute does not require RTF_GATEWAY: a default route that names
+// only a device (`ip route add default dev wg0`) carries RTF_UP alone and still
+// counts.
 func parseProcNetRoute(data []byte) (iface string, ok bool, err error) {
 	var bestMetric uint64
 	for i, line := range strings.Split(string(data), "\n") {
@@ -175,8 +166,6 @@ func parseProcNetRoute(data []byte) (iface string, ok bool, err error) {
 	return iface, ok, nil
 }
 
-// parseProcNetIPv6Route returns the interface of the lowest-metric default
-// IPv6 route. A default route has a zero destination and prefix length.
 func parseProcNetIPv6Route(data []byte) (iface string, ok bool, err error) {
 	var bestMetric uint64
 	for i, line := range strings.Split(string(data), "\n") {
@@ -221,7 +210,7 @@ type inet6Entry struct {
 	iface string
 }
 
-// parseIfInet6 parses /proc/net/if_inet6. The columns are address, interface
+// parseIfInet6 parses /proc/net/if_inet6, whose columns are address, interface
 // index, prefix length, scope, flags and interface name, all but the last in
 // hexadecimal.
 func parseIfInet6(data []byte) ([]inet6Entry, error) {

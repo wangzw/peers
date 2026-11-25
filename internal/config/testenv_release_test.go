@@ -10,20 +10,13 @@ import (
 )
 
 const (
-	// releaseChildEnv marks the child process of TestTestEnvIgnoredInReleaseBuild.
 	releaseChildEnv = "PEERS_TESTENV_RELEASE_CHILD"
-	// releaseRoot and releaseHome are the values the child puts in the
-	// environment. A build that installs the hooks would use them.
-	releaseRoot = "/r"
-	releaseHome = "/h"
+	releaseRoot     = "/r"
+	releaseHome     = "/h"
 )
 
-// TestTestEnvIgnoredInReleaseBuild checks that a build without the
-// peers_testenv tag does not install the environment hooks. The hooks are
-// installed by package init, so the environment has to be in place before the
-// child starts: t.Setenv runs after init and therefore passes whether or not
-// the hooks exist. The child re-executes this test binary with the selectors
-// already set.
+// TestTestEnvIgnoredInReleaseBuild checks that a build without the peers_testenv
+// tag ignores the test environment hooks.
 func TestTestEnvIgnoredInReleaseBuild(t *testing.T) {
 	if os.Getenv(releaseChildEnv) == "1" {
 		if got, want := runtimeDirPath(1000), "/tmp/peers-1000"; got != want {
@@ -41,12 +34,14 @@ func TestTestEnvIgnoredInReleaseBuild(t *testing.T) {
 	runReleaseChild(t, "TestTestEnvIgnoredInReleaseBuild")
 }
 
-// runReleaseChild runs name in a fresh process of this test binary and fails
-// when that process fails. The explicit PASS line catches a -test.run pattern
-// that matches nothing, which would otherwise exit successfully without
-// checking anything.
+// runReleaseChild runs name in a fresh process and fails when it fails; the
+// explicit PASS line catches a -test.run pattern that matches nothing, which
+// would otherwise exit successfully without checking anything.
 func runReleaseChild(t *testing.T, name string) {
 	t.Helper()
+	// The hooks are installed by package init, so the selectors must be in the
+	// child's environment before it starts; t.Setenv runs after init and would
+	// pass whether or not the hooks exist.
 	cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$", "-test.v")
 	cmd.Env = releaseChildEnvVars(
 		releaseChildEnv+"=1",
@@ -62,9 +57,6 @@ func runReleaseChild(t *testing.T, name string) {
 	}
 }
 
-// releaseChildEnvVars returns the current environment with overrides applied.
-// A key in overrides is removed before it is added again, so the child cannot
-// inherit a second value for the same variable.
 func releaseChildEnvVars(overrides ...string) []string {
 	keys := make(map[string]bool, len(overrides))
 	for _, kv := range overrides {

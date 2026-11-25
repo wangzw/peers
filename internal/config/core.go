@@ -11,7 +11,6 @@ import (
 	"github.com/wangzw/peers/internal/accountdb"
 )
 
-// ticker is the small part of time.Ticker this package uses.
 type ticker interface {
 	C() <-chan time.Time
 	Stop()
@@ -24,14 +23,10 @@ func (t realTicker) Stop()               { t.Ticker.Stop() }
 
 func newRealTicker(d time.Duration) ticker { return realTicker{time.NewTicker(d)} }
 
-// addressSource supplies the addresses of the interface that carries the
-// default route.
 type addressSource interface {
 	DefaultRouteAddresses() ([]netip.Addr, error)
 }
 
-// core holds all state and dependencies. Package-level functions only fetch the
-// singleton and call a method on it, so tests can build an independent core.
 type core struct {
 	mu sync.Mutex
 
@@ -87,20 +82,18 @@ type core struct {
 	checkRuntime func() (string, error)
 
 	// configFileRootOnly reports whether the configuration file may be written
-	// only by root. It is a seam so tests can state the permission rule
-	// without being root. lowPrivileged listen ports are allowed only while it
+	// only by root; a test seam, and low listen ports are allowed only while it
 	// returns true.
 	configFileRootOnly func(path string) (bool, error)
-	// systemPaths overrides the fixed system path set. It is a seam tests use
-	// to place the system paths under a temporary directory.
+	// systemPaths overrides the fixed system path set; a test seam placing the
+	// system paths under a temporary directory.
 	systemPaths func() PathSet
 }
 
 var defaultLogger = func() *slog.Logger { return slog.Default() }
 
-// lookupAccount reads one entry of the account database. It is a seam so a
-// test can state the database's answer, including its failure, instead of
-// depending on the host's account database.
+// lookupAccount reads one entry of the account database; a seam so a test can
+// state its answer, including its failure, instead of using the host's database.
 var lookupAccount = accountdb.LookupUID
 
 func accountHomeDir() (string, error) {
@@ -113,8 +106,6 @@ func accountHomeDir() (string, error) {
 // homeDirSource is the seam the peers_testenv build replaces; production code never replaces it.
 var homeDirSource = accountHomeDir
 
-// runningAccountName looks up the name of the account the Broker runs as, the
-// same account database the audit log takes its account names from.
 func runningAccountName() (string, error) {
 	u, err := lookupAccount(uint32(os.Geteuid()))
 	if err != nil {
@@ -159,11 +150,9 @@ func sanitizeHostnameFrom(fn func() (string, error), logger *slog.Logger) string
 	return sanitizeHostname(name)
 }
 
-// accountString returns the raw account name the Broker runs as. A system
-// level Broker has no account part, so it never looks one up. When the lookup
-// fails or yields no name, the numeric effective uid takes its place: it is
-// stable for the process and unique on the host. That fallback is logged at
-// warning level, since the alias then shows an id instead of a name.
+// accountString returns the account name the Broker runs as, or its numeric uid
+// when the lookup fails or the name is empty; a system Broker has no account
+// part and never looks one up.
 func (c *core) accountString() string {
 	if c.mode != ModeUser {
 		return ""
@@ -185,7 +174,7 @@ func (c *core) defaultAliasLocked() string {
 	return defaultAlias(c.mode, c.hostnameString(), c.accountString())
 }
 
-// close stops every goroutine and open file. It is idempotent.
+// close stops every goroutine and open file; it is idempotent.
 func (c *core) close() {
 	c.mu.Lock()
 	if c.closed {

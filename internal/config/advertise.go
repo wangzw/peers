@@ -9,11 +9,8 @@ import (
 	"strings"
 )
 
-// maxAdvertisedAddresses is the upper bound on the advertised address list,
-// including the addresses contributed by configuration.
 const maxAdvertisedAddresses = 8
 
-// advertiseKind is the form of the broker.advertise value.
 type advertiseKind uint8
 
 const (
@@ -23,20 +20,12 @@ const (
 	advertiseKindPort
 )
 
-// advertiseSpec is the parsed broker.advertise value. Host never carries
-// brackets; Port is only set for advertiseKindHostPort and
-// advertiseKindPort.
 type advertiseSpec struct {
 	Kind advertiseKind
 	Host string
 	Port int
 }
 
-// parseAdvertise parses broker.advertise. Legal forms are the empty string,
-// host, host:port and :port. Address kinds have no textual form in this
-// version, so a value carrying a prefix such as "relay://" is not recognised
-// as a kind; it is just an invalid spelling and fails the host/port syntax
-// checks like any other bad value.
 func parseAdvertise(s string) (advertiseSpec, error) {
 	if s == "" {
 		return advertiseSpec{Kind: advertiseKindNone}, nil
@@ -58,18 +47,11 @@ func parseAdvertise(s string) (advertiseSpec, error) {
 	return advertiseSpec{Kind: advertiseKindHostPort, Host: host, Port: port}, nil
 }
 
-// validateExtraItem validates one broker.advertise_extra item without the
-// context needed to choose its default port. The key table uses it for the
-// per-key value check.
 func validateExtraItem(item string) error {
 	_, _, _, err := splitAdvertiseHostPort(item)
 	return err
 }
 
-// parseExtra parses broker.advertise_extra. Each item is host or host:port;
-// an item without a port takes the port used by the advertised addresses:
-// the broker.advertise port when it carries one, otherwise the listen port.
-// The result always carries AdvertisedKindDirect.
 func parseExtra(items []string, adv advertiseSpec, listen listenAddr) ([]AdvertisedAddr, error) {
 	if len(items) == 0 {
 		return nil, nil
@@ -95,9 +77,6 @@ func parseExtra(items []string, adv advertiseSpec, listen listenAddr) ([]Adverti
 	return out, nil
 }
 
-// splitAdvertiseHostPort splits host or host:port. IPv6 hosts must be
-// written in brackets. The returned host is canonical and never carries
-// brackets.
 func splitAdvertiseHostPort(s string) (host string, port int, hasPort bool, err error) {
 	if strings.HasPrefix(s, "[") {
 		end := strings.IndexByte(s, ']')
@@ -143,9 +122,6 @@ func splitAdvertiseHostPort(s string) (host string, port int, hasPort bool, err 
 	}
 }
 
-// parseAdvertiseHost validates a host without brackets. IP addresses are
-// parsed and canonicalised; anything else is treated as a domain name and
-// checked against ValidDialHost. No DNS resolution happens.
 func parseAdvertiseHost(raw string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("host must not be empty")
@@ -160,19 +136,9 @@ func parseAdvertiseHost(raw string) (string, error) {
 }
 
 // ValidDialHost reports whether host, written without brackets, is an IP
-// address or a domain name this system can dial. An IPv6 address reaches this
-// function without its brackets because net.SplitHostPort strips them. Domain
-// names follow the usual label rules: dot-separated labels of 1 to 63 ASCII
-// letters, digits, '-' or '_', no label starting or ending with '-', and at most
-// 253 bytes overall. A fully qualified name may carry one trailing dot, which is
-// removed before the label rules apply; a second trailing dot is an empty label
-// and is rejected. Spaces, slashes and other invalid host strings are rejected,
-// which net.SplitHostPort alone would accept.
-//
-// One function decides this for both a configured advertise address and an
-// address a peer reports, so the two sides cannot disagree: a configuration
-// value that pairing would drop is refused when the configuration is loaded,
-// and a peer-reported value that configuration accepts is not stored.
+// address or a domain name this system can dial: labels of 1 to 63 characters
+// from letters, digits, '-' and '_' that do not begin or end with '-', at most
+// 253 characters plus an optional trailing dot.
 func ValidDialHost(host string) bool {
 	if net.ParseIP(host) != nil {
 		return true
@@ -241,10 +207,6 @@ func joinHostPort(host string, port int) string {
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
 
-// computeAdvertised applies the listen/advertise combination table, enforces
-// the 8-item limit and removes duplicates. routes is the most recent
-// successful default-route enumeration; it is consulted only for the rows
-// that take the addresses of the default-route interfaces.
 func computeAdvertised(listen listenAddr, adv advertiseSpec, extra []AdvertisedAddr, routes []netip.Addr) ([]AdvertisedAddr, error) {
 	if !listen.set {
 		if adv.Kind != advertiseKindNone {
@@ -259,8 +221,6 @@ func computeAdvertised(listen listenAddr, adv advertiseSpec, extra []AdvertisedA
 		return nil, fmt.Errorf("%w: broker.listen and broker.advertise: a port-only broker.advertise requires listening on every address", ErrInvalidCombination)
 	}
 
-	// The configured part of the list counts against the limit. The implicit
-	// first item of a specific listen address is configuration-sourced too.
 	configured := len(extra)
 	switch adv.Kind {
 	case advertiseKindHost, advertiseKindHostPort:
@@ -283,9 +243,6 @@ func computeAdvertised(listen listenAddr, adv advertiseSpec, extra []AdvertisedA
 	case adv.Kind == advertiseKindNone && !listen.all:
 		out = append(out, AdvertisedAddr{Kind: AdvertisedKindDirect, Addr: joinHostPort(listen.host, listen.port)})
 	default:
-		// Rows that advertise the addresses of the default-route
-		// interfaces: advertise is empty with a wildcard listen, or it is a
-		// port with a wildcard listen.
 		port := listen.port
 		if adv.Kind == advertiseKindPort {
 			port = adv.Port
@@ -305,8 +262,6 @@ func computeAdvertised(listen listenAddr, adv advertiseSpec, extra []AdvertisedA
 	return dedupeAdvertised(out), nil
 }
 
-// needsRoutes reports whether the current configuration takes its addresses
-// from the default-route interfaces.
 func needsRoutes(listen listenAddr, adv advertiseSpec) bool {
 	if !listen.set || !listen.all {
 		return false

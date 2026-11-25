@@ -10,18 +10,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// aclXattr is where macOS stores a file's access control list. Unlike Linux's
-// POSIX ACL, a Darwin ACL entry can grant write access that the permission bits
-// do not show, so a mode-only check is not enough.
+// aclXattr is where macOS stores a file's access control list; a Darwin ACL can
+// grant write access the permission bits do not show.
 const aclXattr = "com.apple.system.Security"
 
-// configFileRootOnlyWritable reports whether the file at path is writable only
-// by root. A missing file counts as safe: the write that follows creates it as
-// root with mode 0600.
-//
-// Any security ACL makes the file ineligible. An ACL that grants no write is
-// also refused: without parsing the Darwin ACL encoding, the presence of one is
-// the only signal available here, and refusing is the safe direction.
+// Any security ACL makes the file ineligible, even one that grants no write:
+// without parsing the Darwin ACL encoding, its presence is the only signal
+// available here, and refusing is the safe direction.
 func configFileRootOnlyWritable(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

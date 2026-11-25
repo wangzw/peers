@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// exitRecordingTicker is a ticker seam that records Stop calls, the interval it
-// was created with, and the exit of the goroutine that drove it. C is never
-// written, so the goroutine blocks until it is told to stop.
 type exitRecordingTicker struct {
 	ch       chan time.Time
 	interval time.Duration
@@ -34,8 +31,8 @@ func (t *exitRecordingTicker) Stop() {
 	t.mu.Unlock()
 }
 
-// tickerExited matches the optional interface startAddressTickerLocked looks
-// for, so a test can wait for the old goroutine instead of sleeping.
+// tickerExited satisfies tickerExitReporter so the test can wait for the
+// goroutine to exit.
 func (t *exitRecordingTicker) tickerExited() {
 	t.once.Do(func() { close(t.exited) })
 }
@@ -46,9 +43,6 @@ func (t *exitRecordingTicker) stopCount() int {
 	return t.stopped
 }
 
-// startTestAddressTicker installs a fake ticker factory and starts one ticker
-// through the production path. It returns the first ticker and the full list of
-// tickers created so far.
 func startTestAddressTicker(t *testing.T, c *core, d time.Duration) (*exitRecordingTicker, func() []*exitRecordingTicker) {
 	t.Helper()
 	var mu sync.Mutex
@@ -92,9 +86,8 @@ func assertTickerReplaced(t *testing.T, old *exitRecordingTicker, created func()
 	}
 }
 
-// C1: a reload that finds an empty file must treat it as unparseable and keep
-// every value. An empty file is the window between truncate and write in an
-// in-place rewrite, not a request to reset the configuration.
+// TestConfigReloadEmptyFileKeepsValues checks that a reload of an empty file
+// keeps every value and writes no audit record.
 func TestConfigReloadEmptyFileKeepsValues(t *testing.T) {
 	body := "broker:\n  listen: \"127.0.0.1:7777\"\n  public: true\npairing:\n  static_key: \"0123456789abcdef\"\n  max_failures: 9\n"
 	c, path := newWatchCore(t, body, false, nil)
@@ -128,7 +121,8 @@ func TestConfigReloadEmptyFileKeepsValues(t *testing.T) {
 	}
 }
 
-// C1: the watcher must not create a periodic rescan ticker.
+// TestConfigWatcherHasNoPeriodicRescan checks that starting the watcher creates
+// no periodic rescan ticker.
 func TestConfigWatcherHasNoPeriodicRescan(t *testing.T) {
 	c, _ := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 
@@ -159,9 +153,9 @@ func TestConfigWatcherHasNoPeriodicRescan(t *testing.T) {
 	}
 }
 
-// C1: a write that truncates and then fails must put the previous bytes back,
-// keep memory and the audit log unchanged, and record the hash of the file now
-// on disk so a later reload does not adopt it.
+// TestConfigSetWriteFailureRestoresOriginalBytes checks that a write that
+// truncates and then fails restores the original bytes, keeps memory and the
+// audit log, and records the hash of the file now on disk.
 func TestConfigSetWriteFailureRestoresOriginalBytes(t *testing.T) {
 	originalBody := "broker:\n  public: false\n  alias: old\n"
 	c, path := newWatchCore(t, originalBody, false, nil)
@@ -171,7 +165,6 @@ func TestConfigSetWriteFailureRestoresOriginalBytes(t *testing.T) {
 	c.writeFile = func(p string, data []byte, mode Mode) error {
 		calls++
 		if calls == 1 {
-			// Truncate first, then fail, like ENOSPC after the truncate.
 			if err := os.WriteFile(p, nil, 0o600); err != nil {
 				return err
 			}
@@ -224,8 +217,9 @@ func TestConfigSetWriteFailureRestoresOriginalBytes(t *testing.T) {
 	}
 }
 
-// C1: when the restore also fails, the empty file must still not be adopted.
-// The process records its hash so the watcher sees no external change.
+// TestConfigSetWriteFailureFailedRestoreDoesNotResetValues checks that a failed
+// write whose restore also fails leaves the values in memory and lets no later
+// reload adopt the empty file.
 func TestConfigSetWriteFailureFailedRestoreDoesNotResetValues(t *testing.T) {
 	body := "broker:\n  listen: \"127.0.0.1:7777\"\n  public: true\npairing:\n  max_failures: 9\n"
 	c, path := newWatchCore(t, body, false, nil)
@@ -280,8 +274,9 @@ func TestConfigSetWriteFailureFailedRestoreDoesNotResetValues(t *testing.T) {
 	}
 }
 
-// C2: Set must first adopt an external change that is still pending, with its
-// audit record, and only then validate and write its own key.
+// TestConfigSetAdoptsPendingExternalChangeFirst checks that Set first adopts a
+// pending external change with its audit record, then validates and writes its
+// own key.
 func TestConfigSetAdoptsPendingExternalChangeFirst(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  public: false\n  alias: old\n", false, nil)
 	writeConfigBody(t, path, "broker:\n  public: true\n  alias: old\n")
@@ -320,9 +315,8 @@ func TestConfigSetAdoptsPendingExternalChangeFirst(t *testing.T) {
 	}
 }
 
-// C3: a legal change to both members of the keepalive pair is adopted together.
-// Judging each member against the old partner adopted only keepalive_timeout and
-// left the user with 15s/3s, a combination never written to the file.
+// TestConfigReloadKeepsKeepalivePairTogether checks that a reload adopts a legal
+// keepalive_interval/keepalive_timeout pair together.
 func TestConfigReloadKeepsKeepalivePairTogether(t *testing.T) {
 	c, path := newWatchCore(t, "link:\n  keepalive_interval: 15s\n  keepalive_timeout: 10s\n", false, nil)
 	writeConfigBody(t, path, "link:\n  keepalive_interval: 5s\n  keepalive_timeout: 3s\n")
@@ -342,10 +336,8 @@ func TestConfigReloadKeepsKeepalivePairTogether(t *testing.T) {
 	}
 }
 
-// C3: an illegal combination in the file must leave both members at their old
-// values and write no audit record for either. Per-key adoption used to take
-// reconnect_max=3s and keep reconnect_min=1s, a combination the user never
-// wrote, and audit the half it took.
+// TestConfigReloadKeepsReconnectPairTogether checks that an illegal reconnect
+// pair leaves both members at their old values and writes no audit record.
 func TestConfigReloadKeepsReconnectPairTogether(t *testing.T) {
 	c, path := newWatchCore(t, "link:\n  reconnect_min: 1s\n  reconnect_max: 60s\n", false, nil)
 	writeConfigBody(t, path, "link:\n  reconnect_min: 5s\n  reconnect_max: 3s\n")
@@ -365,9 +357,9 @@ func TestConfigReloadKeepsReconnectPairTogether(t *testing.T) {
 	}
 }
 
-// C10: reloading a changed interval must stop the previous ticker and let its
-// goroutine exit. The old test started no ticker before the reload, so neither
-// Stop nor the goroutine exit was ever exercised.
+// TestConfigReloadStopsOldAddressTicker checks that reloading a changed
+// address_check_interval stops the previous ticker, lets its goroutine exit and
+// starts one with the new interval.
 func TestConfigReloadStopsOldAddressTicker(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  address_check_interval: 1m\n", false, nil)
 	old, created := startTestAddressTicker(t, c, time.Minute)
@@ -384,8 +376,9 @@ func TestConfigReloadStopsOldAddressTicker(t *testing.T) {
 	assertTickerReplaced(t, old, created, 2*time.Minute)
 }
 
-// C10: the Set path that changes the interval must likewise stop the previous
-// ticker and wait for its goroutine to be gone.
+// TestConfigSetStopsOldAddressTicker checks that a Set that changes
+// address_check_interval stops the previous ticker, lets its goroutine exit and
+// starts one with the new interval.
 func TestConfigSetStopsOldAddressTicker(t *testing.T) {
 	c, _ := newWatchCore(t, "broker:\n  address_check_interval: 1m\n", false, nil)
 	old, created := startTestAddressTicker(t, c, time.Minute)
@@ -399,7 +392,8 @@ func TestConfigSetStopsOldAddressTicker(t *testing.T) {
 	assertTickerReplaced(t, old, created, 3*time.Minute)
 }
 
-// Minor: Set and Secret must not act on a closed core.
+// TestConfigClosedSetAndSecret checks that Set cannot change a closed core and
+// Secret returns the empty string.
 func TestConfigClosedSetAndSecret(t *testing.T) {
 	c, _ := newWatchCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", false, nil)
 	c.close()

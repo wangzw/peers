@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// TestWriteConfigFileDoesNotFollowSymlink checks the write side of the
-// configuration file: a path that is a symbolic link must fail instead of
-// rewriting the link's target. The write is in place, so following the link
-// would truncate a file outside the configuration directory.
+// TestWriteConfigFileDoesNotFollowSymlink checks that writing through a
+// symbolic link fails and leaves the link's target unchanged.
 func TestWriteConfigFileDoesNotFollowSymlink(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "target.yaml")

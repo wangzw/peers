@@ -10,10 +10,8 @@ import (
 	"time"
 )
 
-// TestReadConfigFileHashesParsedBytesWithoutSecondRead pins the reload
-// invariant: the stored hash comes from the same bytes that were parsed. The
-// injected reader would return different content on a second call, so a
-// separate read for hashing shows up as a wrong hash or an extra call.
+// TestReadConfigFileHashesParsedBytesWithoutSecondRead checks that the stored
+// hash comes from the same single read that produced the parsed values.
 func TestReadConfigFileHashesParsedBytesWithoutSecondRead(t *testing.T) {
 	first := []byte("broker:\n  alias: first\n")
 	second := []byte("broker:\n  alias: second\n")
@@ -41,8 +39,6 @@ func TestReadConfigFileHashesParsedBytesWithoutSecondRead(t *testing.T) {
 	}
 }
 
-// hashTestRoutes supplies a fixed default-route address so the test never
-// enumerates the host's route tables.
 type hashTestRoutes struct{}
 
 func (hashTestRoutes) DefaultRouteAddresses() ([]netip.Addr, error) {
@@ -87,10 +83,9 @@ func TestLoadStoresHashOfTheBytesItParsed(t *testing.T) {
 	}
 }
 
-// TestWriteConfigFileCreatesParentDirWithDeploymentMode covers the case where
-// the config directory disappeared after Load: creating it must use the mode
-// the deployment mode requires, not a user-mode 0700 in system mode. The file
-// mode is 0600 in both modes, so it cannot be used to infer the directory mode.
+// TestWriteConfigFileCreatesParentDirWithDeploymentMode checks that a missing
+// config directory is created with the deployment mode's directory permission
+// and the file with 0600.
 func TestWriteConfigFileCreatesParentDirWithDeploymentMode(t *testing.T) {
 	old := syscall.Umask(0o022)
 	t.Cleanup(func() { syscall.Umask(old) })

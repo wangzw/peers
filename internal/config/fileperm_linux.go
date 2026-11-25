@@ -8,14 +8,8 @@ import (
 	"syscall"
 )
 
-// configFileRootOnlyWritable reports whether the file at path is writable only
-// by root. A missing file counts as safe: the write that follows creates it as
-// root with mode 0600.
-//
-// A POSIX ACL cannot widen write access past the file mode's group bits: those
-// bits record the ACL mask, so a zero group write bit masks every named user
-// and group entry down to no write. Checking the owner and those bits is
-// therefore enough on Linux.
+// A POSIX ACL cannot widen write access past the file mode's group bits, which
+// record the ACL mask, so checking the owner and those bits is enough on Linux.
 func configFileRootOnlyWritable(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

@@ -9,6 +9,8 @@ import (
 	"testing"
 )
 
+// TestResolvePaths checks the path set for each deployment mode and the errors
+// for a missing or empty home directory and an unknown mode.
 func TestResolvePaths(t *testing.T) {
 	base := t.TempDir()
 	homeErr := errors.New("no home")
@@ -96,6 +98,8 @@ func TestResolvePaths(t *testing.T) {
 	}
 }
 
+// TestRuntimeDirPath checks the runtime directory path for root and a non-root
+// account.
 func TestRuntimeDirPath(t *testing.T) {
 	wantRoot := "/run/peers"
 	if runtime.GOOS == "darwin" {
@@ -109,9 +113,8 @@ func TestRuntimeDirPath(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-013: the account lock path depends only on the account,
-// never on the deployment mode, home directory, configuration or listen
-// address.
+// TestREQBrokerConfig013_AccountLockPathDependsOnAccount checks that the account
+// lock path depends only on the account.
 func TestREQBrokerConfig013_AccountLockPathDependsOnAccount(t *testing.T) {
 	first := accountLockPath(1000)
 	second := accountLockPath(1000)
@@ -131,6 +134,8 @@ func TestREQBrokerConfig013_AccountLockPathDependsOnAccount(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_NonRootPermissionRule checks the runtime permission rule
+// for a non-root account.
 func TestCheckRuntimeDir_NonRootPermissionRule(t *testing.T) {
 	tests := []struct {
 		perm    os.FileMode
@@ -154,10 +159,9 @@ func TestCheckRuntimeDir_NonRootPermissionRule(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_RootPermissionRule checks the runtime permission rule for
+// root.
 func TestCheckRuntimeDir_RootPermissionRule(t *testing.T) {
-	// A root runtime directory is 0755 but may be tightened. Group or world
-	// write access is the only forbidden part, because root's directory is
-	// shared by the system Broker and root's user Broker.
 	tests := []struct {
 		perm    os.FileMode
 		wantErr bool
@@ -180,6 +184,8 @@ func TestCheckRuntimeDir_RootPermissionRule(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_DataAndSharedRules checks the private and shared
+// directory permission rules.
 func TestCheckRuntimeDir_DataAndSharedRules(t *testing.T) {
 	if err := checkDirPermission(0o700, 1000, permData); err != nil {
 		t.Errorf("private directory 0700 rejected: %v", err)
@@ -195,6 +201,8 @@ func TestCheckRuntimeDir_DataAndSharedRules(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_RejectsWrongOwner checks that validateDir refuses a
+// directory owned by another account.
 func TestCheckRuntimeDir_RejectsWrongOwner(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
@@ -214,6 +222,8 @@ func TestCheckRuntimeDir_RejectsWrongOwner(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_RejectsSymlink checks that validateDir refuses a symbolic
+// link.
 func TestCheckRuntimeDir_RejectsSymlink(t *testing.T) {
 	base := t.TempDir()
 	real := filepath.Join(base, "real")
@@ -231,6 +241,8 @@ func TestCheckRuntimeDir_RejectsSymlink(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_RejectsNonDirectory checks that validateDir refuses a
+// regular file.
 func TestCheckRuntimeDir_RejectsNonDirectory(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
@@ -243,6 +255,8 @@ func TestCheckRuntimeDir_RejectsNonDirectory(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeDir_CreatesAndChecksDirectory checks that ensureDir creates a
+// private directory and then refuses one readable by group or other.
 func TestCheckRuntimeDir_CreatesAndChecksDirectory(t *testing.T) {
 	base := t.TempDir()
 	dir := filepath.Join(base, "runtime")
@@ -264,9 +278,6 @@ func TestCheckRuntimeDir_CreatesAndChecksDirectory(t *testing.T) {
 	}
 }
 
-// withTemporaryRuntimeRoot points the runtime directory at root for one test.
-// The seam exists so the account-lock path can be exercised without touching
-// the real /run or /tmp directory of the account.
 func withTemporaryRuntimeRoot(t *testing.T, root string) {
 	t.Helper()
 	old := runtimeRoot
@@ -274,11 +285,11 @@ func withTemporaryRuntimeRoot(t *testing.T, root string) {
 	t.Cleanup(func() { runtimeRoot = old })
 }
 
-// TestAccountLockTemporaryRoot covers the success path of the exported entry
-// points under a temporary root: the directory is created, checked, and the
-// lock path is directly beneath it.
+// TestAccountLockTemporaryRoot checks that CheckRuntimeDir creates the runtime
+// directory under a temporary root and that AccountLock reports the lock path
+// beneath it.
 func TestAccountLockTemporaryRoot(t *testing.T) {
-	_ = takeAccountInitErr() // discard anything an earlier test left behind
+	_ = takeAccountInitErr()
 	root := filepath.Join(t.TempDir(), "runtime")
 	withTemporaryRuntimeRoot(t, root)
 
@@ -300,12 +311,11 @@ func TestAccountLockTemporaryRoot(t *testing.T) {
 	}
 }
 
-// TestAccountLockRuntimeDirFailureIsRemembered drives the failure branch with a
-// temporary root whose parent is a regular file, so creating the directory
-// fails. AccountLock must still return the account lock path and hand the
-// failure to the next Load through takeAccountInitErr.
+// TestAccountLockRuntimeDirFailureIsRemembered checks that AccountLock still
+// returns the lock path and remembers a runtime-directory creation failure for
+// the next Load.
 func TestAccountLockRuntimeDirFailureIsRemembered(t *testing.T) {
-	_ = takeAccountInitErr() // discard anything an earlier test left behind
+	_ = takeAccountInitErr()
 	blocker := filepath.Join(t.TempDir(), "blocker")
 	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -332,13 +342,10 @@ func TestAccountLockRuntimeDirFailureIsRemembered(t *testing.T) {
 	}
 }
 
-// TestAccountLockRuntimeDirPermissionFailureIsRemembered covers the other way
-// initializing the runtime directory fails: it exists but its mode violates the
-// runtime rule. A root runtime directory may be group-readable but not group or
-// world writable; a user runtime directory must not be accessible by group or
-// other at all.
+// TestAccountLockRuntimeDirPermissionFailureIsRemembered checks that AccountLock
+// remembers a runtime-directory permission failure for the next Load.
 func TestAccountLockRuntimeDirPermissionFailureIsRemembered(t *testing.T) {
-	_ = takeAccountInitErr() // discard anything an earlier test left behind
+	_ = takeAccountInitErr()
 	root := filepath.Join(t.TempDir(), "runtime")
 	if err := os.Mkdir(root, 0o700); err != nil {
 		t.Fatal(err)

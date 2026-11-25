@@ -2,16 +2,12 @@ package config
 
 import "net/netip"
 
-// addressSource used by core. The per-OS files provide defaultRouteAddresses.
 type platformAddressSource struct{}
 
 func (platformAddressSource) DefaultRouteAddresses() ([]netip.Addr, error) {
 	return defaultRouteAddresses()
 }
 
-// Address classification shared by the platform-specific route enumerators.
-
-// isIPv4LinkLocal reports whether addr is in 169.254.0.0/16.
 func isIPv4LinkLocal(addr netip.Addr) bool {
 	if !addr.Is4() {
 		return false
@@ -20,7 +16,6 @@ func isIPv4LinkLocal(addr netip.Addr) bool {
 	return b[0] == 169 && b[1] == 254
 }
 
-// isIPv6LinkLocal reports whether addr is in fe80::/10.
 func isIPv6LinkLocal(addr netip.Addr) bool {
 	if !addr.Is6() {
 		return false

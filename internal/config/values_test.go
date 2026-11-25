@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// installCoreForTest swaps the package singleton only for the duration of the
-// test. The lock is held during the swap and during the restore, never between
-// them, so a second installation cannot deadlock.
 var apiTestMu sync.Mutex
 
 func installCoreForTest(t *testing.T, c *core) {
@@ -58,6 +55,8 @@ func newValueCore(t *testing.T, body, override string) (*core, string) {
 	return c, path
 }
 
+// TestREQBrokerConfig001_GetAllEffectiveValues checks that All returns one
+// sorted entry per key table entry and Get refuses an unknown key.
 func TestREQBrokerConfig001_GetAllEffectiveValues(t *testing.T) {
 	c, _ := newValueCore(t, "broker:\n  alias: configured\n  public: true\n", "")
 	installCoreForTest(t, c)
@@ -79,6 +78,8 @@ func TestREQBrokerConfig001_GetAllEffectiveValues(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig002_SetPersistsAndUpdates checks that Set updates memory,
+// the file and the config_set audit log.
 func TestREQBrokerConfig002_SetPersistsAndUpdates(t *testing.T) {
 	c, path := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -105,6 +106,9 @@ func TestREQBrokerConfig002_SetPersistsAndUpdates(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig029_SetListenRejectedUnderOverride checks that Set refuses
+// broker.listen while a startup override is in effect and changes neither the
+// file nor the override.
 func TestREQBrokerConfig029_SetListenRejectedUnderOverride(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  listen: \":17443\"\n", ":17444")
 	installCoreForTest(t, c)
@@ -127,6 +131,8 @@ func TestREQBrokerConfig029_SetListenRejectedUnderOverride(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig034_ValidatorFailureKeepsOld checks that a refused
+// validation keeps the old value, the file and the audit log unchanged.
 func TestREQBrokerConfig034_ValidatorFailureKeepsOld(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  alias: old\n", "")
 	installCoreForTest(t, c)
@@ -154,6 +160,8 @@ func TestREQBrokerConfig034_ValidatorFailureKeepsOld(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing030_SecretNotReturned checks that Get and All report only
+// whether a secret is set and Secret returns its value.
 func TestREQBrokerPairing030_SecretNotReturned(t *testing.T) {
 	c, _ := newValueCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", "")
 	installCoreForTest(t, c)
@@ -178,6 +186,8 @@ func TestREQBrokerPairing030_SecretNotReturned(t *testing.T) {
 	}
 }
 
+// TestConfigSubscribeReceivesSetNotification checks that Set notifies a
+// subscriber of the key with the new value.
 func TestConfigSubscribeReceivesSetNotification(t *testing.T) {
 	c, _ := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -196,6 +206,8 @@ func TestConfigSubscribeReceivesSetNotification(t *testing.T) {
 	}
 }
 
+// TestConfigCrossKeySetRejected checks that Set refuses link.reconnect_max
+// below link.reconnect_min and keeps the old value.
 func TestConfigCrossKeySetRejected(t *testing.T) {
 	c, _ := newValueCore(t, "link:\n  reconnect_min: 1s\n  reconnect_max: 60s\n", "")
 	installCoreForTest(t, c)
@@ -207,6 +219,7 @@ func TestConfigCrossKeySetRejected(t *testing.T) {
 	}
 }
 
+// TestConfigLoadOnlyOnce checks that a second Load returns ErrAlreadyLoaded.
 func TestConfigLoadOnlyOnce(t *testing.T) {
 	c, _ := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -215,6 +228,8 @@ func TestConfigLoadOnlyOnce(t *testing.T) {
 	}
 }
 
+// TestConfigSetFailsWhenFileCannotBeParsed checks that Set fails and does not
+// overwrite an unparseable file.
 func TestConfigSetFailsWhenFileCannotBeParsed(t *testing.T) {
 	c, path := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -233,9 +248,8 @@ func TestConfigSetFailsWhenFileCannotBeParsed(t *testing.T) {
 	}
 }
 
-// TestBrokerOfflineKey covers the key the offline switch reads and writes: it
-// defaults to false, is not secret, and can be changed both in the file and
-// through Set.
+// TestBrokerOfflineKey checks that broker.offline defaults to false and can be
+// set through Set and through the configuration file.
 func TestBrokerOfflineKey(t *testing.T) {
 	t.Run("default and Set", func(t *testing.T) {
 		c, path := newValueCore(t, "", "")

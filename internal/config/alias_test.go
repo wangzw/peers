@@ -10,6 +10,8 @@ import (
 	"testing"
 )
 
+// TestSanitizeHostname checks that every character outside the alias character
+// set becomes one dash.
 func TestSanitizeHostname(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -31,10 +33,9 @@ func TestSanitizeHostname(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-028: the hostname shown next to a pairing key is the
-// system hostname with every character outside the alias character set
-// replaced by "-"; an unreadable hostname yields an empty string and a log
-// entry rather than failing.
+// TestREQBrokerPairing028_HostnameSanitized checks that illegal hostname
+// characters become dashes, each multi-byte character becomes one dash, and an
+// unreadable hostname yields an empty string and a log entry.
 func TestREQBrokerPairing028_HostnameSanitized(t *testing.T) {
 	t.Run("sanitizes every illegal character", func(t *testing.T) {
 		if got := sanitizeHostname("work station (lab)"); got != "work-station--lab-" {
@@ -75,10 +76,8 @@ func TestREQBrokerPairing028_HostnameSanitized(t *testing.T) {
 	})
 }
 
-// REQ-broker-pairing-002: with no configured alias, a system Broker's
-// default alias is the first label of the system hostname, and a user
-// Broker's alias is that label, a dot and the account name. The listen
-// address, the listen port and the advertised address play no part.
+// TestREQBrokerPairing002_DefaultAlias checks the default alias for each
+// deployment mode, hostname and account combination.
 func TestREQBrokerPairing002_DefaultAlias(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -108,10 +107,9 @@ func TestREQBrokerPairing002_DefaultAlias(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-037: the default alias is at most 24 characters. The
-// hostname part is shortened first, down to one character; the account part
-// is shortened only when the result is still too long. A shortened part never
-// ends in "." or "-".
+// TestREQBrokerPairing037_AliasTruncation checks that the default alias is at
+// most 24 characters, the hostname part is shortened first, and a shortened
+// part never ends in "." or "-".
 func TestREQBrokerPairing037_AliasTruncation(t *testing.T) {
 	longHost := strings.Repeat("a", 30)
 	tests := []struct {
@@ -179,8 +177,8 @@ func TestREQBrokerPairing037_AliasTruncation(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-003: a configured alias must be 1 to 24 characters from
-// the alias character set.
+// TestREQBrokerPairing003_AliasValidation checks that a configured alias must
+// be 1 to 24 characters from the alias character set.
 func TestREQBrokerPairing003_AliasValidation(t *testing.T) {
 	tests := []struct {
 		alias   string
@@ -207,8 +205,8 @@ func TestREQBrokerPairing003_AliasValidation(t *testing.T) {
 	}
 }
 
-// An over-long alias says that it is too long, matching the wording the
-// pairing error uses for a local alias.
+// TestAliasValidationLongMessage checks that an over-long alias reports that it
+// is longer than 24 characters.
 func TestAliasValidationLongMessage(t *testing.T) {
 	err := validAlias(strings.Repeat("a", 25))
 	if err == nil || !strings.Contains(err.Error(), "longer than 24 characters") {
@@ -216,8 +214,8 @@ func TestAliasValidationLongMessage(t *testing.T) {
 	}
 }
 
-// A multi-byte alias is refused for its characters, not for its byte length,
-// even when 13 two-byte characters are already over the limit.
+// TestAliasValidationNamesInvalidCharactersFirst checks that a multi-byte alias
+// is refused for its characters rather than its byte length.
 func TestAliasValidationNamesInvalidCharactersFirst(t *testing.T) {
 	err := validAlias(strings.Repeat("é", 13))
 	if err == nil || !strings.Contains(err.Error(), "is not allowed") {
@@ -233,6 +231,8 @@ func testAliasLogger() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(slog.NewTextHandler(buf, nil)), buf
 }
 
+// TestEffectiveAlias checks that the configured alias wins and that the default
+// falls back through hostname, account and uid.
 func TestEffectiveAlias(t *testing.T) {
 	t.Run("configured alias wins", func(t *testing.T) {
 		c := &core{

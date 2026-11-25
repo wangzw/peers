@@ -18,7 +18,6 @@ import (
 
 const auditTestClockText = "2026-11-18T12:00:00.123456789Z"
 
-// auditTestSecretKey is the only key the key table marks as secret.
 const auditTestSecretKey = "pairing.static_key"
 
 func auditTestClock(t *testing.T) time.Time {
@@ -30,8 +29,6 @@ func auditTestClock(t *testing.T) time.Time {
 	return when
 }
 
-// newAuditTestLog opens an audit log under t.TempDir and returns it with its
-// path and the log buffer. The cleanup closes the log.
 func newAuditTestLog(t *testing.T, dirMode os.FileMode) (*auditLog, string, *bytes.Buffer) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "data", "audit.log")
@@ -58,6 +55,9 @@ func testFingerprint(seed byte) [32]byte {
 	return fingerprint
 }
 
+// TestREQBrokerConfig006_SetWritesAudit checks that a config_set event
+// round-trips through the file with its time, actor, account, key and typed old
+// and new values.
 func TestREQBrokerConfig006_SetWritesAudit(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	when := auditTestClock(t)
@@ -119,6 +119,9 @@ func TestREQBrokerConfig006_SetWritesAudit(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig006_SecretAuditOnlyKey checks that a secret key's
+// config_set and config_file_changed records keep only the key and never carry
+// old or new values.
 func TestREQBrokerConfig006_SecretAuditOnlyKey(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	const sentinel = "SENTINEL-secret-value-0123456789"
@@ -160,6 +163,8 @@ func TestREQBrokerConfig006_SecretAuditOnlyKey(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig007_AllEventKinds checks that every event kind is written
+// and read back in order.
 func TestREQBrokerConfig007_AllEventKinds(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	kinds := []EventKind{
@@ -202,6 +207,8 @@ func TestREQBrokerConfig007_AllEventKinds(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig007_ActorAccountPeer checks that the actor, account and
+// peer fields round-trip, with an empty alias for a rejected connection.
 func TestREQBrokerConfig007_ActorAccountPeer(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	fingerprint := testFingerprint(0x10)
@@ -251,12 +258,13 @@ func TestREQBrokerConfig007_ActorAccountPeer(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig008_SecretNeverPersisted checks that a secret value never
+// reaches the audit file or the run log.
 func TestREQBrokerConfig008_SecretNeverPersisted(t *testing.T) {
 	log, path, logs := newAuditTestLog(t, 0o700)
 	const sentinel = "PAIRING-KEY-SENTINEL-0123456789abcdef"
 	when := auditTestClock(t)
 
-	// A direct caller must not be able to smuggle the value through old/new.
 	if err := log.append(Event{
 		Time:  when,
 		Event: EventConfigSet,
@@ -266,7 +274,6 @@ func TestREQBrokerConfig008_SecretNeverPersisted(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append config_set: %v", err)
 	}
-	// A secret-kind Value must never be encoded at all.
 	if err := log.append(Event{
 		Time:  when.Add(time.Second),
 		Event: EventConfigFileChanged,
@@ -298,6 +305,8 @@ func TestREQBrokerConfig008_SecretNeverPersisted(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig008_NoMessageBodyField checks that a record carries only
+// the allowed fields and no message body.
 func TestREQBrokerConfig008_NoMessageBodyField(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	if err := log.append(Event{
@@ -341,10 +350,11 @@ func TestREQBrokerConfig008_NoMessageBodyField(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig009_ReadAuditSinceAndOrder checks that read sorts by time,
+// filters at or after since, and keeps file order for equal timestamps.
 func TestREQBrokerConfig009_ReadAuditSinceAndOrder(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
-	// Append out of chronological order; read must sort by time.
 	for _, offset := range []time.Duration{2 * time.Minute, 0, time.Minute} {
 		if err := log.append(Event{
 			Time:   base.Add(offset),
@@ -381,7 +391,6 @@ func TestREQBrokerConfig009_ReadAuditSinceAndOrder(t *testing.T) {
 		t.Errorf("first filtered time %s is before since %s", filtered[0].Time, since)
 	}
 
-	// Equal timestamps keep their file order.
 	if err := log.append(Event{Time: base, Event: EventLinkDown, Detail: "first"}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -403,6 +412,9 @@ func TestREQBrokerConfig009_ReadAuditSinceAndOrder(t *testing.T) {
 	}
 }
 
+// TestConfigAuditMergeCount checks that rejected connections from one
+// fingerprint merge into one counted record while a later event or another
+// fingerprint stays separate.
 func TestConfigAuditMergeCount(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -413,11 +425,9 @@ func TestConfigAuditMergeCount(t *testing.T) {
 			t.Fatalf("append: %v", err)
 		}
 	}
-	// Outside the window measured from the first record: a new record.
 	if err := log.append(Event{Time: base.Add(21 * time.Minute), Event: EventConnectionRejected, Peer: peer}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	// A different fingerprint never merges with the others.
 	if err := log.append(Event{
 		Time:  base.Add(time.Minute),
 		Event: EventConnectionRejected,
@@ -444,6 +454,8 @@ func TestConfigAuditMergeCount(t *testing.T) {
 	}
 }
 
+// TestConfigAuditMergePairingFailed checks that pairing failures with the same
+// merge key merge, while an empty key or a different source stays separate.
 func TestConfigAuditMergePairingFailed(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -457,7 +469,6 @@ func TestConfigAuditMergePairingFailed(t *testing.T) {
 			t.Fatalf("append: %v", err)
 		}
 	}
-	// An empty MergeKey means this failure is recorded individually.
 	if err := log.append(Event{
 		Time:   base.Add(3 * time.Minute),
 		Event:  EventPairingFailed,
@@ -465,7 +476,6 @@ func TestConfigAuditMergePairingFailed(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	// A different source does not merge with the first group.
 	if err := log.append(Event{
 		Time:     base.Add(4 * time.Minute),
 		Event:    EventPairingFailed,
@@ -489,11 +499,8 @@ func TestConfigAuditMergePairingFailed(t *testing.T) {
 	}
 }
 
-// TestConfigAuditMergePairingFailedByReason checks that two source-level
-// pairing failures from one source but for different reasons keep separate
-// merge windows. A source that first hits the rate limit and then dials with an
-// incompatible protocol version must leave two records, each carrying its own
-// detail, rather than one record whose detail is whichever arrived first.
+// TestConfigAuditMergePairingFailedByReason checks that two pairing failures
+// from one source with different reasons keep separate counted records.
 func TestConfigAuditMergePairingFailedByReason(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -527,11 +534,11 @@ func TestConfigAuditMergePairingFailedByReason(t *testing.T) {
 	}
 }
 
+// TestConfigAuditMergeKeyNotPersisted checks that the merge key reaches neither
+// the audit file nor a read record.
 func TestConfigAuditMergeKeyNotPersisted(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
-	// The second event is outside the first window, so the first window is
-	// flushed and its line can be inspected on disk.
 	for _, offset := range []time.Duration{0, auditMergeWindow + time.Minute} {
 		if err := log.append(Event{
 			Time:     base.Add(offset),
@@ -564,6 +571,8 @@ func TestConfigAuditMergeKeyNotPersisted(t *testing.T) {
 	}
 }
 
+// TestConfigAuditConnectionRejectedBySource checks that rejected connections
+// sharing a source merge key become one record counting all three.
 func TestConfigAuditConnectionRejectedBySource(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -586,6 +595,8 @@ func TestConfigAuditConnectionRejectedBySource(t *testing.T) {
 	}
 }
 
+// TestConfigAuditMergeClockRollback checks that an event whose time is earlier
+// than the open window starts a new record.
 func TestConfigAuditMergeClockRollback(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -593,7 +604,6 @@ func TestConfigAuditMergeClockRollback(t *testing.T) {
 	if err := log.append(Event{Time: base, Event: EventConnectionRejected, Peer: peer}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	// Appended later in the file but with an earlier timestamp.
 	if err := log.append(Event{Time: base.Add(-time.Minute), Event: EventConnectionRejected, Peer: peer}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -606,8 +616,6 @@ func TestConfigAuditMergeClockRollback(t *testing.T) {
 	}
 }
 
-// auditFileRecords decodes the audit file directly, so a test can tell what
-// has actually been persisted from what ReadAudit returns from memory.
 func auditFileRecords(t *testing.T, path string) []Event {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -628,10 +636,8 @@ func auditFileRecords(t *testing.T, path string) []Event {
 	return events
 }
 
-// TestConfigAuditMergeHoldsEventsInMemory reproduces the behaviour the ruling
-// removes: repeated rejected connections used to append one file line each and
-// were merged only by ReadAudit. The window's events must stay in memory until
-// the window closes, and ReadAudit must still return the pending record.
+// TestConfigAuditMergeHoldsEventsInMemory checks that a window's events stay in
+// memory until it closes while read still returns the pending record.
 func TestConfigAuditMergeHoldsEventsInMemory(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -662,9 +668,7 @@ func TestConfigAuditMergeHoldsEventsInMemory(t *testing.T) {
 }
 
 // TestConfigAuditMergeWindowStartsAtFirstEvent checks that the window is
-// anchored at the first event, not chained from each adjacent event: 0, 6 and
-// 12 minutes give one two-event window and a new window for the 12-minute
-// event.
+// anchored at the first event, not chained from each adjacent event.
 func TestConfigAuditMergeWindowStartsAtFirstEvent(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -702,8 +706,8 @@ func TestConfigAuditMergeWindowStartsAtFirstEvent(t *testing.T) {
 	}
 }
 
-// TestConfigAuditMergeWindowIncludesBoundary checks the inclusive edge: events
-// exactly ten minutes apart belong to the same window.
+// TestConfigAuditMergeWindowIncludesBoundary checks that events exactly one
+// merge window apart share the window.
 func TestConfigAuditMergeWindowIncludesBoundary(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -725,8 +729,8 @@ func TestConfigAuditMergeWindowIncludesBoundary(t *testing.T) {
 	}
 }
 
-// TestConfigAuditCloseFlushesPendingCount reproduces the missing flush on
-// Close: the accumulated count must reach the file before it is closed.
+// TestConfigAuditCloseFlushesPendingCount checks that Close writes the
+// accumulated count to the file.
 func TestConfigAuditCloseFlushesPendingCount(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -755,7 +759,6 @@ func TestConfigAuditCloseFlushesPendingCount(t *testing.T) {
 	}
 }
 
-// auditTestClockControl is a mutable clock for the audit log's now seam.
 type auditTestClockControl struct {
 	mu  sync.Mutex
 	now time.Time
@@ -773,8 +776,6 @@ func (c *auditTestClockControl) Advance(d time.Duration) {
 	c.mu.Unlock()
 }
 
-// auditTestTimers records the callbacks scheduled through the afterFunc seam
-// and fires them on command, so a window expiry needs no real wait.
 type auditTestTimers struct {
 	mu        sync.Mutex
 	durations []time.Duration
@@ -803,9 +804,8 @@ func (t *auditTestTimers) fireAll() {
 	}
 }
 
-// TestConfigAuditWindowExpiryFlushesThroughTimer checks the timer seam: when
-// the injected clock passes the deadline and the scheduled callback fires, the
-// accumulated count is appended and nothing waits for real time.
+// TestConfigAuditWindowExpiryFlushesThroughTimer checks that the timer seam
+// fires the expiry callback and appends the accumulated count.
 func TestConfigAuditWindowExpiryFlushesThroughTimer(t *testing.T) {
 	base := auditTestClock(t)
 	clock := &auditTestClockControl{now: base}
@@ -863,12 +863,9 @@ func TestConfigAuditWindowExpiryFlushesThroughTimer(t *testing.T) {
 	}
 }
 
-// TestConfigAuditTimerEarlyFireRearmsUntilDeadline reproduces a fired timer
-// that is never re-armed: a real timer fires on the monotonic clock, which can
-// reach the scheduled delay a little before the wall-clock deadline. When that
-// early firing expires nothing, it must schedule a new timer for the remaining
-// time. Otherwise the window waits for the next append or Close and a Broker
-// killed in between loses it. No event is appended after the early firing.
+// TestConfigAuditTimerEarlyFireRearmsUntilDeadline checks that an early firing
+// arms a timer for the remaining time and the window is still written without a
+// later event.
 func TestConfigAuditTimerEarlyFireRearmsUntilDeadline(t *testing.T) {
 	log, path, clock, timers, _ := newAuditTestLogAt(t)
 	base := clock.Now()
@@ -880,8 +877,6 @@ func TestConfigAuditTimerEarlyFireRearmsUntilDeadline(t *testing.T) {
 		t.Fatalf("append connection_rejected: %v", err)
 	}
 
-	// The timer fires one nanosecond before the window's deadline, as a real
-	// monotonic timer may, so nothing is due yet.
 	clock.Advance(auditMergeWindow - time.Nanosecond)
 	timers.fireAll()
 	if records := auditFileRecords(t, path); len(records) != 0 {
@@ -898,8 +893,6 @@ func TestConfigAuditTimerEarlyFireRearmsUntilDeadline(t *testing.T) {
 		t.Errorf("re-armed timer delay = %s, want the remaining %s", armed[1], time.Nanosecond)
 	}
 
-	// The deadline passes with no further event. The timer the early firing
-	// must have scheduled has to write the window on its own.
 	clock.Advance(time.Nanosecond)
 	timers.fireAll()
 	records := auditFileRecords(t, path)
@@ -911,19 +904,12 @@ func TestConfigAuditTimerEarlyFireRearmsUntilDeadline(t *testing.T) {
 	}
 }
 
-// TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule reproduces a callback
-// running after its timer was replaced. The fake timer's Stop is a no-op, so
-// fireAll still reaches the callback of a timer that stopTimerLocked has since
-// replaced. Opening a window with an earlier deadline replaces the timer and
-// moves to the next generation. Firing the stale callback must do nothing, and
-// firing the current one must re-arm exactly one timer for the remaining
-// window. Without the generation comparison the stale callback re-arms a timer
-// of its own, so two new timers appear instead of one.
+// TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule checks that a stale
+// timer callback does nothing and only the current callback re-arms.
 func TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule(t *testing.T) {
 	log, path, clock, timers, _ := newAuditTestLogAt(t)
 	base := clock.Now()
 
-	// Open a window whose deadline is a minute later than the next one.
 	if err := log.append(Event{
 		Time:     base.Add(time.Minute),
 		Event:    EventConnectionRejected,
@@ -931,8 +917,6 @@ func TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("append the later window: %v", err)
 	}
-	// A window opened at the current time has an earlier deadline, so arming it
-	// replaces the first timer and moves to the next generation.
 	if err := log.append(Event{
 		Time:     base,
 		Event:    EventConnectionRejected,
@@ -954,8 +938,6 @@ func TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule(t *testing.T) {
 		t.Errorf("replacement timer delay = %s, want %s", armed[1], auditMergeWindow)
 	}
 
-	// Fire every callback the fake timers hold: the stale one from the replaced
-	// timer and the current one. The clock has not moved, so nothing is due.
 	timers.fireAll()
 
 	if records := auditFileRecords(t, path); len(records) != 0 {
@@ -964,8 +946,6 @@ func TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule(t *testing.T) {
 	timers.mu.Lock()
 	armed = append([]time.Duration{}, timers.durations...)
 	timers.mu.Unlock()
-	// Only the current callback may re-arm, keeping the same remaining delay;
-	// the stale callback must add none.
 	if len(armed) != 3 {
 		t.Fatalf("firing the stale and current callbacks armed %d timers in total, want 3 (one re-arm)",
 			len(armed))
@@ -983,7 +963,7 @@ func TestConfigAuditTimerStaleCallbackIgnoredAfterReschedule(t *testing.T) {
 }
 
 // TestConfigAuditReadMergesFileAndPendingInTimeOrder checks that a pending
-// record whose window opened before a written record still comes first.
+// window opened before a written record still comes first.
 func TestConfigAuditReadMergesFileAndPendingInTimeOrder(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -1023,7 +1003,7 @@ func auditCounts(events []Event) []uint64 {
 }
 
 // TestConfigAuditAppendOnlyFile checks that flushing a merged window only
-// appends: every byte already in the file is preserved.
+// appends and leaves every existing byte in place.
 func TestConfigAuditAppendOnlyFile(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -1039,8 +1019,6 @@ func TestConfigAuditAppendOnlyFile(t *testing.T) {
 	}
 
 	peer := &PeerRef{Fingerprint: testFingerprint(0x50)}
-	// Two events open a window; the event twenty minutes later closes it and
-	// forces the merged record to be appended.
 	for _, offset := range []time.Duration{time.Minute, 2 * time.Minute, 20 * time.Minute} {
 		if err := log.append(Event{
 			Time:  base.Add(offset),
@@ -1077,6 +1055,8 @@ func TestConfigAuditAppendOnlyFile(t *testing.T) {
 	}
 }
 
+// TestConfigAuditFileMode checks that a new audit file is created with mode
+// 0600 and its directory with 0700.
 func TestConfigAuditFileMode(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	info, err := os.Stat(path)
@@ -1098,6 +1078,8 @@ func TestConfigAuditFileMode(t *testing.T) {
 	}
 }
 
+// TestConfigAuditPreservesExistingFileMode checks that opening an existing
+// audit file keeps its mode.
 func TestConfigAuditPreservesExistingFileMode(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "audit.log")
@@ -1121,6 +1103,8 @@ func TestConfigAuditPreservesExistingFileMode(t *testing.T) {
 	}
 }
 
+// TestConfigAuditMalformedLineSkipped checks that undecodable lines are skipped
+// with an error log entry and the readable records survive.
 func TestConfigAuditMalformedLineSkipped(t *testing.T) {
 	log, path, logs := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -1157,6 +1141,8 @@ func TestConfigAuditMalformedLineSkipped(t *testing.T) {
 	}
 }
 
+// TestConfigAuditUnknownEventKindDropped checks that an unknown event kind is
+// refused, nothing is written and the drop is logged.
 func TestConfigAuditUnknownEventKindDropped(t *testing.T) {
 	log, path, logs := newAuditTestLog(t, 0o700)
 	if err := log.append(Event{Time: auditTestClock(t), Event: EventKind("bogus")}); err == nil {
@@ -1174,6 +1160,8 @@ func TestConfigAuditUnknownEventKindDropped(t *testing.T) {
 	}
 }
 
+// TestConfigAuditZeroTimeUsesClock checks that an event without a time takes
+// the injected clock's time.
 func TestConfigAuditZeroTimeUsesClock(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	if err := log.append(Event{Event: EventLinkUp}); err != nil {
@@ -1191,6 +1179,8 @@ func TestConfigAuditZeroTimeUsesClock(t *testing.T) {
 	}
 }
 
+// TestConfigAuditValueKindsRoundTrip checks that every value kind survives
+// encoding and decoding unchanged.
 func TestConfigAuditValueKindsRoundTrip(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	cases := []Value{
@@ -1230,9 +1220,8 @@ func TestConfigAuditValueKindsRoundTrip(t *testing.T) {
 	}
 }
 
-// TestConfigAuditValueKindSetExcludesUnset pins the documented wire kind set.
-// No valid configuration value has KindUnset, so the audit encoding must not
-// produce or accept an "unset" kind.
+// TestConfigAuditValueKindSetExcludesUnset checks that the unset kind is
+// refused by both encoding and decoding.
 func TestConfigAuditValueKindSetExcludesUnset(t *testing.T) {
 	if _, err := encodeValue(Value{Kind: KindUnset}); err == nil {
 		t.Error("encodeValue accepted KindUnset")
@@ -1242,6 +1231,8 @@ func TestConfigAuditValueKindSetExcludesUnset(t *testing.T) {
 	}
 }
 
+// TestConfigAuditCloseIsIdempotent checks that a second Close succeeds and a
+// later append or read returns an error.
 func TestConfigAuditCloseIsIdempotent(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	if err := log.close(); err != nil {
@@ -1259,9 +1250,8 @@ func TestConfigAuditCloseIsIdempotent(t *testing.T) {
 }
 
 // TestConfigAuditCloseConcurrentWithAudit checks that Audit and ReadAudit may
-// run while Close clears the audit pointer. Close writes the pointer under the
-// core mutex but the two entry points used to read it without any lock, which
-// is a data race under -race.
+// run while Close clears the audit pointer, and a later read returns
+// ErrNotLoaded.
 func TestConfigAuditCloseConcurrentWithAudit(t *testing.T) {
 	c, _ := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	var logs bytes.Buffer
@@ -1297,6 +1287,8 @@ func TestConfigAuditCloseConcurrentWithAudit(t *testing.T) {
 	}
 }
 
+// TestConfigAuditConcurrentAppendAndRead checks that concurrent appends and
+// reads keep every record on its own line and readable.
 func TestConfigAuditConcurrentAppendAndRead(t *testing.T) {
 	log, path, _ := newAuditTestLog(t, 0o700)
 	const writers = 6
@@ -1362,11 +1354,8 @@ func TestConfigAuditConcurrentAppendAndRead(t *testing.T) {
 	}
 }
 
-// TestConfigAuditRepairsMissingTrailingNewline checks the crash-recovery case:
-// a record left half written without a final newline must not swallow the next
-// record. Opening the log terminates the partial line with one newline; every
-// later record then occupies its own line. Without the repair the appended
-// record is spliced onto the truncated tail and both lines become unreadable.
+// TestConfigAuditRepairsMissingTrailingNewline checks that a partial final line
+// gets a newline so a later record lands on its own line.
 func TestConfigAuditRepairsMissingTrailingNewline(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
 	when := auditTestClock(t)
@@ -1414,8 +1403,8 @@ func TestConfigAuditRepairsMissingTrailingNewline(t *testing.T) {
 	}
 }
 
-// TestConfigAuditKeepsTerminatedFileUnchanged checks the counterpart: a log
-// that already ends with a newline gets no extra blank line when it opens.
+// TestConfigAuditKeepsTerminatedFileUnchanged checks that opening a log that
+// already ends with a newline leaves it unchanged.
 func TestConfigAuditKeepsTerminatedFileUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
 	when := auditTestClock(t)
@@ -1442,9 +1431,8 @@ func TestConfigAuditKeepsTerminatedFileUnchanged(t *testing.T) {
 	}
 }
 
-// TestConfigAuditAfterCloseIsLogged checks that an event produced after the
-// audit log closed is reported. append returns errAuditClosed, and the package
-// entry point must log it instead of dropping the event silently.
+// TestConfigAuditAfterCloseIsLogged checks that an event produced after Close
+// is reported to the run log.
 func TestConfigAuditAfterCloseIsLogged(t *testing.T) {
 	c, _ := newNCCore(t, "broker:\n  alias: old\n", nil)
 	var logs bytes.Buffer
@@ -1466,9 +1454,8 @@ func TestConfigAuditAfterCloseIsLogged(t *testing.T) {
 	}
 }
 
-// TestAppendAuditWritesWithoutLoading covers the standalone entry point: a
-// process that is not the Broker, such as the detached launchd reload helper,
-// records one event at the level's audit log without loading the configuration.
+// TestAppendAuditWritesWithoutLoading checks that AppendAudit writes one record
+// from a process that did not load the configuration.
 func TestAppendAuditWritesWithoutLoading(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
 	event := Event{
@@ -1496,16 +1483,14 @@ func TestAppendAuditWritesWithoutLoading(t *testing.T) {
 	}
 }
 
-// TestAppendAuditRejectsAnEmptyPath keeps a missing path from silently dropping
-// the outcome the caller wanted recorded.
+// TestAppendAuditRejectsAnEmptyPath checks that AppendAudit refuses an empty
+// path.
 func TestAppendAuditRejectsAnEmptyPath(t *testing.T) {
 	if err := AppendAudit("", Event{Event: EventUpdateFailed}); err == nil {
 		t.Fatal("AppendAudit accepted an empty path")
 	}
 }
 
-// newAuditTestLogAt opens an audit log with a controllable clock and timer
-// seam, so a test can move time past a window and fire the expiry callback.
 func newAuditTestLogAt(t *testing.T) (*auditLog, string, *auditTestClockControl, *auditTestTimers, *bytes.Buffer) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "data", "audit.log")
@@ -1522,10 +1507,9 @@ func newAuditTestLogAt(t *testing.T) (*auditLog, string, *auditTestClockControl,
 	return log, path, clock, timers, &logs
 }
 
-// TestConfigAuditConnectionRejectedMergesBySourceBeforeFingerprint reproduces
-// the bypass: a stranger changes its certificate for every connection, so each
-// rejection carries a new fingerprint. When the caller names the source, the
-// two events must share one window and one file record counting both.
+// TestConfigAuditConnectionRejectedMergesBySourceBeforeFingerprint checks that
+// rejections naming a source share one window even when each carries a
+// different fingerprint.
 func TestConfigAuditConnectionRejectedMergesBySourceBeforeFingerprint(t *testing.T) {
 	log, path, clock, timers, _ := newAuditTestLogAt(t)
 	base := auditTestClock(t)
@@ -1559,11 +1543,8 @@ func TestConfigAuditConnectionRejectedMergesBySourceBeforeFingerprint(t *testing
 	}
 }
 
-// TestConfigAuditAppendDoesNotScanEveryWindow reproduces the per-event full
-// scan: appending to an already open window must not examine the other open
-// windows. scannedWindows counts every window the expiry code looks at, both
-// while finding expired windows and while finding the earliest deadline to
-// schedule, so reverting either path to a full-table scan fails here.
+// TestConfigAuditAppendDoesNotScanEveryWindow checks that appending to an open
+// window examines at most the heap root, not every open window.
 func TestConfigAuditAppendDoesNotScanEveryWindow(t *testing.T) {
 	log, _, _ := newAuditTestLog(t, 0o700)
 	base := auditTestClock(t)
@@ -1593,16 +1574,13 @@ func TestConfigAuditAppendDoesNotScanEveryWindow(t *testing.T) {
 	log.mu.Lock()
 	scanned := log.scannedWindows - before
 	log.mu.Unlock()
-	// One append examines the heap root once in flushExpiredLocked and once in
-	// rescheduleLocked, so the bound is two no matter how many windows are open.
 	if scanned > 2 {
 		t.Fatalf("appending to an open window examined %d pending windows, want at most 2", scanned)
 	}
 }
 
-// TestConfigAuditExpiryOrdersEqualDeadlinesByKey keeps the documented stable
-// file order: windows that expire at the same instant land in key order, not
-// insertion order.
+// TestConfigAuditExpiryOrdersEqualDeadlinesByKey checks that windows expiring
+// at the same instant are written in merge-key order.
 func TestConfigAuditExpiryOrdersEqualDeadlinesByKey(t *testing.T) {
 	log, path, clock, timers, _ := newAuditTestLogAt(t)
 	base := auditTestClock(t)
@@ -1631,9 +1609,8 @@ func TestConfigAuditExpiryOrdersEqualDeadlinesByKey(t *testing.T) {
 	}
 }
 
-// TestConfigAuditPendingWindowCapAndSummary reproduces the unbounded pending
-// table: after the ordinary windows are full, further distinct sources fold
-// into one per-kind summary record instead of opening one window each.
+// TestConfigAuditPendingWindowCapAndSummary checks that after 256 ordinary
+// windows further sources fold into one counted summary record.
 func TestConfigAuditPendingWindowCapAndSummary(t *testing.T) {
 	log, path, clock, timers, logs := newAuditTestLogAt(t)
 	base := auditTestClock(t)
@@ -1673,9 +1650,8 @@ func TestConfigAuditPendingWindowCapAndSummary(t *testing.T) {
 	}
 }
 
-// TestConfigAuditFullTableStillMergesExistingWindow checks that the cap only
-// diverts sources without a window: a hit on an existing ordinary window is
-// folded into it, never into the summary.
+// TestConfigAuditFullTableStillMergesExistingWindow checks that a full table
+// still merges a hit on an existing window and opens no summary.
 func TestConfigAuditFullTableStillMergesExistingWindow(t *testing.T) {
 	log, path, clock, timers, _ := newAuditTestLogAt(t)
 	base := auditTestClock(t)
@@ -1716,9 +1692,8 @@ func TestConfigAuditFullTableStillMergesExistingWindow(t *testing.T) {
 	}
 }
 
-// TestConfigAuditCapAppliesToPairingFailed checks that the cap is shared by
-// every mergeable kind: a rate-limited failure cannot open a window once the
-// ordinary table is full, and its summary is kept per kind.
+// TestConfigAuditCapAppliesToPairingFailed checks that the ordinary-window cap
+// is shared across mergeable kinds and keeps one summary per kind.
 func TestConfigAuditCapAppliesToPairingFailed(t *testing.T) {
 	log, _, _, _, _ := newAuditTestLogAt(t)
 	base := auditTestClock(t)
@@ -1759,8 +1734,8 @@ func TestConfigAuditCapAppliesToPairingFailed(t *testing.T) {
 	}
 }
 
-// TestConfigAuditCloseFlushesSummary checks that a summary window is written on
-// Close like any other open window.
+// TestConfigAuditCloseFlushesSummary checks that Close writes an open summary
+// window like any other window.
 func TestConfigAuditCloseFlushesSummary(t *testing.T) {
 	log, path, _, _, _ := newAuditTestLogAt(t)
 	base := auditTestClock(t)
@@ -1787,10 +1762,8 @@ func TestConfigAuditCloseFlushesSummary(t *testing.T) {
 	}
 }
 
-// TestOpenAuditUsesRealClockAndReportsUnknownKind covers the two append paths
-// a caller reaches with a real audit log: an event without a time takes the
-// log's clock, and an event whose kind is outside the known set is refused and
-// reported to the log's logger.
+// TestOpenAuditUsesRealClockAndReportsUnknownKind checks that an event without
+// a time takes the real clock and an unknown kind is refused and reported.
 func TestOpenAuditUsesRealClockAndReportsUnknownKind(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -1824,8 +1797,9 @@ func TestOpenAuditUsesRealClockAndReportsUnknownKind(t *testing.T) {
 	}
 }
 
-// TestOpenAuditReportsFilesystemFailures checks that a parent directory that
-// cannot be created and a name the filesystem refuses are both reported.
+// TestOpenAuditReportsFilesystemFailures checks that an uncreatable parent
+// directory and a refused filename both make opening fail with the matching
+// error.
 func TestOpenAuditReportsFilesystemFailures(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "blocker")
@@ -1878,7 +1852,7 @@ func TestAuditAppendStripsSecretKindValues(t *testing.T) {
 }
 
 // TestAuditAppendWriteFailureIsLogged checks that a write failure is returned
-// and logged, and that a later read reports its seek failure.
+// and logged and a later read reports its seek failure.
 func TestAuditAppendWriteFailureIsLogged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.log")
 	var logs bytes.Buffer
@@ -1906,7 +1880,7 @@ func TestAuditAppendWriteFailureIsLogged(t *testing.T) {
 }
 
 // TestAuditReadSkipsBlankAndUnterminatedLines checks that a blank line adds no
-// record and a trailing line without a newline is skipped and logged.
+// record and an unterminated tail is skipped and logged once.
 func TestAuditReadSkipsBlankAndUnterminatedLines(t *testing.T) {
 	log, path, logs := newAuditTestLog(t, 0o700)
 	if err := log.append(Event{Time: auditTestClock(t), Event: EventLinkUp}); err != nil {
@@ -1937,7 +1911,7 @@ func TestAuditReadSkipsBlankAndUnterminatedLines(t *testing.T) {
 }
 
 // TestAuditReadSinceFiltersPendingWindow checks that a pending window whose
-// first event predates since is omitted from the result.
+// first event predates since is omitted.
 func TestAuditReadSinceFiltersPendingWindow(t *testing.T) {
 	log, _, clock, _, _ := newAuditTestLogAt(t)
 	base := clock.Now()
@@ -1965,9 +1939,8 @@ func TestAuditReadSinceFiltersPendingWindow(t *testing.T) {
 	}
 }
 
-// TestDecodeEventRejectsMalformedRecords checks each malformed wire record:
-// no time, an unknown kind, a fingerprint that is not hex and one that is the
-// wrong length.
+// TestDecodeEventRejectsMalformedRecords checks that a missing time, unknown
+// kind, non-hex fingerprint and wrong-length fingerprint are all refused.
 func TestDecodeEventRejectsMalformedRecords(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -2004,7 +1977,7 @@ func TestDecodeEventRejectsMalformedRecords(t *testing.T) {
 }
 
 // TestDecodeEventRejectsMalformedValues checks that a malformed old or new
-// value makes the whole record unreadable.
+// value makes the record unreadable.
 func TestDecodeEventRejectsMalformedValues(t *testing.T) {
 	for field, value := range map[string]string{
 		"old": `"old":{"kind":"string","value":5}`,
@@ -2023,9 +1996,8 @@ func TestDecodeEventRejectsMalformedValues(t *testing.T) {
 	}
 }
 
-// TestDecodeValueRejectsMalformedPayloads checks that every value kind reports
-// its own malformed payload: a wrong JSON type, an unparseable duration, a
-// secret, or an unknown kind.
+// TestDecodeValueRejectsMalformedPayloads checks that each value kind reports
+// its own malformed payload.
 func TestDecodeValueRejectsMalformedPayloads(t *testing.T) {
 	typeMismatch := func(err error) bool {
 		var typeErr *json.UnmarshalTypeError
@@ -2061,8 +2033,8 @@ func TestDecodeValueRejectsMalformedPayloads(t *testing.T) {
 	}
 }
 
-// TestAuditRescheduleClampsNegativeDelay checks that a window whose deadline
-// already passed when it opened is armed with a zero delay, not a negative one.
+// TestAuditRescheduleClampsNegativeDelay checks that a window already past its
+// deadline is armed with a zero delay.
 func TestAuditRescheduleClampsNegativeDelay(t *testing.T) {
 	log, _, clock, timers, _ := newAuditTestLogAt(t)
 	base := clock.Now()
@@ -2088,8 +2060,8 @@ func TestAuditRescheduleClampsNegativeDelay(t *testing.T) {
 	}
 }
 
-// TestAuditSummaryWindowClosesOnExpiredEvent checks that a new overflow event
-// after the summary window expired writes the old summary and opens a new one.
+// TestAuditSummaryWindowClosesOnExpiredEvent checks that an overflow event
+// after the summary expired writes the old summary and opens a new one.
 func TestAuditSummaryWindowClosesOnExpiredEvent(t *testing.T) {
 	log, path, clock, _, _ := newAuditTestLogAt(t)
 	base := clock.Now()
@@ -2143,7 +2115,7 @@ func TestAuditSummaryWindowClosesOnExpiredEvent(t *testing.T) {
 }
 
 // TestCoreAuditAppendWithoutOpenLogReportsToCoreLogger checks that an event
-// reported while no audit log is open reaches the core's own run log.
+// reported with no open audit log reaches the core's run log.
 func TestCoreAuditAppendWithoutOpenLogReportsToCoreLogger(t *testing.T) {
 	var logs bytes.Buffer
 	previous := defaultLogger
@@ -2198,8 +2170,8 @@ func TestOpenAuditReportsRepairFailures(t *testing.T) {
 	}
 }
 
-// TestCreateOrOpenAuditFileReportsChmodFailure checks that the explicit chmod
-// failure is returned and stays distinguishable through the open error.
+// TestCreateOrOpenAuditFileReportsChmodFailure checks that a chmod failure is
+// returned and stays distinguishable through the open error.
 func TestCreateOrOpenAuditFileReportsChmodFailure(t *testing.T) {
 	sentinel := errors.New("chmod denied")
 	previous := auditChmodFile
@@ -2212,8 +2184,8 @@ func TestCreateOrOpenAuditFileReportsChmodFailure(t *testing.T) {
 	}
 }
 
-// TestAuditReadReportsReadFailure checks that a log whose file can be seeked
-// but not read reports the read error.
+// TestAuditReadReportsReadFailure checks that a file that can be seeked but not
+// read reports the read error.
 func TestAuditReadReportsReadFailure(t *testing.T) {
 	dir := t.TempDir()
 	seed := filepath.Join(dir, "writeonly.tmp")

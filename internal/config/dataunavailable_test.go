@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// dataLoadCore builds a user-mode core that really prepares the data
-// directory, with every path under home.
+// dataLoadCore builds a user-mode core that really prepares the data directory
+// under home.
 func dataLoadCore(t *testing.T, home string) *core {
 	t.Helper()
 	c := newLoadTestCore(t, home, oneRoute(t, "192.0.2.20"))
@@ -17,9 +17,9 @@ func dataLoadCore(t *testing.T, home string) *core {
 	return c
 }
 
-// TestLoadClassifiesDataDirectoryFailure covers a data directory that cannot
-// be created: Load reports a DataUnavailableError, and errors.Is matches both
-// the sentinel and the concrete cause.
+// TestLoadClassifiesDataDirectoryFailure checks that an unusable data directory
+// makes Load report a DataUnavailableError matching both the sentinel and the
+// concrete cause.
 func TestLoadClassifiesDataDirectoryFailure(t *testing.T) {
 	home := t.TempDir()
 	c := dataLoadCore(t, home)
@@ -44,11 +44,9 @@ func TestLoadClassifiesDataDirectoryFailure(t *testing.T) {
 	}
 }
 
-// errorTextWithoutPaths removes the resolved paths that a DataUnavailableError
-// is required to name. A check that the remaining text carries no configuration
-// value must not mistake a directory name for one, such as a temporary
-// directory whose name happens to contain "0660". Longer paths go first because
-// the audit log and the configuration file live under the data directory.
+// errorTextWithoutPaths removes the resolved paths from a DataUnavailableError's
+// text, so a check that no configuration value leaks does not mistake a path for
+// one; longer paths go first because the others live under them.
 func errorTextWithoutPaths(err error, paths PathSet) string {
 	text := err.Error()
 	for _, p := range []string{paths.AuditLog, paths.ConfigFile, paths.DataDir, paths.RuntimeDir} {
@@ -59,14 +57,13 @@ func errorTextWithoutPaths(err error, paths PathSet) string {
 	return text
 }
 
-// TestLoadCarriesSocketSettingsOnAuditFailure covers an audit log that cannot
-// be opened while the data directory is usable: the loaded socket settings are
-// carried for a diagnostics-only bind and are kept out of the error text.
+// TestLoadCarriesSocketSettingsOnAuditFailure checks that an unopenable audit
+// log still carries the loaded socket settings and keeps them out of the error
+// text.
 func TestLoadCarriesSocketSettingsOnAuditFailure(t *testing.T) {
-	// The audit log path appears in the error text by design. A fixed "0660"
-	// in the home directory makes a check that mistakes the path for a
-	// configuration value fail every time rather than only when the random
-	// temporary directory name happens to contain the same digits.
+	// A fixed "0660" in the home directory makes a check that mistakes a path
+	// for a configuration value fail deterministically rather than only when a
+	// random temporary name happens to contain the digits.
 	home := filepath.Join(t.TempDir(), "home-0660")
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		t.Fatal(err)
@@ -100,9 +97,9 @@ func TestLoadCarriesSocketSettingsOnAuditFailure(t *testing.T) {
 	}
 }
 
-// TestLoadReportsParseErrorBeforeDataUnavailable covers the classification
-// boundary: a configuration that cannot be parsed is reported as a
-// configuration error even when the data directory is also unusable.
+// TestLoadReportsParseErrorBeforeDataUnavailable checks that an unparsable
+// configuration is reported as a configuration error even when the data
+// directory is also unusable.
 func TestLoadReportsParseErrorBeforeDataUnavailable(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".peers")
@@ -127,8 +124,8 @@ func TestLoadReportsParseErrorBeforeDataUnavailable(t *testing.T) {
 	}
 }
 
-// TestLoadCanBeRetriedAfterDataUnavailable covers the degraded retry: the same
-// core loads successfully once the data directory becomes available.
+// TestLoadCanBeRetriedAfterDataUnavailable checks that the same core loads
+// successfully once the data directory becomes available.
 func TestLoadCanBeRetriedAfterDataUnavailable(t *testing.T) {
 	home := t.TempDir()
 	c := dataLoadCore(t, home)

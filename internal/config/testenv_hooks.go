@@ -8,8 +8,6 @@ import (
 	"strconv"
 )
 
-// testRuntimeRoot returns the runtime directory of one account under the test
-// root: root/root for the superuser and root/<euid> for everyone else.
 func testRuntimeRoot(root string, euid int) string {
 	if euid == 0 {
 		return filepath.Join(root, "root")
@@ -17,9 +15,6 @@ func testRuntimeRoot(root string, euid int) string {
 	return filepath.Join(root, strconv.Itoa(euid))
 }
 
-// init installs the test hooks when the environment selects them. The hooks
-// exist only in builds with the peers_testenv tag, so a release build can
-// never be redirected away from the real runtime and home directories.
 func init() {
 	if root := os.Getenv("PEERS_TEST_RUNTIME_ROOT"); root != "" {
 		if !filepath.IsAbs(root) {

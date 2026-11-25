@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// TestSetLowPortRefusalDoesNotAskToOpenTheFile covers the system Broker's Set
-// refusal for a privileged port. The remedy must not tell the operator to widen
-// the file so every account can read it: the startup path already asks for
-// `chmod g-w`, and the Set path must give the same advice.
+// TestSetLowPortRefusalDoesNotAskToOpenTheFile checks that Set's low-port
+// refusal advises `chmod g-w` rather than widening the file.
 func TestSetLowPortRefusalDoesNotAskToOpenTheFile(t *testing.T) {
 	c, path := systemWatchCore(t, "broker:\n  listen: 127.0.0.1:7777\n", false)
 
@@ -29,10 +27,8 @@ func TestSetLowPortRefusalDoesNotAskToOpenTheFile(t *testing.T) {
 	}
 }
 
-// TestSetSystemCreatesConfigFileWith0600 covers the mode of a configuration
-// file the system Broker creates itself. It matches the installation's
-// conservative mode instead of leaving a statically keyed file readable by
-// every account on the host.
+// TestSetSystemCreatesConfigFileWith0600 checks that a system Broker creates a
+// configuration file with mode 0600.
 func TestSetSystemCreatesConfigFileWith0600(t *testing.T) {
 	c, path := newValueCore(t, "", "")
 	if err := os.Remove(path); err != nil {
@@ -53,9 +49,8 @@ func TestSetSystemCreatesConfigFileWith0600(t *testing.T) {
 	}
 }
 
-// TestStartupLowPortRefusalNamesTheConfiguredValue covers the startup refusal:
-// it shows the broker.listen value found in the file, so root can check what an
-// account able to write the file may have put there before tightening it.
+// TestStartupLowPortRefusalNamesTheConfiguredValue checks that the startup
+// low-port refusal names the broker.listen value from the file.
 func TestStartupLowPortRefusalNamesTheConfiguredValue(t *testing.T) {
 	home := t.TempDir()
 	c, path := systemLoadCore(t, home, false)
@@ -76,9 +71,8 @@ func TestStartupLowPortRefusalNamesTheConfiguredValue(t *testing.T) {
 	}
 }
 
-// TestReloadLowPortWarningNamesTheConfiguredValue covers the hot-reload
-// rejection: the warning shows the value the file now holds, like the startup
-// refusal, so an operator reading the log sees what was written.
+// TestReloadLowPortWarningNamesTheConfiguredValue checks that the reload
+// low-port warning names the broker.listen value from the file.
 func TestReloadLowPortWarningNamesTheConfiguredValue(t *testing.T) {
 	c, path := systemWatchCore(t, "broker:\n  listen: 127.0.0.1:7777\n", false)
 	var logs strings.Builder

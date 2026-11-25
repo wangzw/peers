@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Mode selects the deployment form of the Broker. It decides the locations of
-// the configuration file, data directory and audit log.
+// Mode is the Broker's deployment form; it decides the paths of the
+// configuration file, data directory and audit log.
 type Mode int
 
 const (
@@ -24,6 +24,7 @@ const (
 // ValueKind is the type of a configuration value.
 type ValueKind uint8
 
+// The ValueKind constants are the types a configuration value can hold.
 const (
 	KindUnset ValueKind = iota
 	KindString
@@ -34,41 +35,53 @@ const (
 	KindSecret
 )
 
-// Value is a configuration value. Only the field selected by Kind is
-// meaningful. Strings is never shared with the caller: Get, All and Set copy
-// it. For KindSecret, String holds the value only inside this package; Get and
-// All never return it.
+// Value is a configuration value; only the field selected by Kind is
+// meaningful.
 type Value struct {
-	Kind        ValueKind
-	String      string
-	Bool        bool
-	Int         int64
-	Duration    time.Duration
-	Strings     []string
+	// Kind is the type of the value.
+	Kind ValueKind
+	// String is the value for KindString, and the text of a secret key.
+	String string
+	// Bool is the value for KindBool.
+	Bool bool
+	// Int is the value for KindInt.
+	Int int64
+	// Duration is the value for KindDuration.
+	Duration time.Duration
+	// Strings is the value for KindStringList; callers receive a copy.
+	Strings []string
+	// SecretIsSet reports whether a secret key has a value. Get and All never
+	// return the value; it is read with Secret.
 	SecretIsSet bool
 }
 
 // Entry is one configuration key and its effective value.
 type Entry struct {
-	Key   string
+	// Key is the configuration key's name.
+	Key string
+	// Value is the key's effective value.
 	Value Value
 }
 
-// Actor identifies who initiated a change or an event. UIDKnown reports whether
-// UID is the effective account of the local caller; a caller that could not
-// establish an identity leaves it false and is treated as unprivileged, so the
-// zero value cannot pass a root-only rule. UID is used for rules that depend on
-// whether the caller is root.
+// Actor identifies who initiated a change or an event.
 type Actor struct {
+	// UIDKnown reports whether UID is the local caller's effective account; a
+	// caller that could not establish an identity leaves it false and is
+	// treated as unprivileged.
 	UIDKnown bool
-	UID      uint32
-	Account  string
-	Agent    string
+	// UID is the caller's effective account, used by rules that depend on root.
+	UID uint32
+	// Account is the caller's account name.
+	Account string
+	// Agent is the initiating agent's address, empty when not an agent.
+	Agent string
 }
 
 // AdvertisedAddr is one entry in the advertised address list.
 type AdvertisedAddr struct {
+	// Kind is the address kind, deciding how another Broker reaches this one.
 	Kind string
+	// Addr is the address spelling for Kind; a direct address is host:port.
 	Addr string
 }
 
@@ -77,13 +90,16 @@ const AdvertisedKindDirect = "direct"
 
 // PeerRef identifies a peer Broker.
 type PeerRef struct {
+	// Fingerprint is the peer Broker's fingerprint.
 	Fingerprint [32]byte
-	Alias       string
+	// Alias is the peer Broker's alias.
+	Alias string
 }
 
 // EventKind is the closed set of audit event types.
 type EventKind string
 
+// The EventKind constants name each audit event type.
 const (
 	EventConfigSet          EventKind = "config_set"
 	EventConfigFileChanged  EventKind = "config_file_changed"
@@ -96,11 +112,9 @@ const (
 	EventConnectionRejected EventKind = "connection_rejected"
 	EventRejectedByPeer     EventKind = "rejected_by_peer"
 	EventLocalAliasAssigned EventKind = "local_alias_assigned"
-	// EventConfigRejected records an external configuration change that was
-	// refused, so no value was adopted.
-	EventConfigRejected EventKind = "config_rejected"
-	EventUpdateApplied  EventKind = "update_applied"
-	EventUpdateFailed   EventKind = "update_failed"
+	EventConfigRejected     EventKind = "config_rejected"
+	EventUpdateApplied      EventKind = "update_applied"
+	EventUpdateFailed       EventKind = "update_failed"
 )
 
 var allEventKinds = map[EventKind]bool{
@@ -122,34 +136,47 @@ var allEventKinds = map[EventKind]bool{
 
 // Event is one audit record.
 type Event struct {
-	Time    time.Time
-	Event   EventKind
-	Actor   string
+	// Time is the event time.
+	Time time.Time
+	// Event is the event type.
+	Event EventKind
+	// Actor is the initiating agent's address, empty when not an agent.
+	Actor string
+	// Account is the initiating account, empty when triggered by a peer, a file
+	// change or the system.
 	Account string
-	Peer    *PeerRef
-	Key     string
-	Old     *Value
-	New     *Value
-	Count   uint64
-	Detail  string
-	// MergeKey is used only to decide whether two events merge; it is not part
-	// of the public record. For connection_rejected it takes precedence over
-	// Peer.Fingerprint, which the other side chooses and so cannot identify a
-	// source.
+	// Peer is the related Broker, nil when unrelated.
+	Peer *PeerRef
+	// Key is the configuration key of a change.
+	Key string
+	// Old is the value before the change, nil when not a change.
+	Old *Value
+	// New is the value after the change, nil when not a change.
+	New *Value
+	// Count is the number of merged events, zero when not merged.
+	Count uint64
+	// Detail is supplementary text such as a failure reason.
+	Detail string
+	// MergeKey decides only whether two events merge and is not part of the
+	// public record; for connection_rejected it takes precedence over
+	// Peer.Fingerprint, which the other side chooses.
 	MergeKey string
 }
 
 // PathSet is the set of files this package uses.
 type PathSet struct {
+	// RuntimeDir is the runtime directory holding the local socket and the
+	// account lock.
 	RuntimeDir string
-	// RuntimeDirFallback is set when RuntimeDir is the fallback location
-	// because another account had taken the preferred runtime directory. It
-	// names the preferred directory and the account that owns it, for the
-	// startup log.
+	// RuntimeDirFallback describes why RuntimeDir is the fallback location; nil
+	// when RuntimeDir is the preferred one.
 	RuntimeDirFallback *RuntimeDirFallback
-	ConfigFile         string
-	DataDir            string
-	AuditLog           string
+	// ConfigFile is the configuration file's path.
+	ConfigFile string
+	// DataDir is the data directory's path.
+	DataDir string
+	// AuditLog is the audit log's path.
+	AuditLog string
 }
 
 // RuntimeDirFallback describes the preferred runtime directory that another
@@ -162,6 +189,7 @@ type RuntimeDirFallback struct {
 	OwnerUID int
 }
 
+// The exported errors are sentinels for callers to match with errors.Is.
 var (
 	ErrNotLoaded          = errors.New("the configuration is not loaded")
 	ErrAlreadyLoaded      = errors.New("the configuration is already loaded")
@@ -173,30 +201,31 @@ var (
 	ErrTooManyAddresses   = errors.New("too many advertised addresses")
 	ErrFileWrite          = errors.New("cannot write the configuration file")
 	// ErrLowPortDenied reports that a system Broker refused a listen port
-	// below 1024 because the change was not made by root or the configuration
-	// file can be written by another account.
+	// below 1024 because the caller is not root or another account can write
+	// the configuration file.
 	ErrLowPortDenied = errors.New("a listen port below 1024 requires root and a configuration file that only root can write")
 	// ErrDataUnavailable reports that the data directory or the audit log
-	// cannot be used. A Broker started with --allow-degraded runs diagnostics
-	// only for this class instead of exiting.
+	// cannot be used; a Broker started with --allow-degraded runs diagnostics
+	// only instead of exiting.
 	ErrDataUnavailable = errors.New("the data directory or audit log is unavailable")
 )
 
-// DataUnavailableError classifies a failed Load whose cause is the data
-// directory or the audit log. Every other startup check has already passed:
-// the paths are resolved, the runtime directory is usable, the file was read
-// and parsed, and the values and the advertised addresses were prepared. The
-// error text names no configuration value. LocalSocketGroup and
-// LocalSocketMode carry the loaded broker.local_socket_group and
-// broker.local_socket_mode, so a system Broker can bind its local socket with
-// the configured group and permissions while it runs diagnostics only.
+// DataUnavailableError is a failed Load whose cause is the data directory or
+// the audit log. Every other startup check has passed, so a system Broker can
+// still bind its local socket with the loaded group and permissions while it
+// runs diagnostics only. The error text names no configuration value.
 type DataUnavailableError struct {
-	Paths            PathSet
+	// Paths are the resolved paths of the failed load.
+	Paths PathSet
+	// LocalSocketGroup is the loaded broker.local_socket_group.
 	LocalSocketGroup string
-	LocalSocketMode  string
-	Err              error
+	// LocalSocketMode is the loaded broker.local_socket_mode.
+	LocalSocketMode string
+	// Err is the underlying cause.
+	Err error
 }
 
+// Error returns the sentinel text followed by the cause when there is one.
 func (e *DataUnavailableError) Error() string {
 	if e.Err == nil {
 		return ErrDataUnavailable.Error()
@@ -212,8 +241,8 @@ func (e *DataUnavailableError) Unwrap() []error {
 	return []error{ErrDataUnavailable, e.Err}
 }
 
-// global is the package singleton. Tests install their own core through
-// installTestCore, which serializes the replacement with globalTestMu.
+// global is the package singleton; tests replace it through installTestCore
+// under globalTestMu.
 var global struct {
 	mu   sync.RWMutex
 	core *core
@@ -226,7 +255,10 @@ func currentCore() *core {
 }
 
 // Load resolves the paths for mode and loads the configuration. A non-empty
-// listenOverride replaces broker.listen for this run only.
+// listenOverride replaces broker.listen for this run only. It returns
+// ErrAlreadyLoaded when a configuration is already loaded, a
+// *DataUnavailableError when the data directory or audit log cannot be used,
+// and other errors when the configuration is invalid.
 func Load(mode Mode, listenOverride string) error {
 	global.mu.Lock()
 	defer global.mu.Unlock()
@@ -269,8 +301,9 @@ func Paths() PathSet {
 	return c.paths
 }
 
-// Get returns the effective value of one key. Secret keys return
-// KindSecret with SecretIsSet and no value.
+// Get returns the effective value of one key, or ErrNotLoaded before Load and
+// ErrUnknownKey for a key that does not exist. Secret keys return KindSecret
+// with SecretIsSet and no value.
 func Get(key string) (Value, error) {
 	c := currentCore()
 	if c == nil {
@@ -299,7 +332,13 @@ func All() []Entry {
 }
 
 // Set validates one value and persists it, updates memory, writes an audit
-// record and queues the notifications.
+// record and queues the notifications. It returns ErrNotLoaded before Load,
+// ErrUnknownKey or ErrSecretKey for the key, ErrListenOverridden or
+// ErrLowPortDenied for broker.listen, ErrInvalidValue when a value fails its
+// own check or two link keys disagree, ErrInvalidCombination when
+// broker.listen and broker.advertise or broker.advertise_extra disagree,
+// ErrTooManyAddresses when more than eight addresses are advertised, and
+// ErrFileWrite when the file cannot be written.
 func Set(actor Actor, key string, v Value) (Value, error) {
 	c := currentCore()
 	if c == nil {
@@ -342,7 +381,8 @@ func Hostname() string {
 	return sanitizeHostnameFrom(os.Hostname, defaultLogger())
 }
 
-// SubscribeAdvertised registers a callback for changes of the advertised list.
+// SubscribeAdvertised registers a callback for changes of the advertised
+// address list; it panics before Load or with a nil callback.
 func SubscribeAdvertised(onChange func(old, new []AdvertisedAddr)) {
 	c := currentCore()
 	if c == nil {
@@ -356,14 +396,12 @@ func SubscribeAdvertised(onChange func(old, new []AdvertisedAddr)) {
 	c.advSubs = append(c.advSubs, onChange)
 }
 
-// Validate registers an extra check for one key. Set and reload call it
-// before committing. The check runs while the package lock is held, so it must
-// not call the package API.
-//
-// A check for broker.listen must only probe whether the address can be bound,
-// for example with ProbeListen; it must not keep the listener it opens. The
-// change is committed after the check returns, and the real rebind happens
-// later in the subscriber that reacts to the change.
+// Validate registers an extra check for one key. Set and reload call it before
+// committing, while the package lock is held, so it must not call this
+// package's other exported functions. A check for broker.listen must only probe
+// whether the address can be bound, for example with ProbeListen, and must not
+// keep the listener it opens; the real bind happens later in the subscriber. It
+// panics before Load, with a nil check or for an unknown key.
 func Validate(key string, check func(old, new Value) error) {
 	c := currentCore()
 	if c == nil {
@@ -380,17 +418,15 @@ func Validate(key string, check func(old, new Value) error) {
 	c.validators[key] = append(c.validators[key], check)
 }
 
-// probeListenNet is net.Listen for ProbeListen. Tests replace it to observe the
-// listener a probe opens, so they can assert it was closed without depending on
-// an ephemeral port staying free; production always uses net.Listen.
+// probeListenNet is net.Listen for ProbeListen; tests replace it to observe the
+// listener a probe opens.
 var probeListenNet = net.Listen
 
 // ProbeListen reports whether this process can bind addr, which uses the
-// broker.listen syntax. It binds a TCP listener and closes it before returning,
-// so no listener survives the check and the address stays free for the real
-// listener. The result is only a probe: another process can take the address
-// between the probe and the rebind. An empty addr means "do not listen" and
-// always succeeds.
+// broker.listen syntax. It binds and closes a TCP listener, so no listener
+// survives the check and the address stays free for the real listener; another
+// process can still take it before the rebind. An empty addr means not
+// listening and always succeeds.
 func ProbeListen(addr string) error {
 	if addr == "" {
 		return nil
@@ -408,12 +444,10 @@ func ProbeListen(addr string) error {
 	return nil
 }
 
-// ListenFromFile returns the effective broker.listen value of the configuration
-// file at path: the value in the file, or the default when the key is absent.
-// A missing file is an empty configuration and yields the default; an invalid
-// value is reported as an error. The function only reads: it neither loads the
-// package nor creates any path, so the service installer can check the address
-// before it registers anything.
+// ListenFromFile returns the effective broker.listen value of the file at path,
+// using the default when the key is absent. A missing file is an empty
+// configuration; an invalid value is an error. It only reads: it does not load
+// the package or create any path.
 func ListenFromFile(path string) (string, error) {
 	doc, err := readConfigFile(path)
 	if err != nil {
@@ -438,7 +472,8 @@ func ListenFromFile(path string) (string, error) {
 	return value, nil
 }
 
-// Subscribe registers a callback for changes of one key.
+// Subscribe registers a callback for changes of one key; it panics before Load,
+// for an unknown key or with a nil callback.
 func Subscribe(key string, onChange func(old, new Value)) {
 	c := currentCore()
 	if c == nil {
@@ -468,9 +503,8 @@ func Audit(e Event) {
 
 // AppendAudit writes one record to the audit log at path without loading the
 // configuration. The Broker uses Audit; this entry point is for a process that
-// is not the Broker, such as the detached launchd reload helper, which records
-// an outcome after the caller has already received the update response. An
-// event that would merge in a running Broker is written as one record.
+// is not the Broker, such as the detached launchd reload helper. An event that
+// would merge in a running Broker is written as one record.
 func AppendAudit(path string, e Event) error {
 	if path == "" {
 		return errors.New("the audit log path is empty")
@@ -483,11 +517,8 @@ func AppendAudit(path string, e Event) error {
 	return a.append(e)
 }
 
-// ReadAudit returns the records at or after since in time order. Mergeable
-// events accumulate in an in-memory window instead of being written one by
-// one; the audit file stays append-only and receives one record when the
-// window closes. ReadAudit returns the records already in the file together
-// with any pending in-memory window, in time order.
+// ReadAudit returns the records at or after since in time order, including any
+// merge window still in memory.
 func ReadAudit(since time.Time) ([]Event, error) {
 	c := currentCore()
 	if c == nil {

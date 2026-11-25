@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// C5: address kinds have no textual form in this version. A "kind://" prefix is
-// just another invalid address spelling: the parser must report a syntax error
-// rather than recognising an address kind, and Set maps it to invalid_argument
-// (ErrInvalidValue).
+// TestPrefixedAdvertiseIsInvalidValue checks that a "kind://" prefix is rejected
+// as an invalid address spelling by parseAdvertise, validateExtraItem and Set.
 func TestPrefixedAdvertiseIsInvalidValue(t *testing.T) {
 	prefixed := []string{
 		"relay://b.example:443",
@@ -72,8 +70,8 @@ func TestPrefixedAdvertiseIsInvalidValue(t *testing.T) {
 	}
 }
 
-// C5: loading a configuration file with a prefixed address fails startup with
-// invalid_argument.
+// TestPrefixedAdvertiseRejectedAtLoad checks that loading a configuration file
+// with a prefixed address fails with ErrInvalidValue.
 func TestPrefixedAdvertiseRejectedAtLoad(t *testing.T) {
 	home := t.TempDir()
 	c := newCore()

@@ -8,9 +8,6 @@ import (
 	"testing"
 )
 
-// makeNonRootOwner leaves path owned by an account other than root. A new file
-// already has that owner when the test runs as a non-root account; a root test
-// process chowns it to a fixed non-root uid so the rule is covered either way.
 func makeNonRootOwner(t *testing.T, path string, mode os.FileMode) {
 	t.Helper()
 	if err := os.Chmod(path, mode); err != nil {
@@ -23,6 +20,8 @@ func makeNonRootOwner(t *testing.T, path string, mode os.FileMode) {
 	}
 }
 
+// TestConfigFileRootOnlyWritable checks the missing-file, symlink and
+// other-owner cases of the root-only rule.
 func TestConfigFileRootOnlyWritable(t *testing.T) {
 	t.Run("a missing file is safe", func(t *testing.T) {
 		ok, err := configFileRootOnlyWritable(filepath.Join(t.TempDir(), "absent.yaml"))

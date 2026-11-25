@@ -12,9 +12,8 @@ import (
 	"testing"
 )
 
-// darwinRoute4 is the real "route -n get default" output captured on the
-// macOS runner in CI run 44329785438. The gateway, the interface and the
-// trailing statistics grid are that runner's.
+// darwinRoute4 is real "route -n get default" output captured on a macOS CI
+// runner; do not edit it by hand.
 const darwinRoute4 = `   route to: default
 destination: default
        mask: default
@@ -34,9 +33,8 @@ destination: default
 `
 
 // darwinRouteNoInterface is the shape some macOS route builds print when the
-// host has no default route: a description of the lookup without an interface
-// line. It still names the route and its destination, so the empty result is
-// the designed one rather than a parse failure.
+// host has no default route: it names the route without an interface line, so
+// the empty result is the intended one rather than a parse failure.
 const darwinRouteNoInterface = `   route to: default
 destination: default
        mask: default
@@ -45,9 +43,7 @@ destination: default
 `
 
 // darwinRouteNotInTable is the exact "route -n get -inet6 default" output
-// captured on the macOS runner in CI run 44329785438, where the host has no
-// IPv6 default route. The command exits zero, so the no-route verdict comes
-// from the output rather than the exit status.
+// captured on a macOS CI runner; do not edit it by hand.
 const darwinRouteNotInTable = "route: writing to routing socket: not in table\n"
 
 const darwinIfconfig = `en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500
@@ -61,6 +57,8 @@ const darwinIfconfig = `en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTI
 	nd6 options=201<PERFORMNUD,DAD>
 `
 
+// TestParseDarwinRouteInterface checks that a normal route output names the
+// interface and that output without an interface line means no default route.
 func TestParseDarwinRouteInterface(t *testing.T) {
 	iface, ok, err := parseDarwinRouteInterface([]byte(darwinRoute4))
 	if err != nil {
@@ -69,7 +67,6 @@ func TestParseDarwinRouteInterface(t *testing.T) {
 	if !ok || iface != "en0" {
 		t.Fatalf("interface = %q, ok = %v; want en0", iface, ok)
 	}
-	// No interface line means no default route, not a parse failure.
 	iface, ok, err = parseDarwinRouteInterface([]byte(darwinRouteNoInterface))
 	if err != nil {
 		t.Fatalf("parseDarwinRouteInterface without an interface line: %v", err)
@@ -87,6 +84,8 @@ func TestParseDarwinRouteInterfaceEmptyValueIsError(t *testing.T) {
 	}
 }
 
+// TestParseDarwinIfconfigExcludesLinkLocalAndTemporary checks that ifconfig
+// parsing drops IPv4 and IPv6 link-local addresses and temporary IPv6 addresses.
 func TestParseDarwinIfconfigExcludesLinkLocalAndTemporary(t *testing.T) {
 	v4, err := parseDarwinIfconfig([]byte(darwinIfconfig), false)
 	if err != nil {
@@ -104,6 +103,9 @@ func TestParseDarwinIfconfigExcludesLinkLocalAndTemporary(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig030_DarwinDefaultRouteEnumeration checks that the Darwin
+// enumerator returns the default interface's IPv4 and IPv6 addresses from
+// injected command output.
 func TestREQBrokerConfig030_DarwinDefaultRouteEnumeration(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		switch name {
@@ -142,6 +144,8 @@ func TestREQBrokerConfig030_DarwinDefaultRouteEnumeration(t *testing.T) {
 	}
 }
 
+// TestDarwinDefaultRouteAbsent checks that a not-in-table route output yields
+// no addresses rather than an error.
 func TestDarwinDefaultRouteAbsent(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		if name == "/sbin/route" {
@@ -159,11 +163,8 @@ func TestDarwinDefaultRouteAbsent(t *testing.T) {
 	}
 }
 
-// TestDarwinRouteNotInTableWithZeroExitIsNoRoute reproduces the macOS CI
-// evidence: the IPv6 lookup prints the not-in-table message and exits zero.
-// The output, not the exit status, decides the meaning, so the IPv6 path must
-// yield no route rather than a parse error, and the whole enumeration must
-// return an empty list with a nil error.
+// TestDarwinRouteNotInTableWithZeroExitIsNoRoute checks that a not-in-table
+// IPv6 lookup that exits zero yields no route and an empty address list.
 func TestDarwinRouteNotInTableWithZeroExitIsNoRoute(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		if name != "/sbin/route" {
@@ -192,17 +193,16 @@ func TestDarwinRouteNotInTableWithZeroExitIsNoRoute(t *testing.T) {
 	}
 }
 
-// TestDarwinRouteOutputWithoutRouteLinesIsError pins the boundary of the
-// designed empty result: output that never even names the route lookup is
-// garbage, not "no default route", so it must be reported.
+// TestDarwinRouteOutputWithoutRouteLinesIsError checks that route output with
+// no route to or destination line is an error.
 func TestDarwinRouteOutputWithoutRouteLinesIsError(t *testing.T) {
 	if _, _, err := parseDarwinRouteInterface([]byte("some unrelated output\n")); err == nil {
 		t.Fatal("output without a route to or destination line was accepted")
 	}
 }
 
-// TestDarwinIfconfigFailureIsReported keeps an ifconfig failure fatal instead
-// of turning it into an empty address list.
+// TestDarwinIfconfigFailureIsReported checks that an ifconfig failure is
+// returned as an error.
 func TestDarwinIfconfigFailureIsReported(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		switch name {
@@ -224,9 +224,8 @@ func TestDarwinIfconfigFailureIsReported(t *testing.T) {
 	}
 }
 
-// TestDarwinRouteOutputWithoutInterfaceIsEmpty pins the other "no default
-// route" shape: the command succeeds but its output never names an interface.
-// Both address families must produce an empty list with no error.
+// TestDarwinRouteOutputWithoutInterfaceIsEmpty checks that route output naming
+// no interface yields an empty address list for both address families.
 func TestDarwinRouteOutputWithoutInterfaceIsEmpty(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		if name != "/sbin/route" {
@@ -243,8 +242,8 @@ func TestDarwinRouteOutputWithoutInterfaceIsEmpty(t *testing.T) {
 	}
 }
 
-// TestDarwinRouteCommandNotFoundIsError keeps a genuine failure distinguishable
-// from "no default route": the route tool could not be run at all.
+// TestDarwinRouteCommandNotFoundIsError checks that a route command that cannot
+// be run is an error.
 func TestDarwinRouteCommandNotFoundIsError(t *testing.T) {
 	run := func(string, ...string) ([]byte, error) {
 		return nil, exec.ErrNotFound
@@ -254,6 +253,8 @@ func TestDarwinRouteCommandNotFoundIsError(t *testing.T) {
 	}
 }
 
+// TestDarwinRouteCommandFailureIsReported checks that a route command failure
+// is returned as an error.
 func TestDarwinRouteCommandFailureIsReported(t *testing.T) {
 	run := func(name string, args ...string) ([]byte, error) {
 		return []byte("route: unexpected failure"), errors.New("exit status 1")
@@ -263,8 +264,9 @@ func TestDarwinRouteCommandFailureIsReported(t *testing.T) {
 	}
 }
 
+// TestDarwinIfconfigTemporaryWithoutToken checks that an IPv6 address without
+// the temporary flag is kept.
 func TestDarwinIfconfigTemporaryWithoutToken(t *testing.T) {
-	// A temporary address must be skipped only when the flag is present.
 	out := "inet6 2001:db8::40 prefixlen 64 autoconf secured\n"
 	addrs, err := parseDarwinIfconfig([]byte(out), true)
 	if err != nil {
@@ -275,8 +277,8 @@ func TestDarwinIfconfigTemporaryWithoutToken(t *testing.T) {
 	}
 }
 
-// TestDarwinRouteParseErrorIncludesRawOutput keeps the raw route output in the
-// error so a CI failure shows why parsing failed instead of only the verdict.
+// TestDarwinRouteParseErrorIncludesRawOutput checks that a parse error includes
+// the raw route output.
 func TestDarwinRouteParseErrorIncludesRawOutput(t *testing.T) {
 	_, _, err := parseDarwinRouteInterface([]byte("some unrelated output\nwith two lines\n"))
 	if err == nil {
@@ -290,11 +292,7 @@ func TestDarwinRouteParseErrorIncludesRawOutput(t *testing.T) {
 }
 
 // TestSmokeRealDefaultRouteAddresses calls the production enumerator against
-// this host's real routing table. It only asserts that enumeration succeeds.
-// CI runs it on macOS, so runCommand and the real route and ifconfig output
-// formats are exercised here even though every other test injects its own
-// runner. On failure it logs every command's arguments, exit status and raw
-// output before failing, so the CI log carries the evidence.
+// this host's real routing table and asserts only that enumeration succeeds.
 func TestSmokeRealDefaultRouteAddresses(t *testing.T) {
 	addrs, err := defaultRouteAddresses()
 	if err != nil {
@@ -308,9 +306,6 @@ func TestSmokeRealDefaultRouteAddresses(t *testing.T) {
 	}
 }
 
-// logDarwinRouteDiagnostics reruns the enumerator with a runner that logs every
-// command's arguments, exit status and raw output. It runs only after a smoke
-// test failure, so the extra subprocesses cost nothing on success.
 func logDarwinRouteDiagnostics(t *testing.T) {
 	t.Helper()
 	run := func(name string, args ...string) ([]byte, error) {

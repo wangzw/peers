@@ -11,17 +11,14 @@ import (
 	"time"
 )
 
-// resetFallbackBaseCache clears the cached getconf result so each test starts
-// from an unresolvable state.
 func resetFallbackBaseCache() {
 	fallbackBaseCache.mu.Lock()
 	fallbackBaseCache.dirs = make(map[int]string)
 	fallbackBaseCache.mu.Unlock()
 }
 
-// TestDefaultRuntimeFallbackBasePerPlatform covers the platform branch: the
-// logind directory on Linux, and the per-user temporary directory getconf
-// reports on macOS. The macOS branch also runs in the macOS probe job.
+// TestDefaultRuntimeFallbackBasePerPlatform checks the logind directory on
+// Linux and the getconf per-user temporary directory on macOS.
 func TestDefaultRuntimeFallbackBasePerPlatform(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		got, err := defaultRuntimeFallbackBase(1234)
@@ -57,8 +54,8 @@ func TestDefaultRuntimeFallbackBasePerPlatform(t *testing.T) {
 	}
 }
 
-// TestDarwinFallbackBaseCachesGetconf covers the in-process cache: the second
-// lookup reuses the first result instead of starting getconf again.
+// TestDarwinFallbackBaseCachesGetconf checks that a second darwinFallbackBase
+// lookup reuses the cached getconf result.
 func TestDarwinFallbackBaseCachesGetconf(t *testing.T) {
 	resetFallbackBaseCache()
 	oldOutput := getconfOutput
@@ -89,8 +86,8 @@ func TestDarwinFallbackBaseCachesGetconf(t *testing.T) {
 	}
 }
 
-// TestDarwinFallbackBaseTimesOut covers the context deadline: a stalled
-// getconf returns a deadline error instead of blocking the lookup.
+// TestDarwinFallbackBaseTimesOut checks that a stalled getconf returns a
+// deadline error.
 func TestDarwinFallbackBaseTimesOut(t *testing.T) {
 	resetFallbackBaseCache()
 	oldOutput, oldTimeout := getconfOutput, fallbackBaseProbeTimeout
@@ -100,10 +97,8 @@ func TestDarwinFallbackBaseTimesOut(t *testing.T) {
 		resetFallbackBaseCache()
 	})
 	fallbackBaseProbeTimeout = 25 * time.Millisecond
-	// The probe deadline is the product's bound on getconf. Checking the value
-	// the product passed keeps the assertion independent of scheduling: a probe
-	// that received no deadline, or the caller's much later one, returns at once
-	// so the test reports it instead of blocking.
+	// The test reads the deadline the product passed, so a probe with no
+	// deadline or a far-off one fails at once instead of blocking.
 	const deadlineBound = time.Second
 	deadlines := make(chan time.Duration, 1)
 	getconfOutput = func(ctx context.Context) ([]byte, error) {

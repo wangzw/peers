@@ -5,13 +5,10 @@ import (
 	"strings"
 )
 
-// AliasMaxLen is the maximum length of a Broker alias in bytes. It is the one
-// definition of the limit: the configuration validator, pairing and the Broker
-// all measure aliases against it.
+// AliasMaxLen is the maximum length of a Broker alias, in bytes; every package
+// measures aliases against this one limit.
 const AliasMaxLen = 24
 
-// sanitizeHostname replaces every character outside the alias character set
-// with '-'. A multi-byte character counts as one character and becomes one '-'.
 func sanitizeHostname(name string) string {
 	out := make([]rune, 0, len(name))
 	for _, r := range name {
@@ -49,24 +46,8 @@ func validAlias(s string) error {
 	return nil
 }
 
-// fallbackAlias is the default alias when no hostname can be read.
 const fallbackAlias = "broker"
 
-// defaultAlias derives the default alias for the deployment mode, the hostname
-// and the account name. The listen address, the listen port and the advertised
-// address play no part.
-//
-// A system alias is the first label of the hostname. A user alias
-// is that label, a dot and the account name. Characters outside the alias
-// character set are replaced by '-'. An empty hostname uses fallbackAlias for
-// the hostname part, and a user alias still appends the account. An
-// empty account name leaves the alias at the hostname part; the caller
-// substitutes the uid when the account lookup fails.
-//
-// The result is at most AliasMaxLen characters. When it is too long, the
-// hostname part is shortened first, down to one character; the account part is
-// shortened only while the result is still too long. A shortened part never
-// ends in "." or "-".
 func defaultAlias(mode Mode, hostname, account string) string {
 	host := firstLabel(sanitizeHostname(hostname))
 	if host == "" {
@@ -106,7 +87,6 @@ func defaultAlias(mode Mode, hostname, account string) string {
 	return host + "." + acct
 }
 
-// firstLabel returns the part of the hostname before the first dot.
 func firstLabel(host string) string {
 	if i := strings.IndexByte(host, '.'); i >= 0 {
 		return host[:i]
@@ -114,8 +94,6 @@ func firstLabel(host string) string {
 	return host
 }
 
-// truncateAliasPart shortens s to at most max characters, then drops trailing
-// dots and dashes from the shortened result.
 func truncateAliasPart(s string, max int) string {
 	if max <= 0 {
 		return ""

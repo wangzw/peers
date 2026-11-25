@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// updateGolden rewrites the golden template files when the test runs with
-// -update.
 var updateGolden = flag.Bool("update", false, "rewrite the golden template files")
 
 func modeName(mode Mode) string {
@@ -21,6 +19,8 @@ func modeName(mode Mode) string {
 	return "user"
 }
 
+// TestTemplateModesParseAndLoadDefaults checks that each mode's template parses
+// and yields exactly the defaults.
 func TestTemplateModesParseAndLoadDefaults(t *testing.T) {
 	for _, mode := range []Mode{ModeUser, ModeSystem} {
 		mode := mode
@@ -55,6 +55,8 @@ func TestTemplateModesParseAndLoadDefaults(t *testing.T) {
 	}
 }
 
+// TestTemplateListsEachKeyOnceAndDocumentsIt checks that the template lists
+// each key once, in section and key order, with a description line.
 func TestTemplateListsEachKeyOnceAndDocumentsIt(t *testing.T) {
 	for _, mode := range []Mode{ModeUser, ModeSystem} {
 		body := string(Template(mode))
@@ -106,6 +108,8 @@ func TestTemplateListsEachKeyOnceAndDocumentsIt(t *testing.T) {
 	}
 }
 
+// TestTemplatePlaceholderExamplesValidate checks that uncommenting each
+// example yields a valid effective value.
 func TestTemplatePlaceholderExamplesValidate(t *testing.T) {
 	body := string(Template(ModeUser))
 	for _, name := range allKeyNames() {
@@ -136,9 +140,8 @@ func TestTemplatePlaceholderExamplesValidate(t *testing.T) {
 	}
 }
 
-// TestTemplateGolden compares the whole generated file for each mode with a
-// checked-in copy, so a wrong default or a changed description is reviewed
-// rather than silently accepted. Run with -update to rewrite the files.
+// TestTemplateGolden checks that each mode's generated template matches the
+// checked-in copy, and that -update rewrites the copy.
 func TestTemplateGolden(t *testing.T) {
 	for _, mode := range []Mode{ModeSystem, ModeUser} {
 		mode := mode
@@ -164,8 +167,7 @@ func TestTemplateGolden(t *testing.T) {
 }
 
 // TestTemplateStaticKeyPlaceholderStaysUnset checks that uncommenting the
-// static_key example yields an empty value, which leaves the static key
-// unset, so copying the template cannot enable a publicly known key.
+// static_key example leaves the key unset.
 func TestTemplateStaticKeyPlaceholderStaysUnset(t *testing.T) {
 	body := string(Template(ModeUser))
 	re := regexp.MustCompile(`(?m)^(\s*)#\s*static_key:\s*""\s*$`)
@@ -190,6 +192,8 @@ func TestTemplateStaticKeyPlaceholderStaysUnset(t *testing.T) {
 	}
 }
 
+// TestTemplateUserModeMarksSystemOnlyKeys checks that the user template marks
+// the two system-only keys and the system template does not.
 func TestTemplateUserModeMarksSystemOnlyKeys(t *testing.T) {
 	user := string(Template(ModeUser))
 	system := string(Template(ModeSystem))
@@ -201,6 +205,8 @@ func TestTemplateUserModeMarksSystemOnlyKeys(t *testing.T) {
 	}
 }
 
+// TestTemplateQuotesDefaultsThatYAMLWouldRetype checks that the template quotes
+// defaults YAML would otherwise retype.
 func TestTemplateQuotesDefaultsThatYAMLWouldRetype(t *testing.T) {
 	body := string(Template(ModeUser))
 	for _, want := range []string{`  listen: ":17443"`, `  local_socket_mode: "0666"`} {

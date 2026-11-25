@@ -2,10 +2,8 @@ package config
 
 import "testing"
 
-// TestNewCoreUsesHomeDirSource checks that newCore reads the account home
-// directory through the homeDirSource seam, so the peers_testenv build can
-// replace it. It cannot run in parallel because it changes a package-level
-// variable.
+// TestNewCoreUsesHomeDirSource checks that newCore reads the home directory
+// through the homeDirSource seam.
 func TestNewCoreUsesHomeDirSource(t *testing.T) {
 	old := homeDirSource
 	t.Cleanup(func() { homeDirSource = old })
@@ -21,9 +19,8 @@ func TestNewCoreUsesHomeDirSource(t *testing.T) {
 	}
 }
 
-// TestHomeDirSourceDefaultsToAccountHomeDir checks that the seam defaults to
-// accountHomeDir, so the production build still resolves the same home
-// directory.
+// TestHomeDirSourceDefaultsToAccountHomeDir checks that the homeDirSource seam
+// defaults to accountHomeDir.
 func TestHomeDirSourceDefaultsToAccountHomeDir(t *testing.T) {
 	gotSource, errSource := homeDirSource()
 	gotAccount, errAccount := accountHomeDir()

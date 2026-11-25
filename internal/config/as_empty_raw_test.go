@@ -2,12 +2,8 @@ package config
 
 import "testing"
 
-// TestConfigFileEmptyDocumentKeepsRaw checks that a file holding only comments
-// parses as an empty document that still carries its exact bytes. asEmpty
-// records them so bytes returns the file unchanged; encoding the empty mapping
-// instead would add a "{}" node and drop the original blank lines. The test
-// drives the document helpers directly because a comment-only file never
-// reaches bytes through Set, which clears raw before the first encode.
+// TestConfigFileEmptyDocumentKeepsRaw checks that a comment-only file parses as
+// an empty document whose bytes are returned unchanged.
 func TestConfigFileEmptyDocumentKeepsRaw(t *testing.T) {
 	body := []byte("# first line\n\n# second line\n")
 	doc, err := parseConfigFile(body)

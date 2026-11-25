@@ -1,11 +1,5 @@
 package config
 
-// Notification tests for the Set and reload paths. Every case waits on a
-// channel, and every "no notification" case is established by draining the
-// notifier queue with a barrier callback: the notifier delivers in submission
-// order from one goroutine, so a barrier that has run proves every earlier
-// callback has run too. No test sleeps to decide the outcome.
-
 import (
 	"net/netip"
 	"os"
@@ -15,12 +9,10 @@ import (
 	"time"
 )
 
-// ncNoRoutes is an address source with no default-route addresses.
 type ncNoRoutes struct{}
 
 func (ncNoRoutes) DefaultRouteAddresses() ([]netip.Addr, error) { return nil, nil }
 
-// ncRoutes is a mutable address source for the periodic re-enumeration cases.
 type ncRoutes struct {
 	mu    sync.Mutex
 	addrs []netip.Addr
@@ -47,8 +39,6 @@ func ncAddr(t *testing.T, s string) netip.Addr {
 	return addr
 }
 
-// newNCCore builds a core under a temporary home. The helpers here are private
-// to this file so the other test areas can change theirs independently.
 func newNCCore(t *testing.T, body string, routes addressSource) (*core, string) {
 	t.Helper()
 	home := t.TempDir()
@@ -105,9 +95,8 @@ func ncSubscribeAdvertised(c *core, ch chan<- ncAdvEvent) {
 	})
 }
 
-// ncDrain enqueues a barrier callback and waits for it. Because the notifier
-// runs one goroutine in submission order, everything enqueued before the
-// barrier has finished when this returns.
+// ncDrain enqueues a barrier callback and waits for it, so everything enqueued
+// before the barrier has finished when it returns.
 func ncDrain(t *testing.T, c *core) {
 	t.Helper()
 	done := make(chan struct{})
@@ -179,10 +168,8 @@ func ncWriteConfig(t *testing.T, path, body string) {
 	}
 }
 
-// TestConfigNotificationSetAdvertised checks that Set on a key of the listen
-// and advertise group notifies the advertised-address subscribers with the old
-// and new lists. Removing the notifyAdvertisedLocked call from setLocked makes
-// it time out.
+// TestConfigNotificationSetAdvertised checks that a Set on a listen-group key
+// notifies the advertised-address subscribers with the old and new lists.
 func TestConfigNotificationSetAdvertised(t *testing.T) {
 	c, _ := newNCCore(t, "broker:\n  listen: 127.0.0.1:7777\n", nil)
 	changes := make(chan ncAdvEvent, 4)
@@ -195,9 +182,8 @@ func TestConfigNotificationSetAdvertised(t *testing.T) {
 	ncRequireAddrList(t, event.new, []AdvertisedAddr{{Kind: AdvertisedKindDirect, Addr: "127.0.0.1:8888"}}, "notification new list")
 }
 
-// TestConfigNotificationSetUnrelatedKeyDoesNotNotifyAdvertised makes the
-// notification conditional: a Set outside the address group owns no new list
-// and must not notify. Notifying unconditionally fails the empty-channel check.
+// TestConfigNotificationSetUnrelatedKeyDoesNotNotifyAdvertised checks that a Set
+// outside the address group sends no advertised-address notification.
 func TestConfigNotificationSetUnrelatedKeyDoesNotNotifyAdvertised(t *testing.T) {
 	c, _ := newNCCore(t, "broker:\n  listen: 127.0.0.1:7777\n", nil)
 	changes := make(chan ncAdvEvent, 4)
@@ -214,9 +200,7 @@ func TestConfigNotificationSetUnrelatedKeyDoesNotNotifyAdvertised(t *testing.T) 
 }
 
 // TestConfigNotificationSetListenNotifiesDefaultAlias checks that a listen
-// change leaves the default alias alone, because the alias does not depend on
-// the listener. An explicit alias stays put and produces no notification
-// either.
+// change sends no alias notification for a derived or an explicit alias.
 func TestConfigNotificationSetListenNotifiesDefaultAlias(t *testing.T) {
 	t.Run("default alias does not follow the listen port", func(t *testing.T) {
 		c, _ := newNCCore(t, "broker:\n  listen: 127.0.0.1:7777\n", nil)
@@ -227,9 +211,9 @@ func TestConfigNotificationSetListenNotifiesDefaultAlias(t *testing.T) {
 
 		ncSet(t, c, "broker.listen", stringValue("127.0.0.1:8888"))
 
-		// The advertised notification is enqueued after the alias one in
-		// setLocked, so receiving it proves a stray alias notification would
-		// already have been delivered.
+		// The advertised notification is enqueued after the alias one, so
+		// receiving it proves a stray alias notification would already have
+		// been delivered.
 		ncWaitAdvertised(t, advertised)
 		select {
 		case event := <-alias:
@@ -247,9 +231,9 @@ func TestConfigNotificationSetListenNotifiesDefaultAlias(t *testing.T) {
 
 		ncSet(t, c, "broker.listen", stringValue("127.0.0.1:8888"))
 
-		// The advertised notification is enqueued after the alias one in
-		// setLocked, so receiving it proves a stray alias notification would
-		// already have been delivered.
+		// The advertised notification is enqueued after the alias one, so
+		// receiving it proves a stray alias notification would already have
+		// been delivered.
 		ncWaitAdvertised(t, advertised)
 		select {
 		case event := <-alias:
@@ -259,9 +243,8 @@ func TestConfigNotificationSetListenNotifiesDefaultAlias(t *testing.T) {
 	})
 }
 
-// TestConfigNotificationReloadAdvertised checks the reload path's
-// advertised-address notification. Removing the notifyAdvertisedLocked call
-// from reloadLocked makes it time out.
+// TestConfigNotificationReloadAdvertised checks that an adopted reload of a
+// listen-group key notifies the advertised-address subscribers.
 func TestConfigNotificationReloadAdvertised(t *testing.T) {
 	c, path := newNCCore(t, "broker:\n  listen: 127.0.0.1:7777\n", nil)
 	changes := make(chan ncAdvEvent, 4)
@@ -275,9 +258,8 @@ func TestConfigNotificationReloadAdvertised(t *testing.T) {
 	ncRequireAddrList(t, event.new, []AdvertisedAddr{{Kind: AdvertisedKindDirect, Addr: "127.0.0.1:8888"}}, "notification new list")
 }
 
-// TestConfigNotificationReloadKey checks that an adopted reloaded value
-// notifies its key subscribers. Removing the notifyKeyLocked call from the
-// adoption loop makes it time out.
+// TestConfigNotificationReloadKey checks that an adopted reloaded value notifies
+// its key subscribers.
 func TestConfigNotificationReloadKey(t *testing.T) {
 	c, path := newNCCore(t, "broker:\n  listen: 127.0.0.1:7777\n  public: false\n", nil)
 	public := make(chan ncKeyEvent, 4)
@@ -292,9 +274,8 @@ func TestConfigNotificationReloadKey(t *testing.T) {
 	}
 }
 
-// TestConfigNotificationReloadUnchangedIsSilent changes the file without
-// changing any value and checks that neither a key nor an address notification
-// is queued. A reload that notifies whatever it read fails this.
+// TestConfigNotificationReloadUnchangedIsSilent checks that a reload changing no
+// value notifies neither keys nor advertised addresses.
 func TestConfigNotificationReloadUnchangedIsSilent(t *testing.T) {
 	c, path := newNCCore(t, "broker:\n  listen: 127.0.0.1:7777\n  public: false\n", nil)
 	public := make(chan ncKeyEvent, 4)
@@ -318,10 +299,8 @@ func TestConfigNotificationReloadUnchangedIsSilent(t *testing.T) {
 	}
 }
 
-// TestConfigNotificationReevaluateAdvertised covers the periodic
-// re-enumeration: a changed list is notified, an unchanged one is not. Dropping
-// the sameAddresses guard makes the empty-channel case fail; dropping the
-// notification makes the last case time out.
+// TestConfigNotificationReevaluateAdvertised checks that periodic
+// re-enumeration notifies a changed list and not an unchanged one.
 func TestConfigNotificationReevaluateAdvertised(t *testing.T) {
 	routes := &ncRoutes{}
 	routes.set(ncAddr(t, "192.0.2.10"))

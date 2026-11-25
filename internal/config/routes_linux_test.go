@@ -12,10 +12,6 @@ import (
 	"testing"
 )
 
-// procNetRouteFixture covers four default-route shapes: two with a gateway
-// and different metrics (eth0, eth1), a device-only one with a worse metric
-// (eth2), and one that carries RTF_GATEWAY but is not up (eth3). eth4 is not a
-// default route.
 const procNetRouteFixture = `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
 eth0	00000000	0100000A	0003	0	0	100	00000000	0	0	0
 eth1	00000000	0100000A	0003	0	0	10	00000000	0	0	0
@@ -24,14 +20,13 @@ eth3	00000000	0100000A	0002	0	0	1	00000000	0	0	0
 eth4	00480C0A	00000000	0001	0	0	0	00FFFFFF	0	0	0
 `
 
-// procNetRouteDeviceOnlyFixture is the table `ip route add default dev wg0`
-// produces: the default route names only a device, so its flags carry RTF_UP
-// but not RTF_GATEWAY. It carries the lowest metric and must be selected.
 const procNetRouteDeviceOnlyFixture = `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
 eth0	00000000	0100000A	0003	0	0	10	00000000	0	0	0
 wg0	00000000	00000000	0001	0	0	5	00000000	0	0	0
 `
 
+// TestParseProcNetRoutePicksLowestMetric checks that the default route with the
+// lowest metric is chosen.
 func TestParseProcNetRoutePicksLowestMetric(t *testing.T) {
 	iface, ok, err := parseProcNetRoute([]byte(procNetRouteFixture))
 	if err != nil {
@@ -45,6 +40,8 @@ func TestParseProcNetRoutePicksLowestMetric(t *testing.T) {
 	}
 }
 
+// TestParseProcNetRouteTieKeepsFirstLine checks that equal-metric default
+// routes keep the earlier line.
 func TestParseProcNetRouteTieKeepsFirstLine(t *testing.T) {
 	data := `Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
 ethA 00000000 0100000A 0003 0 0 7 00000000 0 0 0
@@ -59,9 +56,8 @@ ethB 00000000 0100000A 0003 0 0 7 00000000 0 0 0
 	}
 }
 
-// TestREQBrokerConfig030_DeviceOnlyDefaultRoute is the C6 regression test: a
-// default route that names only a device counts even though it carries no
-// RTF_GATEWAY flag. It has the lowest metric here, so it must win.
+// TestREQBrokerConfig030_DeviceOnlyDefaultRoute checks that a default route
+// naming only a device counts even without the gateway flag.
 func TestREQBrokerConfig030_DeviceOnlyDefaultRoute(t *testing.T) {
 	iface, ok, err := parseProcNetRoute([]byte(procNetRouteDeviceOnlyFixture))
 	if err != nil {
@@ -72,8 +68,8 @@ func TestREQBrokerConfig030_DeviceOnlyDefaultRoute(t *testing.T) {
 	}
 }
 
-// TestParseProcNetRouteRequiresUp keeps a default route that is not up out of
-// the result: dropping RTF_GATEWAY must not mean accepting any flags value.
+// TestParseProcNetRouteRequiresUp checks that a default route without RTF_UP is
+// not selected.
 func TestParseProcNetRouteRequiresUp(t *testing.T) {
 	data := `Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
 eth0 00000000 0100000A 0002 0 0 1 00000000 0 0 0
@@ -87,6 +83,8 @@ eth0 00000000 0100000A 0002 0 0 1 00000000 0 0 0
 	}
 }
 
+// TestParseProcNetRouteWithoutDefault checks that a route table without a
+// default entry reports none.
 func TestParseProcNetRouteWithoutDefault(t *testing.T) {
 	data := `Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT
 eth0 00480C0A 00000000 0001 0 0 0 00FFFFFF 0 0 0
@@ -100,6 +98,8 @@ eth0 00480C0A 00000000 0001 0 0 0 00FFFFFF 0 0 0
 	}
 }
 
+// TestParseProcNetRouteRejectsMalformedLine checks that a short route line is
+// an error.
 func TestParseProcNetRouteRejectsMalformedLine(t *testing.T) {
 	data := "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\neth0 00000000\n"
 	if _, _, err := parseProcNetRoute([]byte(data)); err == nil {
@@ -107,6 +107,8 @@ func TestParseProcNetRouteRejectsMalformedLine(t *testing.T) {
 	}
 }
 
+// TestParseProcNetIPv6RoutePicksLowestMetric checks that the default IPv6 route
+// with the lowest metric is chosen.
 func TestParseProcNetIPv6RoutePicksLowestMetric(t *testing.T) {
 	zero := strings.Repeat("0", 32)
 	data := strings.Join([]string{
@@ -122,12 +124,16 @@ func TestParseProcNetIPv6RoutePicksLowestMetric(t *testing.T) {
 	}
 }
 
+// TestParseProcNetIPv6RouteRejectsMalformedLine checks that a short IPv6 route
+// line is an error.
 func TestParseProcNetIPv6RouteRejectsMalformedLine(t *testing.T) {
 	if _, _, err := parseProcNetIPv6Route([]byte("abcd\n")); err == nil {
 		t.Fatal("malformed line was accepted")
 	}
 }
 
+// TestParseIfInet6 checks that if_inet6 columns are parsed into address, scope,
+// flags and interface.
 func TestParseIfInet6(t *testing.T) {
 	data := "20010db8000000000000000000000020 02 40 00 01 eth0\n"
 	entries, err := parseIfInet6([]byte(data))
@@ -146,9 +152,9 @@ func TestParseIfInet6(t *testing.T) {
 	}
 }
 
-// TestREQBrokerConfig030_LinuxDefaultRouteEnumeration drives the Linux
-// enumerator with fixed proc files and fixed interface addresses, so it never
-// touches the host network.
+// TestREQBrokerConfig030_LinuxDefaultRouteEnumeration checks that the Linux
+// enumerator returns the default interface's addresses from fixed proc files
+// and interface addresses.
 func TestREQBrokerConfig030_LinuxDefaultRouteEnumeration(t *testing.T) {
 	zero := strings.Repeat("0", 32)
 	files := map[string]string{
@@ -200,9 +206,8 @@ func TestREQBrokerConfig030_LinuxDefaultRouteEnumeration(t *testing.T) {
 	}
 }
 
-// TestDefaultRouteAddressesDeviceOnlyDefaultRoute drives the full Linux
-// enumerator with a device-only default route and checks that its interface's
-// address is returned.
+// TestDefaultRouteAddressesDeviceOnlyDefaultRoute checks that a device-only
+// default route returns its interface's address.
 func TestDefaultRouteAddressesDeviceOnlyDefaultRoute(t *testing.T) {
 	readFile := func(name string) ([]byte, error) {
 		if name == "/proc/net/route" {
@@ -228,6 +233,8 @@ func TestDefaultRouteAddressesDeviceOnlyDefaultRoute(t *testing.T) {
 	}
 }
 
+// TestDefaultRouteAddressesMissingFileIsError checks that a missing
+// /proc/net/route is an error.
 func TestDefaultRouteAddressesMissingFileIsError(t *testing.T) {
 	readFile := func(string) ([]byte, error) { return nil, errors.New("missing") }
 	if _, err := defaultRouteAddressesFrom(readFile, nil); err == nil {
@@ -235,10 +242,9 @@ func TestDefaultRouteAddressesMissingFileIsError(t *testing.T) {
 	}
 }
 
-// TestDefaultRouteAddressesMissingIPv6FileIsEmptyIPv6 pins the behavior on a
-// host with IPv6 disabled: /proc/net/ipv6_route does not exist, which means
-// there is no default IPv6 route rather than a startup failure. The IPv4 part
-// is still enumerated and the IPv6 part is empty.
+// TestDefaultRouteAddressesMissingIPv6FileIsEmptyIPv6 checks that a missing
+// /proc/net/ipv6_route leaves the IPv6 part empty while IPv4 is still
+// enumerated.
 func TestDefaultRouteAddressesMissingIPv6FileIsEmptyIPv6(t *testing.T) {
 	readFile := func(name string) ([]byte, error) {
 		if name == "/proc/net/route" {
@@ -269,15 +275,14 @@ func TestDefaultRouteAddressesMissingIPv6FileIsEmptyIPv6(t *testing.T) {
 	}
 }
 
-// TestDefaultRouteAddressesNoDefaultRouteIsEmpty pins the host-independent
-// "no default route" rule for both families: a route table without a default
-// entry yields an empty list and no error, and no interface is queried.
+// TestDefaultRouteAddressesNoDefaultRouteIsEmpty checks that a route table
+// without a default entry yields no addresses and queries no interface.
 func TestDefaultRouteAddressesNoDefaultRouteIsEmpty(t *testing.T) {
 	files := map[string]string{
 		"/proc/net/route": `Iface	Destination	Gateway 	Flags	RefCnt	Use	Metric	Mask		MTU	Window	IRTT
 eth0	00480C0A	00000000	0001	0	0	0	00FFFFFF	0	0	0
 `,
-		// A non-default IPv6 route: a nonzero destination, so it is skipped.
+		// A non-default IPv6 route: a nonzero destination.
 		"/proc/net/ipv6_route": "20010db8000000000000000000000000 40 00000000000000000000000000000000 00 00000000000000000000000000000000 00000100 00000001 00000000 00000001 eth0\n",
 	}
 	readFile := func(name string) ([]byte, error) {
@@ -300,8 +305,8 @@ eth0	00480C0A	00000000	0001	0	0	0	00FFFFFF	0	0	0
 	}
 }
 
-// TestDefaultRouteAddressesIPv6ReadErrorIsError keeps a real read failure (for
-// example a permission error) fatal; only a missing file means "no IPv6".
+// TestDefaultRouteAddressesIPv6ReadErrorIsError checks that an IPv6 route file
+// read error is returned as an error.
 func TestDefaultRouteAddressesIPv6ReadErrorIsError(t *testing.T) {
 	readFile := func(name string) ([]byte, error) {
 		if name == "/proc/net/route" {
@@ -316,10 +321,7 @@ func TestDefaultRouteAddressesIPv6ReadErrorIsError(t *testing.T) {
 }
 
 // TestSmokeRealDefaultRouteAddresses calls the production enumerator against
-// this host's real routing table. It only asserts that enumeration succeeds.
-// CI runs it on Linux, so a wrong /proc path, a broken parser or a broken
-// interface lookup fails here even though every other test injects its own
-// readers.
+// this host's real routing table and asserts only that enumeration succeeds.
 func TestSmokeRealDefaultRouteAddresses(t *testing.T) {
 	if _, err := defaultRouteAddresses(); err != nil {
 		t.Fatalf("defaultRouteAddresses() error = %v", err)

@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestTestRuntimeRoot checks that the test runtime root places root under
+// "root" and other accounts under their euid.
 func TestTestRuntimeRoot(t *testing.T) {
 	if got, want := testRuntimeRoot("/r", 1000), "/r/1000"; got != want {
 		t.Errorf("testRuntimeRoot(%q, 1000) = %q, want %q", "/r", got, want)
@@ -17,6 +19,8 @@ func TestTestRuntimeRoot(t *testing.T) {
 	}
 }
 
+// TestTestEnvHooksInstalled checks that the environment hooks redirect the
+// runtime directory and home directory when the selectors are set.
 func TestTestEnvHooksInstalled(t *testing.T) {
 	root := os.Getenv("PEERS_TEST_RUNTIME_ROOT")
 	home := os.Getenv("PEERS_TEST_HOME")

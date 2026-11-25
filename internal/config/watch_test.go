@@ -11,25 +11,16 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
-// eventTimeout is the package-wide fallback for a wait on an event that is
-// expected to arrive but that the test cannot force, including a real fsnotify
-// delivery. It only decides how long a wait that will never complete takes to
-// fail: the success path selects on the event itself and never spends this
-// time, so a larger value costs nothing. Thirty seconds is far above the worst
-// normal latency under load; it is not a claim that an event should take that
-// long.
+// eventTimeout bounds a wait on an event the test cannot force; it only decides
+// how long a wait that will never complete takes to fail, since the success
+// path selects on the event itself.
 const eventTimeout = 30 * time.Second
 
-// watchTestRoutes is the default address source for test cores: it reports no
-// default-route addresses, so a test that is not about route parsing never
-// reads the host's real routing table. Tests that need addresses pass their own
-// source explicitly.
+// watchTestRoutes reports no default-route addresses, so a test not about routes
+// never reads the host's routing table.
 type watchTestRoutes struct{}
 
 func (watchTestRoutes) DefaultRouteAddresses() ([]netip.Addr, error) { return nil, nil }
-
-// The helper types are kept unique to this file so the parallel areas can add
-// their own without collisions.
 
 func newWatchCore(t *testing.T, body string, background bool, routes addressSource) (*core, string) {
 	t.Helper()
@@ -90,6 +81,8 @@ func countEvent(t *testing.T, c *core, kind EventKind, key string) int {
 	return n
 }
 
+// TestConfigWatchFallbackRescan checks that rescanOnce adopts a changed alias and
+// records one config_file_changed event.
 func TestConfigWatchFallbackRescan(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	writeConfigBody(t, path, "broker:\n  alias: new\n")
@@ -102,6 +95,8 @@ func TestConfigWatchFallbackRescan(t *testing.T) {
 	}
 }
 
+// TestConfigWatchRenameRecreate checks that a rename over the configuration file
+// is adopted.
 func TestConfigWatchRenameRecreate(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	tmp := filepath.Join(filepath.Dir(path), "tmp-config")
@@ -115,6 +110,8 @@ func TestConfigWatchRenameRecreate(t *testing.T) {
 	}
 }
 
+// TestConfigWatchHandleFSEvent checks that handleFSEvent reloads for the
+// configuration file and ignores events for another file.
 func TestConfigWatchHandleFSEvent(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	writeConfigBody(t, path, "broker:\n  alias: event\n")
@@ -123,7 +120,6 @@ func TestConfigWatchHandleFSEvent(t *testing.T) {
 	if got := aliasOf(t, c); got != "event" {
 		t.Fatalf("alias = %q, want event", got)
 	}
-	// An event for another file must be ignored.
 	writeConfigBody(t, path, "broker:\n  alias: ignored\n")
 	w.handleFSEvent(fsnotify.Event{Name: filepath.Join(filepath.Dir(path), "other.yaml"), Op: fsnotify.Write})
 	if got := aliasOf(t, c); got != "event" {
@@ -131,6 +127,8 @@ func TestConfigWatchHandleFSEvent(t *testing.T) {
 	}
 }
 
+// TestConfigWatchSelfWriteIsNotReloaded checks that the file written by Set is
+// not adopted again as an external change.
 func TestConfigWatchSelfWriteIsNotReloaded(t *testing.T) {
 	c, _ := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	c.mu.Lock()
@@ -152,9 +150,8 @@ func TestConfigWatchSelfWriteIsNotReloaded(t *testing.T) {
 	}
 }
 
-// fakeWatchTimer is the debounce timer handed to the watcher in the debounce
-// test. C fires only when the test calls fire, so the test decides when the
-// quiet period ends instead of waiting for real time.
+// fakeWatchTimer is a debounce timer whose channel fires only when the test calls
+// fire.
 type fakeWatchTimer struct {
 	c chan time.Time
 }
@@ -171,10 +168,8 @@ func (t *fakeWatchTimer) Reset(time.Duration) bool { return true }
 
 func (t *fakeWatchTimer) fire() { t.c <- time.Now() }
 
-// TestConfigWatchDebounceDelaysReload drives a real filesystem event into the
-// watcher and a fake debounce timer. The reload must not run while the timer is
-// armed and must run once it fires, so a watcher that reloads on the event
-// without waiting for the quiet period fails.
+// TestConfigWatchDebounceDelaysReload checks that a file event reloads only after
+// the fake debounce timer fires.
 func TestConfigWatchDebounceDelaysReload(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	c.mu.Lock()
@@ -246,8 +241,8 @@ func TestConfigWatchDebounceDelaysReload(t *testing.T) {
 	}
 }
 
-// TestConfigWatchFSNotifySmoke keeps one test on the real fsnotify path. The
-// rest drive handleFSEvent or rescanOnce directly.
+// TestConfigWatchFSNotifySmoke checks that a real fsnotify event reloads the
+// configuration.
 func TestConfigWatchFSNotifySmoke(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", true, watchTestRoutes{})
 	if c.watch == nil {

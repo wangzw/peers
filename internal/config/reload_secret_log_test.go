@@ -8,9 +8,8 @@ import (
 	"time"
 )
 
-// TestConfigReloadInvalidStaticKeyDoesNotLeakToLog checks the reload path for
-// the secret key: the rejection is logged, the previous key is kept, no change
-// is recorded, and the value read from the file never appears in the log.
+// TestConfigReloadInvalidStaticKeyDoesNotLeakToLog checks that a rejected static
+// key keeps the old value, records no change and never appears in the log.
 func TestConfigReloadInvalidStaticKeyDoesNotLeakToLog(t *testing.T) {
 	c, path := newNCCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", nil)
 	var logs bytes.Buffer

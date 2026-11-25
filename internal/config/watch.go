@@ -8,13 +8,12 @@ import (
 )
 
 // defaultWatchDebounce is the quiet period after the last filesystem event
-// before the file is reread. A burst of writes from an editor therefore causes
-// one reload. startWatchWithDebounce lets tests shorten it.
+// before the file is reread, so a burst of writes causes one reload;
+// startWatchWithDebounce lets tests shorten it.
 const defaultWatchDebounce = 100 * time.Millisecond
 
-// watchTimer is the part of time.Timer the debounce uses. The interface lets a
-// test supply a fake timer and observe the quiet period without waiting for
-// real time.
+// watchTimer is the part of time.Timer the debounce uses; a test can supply a
+// fake timer and observe the quiet period without real time.
 type watchTimer interface {
 	C() <-chan time.Time
 	Stop() bool
@@ -29,12 +28,12 @@ func (t realWatchTimer) Reset(d time.Duration) bool { return t.timer.Reset(d) }
 
 func newRealWatchTimer(d time.Duration) watchTimer { return realWatchTimer{time.NewTimer(d)} }
 
-// newWatchTimer builds the debounce timer. Production always uses
-// newRealWatchTimer; tests replace it to fire the debounce on command.
+// newWatchTimer builds the debounce timer; tests replace it to fire the
+// debounce on command.
 var newWatchTimer = newRealWatchTimer
 
-// newFSWatcher builds the filesystem watcher. Production always uses
-// fsnotify.NewWatcher; tests replace it to force the creation failure.
+// newFSWatcher builds the filesystem watcher; tests replace it to force the
+// creation failure.
 var newFSWatcher = fsnotify.NewWatcher
 
 type configWatcher struct {
@@ -49,10 +48,6 @@ func startWatch(c *core) (*configWatcher, error) {
 	return startWatchWithDebounce(c, defaultWatchDebounce)
 }
 
-// startWatchWithDebounce is startWatch with an injectable quiet period.
-// There is deliberately no periodic rescan: reloads are driven by filesystem
-// notifications alone, and Secret rereads the file before returning a value so
-// a missed notification cannot keep an old secret in use.
 func startWatchWithDebounce(c *core, debounce time.Duration) (*configWatcher, error) {
 	if c.noBackground {
 		return nil, nil

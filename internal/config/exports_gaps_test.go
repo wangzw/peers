@@ -12,10 +12,9 @@ import (
 	"testing"
 )
 
-// REQ-broker-pairing-028: Hostname is the exported entry point that names the
-// host in pairing output. It reads the loaded instance's hostname source when
-// there is one, falls back to the process hostname otherwise, and turns a read
-// failure into an empty string plus a log entry.
+// TestREQBrokerPairing028_HostnameExportedEntry checks that Hostname uses the
+// loaded instance's source, falls back to the process hostname and reports a
+// read failure as an empty string with a log entry.
 func TestREQBrokerPairing028_HostnameExportedEntry(t *testing.T) {
 	t.Run("loaded instance uses its own source", func(t *testing.T) {
 		c := newCore()
@@ -60,17 +59,15 @@ func TestREQBrokerPairing028_HostnameExportedEntry(t *testing.T) {
 	})
 }
 
-// REQ-broker-config-013 and REQ-broker-config-021: CheckRuntimeDir and
-// AccountLock are the exported entry points the broker uses before Load. They
-// create the account runtime directory, enforce its owner and permission
-// rules, and AccountLock always reports the account-scoped lock path.
+// TestREQBrokerConfig013_RuntimeDirExportedEntries checks that CheckRuntimeDir
+// creates the current account's runtime directory with a compliant owner and
+// permission and that AccountLock returns the lock path beneath it.
 func TestREQBrokerConfig013_RuntimeDirExportedEntries(t *testing.T) {
 	euid := os.Geteuid()
 	runtimeDir := runtimeDirPath(euid)
 
-	// The runtime directory is fixed per account rather than rooted in the
-	// test's temporary directory. Do not remove it afterwards: another test
-	// process can use the same account directory, and creation is idempotent.
+	// The runtime directory is shared per account; do not remove it after the
+	// test.
 	if err := CheckRuntimeDir(); err != nil {
 		t.Fatalf("CheckRuntimeDir() error = %v", err)
 	}
@@ -91,15 +88,13 @@ func TestREQBrokerConfig013_RuntimeDirExportedEntries(t *testing.T) {
 	if got, want := AccountLock(), filepath.Join(runtimeDir, "broker.lock"); got != want {
 		t.Fatalf("AccountLock() = %q, want %q", got, want)
 	}
-	// AccountLock remembers a runtime-directory failure for the next Load.
-	// The directory it has just ensured is valid, so nothing may be pending.
 	if err := takeAccountInitErr(); err != nil {
 		t.Fatalf("AccountLock recorded a startup error: %v", err)
 	}
 }
 
-// prepareDataDirs is reached through Load rather than through an exported
-// entry, but its ownership and mode rules can run against temporary roots.
+// TestPrepareDataDirsUnderTemporaryRoots checks that prepareDataDirs creates a
+// private data directory and refuses the system form for a non-root account.
 func TestPrepareDataDirsUnderTemporaryRoots(t *testing.T) {
 	euid := os.Geteuid()
 	base := t.TempDir()
@@ -132,9 +127,8 @@ func TestPrepareDataDirsUnderTemporaryRoots(t *testing.T) {
 	}
 }
 
-// KindUnset is the zero value of Value, not the type of a configuration value.
-// Every key maps to a concrete kind, so a value taken from the configuration
-// never carries KindUnset.
+// TestConfigValueKindsAreConcrete checks that every key in the table maps to a
+// concrete kind, never KindUnset.
 func TestConfigValueKindsAreConcrete(t *testing.T) {
 	concrete := map[ValueKind]bool{
 		KindString:     true,

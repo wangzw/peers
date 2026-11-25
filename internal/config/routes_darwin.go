@@ -10,13 +10,9 @@ import (
 	"strings"
 )
 
-// defaultRouteAddresses returns the addresses of the interfaces carrying the
-// default routes. IPv4 addresses come first, then IPv6 addresses; within a
-// family the addresses are sorted by value.
-//
-// macOS does not expose IFA_F_TEMPORARY through net.InterfaceAddrs, so the
-// addresses are read from ifconfig, whose IPv6 lines mark temporary
-// addresses with the "temporary" flag.
+// defaultRouteAddresses reads the addresses from ifconfig because macOS does
+// not expose IFA_F_TEMPORARY through net.InterfaceAddrs; ifconfig's IPv6 lines
+// mark temporary addresses with the "temporary" flag.
 func defaultRouteAddresses() ([]netip.Addr, error) {
 	return defaultRouteAddressesFrom(runCommand)
 }
@@ -27,9 +23,6 @@ func runCommand(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
 
-// defaultRouteAddressesFrom is the testable core of defaultRouteAddresses.
-// The command runner lets tests supply fixed route and ifconfig output
-// without running the real tools.
 func defaultRouteAddressesFrom(run commandRunner) ([]netip.Addr, error) {
 	var out []netip.Addr
 
@@ -70,20 +63,11 @@ func defaultRouteAddressesFrom(run commandRunner) ([]netip.Addr, error) {
 	return out, nil
 }
 
-// darwinDefaultInterface runs "route -n get [-inet6] default" and returns the
-// interface named on its "interface:" line. A missing default route is not an
-// error: ok is false in that case. The route tool reports a host without a
-// default route either with a "not in table" style message or, on some builds,
-// with a route description that carries no interface line; both mean "no
-// default route".
-//
-// The "not in table" message is recognized from the output regardless of the
-// exit status, because macOS is not consistent about it: an absent IPv6
-// default route prints "route: writing to routing socket: not in table" and
-// exits zero, while an absent IPv4 default route prints the same message with
-// a nonzero status. A command that could not run, that failed for any other
-// reason, or whose successful output does not describe a route at all, is an
-// error.
+// darwinDefaultInterface returns the interface named by "route -n get [-inet6]
+// default"; a missing default route yields ok false rather than an error, and
+// its "not in table" output is recognized regardless of exit status because
+// macOS exits zero for an absent IPv6 route and nonzero for an absent IPv4
+// route.
 func darwinDefaultInterface(run commandRunner, inet6 bool) (iface string, ok bool, err error) {
 	args := []string{"-n", "get"}
 	if inet6 {
@@ -100,9 +84,6 @@ func darwinDefaultInterface(run commandRunner, inet6 bool) (iface string, ok boo
 	return parseDarwinRouteInterface(out)
 }
 
-// darwinOutputSnippet formats raw command output for an error message. It
-// trims surrounding whitespace, truncates the result to a safe length, and
-// escapes line breaks so the whole message stays on one line in CI logs.
 func darwinOutputSnippet(out []byte) string {
 	const maxBytes = 500
 	s := strings.TrimSpace(string(out))
@@ -125,10 +106,8 @@ func isDarwinNoRoute(out []byte) bool {
 }
 
 // parseDarwinRouteInterface returns the interface named by a route command's
-// output. Output that names the route and destination but no interface line
-// means the host has no default route, which is not an error. Output that does
-// not describe a route at all is garbage, so it is an error rather than a
-// silent empty result. An interface line with no value is malformed.
+// output; output that names the route but no interface means no default route,
+// while output that does not describe a route at all is an error.
 func parseDarwinRouteInterface(out []byte) (string, bool, error) {
 	var iface string
 	sawRoute := false
@@ -157,9 +136,6 @@ func parseDarwinRouteInterface(out []byte) (string, bool, error) {
 	return iface, sawInterface, nil
 }
 
-// parseDarwinIfconfig extracts the IPv4 or IPv6 addresses from ifconfig
-// output. IPv4 link-local addresses, IPv6 link-local addresses and IPv6
-// temporary addresses are excluded.
 func parseDarwinIfconfig(out []byte, inet6 bool) ([]netip.Addr, error) {
 	var addrs []netip.Addr
 	for i, raw := range strings.Split(string(out), "\n") {

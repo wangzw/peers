@@ -9,10 +9,8 @@ import (
 	"testing"
 )
 
-// systemWatchCore loads a user-mode core under a temporary home, then switches
-// it to the system deployment mode so the privileged-port rules apply. The
-// paths stay under the temporary home. The permission seam states whether the
-// file may be written only by root.
+// systemWatchCore loads a core under a temporary home and switches it to system
+// mode, with configFileRootOnly returning rootOnly.
 func systemWatchCore(t *testing.T, body string, rootOnly bool) (*core, string) {
 	t.Helper()
 	c, path := newWatchCore(t, body, false, nil)
@@ -23,9 +21,9 @@ func systemWatchCore(t *testing.T, body string, rootOnly bool) (*core, string) {
 	return c, path
 }
 
-// TestSetConfigLowPortRequiresRoot covers the Set refusal for a privileged
-// port. Only a root caller may set one, and only while the configuration file
-// cannot be written by another account.
+// TestSetConfigLowPortRequiresRoot checks that Set accepts a privileged port
+// only from a known root caller and only while the file is writable by root
+// alone.
 func TestSetConfigLowPortRequiresRoot(t *testing.T) {
 	const body = "broker:\n  listen: 127.0.0.1:7777\n"
 
@@ -96,8 +94,6 @@ func TestSetConfigLowPortRequiresRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// UID 0 without UIDKnown is not proof of root: an Actor that never
-		// established a caller identity must not pass the root-only rule.
 		_, err = c.setLocked(Actor{UID: 0}, "broker.listen", stringValue(":80"))
 		if !errors.Is(err, ErrLowPortDenied) {
 			t.Fatalf("setLocked error = %v, want ErrLowPortDenied", err)
@@ -123,10 +119,9 @@ func TestSetConfigLowPortRequiresRoot(t *testing.T) {
 	})
 }
 
-// TestReloadLowPortRequiresRootOnlyFile covers the reload refusal: a
-// privileged port written into a file that group or other accounts can write
-// is not adopted, the old value stays, a warning is logged, and config_rejected
-// is audited.
+// TestReloadLowPortRequiresRootOnlyFile checks that a reloaded privileged port
+// in a file writable by another account is not adopted and is audited as
+// config_rejected.
 func TestReloadLowPortRequiresRootOnlyFile(t *testing.T) {
 	c, path := systemWatchCore(t, "broker:\n  listen: 127.0.0.1:7777\n", false)
 	var logs strings.Builder
@@ -154,8 +149,8 @@ func TestReloadLowPortRequiresRootOnlyFile(t *testing.T) {
 	}
 }
 
-// TestReloadLowPortAdoptedWhenFileRootOnly covers the allowed reload: with a
-// file only root can write, the new privileged port is adopted normally.
+// TestReloadLowPortAdoptedWhenFileRootOnly checks that a reloaded privileged
+// port is adopted when only root can write the file.
 func TestReloadLowPortAdoptedWhenFileRootOnly(t *testing.T) {
 	c, path := systemWatchCore(t, "broker:\n  listen: 127.0.0.1:7777\n", true)
 
@@ -176,9 +171,8 @@ func TestReloadLowPortAdoptedWhenFileRootOnly(t *testing.T) {
 	}
 }
 
-// TestReloadLowPortUserModeUnaffected covers the user Broker: the rule
-// belongs to the system deployment, so a user reload adopts the value
-// without consulting the file permission rule.
+// TestReloadLowPortUserModeUnaffected checks that a user Broker reload adopts a
+// privileged port without consulting the file permission rule.
 func TestReloadLowPortUserModeUnaffected(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  listen: 127.0.0.1:7777\n", false, nil)
 	c.mu.Lock()
@@ -193,8 +187,8 @@ func TestReloadLowPortUserModeUnaffected(t *testing.T) {
 	}
 }
 
-// systemLoadCore builds a core whose system paths live under home. It is used
-// to drive Load in ModeSystem without touching /etc, /var or /run.
+// systemLoadCore builds a core whose system paths live under home, so Load in
+// ModeSystem touches no real system directory.
 func systemLoadCore(t *testing.T, home string, rootOnly bool) (*core, string) {
 	t.Helper()
 	c := newLoadTestCore(t, home, nil)
@@ -215,10 +209,8 @@ func systemLoadCore(t *testing.T, home string, rootOnly bool) (*core, string) {
 	return c, configFile
 }
 
-// TestLoadLetsLowPortThroughToTheBindStep covers the startup split: Load
-// accepts a privileged port even when the configuration file is writable by
-// another account, and CheckLowPort refuses it when the Broker is about to
-// bind.
+// TestLoadLetsLowPortThroughToTheBindStep checks that Load accepts a privileged
+// port and checkLowPortAtStartup refuses it before the bind.
 func TestLoadLetsLowPortThroughToTheBindStep(t *testing.T) {
 	home := t.TempDir()
 	c, path := systemLoadCore(t, home, false)
@@ -238,8 +230,8 @@ func TestLoadLetsLowPortThroughToTheBindStep(t *testing.T) {
 	}
 }
 
-// TestCheckLowPortReadsTheLoadedCore covers the exported entry point the
-// broker calls in its listen step.
+// TestCheckLowPortReadsTheLoadedCore checks that CheckLowPort reports
+// ErrNotLoaded before Load and the loaded core's refusal after it.
 func TestCheckLowPortReadsTheLoadedCore(t *testing.T) {
 	if err := CheckLowPort(); !errors.Is(err, ErrNotLoaded) {
 		t.Fatalf("CheckLowPort before Load = %v, want ErrNotLoaded", err)
@@ -268,9 +260,8 @@ func TestCheckLowPortReadsTheLoadedCore(t *testing.T) {
 	}
 }
 
-// TestLoadLowPortSucceedsWhenFileRootOnly covers the allowed startup: the same
-// configuration loads and the bind-step check accepts it when the file can be
-// written only by root.
+// TestLoadLowPortSucceedsWhenFileRootOnly checks that Load and the bind-step
+// check accept a privileged port when only root can write the file.
 func TestLoadLowPortSucceedsWhenFileRootOnly(t *testing.T) {
 	home := t.TempDir()
 	c, path := systemLoadCore(t, home, true)

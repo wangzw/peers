@@ -9,10 +9,9 @@ import (
 	"testing"
 )
 
-// TestSetListenKeepsDerivedAlias covers the case where broker.alias is not
-// configured: the default alias does not depend on the listen address, so a
-// listen change is accepted without consulting the broker.alias validators,
-// and the alias keeps its value.
+// TestSetListenKeepsDerivedAlias checks that a listen change is accepted
+// without consulting the broker.alias validators and leaves the derived alias
+// alone.
 func TestSetListenKeepsDerivedAlias(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  public: false\n", "")
 	installCoreForTest(t, c)
@@ -49,9 +48,8 @@ func TestSetListenKeepsDerivedAlias(t *testing.T) {
 	}
 }
 
-// TestReloadListenKeepsDerivedAlias covers the reload path: a file that changes
-// broker.listen adopts the new listener and leaves the default alias alone,
-// without consulting the broker.alias validators.
+// TestReloadListenKeepsDerivedAlias checks that a reloaded listen address leaves
+// the derived alias alone without consulting its validators.
 func TestReloadListenKeepsDerivedAlias(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  listen: \":17443\"\n", "")
 	installCoreForTest(t, c)
@@ -82,11 +80,8 @@ func TestReloadListenKeepsDerivedAlias(t *testing.T) {
 	}
 }
 
-// TestReloadRejectedDerivedAliasKeepsExplicitAlias covers the state left
-// behind when the file removes an explicit broker.alias and the derived value
-// is rejected. The old explicit alias stays in effect, so explicitAlias must
-// stay true too; otherwise a later broker.listen change would be treated as
-// deriving the alias and would overwrite the explicit one.
+// TestReloadRejectedDerivedAliasKeepsExplicitAlias checks that a rejected
+// derived alias keeps the old explicit alias and the explicit flag.
 func TestReloadRejectedDerivedAliasKeepsExplicitAlias(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  listen: \":17443\"\n  alias: \"hostB\"\n", "")
 	installCoreForTest(t, c)
@@ -116,11 +111,8 @@ func TestReloadRejectedDerivedAliasKeepsExplicitAlias(t *testing.T) {
 	}
 }
 
-// TestReloadExplicitAliasValidatesConfiguredValue covers the other reload
-// branch: the file configures broker.alias explicitly. The broker.alias
-// validators must see the new value there too; a rejection keeps the previous
-// alias and rolls the listen and advertise group back with it, as a rejected
-// derived alias does.
+// TestReloadExplicitAliasValidatesConfiguredValue checks that a configured alias
+// is validated and a rejection rolls back the alias and the listen group.
 func TestReloadExplicitAliasValidatesConfiguredValue(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  listen: \":17443\"\n", "")
 	installCoreForTest(t, c)
@@ -147,8 +139,7 @@ func TestReloadExplicitAliasValidatesConfiguredValue(t *testing.T) {
 	if got := aliasOf(t, c); got != "hostA.tester" {
 		t.Fatalf("broker.alias = %q after a rejected reload, want the old derived value hostA.tester", got)
 	}
-	// Keeping the old alias rolls the listen address group back with it, as the
-	// derived-alias path does.
+	// Keeping the old alias rolls the listen address group back with it.
 	if v, _ := Get("broker.listen"); v.String != ":17443" {
 		t.Fatalf("broker.listen = %q after a rejected reload, want the old value", v.String)
 	}

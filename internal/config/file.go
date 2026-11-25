@@ -23,29 +23,22 @@ type configDocument struct {
 	present  map[string]bool
 	invalid  map[string]error
 	exists   bool
-	// empty reports that the bytes held no YAML document at all: an empty
-	// file, one containing only whitespace and comments, or a document with no
-	// content. Load treats such a file as an empty configuration, but a reload
-	// must treat it as unparseable so a truncation window cannot reset every
-	// value to its default.
+	// empty marks a document with no configuration content: Load treats it as an
+	// empty configuration, while a reload treats it as unparseable and keeps the
+	// current values.
 	empty       bool
 	headComment string
-	// raw holds the exact bytes this document was parsed from, or the bytes a
-	// placeholder replacement produced. bytes returns it verbatim, so a Set
-	// that only uncomments an inactive example line changes no other byte. A
-	// node edit clears it and bytes re-encodes the document instead.
+	// raw holds the exact bytes the document was parsed from; bytes returns them
+	// verbatim when raw is set, so every path that edits a node must clear it
+	// first or the edit is never written.
 	raw []byte
-	// contentHash is the hash of exactly the bytes that were parsed into this
-	// document. Load copies it into core.lastFileHash, so the first reload
-	// comparison starts from the hash of the bytes these values came from.
-	// Reloads themselves hash the file on disk and compare core.lastFileHash;
-	// a document built by parseConfigFile during a reload leaves this field
+	// contentHash is the hash of the bytes parsed into this document, filled by
+	// readConfigFileFrom so a second read cannot see different content. A
+	// document built by parseConfigFile, such as on the reload path, leaves it
 	// zero.
 	contentHash [32]byte
 }
 
-// asEmpty records that data held no YAML document and returns the document
-// carrying its leading comment and the exact parsed bytes.
 func (d configDocument) asEmpty(data []byte) configDocument {
 	d.empty = true
 	d.headComment = leadingComment(data)
@@ -65,16 +58,8 @@ func emptyDocument() configDocument {
 	}
 }
 
-// maxConfigFileBytes is the largest configuration file, in bytes, that this
-// package reads. A configuration file can be written by a member of the admin
-// group for a system Broker, so the limit keeps an oversized file from
-// consuming arbitrary memory. The generated templates and the documented
-// examples are far smaller.
 const maxConfigFileBytes = 1 << 20
 
-// readConfigFileLimited reads path but never more than maxConfigFileBytes+1
-// bytes. A file one byte above the limit is refused, so its remaining bytes are
-// neither read nor parsed.
 func readConfigFileLimited(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -95,10 +80,8 @@ func readConfigFile(path string) (configDocument, error) {
 	return readConfigFileFrom(path, readConfigFileLimited)
 }
 
-// readConfigFileFrom reads the file through readFile exactly once, and records
-// the hash of the same bytes it parsed. A second read to hash the file could
-// see different content, leaving a stored hash that describes bytes the parsed
-// values never came from.
+// readConfigFileFrom reads the file exactly once and hashes the same bytes it
+// parsed, because a second read could see different content.
 func readConfigFileFrom(path string, readFile func(string) ([]byte, error)) (configDocument, error) {
 	data, err := readFile(path)
 	if err != nil {
@@ -109,9 +92,8 @@ func readConfigFileFrom(path string, readFile func(string) ([]byte, error)) (con
 		}
 		return configDocument{}, fmt.Errorf("cannot read %s: %w", path, err)
 	}
-	// The default reader applies this limit itself; the check also covers a
-	// reader supplied through the seam, so no path can hand an oversized file
-	// to the parser.
+	// The default reader applies the limit itself; this check also covers a
+	// reader supplied through the seam.
 	if len(data) > maxConfigFileBytes {
 		return configDocument{}, fmt.Errorf("cannot read %s: the file is larger than 1 MiB", path)
 	}
@@ -152,10 +134,8 @@ func parseConfigFile(data []byte) (configDocument, error) {
 	if root == nil || root.Kind == 0 {
 		return doc.asEmpty(data), nil
 	}
-	// checkStructure runs before the top-level kind check so a document whose
-	// first node is an alias is refused as an anchor or alias, not as a
-	// non-mapping. It walks the node tree only, so it never follows an alias
-	// pointer and cannot cycle or expand an alias exponentially.
+	// checkStructure must run before the top-level kind check, otherwise an alias
+	// document is reported as a non-mapping.
 	if err := checkStructure(root); err != nil {
 		return configDocument{}, err
 	}
@@ -204,20 +184,12 @@ func leadingComment(data []byte) string {
 	return string(data)
 }
 
-// maxConfigNesting is the deepest mapping and sequence nesting a configuration
-// file may use. A file one level deeper is refused, so an extremely deep
-// document cannot exhaust the stack. The templates and normal configurations
-// are far shallower.
 const maxConfigNesting = 32
 
 func checkStructure(n *yaml.Node) error {
 	return checkNodeStructure(n, 1)
 }
 
-// checkNodeStructure walks the node tree, rejecting anchors, aliases and
-// excessive nesting. It never follows an Alias pointer, so a self-referential
-// or exponentially expanding alias cannot run away: the first alias or anchored
-// node ends the walk with a parse error.
 func checkNodeStructure(n *yaml.Node, depth int) error {
 	if n == nil {
 		return errors.New("config file parse error: empty node")
@@ -273,10 +245,6 @@ func sectionAndLeaf(key string) (section, leaf string) {
 	return key, ""
 }
 
-// replacePlaceholderLine replaces the first line matching "^\s*#\s*<leaf>:"
-// followed by whitespace or the end of the line inside section with an active
-// "<leaf>: <value>" line, keeping the line's indentation and every other byte.
-// It returns false when no such line exists.
 func replacePlaceholderLine(data []byte, section, leaf string, spec *keySpec, v Value) ([]byte, bool) {
 	text, err := encodeValueText(spec, v)
 	if err != nil {
@@ -310,8 +278,6 @@ func replacePlaceholderLine(data []byte, section, leaf string, spec *keySpec, v 
 	return nil, false
 }
 
-// sectionHeaderIndent reports the indentation of a "section:" header line and
-// whether line is one.
 func sectionHeaderIndent(line, section string) (int, bool) {
 	indent := lineIndent(line)
 	rest := line[indent:]
@@ -329,8 +295,6 @@ func sectionHeaderIndent(line, section string) (int, bool) {
 	return indent, true
 }
 
-// placeholderIndent reports the indentation of a line matching
-// "^\s*#\s*<leaf>:<end or whitespace>" and whether line is one.
 func placeholderIndent(line, leaf string) (int, bool) {
 	indent := lineIndent(line)
 	rest := line[indent:]
@@ -352,7 +316,6 @@ func placeholderIndent(line, leaf string) (int, bool) {
 	return indent, true
 }
 
-// lineIndent returns the number of leading spaces and tabs in line.
 func lineIndent(line string) int {
 	i := 0
 	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
@@ -434,9 +397,6 @@ func (d *configDocument) setKey(key string, v Value) error {
 		return fmt.Errorf("%w: %s: top level is not a mapping", ErrInvalidValue, key)
 	}
 	section, leaf := sectionAndLeaf(key)
-	// A key that exists only as an inactive example line is replaced where
-	// that line stands, so the rest of the file stays byte-identical. The
-	// result is parsed back and checked before it is adopted.
 	if d.raw != nil {
 		if _, present := findKeyNode(d.root, key); !present {
 			if replaced, ok := replacePlaceholderLine(d.raw, section, leaf, spec, v); ok {
@@ -458,7 +418,6 @@ func (d *configDocument) setKey(key string, v Value) error {
 			}
 		}
 	}
-	// Any node edit below re-encodes the whole document.
 	d.raw = nil
 	m, ok := findSection(d.root, section)
 	if !ok {
@@ -525,11 +484,6 @@ func encodeValueNode(spec *keySpec, v Value) *yaml.Node {
 	}
 }
 
-// encodeValueText encodes v as the YAML text that follows "<leaf>: " in a
-// configuration file. Strings that YAML would read back as another type, such
-// as ":17443" or "0666", come back quoted, so parsing the text yields the same
-// Value. String lists are flow sequences, which both the file and SetConfig
-// accept.
 func encodeValueText(spec *keySpec, v Value) (string, error) {
 	var plain any
 	switch spec.Kind {
@@ -555,9 +509,8 @@ func encodeValueText(spec *keySpec, v Value) (string, error) {
 		return "", err
 	}
 	text := strings.TrimSuffix(string(data), "\n")
-	// A string value such as ":17443" is a legal plain YAML scalar, so the
-	// encoder leaves it unquoted. Quote it anyway: a value that starts with
-	// ':' reads like a port and should never depend on that subtlety.
+	// A string value starting with ':' is legal plain YAML but is quoted anyway,
+	// so it never reads like a port.
 	if (spec.Kind == keyString || spec.Kind == keySecret) && strings.HasPrefix(text, ":") {
 		node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v.String, Style: yaml.DoubleQuotedStyle}
 		data, err := yaml.Marshal(node)
@@ -606,7 +559,7 @@ func (d *configDocument) bytes() ([]byte, error) {
 	return out, nil
 }
 
-// verify parses the encoded bytes again, so a node edit can never produce an
+// verify parses the encoded bytes again so a node edit cannot produce an
 // invalid structure.
 func (d *configDocument) verify(data []byte) error {
 	back, err := parseConfigFile(data)
@@ -639,13 +592,6 @@ func valueEqual(a, b Value) bool {
 	return true
 }
 
-// configFileDirMode returns the mode for the directory holding the config
-// file when writeConfigFile has to create it. The deployment mode fixes the
-// directory mode independently of the file mode: a user Broker writes 0600
-// under a 0700 data directory, a system Broker writes 0600 under the
-// group-readable /etc/peers (0755). The file itself is 0600 in both modes,
-// because the Broker cannot know the administration group the installation
-// gives the file.
 func configFileDirMode(mode Mode) os.FileMode {
 	if mode == ModeSystem {
 		return 0o755
@@ -653,15 +599,12 @@ func configFileDirMode(mode Mode) os.FileMode {
 	return 0o700
 }
 
-// openConfigFileForWrite opens the configuration file. It is a seam: a real
-// test file cannot produce the create race or the mode failure.
+// openConfigFileForWrite is a seam tests replace to simulate the create race
+// and the mode failure.
 var openConfigFileForWrite = os.OpenFile
 
-// writeConfigFile rewrites path in place: existing ownership, group, mode and
-// ACLs stay in place because the same inode is reused. A new file is created
-// with mode 0600. O_NOFOLLOW makes a path that is a symbolic link fail instead
-// of truncating the link's target, which could be a file outside the
-// configuration directory.
+// writeConfigFile writes in place and opens with O_NOFOLLOW, so a path that is
+// a symbolic link fails instead of redirecting the write to its target.
 func writeConfigFile(path string, data []byte, mode Mode) error {
 	f, err := openConfigFileForWrite(path, os.O_RDWR|unix.O_NOFOLLOW, 0)
 	if err != nil {

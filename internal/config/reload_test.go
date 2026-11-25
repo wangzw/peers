@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// TestREQBrokerConfig017_ReloadKeepsInvalid checks that a value which parses
-// as the right YAML type but fails the key's own range check is not adopted
-// when the file changes. Reload must apply the same validateValue check as Set.
+// TestREQBrokerConfig017_ReloadKeepsInvalid checks that a reload keeps a value
+// failing the key's range check.
 func TestREQBrokerConfig017_ReloadKeepsInvalid(t *testing.T) {
 	c, path := newWatchCore(t, "pairing:\n  max_failures: 5\n", false, nil)
 
@@ -25,8 +24,8 @@ func TestREQBrokerConfig017_ReloadKeepsInvalid(t *testing.T) {
 	}
 }
 
-// TestREQBrokerConfig017_ReloadAdoptsValid checks the counterpart: a valid new
-// value passes the key's own check and is adopted with one audit record.
+// TestREQBrokerConfig017_ReloadAdoptsValid checks that a reload adopts a valid
+// new value and records one audit event.
 func TestREQBrokerConfig017_ReloadAdoptsValid(t *testing.T) {
 	c, path := newWatchCore(t, "pairing:\n  max_failures: 5\n", false, nil)
 
@@ -44,8 +43,8 @@ func TestREQBrokerConfig017_ReloadAdoptsValid(t *testing.T) {
 	}
 }
 
-// TestREQBrokerConfig017_ReloadKeepsInvalidAlias checks the alias path, which
-// reload handles separately from the generic per-key loop.
+// TestREQBrokerConfig017_ReloadKeepsInvalidAlias checks that a reload keeps the
+// previous alias when the file's value is invalid.
 func TestREQBrokerConfig017_ReloadKeepsInvalidAlias(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 
@@ -60,12 +59,9 @@ func TestREQBrokerConfig017_ReloadKeepsInvalidAlias(t *testing.T) {
 	}
 }
 
-// TestConfigReloadListenUpdatesEffectiveAddress checks that adopting a new
-// broker.listen also replaces the effective listen address. Reload used to
-// write the adopted value into the same map it compared against, so the
-// comparison saw no change, the effective address stayed at the old port, and
-// the advertised list kept the old port even though Get returned the new
-// value. The default alias does not depend on the listener, so it stays put.
+// TestConfigReloadListenUpdatesEffectiveAddress checks that a reloaded
+// broker.listen replaces the effective listen address and the advertised list,
+// while the default alias stays put.
 func TestConfigReloadListenUpdatesEffectiveAddress(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  listen: 127.0.0.1:7777\n", false, nil)
 
@@ -96,9 +92,9 @@ func TestConfigReloadListenUpdatesEffectiveAddress(t *testing.T) {
 	}
 }
 
-// recordingTicker is a ticker seam that records how often stop is called and
-// the interval it was created with. The channel is never written, so the
-// address goroutine blocks until the core is closed.
+// recordingTicker is a ticker seam that records how often Stop is called and the
+// interval it was created with; its channel is never written, so the address
+// goroutine blocks until the core is closed.
 type recordingTicker struct {
 	ch       chan time.Time
 	interval time.Duration
@@ -108,10 +104,9 @@ type recordingTicker struct {
 func (t *recordingTicker) C() <-chan time.Time { return t.ch }
 func (t *recordingTicker) Stop()               { t.stopped++ }
 
-// TestConfigReloadIntervalRestartsTicker checks that adopting a new
-// broker.address_check_interval replaces the periodic address ticker. The
-// reload compared the new value against the same map it had already written,
-// so the comparison was always equal and the ticker kept the old interval.
+// TestConfigReloadIntervalRestartsTicker checks that a reloaded
+// broker.address_check_interval restarts the address ticker with the new
+// interval.
 func TestConfigReloadIntervalRestartsTicker(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  address_check_interval: 1m\n", false, nil)
 
@@ -147,7 +142,6 @@ func TestConfigReloadIntervalRestartsTicker(t *testing.T) {
 	}
 }
 
-// advertisedAddrs returns the advertised addresses in string form.
 func advertisedAddrs(t *testing.T, c *core) []string {
 	t.Helper()
 	c.mu.Lock()

@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// probeRecord is one listener ProbeListen opened in a test. It records the
-// address the probe requested and whether the probe closed the listener.
 type probeRecord struct {
 	net.Listener
 	requested string
@@ -18,16 +16,9 @@ func (r *probeRecord) Close() error {
 	return r.Listener.Close()
 }
 
-// recordProbeListeners replaces the listener factory ProbeListen uses with one
-// that binds an ephemeral loopback port and records every listener it returns.
-// A test can then assert the probe closed each one.
-//
-// Nothing here re-binds a released port: the probe asks for a concrete address
-// (broker.listen rejects port zero), but the factory binds port zero itself and
-// records the requested address instead of binding it. Choosing the port first
-// and releasing it for the probe would leave the window this test exists to
-// avoid, in which another process takes the port and the probe fails for a
-// reason unrelated to leaving a listener behind.
+// recordProbeListeners replaces ProbeListen's listener factory with one that
+// binds an ephemeral loopback port and records each listener, so a test can
+// assert it was closed without ever re-binding a released port.
 func recordProbeListeners() (*[]*probeRecord, func()) {
 	prev := probeListenNet
 	var records []*probeRecord
@@ -43,8 +34,8 @@ func recordProbeListeners() (*[]*probeRecord, func()) {
 	return &records, func() { probeListenNet = prev }
 }
 
-// C4: the broker.listen validator only probes. ProbeListen must close the
-// listener it opened, so the port stays free for the real listener.
+// TestProbeListenLeavesNoListener checks that ProbeListen closes its listener,
+// rejects an occupied address and treats an empty address as not listening.
 func TestProbeListenLeavesNoListener(t *testing.T) {
 	const addr = "127.0.0.1:17445"
 	records, restore := recordProbeListeners()
@@ -85,9 +76,8 @@ func TestProbeListenLeavesNoListener(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-034: the broker.listen validator is a probe, so a
-// successful Set leaves the port free. Running Set twice probes twice, and the
-// file write that follows the probe finds no listener of ours holding the port.
+// TestREQBrokerConfig034_ListenValidatorLeavesPortFree checks that a successful
+// Set through the broker.listen probe leaves the port free.
 func TestREQBrokerConfig034_ListenValidatorLeavesPortFree(t *testing.T) {
 	c, _ := newValueCore(t, "broker:\n  listen: \":17443\"\n", "")
 	installCoreForTest(t, c)

@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// newLimitTestCore builds a core that resolves its configuration file under a
-// temporary home but does not load it, so a test can call load itself and
-// observe the error.
 func newLimitTestCore(t *testing.T) (*core, string) {
 	t.Helper()
 	home := t.TempDir()
@@ -41,10 +38,7 @@ func writeLimitFile(t *testing.T, path string, body []byte) {
 }
 
 // TestConfigFileRejectsAnchorsAndAliases checks that a configuration file
-// which defines an anchor or uses an alias is refused at load. Anchors let one
-// node stand for another, so a small file can describe a cycle or an
-// exponentially large tree; refusing them keeps the parse bounded by the bytes
-// on disk.
+// defining an anchor or using an alias is refused at load.
 func TestConfigFileRejectsAnchorsAndAliases(t *testing.T) {
 	cases := []struct{ name, body string }{
 		{"alias", "x: &a [1]\ny: *a\n"},
@@ -67,9 +61,8 @@ func TestConfigFileRejectsAnchorsAndAliases(t *testing.T) {
 	}
 }
 
-// TestConfigFileRejectsRecursiveAnchorOnReload checks the hot-reload path. A
-// reload that followed a self-referential alias would recurse without end, so
-// the file must be refused and the running values kept.
+// TestConfigFileRejectsRecursiveAnchorOnReload checks that a reload refuses a
+// file with a recursive anchor and keeps the running values.
 func TestConfigFileRejectsRecursiveAnchorOnReload(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  alias: old\n", false, nil)
 	writeLimitFile(t, path, []byte("x: &a [*a]\n"))
@@ -81,9 +74,6 @@ func TestConfigFileRejectsRecursiveAnchorOnReload(t *testing.T) {
 	}
 }
 
-// doublingAliasFile builds a document in which each alias refers twice to the
-// previous one. Following the aliases while walking the tree takes time
-// exponential in levels.
 func doublingAliasFile(levels int) string {
 	var b strings.Builder
 	b.WriteString("a0: &a0 [0]\n")
@@ -94,9 +84,7 @@ func doublingAliasFile(levels int) string {
 }
 
 // TestConfigFileRejectsExponentialAliases checks that a small file whose
-// aliases expand to an exponential number of nodes is refused quickly instead
-// of holding the parser for hours. The parse runs in its own goroutine under a
-// deadline, so a hang shows up as a test failure rather than a stuck suite.
+// aliases would expand exponentially is refused quickly.
 func TestConfigFileRejectsExponentialAliases(t *testing.T) {
 	body := doublingAliasFile(30)
 	done := make(chan error, 1)
@@ -118,8 +106,6 @@ func TestConfigFileRejectsExponentialAliases(t *testing.T) {
 	}
 }
 
-// oversizedConfigBody returns a valid configuration file of 1 MiB + 1 byte
-// that would change pairing.max_failures if it were read.
 func oversizedConfigBody() []byte {
 	body := []byte("pairing:\n  max_failures: 7\n")
 	pad := (1 << 20) + 1 - len(body)
@@ -147,10 +133,8 @@ func TestConfigFileRejectsOversizedFile(t *testing.T) {
 	}
 }
 
-// TestReadConfigFileFromEnforcesTheLimitForAnyReader covers the check after the
-// read as well as the reader's own limit. A reader that returns too much must
-// not hand the bytes to the parser, so the limit holds even when the reader is
-// replaced or its limit is bypassed.
+// TestReadConfigFileFromEnforcesTheLimitForAnyReader checks that the limit is
+// enforced even when the reader returns an oversized body.
 func TestReadConfigFileFromEnforcesTheLimitForAnyReader(t *testing.T) {
 	body := []byte("broker:\n  alias: " + strings.Repeat("x", 1<<20))
 	if len(body) <= maxConfigFileBytes {
@@ -165,8 +149,8 @@ func TestReadConfigFileFromEnforcesTheLimitForAnyReader(t *testing.T) {
 	}
 }
 
-// TestConfigFileAcceptsFileAtTheLimit pins the boundary: exactly 1 MiB is
-// still read.
+// TestConfigFileAcceptsFileAtTheLimit checks that a file of exactly 1 MiB is
+// read.
 func TestConfigFileAcceptsFileAtTheLimit(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeLimitFile(t, path, bytes.Repeat([]byte("#"), 1<<20))
@@ -176,9 +160,8 @@ func TestConfigFileAcceptsFileAtTheLimit(t *testing.T) {
 	}
 }
 
-// TestConfigFileReloadKeepsValuesForOversizedFile checks the hot-reload path:
-// an oversized file is a read error, so the running values stay in place
-// instead of the new value being adopted.
+// TestConfigFileReloadKeepsValuesForOversizedFile checks that a reload with an
+// oversized file keeps the running values.
 func TestConfigFileReloadKeepsValuesForOversizedFile(t *testing.T) {
 	c, path := newWatchCore(t, "pairing:\n  max_failures: 5\n", false, nil)
 	writeLimitFile(t, path, oversizedConfigBody())
@@ -218,8 +201,6 @@ func TestConfigFileSetRefusesOversizedFile(t *testing.T) {
 	}
 }
 
-// nestedMappingFile builds a document whose mappings are nested depth levels
-// deep.
 func nestedMappingFile(depth int) string {
 	var b strings.Builder
 	for i := 0; i < depth-1; i++ {
@@ -232,8 +213,7 @@ func nestedMappingFile(depth int) string {
 }
 
 // TestConfigFileRespectsNestingLimit checks that 32 levels of nesting parse and
-// 33 are refused. The generated templates, which use plain key-value pairs,
-// still parse.
+// 33 are refused.
 func TestConfigFileRespectsNestingLimit(t *testing.T) {
 	if _, err := parseConfigFile([]byte(nestedMappingFile(32))); err != nil {
 		t.Fatalf("32 levels of nesting did not parse: %v", err)

@@ -9,16 +9,14 @@ import (
 	"testing"
 )
 
-// TestConfigFileRootOnlyWritableDarwin exercises the rule on real root-owned
-// files. A non-root process cannot read the protected com.apple.system.Security
-// xattr, so the test re-runs itself through sudo and checks the child's exit
-// status.
+// TestConfigFileRootOnlyWritableDarwin checks the root-only rule against real
+// root-owned files, re-running itself through sudo to read the security ACL.
 func TestConfigFileRootOnlyWritableDarwin(t *testing.T) {
 	if os.Geteuid() != 0 {
 		out, err := exec.Command("sudo", "-n", os.Args[0],
 			"-test.run", "^TestConfigFileRootOnlyWritableDarwin$", "-test.v").CombinedOutput()
 		if err != nil {
-			// The macOS CI runner grants passwordless sudo. Fail there rather
+			// The macOS CI runner grants passwordless sudo: fail there rather
 			// than skip, so a runner that loses that grant cannot silently drop
 			// the ACL coverage.
 			if os.Getenv("GITHUB_ACTIONS") == "true" {
@@ -114,8 +112,6 @@ func TestConfigFileRootOnlyWritableDarwin(t *testing.T) {
 	})
 }
 
-// writePermConfigFile creates a configuration file with mode, owned by the
-// current process.
 func writePermConfigFile(t *testing.T, mode os.FileMode) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.yaml")

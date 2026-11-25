@@ -5,7 +5,6 @@ import (
 	"sync"
 )
 
-// notifier delivers callbacks in submission order from one goroutine.
 type notifier interface {
 	enqueue(fn func())
 	close()
@@ -18,9 +17,9 @@ type asyncNotifier struct {
 	closed bool
 	done   chan struct{}
 	logger *slog.Logger
-	// closeMarked runs after close sets closed and before it waits for the
-	// queue to drain. Tests use it to release a blocked callback only once the
-	// queue is provably behind close; production leaves it nil.
+	// closeMarked runs after close sets closed and before it waits for the queue
+	// to drain; tests use it to release a blocked callback only once the queue
+	// is provably behind close.
 	closeMarked func()
 }
 

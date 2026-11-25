@@ -6,15 +6,8 @@ import (
 	"net/netip"
 )
 
-// load performs the part of Load that must finish before the package publishes
-// the core: path derivation, directory checks, reading and parsing the file,
-// per-key and cross-key validation, the listen/advertise combination, the
-// default alias, the advertised address list, and opening the audit log.
-// Background workers start last, and only when the core was not built for a
-// test that drives them by hand.
-//
-// No other goroutine can reach the core while load runs, so load itself does
-// not take c.mu. The helpers that swap a running ticker do.
+// load runs before the core is published, so it takes no c.mu; the helpers that
+// swap a running ticker do.
 func (c *core) load(mode Mode, listenOverride string) error {
 	c.mode = mode
 
@@ -47,11 +40,8 @@ func (c *core) load(mode Mode, listenOverride string) error {
 		return err
 	}
 
-	// The data directory is checked after every configuration check and after
-	// the advertised addresses are prepared, so a DataUnavailableError always
-	// means the configuration itself was usable and can be reused by a degraded
-	// run. Only this check and the audit log open enter that class; every other
-	// failure above is a configuration failure.
+	// The data check runs after every configuration check, so a
+	// DataUnavailableError always means the configuration itself was usable.
 	if !c.skipDataCheck {
 		if err := c.prepareDataDirs(paths); err != nil {
 			return c.dataUnavailable(paths, err)
@@ -66,16 +56,14 @@ func (c *core) load(mode Mode, listenOverride string) error {
 	if c.notify == nil {
 		c.notify = newNotifier(c.logger)
 	}
+	// Background workers start last, and only when the core was not built for a
+	// test that drives them by hand.
 	if !c.noBackground {
 		c.startBackground()
 	}
 	return nil
 }
 
-// dataUnavailable wraps a data-directory or audit-log failure. The socket
-// group and mode are copied from the already adopted values so a system Broker
-// can still bind its local socket while it runs diagnostics only; they are not
-// part of the error text.
 func (c *core) dataUnavailable(paths PathSet, err error) error {
 	return &DataUnavailableError{
 		Paths:            paths,
@@ -85,9 +73,8 @@ func (c *core) dataUnavailable(paths PathSet, err error) error {
 	}
 }
 
-// checkRuntimeForLoad creates and checks the runtime directory. Tests replace
-// checkRuntime with a directory under t.TempDir so they never touch
-// /tmp/peers-<uid> or /run/peers.
+// checkRuntimeForLoad creates and checks the runtime directory; tests replace
+// checkRuntime so they never touch the real one.
 func (c *core) checkRuntimeForLoad() error {
 	if c.checkRuntime != nil {
 		_, err := c.checkRuntime()
@@ -97,10 +84,6 @@ func (c *core) checkRuntimeForLoad() error {
 	return err
 }
 
-// adoptValues copies the values present in the file into memory, fills the
-// missing keys with their defaults, and resolves the effective listen address
-// and default alias. Under a command-line listen override the file's
-// broker.listen is neither validated nor adopted; the override is used instead.
 func (c *core) adoptValues(doc *configDocument, listenOverride string) error {
 	override := listenOverride != ""
 	for _, name := range allKeyNames() {
@@ -146,8 +129,6 @@ func (c *core) adoptValues(doc *configDocument, listenOverride string) error {
 		c.effectiveListen = addr
 	}
 
-	// broker.alias has no static default: with no configured value it follows
-	// the deployment mode, the hostname and the account name.
 	if !c.explicitAlias {
 		spec, _ := lookupKey("broker.alias")
 		c.values["broker.alias"] = defaultValue(spec, defaultContext{
@@ -159,8 +140,6 @@ func (c *core) adoptValues(doc *configDocument, listenOverride string) error {
 	return nil
 }
 
-// validateLoadedValues checks every key's own value and the cross-key rules.
-// The startup path rejects the whole configuration on the first invalid key.
 func (c *core) validateLoadedValues() error {
 	for _, name := range allKeyNames() {
 		spec, ok := lookupKey(name)
@@ -178,11 +157,6 @@ func (c *core) validateLoadedValues() error {
 	return validateCrossKeys(c.values)
 }
 
-// prepareAdvertised applies the listen/advertise combination table and the
-// eight-address limit. The default-route interface addresses are enumerated
-// only when the combination needs them. A failure to enumerate them is logged
-// and leaves that part of the list empty instead of refusing to start; the
-// periodic address check retries and fills it in later.
 func (c *core) prepareAdvertised() error {
 	adv, err := parseAdvertise(c.values["broker.advertise"].String)
 	if err != nil {
@@ -216,8 +190,6 @@ func (c *core) prepareAdvertised() error {
 	return nil
 }
 
-// wrapConfigError names the offending key, but keeps an error that already
-// carries a configuration sentinel so errors.Is sees the original class.
 func wrapConfigError(key string, err error) error {
 	if err == nil {
 		return nil
@@ -228,9 +200,7 @@ func wrapConfigError(key string, err error) error {
 	return wrapInvalid(key, err.Error())
 }
 
-// effectiveAlias returns the configured alias when there is one, otherwise the
-// default alias for the current deployment mode, hostname and account. The
-// caller must hold c.mu or be initializing the core.
+// The caller must hold c.mu or be initializing the core.
 func (c *core) effectiveAlias() string {
 	if c.explicitAlias {
 		return c.values["broker.alias"].String
@@ -238,9 +208,6 @@ func (c *core) effectiveAlias() string {
 	return c.defaultAliasLocked()
 }
 
-// startBackground starts the file watcher and the periodic address check. The
-// address loop itself lives in state.go, which also restarts it when
-// broker.address_check_interval changes.
 func (c *core) startBackground() {
 	if w, err := startWatch(c); err != nil {
 		c.logger.Error("config: cannot start the config file watcher", "error", err)

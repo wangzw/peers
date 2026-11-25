@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// TestKeyTableCompleteAndDefaults walks every key so a wrong type, default or
-// missing entry in the table fails a test.
+// TestKeyTableCompleteAndDefaults checks that every key's type and default
+// match the table and that no entry is missing.
 func TestKeyTableCompleteAndDefaults(t *testing.T) {
 	if got, want := len(keyTable), 32; got != want {
 		t.Fatalf("key table has %d keys, want %d", got, want)
@@ -85,9 +85,8 @@ func TestKeyTableCompleteAndDefaults(t *testing.T) {
 	}
 }
 
-// TestTimeoutDocsNameTheToolLimit keeps the send and dial timeout descriptions
-// saying that a call made from a session is also bounded by the fixed tool
-// limit, so the relationship does not drift from the handler bounds.
+// TestTimeoutDocsNameTheToolLimit checks that the send and dial timeout
+// descriptions name the fixed tool limit for calls made from a session.
 func TestTimeoutDocsNameTheToolLimit(t *testing.T) {
 	cases := map[string]string{
 		"send.request_timeout": "Budget for one send call, i.e. the total time limit. A call made from a Claude Code session is also bounded by the fixed limit of the tool that makes it, 30 seconds for send_message, so any part of this value above that limit does not apply to calls made from a session.",
@@ -104,8 +103,8 @@ func TestTimeoutDocsNameTheToolLimit(t *testing.T) {
 	}
 }
 
-// TestKeyNamesListsTheWholeTable keeps the exported key list in step with the
-// table that the parser uses.
+// TestKeyNamesListsTheWholeTable checks that KeyNames returns every key in the
+// table in the same order as allKeyNames.
 func TestKeyNamesListsTheWholeTable(t *testing.T) {
 	got := KeyNames()
 	want := allKeyNames()
@@ -119,6 +118,8 @@ func TestKeyNamesListsTheWholeTable(t *testing.T) {
 	}
 }
 
+// TestValidateValueBoundaries checks the accepted and rejected values at each
+// key's boundaries.
 func TestValidateValueBoundaries(t *testing.T) {
 	cases := []struct {
 		key   string
@@ -226,6 +227,8 @@ func TestREQBrokerConfig024_ListenValidation(t *testing.T) {
 	}
 }
 
+// TestParseValue checks that ParseValue accepts and rejects the text forms of
+// each key's type.
 func TestParseValue(t *testing.T) {
 	ok := []struct {
 		key  string

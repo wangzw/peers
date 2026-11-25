@@ -7,13 +7,8 @@ import (
 	"testing"
 )
 
-// TestSetUsesTheBytesReloadRead pins the single-read invariant: Set must
-// validate and write back the same bytes its reload adopted, not a second read
-// of the file. The injected reader simulates another process writing the file
-// between the reload read and the write-back. A second read would see that
-// external value, write it into the file, leave memory on the old value and
-// record the new file's hash; the external change would then sit in the file
-// without ever being adopted.
+// TestSetUsesTheBytesReloadRead checks that Set validates and writes back the
+// bytes its reload read, not a second read of the file.
 func TestSetUsesTheBytesReloadRead(t *testing.T) {
 	c, path := newWatchCore(t, "broker:\n  public: false\n  alias: old\n", false, nil)
 
@@ -26,7 +21,6 @@ func TestSetUsesTheBytesReloadRead(t *testing.T) {
 			return data, err
 		}
 		injected = true
-		// Another process writes between the reload read and the write-back.
 		return data, os.WriteFile(name, []byte(external), 0o600)
 	}
 
@@ -68,8 +62,6 @@ func TestSetUsesTheBytesReloadRead(t *testing.T) {
 		t.Error("lastFileHash does not describe the file on disk after Set")
 	}
 
-	// The accepted cost of the in-place rewrite is that the concurrent write is
-	// overwritten, not that it survives on disk while memory ignores it.
 	c.rescanOnce()
 	if after := countEvent(t, c, EventConfigFileChanged, ""); after != before {
 		t.Errorf("a later reload adopted %d externally changed keys", after-before)
@@ -82,10 +74,8 @@ func TestSetUsesTheBytesReloadRead(t *testing.T) {
 	}
 }
 
-// TestSetInitialReadFailureIsInternal checks that a failure to read the
-// configuration file at the start of Set is an internal failure, not an
-// invalid_argument about the key being set: the caller's value is fine and the
-// file cannot be read for reasons outside its control.
+// TestSetInitialReadFailureIsInternal checks that a configuration read failure
+// at the start of Set is an internal error, not an invalid value.
 func TestSetInitialReadFailureIsInternal(t *testing.T) {
 	c, _ := newWatchCore(t, "broker:\n  public: false\n  alias: old\n", false, nil)
 

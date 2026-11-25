@@ -6,8 +6,6 @@ import (
 	"time"
 )
 
-// templateSections is the order in which the generated template lists the
-// configuration sections.
 var templateSections = []string{"broker", "pairing", "topics", "directory", "send", "link", "update", "log"}
 
 const systemTemplateHeader = `# peers system Broker configuration.
@@ -27,12 +25,10 @@ const userTemplateHeader = `# peers user Broker configuration.
 # and reads or writes the file.
 `
 
-// templateExample is an inactive, valid example for a key that has no fixed
-// default value.
 type templateExample struct {
 	value   string
-	runtime bool   // the default is computed at runtime instead of being absent
-	note    string // replaces the generic note when set
+	runtime bool
+	note    string
 }
 
 var templateExamples = map[string]templateExample{
@@ -48,10 +44,9 @@ var templateExamples = map[string]templateExample{
 
 const systemOnlyNote = " This key applies to the system Broker only."
 
-// Template returns the initial configuration file for mode. The file lists
-// every configuration key with a one-line description. Keys with a fixed
-// default carry that default as an active value; keys without one appear as an
-// inactive example, so loading the file yields exactly the defaults.
+// Template returns the configuration file template for mode; a key with a
+// fixed default carries that value, and a key without one appears as an
+// inactive example.
 func Template(mode Mode) []byte {
 	var b strings.Builder
 	if mode == ModeSystem {
@@ -110,9 +105,6 @@ func Template(mode Mode) []byte {
 	return []byte(b.String())
 }
 
-// shortestDuration renders d the way an operator would write it, dropping a
-// zero seconds component: 1m0s becomes 1m and 1h0m0s becomes 1h. Parsing the
-// text yields the same duration.
 func shortestDuration(d time.Duration) string {
 	s := d.String()
 	if strings.HasSuffix(s, "m0s") {

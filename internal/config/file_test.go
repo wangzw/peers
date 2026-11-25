@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestConfigFileRoundTripPreservesCommentsAndOrder checks that parsing and
+// re-encoding keeps comments, key order and unrelated keys.
 func TestConfigFileRoundTripPreservesCommentsAndOrder(t *testing.T) {
 	body := `# head comment
 broker:
@@ -53,6 +55,8 @@ custom:
 	}
 }
 
+// TestConfigFilePreservesBlockSequenceStyle checks that a block sequence keeps
+// its style when another key is set.
 func TestConfigFilePreservesBlockSequenceStyle(t *testing.T) {
 	body := `broker:
   advertise_extra:
@@ -77,6 +81,8 @@ func TestConfigFilePreservesBlockSequenceStyle(t *testing.T) {
 	}
 }
 
+// TestConfigFileCommentOnlyFirstSet checks that a comment-only file keeps its
+// comments when the first key is set.
 func TestConfigFileCommentOnlyFirstSet(t *testing.T) {
 	doc, err := parseConfigFile([]byte("# keep this\n\n"))
 	if err != nil {
@@ -101,16 +107,13 @@ func TestConfigFileCommentOnlyFirstSet(t *testing.T) {
 	}
 }
 
-// splitFileLines splits a text file into lines without keeping the trailing
-// newline of the last line, so a line-by-line comparison sees the content only.
 func splitFileLines(s string) []string {
 	return strings.Split(strings.TrimSuffix(s, "\n"), "\n")
 }
 
-// TestConfigFileSetUncommentsPlaceholderInPlace checks that Set to a key that
-// exists only as an inactive example line replaces that line where it stands:
-// the line count does not change, no second entry appears, and every other
-// line stays byte-identical.
+// TestConfigFileSetUncommentsPlaceholderInPlace checks that setting a key that
+// exists only as an inactive example line replaces that line in place without
+// changing the line count or any other byte.
 func TestConfigFileSetUncommentsPlaceholderInPlace(t *testing.T) {
 	before := string(Template(ModeUser))
 	c, path := newValueCore(t, before, "")
@@ -154,6 +157,8 @@ func TestConfigFileSetUncommentsPlaceholderInPlace(t *testing.T) {
 	}
 }
 
+// TestConfigFileSetAppendsWhenNoPlaceholder checks that a key is appended when
+// its section has no matching placeholder line and the existing comment is kept.
 func TestConfigFileSetAppendsWhenNoPlaceholder(t *testing.T) {
 	body := "pairing:\n  # a comment that is not a placeholder\n  max_failures: 5\n"
 	c, path := newValueCore(t, body, "")
@@ -179,6 +184,8 @@ func TestConfigFileSetAppendsWhenNoPlaceholder(t *testing.T) {
 	}
 }
 
+// TestConfigFileSetUpdatesEffectiveKeyInPlace checks that setting an existing
+// key updates it in place and keeps the comment above it.
 func TestConfigFileSetUpdatesEffectiveKeyInPlace(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  # public comment\n  public: false\n", "")
 	c.mu.Lock()
@@ -202,6 +209,8 @@ func TestConfigFileSetUpdatesEffectiveKeyInPlace(t *testing.T) {
 	}
 }
 
+// TestConfigFileSetCreatesMissingSection checks that setting a key whose
+// section is absent creates the section.
 func TestConfigFileSetCreatesMissingSection(t *testing.T) {
 	c, path := newValueCore(t, "log:\n  level: info\n", "")
 	c.mu.Lock()
@@ -250,11 +259,8 @@ func TestConfigFileSetIgnoresPlaceholderInAnotherSection(t *testing.T) {
 	}
 }
 
-// TestConfigFileSetPlaceholderSearchStopsAtSectionEnd checks that the search
-// for an inactive example line stops at the end of the key's own section. Both
-// sections carry a level leaf here: log.level is already effective and only the
-// send section holds a commented placeholder, so a search that crossed the
-// section end would replace the send line.
+// TestConfigFileSetPlaceholderSearchStopsAtSectionEnd checks that the
+// placeholder search stops at the end of the key's own section.
 func TestConfigFileSetPlaceholderSearchStopsAtSectionEnd(t *testing.T) {
 	body := []byte("log:\n  level: info\nsend:\n  # level: debug\n  request_timeout: 20s\n")
 	spec, _ := lookupKey("log.level")
@@ -292,6 +298,8 @@ func TestConfigFileSetIgnoresExplanationComment(t *testing.T) {
 	}
 }
 
+// TestConfigFileParseErrors checks that malformed, duplicate-key,
+// multi-document and alias configurations are refused.
 func TestConfigFileParseErrors(t *testing.T) {
 	cases := []string{
 		"broker: [\n",
@@ -307,6 +315,8 @@ func TestConfigFileParseErrors(t *testing.T) {
 	}
 }
 
+// TestConfigFileCreateAndChmod checks that a new configuration file is created
+// with mode 0600.
 func TestConfigFileCreateAndChmod(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -322,6 +332,8 @@ func TestConfigFileCreateAndChmod(t *testing.T) {
 	}
 }
 
+// TestConfigFileInPlacePreservesMetadata checks that an in-place rewrite keeps
+// the inode, owner and mode.
 func TestConfigFileInPlacePreservesMetadata(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
@@ -355,6 +367,8 @@ func TestConfigFileInPlacePreservesMetadata(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig002_SetPreservesFileMetadata checks that Set keeps the
+// configuration file's inode, owner and mode.
 func TestREQBrokerConfig002_SetPreservesFileMetadata(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  alias: old\n", "")
 	if err := os.Chmod(path, 0o640); err != nil {
@@ -385,6 +399,8 @@ func TestREQBrokerConfig002_SetPreservesFileMetadata(t *testing.T) {
 	}
 }
 
+// TestConfigFileWriteFailure checks that writing under a non-directory path
+// returns an error.
 func TestConfigFileWriteFailure(t *testing.T) {
 	dir := t.TempDir()
 	blocker := filepath.Join(dir, "not-a-dir")
@@ -397,6 +413,8 @@ func TestConfigFileWriteFailure(t *testing.T) {
 	}
 }
 
+// TestConfigFileNodeFor checks that nodeFor finds a present key's node and
+// returns nil for an absent key.
 func TestConfigFileNodeFor(t *testing.T) {
 	doc, err := parseConfigFile([]byte("broker:\n  alias: a\n"))
 	if err != nil {

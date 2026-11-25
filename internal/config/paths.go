@@ -16,8 +16,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// resolvePaths returns the path set for the account and deployment mode. It
-// does not create anything.
 func (c *core) resolvePaths() (PathSet, error) {
 	euid := c.euid()
 	choice, err := chooseRuntimeDir(euid)
@@ -58,9 +56,8 @@ func (c *core) resolvePaths() (PathSet, error) {
 	}
 }
 
-// runtimeRoot returns the runtime directory of one account. It is the seam
-// tests use to place the directory under a temporary root; production code
-// never replaces it.
+// runtimeRoot is a seam tests replace to place the runtime directory under a
+// temporary root; production code never replaces it.
 var runtimeRoot = func(euid int) string {
 	if euid == 0 {
 		if runtime.GOOS == "darwin" {
@@ -71,35 +68,26 @@ var runtimeRoot = func(euid int) string {
 	return fmt.Sprintf("/tmp/peers-%d", euid)
 }
 
-// runtimeFallbackBase returns the per-account base directory whose "peers"
-// child is the fallback runtime directory, used only when another account has
-// taken the preferred directory. It is a seam tests replace; production code
-// never replaces it.
+// runtimeFallbackBase is a seam tests replace; production code never replaces
+// it.
 var runtimeFallbackBase = defaultRuntimeFallbackBase
 
-// fallbackBaseProbeTimeout bounds the getconf call on macOS, so a stalled
-// getconf cannot delay every runtime-directory lookup. It is a variable so
-// tests can shorten it.
+// fallbackBaseProbeTimeout bounds the getconf call so a stalled getconf cannot
+// delay every runtime-directory lookup; tests shorten it.
 var fallbackBaseProbeTimeout = 5 * time.Second
 
-// getconfOutput runs getconf. It is a seam tests replace; production code never
-// replaces it.
+// getconfOutput is a seam tests replace; production code never replaces it.
 var getconfOutput = func(ctx context.Context) ([]byte, error) {
 	return exec.CommandContext(ctx, "/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
 }
 
-// fallbackBaseCache keeps a successful getconf result for the life of the
-// process. The runtime directory is resolved on every lookup, and asking
-// getconf each time would spawn a process per call. A failure is not cached, so
-// a transient failure can recover on the next lookup.
+// fallbackBaseCache caches a successful getconf result per account; a failure
+// is not cached so a transient failure can recover on the next lookup.
 var fallbackBaseCache = struct {
 	mu   sync.Mutex
 	dirs map[int]string
 }{dirs: make(map[int]string)}
 
-// defaultRuntimeFallbackBase names the platform's per-account base directory:
-// the logind runtime directory on Linux, and the per-user temporary directory
-// that getconf reports on macOS.
 func defaultRuntimeFallbackBase(euid int) (string, error) {
 	if runtime.GOOS != "darwin" {
 		return fmt.Sprintf("/run/user/%d", euid), nil
@@ -107,8 +95,6 @@ func defaultRuntimeFallbackBase(euid int) (string, error) {
 	return darwinFallbackBase(euid)
 }
 
-// darwinFallbackBase asks getconf once per process and account, with a bounded
-// wait.
 func darwinFallbackBase(euid int) (string, error) {
 	fallbackBaseCache.mu.Lock()
 	if dir, ok := fallbackBaseCache.dirs[euid]; ok {
@@ -133,16 +119,13 @@ func darwinFallbackBase(euid int) (string, error) {
 	return dir, nil
 }
 
-// runtimeDirOccupant describes why the preferred runtime directory cannot be
-// used.
 type runtimeDirOccupant struct {
 	taken  RuntimeDirFallback
 	reason string
 }
 
-// dirOwnerUID returns the owner uid of a directory entry. Tests replace it to
-// simulate an entry owned by another account without needing root; production
-// reads the uid from the stat data.
+// dirOwnerUID is a seam tests replace to simulate an entry owned by another
+// account without needing root; production reads the uid from the stat data.
 var dirOwnerUID = func(info os.FileInfo) (int, bool) {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
@@ -151,11 +134,6 @@ var dirOwnerUID = func(info os.FileInfo) (int, bool) {
 	return int(st.Uid), true
 }
 
-// occupiedRuntimeDir reports whether another account has taken path. A path
-// that does not exist yet is not occupied. Only a symbolic link, a
-// non-directory or a directory owned by another account counts: a directory
-// this account owns with permissions that are too wide is refused later by the
-// ordinary rule, because the account can fix it.
 func occupiedRuntimeDir(path string, euid int) (runtimeDirOccupant, bool) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -179,9 +157,6 @@ func occupiedRuntimeDir(path string, euid int) (runtimeDirOccupant, bool) {
 	return runtimeDirOccupant{}, false
 }
 
-// usableFallbackBase reports whether base may hold the fallback runtime
-// directory: it must be a directory this account owns with no group or other
-// access, and it must not be a symbolic link.
 func usableFallbackBase(base string, euid int) bool {
 	info, err := os.Lstat(base)
 	if err != nil {
@@ -197,16 +172,11 @@ func usableFallbackBase(base string, euid int) bool {
 	return info.Mode().Perm()&0o077 == 0
 }
 
-// runtimeDirChoice is the result of resolving the runtime directory.
 type runtimeDirChoice struct {
 	path     string
 	fallback *RuntimeDirFallback
 }
 
-// chooseRuntimeDir returns the runtime directory for euid. The preferred
-// directory is kept unless another account has taken it; then the platform's
-// per-account fallback is used if it is usable. When neither is available it
-// returns the preferred path and an error naming the occupant and the reason.
 func chooseRuntimeDir(euid int) (runtimeDirChoice, error) {
 	preferred := runtimeRoot(euid)
 	if euid == 0 {
@@ -223,9 +193,6 @@ func chooseRuntimeDir(euid int) (runtimeDirChoice, error) {
 	return runtimeDirChoice{path: preferred}, fmt.Errorf("cannot use %s: %s, and no other runtime directory is available", preferred, occ.reason)
 }
 
-// runtimeDirPath depends only on the effective account and the filesystem
-// state. An unavailable fallback leaves the preferred path; the attempt to use
-// it reports the error.
 func runtimeDirPath(euid int) string {
 	choice, _ := chooseRuntimeDir(euid)
 	return choice.path
@@ -235,11 +202,6 @@ func accountLockPath(euid int) string {
 	return filepath.Join(runtimeDirPath(euid), "broker.lock")
 }
 
-// runtimeDirCandidates returns every runtime directory this account's Broker
-// may run in: the preferred directory and, when it differs, the fallback one.
-// The list depends only on the account and the platform paths, so a process can
-// check both locations even while the preferred directory's state changes under
-// it.
 func runtimeDirCandidates(euid int) []string {
 	preferred := runtimeRoot(euid)
 	if euid == 0 {
@@ -255,9 +217,8 @@ func runtimeDirCandidates(euid int) []string {
 }
 
 // AccountLockCandidates returns the account lock path at every runtime
-// directory this account's Broker may use. The Broker checks all of them before
-// serving, so a running instance at either location keeps a second one from
-// starting.
+// directory this account's Broker may use, so a running instance at either
+// location keeps a second one from starting.
 func AccountLockCandidates() []string {
 	dirs := runtimeDirCandidates(os.Geteuid())
 	paths := make([]string, 0, len(dirs))
@@ -267,8 +228,6 @@ func AccountLockCandidates() []string {
 	return paths
 }
 
-// ensureRuntimeDir creates and validates the runtime directory. It returns the
-// path. The caller owns the directory after this call.
 func ensureRuntimeDir(euid int) (string, error) {
 	choice, err := chooseRuntimeDir(euid)
 	if err != nil {
@@ -279,9 +238,9 @@ func ensureRuntimeDir(euid int) (string, error) {
 		mode = 0o755
 	}
 	if err := ensureDir(choice.path, mode, euid, permRuntime); err != nil {
-		// The preferred directory may have been absent when it was resolved and
-		// taken by another account before it could be created. Re-resolve once,
-		// so the fallback is used instead of failing startup.
+		// The preferred directory may have been taken between resolution and
+		// creation, so re-resolve once to use the fallback instead of failing
+		// startup.
 		var mismatch *dirOwnerMismatchError
 		if choice.fallback == nil && errors.As(err, &mismatch) {
 			if next, nextErr := chooseRuntimeDir(euid); nextErr == nil && next.path != choice.path {
@@ -298,9 +257,9 @@ func ensureRuntimeDir(euid int) (string, error) {
 type permRule int
 
 const (
-	permRuntime permRule = iota // root: no group/other write; otherwise no group/other access
-	permData                    // no group/other access
-	permShared                  // no group/other write
+	permRuntime permRule = iota
+	permData
+	permShared
 )
 
 func ensureDir(path string, mode os.FileMode, euid int, rule permRule) error {
@@ -313,9 +272,6 @@ func ensureDir(path string, mode os.FileMode, euid int, rule permRule) error {
 	return nil
 }
 
-// dirOwnerMismatchError reports a directory owned by another account. The
-// runtime-directory resolution uses it to tell a directory that appeared after
-// resolution from a permission problem this account can fix.
 type dirOwnerMismatchError struct {
 	path  string
 	owner int
@@ -356,9 +312,6 @@ func validateDir(path string, euid int, rule permRule) error {
 	return nil
 }
 
-// checkDirPermission applies the permission rule for one kind of directory.
-// A rule allows tightening the mode but never loosening it, and the root
-// runtime directory only forbids write access for group and other.
 func checkDirPermission(perm os.FileMode, euid int, rule permRule) error {
 	switch rule {
 	case permRuntime:
@@ -381,8 +334,6 @@ func checkDirPermission(perm os.FileMode, euid int, rule permRule) error {
 	return nil
 }
 
-// prepareDataDirs creates and validates the directories holding the
-// configuration file and audit log.
 func (c *core) prepareDataDirs(paths PathSet) error {
 	euid := c.euid()
 	switch c.mode {
@@ -427,14 +378,13 @@ func setAccountInitErr(err error) {
 }
 
 // RuntimeDir returns the runtime directory of the account euid, applying the
-// fallback rule. Service installation and removal use it to find the same local
-// socket as the Broker.
+// fallback rule.
 func RuntimeDir(euid int) string {
 	return runtimeDirPath(euid)
 }
 
-// CheckRuntimeDir creates and checks the runtime directory, so the broker can
-// check it before taking the account lock.
+// CheckRuntimeDir creates and checks the runtime directory's owner and
+// permission, before the account lock is taken.
 func CheckRuntimeDir() error {
 	return checkRuntimeDir(os.Geteuid())
 }
@@ -444,9 +394,8 @@ func checkRuntimeDir(euid int) error {
 	return err
 }
 
-// AccountLock returns the path of the account lock. It tries to create and
-// check the runtime directory; a failure is remembered and returned by the next
-// Load.
+// AccountLock returns the path of the account lock. It attempts to create and
+// check the runtime directory, remembering a failure for the next Load.
 func AccountLock() string {
 	euid := os.Geteuid()
 	if _, err := ensureRuntimeDir(euid); err != nil {

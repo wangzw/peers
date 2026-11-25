@@ -17,8 +17,6 @@ func (c *core) getLocked(key string) (Value, error) {
 	return presentedValue(spec, c.values[key]), nil
 }
 
-// presentedValue returns the value a caller may see for a key. A secret key
-// exposes only whether it is set, so its text never leaves this package.
 func presentedValue(spec *keySpec, v Value) Value {
 	if spec.Secret {
 		return Value{Kind: KindSecret, SecretIsSet: v.String != ""}
@@ -64,26 +62,21 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 	if c.listenOverride && key == "broker.listen" {
 		return Value{}, fmt.Errorf("%w: %s", ErrListenOverridden, key)
 	}
-	// A privileged port needs root and a configuration file that no other
-	// account can write. This is checked before the pending external change is
+	// A privileged port check runs before any pending external change is
 	// adopted and before anything is written, so a refused caller leaves both
-	// the file and the in-memory values untouched.
+	// the file and memory untouched.
 	if key == "broker.listen" && c.mode == ModeSystem && lowPrivilegedListenPort(v) {
 		if err := c.checkLowPortAllowed(actor, v); err != nil {
 			return Value{}, err
 		}
 	}
-	// Adopt any external change that is still pending, by the reload rules and
-	// with its audits, before validating and writing. Validation must start
-	// from the values now on disk, not from a stale memory snapshot. The bytes
-	// read here are the only read of the file: the write-back and the restore
-	// after a failed write use them too, so a write by another process between
-	// this read and the write-back cannot put content in the file that this
-	// process never adopts.
+	// Adopt the pending external change first, by the reload rules and with its
+	// audits, so validation starts from the values on disk. The bytes read here
+	// are reused by the write-back and the restore after a failed write.
 	read, err := c.reloadLocked()
 	if err != nil {
-		// Reading the file failed for a reason outside the caller's value, so
-		// this is an internal failure rather than an invalid_argument.
+		// A read failure is internal, not invalid_argument: the caller's value
+		// is fine and the file cannot be read for reasons outside its control.
 		return Value{}, fmt.Errorf("cannot read %s: %w", c.paths.ConfigFile, err)
 	}
 	if v.Kind != valueKindForSpec(spec) {
@@ -122,11 +115,8 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 			return Value{}, wrapInvalid(key, err.Error())
 		}
 	}
-	// Without a configured broker.alias the effective alias is derived from the
-	// deployment mode, the hostname and the account, none of which a listen
-	// change touches. The derived value is compared anyway so a change that ever
-	// makes it differ still passes the broker.alias validators before the
-	// listener is committed.
+	// Compare the derived alias even though a listen change cannot alter it, so
+	// a future derivation change still passes the broker.alias validators.
 	if key == "broker.listen" && !c.explicitAlias {
 		derived := stringValue(c.defaultAliasLocked())
 		if !valueEqual(derived, c.values["broker.alias"]) {
@@ -138,10 +128,9 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 		}
 	}
 
-	// The raw bytes that the reload above read are both the input to
-	// parseConfigFile and the content restored if the in-place rewrite
-	// truncates and then fails. Reading the file again here could pick up a
-	// concurrent external write that reload did not adopt.
+	// The bytes read by the reload above feed both parsing and the restore
+	// after a failed write, so a concurrent external write cannot enter the
+	// file unadopted.
 	original := read.data
 	existed := read.exists
 	doc, err := parseConfigFile(original)
@@ -157,16 +146,15 @@ func (c *core) setLocked(actor Actor, key string, v Value) (Value, error) {
 	}
 	if err := c.writeFile(c.paths.ConfigFile, data, c.mode); err != nil {
 		c.logger.Error("config: cannot write the configuration file", "error", err)
-		// The in-place rewrite truncates before writing, so a failure can leave
-		// an empty or partial file. Put the previous bytes back when possible.
+		// The in-place rewrite truncates first, so a failed write can leave an
+		// empty or partial file; put the previous bytes back.
 		if existed {
 			if restoreErr := c.writeFile(c.paths.ConfigFile, original, c.mode); restoreErr != nil {
 				c.logger.Error("config: cannot restore the configuration file after a failed write", "error", restoreErr)
 			}
 		}
-		// Whether or not the restore worked, remember the hash of the bytes now
-		// on disk so this process does not adopt the empty or damaged file as
-		// an external change.
+		// Remember the hash of the bytes now on disk, so this process does not
+		// adopt the empty or damaged file as an external change.
 		if current, hashErr := readConfigFileLimited(c.paths.ConfigFile); hashErr == nil {
 			c.lastFileHash = sha256.Sum256(current)
 		} else if errors.Is(hashErr, os.ErrNotExist) {
@@ -292,9 +280,8 @@ func (c *core) routesForLocked(force bool) ([]netip.Addr, error) {
 	return addrs, nil
 }
 
-// tickerExitReporter is implemented by tickers that want to learn when the
-// goroutine driving them has returned. The address-ticker tests use it to
-// assert that replacing the ticker leaves no old goroutine behind.
+// tickerExitReporter is implemented by tickers whose driving goroutine signals
+// its exit; the address-ticker tests use it to assert no old goroutine remains.
 type tickerExitReporter interface {
 	tickerExited()
 }
@@ -359,8 +346,6 @@ func (c *core) reevaluateAdvertised() {
 	c.notifyAdvertisedLocked(old, newList)
 }
 
-// reloadFromDisk is called by the watcher and by Secret. It compares the file
-// hash before doing any work.
 func (c *core) reloadFromDisk() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -372,9 +357,6 @@ func (c *core) reloadFromDisk() {
 	}
 }
 
-// configBytes is one read of the configuration file. It carries the exact
-// bytes of that read and whether the file existed, so callers that both adopt
-// the file and write it back can use the same read for both.
 type configBytes struct {
 	data   []byte
 	exists bool
@@ -486,9 +468,6 @@ func (c *core) reloadLocked() (configBytes, error) {
 			}
 		}
 	}
-	// A privileged listen port is adopted only while the configuration file is
-	// writable only by root. Otherwise the whole listen group keeps its old
-	// values, the rejection is logged, and config_rejected is audited.
 	if groupValid && c.rejectReloadedLowPort(values["broker.listen"], candidate["broker.listen"]) {
 		groupValid = false
 	}
@@ -507,11 +486,8 @@ func (c *core) reloadLocked() (configBytes, error) {
 	}
 	var adoptions []adoption
 
-	// Cross-key groups are judged as a whole. A member's new value is adopted
-	// only if every member is individually valid and the group's combined rule
-	// holds; otherwise every member keeps its old value. Checking each member
-	// against the old partner, as the generic loop below would, makes the
-	// result depend on the lexicographic order of the keys.
+	// Cross-key groups are judged as a whole, not member by member, or the result
+	// would depend on the lexicographic order of the keys.
 	for _, members := range crossKeyGroups {
 		groupCandidate := copyValues(candidate)
 		groupOK := true
@@ -624,9 +600,8 @@ func (c *core) reloadLocked() (configBytes, error) {
 		newAlias := stringValue(c.defaultAliasLocked())
 		accepted := true
 		if !valueEqual(newAlias, values["broker.alias"]) {
-			// The file removed the explicit alias, so the default alias takes
-			// over. Run the broker.alias checks on it before adopting it; a
-			// rejected derived alias keeps the previous value.
+			// Run the broker.alias validators on the derived alias before
+			// adopting it; a rejection keeps the previous value.
 			for _, check := range c.validators["broker.alias"] {
 				if err := check(values["broker.alias"], newAlias); err != nil {
 					c.logger.Error("config: keeping the current alias; a validator rejected the derived alias", "key", "broker.alias", "error", err)
@@ -662,9 +637,8 @@ func (c *core) reloadLocked() (configBytes, error) {
 		if err := validateValue(spec, newAlias); err != nil {
 			c.logger.Error("config: keeping the current alias; the file value is invalid", "key", "broker.alias", "error", err)
 		} else {
-			// The file configures broker.alias explicitly. Run the checks
-			// registered for broker.alias on a changed value before adopting
-			// it; a rejection keeps the previous alias.
+			// Run the broker.alias validators on a changed configured alias; a
+			// rejection keeps the previous alias.
 			accepted := true
 			if !valueEqual(newAlias, values["broker.alias"]) {
 				for _, check := range c.validators["broker.alias"] {

@@ -27,11 +27,8 @@ func oneRoute(t *testing.T, addr string) addressSource {
 	return fixedRoutes{addrs: []netip.Addr{netip.MustParseAddr(addr)}}
 }
 
-// newLoadTestCore builds a core whose paths all live under home and whose
-// runtime and data directory checks are replaced with a no-op, so nothing
-// touches the host's real /run, /tmp or home. noBackground keeps the watcher
-// and the address ticker out of the way; tests drive reload and enumeration
-// directly.
+// newLoadTestCore builds a core confined to home with the runtime and data
+// directory checks replaced, so nothing touches the host.
 func newLoadTestCore(t *testing.T, home string, routes addressSource) *core {
 	t.Helper()
 	c := newCore()
@@ -64,6 +61,8 @@ func writeLoadTestConfig(t *testing.T, home, body string) string {
 	return path
 }
 
+// TestLoadDefaults checks that loading an absent configuration file yields the
+// defaults, the default alias and the default-route advertised address.
 func TestLoadDefaults(t *testing.T) {
 	home := t.TempDir()
 	c := newLoadTestCore(t, home, oneRoute(t, "192.0.2.20"))
@@ -92,8 +91,9 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-028: the default configuration listens on every address at
-// port 17443; an explicitly empty listener listens on nothing.
+// TestREQBrokerConfig028_DefaultAndEmptyListen checks that the default
+// configuration listens on every address at port 17443 and that an explicitly
+// empty listen address listens on nothing.
 func TestREQBrokerConfig028_DefaultAndEmptyListen(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		home := t.TempDir()
@@ -125,8 +125,8 @@ func TestREQBrokerConfig028_DefaultAndEmptyListen(t *testing.T) {
 	})
 }
 
-// REQ-broker-config-025: a listen override replaces the configured value for
-// this run and is never written back to the file.
+// TestREQBrokerConfig025_ListenOverride checks that a listen override replaces
+// the configured value for this run and is never written back to the file.
 func TestREQBrokerConfig025_ListenOverride(t *testing.T) {
 	home := t.TempDir()
 	path := writeLoadTestConfig(t, home, "broker:\n  listen: \":17443\"\n")
@@ -160,8 +160,8 @@ func TestREQBrokerConfig025_ListenOverride(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-025: under an override the file's broker.listen is not
-// validated at all, so an otherwise unusable value does not stop startup.
+// TestREQBrokerConfig025_OverrideSkipsInvalidFileListen checks that under an
+// override the file's broker.listen is not validated.
 func TestREQBrokerConfig025_OverrideSkipsInvalidFileListen(t *testing.T) {
 	home := t.TempDir()
 	writeLoadTestConfig(t, home, "broker:\n  listen: 123\n")
@@ -174,7 +174,6 @@ func TestREQBrokerConfig025_OverrideSkipsInvalidFileListen(t *testing.T) {
 		t.Fatalf("broker.listen = %q, want :17444", got)
 	}
 
-	// Without the override the same file must be rejected.
 	plain := newLoadTestCore(t, home, oneRoute(t, "192.0.2.20"))
 	err := plain.load(ModeUser, "")
 	if err == nil {
@@ -185,6 +184,8 @@ func TestREQBrokerConfig025_OverrideSkipsInvalidFileListen(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsInvalidValue checks that loading refuses an invalid value and
+// names the key.
 func TestLoadRejectsInvalidValue(t *testing.T) {
 	home := t.TempDir()
 	writeLoadTestConfig(t, home, "log:\n  level: verbose\n")
@@ -201,6 +202,8 @@ func TestLoadRejectsInvalidValue(t *testing.T) {
 	}
 }
 
+// TestLoadRejectsCrossKeyRules checks that loading refuses values that violate
+// a cross-key rule and names the offending key.
 func TestLoadRejectsCrossKeyRules(t *testing.T) {
 	tests := []struct {
 		name string
@@ -237,8 +240,8 @@ func TestLoadRejectsCrossKeyRules(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-032: an illegal listen/advertise combination stops startup
-// and names the combination error.
+// TestREQBrokerConfig032_StartupRejectsCombination checks that an illegal
+// listen/advertise combination stops startup with ErrInvalidCombination.
 func TestREQBrokerConfig032_StartupRejectsCombination(t *testing.T) {
 	tests := []struct {
 		name string
@@ -273,8 +276,8 @@ func TestREQBrokerConfig032_StartupRejectsCombination(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-036: more than eight configured addresses are rejected at
-// startup.
+// TestLoadREQBrokerConfig036_TooManyConfigured checks that more than eight
+// configured addresses are rejected at startup.
 func TestLoadREQBrokerConfig036_TooManyConfigured(t *testing.T) {
 	var body strings.Builder
 	body.WriteString("broker:\n  advertise_extra:\n")
@@ -295,8 +298,8 @@ func TestLoadREQBrokerConfig036_TooManyConfigured(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-030: with a port-only advertise, the default-route
-// addresses carry the configured port.
+// TestLoadREQBrokerConfig030_PortOnly checks that with a port-only advertise
+// the default-route addresses carry the configured port.
 func TestLoadREQBrokerConfig030_PortOnly(t *testing.T) {
 	home := t.TempDir()
 	writeLoadTestConfig(t, home, "broker:\n  advertise: \":18443\"\n")
@@ -310,8 +313,8 @@ func TestLoadREQBrokerConfig030_PortOnly(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-033: advertise_extra entries are appended and an entry
-// without a port takes the advertise or listen port.
+// TestREQBrokerConfig033_ExtraAppended checks that advertise_extra entries are
+// appended and an entry without a port takes the advertise or listen port.
 func TestREQBrokerConfig033_ExtraAppended(t *testing.T) {
 	tests := []struct {
 		name string
@@ -350,8 +353,8 @@ func TestREQBrokerConfig033_ExtraAppended(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-031: a host in broker.advertise is the first entry; a bare
-// host takes the listen port.
+// TestREQBrokerConfig031_HostAddresses checks that a host in broker.advertise
+// becomes the first entry and a bare host takes the listen port.
 func TestREQBrokerConfig031_HostAddresses(t *testing.T) {
 	tests := []struct {
 		name string
@@ -389,6 +392,9 @@ func TestREQBrokerConfig031_HostAddresses(t *testing.T) {
 	}
 }
 
+// TestLoadRoutesFailureOnlyWhenNeeded checks that a route enumeration failure
+// does not stop startup and that a combination needing routes starts with an
+// empty advertised list and a log entry.
 func TestLoadRoutesFailureOnlyWhenNeeded(t *testing.T) {
 	t.Run("a configured host does not need the default route", func(t *testing.T) {
 		home := t.TempDir()
@@ -399,9 +405,6 @@ func TestLoadRoutesFailureOnlyWhenNeeded(t *testing.T) {
 		}
 	})
 
-	// REQ-broker-config-030: a route enumeration failure at startup must not
-	// stop the Broker from starting. The route-derived part is empty and the
-	// failure is logged; the periodic address check fills it in later.
 	t.Run("a route failure starts with an empty list and is logged", func(t *testing.T) {
 		home := t.TempDir()
 		var logs bytes.Buffer
@@ -419,8 +422,6 @@ func TestLoadRoutesFailureOnlyWhenNeeded(t *testing.T) {
 	})
 }
 
-// flakyLoadRoutes is an addressSource whose enumeration error can be cleared,
-// so a test can fail startup and then let the periodic check succeed.
 type flakyLoadRoutes struct {
 	mu    sync.Mutex
 	addrs []netip.Addr
@@ -440,9 +441,8 @@ func (f *flakyLoadRoutes) recover(addrs ...netip.Addr) {
 	f.err = nil
 }
 
-// TestLoadRoutesEmptyThenFilledByReenumeration checks the other half of the
-// startup rule: once enumeration works again, the periodic check fills in the
-// addresses that startup left empty.
+// TestLoadRoutesEmptyThenFilledByReenumeration checks that re-enumeration
+// fills in the addresses that startup left empty.
 func TestLoadRoutesEmptyThenFilledByReenumeration(t *testing.T) {
 	home := t.TempDir()
 	routes := &flakyLoadRoutes{err: errors.New("no route table")}
@@ -463,6 +463,8 @@ func TestLoadRoutesEmptyThenFilledByReenumeration(t *testing.T) {
 	}
 }
 
+// TestLoadAlias checks that a configured alias is kept and that without one the
+// default combines the hostname and account.
 func TestLoadAlias(t *testing.T) {
 	t.Run("a configured alias is kept", func(t *testing.T) {
 		home := t.TempDir()
@@ -497,8 +499,8 @@ func TestLoadAlias(t *testing.T) {
 	})
 }
 
-// REQ-broker-config-023: loading only needs to read the config file, so a
-// write-protected file does not stop startup.
+// TestREQBrokerConfig023_LoadDoesNotRequireWritePermission checks that a
+// write-protected configuration file does not stop startup.
 func TestREQBrokerConfig023_LoadDoesNotRequireWritePermission(t *testing.T) {
 	home := t.TempDir()
 	path := writeLoadTestConfig(t, home, "broker:\n  alias: build-box\n")
@@ -514,6 +516,8 @@ func TestREQBrokerConfig023_LoadDoesNotRequireWritePermission(t *testing.T) {
 	}
 }
 
+// TestLoadCreatesAuditLogWith0600 checks that loading creates the audit log
+// with mode 0600.
 func TestLoadCreatesAuditLogWith0600(t *testing.T) {
 	home := t.TempDir()
 	c := newLoadTestCore(t, home, oneRoute(t, "192.0.2.20"))

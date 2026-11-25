@@ -11,16 +11,10 @@ import (
 	"time"
 )
 
-// This file fills the requirement-test gaps reported by the verification of
-// the config unit. It owns its helpers and prefixes them with "gap" so the
-// tests written by the other areas keep their own names.
-
-// gapNoRoutes is an addressSource with no default-route addresses.
 type gapNoRoutes struct{}
 
 func (gapNoRoutes) DefaultRouteAddresses() ([]netip.Addr, error) { return nil, nil }
 
-// gapRoutes is a mutable addressSource that drives re-enumeration tests.
 type gapRoutes struct {
 	mu    sync.Mutex
 	addrs []netip.Addr
@@ -47,9 +41,6 @@ func gapAddr(t *testing.T, s string) netip.Addr {
 	return a
 }
 
-// newGapCore builds a core with the same test dependencies as newValueCore but
-// returns the Load error instead of failing, so startup rejection can be
-// asserted. A successful load registers the close cleanup.
 func newGapCore(t *testing.T, body, override string) (*core, string, error) {
 	t.Helper()
 	home := t.TempDir()
@@ -77,7 +68,6 @@ func newGapCore(t *testing.T, body, override string) (*core, string, error) {
 	return c, path, err
 }
 
-// gapValue reads one key while holding the core lock.
 func gapValue(t *testing.T, c *core, key string) Value {
 	t.Helper()
 	c.mu.Lock()
@@ -89,7 +79,6 @@ func gapValue(t *testing.T, c *core, key string) Value {
 	return v
 }
 
-// gapEvent returns the first audit record of kind for key.
 func gapEvent(t *testing.T, c *core, kind EventKind, key string) (Event, bool) {
 	t.Helper()
 	events, err := c.readAudit(time.Time{})
@@ -112,8 +101,9 @@ func gapExtraItems(n int) []string {
 	return out
 }
 
-// REQ-broker-config-006: Set must record the actor, the account and both the
-// old and the new value in the config_set audit record.
+// TestREQBrokerConfig006_SetWritesActorAccountOldNew checks that Set records
+// the actor, the account and both the old and the new value in the config_set
+// audit record.
 func TestREQBrokerConfig006_SetWritesActorAccountOldNew(t *testing.T) {
 	c, _ := newValueCore(t, "broker:\n  public: false\n", "")
 	installCoreForTest(t, c)
@@ -144,8 +134,8 @@ func TestREQBrokerConfig006_SetWritesActorAccountOldNew(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-011: log.level defaults to info and only accepts the four
-// documented levels.
+// TestREQBrokerConfig011_LogLevelDefaultAndValidation checks that log.level
+// defaults to info and accepts only debug, info, warn and error.
 func TestREQBrokerConfig011_LogLevelDefaultAndValidation(t *testing.T) {
 	c, _ := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -179,8 +169,8 @@ func TestREQBrokerConfig011_LogLevelDefaultAndValidation(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-017: reload adopts a legal new value and audits it with the
-// old and new values.
+// TestREQBrokerConfig017_ReloadAuditsEachAdoptedKey checks that a reload adopts
+// a legal new value and audits it with the old and the new value.
 func TestREQBrokerConfig017_ReloadAuditsEachAdoptedKey(t *testing.T) {
 	c, path := newWatchCore(t, "log:\n  level: info\nsend:\n  link_retries: 5\n", false, nil)
 	writeConfigBody(t, path, "log:\n  level: debug\nsend:\n  link_retries: 3\n")
@@ -217,7 +207,8 @@ func TestREQBrokerConfig017_ReloadAuditsEachAdoptedKey(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-017: reload keeps an illegal value and does not audit it.
+// TestREQBrokerConfig017_ReloadKeepsIllegalLogLevel checks that a reload keeps
+// an illegal value and writes no audit record for it.
 func TestREQBrokerConfig017_ReloadKeepsIllegalLogLevel(t *testing.T) {
 	c, path := newWatchCore(t, "log:\n  level: info\n", false, nil)
 	writeConfigBody(t, path, "log:\n  level: verbose\n")
@@ -231,8 +222,9 @@ func TestREQBrokerConfig017_ReloadKeepsIllegalLogLevel(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-017: a command-line listen override excludes broker.listen
-// from reload while the other keys keep reloading.
+// TestREQBrokerConfig017_OverrideExcludesListenOnReload checks that a startup
+// listen override keeps broker.listen out of a reload while the other keys keep
+// reloading.
 func TestREQBrokerConfig017_OverrideExcludesListenOnReload(t *testing.T) {
 	c, path := newValueCore(t, "log:\n  level: info\n", ":17444")
 	writeConfigBody(t, path, "broker:\n  listen: \":17445\"\nlog:\n  level: debug\n")
@@ -261,8 +253,8 @@ func TestREQBrokerConfig017_OverrideExcludesListenOnReload(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-017: when one key of the listen/advertise group is
-// invalid, the whole group keeps its previous values.
+// TestREQBrokerConfig017_ReloadKeepsTheListenGroupTogether checks that an
+// invalid listen/advertise member keeps the whole group at its previous values.
 func TestREQBrokerConfig017_ReloadKeepsTheListenGroupTogether(t *testing.T) {
 	c, path := newWatchCore(t, "", false, nil)
 	writeConfigBody(t, path, "broker:\n  listen: \":17444\"\n  advertise_extra:\n    - \":17445\"\n")
@@ -285,9 +277,9 @@ func TestREQBrokerConfig017_ReloadKeepsTheListenGroupTogether(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-017: reload adopts a legal broker.listen change, updating
-// the effective listener and the advertised addresses; the default alias does
-// not depend on the listener and stays the same.
+// TestREQBrokerConfig017_ReloadAdoptsLegalListen checks that a reload adopts a
+// legal broker.listen change into the effective listener and the advertised
+// addresses while leaving the default alias unchanged.
 func TestREQBrokerConfig017_ReloadAdoptsLegalListen(t *testing.T) {
 	routes := &gapRoutes{}
 	routes.set(gapAddr(t, "192.0.2.10"))
@@ -317,9 +309,8 @@ func TestREQBrokerConfig017_ReloadAdoptsLegalListen(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-021: the config file is created 0600 in both deployment
-// forms. A system Broker cannot know the administration group the installation
-// gives the file, so it writes the conservative mode.
+// TestREQBrokerConfig021_ConfigFileCreationModes checks that a missing config
+// file is created 0600 in both deployment forms.
 func TestREQBrokerConfig021_ConfigFileCreationModes(t *testing.T) {
 	cases := []struct {
 		name string
@@ -352,8 +343,8 @@ func TestREQBrokerConfig021_ConfigFileCreationModes(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-022: the path set is derived from the deployment form and
-// the account, so the config file and audit log are visible to the Broker.
+// TestREQBrokerConfig022_PathRulesBothModes checks that each deployment form
+// derives its own config, data and audit paths.
 func TestREQBrokerConfig022_PathRulesBothModes(t *testing.T) {
 	c := newCore()
 	c.homeDir = func() (string, error) { return "/home/ana", nil }
@@ -391,8 +382,9 @@ func TestREQBrokerConfig022_PathRulesBothModes(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-027: broker.local_socket_group and
-// broker.local_socket_mode validate their values.
+// TestREQBrokerConfig027_LocalSocketKeys checks that broker.local_socket_group
+// and broker.local_socket_mode accept their valid spellings and reject invalid
+// ones.
 func TestREQBrokerConfig027_LocalSocketKeys(t *testing.T) {
 	c, _ := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -430,8 +422,8 @@ func TestREQBrokerConfig027_LocalSocketKeys(t *testing.T) {
 	}
 }
 
-// REQ-topics-020: topics.auto_join defaults to true and a reload adopts a new
-// value.
+// TestREQTopics020_AutoJoinDefault checks that topics.auto_join defaults to
+// true.
 func TestREQTopics020_AutoJoinDefault(t *testing.T) {
 	c, _ := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -444,6 +436,8 @@ func TestREQTopics020_AutoJoinDefault(t *testing.T) {
 	}
 }
 
+// TestREQTopics020_AutoJoinReload checks that a reload adopts a new
+// topics.auto_join value and audits it.
 func TestREQTopics020_AutoJoinReload(t *testing.T) {
 	c, path := newWatchCore(t, "topics:\n  auto_join: true\n", false, nil)
 	installCoreForTest(t, c)
@@ -463,8 +457,8 @@ func TestREQTopics020_AutoJoinReload(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-029: startup rejects a static key whose length is outside
-// 16..128 characters, and the error never contains the value.
+// TestREQBrokerPairing029_StartupRejectsInvalidKey checks that startup rejects
+// a static key outside 16 to 128 characters and never names its value.
 func TestREQBrokerPairing029_StartupRejectsInvalidKey(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -500,8 +494,8 @@ func TestREQBrokerPairing029_StartupRejectsInvalidKey(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-029: reload keeps the previous static key when the file
-// value is invalid.
+// TestREQBrokerPairing029_ReloadKeepsInvalidKey checks that a reload keeps the
+// previous static key when the file value is invalid.
 func TestREQBrokerPairing029_ReloadKeepsInvalidKey(t *testing.T) {
 	c, path := newWatchCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", false, nil)
 	installCoreForTest(t, c)
@@ -515,8 +509,8 @@ func TestREQBrokerPairing029_ReloadKeepsInvalidKey(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-031: Set rejects the secret key and changes neither the
-// file, the memory value nor the audit log.
+// TestREQBrokerPairing031_SetSecretRejected checks that Set refuses the secret
+// key and changes neither the file, the memory value nor the audit log.
 func TestREQBrokerPairing031_SetSecretRejected(t *testing.T) {
 	c, path := newValueCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", "")
 	installCoreForTest(t, c)
@@ -543,8 +537,9 @@ func TestREQBrokerPairing031_SetSecretRejected(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-032: Secret returns a value replaced in the file without
-// requiring a separate reload, and the audit record keeps only the key.
+// TestREQBrokerPairing032_SecretReload checks that Secret returns a value
+// replaced in the file without a separate reload and that the audit record
+// keeps only the key.
 func TestREQBrokerPairing032_SecretReload(t *testing.T) {
 	c, path := newWatchCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", false, nil)
 	installCoreForTest(t, c)
@@ -566,8 +561,8 @@ func TestREQBrokerPairing032_SecretReload(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-033: deleting the key from the file makes Secret return
-// the empty string.
+// TestREQBrokerPairing033_SecretDelete checks that deleting the key from the
+// file makes Secret return the empty string and Get report an unset secret.
 func TestREQBrokerPairing033_SecretDelete(t *testing.T) {
 	c, path := newWatchCore(t, "pairing:\n  static_key: \"0123456789abcdef\"\n", false, nil)
 	installCoreForTest(t, c)
@@ -591,9 +586,8 @@ func TestREQBrokerPairing033_SecretDelete(t *testing.T) {
 	}
 }
 
-// REQ-broker-discovery-016: the periodic re-enumeration replaces the list and
-// notifies the advertised-address subscribers. Removing reevaluateAdvertised
-// or its notification makes this test fail.
+// TestREQBrokerDiscovery016_ReenumerateNotifies checks that re-enumeration
+// replaces the advertised list and notifies the advertised-address subscribers.
 func TestREQBrokerDiscovery016_ReenumerateNotifies(t *testing.T) {
 	routes := &gapRoutes{}
 	routes.set(gapAddr(t, "192.0.2.10"))
@@ -633,8 +627,9 @@ func TestREQBrokerDiscovery016_ReenumerateNotifies(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-032: Set rejects an invalid listen/advertise combination
-// and leaves the file, memory and audit log unchanged.
+// TestREQBrokerConfig032_SetRejectsCombination checks that Set refuses an
+// invalid listen/advertise combination and changes neither the file, memory nor
+// the audit log.
 func TestREQBrokerConfig032_SetRejectsCombination(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  listen: \"203.0.113.5:17443\"\n", "")
 	installCoreForTest(t, c)
@@ -661,8 +656,8 @@ func TestREQBrokerConfig032_SetRejectsCombination(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-032: reload rejects an invalid listen/advertise
-// combination and keeps the previous group.
+// TestREQBrokerConfig032_ReloadRejectsCombination checks that a reload refuses
+// an invalid listen/advertise combination and keeps the previous group.
 func TestREQBrokerConfig032_ReloadRejectsCombination(t *testing.T) {
 	c, path := newWatchCore(t, "", false, nil)
 	writeConfigBody(t, path, "broker:\n  listen: \"\"\n  advertise: example.com\n")
@@ -681,8 +676,9 @@ func TestREQBrokerConfig032_ReloadRejectsCombination(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-036: Set rejects more than eight configured addresses and
-// keeps the previous value.
+// TestREQBrokerConfig036_SetRejectsTooMany checks that Set refuses more than
+// eight advertised addresses and changes neither the file, memory nor the audit
+// log.
 func TestREQBrokerConfig036_SetRejectsTooMany(t *testing.T) {
 	c, path := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -709,8 +705,8 @@ func TestREQBrokerConfig036_SetRejectsTooMany(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-036: reload rejects more than eight configured addresses
-// and keeps the previous group.
+// TestREQBrokerConfig036_ReloadRejectsTooMany checks that a reload refuses more
+// than eight advertised addresses and keeps the previous list.
 func TestREQBrokerConfig036_ReloadRejectsTooMany(t *testing.T) {
 	c, path := newWatchCore(t, "", false, nil)
 	var body strings.Builder
@@ -732,7 +728,9 @@ func TestREQBrokerConfig036_ReloadRejectsTooMany(t *testing.T) {
 	}
 }
 
-// Set persistence failure keeps the in-memory value and writes no audit record.
+// TestREQBrokerConfig002_SetWriteFailureKeepsMemoryAndAudit checks that a
+// failed write keeps the in-memory value and the file unchanged and writes no
+// audit record.
 func TestREQBrokerConfig002_SetWriteFailureKeepsMemoryAndAudit(t *testing.T) {
 	c, path := newValueCore(t, "broker:\n  public: false\n", "")
 	installCoreForTest(t, c)
@@ -760,7 +758,8 @@ func TestREQBrokerConfig002_SetWriteFailureKeepsMemoryAndAudit(t *testing.T) {
 	}
 }
 
-// Set persists values of every non-string kind.
+// TestREQBrokerConfig002_SetPersistsIntDurationStringList checks that Set
+// persists int, duration and string-list values to memory and to the file.
 func TestREQBrokerConfig002_SetPersistsIntDurationStringList(t *testing.T) {
 	c, path := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -804,7 +803,8 @@ func TestREQBrokerConfig002_SetPersistsIntDurationStringList(t *testing.T) {
 	}
 }
 
-// Set rejects an unknown key, changing nothing.
+// TestREQBrokerConfig002_SetUnknownKeyRejected checks that Set refuses an
+// unknown key and changes nothing.
 func TestREQBrokerConfig002_SetUnknownKeyRejected(t *testing.T) {
 	c, path := newValueCore(t, "", "")
 	installCoreForTest(t, c)
@@ -828,8 +828,8 @@ func TestREQBrokerConfig002_SetUnknownKeyRejected(t *testing.T) {
 	}
 }
 
-// Set with a value equal to the current one still writes and audits, because
-// the design gives same-value writes no exception.
+// TestREQBrokerConfig002_SetSameValueStillAudits checks that a Set to the
+// current value still returns the old value and appends a config_set record.
 func TestREQBrokerConfig002_SetSameValueStillAudits(t *testing.T) {
 	c, _ := newValueCore(t, "broker:\n  public: false\n", "")
 	installCoreForTest(t, c)

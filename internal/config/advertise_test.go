@@ -62,8 +62,8 @@ func makeRoutes(n int) []netip.Addr {
 	return out
 }
 
-// TestAdvertisedCombinationTable exercises every row of the combination
-// table in design-config.md without touching the host network.
+// TestAdvertisedCombinationTable checks every row of the listen/advertise
+// combination table without touching the host network.
 func TestAdvertisedCombinationTable(t *testing.T) {
 	routes := []netip.Addr{mustAddr(t, "192.0.2.20"), mustAddr(t, "2001:db8::20")}
 	tests := []struct {
@@ -127,6 +127,8 @@ func TestAdvertisedCombinationTable(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig030_DefaultRouteOnly checks that a wildcard listen with
+// no advertise yields the default-route addresses at the listen port.
 func TestREQBrokerConfig030_DefaultRouteOnly(t *testing.T) {
 	routes := []netip.Addr{mustAddr(t, "192.0.2.20"), mustAddr(t, "2001:db8::20")}
 	got, err := computeAdvertised(wildcardListen(17443), advertiseSpec{Kind: advertiseKindNone}, nil, routes)
@@ -139,6 +141,8 @@ func TestREQBrokerConfig030_DefaultRouteOnly(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig030_PortOnly checks that a port-only advertise gives the
+// default-route addresses that port.
 func TestREQBrokerConfig030_PortOnly(t *testing.T) {
 	routes := []netip.Addr{mustAddr(t, "192.0.2.20")}
 	got, err := computeAdvertised(wildcardListen(17443), advertiseSpec{Kind: advertiseKindPort, Port: 18443}, nil, routes)
@@ -148,6 +152,8 @@ func TestREQBrokerConfig030_PortOnly(t *testing.T) {
 	assertAddresses(t, got, []AdvertisedAddr{directHostPort("192.0.2.20", 18443)})
 }
 
+// TestREQBrokerConfig030_ExtraAppended checks that extra addresses are appended
+// after the derived list.
 func TestREQBrokerConfig030_ExtraAppended(t *testing.T) {
 	routes := []netip.Addr{mustAddr(t, "192.0.2.20")}
 	extra := []AdvertisedAddr{directAddr("b.vpn.example:18443")}
@@ -161,6 +167,8 @@ func TestREQBrokerConfig030_ExtraAppended(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig031_HostPortOnly checks that a host:port advertise yields
+// only that item.
 func TestREQBrokerConfig031_HostPortOnly(t *testing.T) {
 	routes := []netip.Addr{mustAddr(t, "192.0.2.20")}
 	got, err := computeAdvertised(wildcardListen(17443), advertiseSpec{Kind: advertiseKindHostPort, Host: "b.example", Port: 443}, nil, routes)
@@ -170,6 +178,8 @@ func TestREQBrokerConfig031_HostPortOnly(t *testing.T) {
 	assertAddresses(t, got, []AdvertisedAddr{directHostPort("b.example", 443)})
 }
 
+// TestREQBrokerConfig031_HostOnly checks that a bare host advertise takes the
+// listen port.
 func TestREQBrokerConfig031_HostOnly(t *testing.T) {
 	got, err := computeAdvertised(specificListen("192.0.2.20", 17443), advertiseSpec{Kind: advertiseKindHost, Host: "b.example"}, nil, nil)
 	if err != nil {
@@ -178,6 +188,8 @@ func TestREQBrokerConfig031_HostOnly(t *testing.T) {
 	assertAddresses(t, got, []AdvertisedAddr{directHostPort("b.example", 17443)})
 }
 
+// TestREQBrokerConfig031_ExtraAfterHost checks that extra addresses follow a
+// configured host.
 func TestREQBrokerConfig031_ExtraAfterHost(t *testing.T) {
 	extra := []AdvertisedAddr{directAddr("b.vpn.example:17443")}
 	got, err := computeAdvertised(specificListen("192.0.2.20", 17443), advertiseSpec{Kind: advertiseKindHost, Host: "b.example"}, extra, nil)
@@ -190,6 +202,8 @@ func TestREQBrokerConfig031_ExtraAfterHost(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig035_SpecificListenFirst checks that a specific listen
+// address becomes the first item, followed by the extra addresses.
 func TestREQBrokerConfig035_SpecificListenFirst(t *testing.T) {
 	extra := []AdvertisedAddr{directAddr("b.vpn.example:17443")}
 	got, err := computeAdvertised(specificListen("192.0.2.20", 17443), advertiseSpec{Kind: advertiseKindNone}, extra, nil)
@@ -202,6 +216,8 @@ func TestREQBrokerConfig035_SpecificListenFirst(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig032_CombinationErrorsNameTheKeys checks that an illegal
+// combination returns ErrInvalidCombination and names both keys.
 func TestREQBrokerConfig032_CombinationErrorsNameTheKeys(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -251,6 +267,8 @@ func TestREQBrokerConfig032_CombinationErrorsNameTheKeys(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig033_ExtraAddresses checks that extra address items are
+// parsed and joined with their ports.
 func TestREQBrokerConfig033_ExtraAddresses(t *testing.T) {
 	adv := advertiseSpec{Kind: advertiseKindPort, Port: 18443}
 	extra, err := parseExtra([]string{"b.vpn.example", "198.51.100.7:8443", "[2001:db8::7]"}, adv, wildcardListen(17443))
@@ -264,6 +282,8 @@ func TestREQBrokerConfig033_ExtraAddresses(t *testing.T) {
 	})
 }
 
+// TestREQBrokerConfig033_ExtraPortDefault checks which port an extra address
+// item without a port takes.
 func TestREQBrokerConfig033_ExtraPortDefault(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -287,6 +307,8 @@ func TestREQBrokerConfig033_ExtraPortDefault(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig036_TooManyConfigured checks the eight-item cap across
+// configured and default-route addresses.
 func TestREQBrokerConfig036_TooManyConfigured(t *testing.T) {
 	hostPort := advertiseSpec{Kind: advertiseKindHostPort, Host: "b.example", Port: 443}
 	if _, err := computeAdvertised(wildcardListen(17443), hostPort, makeExtra(8), nil); !errors.Is(err, ErrTooManyAddresses) {
@@ -320,6 +342,8 @@ func TestREQBrokerConfig036_TooManyConfigured(t *testing.T) {
 	}
 }
 
+// TestREQBrokerConfig036_TruncateDefaultRoute checks that default-route
+// addresses beyond the cap are dropped and every extra item is kept.
 func TestREQBrokerConfig036_TruncateDefaultRoute(t *testing.T) {
 	extra7 := makeExtra(7)
 	got, err := computeAdvertised(wildcardListen(17443), advertiseSpec{Kind: advertiseKindNone}, extra7, makeRoutes(10))
@@ -356,6 +380,8 @@ func TestREQBrokerConfig036_TruncateDefaultRoute(t *testing.T) {
 	}
 }
 
+// TestConfigAdvertisedOrderAndDedup checks that the list keeps its order and
+// removes duplicates.
 func TestConfigAdvertisedOrderAndDedup(t *testing.T) {
 	routes := []netip.Addr{mustAddr(t, "192.0.2.20")}
 	extra := []AdvertisedAddr{
@@ -373,6 +399,8 @@ func TestConfigAdvertisedOrderAndDedup(t *testing.T) {
 	})
 }
 
+// TestParseAdvertise checks the accepted and rejected broker.advertise
+// spellings.
 func TestParseAdvertise(t *testing.T) {
 	tests := []struct {
 		in      string
@@ -427,9 +455,8 @@ func TestParseAdvertise(t *testing.T) {
 	}
 }
 
-// TestValidDialHostTrailingDot pins the trailing-dot rule: an FQDN written
-// with one trailing dot is dialable and accepted, while two trailing dots
-// leave an empty label and are rejected.
+// TestValidDialHostTrailingDot checks that one trailing dot is accepted and two
+// are rejected.
 func TestValidDialHostTrailingDot(t *testing.T) {
 	tests := []struct {
 		host string
@@ -448,6 +475,8 @@ func TestValidDialHostTrailingDot(t *testing.T) {
 	}
 }
 
+// TestParseExtraRejectsInvalidItems checks that parseExtra rejects invalid
+// broker.advertise_extra items.
 func TestParseExtraRejectsInvalidItems(t *testing.T) {
 	adv := advertiseSpec{Kind: advertiseKindNone}
 	listen := wildcardListen(17443)
@@ -473,6 +502,8 @@ func TestParseExtraRejectsInvalidItems(t *testing.T) {
 	}
 }
 
+// TestNeedsRoutes checks which listen and advertise combinations need the
+// default-route addresses.
 func TestNeedsRoutes(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -495,9 +526,8 @@ func TestNeedsRoutes(t *testing.T) {
 	}
 }
 
-// TestREQBrokerDiscovery016_ReenumerateChanges proves that a changed
-// default-route enumeration produces a different list, which is what the
-// periodic checker and SubscribeAdvertised report.
+// TestREQBrokerDiscovery016_ReenumerateChanges checks that a changed
+// default-route enumeration produces a different advertised list.
 func TestREQBrokerDiscovery016_ReenumerateChanges(t *testing.T) {
 	first := []netip.Addr{mustAddr(t, "198.51.100.4")}
 	second := []netip.Addr{mustAddr(t, "198.51.100.9")}
@@ -519,6 +549,8 @@ func TestREQBrokerDiscovery016_ReenumerateChanges(t *testing.T) {
 	assertAddresses(t, after, []AdvertisedAddr{directHostPort("198.51.100.9", 17443)})
 }
 
+// TestSameAddressesIgnoresNilVersusEmpty checks that nil and empty address
+// lists compare equal.
 func TestSameAddressesIgnoresNilVersusEmpty(t *testing.T) {
 	if !sameAddresses(nil, []AdvertisedAddr{}) {
 		t.Fatal("nil and empty lists must compare equal")
