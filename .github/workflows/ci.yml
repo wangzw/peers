@@ -79,13 +79,26 @@ jobs:
           go-version: "1.27"
           cache: true
       - name: Run the tests
-        run: make test JOBS=4
+        run: make test JOBS=4 COVER_DIR="${{ runner.temp }}/cover"
       # These tests change file ownership or start a child as another account,
       # so they need root and skip themselves otherwise. PATH keeps the
       # setup-go toolchain visible and HOME keeps the Go caches in the same
-      # place the non-root step used.
+      # place the non-root step used. The root round is not instrumented,
+      # because its data is not counted anywhere.
       - name: Run the tests that need root
         run: sudo --preserve-env=PATH,HOME make test-root JOBS=2
+      # The coverage job merges these counters with the end-to-end ones. Both
+      # test rounds sit below one artifact, so the download names them
+      # coverage-test/unit and coverage-test/testenv.
+      - name: Upload the test coverage
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: coverage-test
+          path: |
+            ${{ runner.temp }}/cover/unit
+            ${{ runner.temp }}/cover/testenv
+          if-no-files-found: error
+          retention-days: 7
 
   docs-check:
     name: documentation
@@ -303,7 +316,7 @@ jobs:
           E2E_ARTIFACTS: ${{ runner.temp }}/e2e-artifacts
         run: |
           mkdir -p "$E2E_ARTIFACTS"
-          make e2e JOBS="$(nproc)" 2>&1 | tee "$E2E_ARTIFACTS/test.log"
+          make e2e JOBS="$(nproc)" COVER_DIR="${{ runner.temp }}/cover" 2>&1 | tee "$E2E_ARTIFACTS/test.log"
       # A Go stack written by SIGQUIT and a Broker log carry no pairing key by
       # design, but the upload must not rely on that alone. The scan refuses
       # the upload when a one-time key or a secret-bearing environment
@@ -337,6 +350,119 @@ jobs:
           name: e2e-artifacts-${{ matrix.shard }}
           path: ${{ runner.temp }}/e2e-artifacts/
           if-no-files-found: warn
+          retention-days: 7
+      # A single directory path publishes its contents at the artifact root,
+      # so the download leaves plain covdata under coverage-e2e-<shard> rather
+      # than a second e2e/ level.
+      - name: Upload the end-to-end coverage
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: coverage-e2e-${{ matrix.shard }}
+          path: ${{ runner.temp }}/cover/e2e
+          if-no-files-found: error
+          retention-days: 7
+
+  coverage:
+    name: coverage report
+    runs-on: ubuntu-24.04
+    needs: [test, e2e]
+    # The job only merges what the producers published: the merge over the
+    # unit and testenv rounds took 2.1 s measured locally, and the e2e counters
+    # join the same one-pass merge. A cold module cache plus one stalled action
+    # download (282 s) stays well inside 10 minutes.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
+        with:
+          go-version: "1.27"
+          cache: true
+      # Download leaves one directory per artifact, named after it: coverage-test
+      # holds unit/ and testenv/ below it once extracted, and each e2e shard's
+      # counters sit directly in coverage-e2e-<shard>. skip-decompress keeps the
+      # action's unzip path, which emits the DEP0005 Buffer() deprecation, out
+      # of the log; the report step extracts each archive itself. The report
+      # step derives its input list from these directories, so a shard added to
+      # the e2e matrix needs no change here.
+      - name: Download the coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          # Extglob, not coverage-*: a re-run also leaves coverage-profile, which has no covmeta.
+          pattern: coverage-@(test|e2e-*)
+          path: ${{ runner.temp }}/cover
+          skip-decompress: true
+      # A fail-closed error in coverreport fails this step; thresholds are not
+      # enforced here. Every downloaded artifact directory must carry counters,
+      # so an upload that produced none fails the step instead of being merged
+      # partly.
+      - name: Publish the coverage report
+        run: |
+          cover="${{ runner.temp }}/cover"
+          # skip-decompress left one raw archive inside the directory named after
+          # each artifact; extract it there so the layout matches a normal
+          # download, and fail on any unzip error.
+          for artifact in "$cover"/coverage-*/; do
+            artifact="${artifact%/}"
+            [ -d "$artifact" ] || continue
+            zipfile="$(find "$artifact" -mindepth 1 -maxdepth 1 -type f -print -quit)"
+            if [ -z "$zipfile" ]; then
+              echo "::error::$(basename "$artifact") holds no downloaded archive"
+              exit 1
+            fi
+            if ! unzip -q -o "$zipfile" -d "$artifact"; then
+              echo "::error::$(basename "$artifact") failed to extract its archive"
+              exit 1
+            fi
+            rm -f "$zipfile"
+          done
+          has_both() {
+            [ -d "$1" ] || return 1
+            [ -n "$(find "$1" -maxdepth 1 -type f -name 'covmeta.*' -print -quit)" ] &&
+              [ -n "$(find "$1" -maxdepth 1 -type f -name 'covcounters.*' -print -quit)" ]
+          }
+          counters() {
+            find "$1" -mindepth 1 -maxdepth 2 -type f \
+              \( -name 'covmeta.*' -o -name 'covcounters.*' \) -print -quit
+          }
+          # make test exits 0 when a round finds no tests to run, and the upload
+          # still succeeds because the other round carries files, so both rounds
+          # are checked here or the report would silently lose one.
+          for round in unit testenv; do
+            if ! has_both "$cover/coverage-test/$round"; then
+              echo "::error::coverage-test/$round carries no covmeta and covcounters"
+              exit 1
+            fi
+          done
+          dirs="$(find "$cover" -mindepth 2 -maxdepth 3 -type f \
+            \( -name 'covmeta.*' -o -name 'covcounters.*' \) -printf '%h\n' | sort -u)"
+          if [ -z "$dirs" ]; then
+            echo "::error::no coverage data under $cover"
+            exit 1
+          fi
+          for artifact in "$cover"/coverage-*/; do
+            artifact="${artifact%/}"
+            if [ -z "$(counters "$artifact")" ]; then
+              echo "::error::$(basename "$artifact") carries no coverage data"
+              exit 1
+            fi
+          done
+          inputs=""
+          while IFS= read -r dir; do
+            inputs="${inputs:+$inputs }${dir#"$cover"/}"
+          done <<< "$dirs"
+          make cover-report \
+            COVER_DIR="$cover" \
+            COVER_FORMAT=markdown \
+            COVER_INPUTS="$inputs" \
+            >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the coverage profile
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: coverage-profile
+          path: ${{ runner.temp }}/cover/coverage.txt
+          if-no-files-found: error
           retention-days: 7
 
   third-party-licenses:
