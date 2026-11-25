@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -576,6 +577,178 @@ func currentGroupName(t *testing.T) string {
 	return g.Name
 }
 
+// TestParseDecimal32RejectsEmptyID checks that parseDecimal32 rejects an empty
+// id.
+func TestParseDecimal32RejectsEmptyID(t *testing.T) {
+	if _, err := parseDecimal32(""); err == nil || err.Error() != "empty id" {
+		t.Errorf("parseDecimal32(\"\") error = %v, want \"empty id\"", err)
+	}
+}
+
+// TestOSUserToUserRejectsInvalidIDs checks that osUserToUser reports an
+// invalid uid or gid and returns the zero user.
+func TestOSUserToUserRejectsInvalidIDs(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   user.User
+		want string
+	}{
+		{"uid", user.User{Username: "bob", Uid: "not-a-number", Gid: "1"}, "invalid uid"},
+		{"gid", user.User{Username: "bob", Uid: "1", Gid: "not-a-number"}, "invalid gid"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := osUserToUser(&c.in)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("osUserToUser(%+v) error = %v, want it to mention %q", c.in, err, c.want)
+			}
+			if got != (User{}) {
+				t.Errorf("osUserToUser(%+v) = %+v, want the zero user alongside the error", c.in, got)
+			}
+		})
+	}
+}
+
+// TestOSUserGroupIDsForCurrentAccount checks that osUserGroupIDs returns the
+// current account's groups sorted, without duplicates, including the primary
+// gid.
+func TestOSUserGroupIDsForCurrentAccount(t *testing.T) {
+	u, err := osUserLookupUID(currentUID(t))
+	if err != nil {
+		t.Fatalf("osUserLookupUID(%d): %v", currentUID(t), err)
+	}
+	ids, err := osUserGroupIDs(u)
+	if err != nil {
+		t.Fatalf("osUserGroupIDs(%+v): %v", u, err)
+	}
+	if len(ids) == 0 {
+		t.Fatal("osUserGroupIDs returned no groups")
+	}
+	found := false
+	for i, id := range ids {
+		if id == u.GID {
+			found = true
+		}
+		if i > 0 && ids[i-1] >= id {
+			t.Errorf("osUserGroupIDs(%+v) = %v, want strictly increasing ids", u, ids)
+			break
+		}
+	}
+	if !found {
+		t.Errorf("osUserGroupIDs(%+v) = %v, want it to contain the primary gid %d", u, ids, u.GID)
+	}
+}
+
+// TestLookupNameMalformedGetentFallsBackToLocalAccount checks that a malformed
+// getent passwd answer falls back to the local account.
+func TestLookupNameMalformedGetentFallsBackToLocalAccount(t *testing.T) {
+	want, err := osUserLookupUID(currentUID(t))
+	if err != nil {
+		t.Fatalf("osUserLookupUID(%d): %v", currentUID(t), err)
+	}
+	fakeGetentWithOutput(t, "not-a-passwd-entry\n")
+
+	got, err := LookupName(want.Name)
+	if err != nil {
+		t.Fatalf("LookupName(%q): %v", want.Name, err)
+	}
+	if got != want {
+		t.Errorf("LookupName(%q) = %+v, want the local account %+v", want.Name, got, want)
+	}
+}
+
+// TestGroupIDsMalformedInitgroupsFallsBackToLocalAccount checks that a
+// malformed getent initgroups answer falls back to the local account's groups.
+func TestGroupIDsMalformedInitgroupsFallsBackToLocalAccount(t *testing.T) {
+	want, err := osUserLookupUID(currentUID(t))
+	if err != nil {
+		t.Fatalf("osUserLookupUID(%d): %v", currentUID(t), err)
+	}
+	wantIDs, err := osUserGroupIDs(want)
+	if err != nil {
+		t.Fatalf("osUserGroupIDs(%+v): %v", want, err)
+	}
+	fakeGetentWithOutput(t, "someone-else 1 2\n")
+
+	ids, err := GroupIDs(want)
+	if err != nil {
+		t.Fatalf("GroupIDs(%+v): %v", want, err)
+	}
+	if !slices.Equal(ids, wantIDs) {
+		t.Errorf("GroupIDs(%+v) = %v, want the local groups %v", want, ids, wantIDs)
+	}
+	for _, id := range []uint32{1, 2} {
+		if slices.Contains(wantIDs, id) {
+			continue
+		}
+		if slices.Contains(ids, id) {
+			t.Errorf("GroupIDs(%+v) = %v, want the fake getent's group %d excluded", want, ids, id)
+		}
+	}
+}
+
+// TestParsePasswdRejectsMalformedEntries checks that parsePasswd rejects an
+// invalid account name and a non-numeric gid.
+func TestParsePasswdRejectsMalformedEntries(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		in      string
+		wantErr string
+	}{
+		{"invalid name", "bad name:x:1:1::/home/bob:/bin/sh\n", "cannot use account name"},
+		{"invalid gid", "bob:x:1:not-a-number::/home/bob:/bin/sh\n", "passwd entry gid"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := parsePasswd([]byte(c.in))
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("parsePasswd(%q) error = %v, want it to mention %q", c.in, err, c.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseGroupRejectsMalformedEntries checks that parseGroup rejects empty
+// output and an invalid account name.
+func TestParseGroupRejectsMalformedEntries(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		in      string
+		wantErr string
+	}{
+		{"empty output", "", "empty output"},
+		{"invalid name", "bad name:x:1:\n", "cannot use account name"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := parseGroup([]byte(c.in))
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("parseGroup(%q) error = %v, want it to mention %q", c.in, err, c.wantErr)
+			}
+		})
+	}
+}
+
+// TestParseInitgroupsRejectsMalformedEntries checks that parseInitgroups
+// rejects empty output, another account's name and a non-numeric id.
+func TestParseInitgroupsRejectsMalformedEntries(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		in      string
+		wantErr string
+	}{
+		{"empty output", "", "empty output"},
+		{"other account", "other 1 2\n", "does not start with"},
+		{"invalid id", "bob 1 not-a-number\n", "initgroups entry"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := parseInitgroups([]byte(c.in), "bob")
+			if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("parseInitgroups(%q) error = %v, want it to mention %q", c.in, err, c.wantErr)
+			}
+		})
+	}
+}
+
+// TestPlatformLookupsCurrentAccount checks that the platform lookups resolve
+// the current account and its primary group.
 func TestPlatformLookupsCurrentAccount(t *testing.T) {
 	uid := currentUID(t)
 	u, err := LookupUID(uid)
