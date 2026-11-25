@@ -347,7 +347,7 @@ The user template likewise lists `broker.local_socket_group` and `broker.local_s
 - Append a `config_set` audit record.
 - Put this change into the notification queue.
 
-When the key is absent from the file, `Set` first finds, within the section the key belongs to, a placeholder line matching `^\s*#\s*<leaf>:`. At the first match it replaces that line with the effective `<leaf>: <new value>`, keeping the position and indentation and the explanatory comment above it; when none is found, it appends to the section's end or the file's end as before. Apart from this replacement, the rest of the file is untouched (`REQ-broker-config-040`).
+When the key is absent from the file, `Set` first finds, within the section the key belongs to, a placeholder line matching `^\s*#\s*<leaf>:` followed by whitespace or the end of the line. At the first match it replaces that line with the effective `<leaf>: <new value>`, keeping the position and indentation and the explanatory comment above it; when none is found, it appends to the section's end or the file's end as before. Apart from this replacement, the rest of the file is untouched (`REQ-broker-config-040`).
 
 The read and the write-back are not atomic: content written by another program in this window is overwritten and lost by this write-back, a cost accepted for the in-place rewrite. When the configuration file on disk is empty or absent, the write-back contains only the modified key and the file's original comments; other keys remain only in memory, in effect from memory for this run and back to their defaults after a restart.
 

@@ -273,10 +273,10 @@ func sectionAndLeaf(key string) (section, leaf string) {
 	return key, ""
 }
 
-// replacePlaceholderLine replaces the first line matching
-// "^\s*#\s*<leaf>:" inside section with an active "<leaf>: <value>" line. It
-// returns false when the section or such a line is absent. The replacement
-// keeps the line's indentation and every other byte of the file.
+// replacePlaceholderLine replaces the first line matching "^\s*#\s*<leaf>:"
+// followed by whitespace or the end of the line inside section with an active
+// "<leaf>: <value>" line, keeping the line's indentation and every other byte.
+// It returns false when no such line exists.
 func replacePlaceholderLine(data []byte, section, leaf string, spec *keySpec, v Value) ([]byte, bool) {
 	text, err := encodeValueText(spec, v)
 	if err != nil {
