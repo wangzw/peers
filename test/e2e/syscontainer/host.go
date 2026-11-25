@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/wangzw/peers/test/e2e/harness"
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
@@ -280,10 +281,11 @@ func runCommand(t *testing.T, account string, env []string, name string, args ..
 }
 
 // Command builds a command that runs as account. The environment is built from
-// an empty one: HOME, USER, LOGNAME, PATH, then env. The working directory is
-// the account's home. The credential is set from the account database, and it
-// is left alone when the target account is the current one, because changing
-// the group list then fails.
+// an empty one: HOME, USER, LOGNAME, PATH, then env. Under coverage the
+// coverage directory is added as GOCOVERDIR, unless env already names one. The
+// working directory is the account's home. The credential is set from the
+// account database, and it is left alone when the target account is the
+// current one, because changing the group list then fails.
 func Command(account string, env []string, name string, args ...string) *exec.Cmd {
 	u, uid, gid := lookupAccount(account)
 	cmd := exec.Command(name, args...)
@@ -294,6 +296,9 @@ func Command(account string, env []string, name string, args ...string) *exec.Cm
 		"LOGNAME=" + u.Username,
 		"PATH=" + accountPath,
 	}, env...)
+	if coverDir := harness.CoverageDir(); coverDir != "" && !hasEnv(env, "GOCOVERDIR") {
+		cmd.Env = append(cmd.Env, "GOCOVERDIR="+coverDir)
+	}
 	if euid := os.Geteuid(); uint32(euid) != uid {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			Credential: &syscall.Credential{
@@ -304,6 +309,17 @@ func Command(account string, env []string, name string, args ...string) *exec.Cm
 		}
 	}
 	return cmd
+}
+
+// hasEnv reports whether env names the variable.
+func hasEnv(env []string, name string) bool {
+	prefix := name + "="
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // lookupAccount is Command's account lookup. Command has no *testing.T, so a

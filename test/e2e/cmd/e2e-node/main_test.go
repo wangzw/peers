@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -111,6 +112,59 @@ func TestOneshotSessionPrintsResult(t *testing.T) {
 	if len(out.Agents) != 1 || out.Agents[0].Address != "stub@hostA" {
 		t.Fatalf("agents = %+v, want the stub's single entry", out.Agents)
 	}
+}
+
+// TestWithCoverageAddsGoCoverDir checks that GOCOVERDIR joins the BaseEnv the
+// command builds only when coverage is on, that it keeps the caller's entries,
+// and that it does not mutate the map it was given.
+func TestWithCoverageAddsGoCoverDir(t *testing.T) {
+	base := node.BaseEnv{
+		Home:  "/home/peer",
+		Path:  "/usr/bin",
+		Extra: map[string]string{"PEERS_TEST_RUNTIME_ROOT": "/tmp/root"},
+	}
+	if _, ok := base.Extra["GOCOVERDIR"]; ok {
+		t.Fatal("the fixture already names GOCOVERDIR")
+	}
+
+	t.Setenv(coverageDirEnv, "")
+	off := withCoverage(base)
+	if _, ok := envValues(off.Build(nil))["GOCOVERDIR"]; ok {
+		t.Fatalf("withCoverage without coverage added GOCOVERDIR: %v", off.Build(nil))
+	}
+	if got := off.Extra["PEERS_TEST_RUNTIME_ROOT"]; got != "/tmp/root" {
+		t.Fatalf("withCoverage without coverage changed the extra map: %v", off.Extra)
+	}
+
+	t.Setenv(coverageDirEnv, "/e2e-cover")
+	on := withCoverage(node.BaseEnv{Home: "/home/peer", Path: "/usr/bin", Extra: base.Extra})
+	values := envValues(on.Build(nil))
+	if got := values["GOCOVERDIR"]; got != "/e2e-cover" {
+		t.Fatalf("GOCOVERDIR = %q, want /e2e-cover", got)
+	}
+	if got := values["PEERS_TEST_RUNTIME_ROOT"]; got != "/tmp/root" {
+		t.Fatalf("PEERS_TEST_RUNTIME_ROOT = %q, want /tmp/root", got)
+	}
+	if _, ok := base.Extra["GOCOVERDIR"]; ok {
+		t.Fatal("withCoverage mutated the caller's extra map")
+	}
+
+	// An environment with no extras gets one.
+	bare := withCoverage(node.BaseEnv{Home: "/home/peer", Path: "/usr/bin"})
+	if got := envValues(bare.Build(nil))["GOCOVERDIR"]; got != "/e2e-cover" {
+		t.Fatalf("GOCOVERDIR for a bare environment = %q, want /e2e-cover", got)
+	}
+}
+
+// envValues turns NAME=value strings into a map.
+func envValues(env []string) map[string]string {
+	values := make(map[string]string, len(env))
+	for _, entry := range env {
+		if name, value, ok := strings.Cut(entry, "="); ok {
+			values[name] = value
+		}
+	}
+	return values
 }
 
 // TestServeShutdown starts the command, asks it to stop over the control

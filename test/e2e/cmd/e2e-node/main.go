@@ -44,6 +44,27 @@ const oneshotReadyBound = 30 * time.Second
 // the loop has not classified the Broker yet.
 const oneshotStartingText = "still being set up"
 
+// coverageDirEnv names the e2e coverage directory, the same variable the
+// harness and syscontainer use.
+const coverageDirEnv = "E2E_COVER_DIR"
+
+// withCoverage adds GOCOVERDIR to env when coverage collection is on, so the
+// children started with env write their counters to the directory the container
+// mounted. env is left untouched when coverage is off.
+func withCoverage(env node.BaseEnv) node.BaseEnv {
+	dir := os.Getenv(coverageDirEnv)
+	if dir == "" {
+		return env
+	}
+	extra := make(map[string]string, len(env.Extra)+1)
+	for name, value := range env.Extra {
+		extra[name] = value
+	}
+	extra["GOCOVERDIR"] = dir
+	env.Extra = extra
+	return env
+}
+
 const usage = "usage: e2e-node serve --ctl <socket> --home <dir> --bin <peers> [--runtime-root <dir>] [--path <PATH>]\n" +
 	"       e2e-node probe-hello --addr <host:port>\n" +
 	"       e2e-node oneshot-session --name <name> --bin <peers> [--env NAME=value]..."
@@ -150,7 +171,7 @@ func runOneshotSession(args []string) int {
 	defer tb.Close()
 
 	session, err := node.StartSession(context.Background(), tb,
-		node.BaseEnv{Home: home, Path: os.Getenv("PATH")},
+		withCoverage(node.BaseEnv{Home: home, Path: os.Getenv("PATH")}),
 		node.MCPCommand{Path: *binary, Args: []string{"mcp"}},
 		node.SessionSpec{Name: *name, StartMCP: true, Env: env})
 	if err != nil {
@@ -249,7 +270,7 @@ func runServe(args []string) int {
 	if *runtimeRoot != "" {
 		extra["PEERS_TEST_RUNTIME_ROOT"] = *runtimeRoot
 	}
-	env := node.BaseEnv{Home: *home, Path: *path, Extra: extra}
+	env := withCoverage(node.BaseEnv{Home: *home, Path: *path, Extra: extra})
 	tb := node.NewTB("e2e-node", "")
 	agent := node.NewAgent(tb, env, *binary, logDir)
 

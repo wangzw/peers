@@ -71,17 +71,28 @@ func NewLocalHost(t *testing.T, opts LocalOptions) *Node {
 		acct: acct,
 		home: home,
 		env: BaseEnv{
-			Home: home,
-			Path: os.Getenv("PATH"),
-			Extra: map[string]string{
-				"PEERS_TEST_RUNTIME_ROOT": root,
-				"PEERS_TEST_HOME":         acct,
-			},
+			Home:  home,
+			Path:  os.Getenv("PATH"),
+			Extra: localEnvExtra(root, acct),
 		},
 		freeAddrs: map[string]bool{},
 	}
 	t.Cleanup(l.cleanup)
 	return &Node{impl: l}
+}
+
+// localEnvExtra returns the extra environment of a host-local node. Under
+// coverage every child of the node inherits GOCOVERDIR, so the counter files
+// land in the host directory the e2e run named.
+func localEnvExtra(root, acct string) map[string]string {
+	extra := map[string]string{
+		"PEERS_TEST_RUNTIME_ROOT": root,
+		"PEERS_TEST_HOME":         acct,
+	}
+	if coverDir := CoverageDir(); coverDir != "" {
+		extra["GOCOVERDIR"] = coverDir
+	}
+	return extra
 }
 
 // brokerSocket is the local socket of the node's Broker.
@@ -542,7 +553,15 @@ func terminateBroker(b *node.BrokerProc) {
 	_, _ = b.Wait(2 * time.Second)
 }
 
-// killProcesses kills every process whose environment carries this node's
+// coverKillBound is how long a detached process gets to exit after SIGTERM
+// before it is killed, when coverage collection is on. It is generous because
+// the process must flush its counters while it shuts down.
+const coverKillBound = 10 * time.Second
+
+// coverKillPoll is the interval between two liveness checks during that wait.
+const coverKillPoll = 100 * time.Millisecond
+
+// killProcesses ends every process whose environment carries this node's
 // runtime root, including a Broker that detached from the process that started
 // it. The scan is the node library's; no second implementation lives here.
 func (l *localNode) killProcesses() {
@@ -558,11 +577,73 @@ func (l *localNode) killProcesses() {
 		return
 	}
 	self := os.Getpid()
+	pids := make([]int, 0, len(procs))
 	for _, proc := range procs {
 		if proc.PID == self {
 			continue
 		}
-		_ = procsig.SendSignal(proc.PID, syscall.SIGKILL)
+		pids = append(pids, proc.PID)
+	}
+	killPids(pids, procsig.SendSignal, procsig.Alive, processStartTime, coverKillBound, coverKillPoll)
+}
+
+// killPids ends every process in pids. With coverage off it sends SIGKILL at
+// once. With coverage on it sends SIGTERM first, waits up to bound for the
+// processes to exit, and SIGKILLs the survivors, so an instrumented process
+// flushes its counters on the way out. Both paths signal through send, which
+// the cleanup wires to procsig.SendSignal.
+//
+// The wait is long enough for the kernel to reuse a pid, so the cleanup tracks
+// each process by the start time startTime reports for it, captured before
+// SIGTERM. A pid observed dead is dropped for good: the number may later name
+// an unrelated process. A survivor is killed only when its start time still
+// matches the one recorded here; a changed identity means the number now names
+// a different process, which is left alone.
+func killPids(pids []int, send func(int, syscall.Signal) error, alive func(int) bool, startTime func(int) (uint64, error), bound, poll time.Duration) {
+	if !CoverageEnabled() {
+		for _, pid := range pids {
+			_ = send(pid, syscall.SIGKILL)
+		}
+		return
+	}
+	starts := make(map[int]uint64, len(pids))
+	for _, pid := range pids {
+		if start, err := startTime(pid); err == nil {
+			starts[pid] = start
+		}
+	}
+	for _, pid := range pids {
+		_ = send(pid, syscall.SIGTERM)
+	}
+	live := make(map[int]bool, len(pids))
+	for _, pid := range pids {
+		live[pid] = true
+	}
+	deadline := time.Now().Add(bound)
+	for {
+		for pid := range live {
+			if !alive(pid) {
+				delete(live, pid)
+			}
+		}
+		if len(live) == 0 {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			for pid := range live {
+				start, ok := starts[pid]
+				if !ok {
+					continue
+				}
+				current, err := startTime(pid)
+				if err != nil || current != start {
+					continue
+				}
+				_ = send(pid, syscall.SIGKILL)
+			}
+			return
+		}
+		time.Sleep(poll)
 	}
 }
 

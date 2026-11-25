@@ -28,6 +28,45 @@ import (
 // fail.
 const agentSocketBound = EventTimeout
 
+// CoverMountPath is where the coverage directory named by CoverageDirEnv is
+// mounted inside a container.
+const CoverMountPath = "/e2e-cover"
+
+// coverOverrideName is the file name of the compose override written next to
+// the copied compose file when coverage collection is on.
+const coverOverrideName = "compose.cover.yaml"
+
+// CoverOverride returns a compose override file that, for every service in
+// services, bind-mounts hostDir at CoverMountPath and sets both CoverageDirEnv
+// and GOCOVERDIR to that path. The container environment reaches every process
+// started through docker compose exec. sudo drops GOCOVERDIR unless a sudoers
+// env_keep rule holds it, and systemd units do not inherit the container
+// environment at all; the system topology installs the sudoers drop-in and the
+// DefaultEnvironment drop-in that cover both. extraVolumes adds further volume
+// entries (host:container[:mode]) to the named services; it carries the systemd
+// coverage drop-in for the system topology.
+func CoverOverride(hostDir string, services []string, extraVolumes map[string][]string) ([]byte, error) {
+	type serviceOverride struct {
+		Environment map[string]string `yaml:"environment"`
+		Volumes     []string          `yaml:"volumes"`
+	}
+	doc := struct {
+		Services map[string]serviceOverride `yaml:"services"`
+	}{Services: make(map[string]serviceOverride, len(services))}
+	for _, name := range services {
+		volumes := []string{hostDir + ":" + CoverMountPath}
+		volumes = append(volumes, extraVolumes[name]...)
+		doc.Services[name] = serviceOverride{
+			Environment: map[string]string{
+				CoverageDirEnv: CoverMountPath,
+				"GOCOVERDIR":   CoverMountPath,
+			},
+			Volumes: volumes,
+		}
+	}
+	return yaml.Marshal(doc)
+}
+
 // Topology describes one compose project: which file to start, which services
 // it has, which network each service is addressed on, and what to do once the
 // containers are running. The fault work item adds its topologies with the
@@ -61,11 +100,11 @@ var TopoSingle = Topology{
 // Cluster is one running compose project. A test drives its nodes through the
 // same Node and Session types as a local node.
 type Cluster struct {
-	t           *testing.T
-	project     string
-	composePath string
-	env         []string
-	image       string
+	t            *testing.T
+	project      string
+	composeFiles []string
+	env          []string
+	image        string
 
 	ctlDirs map[string]string
 	order   []string
@@ -105,11 +144,24 @@ func Up(t *testing.T, topo Topology) *Cluster {
 	if err := os.WriteFile(composePath, composeData, 0o644); err != nil {
 		t.Fatalf("harness: writing %s: %v", composePath, err)
 	}
+	// Under coverage every service gets the mounted coverage directory and the
+	// two environment variables, and every compose command passes both files.
+	overridePath := ""
+	if coverDir := CoverageDir(); coverDir != "" {
+		override, err := CoverOverride(coverDir, services, nil)
+		if err != nil {
+			t.Fatalf("harness: building the coverage override for %s: %v", topo.file, err)
+		}
+		overridePath = filepath.Join(dir, coverOverrideName)
+		if err := os.WriteFile(overridePath, override, 0o644); err != nil {
+			t.Fatalf("harness: writing %s: %v", overridePath, err)
+		}
+	}
 
 	c := &Cluster{
 		t:            t,
 		project:      project,
-		composePath:  composePath,
+		composeFiles: append([]string{composePath}, overrideFileIfAny(overridePath)...),
 		image:        image,
 		ctlDirs:      map[string]string{},
 		order:        append([]string(nil), topo.nodes...),
@@ -356,19 +408,34 @@ func (c *Cluster) RootOK(t testing.TB, node string, argv ...string) (string, err
 // cleanup.
 func (c *Cluster) Down() {
 	c.downOnce.Do(func() {
-		cmd := c.composeCommand("down", "-v", "--remove-orphans", "--timeout", "1")
+		cmd := c.composeCommand("down", "-v", "--remove-orphans", "--timeout", DownTimeout())
 		if out, err := cmd.CombinedOutput(); err != nil {
 			c.t.Errorf("harness: tearing down compose project %s: %v\n%s", c.project, err, strings.TrimSpace(string(out)))
 		}
 	})
 }
 
-// composeCommand builds one docker compose invocation for this project.
+// composeCommand builds one docker compose invocation for this project. It
+// names every compose file, so a command that mutates the project sees the same
+// coverage override the start used.
 func (c *Cluster) composeCommand(args ...string) *exec.Cmd {
-	argv := append([]string{"compose", "-p", c.project, "-f", c.composePath}, args...)
+	argv := []string{"compose", "-p", c.project}
+	for _, file := range c.composeFiles {
+		argv = append(argv, "-f", file)
+	}
+	argv = append(argv, args...)
 	cmd := exec.Command("docker", argv...)
 	cmd.Env = c.env
 	return cmd
+}
+
+// overrideFileIfAny returns path as a one-element slice, or nothing when the
+// override is absent.
+func overrideFileIfAny(path string) []string {
+	if path == "" {
+		return nil
+	}
+	return []string{path}
 }
 
 // containerID returns the docker container id of node.

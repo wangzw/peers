@@ -258,9 +258,28 @@ test-root:
 # empties so a gate without -v still shows how often and why it happened.
 SYSTEMD_REBUILD_LEDGER ?= /tmp/ape2e-systemd-rebuilds.log
 
+# With COVER_DIR set to an absolute path, the run collects e2e coverage into
+# $(COVER_DIR)/e2e and exports E2E_COVER_DIR for the harness. The directory is
+# world-writable and carries a default ACL for the invoking uid, because the
+# instrumented processes run in containers and write under UMask=0077; their
+# counter files then stay readable without sudo. That needs setfacl from the
+# acl package. COVER_DIR= turns coverage off, and E2E_COVER_DIR is cleared so a
+# value inherited from the environment cannot turn it back on.
 e2e:
 	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
 	status=0; \
+	if [ -n '$(COVER_DIR)' ]; then \
+		case '$(COVER_DIR)' in /*) ;; *) echo "e2e: COVER_DIR must name an absolute path (got '$(COVER_DIR)')" >&2; exit 2 ;; esac; \
+		if ! command -v setfacl >/dev/null 2>&1; then \
+			echo "e2e: COVER_DIR is set but setfacl is missing; install the acl package (for example sudo apt-get install -y acl), or run with COVER_DIR= to collect no coverage" >&2; \
+			exit 1; \
+		fi; \
+		rm -rf '$(COVER_DIR)/e2e' && mkdir -p '$(COVER_DIR)/e2e' && chmod 0777 '$(COVER_DIR)/e2e' && setfacl -d -m u:$$(id -u):rwX '$(COVER_DIR)/e2e' \
+			|| { echo "e2e: preparing '$(COVER_DIR)/e2e' failed" >&2; exit 1; }; \
+		export E2E_COVER_DIR='$(COVER_DIR)/e2e'; \
+	else \
+		unset E2E_COVER_DIR; \
+	fi; \
 	runarg=""; \
 	if [ -n '$(E2E_RUN)' ]; then runarg="-run '$(E2E_RUN)'"; fi; \
 	if go build -o "$$tmp/testreport" ./scripts/testreport; then \

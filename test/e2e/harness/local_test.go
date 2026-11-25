@@ -8,8 +8,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -158,6 +160,150 @@ func TestLocalHostCleanupKillsDetached(t *testing.T) {
 		}
 		return true, ""
 	})
+}
+
+// TestLocalEnvCarriesCoverageDir checks that the children of a host-local node
+// inherit GOCOVERDIR only when coverage is on, and that the node's own
+// variables are always present.
+func TestLocalEnvCarriesCoverageDir(t *testing.T) {
+	t.Setenv(CoverageDirEnv, "")
+	off := localEnvExtra("/runtime", "/account")
+	if _, ok := off["GOCOVERDIR"]; ok {
+		t.Fatalf("GOCOVERDIR without coverage: %v", off)
+	}
+	if off["PEERS_TEST_RUNTIME_ROOT"] != "/runtime" || off["PEERS_TEST_HOME"] != "/account" {
+		t.Fatalf("node variables = %v", off)
+	}
+
+	t.Setenv(CoverageDirEnv, "/tmp/cover")
+	on := localEnvExtra("/runtime", "/account")
+	if got := on["GOCOVERDIR"]; got != "/tmp/cover" {
+		t.Fatalf("GOCOVERDIR under coverage = %q, want /tmp/cover", got)
+	}
+	if on["PEERS_TEST_RUNTIME_ROOT"] != "/runtime" || on["PEERS_TEST_HOME"] != "/account" {
+		t.Fatalf("node variables under coverage = %v", on)
+	}
+}
+
+// sentSignal is one signal killPids sent to a process.
+type sentSignal struct {
+	pid int
+	sig syscall.Signal
+}
+
+// TestKillPids fixes the process cleanup: without coverage every process gets
+// SIGKILL at once; under coverage every process gets SIGTERM first, one that
+// exits on it is never killed, and one that survives is killed after the wait.
+func TestKillPids(t *testing.T) {
+	cases := []struct {
+		name      string
+		coverDir  string
+		termExits map[int]bool
+		want      []sentSignal
+	}{
+		{
+			name: "coverage off kills at once",
+			want: []sentSignal{{11, syscall.SIGKILL}, {12, syscall.SIGKILL}},
+		},
+		{
+			name:      "coverage on waits for a process that exits on SIGTERM",
+			coverDir:  "/tmp/cover",
+			termExits: map[int]bool{11: true, 12: true},
+			want:      []sentSignal{{11, syscall.SIGTERM}, {12, syscall.SIGTERM}},
+		},
+		{
+			name:      "coverage on kills a process that ignores SIGTERM",
+			coverDir:  "/tmp/cover",
+			termExits: map[int]bool{11: true},
+			want:      []sentSignal{{11, syscall.SIGTERM}, {12, syscall.SIGTERM}, {12, syscall.SIGKILL}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(CoverageDirEnv, tc.coverDir)
+			alive := map[int]bool{11: true, 12: true}
+			var sent []sentSignal
+			send := func(pid int, sig syscall.Signal) error {
+				sent = append(sent, sentSignal{pid, sig})
+				if sig == syscall.SIGKILL || tc.termExits[pid] {
+					alive[pid] = false
+				}
+				return nil
+			}
+			aliveFunc := func(pid int) bool { return alive[pid] }
+			startTime := func(int) (uint64, error) { return 1, nil }
+			killPids([]int{11, 12}, send, aliveFunc, startTime, 20*time.Millisecond, time.Millisecond)
+			if !slices.Equal(sent, tc.want) {
+				t.Fatalf("killPids sent %v, want %v", sent, tc.want)
+			}
+		})
+	}
+}
+
+// TestKillPidsDropsAPidSeenDead checks that a pid observed dead is never
+// considered again. The number may report alive later because an unrelated
+// process reused it, and that process must not receive SIGKILL.
+func TestKillPidsDropsAPidSeenDead(t *testing.T) {
+	t.Setenv(CoverageDirEnv, "/tmp/cover")
+	calls := map[int]int{}
+	alive := func(pid int) bool {
+		calls[pid]++
+		// 21 is first seen dead and then reused by a process that is alive.
+		return pid != 21 || calls[pid] > 1
+	}
+	startTime := func(int) (uint64, error) { return 100, nil }
+	var sent []sentSignal
+	send := func(pid int, sig syscall.Signal) error {
+		sent = append(sent, sentSignal{pid, sig})
+		return nil
+	}
+	killPids([]int{21, 22}, send, alive, startTime, 20*time.Millisecond, time.Millisecond)
+	if hasSignal(sent, 21, syscall.SIGKILL) {
+		t.Fatalf("killPids sent SIGKILL to pid 21 after seeing it dead: %v", sent)
+	}
+	if !hasSignal(sent, 22, syscall.SIGKILL) {
+		t.Fatalf("killPids did not SIGKILL the surviving pid 22: %v", sent)
+	}
+}
+
+// TestKillPidsSkipsAReusedPid checks that a pid whose identity changed before
+// the SIGKILL deadline is left alone: the number now names a different
+// process, which the cleanup must not kill.
+func TestKillPidsSkipsAReusedPid(t *testing.T) {
+	t.Setenv(CoverageDirEnv, "/tmp/cover")
+	calls := map[int]int{}
+	startTime := func(pid int) (uint64, error) {
+		calls[pid]++
+		if pid != 31 {
+			return 400, nil
+		}
+		if calls[pid] > 1 {
+			return 200, nil // the number now names a different process
+		}
+		return 100, nil
+	}
+	alive := func(int) bool { return true }
+	var sent []sentSignal
+	send := func(pid int, sig syscall.Signal) error {
+		sent = append(sent, sentSignal{pid, sig})
+		return nil
+	}
+	killPids([]int{31, 32}, send, alive, startTime, 20*time.Millisecond, time.Millisecond)
+	if hasSignal(sent, 31, syscall.SIGKILL) {
+		t.Fatalf("killPids sent SIGKILL to reused pid 31: %v", sent)
+	}
+	if !hasSignal(sent, 32, syscall.SIGKILL) {
+		t.Fatalf("killPids did not SIGKILL the surviving pid 32: %v", sent)
+	}
+}
+
+func hasSignal(sent []sentSignal, pid int, sig syscall.Signal) bool {
+	for _, s := range sent {
+		if s.pid == pid && s.sig == sig {
+			return true
+		}
+	}
+	return false
 }
 
 func containsPID(pids []int, want int) bool {

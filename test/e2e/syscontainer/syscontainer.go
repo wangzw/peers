@@ -39,6 +39,37 @@ const (
 // inContainerEnv marks a test process that runs inside the container.
 const inContainerEnv = "PEERS_E2E_IN_CONTAINER"
 
+// sudoersCoverPath is the sudoers drop-in that keeps GOCOVERDIR across sudo. It
+// is written inside the container, not bind-mounted: sudo ignores a file not
+// owned by uid 0, and a host file carries the invoking uid. The name has no dot,
+// so sudo's includedir reads it.
+const sudoersCoverPath = "/etc/sudoers.d/e2e-cover"
+
+// sudoersCoverContent is the drop-in's content.
+const sudoersCoverContent = `Defaults env_keep += "GOCOVERDIR"`
+
+// sudoersWriteScript writes and validates the sudoers drop-in inside a
+// container. sudo refuses a file whose owner is not root or that group or
+// others can write, so the script sets root ownership and mode 0440 and then
+// validates the result with visudo.
+const sudoersWriteScript = "mkdir -p /etc/sudoers.d && " +
+	"printf '%s\\n' '" + sudoersCoverContent + "' > " + sudoersCoverPath + " && " +
+	"chown root:root " + sudoersCoverPath + " && " +
+	"chmod 0440 " + sudoersCoverPath + " && " +
+	"visudo -cf " + sudoersCoverPath
+
+// systemdCoverDropInName is the host file name of the systemd drop-in mounted
+// into the systemd services.
+const systemdCoverDropInName = "90-e2e-cover.conf"
+
+// systemdCoverDropInPath is where the drop-in mounts inside the container.
+const systemdCoverDropInPath = "/etc/systemd/system.conf.d/" + systemdCoverDropInName
+
+// systemdCoverDropInContent puts GOCOVERDIR into the manager's environment, so
+// every unit it starts inherits the variable. The [Manager] header is required:
+// a drop-in without it is ignored.
+const systemdCoverDropInContent = "[Manager]\nDefaultEnvironment=GOCOVERDIR=" + harness.CoverMountPath + "\n"
+
 // expectFailEnv forwards an intentional failure request into the container. It
 // is set only by the smoke test that checks failure propagation.
 const expectFailEnv = "PEERS_E2E_EXPECT_FAIL"
@@ -273,19 +304,20 @@ func Run(t *testing.T, svc Service, extraEnv ...string) {
 	var err error
 	switch svc {
 	case Plain:
-		args := []string{"compose", "-p", c.project, "-f", c.composeFile, "run", "--rm", "-T"}
+		args := c.composeArgs("run", "--rm", "-T")
 		args = append(args, c.forwardEnvArgs()...)
 		args = append(args, string(Plain))
-		args = append(args, argv...)
+		args = append(args, plainCommand(argv)...)
 		out, err = c.command(args...).CombinedOutput()
 	case Systemd:
-		if out, err = c.command("compose", "-p", c.project, "-f", c.composeFile, "up", "-d", "systemd").CombinedOutput(); err != nil {
+		if out, err = c.command(c.composeArgs("up", "-d", string(Systemd))...).CombinedOutput(); err != nil {
 			t.Fatalf("syscontainer: starting systemd in %s: %v\n%s", c.project, err, strings.TrimSpace(string(out)))
 		}
-		c.waitSystemd("systemd")
-		args := []string{"compose", "-p", c.project, "-f", c.composeFile, "exec", "-T"}
+		c.waitSystemd(string(Systemd))
+		c.writeSudoers(t, string(Systemd))
+		args := c.composeArgs("exec", "-T")
 		args = append(args, c.forwardEnvArgs()...)
-		args = append(args, "systemd")
+		args = append(args, string(Systemd))
 		args = append(args, argv...)
 		out, err = c.command(args...).CombinedOutput()
 	default:
@@ -320,10 +352,23 @@ func newTestContainer(t *testing.T, extraEnv ...string) *container {
 	}
 
 	image := systemImage(t)
-	dir, err := composeDir()
+	sourceDir, err := composeDir()
 	if err != nil {
 		t.Fatalf("syscontainer: %v", err)
 	}
+	// Copy the compose file into the test's temporary directory so the
+	// coverage override can sit next to it without touching the repository.
+	composeData, err := os.ReadFile(filepath.Join(sourceDir, "compose.yaml"))
+	if err != nil {
+		t.Fatalf("syscontainer: reading the compose file: %v", err)
+	}
+	dir := t.TempDir()
+	composePath := filepath.Join(dir, "compose.yaml")
+	if err := os.WriteFile(composePath, composeData, 0o644); err != nil {
+		t.Fatalf("syscontainer: writing %s: %v", composePath, err)
+	}
+	composeFiles := []string{composePath}
+
 	// Allocate the subnet before registering down: t.Cleanup runs in reverse,
 	// so the network is removed before its slot is handed to another project.
 	subnet := allocSystemSubnet(t)
@@ -336,20 +381,55 @@ func newTestContainer(t *testing.T, extraEnv ...string) *container {
 		ownerEnv + "=" + owner,
 	}
 	env = append(env, extraEnv...)
+	forward := append([]string(nil), env...)
+	if harness.CoverageEnabled() {
+		overridePath, forwardEntry := writeSystemCoverage(t, dir)
+		composeFiles = append(composeFiles, overridePath)
+		forward = append(forward, forwardEntry)
+	}
 	c := &container{
-		t:           t,
-		project:     project,
-		owner:       owner,
-		started:     time.Now(),
-		composeFile: filepath.Join(dir, "compose.yaml"),
+		t:            t,
+		project:      project,
+		owner:        owner,
+		started:      time.Now(),
+		composeFile:  composePath,
+		composeFiles: composeFiles,
 		// The compose file mounts this directory at /opt/peers-test.
 		env: append(os.Environ(), env...),
 		// The inner process needs the values; compose exec reads them from the
 		// docker CLI environment, which is this build of env.
-		forward: env,
+		forward: forward,
 	}
 	t.Cleanup(c.down)
 	return c
+}
+
+// writeSystemCoverage writes the coverage override the system topology needs
+// under dir. It returns the override path and the E2E_COVER_DIR entry forwarded
+// to the inner test, whose value is the container path. Every service gets the
+// mounted coverage directory; the two systemd services also get a read-only
+// DefaultEnvironment drop-in, which is how their units inherit GOCOVERDIR.
+func writeSystemCoverage(t testing.TB, dir string) (string, string) {
+	t.Helper()
+	dropInPath := filepath.Join(dir, systemdCoverDropInName)
+	if err := os.WriteFile(dropInPath, []byte(systemdCoverDropInContent), 0o644); err != nil {
+		t.Fatalf("syscontainer: writing the systemd coverage drop-in: %v", err)
+	}
+	mount := dropInPath + ":" + systemdCoverDropInPath + ":ro"
+	extraVolumes := map[string][]string{
+		string(Systemd):   {mount},
+		string(pairHostB): {mount},
+	}
+	override, err := harness.CoverOverride(harness.CoverageDir(),
+		[]string{string(Plain), string(Systemd), string(pairHostB)}, extraVolumes)
+	if err != nil {
+		t.Fatalf("syscontainer: building the coverage override: %v", err)
+	}
+	overridePath := filepath.Join(dir, "compose.cover.yaml")
+	if err := os.WriteFile(overridePath, override, 0o644); err != nil {
+		t.Fatalf("syscontainer: writing the coverage override: %v", err)
+	}
+	return overridePath, harness.CoverageDirEnv + "=" + harness.CoverMountPath
 }
 
 // pairHostA and pairHostB are the compose services a pair run starts. hostA
@@ -413,13 +493,14 @@ func RunPairTest(t *testing.T, opts PairOptions) {
 	}
 
 	c := newTestContainer(t)
-	up := c.command("compose", "-p", c.project, "-f", c.composeFile,
-		"up", "-d", string(pairHostA), string(pairHostB))
+	up := c.command(c.composeArgs("up", "-d", string(pairHostA), string(pairHostB))...)
 	if out, err := up.CombinedOutput(); err != nil {
 		t.Fatalf("syscontainer: starting the pair in %s: %v\n%s", c.project, err, strings.TrimSpace(string(out)))
 	}
 	c.waitSystemd(string(pairHostA))
 	c.waitSystemd(string(pairHostB))
+	c.writeSudoers(t, string(pairHostA))
+	c.writeSudoers(t, string(pairHostB))
 
 	argv := []string{
 		testBinaryPath + "/" + filepath.Base(testBinary),
@@ -445,7 +526,7 @@ func RunPairTest(t *testing.T, opts PairOptions) {
 	for _, host := range hosts {
 		host := host
 		go func() {
-			args := []string{"compose", "-p", c.project, "-f", c.composeFile, "exec", "-T"}
+			args := c.composeArgs("exec", "-T")
 			args = append(args, c.forwardEnvArgs()...)
 			args = append(args, "-e", PairRoleEnv+"="+string(host.role), "-e", pairSharedEnv+"="+opts.SharedDir)
 			for _, entry := range opts.ExtraEnv {
@@ -504,18 +585,65 @@ type container struct {
 	owner string
 	// started is when the project was created, the start of the event window a
 	// failed run is diagnosed with.
-	started     time.Time
+	started time.Time
+	// composeFile is the copied base file, the one evidence collection reads.
 	composeFile string
-	env         []string
+	// composeFiles are every file a compose command passes, the copied base
+	// file and, under coverage, its override.
+	composeFiles []string
+	env          []string
 	// forward is passed into the container with -e, one NAME=value per entry.
 	forward []string
 }
 
-// command builds one docker compose invocation for the project.
+// command builds one docker invocation for the project.
 func (c *container) command(args ...string) *exec.Cmd {
 	cmd := exec.Command("docker", args...)
 	cmd.Env = c.env
 	return cmd
+}
+
+// composeArgs prefixes a compose command with the project name and every
+// compose file, so every command sees the coverage override the start used.
+func (c *container) composeArgs(args ...string) []string {
+	argv := []string{"compose", "-p", c.project}
+	for _, file := range c.composeFiles {
+		argv = append(argv, "-f", file)
+	}
+	return append(argv, args...)
+}
+
+// sudoersInstall returns the command that writes the sudoers drop-in inside
+// service, or nil when coverage is off. The write runs as root through compose
+// exec, so sudo keeps GOCOVERDIR for the commands a test runs through it.
+func (c *container) sudoersInstall(service string) []string {
+	if !harness.CoverageEnabled() {
+		return nil
+	}
+	return c.composeArgs("exec", "-T", "-u", "root", service, "sh", "-c", sudoersWriteScript)
+}
+
+// writeSudoers installs the sudoers drop-in in service when coverage is on.
+func (c *container) writeSudoers(t *testing.T, service string) {
+	t.Helper()
+	argv := c.sudoersInstall(service)
+	if argv == nil {
+		return
+	}
+	if out, err := c.command(argv...).CombinedOutput(); err != nil {
+		t.Fatalf("syscontainer: writing the coverage sudoers drop-in in %s: %v\n%s",
+			service, err, strings.TrimSpace(string(out)))
+	}
+}
+
+// plainCommand wraps a plain-container test command so the sudoers drop-in is
+// written inside the container the run starts, before the test replaces the
+// shell. A compose run has no separate exec step to write it from the host.
+func plainCommand(argv []string) []string {
+	if !harness.CoverageEnabled() {
+		return argv
+	}
+	return append([]string{"sh", "-c", sudoersWriteScript + ` && exec "$@"`, "sh"}, argv...)
 }
 
 // exitDiagnostic returns the text that explains an inner run that exited with
@@ -637,8 +765,7 @@ func (c *container) probeSystemd(ctx context.Context, service string) systemdPro
 	probeCtx, cancel := context.WithTimeout(ctx, systemdProbeBound)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, "docker",
-		"compose", "-p", c.project, "-f", c.composeFile, "exec", "-T", service,
-		"systemctl", "is-system-running", "--wait")
+		c.composeArgs("exec", "-T", service, "systemctl", "is-system-running", "--wait")...)
 	cmd.Env = c.env
 	out, err := cmd.CombinedOutput()
 	timedOut := probeCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil
@@ -652,8 +779,7 @@ func (c *container) systemdCurrentState(ctx context.Context, service string) str
 	probeCtx, cancel := context.WithTimeout(ctx, systemdProbeBound)
 	defer cancel()
 	cmd := exec.CommandContext(probeCtx, "docker",
-		"compose", "-p", c.project, "-f", c.composeFile, "exec", "-T", service,
-		"systemctl", "is-system-running")
+		c.composeArgs("exec", "-T", service, "systemctl", "is-system-running")...)
 	cmd.Env = c.env
 	out, err := cmd.CombinedOutput()
 	text := strings.TrimSpace(string(out))
@@ -666,8 +792,7 @@ func (c *container) systemdCurrentState(ctx context.Context, service string) str
 // containerID returns the project's container id for service, including an
 // exited one.
 func (c *container) containerID(ctx context.Context, service string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker",
-		"compose", "-p", c.project, "-f", c.composeFile, "ps", "-aq", service)
+	cmd := exec.CommandContext(ctx, "docker", c.composeArgs("ps", "-aq", service)...)
 	cmd.Env = c.env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -718,8 +843,7 @@ func (c *container) recreateSystemd(ctx context.Context, service string) {
 				service, c.project, err, strings.TrimSpace(string(out)))
 		}
 	}
-	up := exec.CommandContext(ctx, "docker",
-		"compose", "-p", c.project, "-f", c.composeFile, "up", "-d", "--force-recreate", service)
+	up := exec.CommandContext(ctx, "docker", c.composeArgs("up", "-d", "--force-recreate", service)...)
 	up.Env = c.env
 	if out, err := up.CombinedOutput(); err != nil {
 		c.t.Logf("syscontainer: recreating the %s container in %s: %v\n%s",
@@ -748,9 +872,10 @@ func (c *container) recordRebuild(service, reason string) {
 // one-second stop timeout force-kills a container whose process 1 does not exit
 // on the image's stop signal, so a container torn down here can end with exit
 // code 137; the residue cleanup only force-removes containers whose owner
-// process is already gone.
+// process is already gone. Under coverage the timeout is longer, so an
+// instrumented process can flush its counters while it stops.
 func (c *container) down() {
-	cmd := c.command("compose", "-p", c.project, "-f", c.composeFile, "down", "-v", "--remove-orphans", "--timeout", "1")
+	cmd := c.command(c.composeArgs("down", "-v", "--remove-orphans", "--timeout", harness.DownTimeout())...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		c.t.Logf("syscontainer: tearing down %s: %v\n%s", c.project, err, strings.TrimSpace(string(out)))
 	}
