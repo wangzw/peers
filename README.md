@@ -40,7 +40,9 @@ See [Known limitations](https://peers.zhanwei.wang/docs/limitations/) for what p
 
 ## Development
 
-The build gates live in the Makefile. `make lint`, `make test` and `make docs-check` run on any supported platform. The end-to-end suite (`make e2e`) needs Linux and a working Docker daemon; pass the job count explicitly, for example `make e2e JOBS=4`. The requirements, design, architecture decision records and glossary are under [docs/](docs/), written in English; start with the [system overview](docs/prd/overview.md) and the [architecture](docs/design/architecture.md).
+The build gates live in the Makefile. `make lint`, `make test` and `make docs-check` run on any supported platform. The end-to-end suite (`make e2e`) needs Linux and a working Docker daemon; pass the job count explicitly, for example `make e2e JOBS=4`.
+
+`make cover-report` merges the coverage data under `COVER_DIR` and prints a per-package table, and `make cover-check` prints the same table and fails when total coverage is below `COVER_TOTAL` (default 90) or one package is below `COVER_PACKAGE` (default 80). `COVER_INPUTS` selects which producer directories are merged (default `unit testenv e2e`); the directories must come from one run on the same tree, because a stale e2e directory mixed with fresh unit data can raise the number. Coverage is collected only when `COVER_DIR` names an absolute directory, for example `make test e2e cover-report COVER_DIR=$PWD/.cover`; `make e2e` with coverage needs `setfacl` from the `acl` package. The requirements, design, architecture decision records and glossary are under [docs/](docs/), written in English; start with the [system overview](docs/prd/overview.md) and the [architecture](docs/design/architecture.md).
 
 ## License
 

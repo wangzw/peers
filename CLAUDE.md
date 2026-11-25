@@ -24,6 +24,8 @@ A cross-host communication system for agents. A host runs a Broker either as a s
 
 `make check` runs every gate in order: `lint`, `proto-lint`, `gen-check`, `test`, `e2e` and `docs-check`. Each is also a target of its own. Run the gates that cover what a change touches before committing it, and leave them passing with no warning ignored.
 
+`make cover-report` and `make cover-check` merge the coverage data `make test` and `make e2e` write under `COVER_DIR` and print a per-package table, with `cover-check` also enforcing the `COVER_TOTAL` and `COVER_PACKAGE` floors; they need that data and are not part of `make check`.
+
 `make site-check` builds the website under `docs/site/` strictly and checks its internal links. It is not part of `make check`; run it when a change touches the website.
 
 `make third-party-check` compares every vendored library under `third_party/` with the upstream module version `third_party/UPSTREAM` records, and `make vulncheck` scans the module graph for known vulnerabilities on both supported platforms. Both reach the network, so neither is part of `make check`; run them when a change touches the vendored source or the module graph.

@@ -14,6 +14,15 @@ JOBS ?= 4
 COVER_DIR ?=
 COVER_PKGS := github.com/wangzw/peers/internal/...,github.com/wangzw/peers/cmd/...
 
+# Settings for cover-report and cover-check. COVER_INPUTS names the producer
+# directories under COVER_DIR to merge; COVER_TOTAL and COVER_PACKAGE are the
+# floors cover-check enforces, and COVER_FORMAT selects the plain table (text)
+# or the Markdown table CI appends to the step summary.
+COVER_INPUTS ?= unit testenv e2e
+COVER_TOTAL ?= 90
+COVER_PACKAGE ?= 80
+COVER_FORMAT ?= text
+
 # Guard and prepare one coverage round: refuse a relative directory, then
 # recreate the round's own subdirectory empty so no stale data survives. The
 # shell body is a separate variable so the $(if) below never parses the ')' in
@@ -26,6 +35,16 @@ COVER_ROUND_PREP = $(if $(COVER_DIR),$(COVER_ROUND_PREP_ON))
 # it to the binary, so it must stay last on the go test command line.
 COVER_GO_FLAGS = $(if $(COVER_DIR), -cover -covermode=atomic -coverpkg=$(COVER_PKGS))
 COVER_GO_ARGS = $(if $(COVER_DIR), -args -test.gocoverdir=$(COVER_DIR)/$(1))
+
+# coverreport's -i value: every COVER_INPUTS name, which may be a relative
+# subpath such as coverage-test/unit, prefixed with COVER_DIR/ and the results
+# joined by commas. Recursive, so a command-line override of COVER_INPUTS is
+# honoured; the cover-report and cover-check guards reject an empty COVER_DIR
+# before the value is used.
+COVER_EMPTY :=
+COVER_SPACE := $(COVER_EMPTY) $(COVER_EMPTY)
+COVER_COMMA := ,
+COVER_INPUT_DIRS = $(subst $(COVER_SPACE),$(COVER_COMMA),$(strip $(foreach name,$(COVER_INPUTS),$(COVER_DIR)/$(name))))
 
 # Optional directory for golangci-lint's cache. The global run lock is disabled
 # in .golangci.yml (allow-parallel-runners), so concurrent gates share the
@@ -63,7 +82,7 @@ RELEASE_NOTES_VERSION ?= v0.6.0
 # target was added.
 GOVULNCHECK_VERSION := v1.10.0
 
-.PHONY: gen gen-check lint release-notes-check archive-check third-party-check vulncheck proto-lint test test-root e2e e2e-darwin docs-check check site site-check
+.PHONY: gen gen-check lint release-notes-check archive-check third-party-check vulncheck proto-lint test test-root e2e e2e-darwin cover-report cover-check docs-check check site site-check
 
 # Regenerate the committed generated artifacts: the protobuf code with buf and
 # the man pages from the cobra command tree. Generated Go code is committed next
@@ -294,6 +313,23 @@ e2e:
 	fi; \
 	go test -tags e2e -count=1 -run '^$$' ./test/e2e/ >/dev/null 2>&1 || true; \
 	exit $$status
+
+# Merge the producer directories COVER_INPUTS names under COVER_DIR and print
+# the coverage table. cover-check is the same report with the COVER_TOTAL and
+# COVER_PACKAGE floors enforced, so a shortfall exits non-zero. Only the report
+# reaches stdout, which lets CI append it to the step summary. Neither target
+# belongs to make check; both need data the producers wrote first, and an empty
+# COVER_DIR fails before coverreport runs. Both remove the previous profile
+# first, so a run that fails leaves no stale coverage.txt behind.
+cover-report:
+	@if [ -z '$(COVER_DIR)' ]; then echo "cover-report: COVER_DIR is empty; set it to the absolute directory the producers wrote, for example COVER_DIR=\$$PWD/.cover" >&2; exit 2; fi; \
+	rm -f '$(COVER_DIR)/coverage.txt'; \
+	go run ./scripts/coverreport -i '$(COVER_INPUT_DIRS)' -root '$(CURDIR)' -o '$(COVER_DIR)/coverage.txt' -format '$(COVER_FORMAT)'
+
+cover-check:
+	@if [ -z '$(COVER_DIR)' ]; then echo "cover-check: COVER_DIR is empty; set it to the absolute directory the producers wrote, for example COVER_DIR=\$$PWD/.cover" >&2; exit 2; fi; \
+	rm -f '$(COVER_DIR)/coverage.txt'; \
+	go run ./scripts/coverreport -i '$(COVER_INPUT_DIRS)' -root '$(CURDIR)' -o '$(COVER_DIR)/coverage.txt' -format '$(COVER_FORMAT)' -total '$(COVER_TOTAL)' -package '$(COVER_PACKAGE)'
 
 # The macOS service end-to-end tests exercise launchd on the host, so they run
 # on macOS only and use the real launchctl and sudo. The system and
