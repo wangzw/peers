@@ -591,3 +591,36 @@ func TestCheckAccessCheckStartRunsTheCheckProcess(t *testing.T) {
 		t.Error("allowed = false for a file the account can read, want true")
 	}
 }
+
+// TestAccessCheckStartStdinPipeFailure checks that a start whose first pipe cannot be created returns that error and no process.
+func TestAccessCheckStartStdinPipeFailure(t *testing.T) {
+	boom := errors.New("stdin pipe failure")
+	stubHelperPipe(t, 1, boom)
+
+	proc, err := accessCheckStart("unused")(context.Background(), Account{UID: uint32(os.Geteuid())})
+	if proc != nil {
+		t.Fatal("accessCheckStart returned a process after the stdin pipe failed")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("accessCheckStart error = %v, want the stdin pipe error", err)
+	}
+}
+
+// TestAccessCheckStartStdoutPipeFailure checks that a start whose second pipe cannot be created closes both ends of the stdin pipe.
+func TestAccessCheckStartStdoutPipeFailure(t *testing.T) {
+	boom := errors.New("stdout pipe failure")
+	rec := stubHelperPipe(t, 2, boom)
+
+	proc, err := accessCheckStart("unused")(context.Background(), Account{UID: uint32(os.Geteuid())})
+	if proc != nil {
+		t.Fatal("accessCheckStart returned a process after the stdout pipe failed")
+	}
+	if !errors.Is(err, boom) {
+		t.Fatalf("accessCheckStart error = %v, want the stdout pipe error", err)
+	}
+	if len(rec.pipes) != 1 {
+		t.Fatalf("created %d stdin pipes, want 1", len(rec.pipes))
+	}
+	assertPipeClosed(t, "stdin writer", rec.pipes[0][1])
+	assertPipeClosed(t, "stdin read end", rec.pipes[0][0])
+}

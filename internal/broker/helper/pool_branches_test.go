@@ -803,12 +803,38 @@ func TestRespawnLoopStopsWhenWatchesEndWhileWaiting(t *testing.T) {
 	}
 }
 
+// helperPipeRecorder records the pipes a stubbed helperPipe created.
+type helperPipeRecorder struct {
+	pipes [][2]*os.File
+}
+
+// stubHelperPipe replaces helperPipe so that its nth call (n = call) fails with
+// err, recording the pipes the earlier calls created.
+func stubHelperPipe(t *testing.T, call int, err error) *helperPipeRecorder {
+	t.Helper()
+	orig := helperPipe
+	rec := &helperPipeRecorder{}
+	calls := 0
+	helperPipe = func() (*os.File, *os.File, error) {
+		calls++
+		if calls == call {
+			return nil, nil, err
+		}
+		r, w, pipeErr := os.Pipe()
+		if pipeErr != nil {
+			return nil, nil, pipeErr
+		}
+		rec.pipes = append(rec.pipes, [2]*os.File{r, w})
+		return r, w, nil
+	}
+	t.Cleanup(func() { helperPipe = orig })
+	return rec
+}
+
 // TestStartHelperProcessArgsStdinPipeFailure checks that a helper whose first pipe cannot be created returns that error and no process.
 func TestStartHelperProcessArgsStdinPipeFailure(t *testing.T) {
 	boom := errors.New("stdin pipe failure")
-	orig := helperStdinPipe
-	helperStdinPipe = func(*exec.Cmd) (io.WriteCloser, error) { return nil, boom }
-	t.Cleanup(func() { helperStdinPipe = orig })
+	stubHelperPipe(t, 1, boom)
 
 	proc, err := startHelperProcessArgs("unused", nil, Account{UID: uint32(os.Geteuid())},
 		slog.New(slog.NewTextHandler(io.Discard, nil)), func() bool { return false })
@@ -820,16 +846,10 @@ func TestStartHelperProcessArgsStdinPipeFailure(t *testing.T) {
 	}
 }
 
-// TestStartHelperProcessArgsStdoutPipeFailure checks that a helper whose second pipe cannot be created returns that error and no process.
+// TestStartHelperProcessArgsStdoutPipeFailure checks that a helper whose second pipe cannot be created closes both ends of the stdin pipe.
 func TestStartHelperProcessArgsStdoutPipeFailure(t *testing.T) {
 	boom := errors.New("stdout pipe failure")
-	origIn, origOut := helperStdinPipe, helperStdoutPipe
-	helperStdinPipe = func(*exec.Cmd) (io.WriteCloser, error) { return poolNopWriteCloser{io.Discard}, nil }
-	helperStdoutPipe = func(*exec.Cmd) (io.ReadCloser, error) { return nil, boom }
-	t.Cleanup(func() {
-		helperStdinPipe = origIn
-		helperStdoutPipe = origOut
-	})
+	rec := stubHelperPipe(t, 2, boom)
 
 	proc, err := startHelperProcessArgs("unused", nil, Account{UID: uint32(os.Geteuid())},
 		slog.New(slog.NewTextHandler(io.Discard, nil)), func() bool { return false })
@@ -838,6 +858,19 @@ func TestStartHelperProcessArgsStdoutPipeFailure(t *testing.T) {
 	}
 	if !errors.Is(err, boom) {
 		t.Fatalf("startHelperProcessArgs error = %v, want the stdout pipe error", err)
+	}
+	if len(rec.pipes) != 1 {
+		t.Fatalf("created %d stdin pipes, want 1", len(rec.pipes))
+	}
+	assertPipeClosed(t, "stdin writer", rec.pipes[0][1])
+	assertPipeClosed(t, "stdin read end", rec.pipes[0][0])
+}
+
+// assertPipeClosed fails t unless f was already closed by the code under test.
+func assertPipeClosed(t *testing.T, name string, f *os.File) {
+	t.Helper()
+	if err := f.Close(); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("%s was not closed: Close = %v", name, err)
 	}
 }
 

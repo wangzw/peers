@@ -675,22 +675,37 @@ func (s *accessSlots) evictOldestIdleLocked() {
 func accessCheckStart(exe string) func(context.Context, Account) (*Process, error) {
 	return func(_ context.Context, acct Account) (*Process, error) {
 		cmd := accessCheckCommand(exe, acct)
-		stdin, err := cmd.StdinPipe()
+		stdinR, stdinW, err := helperPipe()
 		if err != nil {
 			return nil, err
 		}
-		stdout, err := cmd.StdoutPipe()
+		cmd.Stdin = stdinR
+		stdoutR, stdoutW, err := helperPipe()
 		if err != nil {
+			_ = stdinR.Close()
+			_ = stdinW.Close()
 			return nil, err
 		}
+		cmd.Stdout = stdoutW
 		if err := cmd.Start(); err != nil {
+			_ = stdinR.Close()
+			_ = stdinW.Close()
+			_ = stdoutR.Close()
+			_ = stdoutW.Close()
 			return nil, err
 		}
+		_ = stdinR.Close()
+		_ = stdoutW.Close()
 		return &Process{
-			Stdin:  stdin,
-			Stdout: stdout,
-			Wait:   cmd.Wait,
-			Kill:   cmd.Process.Kill,
+			Stdin:  stdinW,
+			Stdout: stdoutR,
+			Wait: func() error {
+				err := cmd.Wait()
+				_ = stdinW.Close()
+				_ = stdoutR.Close()
+				return err
+			},
+			Kill: cmd.Process.Kill,
 		}, nil
 	}
 }

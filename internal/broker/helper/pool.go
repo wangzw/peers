@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os/exec"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -257,38 +257,50 @@ func startHelperProcess(exe string, acct Account, log *slog.Logger, stopping fun
 	return startHelperProcessArgs(exe, []string{"internal", "account-helper"}, acct, log, stopping)
 }
 
-// The child's standard-stream pipes are variables so tests can exercise the
-// pipe-creation failures a normal start cannot trigger.
-var (
-	helperStdinPipe  = func(cmd *exec.Cmd) (io.WriteCloser, error) { return cmd.StdinPipe() }
-	helperStdoutPipe = func(cmd *exec.Cmd) (io.ReadCloser, error) { return cmd.StdoutPipe() }
-)
+// helperPipe creates one of the two pipes that connect a helper's standard
+// streams to the Broker. It is a variable so tests can make creation fail,
+// which a normal start only meets under file-descriptor exhaustion.
+var helperPipe = os.Pipe
 
 // startHelperProcessArgs is startHelperProcess with the subcommand arguments
 // spelled out, so tests can exercise the same standard-stream wiring.
 func startHelperProcessArgs(exe string, args []string, acct Account, log *slog.Logger, stopping func() bool) (*Process, error) {
 	cmd := accountCommand(exe, args, acct)
-	stdin, err := helperStdinPipe(cmd)
+	stdinR, stdinW, err := helperPipe()
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := helperStdoutPipe(cmd)
+	cmd.Stdin = stdinR
+	stdoutR, stdoutW, err := helperPipe()
 	if err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
 		return nil, err
 	}
+	cmd.Stdout = stdoutW
 	// The helper's stderr is a pipe read by the Broker, not the Broker's own
 	// stderr: a helper must not write into the service log as if it were the
 	// Broker, and its output is only useful with the account it belongs to.
 	stderr := newHelperStderr(log, acct.UID, stopping)
 	cmd.Stderr = stderr
 	if err := cmd.Start(); err != nil {
+		_ = stdinR.Close()
+		_ = stdinW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		return nil, err
 	}
+	// The child holds its own copies now. Closing the parent's copies lets EOF
+	// travel between the two sides.
+	_ = stdinR.Close()
+	_ = stdoutW.Close()
 	return &Process{
-		Stdin:  stdin,
-		Stdout: stdout,
+		Stdin:  stdinW,
+		Stdout: stdoutR,
 		Wait: func() error {
 			err := cmd.Wait()
+			_ = stdinW.Close()
+			_ = stdoutR.Close()
 			stderr.flush()
 			return err
 		},
