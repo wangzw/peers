@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // fixedSelector returns path and an unchecked dialer from every call.
@@ -146,7 +146,7 @@ func TestRunStatusSelectorError(t *testing.T) {
 }
 
 func TestRunStatusUnreachable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "missing.sock")
+	path := socktest.Path(t, "missing.sock")
 	var got bytes.Buffer
 	err := within(t, eventTimeout, func() error {
 		return RunStatus(t.Context(), fixedSelector(path), &got)

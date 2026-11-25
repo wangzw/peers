@@ -9,7 +9,6 @@ import (
 	"context"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 
@@ -20,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/wangzw/peers/internal/broker/localpb"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // SocketPath returns a short socket path in a fresh directory removed at
@@ -27,12 +27,7 @@ import (
 // 104 bytes on macOS.
 func SocketPath(t testing.TB) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "ap-")
-	if err != nil {
-		t.Fatalf("fakelocal: creating the socket directory: %v", err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, "broker.sock")
+	return socktest.Path(t, "broker.sock")
 }
 
 // Selector returns a termcmd-compatible selector for a Server at path. The

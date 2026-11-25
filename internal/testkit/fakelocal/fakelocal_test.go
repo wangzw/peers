@@ -308,8 +308,8 @@ func TestSocketPath(t *testing.T) {
 		t.Fatalf("socket path %q is %d bytes, want fewer than 100", path, len(path))
 	}
 	base := filepath.Base(filepath.Dir(path))
-	if !strings.HasPrefix(base, "ap-") {
-		t.Fatalf("socket directory %q does not start with ap-", base)
+	if !strings.HasPrefix(base, "socktest-") {
+		t.Fatalf("socket directory %q does not start with socktest-", base)
 	}
 }
 

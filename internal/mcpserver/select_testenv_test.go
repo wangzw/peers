@@ -13,6 +13,7 @@ import (
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // TestSelectTestSocketTakesPrecedence selects the socket PEERS_TEST_SOCKET names
@@ -44,14 +45,14 @@ func TestSelectTestSocketTakesPrecedence(t *testing.T) {
 // TestSelectTestSocketMissingDoesNotFallThrough reports a dead PEERS_TEST_SOCKET
 // instead of selecting another Broker.
 func TestSelectTestSocketMissingDoesNotFallThrough(t *testing.T) {
-	missing := filepath.Join(shortTempDir(t), "absent.sock")
+	missing := socktest.Path(t, "absent.sock")
 	userPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, userPath, fakelocal.Handlers{})
 	t.Setenv("PEERS_TEST_SOCKET", missing)
 
 	s := &selector{
 		userSocket:   userPath,
-		systemSocket: filepath.Join(shortTempDir(t), "system.sock"),
+		systemSocket: socktest.Path(t, "system.sock"),
 		probe:        inspectSocket,
 	}
 
@@ -77,8 +78,8 @@ func TestSelectRejectsForeignTestSocket(t *testing.T) {
 	t.Cleanup(func() { peerUID = old })
 
 	s := &selector{
-		userSocket:   filepath.Join(shortTempDir(t), "user.sock"),
-		systemSocket: filepath.Join(shortTempDir(t), "system.sock"),
+		userSocket:   socktest.Path(t, "user.sock"),
+		systemSocket: socktest.Path(t, "system.sock"),
 		probe:        inspectSocket,
 	}
 

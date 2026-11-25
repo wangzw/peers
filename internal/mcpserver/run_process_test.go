@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 func init() {
@@ -92,7 +92,7 @@ func TestRunProcessServesMCP(t *testing.T) {
 
 // REQ-agent-messaging-038
 func TestRunProcessSurvivesMissingBroker(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "missing.sock")
+	missing := socktest.Path(t, "missing.sock")
 	env := runProcessEnv(t,
 		"PEERS_TEST_SOCKET="+missing,
 		"CLAUDE_CODE_MESSAGING_SOCKET=/s",

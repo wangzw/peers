@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // recordingAfter returns an after function that records each requested wait and
@@ -104,7 +104,7 @@ func TestSelectSystemOnly(t *testing.T) {
 
 	s := &selector{
 		getenv:       func(string) string { return "" },
-		userSocket:   filepath.Join(t.TempDir(), "broker.sock"),
+		userSocket:   socktest.Path(t, "broker.sock"),
 		systemSocket: systemPath,
 		probe:        inspectSocket,
 	}
@@ -122,8 +122,8 @@ func TestSelectSystemOnly(t *testing.T) {
 // user Broker there is nothing to select (REQ-broker-config-027,
 // REQ-broker-config-038).
 func TestFindSystemDeniedReturnsNoBroker(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 	after, waits := recordingAfter()
 
 	s := &selector{
@@ -163,7 +163,7 @@ func TestSelectRejectsForeignUserSocket(t *testing.T) {
 	s := &selector{
 		getenv:       func(string) string { return "" },
 		userSocket:   userPath,
-		systemSocket: filepath.Join(t.TempDir(), "system.sock"),
+		systemSocket: socktest.Path(t, "system.sock"),
 		probe:        inspectSocket,
 	}
 
@@ -197,7 +197,7 @@ func TestSelectRejectsRootServedUserSocket(t *testing.T) {
 	s := &selector{
 		getenv:       func(string) string { return "" },
 		userSocket:   userPath,
-		systemSocket: filepath.Join(t.TempDir(), "system.sock"),
+		systemSocket: socktest.Path(t, "system.sock"),
 		probe:        inspectSocket,
 	}
 
@@ -216,7 +216,7 @@ func TestSelectRejectsRootServedUserSocket(t *testing.T) {
 // administrator to start a system Broker.
 func TestFindNonRootSystemSocketReportsMismatch(t *testing.T) {
 	userPath := fakelocal.SocketPath(t)
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	systemPath := socktest.Path(t, "system.sock")
 
 	s := &selector{
 		getenv:       func(string) string { return "" },
@@ -248,8 +248,8 @@ func TestFindNonRootSystemSocketReportsMismatch(t *testing.T) {
 func TestFindNoBroker(t *testing.T) {
 	s := &selector{
 		getenv:       func(string) string { return "" },
-		userSocket:   filepath.Join(t.TempDir(), "user.sock"),
-		systemSocket: filepath.Join(t.TempDir(), "system.sock"),
+		userSocket:   socktest.Path(t, "user.sock"),
+		systemSocket: socktest.Path(t, "system.sock"),
 		probe:        inspectSocket,
 	}
 
@@ -267,7 +267,7 @@ func TestFindNoBroker(t *testing.T) {
 // For root the user and system sockets are one path, so only one
 // probe runs and the target is treated as the user socket.
 func TestSelectRootSharedSocketPath(t *testing.T) {
-	same := filepath.Join(t.TempDir(), "broker.sock")
+	same := socktest.Path(t, "broker.sock")
 	probes := 0
 
 	s := &selector{
@@ -294,8 +294,8 @@ func TestSelectRootSharedSocketPath(t *testing.T) {
 
 // REQ-broker-config-026
 func TestFindSystemRefusedRetriesThenNoBroker(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 	after, waits := recordingAfter()
 
 	s := &selector{
@@ -334,8 +334,8 @@ func TestFindSystemRefusedRetriesThenNoBroker(t *testing.T) {
 }
 
 func TestSelectSystemRefusedThenUp(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 	systemProbes := 0
 	after, waits := recordingAfter()
 
@@ -367,12 +367,12 @@ func TestSelectSystemRefusedThenUp(t *testing.T) {
 }
 
 func TestFindSystemRefusedRetries(t *testing.T) {
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	systemPath := socktest.Path(t, "system.sock")
 	after, waits := recordingAfter()
 
 	s := &selector{
 		getenv:       func(string) string { return "" },
-		userSocket:   filepath.Join(t.TempDir(), "user.sock"),
+		userSocket:   socktest.Path(t, "user.sock"),
 		systemSocket: systemPath,
 		probe: func(_ context.Context, path string) probeInfo {
 			if path == systemPath {
@@ -403,8 +403,8 @@ func TestFindSystemRefusedRetries(t *testing.T) {
 // running out the retry deadline and telling the user to ask the administrator
 // to start a system Broker.
 func TestFindSystemRefusedThenWrongPeerReportsMismatch(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 	const foreign = uint32(4242)
 	after, waits := recordingAfter()
 
@@ -451,8 +451,8 @@ func TestFindSystemRefusedThenWrongPeerReportsMismatch(t *testing.T) {
 // Broker, so the two explicit levels pick different sockets even when both
 // Brokers answer.
 func TestFindAtLevelSelectsOnlyThatLevel(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 
 	s := &selector{
 		getenv:       func(string) string { return "" },
@@ -484,8 +484,8 @@ func TestFindAtLevelSelectsOnlyThatLevel(t *testing.T) {
 // Broker; otherwise the option would not decide which Broker the command talks
 // to.
 func TestFindAtLevelUserDoesNotFallThrough(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 
 	s := &selector{
 		getenv:       func(string) string { return "" },
@@ -513,8 +513,8 @@ func TestFindAtLevelUserDoesNotFallThrough(t *testing.T) {
 // unavailable; a defaulted selection points at --system when only the system
 // Broker answers; a named --user keeps the generic text.
 func TestFindForLevelExplainsAnEmptySelection(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 
 	cases := []struct {
 		name          string
@@ -582,8 +582,8 @@ func TestFindForLevelExplainsAnEmptySelection(t *testing.T) {
 // TestFindForLevelReturnsTheSelectedSocket checks the successful path of the
 // level-aware finder.
 func TestFindForLevelReturnsTheSelectedSocket(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 
 	s := &selector{
 		userSocket:   userPath,
@@ -607,8 +607,8 @@ func TestFindForLevelReturnsTheSelectedSocket(t *testing.T) {
 // REQ-broker-config-055: --system must not fall through to a running user
 // Broker either.
 func TestFindAtLevelSystemDoesNotFallThrough(t *testing.T) {
-	userPath := filepath.Join(t.TempDir(), "user.sock")
-	systemPath := filepath.Join(t.TempDir(), "system.sock")
+	userPath := socktest.Path(t, "user.sock")
+	systemPath := socktest.Path(t, "system.sock")
 
 	s := &selector{
 		getenv:       func(string) string { return "" },

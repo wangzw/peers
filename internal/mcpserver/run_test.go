@@ -18,6 +18,7 @@ import (
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // runHandle drives one Run in the background together with an MCP client
@@ -120,8 +121,8 @@ func runTestOptions(t *testing.T, clock *loopClock, env map[string]string) Optio
 		Logger:       loopTestLogger(),
 		getenv:       func(name string) string { return env[name] },
 		getwd:        func() (string, error) { return dir, nil },
-		userSocket:   filepath.Join(t.TempDir(), "user.sock"),
-		systemSocket: filepath.Join(t.TempDir(), "system.sock"),
+		userSocket:   socktest.Path(t, "user.sock"),
+		systemSocket: socktest.Path(t, "system.sock"),
 		readOrigin:   func(context.Context, string) (string, error) { return "", errors.New("no origin") },
 		after:        clock.after,
 	}
@@ -204,7 +205,7 @@ func runWaitRegistered(t *testing.T, cs *mcp.ClientSession) {
 // REQ-agent-messaging-038
 func TestRunHandshakeWithoutBroker(t *testing.T) {
 	clock := newLoopClock()
-	missing := filepath.Join(t.TempDir(), "missing.sock")
+	missing := socktest.Path(t, "missing.sock")
 	opts := runTestOptions(t, clock, nil)
 	opts.userSocket = missing
 
@@ -604,7 +605,7 @@ func TestRunCancelClosesRegisterStream(t *testing.T) {
 
 func TestRunInstallsNoSignalHandler(t *testing.T) {
 	clock := newLoopClock()
-	sock := filepath.Join(t.TempDir(), "missing.sock")
+	sock := socktest.Path(t, "missing.sock")
 	opts := runTestOptions(t, clock, map[string]string{
 		"CLAUDE_CODE_MESSAGING_SOCKET": "/s",
 	})

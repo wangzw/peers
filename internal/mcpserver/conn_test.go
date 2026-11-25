@@ -15,6 +15,7 @@ import (
 
 	"github.com/wangzw/peers/internal/broker/localpb"
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // dialFakeConn starts a fake Local service and returns a client connection to it.
@@ -46,8 +47,7 @@ func TestProbeSocket(t *testing.T) {
 	})
 
 	t.Run("missing path", func(t *testing.T) {
-		dir := t.TempDir()
-		if got := probeSocket(context.Background(), filepath.Join(dir, "absent.sock")); got != probeMissing {
+		if got := probeSocket(context.Background(), socktest.Path(t, "absent.sock")); got != probeMissing {
 			t.Fatalf("probeSocket = %v, want probeMissing", got)
 		}
 	})
@@ -88,11 +88,7 @@ func TestProbeSocket(t *testing.T) {
 		if os.Geteuid() == 0 {
 			t.Skip("root can traverse a directory regardless of its mode")
 		}
-		dir, err := os.MkdirTemp("", "ap-")
-		if err != nil {
-			t.Fatalf("create directory: %v", err)
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(dir) })
+		dir := socktest.Dir(t)
 		if err := os.Chmod(dir, 0o000); err != nil {
 			t.Fatalf("chmod: %v", err)
 		}
