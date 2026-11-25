@@ -33,6 +33,10 @@ func newRealWatchTimer(d time.Duration) watchTimer { return realWatchTimer{time.
 // newRealWatchTimer; tests replace it to fire the debounce on command.
 var newWatchTimer = newRealWatchTimer
 
+// newFSWatcher builds the filesystem watcher. Production always uses
+// fsnotify.NewWatcher; tests replace it to force the creation failure.
+var newFSWatcher = fsnotify.NewWatcher
+
 type configWatcher struct {
 	c        *core
 	fsw      *fsnotify.Watcher
@@ -62,7 +66,7 @@ func startWatchWithDebounce(c *core, debounce time.Duration) (*configWatcher, er
 		stopCh:   make(chan struct{}),
 		done:     make(chan struct{}),
 	}
-	fsw, err := fsnotify.NewWatcher()
+	fsw, err := newFSWatcher()
 	if err != nil {
 		c.logger.Error("config: cannot create the file watcher; configuration reloads will not be noticed", "error", err)
 	} else {

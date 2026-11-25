@@ -98,8 +98,13 @@ type core struct {
 
 var defaultLogger = func() *slog.Logger { return slog.Default() }
 
+// lookupAccount reads one entry of the account database. It is a seam so a
+// test can state the database's answer, including its failure, instead of
+// depending on the host's account database.
+var lookupAccount = accountdb.LookupUID
+
 func accountHomeDir() (string, error) {
-	if u, err := accountdb.LookupUID(uint32(os.Getuid())); err == nil && u.Home != "" {
+	if u, err := lookupAccount(uint32(os.Getuid())); err == nil && u.Home != "" {
 		return u.Home, nil
 	}
 	return os.UserHomeDir()
@@ -111,7 +116,7 @@ var homeDirSource = accountHomeDir
 // runningAccountName looks up the name of the account the Broker runs as, the
 // same account database the audit log takes its account names from.
 func runningAccountName() (string, error) {
-	u, err := accountdb.LookupUID(uint32(os.Geteuid()))
+	u, err := lookupAccount(uint32(os.Geteuid()))
 	if err != nil {
 		return "", err
 	}
