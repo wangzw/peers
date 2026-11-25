@@ -8,11 +8,9 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// bufferedSendStream models the gRPC client transport on a dialed connection.
-// Send hands a frame to the transport and returns before it reaches the peer;
-// the transport writes the buffered frames later in flush. Closing the
-// connection before that write discards whatever is still buffered, which is
-// how a Reject sent just before closeAsync can be lost.
+// bufferedSendStream models the gRPC client transport: Send returns before the
+// frame reaches the peer, and closing before the transport writes discards what
+// is buffered.
 type bufferedSendStream struct {
 	incoming  chan *linkpb.Frame
 	delivered chan *linkpb.Frame
@@ -51,14 +49,11 @@ func (s *bufferedSendStream) Recv() (*linkpb.Frame, error) {
 	}
 }
 
-// CloseSend models the transport's ordered half-close: buffered frames are
-// written before the stream ends.
 func (s *bufferedSendStream) CloseSend() error {
 	s.flush()
 	return nil
 }
 
-// flush is the transport writer: it hands the buffered frames to the peer.
 func (s *bufferedSendStream) flush() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -80,12 +75,9 @@ func (s *bufferedSendStream) abort() {
 	s.closeOnce.Do(func() { close(s.closed) })
 }
 
-// TestDialerVersionMismatchLingersUntilTheRejectIsWritten reproduces the lost
-// Reject without relying on the timing race of a real transport. The stream
-// holds every frame until flush, which stands in for the gRPC writer running
-// after the handshake returned. If the dialer closes the connection as soon as
-// the version mismatch is seen, abort discards the buffered Reject and the
-// accepting side never receives it.
+// TestDialerVersionMismatchLingersUntilTheRejectIsWritten checks that the
+// dialer's Reject for a version mismatch is flushed to the stream before the
+// connection closes.
 func TestDialerVersionMismatchLingersUntilTheRejectIsWritten(t *testing.T) {
 	h := newHandshakeHarness(t)
 	fp := Fingerprint{0xB7}
@@ -103,11 +95,8 @@ func TestDialerVersionMismatchLingersUntilTheRejectIsWritten(t *testing.T) {
 		t.Fatalf("peer version = %d, want %d", res.peerVersion, linkpb.ProtocolVersion+1)
 	}
 
-	// This is the dial loop's failure path for a failed handshake.
 	c.closeAfterFailedHandshake(FailVersionIncompatible)
 
-	// The transport writer runs after the handshake. A connection that was
-	// already aborted never gets its buffered Reject written.
 	stream.flush()
 
 	deadline := time.After(eventTimeout)

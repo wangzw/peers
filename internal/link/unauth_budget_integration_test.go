@@ -13,13 +13,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// TestAuthenticatedLinkAcceptsLargeFrameAfterHello is the regression guard for
-// the pre-authentication read budget: the acceptor leaves the registry as soon
-// as it has verified the dialer's Hello, before it answers with its own. The
-// dialer sends a 1 MiB state frame immediately after it reads that Hello,
-// while the acceptor is held in the window between sending its Hello and
-// installing the link. If the acceptor authenticated after answering instead,
-// the frame would be charged to the 64 KiB budget and the connection closed.
+// TestAuthenticatedLinkAcceptsLargeFrameAfterHello checks that the acceptor
+// leaves the pre-authentication read budget before a 1 MiB frame arrives after
+// its Hello.
 func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 	helloSent := make(chan struct{})
 	release := make(chan struct{})
@@ -28,13 +24,10 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 
 	acceptor := newNode(t, "acceptor")
 	link.SetTestKnobs(acceptor.Link, link.TestKnobs{
-		// Hold the accepting side after it answers the dialer, before install.
 		AfterHelloSent: func() {
 			close(helloSent)
 			<-release
 		},
-		// Observe the bytes the accepting side reads, including the ones read
-		// after it left the registry.
 		OnUnauthenticatedRead: func(total int64) {
 			if total > 64<<10 {
 				readOnce.Do(func() { close(readPastBudget) })
@@ -55,8 +48,6 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 	acceptor.Start()
 	fpAcceptor := acceptor.Peers.Fingerprint()
 
-	// The dialer installs its side as soon as it reads the acceptor's Hello,
-	// while the acceptor is still held before install.
 	dialer.waitUp(t, fpAcceptor, 1)
 	select {
 	case <-helloSent:
@@ -68,9 +59,8 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 		t.Fatalf("Send a 1 MiB frame after the Hello: %v", err)
 	}
 
-	// Let the frame travel before releasing the acceptor. The observer runs
-	// after the budget check, so when it fires the outcome is already decided:
-	// an acceptor that was still unauthenticated closed the connection here.
+	// The observer runs after the budget check, so when it fires the outcome is
+	// already decided.
 	select {
 	case <-readPastBudget:
 	case <-time.After(eventTimeout):
@@ -91,9 +81,8 @@ func TestAuthenticatedLinkAcceptsLargeFrameAfterHello(t *testing.T) {
 	}
 }
 
-// TestPairingHandshakeStaysWithinReadBudget checks that a complete pairing
-// handshake with ordinary alias and address fields stays below the 64 KiB
-// pre-authentication read budget and never logs cause byte_budget.
+// TestPairingHandshakeStaysWithinReadBudget checks that an ordinary pairing
+// handshake stays below the 64 KiB pre-authentication read budget.
 func TestPairingHandshakeStaysWithinReadBudget(t *testing.T) {
 	var logs syncBuffer
 	acceptor := newNode(t, "acceptor", func(o *link.Options) {

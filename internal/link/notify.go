@@ -6,15 +6,14 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// subscription is one pair of link up and down callbacks.
 type subscription struct {
 	onUp   func(peer Fingerprint, salt []byte)
 	onDown func(peer Fingerprint)
 }
 
-// event is one queued link up or down notification. delivered is non-nil only
-// for up events; it is closed once every onUp callback returned, or when the
-// event is discarded.
+// event is one queued link up or down notification; delivered is non-nil only
+// for up events and is closed once every onUp callback returned or the event is
+// discarded.
 type event struct {
 	up        bool
 	peer      Fingerprint
@@ -23,10 +22,9 @@ type event struct {
 	delivered chan struct{}
 }
 
-// notifier hands link up and down events to the subscribers one at a time, in
-// the order they were posted. It runs one goroutine and an unbounded queue, so
-// posting never blocks and may happen while holding Link.mu; the notifier's own
-// mutex is a leaf lock.
+// notifier hands link up and down events to the subscribers one at a time in
+// posting order. Posting never blocks and may happen while holding Link.mu; the
+// notifier's own mutex is a leaf lock.
 type notifier struct {
 	l *Link
 
@@ -44,9 +42,9 @@ func newNotifier(l *Link) *notifier {
 	return n
 }
 
-// post appends ev to the queue and wakes the delivery goroutine. After stop it
-// discards the event instead, closing the delivered channel of an up event so
-// its waiter is released.
+// post appends ev to the queue and wakes the delivery goroutine; after stop it
+// discards the event, closing the delivered channel of an up event so its
+// waiter is released.
 func (n *notifier) post(ev event) {
 	n.mu.Lock()
 	if n.stopped {
@@ -59,8 +57,8 @@ func (n *notifier) post(ev event) {
 	n.mu.Unlock()
 }
 
-// start starts the delivery goroutine. Events posted before the start are
-// delivered once it runs.
+// Events posted before the delivery goroutine starts are delivered once it
+// runs.
 func (n *notifier) start() {
 	n.mu.Lock()
 	if n.started || n.stopped {
@@ -73,7 +71,7 @@ func (n *notifier) start() {
 }
 
 // stop discards the queued events, releases their waiters and waits for the
-// delivery goroutine to exit. A callback already running finishes first.
+// delivery goroutine to exit; a callback already running finishes first.
 func (n *notifier) stop() {
 	n.mu.Lock()
 	n.stopped = true
@@ -90,7 +88,6 @@ func (n *notifier) stop() {
 	<-n.done
 }
 
-// run delivers queued events until stop is called.
 func (n *notifier) run() {
 	defer close(n.done)
 	for {
@@ -112,8 +109,8 @@ func (n *notifier) run() {
 	}
 }
 
-// deliver calls every subscriber, then writes the audit event. It holds no
-// Link lock, so callbacks may use Link methods.
+// deliver calls every subscriber, then writes the audit event; it holds no Link
+// lock, so callbacks may use Link methods.
 func (n *notifier) deliver(ev event) {
 	l := n.l
 	l.subMu.RLock()
@@ -148,7 +145,7 @@ func (n *notifier) deliver(ev event) {
 	release(ev)
 }
 
-// release closes the delivered channel of an up event. It is safe to call once
+// release closes the delivered channel of an up event; it is safe to call once
 // per event.
 func release(ev event) {
 	if ev.up && ev.delivered != nil {
@@ -156,7 +153,6 @@ func release(ev event) {
 	}
 }
 
-// releaseAll releases the up-event waiters of every event in events.
 func releaseAll(events []event) {
 	for _, ev := range events {
 		release(ev)

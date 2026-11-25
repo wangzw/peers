@@ -1,7 +1,6 @@
 package link
 
-// String returns the lowercase name of the phase used in logs and status
-// details.
+// String returns the lowercase phase name used in logs and status details.
 func (p Phase) String() string {
 	switch p {
 	case PhaseNone:
@@ -23,8 +22,8 @@ func (p Phase) String() string {
 	}
 }
 
-// String returns the lowercase name of the failure reason used in logs and
-// audit details.
+// String returns the lowercase failure-reason name used in logs and audit
+// details.
 func (r FailReason) String() string {
 	switch r {
 	case FailNone:

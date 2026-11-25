@@ -7,9 +7,7 @@ import (
 )
 
 // TestPreAuthBacklogAtMostOneFrame checks that a connection that never
-// authenticates cannot make the reader buffer more than one frame. A stranger
-// that floods frames after its Hello must reach the Reject with at most one
-// frame waiting in the input queue.
+// authenticates buffers at most one frame before its Reject.
 func TestPreAuthBacklogAtMostOneFrame(t *testing.T) {
 	h := newHandshakeHarness(t)
 	peer := Fingerprint{0xF5}

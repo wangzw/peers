@@ -6,7 +6,6 @@ import (
 	"testing"
 )
 
-// copyBufSize is the chunk size each forwarding direction reads and writes.
 const copyBufSize = 32 * 1024
 
 // Proxy forwards TCP connections to a target address and lets a test inspect
@@ -128,7 +127,7 @@ func (p *Proxy) Accepted() int {
 }
 
 // WaitAccepted blocks until at least n connections have been accepted, failing
-// the test after three seconds.
+// the test once eventTimeout passes.
 func (p *Proxy) WaitAccepted(t testing.TB, n int) {
 	t.Helper()
 	waitUntil(t, "accepted proxy connections", p.changedCh, func() bool {
@@ -136,17 +135,12 @@ func (p *Proxy) WaitAccepted(t testing.TB, n int) {
 	})
 }
 
-// bufferedBytes returns how many bytes have been read from one side and not
-// yet forwarded to the other. While paused this is at least the size of the
-// chunk waiting in each direction.
 func (p *Proxy) bufferedBytes() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.buffered
 }
 
-// waitBuffered blocks until cond holds for the buffered byte count, failing the
-// test after three seconds.
 func (p *Proxy) waitBuffered(t testing.TB, cond func(int) bool) {
 	t.Helper()
 	waitUntil(t, "buffered proxy bytes", p.changedCh, func() bool {
@@ -226,8 +220,8 @@ func (p *Proxy) serve(client net.Conn) {
 	pc.close()
 }
 
-// pump forwards src to dst. A chunk is counted as buffered while it waits for a
-// pause to end and as captured once it has been written.
+// pump forwards src to dst, counting a chunk as buffered while it waits for a
+// pause and as captured once written.
 func (p *Proxy) pump(src, dst net.Conn) {
 	buf := make([]byte, copyBufSize)
 	for {
@@ -269,7 +263,6 @@ func (p *Proxy) pump(src, dst net.Conn) {
 	}
 }
 
-// waitResume blocks while a pause is in effect.
 func (p *Proxy) waitResume() {
 	for {
 		p.mu.Lock()

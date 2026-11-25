@@ -10,16 +10,15 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// errMalformed reports a frame that does not match the link protocol. Every
-// decode error wraps it so callers can tell a protocol violation from a
+// errMalformed reports a frame that does not match the link protocol; every
+// decode error wraps it, so callers can tell a protocol violation from a
 // transport failure.
 var errMalformed = errors.New("malformed frame")
 
-// nonceSize is the length of the Hello random value. Both sides mix it into
-// the pairing salt, so a difference in length would produce different salts.
+// nonceSize is the length of the Hello random value; both sides mix it into the
+// salt, so a different length would produce different salts.
 const nonceSize = 32
 
-// encodeHello builds the first frame sent by either role.
 func encodeHello(version uint32, alias string, nonce []byte, addrs []config.AdvertisedAddr) *linkpb.Frame {
 	return marshalFrame(linkpb.KindHello, &linkpb.Hello{
 		ProtocolVersion:     version,
@@ -29,7 +28,6 @@ func encodeHello(version uint32, alias string, nonce []byte, addrs []config.Adve
 	})
 }
 
-// decodeHello checks the kind and decodes the Hello payload.
 func decodeHello(f *linkpb.Frame) (*linkpb.Hello, error) {
 	msg := new(linkpb.Hello)
 	if err := unmarshalFrame(f, linkpb.KindHello, msg); err != nil {
@@ -41,7 +39,6 @@ func decodeHello(f *linkpb.Frame) (*linkpb.Hello, error) {
 	return msg, nil
 }
 
-// encodePeerInfo builds a frame reporting an alias or address change.
 func encodePeerInfo(alias string, addrs []config.AdvertisedAddr) *linkpb.Frame {
 	return marshalFrame(linkpb.KindPeerInfo, &linkpb.PeerInfo{
 		Alias:               alias,
@@ -49,7 +46,6 @@ func encodePeerInfo(alias string, addrs []config.AdvertisedAddr) *linkpb.Frame {
 	})
 }
 
-// decodePeerInfo checks the kind and decodes the PeerInfo payload.
 func decodePeerInfo(f *linkpb.Frame) (*linkpb.PeerInfo, error) {
 	msg := new(linkpb.PeerInfo)
 	if err := unmarshalFrame(f, linkpb.KindPeerInfo, msg); err != nil {
@@ -58,13 +54,12 @@ func decodePeerInfo(f *linkpb.Frame) (*linkpb.PeerInfo, error) {
 	return msg, nil
 }
 
-// encodeReject builds a frame refusing the connection or the first frame.
 func encodeReject(reason linkpb.RejectReason) *linkpb.Frame {
 	return marshalFrame(linkpb.KindReject, &linkpb.Reject{Reason: reason})
 }
 
-// decodeReject checks the kind and decodes the Reject payload. An unspecified
-// or unknown reason is malformed: the receiver cannot act on it.
+// decodeReject checks the kind and decodes the Reject payload; an unspecified
+// or unknown reason is malformed, because the receiver cannot act on it.
 func decodeReject(f *linkpb.Frame) (linkpb.RejectReason, error) {
 	msg := new(linkpb.Reject)
 	if err := unmarshalFrame(f, linkpb.KindReject, msg); err != nil {
@@ -81,7 +76,7 @@ func decodeReject(f *linkpb.Frame) (linkpb.RejectReason, error) {
 }
 
 // unsupportedReply builds the reply to a request whose kind the receiver does
-// not handle. It carries the request id, so the requester can match it.
+// not handle; it carries the request id so the requester can match it.
 func unsupportedReply(req *linkpb.Frame) *linkpb.Frame {
 	return &linkpb.Frame{
 		Kind:      linkpb.KindUnsupported,
@@ -91,8 +86,6 @@ func unsupportedReply(req *linkpb.Frame) *linkpb.Frame {
 	}
 }
 
-// decodeUnsupported checks the kind and returns the request kind the peer
-// refused.
 func decodeUnsupported(f *linkpb.Frame) (uint32, error) {
 	msg := new(linkpb.Unsupported)
 	if err := unmarshalFrame(f, linkpb.KindUnsupported, msg); err != nil {
@@ -101,8 +94,6 @@ func decodeUnsupported(f *linkpb.Frame) (uint32, error) {
 	return msg.GetRequestKind(), nil
 }
 
-// addrsToPB converts the advertised address list to its wire form. A nil or
-// empty list becomes an empty list.
 func addrsToPB(addrs []config.AdvertisedAddr) []*linkpb.AdvertisedAddress {
 	if len(addrs) == 0 {
 		return nil
@@ -114,9 +105,9 @@ func addrsToPB(addrs []config.AdvertisedAddr) []*linkpb.AdvertisedAddress {
 	return out
 }
 
-// addrsFromPB converts the wire form back to the advertised address list. It
-// preserves order and keeps unknown kinds and empty addresses untouched;
-// filtering them is the peer table's job. Nil elements are skipped.
+// addrsFromPB converts the wire form back to the advertised address list; it
+// preserves order and keeps unknown kinds untouched, because filtering them is
+// the peer table's job. Nil elements are skipped.
 func addrsFromPB(addrs []*linkpb.AdvertisedAddress) []config.AdvertisedAddr {
 	if len(addrs) == 0 {
 		return nil
@@ -131,7 +122,6 @@ func addrsFromPB(addrs []*linkpb.AdvertisedAddress) []config.AdvertisedAddr {
 	return out
 }
 
-// frameClass is how the router treats a frame.
 type frameClass uint8
 
 const (
@@ -141,9 +131,8 @@ const (
 	classReply
 )
 
-// classify decides whether a frame is an unsolicited state update, a request,
-// or the reply to a request. A reply flag without a request id matches
-// nothing and is invalid.
+// classify decides whether a frame is a state update, a request or a reply; a
+// reply flag without a request id matches nothing and is invalid.
 func classify(f *linkpb.Frame) frameClass {
 	if f == nil {
 		return classInvalid
@@ -160,8 +149,6 @@ func classify(f *linkpb.Frame) frameClass {
 	}
 }
 
-// marshalFrame wraps a payload message in a frame that carries no request id
-// and is not a reply.
 func marshalFrame(kind uint32, msg proto.Message) *linkpb.Frame {
 	return &linkpb.Frame{
 		Kind:    kind,
@@ -169,7 +156,6 @@ func marshalFrame(kind uint32, msg proto.Message) *linkpb.Frame {
 	}
 }
 
-// unmarshalFrame verifies the frame kind and decodes its payload into msg.
 func unmarshalFrame(f *linkpb.Frame, kind uint32, msg proto.Message) error {
 	if f == nil {
 		return fmt.Errorf("%w: nil frame", errMalformed)
@@ -183,9 +169,9 @@ func unmarshalFrame(f *linkpb.Frame, kind uint32, msg proto.Message) error {
 	return nil
 }
 
-// marshalPayload encodes a generated message. These messages only fail to
-// encode when a string field holds invalid UTF-8; the values passed here come
-// from validated configuration, so the error is not actionable at this layer.
+// marshalPayload encodes a generated message. Encoding only fails on invalid
+// UTF-8 in a string field, and the values here come from validated
+// configuration, so the error is not actionable at this layer.
 func marshalPayload(msg proto.Message) []byte {
 	b, err := proto.Marshal(msg)
 	if err != nil {

@@ -8,6 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
+// TestNewRejectsMissingCollaborators checks that New rejects nil Peers or
+// Settings.
 func TestNewRejectsMissingCollaborators(t *testing.T) {
 	peers := linktest.NewFakePeers(t)
 	settings := linktest.NewFakeSettings("b")
@@ -28,6 +30,7 @@ func TestNewRejectsMissingCollaborators(t *testing.T) {
 	}
 }
 
+// TestNewDefaults checks the production defaults New sets.
 func TestNewDefaults(t *testing.T) {
 	peers := linktest.NewFakePeers(t)
 	settings := linktest.NewFakeSettings("b")
@@ -87,6 +90,8 @@ func TestNewDefaults(t *testing.T) {
 	}
 }
 
+// TestNewProtocolVersionFromOptions checks that Options.ProtocolVersion
+// overrides the default and survives SetTestKnobs.
 func TestNewProtocolVersionFromOptions(t *testing.T) {
 	peers := linktest.NewFakePeers(t)
 	settings := linktest.NewFakeSettings("b")
@@ -109,6 +114,8 @@ func TestNewProtocolVersionFromOptions(t *testing.T) {
 	}
 }
 
+// TestPhaseAndFailReasonStrings checks every Phase and FailReason name and the
+// unknown fallback.
 func TestPhaseAndFailReasonStrings(t *testing.T) {
 	phases := map[Phase]string{
 		PhaseNone:        "none",

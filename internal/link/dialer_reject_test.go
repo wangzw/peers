@@ -19,9 +19,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// lingerStubServerCreds performs the TLS handshake itself, like link's own
-// server credentials do. The real dialer offers no ALPN protocol, so grpc's
-// standard TLS credentials would refuse the connection.
+// lingerStubServerCreds performs the TLS handshake itself because the real
+// dialer offers no ALPN protocol, which grpc's standard TLS credentials refuse.
 type lingerStubServerCreds struct {
 	id linktest.Identity
 }
@@ -51,10 +50,9 @@ type lingerStubAuthInfo struct{}
 
 func (lingerStubAuthInfo) AuthType() string { return "stub" }
 
-// lingerStubAcceptor sends a Hello with a newer protocol version and only then
-// waits before it reads the dialer's answer. The pause gives a dialer that
-// closes as soon as it has handled the Hello time to tear the stream down
-// before the Reject reaches the accepting side.
+// lingerStubAcceptor answers the dialer's Hello with a newer protocol version
+// and then pauses before reading, so a dialer that closes early loses the
+// Reject.
 type lingerStubAcceptor struct {
 	linkpb.UnimplementedLinkServer
 
@@ -110,11 +108,8 @@ func (s *lingerStubAcceptor) Connect(stream grpc.BidiStreamingServer[linkpb.Fram
 	}
 }
 
-// TestDialerRejectReachesAcceptorBeforeClose checks that the dialer's Reject
-// for a version mismatch is written to the stream before the dialer closes it.
-// Without the pause at the accepting side, a lost Reject is a timing race that
-// shows up only some of the time; with the pause the abort always wins when
-// the Reject was merely handed to gRPC and not flushed.
+// TestDialerRejectReachesAcceptorBeforeClose checks that the dialer's Reject for
+// a version mismatch is written to the stream before the dialer closes it.
 func TestDialerRejectReachesAcceptorBeforeClose(t *testing.T) {
 	id := linktest.NewIdentity(t)
 	stub := &lingerStubAcceptor{

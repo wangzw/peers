@@ -19,6 +19,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
+// TestLinkVersionAcceptorNewer checks that a newer accepting side leaves the
+// dialer backing off with version incompatible and records the version on the
+// waiting side.
 func TestLinkVersionAcceptorNewer(t *testing.T) {
 	acceptor := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = linkpb.ProtocolVersion + 1 })
 	dialer := newNode(t, "a")
@@ -44,6 +47,9 @@ func TestLinkVersionAcceptorNewer(t *testing.T) {
 	}
 }
 
+// TestLinkVersionDialerNewer checks that the accepting side rejects a newer
+// dialer's Hello and waits with the dialer's recorded version while the dialer
+// backs off as version incompatible and the link never comes up.
 func TestLinkVersionDialerNewer(t *testing.T) {
 	dialer := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = linkpb.ProtocolVersion + 1 })
 	acceptor := newNode(t, "a")
@@ -68,9 +74,8 @@ func TestLinkVersionDialerNewer(t *testing.T) {
 	}
 }
 
-// stubServerCreds performs the TLS handshake itself, like link's own server
-// credentials do. The real dialer offers no ALPN protocol, so grpc's standard
-// TLS credentials would refuse the connection.
+// stubServerCreds performs the TLS handshake itself because the real dialer
+// offers no ALPN protocol, which grpc's standard TLS credentials refuse.
 type stubServerCreds struct {
 	id linktest.Identity
 }
@@ -100,9 +105,8 @@ type stubAuthInfo struct{}
 
 func (stubAuthInfo) AuthType() string { return "stub" }
 
-// stubAcceptor is a hand-written accepting side. It answers the dialer's Hello
-// with a newer protocol version and records every frame the dialer sends after
-// that Hello.
+// stubAcceptor answers the dialer's Hello with a newer protocol version and
+// records the frames the dialer sends after it.
 type stubAcceptor struct {
 	linkpb.UnimplementedLinkServer
 
@@ -155,6 +159,8 @@ func (s *stubAcceptor) Connect(stream grpc.BidiStreamingServer[linkpb.Frame, lin
 	}
 }
 
+// TestDialerRejectsAcceptorHello checks that a dialer rejects a Hello with a
+// newer version, sends Reject, ends the stream and never reports the link up.
 func TestDialerRejectsAcceptorHello(t *testing.T) {
 	id := linktest.NewIdentity(t)
 	stub := &stubAcceptor{version: linkpb.ProtocolVersion + 1, frames: make(chan *linkpb.Frame, 4), ended: make(chan error, 1)}
@@ -208,6 +214,8 @@ func TestDialerRejectsAcceptorHello(t *testing.T) {
 	}
 }
 
+// TestLinkVersionRecoversAfterUpgrade checks that the dialer establishes the
+// link once the accepting side runs the same version.
 func TestLinkVersionRecoversAfterUpgrade(t *testing.T) {
 	acceptor := newNode(t, "b", func(o *link.Options) { o.ProtocolVersion = linkpb.ProtocolVersion + 1 })
 	dialer := newNode(t, "a")
@@ -221,8 +229,6 @@ func TestLinkVersionRecoversAfterUpgrade(t *testing.T) {
 		return st.Phase == link.PhaseBackoff && st.LastFailure == link.FailVersionIncompatible
 	})
 
-	// Restart the accepting side on the same address and identity with the
-	// default protocol version, then make the dialer retry at once.
 	acceptor.Close()
 	upgraded := newNodeFrom(t, acceptor.Peers, acceptor.Settings, linktest.NewFakeClock(time.Unix(1_700_000_000, 0)))
 	if err := upgraded.Listen(addr); err != nil {

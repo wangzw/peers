@@ -9,8 +9,7 @@ import (
 )
 
 // TestKnownAcceptorNonHelloFirstFrameClosesSilently checks that a known peer
-// whose first frame is not Hello is closed without a Reject and without an
-// audit event: the role check refuses it before the unknown-fingerprint path.
+// whose first frame is not Hello is closed without a Reject or an audit event.
 func TestKnownAcceptorNonHelloFirstFrameClosesSilently(t *testing.T) {
 	h := newHandshakeHarness(t)
 	peer := Fingerprint{0xF1}
@@ -33,9 +32,8 @@ func TestKnownAcceptorNonHelloFirstFrameClosesSilently(t *testing.T) {
 	hsWaitClosed(t, c)
 }
 
-// TestAcceptorMalformedHelloClosesSilently checks that a known peer's Hello
-// that fails to decode closes the connection without a Reject or an audit
-// event: the decode error is a protocol failure, not a peer-table decision.
+// TestAcceptorMalformedHelloClosesSilently checks that a known peer's malformed
+// Hello closes the connection without a Reject or an audit event.
 func TestAcceptorMalformedHelloClosesSilently(t *testing.T) {
 	h := newHandshakeHarness(t)
 	peer := Fingerprint{0xF2}
@@ -98,11 +96,9 @@ func TestUnknownFingerprintMalformedHelloIsAudited(t *testing.T) {
 	hsWaitClosed(t, c)
 }
 
-// TestRejectedConnectionsMergeBySource checks that a rejection names the
-// network source, not the certificate the stranger chose: two connections from
-// one address with different certificates carry the same merge key and a
-// detail naming the source. The merge key is what config groups on, so the
-// stranger cannot escape the audit merge by rekeying every connection.
+// TestRejectedConnectionsMergeBySource checks that rejections from one source
+// with different certificates share one merge key and a detail naming the
+// source.
 func TestRejectedConnectionsMergeBySource(t *testing.T) {
 	h := newHandshakeHarness(t)
 	const remote = "203.0.113.7:4000"
@@ -140,8 +136,8 @@ func TestRejectedConnectionsMergeBySource(t *testing.T) {
 	}
 }
 
-// TestRejectedConnectionsMergeByIPv6Prefix checks the same rule inside one
-// IPv6 /64: two addresses in the prefix share one merge key.
+// TestRejectedConnectionsMergeByIPv6Prefix checks that two addresses in one
+// IPv6 /64 share one merge key.
 func TestRejectedConnectionsMergeByIPv6Prefix(t *testing.T) {
 	h := newHandshakeHarness(t)
 	event := func(remote string) config.Event {
@@ -171,9 +167,8 @@ func TestRejectedConnectionsMergeByIPv6Prefix(t *testing.T) {
 	}
 }
 
-// TestNonHelloFirstFrameRejectionNamesSource covers the other unknown-peer
-// path: a first frame that is neither Hello nor PairRequest still reports the
-// source, so both paths merge alike.
+// TestNonHelloFirstFrameRejectionNamesSource checks that a non-Hello first frame
+// from an unknown peer also names the source in the audit record.
 func TestNonHelloFirstFrameRejectionNamesSource(t *testing.T) {
 	h := newHandshakeHarness(t)
 	const remote = "203.0.113.9:4000"
@@ -195,9 +190,9 @@ func TestNonHelloFirstFrameRejectionNamesSource(t *testing.T) {
 	}
 }
 
-// TestRoleMismatchStillRejectsKnownDialer guards the role check order: a peer
-// this Broker dials is still refused with a role mismatch, not with a silent
-// close or a "not a peer" audit.
+// TestRoleMismatchStillRejectsKnownDialer checks that a peer this Broker dials
+// is still refused with a role mismatch, not a silent close or a "not a peer"
+// audit.
 func TestRoleMismatchStillRejectsKnownDialer(t *testing.T) {
 	h := newHandshakeHarness(t)
 	peer := Fingerprint{0xF4}

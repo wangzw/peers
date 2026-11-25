@@ -11,26 +11,22 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// frameStream is the part of a gRPC bidirectional stream that conn needs.
-// Both linkpb.Link_ConnectClient and linkpb.Link_ConnectServer satisfy it.
 type frameStream interface {
 	Send(*linkpb.Frame) error
 	Recv() (*linkpb.Frame, error)
 }
 
-// peerIdentity is the authenticated identity of the peer on one connection.
 type peerIdentity struct {
 	fp     Fingerprint
-	pub    []byte // raw 32-byte Ed25519 key
-	remote string // host:port of the TCP peer
+	pub    []byte
+	remote string
 }
 
-// connInQueueSize buffers frames between the reader goroutine and the
-// consumers. The reader stops reading the transport while it is full, which
-// lets the transport apply its own flow control.
+// connInQueueSize bounds the buffer between the reader goroutine and the
+// consumers; a full queue stops the reader, letting the transport apply flow
+// control.
 const connInQueueSize = 16
 
-// Request states of a pendingReq.
 const (
 	reqQueued int32 = iota
 	reqWritten
@@ -38,31 +34,27 @@ const (
 )
 
 // conn is one transport connection: a single gRPC stream carrying link frames.
-// It owns the reader, the optional writer goroutine, the bounded send queue,
-// the request table and the asynchronous close path. Link records and
-// notifications are layered on top of it.
 type conn struct {
 	id     peerIdentity
 	role   pairing.Role // set by the handshake before install; read-only afterwards
 	stream frameStream
 	abort  func() // closes the transport; must not block; safe to call repeatedly
 
-	in       chan *linkpb.Frame // cap connInQueueSize, filled by the reader
+	in       chan *linkpb.Frame
 	unreadMu sync.Mutex
 	// unreadStack holds frames pushed back by pairing; it is a stack so the
 	// most recent Unread is received first.
 	unreadStack []*linkpb.Frame
 
-	// readAhead holds one read permit until the handshake finishes. The reader
-	// takes it before each Recv and recv returns it after dequeuing a frame, so
-	// at most one frame waits in in before authentication. startWriter opens
-	// the gate for good, letting the reader fill in again.
+	// readAhead holds one read permit until the handshake finishes, so at most
+	// one frame waits in in before authentication; startWriter opens the gate
+	// for good.
 	readAhead chan struct{}
 	authed    chan struct{}
 	authOnce  sync.Once
 
-	out    chan outItem // cap sendQueueSize
-	sendMu sync.Mutex   // serialises sendDirect before the writer starts
+	out    chan outItem
+	sendMu sync.Mutex // serialises sendDirect before the writer starts
 	// outMu guards latest, the queued latest slot of each key. The writer
 	// removes a slot while holding it, so a later replacement is queued anew.
 	outMu    sync.Mutex
@@ -71,10 +63,10 @@ type conn struct {
 
 	closed    chan struct{}
 	closeOnce sync.Once
-	failure   atomic.Uint32 // FailReason
+	failure   atomic.Uint32
 	// lingering is set by rejectAndLinger, which then owns the close after the
-	// linger. A failed handshake must not close the connection out from under
-	// a Reject that is still in the transport's write buffer.
+	// linger; a failed handshake must not close the connection out from under
+	// a Reject still in the transport's write buffer.
 	lingering atomic.Bool
 
 	stateDone chan struct{}
@@ -88,25 +80,21 @@ type conn struct {
 	cancel context.CancelFunc
 }
 
-// outItem is one queued frame. req is non-nil for a request, whose state
-// changes when the writer takes it. latest, when non-nil, identifies an item
-// queued by SendLatest or SendLatestKey that a later send with the same key
-// replaces in place.
 type outItem struct {
 	f      *linkpb.Frame
 	req    *pendingReq
 	latest *latestSlot
 }
 
-// latestSlot holds the frame of one queued latest item. Its mutex keeps the
-// writer's read of f from racing with a replacement.
+// latestSlot holds the frame of one queued latest item; mu keeps the writer's
+// read of f from racing with a replacement.
 type latestSlot struct {
 	mu  sync.Mutex
 	key string
 	f   *linkpb.Frame
 }
 
-// pendingReq is one request waiting for its reply. state is queued until the
+// pendingReq is one request waiting for its reply: state is queued until the
 // writer takes it, written once the writer calls the transport, and canceled
 // when the caller gave up while it was still queued.
 type pendingReq struct {
@@ -115,9 +103,8 @@ type pendingReq struct {
 	reply chan *linkpb.Frame // cap 1
 }
 
-// newConn builds a connection around an already open stream. It starts no
-// goroutine; call start, and startWriter when the connection runs without a
-// handshake that needs sendDirect.
+// newConn builds a connection around an already open stream; it starts no
+// goroutine, so the caller runs start and startWriter.
 func newConn(stream frameStream, abort func(), id peerIdentity, queueSize int) *conn {
 	if abort == nil {
 		abort = func() {}
@@ -142,15 +129,10 @@ func newConn(stream frameStream, abort func(), id peerIdentity, queueSize int) *
 	return c
 }
 
-// start starts the reader goroutine.
 func (c *conn) start() {
 	go c.readLoop()
 }
 
-// readLoop moves frames from the transport into the in queue. A transport
-// error closes the connection; the reader never blocks on a full queue after
-// the connection closed. Before authentication it holds one read permit, so
-// at most one frame is buffered.
 func (c *conn) readLoop() {
 	for {
 		if !c.acquireReadPermit() {
@@ -169,9 +151,9 @@ func (c *conn) readLoop() {
 	}
 }
 
-// acquireReadPermit waits until the connection may read another frame. The
+// acquireReadPermit waits until the connection may read another frame; the
 // handshake phase has exactly one permit, so the reader cannot run ahead of
-// the frame being processed; authentication opens the gate permanently.
+// the frame being processed, and authentication opens the gate permanently.
 func (c *conn) acquireReadPermit() bool {
 	select {
 	case <-c.authed:
@@ -188,9 +170,6 @@ func (c *conn) acquireReadPermit() bool {
 	}
 }
 
-// releaseReadPermit returns the permit of a frame taken from in. Frames taken
-// from the unread stack do not have a permit; after authentication there is no
-// gate at all.
 func (c *conn) releaseReadPermit() {
 	select {
 	case <-c.authed:
@@ -203,8 +182,6 @@ func (c *conn) releaseReadPermit() {
 	}
 }
 
-// allowReadAhead opens the pre-authentication read gate. It is called once the
-// handshake finished and the connection starts running.
 func (c *conn) allowReadAhead() {
 	c.authOnce.Do(func() { close(c.authed) })
 }
@@ -241,8 +218,6 @@ func (c *conn) recv(ctx context.Context) (*linkpb.Frame, error) {
 	}
 }
 
-// tryRecv takes a buffered frame without blocking. It returns false when no
-// frame is queued.
 func (c *conn) tryRecv() (*linkpb.Frame, bool) {
 	select {
 	case f := <-c.in:
@@ -253,16 +228,16 @@ func (c *conn) tryRecv() (*linkpb.Frame, bool) {
 	}
 }
 
-// unread pushes a frame back to the head of the receive queue. It may be
-// called from any goroutine.
+// unread pushes a frame back to the head of the receive queue; safe for
+// concurrent use.
 func (c *conn) unread(f *linkpb.Frame) {
 	c.unreadMu.Lock()
 	c.unreadStack = append(c.unreadStack, f)
 	c.unreadMu.Unlock()
 }
 
-// sendDirect writes a frame before the writer goroutine starts. The handshake
-// uses it; once the connection runs, all writes go through the queue.
+// sendDirect writes a frame before the writer goroutine starts; the handshake
+// uses it, and once the connection runs all writes go through the queue.
 func (c *conn) sendDirect(ctx context.Context, f *linkpb.Frame) error {
 	c.sendMu.Lock()
 	defer c.sendMu.Unlock()
@@ -291,9 +266,8 @@ func (c *conn) sendDirect(ctx context.Context, f *linkpb.Frame) error {
 	}
 }
 
-// startWriter starts the writer goroutine. After this, sendDirect refuses to
-// send and all writes go through enqueue. It also opens the read gate: the
-// handshake is over and the reader may fill the input queue again.
+// startWriter starts the writer goroutine; after this sendDirect refuses to
+// send and all writes go through enqueue. It also opens the read gate.
 func (c *conn) startWriter() {
 	c.sendMu.Lock()
 	c.writerOn.Store(true)
@@ -302,8 +276,8 @@ func (c *conn) startWriter() {
 	go c.writeLoop()
 }
 
-// writeLoop drains the send queue in order. A request canceled while queued is
-// skipped; a transport error closes the connection.
+// writeLoop drains the send queue in order; a request canceled while queued is
+// skipped and a transport error closes the connection.
 func (c *conn) writeLoop() {
 	for {
 		select {
@@ -335,17 +309,16 @@ func (c *conn) writeLoop() {
 	}
 }
 
-// enqueue queues a frame without blocking. A full queue closes the connection
-// so the peer cannot accumulate an unbounded backlog.
+// enqueue queues a frame without blocking; a full queue closes the connection
+// so a peer cannot accumulate an unbounded backlog.
 func (c *conn) enqueue(f *linkpb.Frame) error {
 	return c.push(outItem{f: f})
 }
 
-// enqueueLatest queues f like enqueue under key. When a frame with the same key
-// is already queued by enqueueLatest and the writer has not taken it, that
-// frame's content is replaced in place, no new queue position is used, and
-// replaced reports true. A replacement that arrives after the writer took the
-// frame is queued as a new item, as is the case once the queue is closed.
+// enqueueLatest queues f under key; when a frame with the same key is queued
+// and the writer has not taken it, that frame is replaced in place without a
+// new queue position and replaced reports true. A replacement after the writer
+// took the frame is queued as a new item.
 func (c *conn) enqueueLatest(key string, f *linkpb.Frame) (replaced bool, err error) {
 	c.outMu.Lock()
 	defer c.outMu.Unlock()
@@ -370,9 +343,8 @@ func (c *conn) enqueueLatest(key string, f *linkpb.Frame) (replaced bool, err er
 }
 
 // enqueueRequest assigns the next request id, registers the waiter and queues
-// the frame. The size check runs after the id is filled, so the check covers
-// the frame as it will actually be written. A failed check or enqueue removes
-// the waiter again.
+// the frame. The size check runs after the id is filled, so it covers the frame
+// as it will be written; a failed check or enqueue removes the waiter again.
 func (c *conn) enqueueRequest(f *linkpb.Frame) (*pendingReq, error) {
 	id := c.nextID.Add(1)
 	p := &pendingReq{id: id, reply: make(chan *linkpb.Frame, 1)}
@@ -395,7 +367,7 @@ func (c *conn) enqueueRequest(f *linkpb.Frame) (*pendingReq, error) {
 	return p, nil
 }
 
-// push applies the enqueue rules to any queued item. It never blocks and never
+// push applies the enqueue rules to any queued item; it never blocks and never
 // waits for the network.
 func (c *conn) push(it outItem) error {
 	select {
@@ -419,9 +391,9 @@ func (c *conn) push(it outItem) error {
 	}
 }
 
-// closedErr describes a queue operation on a closed connection. A connection
-// closed because its queue filled keeps reporting ErrQueueFull, so callers see
-// the cause rather than a generic close.
+// closedErr describes a queue operation on a closed connection; one closed
+// because its queue filled keeps reporting ErrQueueFull so callers see the
+// cause rather than a generic close.
 func (c *conn) closedErr() error {
 	if c.reason() == FailQueueFull {
 		return ErrQueueFull
@@ -429,8 +401,6 @@ func (c *conn) closedErr() error {
 	return fmt.Errorf("%w: connection closed", ErrNotEstablished)
 }
 
-// deliverReply hands a reply to the waiting request. It reports whether the
-// request id was still pending.
 func (c *conn) deliverReply(f *linkpb.Frame) bool {
 	id := f.GetRequestId()
 	c.pendMu.Lock()
@@ -449,8 +419,8 @@ func (c *conn) deliverReply(f *linkpb.Frame) bool {
 	return true
 }
 
-// cancelRequest gives up on a request. It reports whether the writer had
-// already taken the frame: false means the frame will not be written.
+// cancelRequest gives up on a request and reports whether the writer had
+// already taken the frame; false means the frame will not be written.
 func (c *conn) cancelRequest(p *pendingReq) (sent bool) {
 	c.pendMu.Lock()
 	delete(c.pending, p.id)
@@ -458,8 +428,8 @@ func (c *conn) cancelRequest(p *pendingReq) (sent bool) {
 	return !p.state.CompareAndSwap(reqQueued, reqCanceled)
 }
 
-// closeAsync closes the connection once. It records the reason, cancels the
-// connection context, signals done and aborts the transport. It blocks on
+// closeAsync closes the connection once, recording the reason, cancelling the
+// connection context, signalling done and aborting the transport. It blocks on
 // nothing and may be called while holding any lock.
 func (c *conn) closeAsync(reason FailReason) {
 	c.closeOnce.Do(func() {
@@ -470,18 +440,14 @@ func (c *conn) closeAsync(reason FailReason) {
 	})
 }
 
-// done is closed when the connection closed.
 func (c *conn) done() <-chan struct{} {
 	return c.closed
 }
 
-// reason returns the reason recorded by the first closeAsync call.
 func (c *conn) reason() FailReason {
 	return FailReason(c.failure.Load())
 }
 
-// markStateDone records that the state-frame handler of this connection
-// exited. It is idempotent.
 func (c *conn) markStateDone() {
 	c.stateOnce.Do(func() { close(c.stateDone) })
 }

@@ -9,9 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// noLinger is a synchronous rejection send for the contract test: the frame is
-// handed to the pipe and the connection closes at once. The contract test does
-// not exercise the linger itself.
 func noLinger(c *conn, send func(context.Context) error) error {
 	if err := send(context.Background()); err != nil {
 		return err
@@ -20,9 +17,9 @@ func noLinger(c *conn, send func(context.Context) error) error {
 	return nil
 }
 
-// TestPairConnContract checks the pairing.PairConn behaviours pairing relies
-// on: identity accessors, a frame pushed back being received first, Send
-// producing an unprompted frame, ctx cancellation, and repeated Close.
+// TestPairConnContract checks the pairing.PairConn behaviours pairing relies on:
+// identity accessors, a pushed-back frame, an unprompted Send, context
+// cancellation and repeated Close.
 func TestPairConnContract(t *testing.T) {
 	a, b := newPipe(t)
 	fp := Fingerprint{0xab, 0xcd}
@@ -53,7 +50,6 @@ func TestPairConnContract(t *testing.T) {
 		t.Fatalf("ProtocolVersion() = %d, want %d", got, linkpb.ProtocolVersion)
 	}
 
-	// A frame pushed back is received before frames from the stream.
 	pc.Unread(100, []byte("pair-request"))
 	kind, payload, err := pc.Receive(context.Background())
 	if err != nil {
@@ -63,7 +59,6 @@ func TestPairConnContract(t *testing.T) {
 		t.Fatalf("Receive got kind=%d payload=%q, want kind=100 payload=pair-request", kind, payload)
 	}
 
-	// Send writes an unprompted frame.
 	if err := pc.Send(context.Background(), 101, []byte("ok")); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -78,11 +73,8 @@ func TestPairConnContract(t *testing.T) {
 		t.Fatalf("sent frame id=%d isReply=%v, want id=0 isReply=false", f.GetRequestId(), f.GetIsReply())
 	}
 
-	// Send returns the context error while the peer's stream blocks.
 	block := make(chan struct{})
 	a.blockSend = block
-	// The stream is blocked, so Send can return only through the deadline: the
-	// deadline is the assertion, not a fallback, and no event must precede it.
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	if err := pc.Send(ctx, 103, nil); !errors.Is(err, context.DeadlineExceeded) {
@@ -90,7 +82,6 @@ func TestPairConnContract(t *testing.T) {
 	}
 	close(block)
 
-	// Close is idempotent.
 	if err := pc.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}

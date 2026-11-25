@@ -10,22 +10,18 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// The fakes must implement the narrow interfaces link depends on.
 var (
 	_ Peers    = (*linktest.FakePeers)(nil)
 	_ Settings = (*linktest.FakeSettings)(nil)
 	_ Clock    = (*linktest.FakeClock)(nil)
 )
 
-// recordedEvent is one callback the test harness observed.
 type recordedEvent struct {
 	up   bool
 	peer Fingerprint
 	salt []byte
 }
 
-// recordHarness is a Link with a recording subscription and a started
-// notifier.
 type recordHarness struct {
 	t        *testing.T
 	l        *Link
@@ -67,14 +63,12 @@ func (h *recordHarness) onDown(peer Fingerprint) {
 	h.mu.Unlock()
 }
 
-// snapshot returns a copy of the recorded events.
 func (h *recordHarness) snapshot() []recordedEvent {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return append([]recordedEvent(nil), h.events...)
 }
 
-// waitCount blocks until n events were recorded and returns them.
 func (h *recordHarness) waitCount(t *testing.T, n int) []recordedEvent {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -90,7 +84,6 @@ func (h *recordHarness) waitCount(t *testing.T, n int) []recordedEvent {
 	}
 }
 
-// kickChan returns the kick channel of peer's record, or nil.
 func (h *recordHarness) kickChan(peer Fingerprint) chan struct{} {
 	h.l.mu.Lock()
 	defer h.l.mu.Unlock()
@@ -101,7 +94,6 @@ func (h *recordHarness) kickChan(peer Fingerprint) chan struct{} {
 	return rec.kick
 }
 
-// kickSignals drains and counts the pending kick signals.
 func kickSignals(ch chan struct{}) int {
 	if ch == nil {
 		return 0
@@ -117,7 +109,6 @@ func kickSignals(ch chan struct{}) int {
 	}
 }
 
-// newRecordConn builds a connection around one end of an in-memory pipe.
 func newRecordConn(t *testing.T, peer Fingerprint, role pairing.Role) *conn {
 	t.Helper()
 	a, _ := newPipe(t)
@@ -126,7 +117,6 @@ func newRecordConn(t *testing.T, peer Fingerprint, role pairing.Role) *conn {
 	return c
 }
 
-// waitAudit returns at least n audit events of kind.
 func waitAudit(t *testing.T, s *linktest.FakeSettings, kind config.EventKind, n int) []config.Event {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -147,6 +137,8 @@ func waitAudit(t *testing.T, s *linktest.FakeSettings, kind config.EventKind, n 
 	}
 }
 
+// TestInstallNotifiesUpWithSalt checks that install notifies an up event with
+// the salt, sets the state and writes link_up.
 func TestInstallNotifiesUpWithSalt(t *testing.T) {
 	h := newRecordHarness(t)
 	peer := Fingerprint{1}
@@ -181,6 +173,8 @@ func TestInstallNotifiesUpWithSalt(t *testing.T) {
 	}
 }
 
+// TestReplaceNotifiesDownThenUpOnce checks that replacing a connection posts
+// the old down event then the new up event exactly once.
 func TestReplaceNotifiesDownThenUpOnce(t *testing.T) {
 	peers := linktest.NewFakePeers(t)
 	settings := linktest.NewFakeSettings("self")
@@ -243,6 +237,8 @@ func TestReplaceNotifiesDownThenUpOnce(t *testing.T) {
 	}
 }
 
+// TestTeardownSetsWaitingOrBackoff checks that teardown leaves an acceptor
+// waiting and a dialer in backoff and records the failure.
 func TestTeardownSetsWaitingOrBackoff(t *testing.T) {
 	h := newRecordHarness(t)
 
@@ -300,6 +296,8 @@ func TestTeardownSetsWaitingOrBackoff(t *testing.T) {
 	}
 }
 
+// TestDropIsAsyncAndOrdered checks that Drop returns without waiting and the
+// down event precedes a later install's up event.
 func TestDropIsAsyncAndOrdered(t *testing.T) {
 	h := newRecordHarness(t)
 	peer := Fingerprint{5}
@@ -333,10 +331,6 @@ func TestDropIsAsyncAndOrdered(t *testing.T) {
 		installed <- ok
 	}()
 
-	// install must wait for the in-flight Drop. The checks below read the state
-	// that forces the wait, but that state alone does not show install stayed
-	// blocked; what proves install only completed after Drop is the event order
-	// checked at the end of the test.
 	h.l.mu.Lock()
 	dropping := h.l.dropping[peer] != nil
 	h.l.mu.Unlock()
@@ -348,7 +342,6 @@ func TestDropIsAsyncAndOrdered(t *testing.T) {
 			t.Fatal("the drop's down event was posted before install was released")
 		}
 	}
-	// Negative window: a late install that ignored the drop still returns here.
 	select {
 	case <-installed:
 		t.Fatal("install returned before Drop finished")
@@ -382,6 +375,8 @@ func TestDropIsAsyncAndOrdered(t *testing.T) {
 	}
 }
 
+// TestInstallFailsAfterDropGeneration checks that install refuses a connection
+// whose drop generation is stale.
 func TestInstallFailsAfterDropGeneration(t *testing.T) {
 	h := newRecordHarness(t)
 	peer := Fingerprint{6}
@@ -394,6 +389,8 @@ func TestInstallFailsAfterDropGeneration(t *testing.T) {
 	}
 }
 
+// TestOnDownCallbackMayTakeLockHeldBySender checks that Drop does not block on
+// a lock the onDown callback takes.
 func TestOnDownCallbackMayTakeLockHeldBySender(t *testing.T) {
 	h := newRecordHarness(t)
 	peer := Fingerprint{7}
@@ -436,6 +433,8 @@ func TestOnDownCallbackMayTakeLockHeldBySender(t *testing.T) {
 	}
 }
 
+// TestCallbacksMayCallLinkMethods checks that an onUp callback can call State,
+// Kick and Drop without deadlocking.
 func TestCallbacksMayCallLinkMethods(t *testing.T) {
 	h := newRecordHarness(t)
 	peer := Fingerprint{8}
@@ -462,6 +461,8 @@ func TestCallbacksMayCallLinkMethods(t *testing.T) {
 	}
 }
 
+// TestNotificationsAreSerialAndOrdered checks that callbacks run one at a time
+// in event order.
 func TestNotificationsAreSerialAndOrdered(t *testing.T) {
 	h := newRecordHarness(t)
 	peers := []Fingerprint{{10}, {11}, {12}}
@@ -512,10 +513,11 @@ func TestNotificationsAreSerialAndOrdered(t *testing.T) {
 	}
 }
 
+// TestKickOnlyInDialerBackoff checks that Kick signals only a dialer record in
+// backoff, once for repeated calls.
 func TestKickOnlyInDialerBackoff(t *testing.T) {
 	h := newRecordHarness(t)
 
-	// Accept-side record, waiting.
 	acceptor := Fingerprint{12}
 	cA := newRecordConn(t, acceptor, pairing.RoleAcceptor)
 	dA, ok := h.l.install(acceptor, pairing.RoleAcceptor, cA, []byte("a"), h.l.dropGeneration(acceptor))
@@ -531,7 +533,6 @@ func TestKickOnlyInDialerBackoff(t *testing.T) {
 		t.Fatalf("Kick on an accept-side record sent %d signals", n)
 	}
 
-	// Dialer record, established.
 	established := Fingerprint{13}
 	cE := newRecordConn(t, established, pairing.RoleDialer)
 	dE, ok := h.l.install(established, pairing.RoleDialer, cE, []byte("e"), h.l.dropGeneration(established))
@@ -544,7 +545,6 @@ func TestKickOnlyInDialerBackoff(t *testing.T) {
 		t.Fatalf("Kick on an established link sent %d signals", n)
 	}
 
-	// Dialer record, rejected.
 	rejected := Fingerprint{14}
 	h.l.mu.Lock()
 	h.l.ensureRecord(rejected, pairing.RoleDialer, PhaseRejected)
@@ -554,7 +554,6 @@ func TestKickOnlyInDialerBackoff(t *testing.T) {
 		t.Fatalf("Kick on a rejected record sent %d signals", n)
 	}
 
-	// Dialer record, backoff.
 	backoff := Fingerprint{15}
 	cB := newRecordConn(t, backoff, pairing.RoleDialer)
 	dB, ok := h.l.install(backoff, pairing.RoleDialer, cB, []byte("b"), h.l.dropGeneration(backoff))
@@ -582,11 +581,8 @@ func TestKickOnlyInDialerBackoff(t *testing.T) {
 	}
 }
 
-// waitNotifierStopped waits until stop set the stopped flag. The caller may
-// release a blocked callback only after this returns, so the events queued
-// behind it are still queued when stop runs. Releasing it earlier lets the
-// delivery goroutine take the next event as in-flight before stop was called,
-// and stop is allowed to let an in-flight delivery finish.
+// waitNotifierStopped waits until stop committed, so a blocked callback can be
+// released without letting the next event go in-flight.
 func waitNotifierStopped(t *testing.T, n *notifier) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -604,6 +600,8 @@ func waitNotifierStopped(t *testing.T, n *notifier) {
 	}
 }
 
+// TestStopDiscardsAndReleasesWaiters checks that stop discards queued events,
+// closes their delivered channels and runs no further callbacks.
 func TestStopDiscardsAndReleasesWaiters(t *testing.T) {
 	h := newRecordHarness(t)
 	first := Fingerprint{16}
@@ -644,10 +642,6 @@ func TestStopDiscardsAndReleasesWaiters(t *testing.T) {
 		h.l.notifier.stop()
 		close(stopped)
 	}()
-	// Wait for stop to commit before releasing the blocked callback. Otherwise
-	// the delivery goroutine may take the second event as in-flight before
-	// stop is called, and the assertion below would count its callback even
-	// though stop is allowed to let an in-flight delivery finish.
 	waitNotifierStopped(t, h.l.notifier)
 	close(block)
 
@@ -666,7 +660,6 @@ func TestStopDiscardsAndReleasesWaiters(t *testing.T) {
 	}
 }
 
-// atomicCount is a small counter so the test needs no atomic import elsewhere.
 type atomicCount struct {
 	mu sync.Mutex
 	n  int

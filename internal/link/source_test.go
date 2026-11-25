@@ -2,6 +2,8 @@ package link
 
 import "testing"
 
+// TestSourcePrefix checks the prefix for IPv4, IPv6, mapped and zoned
+// addresses and the empty result for a non-IP source.
 func TestSourcePrefix(t *testing.T) {
 	tests := []struct {
 		name   string

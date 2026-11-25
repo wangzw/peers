@@ -17,9 +17,8 @@ import (
 	"github.com/wangzw/peers/internal/pairing/pairingpb"
 )
 
-// TestIdentityFromStateRejectsNonEd25519 checks that a peer certificate with a
-// key other than Ed25519 is refused: the fingerprint must always name an
-// Ed25519 key taken from the SubjectPublicKeyInfo.
+// TestIdentityFromStateRejectsNonEd25519 checks that a certificate key other
+// than Ed25519 is refused.
 func TestIdentityFromStateRejectsNonEd25519(t *testing.T) {
 	st := tls.ConnectionState{
 		Version:          tls.VersionTLS13,
@@ -34,10 +33,8 @@ func TestIdentityFromStateRejectsNonEd25519(t *testing.T) {
 	}
 }
 
-// closeTrackingListener wraps a TCP listener and records whether each accepted
-// connection was closed. The unauthenticated registry closes the raw connection
-// it tracks when it evicts it, so a closed record proves the connection was
-// evicted rather than authenticated.
+// A closed record proves the registry evicted the connection rather than
+// authenticating it.
 type closeTrackingListener struct {
 	net.Listener
 	mu    sync.Mutex
@@ -72,8 +69,6 @@ func (l *closeTrackingListener) accepted() []*closeTrackingConn {
 	return append([]*closeTrackingConn(nil), l.conns...)
 }
 
-// closeTrackingConn records Close so a test can tell that the registry evicted
-// the connection.
 type closeTrackingConn struct {
 	net.Conn
 	mu     sync.Mutex
@@ -93,8 +88,6 @@ func (c *closeTrackingConn) isClosed() bool {
 	return c.closed
 }
 
-// startTransportServerOn serves l's gRPC endpoint on ln and tracks accepted
-// connections with l's unauth registry, as Listen does.
 func startTransportServerOn(t *testing.T, l *Link, onStream func(*conn, *trackedConn), ln net.Listener) {
 	t.Helper()
 	tl := &trackingListener{Listener: ln, reg: l.unauth}
@@ -106,12 +99,6 @@ func startTransportServerOn(t *testing.T, l *Link, onStream func(*conn, *tracked
 	})
 }
 
-// pendingPairingFlood opens one inbound connection that completed TLS, holds it
-// unauthenticated inside a blocked pairing Accept, then registers 100
-// connections from 100 distinct stranger sources. It returns whether the
-// inbound connection's raw socket was closed by the flood. prepare runs before
-// the connection arrives and decides what the server's peer table holds for the
-// dialer's fingerprint.
 func pendingPairingFlood(t *testing.T, prepare func(server, client *transportTestLink)) bool {
 	t.Helper()
 
@@ -157,10 +144,9 @@ func pendingPairingFlood(t *testing.T, prepare func(server, client *transportTes
 		t.Fatal("pairing Accept was not called")
 	}
 
-	// The connection has completed TLS and is held unauthenticated inside
-	// Accept. Its fingerprint decides which pool holds it: a known peer stays
-	// in the known-peer pool, an unknown one in the stranger-source pool the
-	// flood below fills.
+	// The fingerprint decides which pool holds the connection: a known peer
+	// stays in the known-peer pool, an unknown one in the stranger-source pool
+	// the flood below fills.
 	for i := 0; i < 100; i++ {
 		server.unauth.track(&fakeSourceConn{remote: fmt.Sprintf("198.51.0.%d:4000", i)})
 	}
@@ -172,11 +158,8 @@ func pendingPairingFlood(t *testing.T, prepare func(server, client *transportTes
 	return conns[0].isClosed()
 }
 
-// TestKnownPeerSurvivesStrangerFlood reproduces the denial of service where a
-// connection that completed TLS with a fingerprint in the peer table still
-// counted against the stranger-source global limit. One hundred distinct
-// stranger sources then arrive; before the fix the global-limit eviction closes
-// the known peer's connection because it was the oldest in the shared pool.
+// TestKnownPeerSurvivesStrangerFlood checks that a connection from a known peer
+// is not evicted when 100 distinct stranger sources connect.
 func TestKnownPeerSurvivesStrangerFlood(t *testing.T) {
 	if pendingPairingFlood(t, func(server, client *transportTestLink) {
 		server.peers.Add(client.peers.Fingerprint(), pairing.RoleAcceptor, "client")
@@ -185,18 +168,18 @@ func TestKnownPeerSurvivesStrangerFlood(t *testing.T) {
 	}
 }
 
-// TestUnknownPeerStaysInStrangerPool checks the other side of the rule: a
-// fingerprint absent from the peer table stays in the stranger-source pool and
-// is still evicted by the global limit when the flood arrives.
+// TestUnknownPeerStaysInStrangerPool checks that a fingerprint absent from the
+// peer table stays in the stranger-source pool and is still evicted by the
+// global limit.
 func TestUnknownPeerStaysInStrangerPool(t *testing.T) {
 	if !pendingPairingFlood(t, nil) {
 		t.Fatal("connection from an unknown fingerprint was not closed by the stranger-source limits")
 	}
 }
 
-// TestUnpairedFingerprintStaysInStrangerPool checks a fingerprint that was a
-// peer until it was just unpaired: it must fall back to the stranger-source
-// pool, so the same flood that cannot evict a known peer does evict it.
+// TestUnpairedFingerprintStaysInStrangerPool checks that a just-unpaired
+// fingerprint falls back to the stranger-source pool and is evicted by the same
+// flood.
 func TestUnpairedFingerprintStaysInStrangerPool(t *testing.T) {
 	if !pendingPairingFlood(t, func(server, client *transportTestLink) {
 		fp := client.peers.Fingerprint()

@@ -12,14 +12,12 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-// authType names the credentials in gRPC peer information. It is not the TLS
-// security protocol, which Info reports separately.
+// authType is the peer-info auth type, distinct from the TLS security protocol
+// Info reports.
 const authType = "peers-tls"
 
-// identityFromState extracts the authenticated peer identity from a finished
-// TLS handshake. Only TLS 1.3 is accepted and the peer must have presented an
-// Ed25519 certificate. Identity comes from the certificate's
-// SubjectPublicKeyInfo, never from its chain.
+// Only TLS 1.3 and an Ed25519 certificate are accepted; identity comes from
+// SubjectPublicKeyInfo, never from the chain.
 func identityFromState(st tls.ConnectionState, remote string) (peerIdentity, error) {
 	if st.Version != tls.VersionTLS13 {
 		return peerIdentity{}, fmt.Errorf("the peer negotiated TLS version %#x, want TLS 1.3", st.Version)
@@ -42,8 +40,6 @@ func identityFromState(st tls.ConnectionState, remote string) (peerIdentity, err
 	}, nil
 }
 
-// serverAuthInfo carries the identity of the dialing peer and, when the inbound
-// connection was tracked, the wrapper that enforces the first-frame rules.
 type serverAuthInfo struct {
 	credentials.CommonAuthInfo
 	id      peerIdentity
@@ -52,8 +48,6 @@ type serverAuthInfo struct {
 
 func (serverAuthInfo) AuthType() string { return authType }
 
-// clientAuthInfo carries the identity of the accepting peer on a dialed
-// connection.
 type clientAuthInfo struct {
 	credentials.CommonAuthInfo
 	id peerIdentity
@@ -61,21 +55,12 @@ type clientAuthInfo struct {
 
 func (clientAuthInfo) AuthType() string { return authType }
 
-// serverCreds performs the server side of TLS. The dialing side is
-// untrusted until the certificate is checked, so the handshake runs here
-// rather than in a gRPC interceptor.
 type serverCreds struct {
 	cfg func() *tls.Config
-	// known reports whether a fingerprint is in the peer table. It is called
-	// after the TLS handshake, before the registry lock is taken, so a paired
-	// peer's connection can be moved out of the stranger-source pool.
+	// known is called after the TLS handshake, before the registry lock is taken.
 	known func(fp pairing.Fingerprint) bool
 }
 
-// ServerHandshake wraps raw in a TLS server, completes the handshake and reads
-// the client identity from it. The raw connection is a *trackedConn when it
-// came through a trackingListener; that wrapper is passed along so the stream
-// can claim it once.
 func (c serverCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
 	cfg := c.cfg()
 	if cfg == nil {
@@ -92,11 +77,8 @@ func (c serverCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthIn
 		_ = tc.Close()
 		return nil, nil, err
 	}
-	// TLS 1.3 and CertificateVerify proved the peer holds this fingerprint's
-	// private key. A fingerprint already in the peer table leaves the
-	// stranger-source pool now, so a flood from other sources cannot evict it
-	// before its Hello is checked. The role query runs outside the registry
-	// lock; promoteKnown takes the lock without calling Peers.
+	// Promote before reading the first frame so a stranger flood cannot evict
+	// the connection, and query the role outside the registry lock.
 	if tracked != nil && c.known != nil && c.known(id.fp) {
 		tracked.promoteKnown(id.fp)
 	}
@@ -119,9 +101,6 @@ func (c serverCreds) Clone() credentials.TransportCredentials { return c }
 
 func (serverCreds) OverrideServerName(string) error { return nil }
 
-// clientCreds hands an already authenticated TLS connection to gRPC. The
-// dialer performs both the TCP and the TLS handshake before gRPC sees the
-// connection, so nothing is sent to a peer whose fingerprint failed the check.
 type clientCreds struct {
 	id peerIdentity
 }
@@ -147,15 +126,11 @@ func (c clientCreds) Clone() credentials.TransportCredentials {
 
 func (clientCreds) OverrideServerName(string) error { return nil }
 
-// clonePeerIdentity copies the public key so callers cannot mutate the key
-// slices shared by credential copies.
 func clonePeerIdentity(id peerIdentity) peerIdentity {
 	id.pub = append([]byte(nil), id.pub...)
 	return id
 }
 
-// connectionRemote returns the peer address of c, or the empty string when the
-// connection or its address is unavailable.
 func connectionRemote(c net.Conn) string {
 	if c == nil || c.RemoteAddr() == nil {
 		return ""

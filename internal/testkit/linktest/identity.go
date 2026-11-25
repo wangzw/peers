@@ -15,12 +15,15 @@ import (
 
 // Identity is a self-signed Ed25519 identity for one fake Broker. Its
 // fingerprint is derived from the certificate's SubjectPublicKeyInfo exactly
-// as pairing derives one, so the fingerprint checks link performs behave the
-// same against a fake as against a real identity.
+// as pairing derives one.
 type Identity struct {
-	Cert        tls.Certificate
-	Leaf        *x509.Certificate
-	PublicKey   ed25519.PublicKey
+	// Cert is the TLS certificate presenting this identity.
+	Cert tls.Certificate
+	// Leaf is the parsed form of Cert.
+	Leaf *x509.Certificate
+	// PublicKey is the Ed25519 public key.
+	PublicKey ed25519.PublicKey
+	// Fingerprint is the digest of the certificate's SubjectPublicKeyInfo.
 	Fingerprint pairing.Fingerprint
 }
 
@@ -66,13 +69,11 @@ func NewIdentity(t testing.TB) Identity {
 	}
 }
 
-// TLSConfig returns a fresh TLS configuration presenting this identity. It
-// mirrors pairing's own TLSConfig: TLS 1.3 or later, request the peer's
-// certificate, and skip certificate-chain verification because identity comes
-// from the fingerprint check instead.
+// TLSConfig returns a fresh TLS configuration presenting this identity: TLS
+// 1.3 or later, requesting the peer's certificate and skipping chain
+// verification.
 func (id Identity) TLSConfig() *tls.Config {
-	// InsecureSkipVerify is deliberate here, as in pairing.TLSConfig: the
-	// certificate chain proves nothing, and link verifies the peer by
+	// The certificate chain proves nothing: link verifies the peer by
 	// fingerprint after the handshake.
 	return &tls.Config{
 		Certificates:       []tls.Certificate{id.Cert},

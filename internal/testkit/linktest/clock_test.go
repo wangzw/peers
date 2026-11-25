@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+// TestFakeClockFiresInDeadlineOrder checks that Advance runs due timers in deadline order.
 func TestFakeClockFiresInDeadlineOrder(t *testing.T) {
 	clock := NewFakeClock(time.Unix(0, 0))
 	ch := make(chan string, 3)
@@ -28,6 +29,8 @@ func TestFakeClockFiresInDeadlineOrder(t *testing.T) {
 	}
 }
 
+// TestFakeClockStop checks that the stop function cancels an unfired timer and
+// reports false once it has fired or been stopped.
 func TestFakeClockStop(t *testing.T) {
 	clock := NewFakeClock(time.Unix(0, 0))
 
@@ -65,6 +68,7 @@ func TestFakeClockStop(t *testing.T) {
 	}
 }
 
+// TestFakeClockEarliest checks the first pending deadline and that stopping or firing removes it.
 func TestFakeClockEarliest(t *testing.T) {
 	start := time.Unix(0, 0)
 	clock := NewFakeClock(start)
@@ -91,6 +95,7 @@ func TestFakeClockEarliest(t *testing.T) {
 	}
 }
 
+// TestFakeClockWaitPending checks that WaitPending returns once the requested timers are pending.
 func TestFakeClockWaitPending(t *testing.T) {
 	clock := NewFakeClock(time.Unix(0, 0))
 	registered := make(chan struct{})

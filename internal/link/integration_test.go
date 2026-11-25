@@ -20,19 +20,11 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// eventTimeout is the package-wide fallback for every wait in these tests. It
-// only decides how long a wait that will never complete takes to fail: the
-// success path selects on the event itself and never spends this time, so a
-// larger value costs nothing. It equals the product's default
-// link.keepalive_interval (15s) plus link.keepalive_timeout (10s), the same
-// values linktest.FakeSettings returns: a link the product still considers
-// alive must not be declared dead by the test before the product's own
-// keepalive policy would.
+// eventTimeout is the package-wide fallback for every wait. It must not be
+// shorter than the product's default link.keepalive_interval (15s) plus
+// link.keepalive_timeout (10s), the values linktest.FakeSettings returns.
 const eventTimeout = 15*time.Second + 10*time.Second
 
-// node is one Link together with its fake collaborators and a recording
-// subscription. Tests build it through link.New so they exercise the same
-// public constructor as production.
 type node struct {
 	*link.Link
 	Peers    *linktest.FakePeers
@@ -44,16 +36,12 @@ type node struct {
 	notify chan struct{}
 }
 
-// linkEvent is one link up or down notification recorded for a node.
 type linkEvent struct {
 	up   bool
 	peer link.Fingerprint
 	salt []byte
 }
 
-// newNode builds a node with freshly generated collaborators, a fixed fake
-// clock, a discard logger and a recording subscription. opts may change any
-// link.Options field before construction.
 func newNode(t *testing.T, alias string, opts ...func(*link.Options)) *node {
 	t.Helper()
 	return newNodeFrom(t,
@@ -63,9 +51,6 @@ func newNode(t *testing.T, alias string, opts ...func(*link.Options)) *node {
 		opts...)
 }
 
-// newNodeFrom builds a node around collaborators a test already owns. A restart
-// test uses it to keep the same identity, peer table and settings while the
-// Link instance changes.
 func newNodeFrom(t *testing.T, peers *linktest.FakePeers, settings *linktest.FakeSettings, clock *linktest.FakeClock, opts ...func(*link.Options)) *node {
 	t.Helper()
 	options := link.Options{
@@ -179,8 +164,6 @@ func (n *node) waitDown(t *testing.T, peer link.Fingerprint, atLeast int) {
 	waitUntil(t, "link down", n.changed, func() bool { return n.downCount(peer) >= atLeast })
 }
 
-// waitUntil re-evaluates cond after every wake-up on changed and fails the test
-// when cond is still false after eventTimeout.
 func waitUntil(t testing.TB, what string, changed func() <-chan struct{}, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -200,9 +183,6 @@ func waitUntil(t testing.TB, what string, changed func() <-chan struct{}, cond f
 	}
 }
 
-// waitWithin polls cond until it holds or d passes and reports whether it
-// held. Unlike waitUntil it lets a test collect several independent failures
-// before it ends.
 func waitWithin(d time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(d)
 	for {
@@ -216,9 +196,6 @@ func waitWithin(d time.Duration, cond func() bool) bool {
 	}
 }
 
-// waitState watches a LinkState that has no notification surface of its own.
-// It polls the public State method until cond holds, with the same eventTimeout
-// bound as the event-driven waits.
 func waitState(t *testing.T, l *link.Link, peer link.Fingerprint, what string, cond func(link.LinkState) bool) link.LinkState {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -234,7 +211,6 @@ func waitState(t *testing.T, l *link.Link, peer link.Fingerprint, what string, c
 	}
 }
 
-// listenAt binds n to a loopback port and returns the address it listens on.
 func listenAt(t *testing.T, n *node) string {
 	t.Helper()
 	if err := n.Listen("127.0.0.1:0"); err != nil {
@@ -247,16 +223,12 @@ func listenAt(t *testing.T, n *node) string {
 	return addr.String()
 }
 
-// connect introduces dialer and acceptor, binds the acceptor to a loopback port
-// and waits for both sides to report the link up.
 func connect(t *testing.T, dialer, acceptor *node) {
 	t.Helper()
 	addr := listenAt(t, acceptor)
 	connectVia(t, dialer, acceptor, addr)
 }
 
-// connectVia is connect with an explicit dial address, used when the dialer
-// reaches the acceptor through a proxy.
 func connectVia(t *testing.T, dialer, acceptor *node, dialAddr string) {
 	t.Helper()
 	linktest.Introduce(dialer.Peers, acceptor.Peers, dialer.Settings.Alias(), acceptor.Settings.Alias(), dialAddr)
@@ -266,24 +238,15 @@ func connectVia(t *testing.T, dialer, acceptor *node, dialAddr string) {
 	acceptor.waitUp(t, dialer.Peers.Fingerprint(), 1)
 }
 
-// startAcceptorThenDialer starts the accepting node before the dialing node.
-//
-// Link.Start creates one record per peer in the table, and the accepting side
-// records a rejected inbound version only on an existing record
-// (noteVersionFailure). A dial that reaches the listening acceptor before the
-// acceptor has started is still rejected and the dialer still backs off, but
-// the acceptor's record is created afterwards at PhaseWaiting with no failure.
-// The dialer then stays in backoff, so no later event corrects the acceptor
-// state and the test waits forever for a failure that was already handled.
-// Starting the acceptor first removes that ordering race instead of widening a
-// wait.
+// startAcceptorThenDialer starts the accepting node before the dialing node. A
+// dial that reaches the acceptor before it started is rejected with no record
+// to record the failure, leaving the dialer in backoff and the test waiting
+// forever.
 func startAcceptorThenDialer(acceptor, dialer *node) {
 	acceptor.Start()
 	dialer.Start()
 }
 
-// dialRecorder counts the addresses handed to the OnDial hook and wakes
-// waiters on every attempt.
 type dialRecorder struct {
 	mu      sync.Mutex
 	count   int
@@ -319,8 +282,6 @@ func (d *dialRecorder) waitAtLeast(t *testing.T, n int) {
 	waitUntil(t, "dial attempts", d.changedCh, func() bool { return d.n() >= n })
 }
 
-// assertNoDial fails if a dial is recorded within d. A negative assertion has
-// no event to wait for, so it waits for the absence of the event instead.
 func (d *dialRecorder) assertNoDial(t *testing.T, within time.Duration) {
 	t.Helper()
 	select {
@@ -351,7 +312,6 @@ func containsAlias(aliases []string, want string) bool {
 	return false
 }
 
-// syncBuffer is a concurrency-safe bytes.Buffer for a slog JSON handler.
 type syncBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -369,8 +329,6 @@ func (b *syncBuffer) String() string {
 	return b.buf.String()
 }
 
-// logHasVersionMismatch reports whether text holds the version-mismatch log
-// line with the given local and peer versions.
 func logHasVersionMismatch(text string, local, peer uint32) bool {
 	for _, line := range strings.Split(text, "\n") {
 		if strings.TrimSpace(line) == "" {
@@ -412,7 +370,6 @@ func TestREQBrokerPairing027_AcceptorNeverDials(t *testing.T) {
 	acceptor.waitDown(t, fpDialer, 1)
 	dialer.waitDown(t, fpAcceptor, 1)
 
-	// Kick on the accepting side must not start a dial or disturb recovery.
 	acceptor.Kick(fpDialer)
 
 	dialer.Clock.WaitPending(t, 1)
@@ -457,19 +414,15 @@ func TestREQBrokerPairing019_RestartRestoresBothRoles(t *testing.T) {
 	d.waitDown(t, fpX, 1)
 	e.waitDown(t, fpX, 1)
 
-	// Same identity, peer table and settings; the Link instance and its
-	// listener are new.
 	restarted := newNodeFrom(t, x.Peers, x.Settings, linktest.NewFakeClock(time.Unix(1_700_000_000, 0)))
 	if err := restarted.Listen(xAddr); err != nil {
 		t.Fatalf("restarted Listen(%s): %v", xAddr, err)
 	}
 	restarted.Start()
 
-	// The dialing side reconnects immediately, without any clock advance.
 	restarted.waitUp(t, d.Peers.Fingerprint(), 1)
 	d.waitUp(t, fpX, 2)
 
-	// The accepting side comes back on its own backoff schedule.
 	e.Clock.WaitPending(t, 1)
 	e.Clock.Advance(time.Second)
 	e.waitUp(t, fpX, 2)
@@ -735,7 +688,6 @@ func TestAcceptorReplacesStaleConnection(t *testing.T) {
 	fpAcceptor := acceptor.Peers.Fingerprint()
 	fpDialer := dialer.Peers.Fingerprint()
 
-	// Freeze the proxy so the acceptor cannot notice the first dialer leaving.
 	proxy.Pause()
 	dialer.Close()
 
@@ -747,10 +699,6 @@ func TestAcceptorReplacesStaleConnection(t *testing.T) {
 	})
 	restarted.Start()
 
-	// The peer table still remembers the proxy as the last connected address,
-	// which it tries first. The proxy is paused, so that attempt would wait for
-	// the fake clock forever; advancing past the dial timeout makes the dialer
-	// move on to the direct candidate the test just installed.
 	restarted.Clock.WaitPending(t, 1)
 	restarted.Clock.Advance(5 * time.Second)
 
@@ -809,8 +757,6 @@ func TestBothDialersReportRoleMismatch(t *testing.T) {
 	waitState(t, a.Link, fpB, "a to back off with role_mismatch", wantBackoff)
 	waitState(t, b.Link, fpA, "b to back off with role_mismatch", wantBackoff)
 
-	// After a clock advance both sides dial again and still report the same
-	// reason.
 	aBefore, bBefore := aDials.n(), bDials.n()
 	a.Clock.Advance(time.Second)
 	b.Clock.Advance(time.Second)
@@ -849,10 +795,8 @@ func TestProtocolVersionIncompatible(t *testing.T) {
 }
 
 // TestAcceptorDetectsSilentPeerByKeepalive checks that the accepting side
-// closes a link whose peer stopped answering. Unlike the other tests this one
-// depends on gRPC's real keepalive timers, which fire about 1.5 seconds after
-// the proxy stops forwarding: one second until the probe and 500ms until its
-// timeout. It is the only integration test that relies on real time.
+// closes a link whose peer stopped answering, using gRPC's real keepalive
+// timers.
 func TestAcceptorDetectsSilentPeerByKeepalive(t *testing.T) {
 	acceptor := newNode(t, "a")
 	acceptor.Settings.SetKeepalive(time.Second, 500*time.Millisecond)
@@ -893,13 +837,9 @@ func TestClosedLinkRejectsStartAndPairDial(t *testing.T) {
 	}
 
 	n.Start()
-	// Supplement: Start runs asynchronously, so reading the count right after it
-	// returns has almost no discriminating power; the negative window below is
-	// what catches a dial started after Start.
 	if got := dials.n(); got != 0 {
 		t.Fatalf("a closed link dialed %d times after Start", got)
 	}
-	// Negative window: a late dial still shows up here.
 	dials.assertNoDial(t, 100*time.Millisecond)
 
 	if err := n.Listen("127.0.0.1:0"); !errors.Is(err, link.ErrClosed) {
@@ -907,9 +847,9 @@ func TestClosedLinkRejectsStartAndPairDial(t *testing.T) {
 	}
 }
 
-// TestTopicStyleLockingDoesNotDeadlock exercises the lock order an upper layer
-// uses: it holds one mutex while calling Send, and its up, down and state
-// callbacks take the same mutex. Concurrent reconnects must not form a cycle.
+// TestTopicStyleLockingDoesNotDeadlock checks that holding one mutex across
+// Send while the callbacks take the same mutex does not deadlock under
+// concurrent reconnects.
 func TestTopicStyleLockingDoesNotDeadlock(t *testing.T) {
 	acceptor := newNode(t, "a")
 	dialer := newNode(t, "b")
@@ -940,8 +880,6 @@ func TestTopicStyleLockingDoesNotDeadlock(t *testing.T) {
 		senders.Add(1)
 		go func() {
 			defer senders.Done()
-			// Pace the senders with a ticker; this bounds the send queues, it is
-			// not synchronization.
 			ticker := time.NewTicker(100 * time.Microsecond)
 			defer ticker.Stop()
 			for {
@@ -975,7 +913,6 @@ func TestTopicStyleLockingDoesNotDeadlock(t *testing.T) {
 		acceptor.waitUp(t, fpDialer, upAcceptor+1)
 	}
 
-	// Drop and rebuild the dialing side twice while the senders keep running.
 	acceptor.Peers.SetAccept(linktest.FakePairAccept(acceptor.Peers, "dialer"))
 	for i := 0; i < 2; i++ {
 		upAcceptor := acceptor.upCount(fpDialer)
@@ -1004,14 +941,8 @@ func TestTopicStyleLockingDoesNotDeadlock(t *testing.T) {
 	}
 }
 
-// TestPairDialRunsInstalledConnAfterDropCancelsLoop covers the window between
-// startDialLoop launching its goroutine and that goroutine reaching the dial
-// loop. Drop during the window cancels the loop context, but the connection was
-// already installed, so it must still run. Drop posts onDown only after the
-// connection's state handler exits, and every later install of the peer waits
-// for that Drop. A loop that checks its context first leaves the connection
-// unrun and the peer stuck behind an unfinished Drop: onDown never arrives and
-// a later PairDial never returns.
+// TestPairDialRunsInstalledConnAfterDropCancelsLoop checks that a connection
+// installed before Drop cancels the dial loop still runs.
 func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 	dialer := newNode(t, "dialer")
 	acceptor := newNode(t, "acceptor")
@@ -1022,8 +953,6 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 	fpAcceptor := acceptor.Peers.Fingerprint()
 	acceptor.Peers.SetAccept(linktest.FakePairAccept(acceptor.Peers, "dialer"))
 
-	// Hold the goroutine the next startDialLoop launches just before it runs
-	// the installed connection and enters the dial loop.
 	loopHeld := make(chan struct{})
 	releaseLoop := make(chan struct{})
 	var heldOnce sync.Once
@@ -1045,9 +974,6 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 		t.Fatal("the dial loop goroutine did not reach the test hook")
 	}
 
-	// The repair replaced the old connection, whose down event is queued
-	// before the new up event. Wait for the up event so the down count below
-	// measures the Drop, not that replacement.
 	dialer.waitUp(t, fpAcceptor, 2)
 	downBeforeDrop := dialer.downCount(fpAcceptor)
 
@@ -1060,8 +986,6 @@ func TestPairDialRunsInstalledConnAfterDropCancelsLoop(t *testing.T) {
 		failed = true
 	}
 
-	// The Drop finished with the onDown; the same peer must now be installable
-	// again instead of waiting on that Drop forever.
 	pairdialDone := make(chan error, 1)
 	go func() {
 		pairdialDone <- dialer.PairDial(context.Background(), proxy.Addr(), linktest.FakePairRun(dialer.Peers, "acceptor"))

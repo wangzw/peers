@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// TestKnobs overrides Link's fixed constants in tests. Zero fields keep the
-// current value; there is deliberately no protocol version field, which is set
-// through Options.ProtocolVersion.
+// TestKnobs overrides Link's fixed constants in tests; zero fields keep the
+// current value. There is no protocol version field, which comes from
+// Options.ProtocolVersion.
 type TestKnobs struct {
 	SendQueueSize         int
 	FirstFrameTimeout     time.Duration
@@ -27,10 +27,9 @@ type TestKnobs struct {
 	OnUnauthenticatedRead func(total int64)
 }
 
-// SetTestKnobs applies k to l. Zero fields keep the current value. Tests call
-// it before the goroutine that reads a knob starts: before Listen or Start for
-// the knobs those paths read, and before the PairDial or inbound connection
-// whose goroutine reads BeforeDialLoop or OnRejectLingerExit.
+// SetTestKnobs applies k to l; zero fields keep the current value. Tests call it
+// before the goroutine that reads a knob starts, which for BeforeDialLoop and
+// OnRejectLingerExit is the PairDial or inbound connection itself.
 func SetTestKnobs(l *Link, k TestKnobs) {
 	if k.SendQueueSize != 0 {
 		l.sendQueueSize = k.SendQueueSize

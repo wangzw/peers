@@ -15,8 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// pairHarness builds an acceptor that serves links and a dialer that is ready
-// to pair. The acceptor accepts FakePairAccept unless the test replaces it.
 func pairHarness(t *testing.T) (dialer, acceptor *dialHarness, addr string) {
 	t.Helper()
 	acceptor = newDialHarness(t)
@@ -27,6 +25,9 @@ func pairHarness(t *testing.T) (dialer, acceptor *dialHarness, addr string) {
 	return dialer, acceptor, addr
 }
 
+// TestPairDialHandsOverAndSendsHello checks that PairDial hands the connection
+// to run, completes Hello and installs the link with the same salt on both
+// sides.
 func TestPairDialHandsOverAndSendsHello(t *testing.T) {
 	dialer, acceptor, addr := pairHarness(t)
 	dialerFP := dialer.peers.Fingerprint()
@@ -56,6 +57,9 @@ func TestPairDialHandsOverAndSendsHello(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing020_DialerWithoutListenerBothDirections checks that a
+// dialer that does not listen can send and request in both directions once the
+// link is established.
 func TestREQBrokerPairing020_DialerWithoutListenerBothDirections(t *testing.T) {
 	dialer, acceptor, addr := pairHarness(t)
 	dialerFP := dialer.peers.Fingerprint()
@@ -121,6 +125,8 @@ func TestREQBrokerPairing020_DialerWithoutListenerBothDirections(t *testing.T) {
 	}
 }
 
+// TestPairDialWrapsDialFailure checks that PairDial wraps a dial failure as
+// ErrDialFailed without calling run.
 func TestPairDialWrapsDialFailure(t *testing.T) {
 	dialer := newDialHarness(t)
 	runCalled := false
@@ -136,6 +142,8 @@ func TestPairDialWrapsDialFailure(t *testing.T) {
 	}
 }
 
+// TestPairDialReturnsRunErrorUnchanged checks that PairDial returns a run error
+// unchanged.
 func TestPairDialReturnsRunErrorUnchanged(t *testing.T) {
 	acceptor := newDialHarness(t)
 	handlerStarted := make(chan struct{}, 1)
@@ -167,14 +175,14 @@ func TestPairDialReturnsRunErrorUnchanged(t *testing.T) {
 	}
 }
 
+// TestPairConnReceiveHonoursContext checks that PairConn.Receive returns the
+// context deadline when no frame arrives.
 func TestPairConnReceiveHonoursContext(t *testing.T) {
 	acceptor := newDialHarness(t)
 	addr := serveAcceptor(t, acceptor)
 	dialer := newDialHarness(t)
 
 	err := dialer.l.PairDial(context.Background(), addr, func(pc pairing.PairConn) error {
-		// No frame is sent, so Receive can return only through the deadline: the
-		// deadline is the assertion, not a fallback.
 		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		defer cancel()
 		_, _, err := pc.Receive(ctx)
@@ -185,11 +193,11 @@ func TestPairConnReceiveHonoursContext(t *testing.T) {
 	}
 }
 
+// TestPairDialAfterRunHelloFailure checks that a Hello rejected after a
+// successful run leaves the link rejected and audits the rejection.
 func TestPairDialAfterRunHelloFailure(t *testing.T) {
 	acceptor := newDialHarness(t)
 	addr := serveAcceptor(t, acceptor)
-	// The accept function completes the pairing frames but does not commit the
-	// dialer, so the acceptor rejects the following Hello.
 	acceptor.peers.SetAccept(pairAcceptUncommitted())
 	dialer := newDialHarness(t)
 	dialer.l.Start()
@@ -208,6 +216,8 @@ func TestPairDialAfterRunHelloFailure(t *testing.T) {
 	waitFor(t, func() bool { return dialer.hasEvent(config.EventRejectedByPeer) })
 }
 
+// TestRepairReplacesExistingLink checks that re-pairing an existing peer
+// produces down then up with a fresh salt.
 func TestRepairReplacesExistingLink(t *testing.T) {
 	dialer, acceptor, addr := pairHarness(t)
 	acceptorFP := acceptor.peers.Fingerprint()
@@ -221,7 +231,6 @@ func TestRepairReplacesExistingLink(t *testing.T) {
 		if err := linktest.FakePairRun(dialer.peers, "acceptor")(pc); err != nil {
 			return err
 		}
-		// pairing calls Drop while re-pairing an existing peer.
 		dialer.l.Drop(pc.PeerFingerprint())
 		return nil
 	}
@@ -247,6 +256,8 @@ func TestRepairReplacesExistingLink(t *testing.T) {
 	}
 }
 
+// TestPairDialCallerCancelAfterReturnKeepsLink checks that cancelling the
+// caller's context after PairDial returns does not close the link.
 func TestPairDialCallerCancelAfterReturnKeepsLink(t *testing.T) {
 	dialer, acceptor, addr := pairHarness(t)
 	acceptorFP := acceptor.peers.Fingerprint()
@@ -275,9 +286,6 @@ func TestPairDialCallerCancelAfterReturnKeepsLink(t *testing.T) {
 	}
 }
 
-// pairAcceptUncommitted performs the acceptor half of the pairing frame
-// exchange and pushes the link Hello back, but never adds the dialer to the
-// peer table.
 func pairAcceptUncommitted() func(pairing.PairConn) error {
 	return func(conn pairing.PairConn) error {
 		fail := func(err error) error {
@@ -309,7 +317,6 @@ func pairAcceptUncommitted() func(pairing.PairConn) error {
 	}
 }
 
-// pairExpect reads one frame and requires the expected kind.
 func pairExpect(ctx context.Context, conn pairing.PairConn, want uint32) error {
 	kind, _, err := conn.Receive(ctx)
 	if err != nil {

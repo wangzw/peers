@@ -12,7 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// waitFor polls cond until it is true or eventTimeout passes.
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -26,8 +25,7 @@ func waitFor(t *testing.T, cond func() bool) {
 }
 
 // TestEnqueueNeverBlocks checks that a full send queue closes the connection
-// instead of blocking the caller, as a caller holding its own lock would
-// otherwise deadlock.
+// instead of blocking the caller.
 func TestEnqueueNeverBlocks(t *testing.T) {
 	a, _ := newPipe(t)
 	block := make(chan struct{})
@@ -80,8 +78,7 @@ func TestEnqueueNeverBlocks(t *testing.T) {
 }
 
 // TestCloseAsyncUnderForeignLock checks that closeAsync returns without
-// waiting for the reader or the writer, so a caller holding a lock cannot
-// deadlock with a callback that needs it.
+// waiting for the reader or the writer.
 func TestCloseAsyncUnderForeignLock(t *testing.T) {
 	a, _ := newPipe(t)
 	var aborted atomic.Bool
@@ -150,8 +147,6 @@ func TestRequestSentFlagQueuedThenCanceled(t *testing.T) {
 	if err := c.enqueue(&linkpb.Frame{Kind: 300}); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
-	// Wait until the writer took the first frame and blocked in Send; the
-	// second frame then stays queued.
 	waitFor(t, func() bool { return len(c.out) == 0 })
 
 	p, err := c.enqueueRequest(&linkpb.Frame{Kind: 400})
@@ -170,14 +165,10 @@ func TestRequestSentFlagQueuedThenCanceled(t *testing.T) {
 	if f.GetKind() != 300 {
 		t.Fatalf("first frame kind = %d, want 300", f.GetKind())
 	}
-	// Supplement: the queue is drained, so the synchronous count is a quick
-	// extra check; the negative window below is what catches a late write of
-	// the canceled request.
 	waitFor(t, func() bool { return len(c.out) == 0 })
 	if sent := a.sent(); len(sent) != 1 || sent[0].GetKind() != 300 {
 		t.Fatalf("connection wrote %d frames, want only the first frame", len(sent))
 	}
-	// Negative window: a late write of the canceled request still shows up here.
 	select {
 	case f := <-b.in:
 		t.Fatalf("canceled request was written: kind %d", f.GetKind())

@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestPairConnSendAndLingerHoldsTheConnection checks the capability pairing
-// uses for PairReject: the frame reaches the peer while the connection is
-// still open, and the connection stays open until the linger expires.
+// TestPairConnSendAndLingerHoldsTheConnection checks that SendAndLinger
+// delivers the frame and keeps the connection open until the linger expires.
 func TestPairConnSendAndLingerHoldsTheConnection(t *testing.T) {
 	h := newHandshakeHarness(t)
 	local, peer := newPipe(t)
@@ -32,7 +31,6 @@ func TestPairConnSendAndLingerHoldsTheConnection(t *testing.T) {
 		t.Fatalf("frame kind=%d payload=%q, want kind=104 payload=%q", f.GetKind(), f.GetPayload(), payload)
 	}
 
-	// The write completed, but the linger owns the close.
 	hsAssertNotClosed(t, c)
 
 	h.clock.Advance(h.l.rejectLinger)

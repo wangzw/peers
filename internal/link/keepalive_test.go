@@ -15,18 +15,16 @@ import (
 	"google.golang.org/grpc/keepalive"
 )
 
-// rawHTTP2Client is a hand-written HTTP/2 client. It lets a test send PING
-// frames without opening a stream, which is exactly the traffic the server's
-// keepalive enforcement policy judges.
+// rawHTTP2Client is a hand-written HTTP/2 client that sends PING frames without
+// opening a stream.
 type rawHTTP2Client struct {
 	conn   *tls.Conn
 	framer *http2.Framer
 }
 
-// dialRawHTTP2 dials addr with a linktest identity, performs the TLS 1.3
-// handshake and the HTTP/2 preface, acknowledges the server's SETTINGS and
-// returns a client that opens no stream. The raw TLS configuration mirrors
-// pairing's, with ALPN restricted to h2 as an HTTP/2 client should.
+// dialRawHTTP2 performs the TLS handshake and the HTTP/2 preface with an
+// identity, acknowledges the server's SETTINGS and opens no stream; ALPN is
+// restricted to h2.
 func dialRawHTTP2(t *testing.T, addr string) *rawHTTP2Client {
 	t.Helper()
 	cfg := linktest.NewIdentity(t).TLSConfig()
@@ -59,8 +57,6 @@ func dialRawHTTP2(t *testing.T, addr string) *rawHTTP2Client {
 	return c
 }
 
-// awaitServerSettings reads frames until the server's non-ack SETTINGS arrives
-// and acknowledges it.
 func (c *rawHTTP2Client) awaitServerSettings(t *testing.T) {
 	t.Helper()
 	for {
@@ -79,8 +75,6 @@ func (c *rawHTTP2Client) awaitServerSettings(t *testing.T) {
 	}
 }
 
-// awaitPingAck reads frames until the acknowledgement for data arrives. A
-// GOAWAY before the acknowledgement fails the test.
 func (c *rawHTTP2Client) awaitPingAck(t *testing.T, data [8]byte) {
 	t.Helper()
 	for {
@@ -99,9 +93,8 @@ func (c *rawHTTP2Client) awaitPingAck(t *testing.T, data [8]byte) {
 	}
 }
 
-// TestEnforcementAllowsProbesWithoutStream sends probes one at a time, waiting
-// for each acknowledgement. gRPC's default policy would answer the third probe
-// with GOAWAY; the configured policy must accept all of them without a stream.
+// TestEnforcementAllowsProbesWithoutStream checks that the configured
+// enforcement policy accepts probes without an active stream.
 func TestEnforcementAllowsProbesWithoutStream(t *testing.T) {
 	server := newTransportTestLink(t)
 	SetTestKnobs(server.Link, TestKnobs{EnforcementMinTime: time.Microsecond})
@@ -123,9 +116,8 @@ func TestEnforcementAllowsProbesWithoutStream(t *testing.T) {
 	}
 }
 
-// TestEnforcementStillRejectsFlood proves the previous test can see a refusal:
-// with a one-hour minimum interval a burst of probes must end in GOAWAY with
-// ENHANCE_YOUR_CALM and the too_many_pings debug data.
+// TestEnforcementStillRejectsFlood checks that a probe flood still ends in
+// GOAWAY with ENHANCE_YOUR_CALM and too_many_pings.
 func TestEnforcementStillRejectsFlood(t *testing.T) {
 	server := newTransportTestLink(t)
 	SetTestKnobs(server.Link, TestKnobs{EnforcementMinTime: time.Hour})
@@ -138,9 +130,6 @@ func TestEnforcementStillRejectsFlood(t *testing.T) {
 		t.Fatalf("set connection deadline: %v", err)
 	}
 
-	// Write the burst without waiting for acknowledgements. The server refuses
-	// the connection long before the burst is exhausted; a write error after
-	// that point is expected and simply ends the burst.
 	var data [8]byte
 	for i := uint64(0); i < 20; i++ {
 		binary.BigEndian.PutUint64(data[:], i)
@@ -168,10 +157,8 @@ func TestEnforcementStillRejectsFlood(t *testing.T) {
 	}
 }
 
-// TestProductionPolicyToleratesFifteenSecondProbes pins the relation between
-// the enforcement minimum and the probe intervals peers actually use: a peer
-// probing at the default link.keepalive_interval of fifteen seconds, or at
-// gRPC's smallest client interval of ten seconds, must never be refused.
+// TestProductionPolicyToleratesFifteenSecondProbes checks that the enforcement
+// minimum tolerates peer probe intervals of ten and fifteen seconds.
 func TestProductionPolicyToleratesFifteenSecondProbes(t *testing.T) {
 	l := newTransportTestLink(t).Link
 

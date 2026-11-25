@@ -16,8 +16,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// listenNode is a Link with fake dependencies, a recording subscription and a
-// started notifier.
 type listenNode struct {
 	t        *testing.T
 	l        *Link
@@ -64,7 +62,6 @@ func (n *listenNode) onDown(peer Fingerprint) {
 
 func (n *listenNode) fingerprint() Fingerprint { return n.peers.Fingerprint() }
 
-// waitUps blocks until n.up callbacks were delivered.
 func (n *listenNode) waitUps(t *testing.T, want int) []Fingerprint {
 	t.Helper()
 	waitFor(t, func() bool {
@@ -92,7 +89,6 @@ func (n *listenNode) counts() (ups, downs, handled int) {
 	return len(n.ups), len(n.downs), n.handled
 }
 
-// listenNodeAddr binds n to a loopback port and returns the address.
 func listenNodeAddr(t *testing.T, n *listenNode) string {
 	t.Helper()
 	if err := n.l.Listen("127.0.0.1:0"); err != nil {
@@ -105,7 +101,6 @@ func listenNodeAddr(t *testing.T, n *listenNode) string {
 	return addr.String()
 }
 
-// currentListener returns the listener n accepts on now.
 func (n *listenNode) currentListener(t *testing.T) net.Listener {
 	t.Helper()
 	n.l.mu.Lock()
@@ -117,12 +112,8 @@ func (n *listenNode) currentListener(t *testing.T) net.Listener {
 	return lis
 }
 
-// requireStopped checks that ln no longer accepts connections. Accept is the
-// direct evidence: a closed listener reports net.ErrClosed, while one the
-// product left open times out at the deadline. Dialing the address the
-// listener used to hold is not a substitute: another process can bind that
-// released port and make the dial succeed for a reason unrelated to the
-// listener the product was supposed to close.
+// Accept is the direct evidence: a closed listener reports net.ErrClosed, while
+// dialing the released port can succeed for an unrelated reason.
 func requireStopped(t *testing.T, ln net.Listener) {
 	t.Helper()
 	base := ln
@@ -145,9 +136,8 @@ func requireStopped(t *testing.T, ln net.Listener) {
 	}
 }
 
-// waitFirstFrameTimer blocks until the registry holds the accepted connection
-// and its first-frame timer is armed. Unlike clock.WaitPending, which accepts
-// any pending timer, this names the timer the test is about to fire.
+// Unlike clock.WaitPending, this names the first-frame timer the test is about
+// to fire.
 func (n *listenNode) waitFirstFrameTimer(t *testing.T) {
 	t.Helper()
 	waitFor(t, func() bool {
@@ -162,9 +152,6 @@ func (n *listenNode) waitFirstFrameTimer(t *testing.T) {
 	})
 }
 
-// dialOnce dials addr from from, checks the accepting peer's certificate
-// fingerprint and completes the Hello exchange. The accepting side is expected
-// to install the link; the dialing side keeps the raw connection only.
 func dialOnce(t *testing.T, from *Link, addr string) *conn {
 	t.Helper()
 	tc, id, err := from.dialTLS(context.Background(), addr)
@@ -325,14 +312,10 @@ func TestSilentConnectionClosedAtFirstFrameDeadline(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 
-	// Wait for this connection specifically: the registry must still hold it
-	// and its first-frame timer must be armed.
 	acceptor.waitFirstFrameTimer(t)
 
-	// The gRPC server flushes its HTTP/2 SETTINGS as soon as the TLS handshake
-	// completes, before any stream exists. Take the first byte so the close is
-	// observed with data already buffered, the ordering that made a single Read
-	// misreport the connection as open.
+	// The gRPC server flushes HTTP/2 SETTINGS before any stream exists; take
+	// the first byte so the close is observed with data already buffered.
 	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
@@ -340,18 +323,15 @@ func TestSilentConnectionClosedAtFirstFrameDeadline(t *testing.T) {
 		t.Fatalf("read the server's first flush: n=%d err=%v", n, err)
 	}
 
-	// The connection must still be tracked before the deadline fires.
 	if n := acceptor.l.unauth.count(); n != 1 {
 		t.Fatalf("unauthenticated connections before the deadline = %d, want 1", n)
 	}
 
 	acceptor.clock.Advance(acceptor.l.firstFrameTimeout)
 
-	// Drain everything the server flushed before the close. A single Read
-	// returns that buffered data with a nil error, which says nothing about
-	// whether the connection is still open. Only EOF, a reset or a locally
-	// closed connection prove the deadline closed it; a read timeout proves it
-	// did not.
+	// Drain buffered data first; only EOF, a reset or a locally closed
+	// connection prove the close, while a read timeout proves the connection
+	// stayed open.
 	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
@@ -372,10 +352,9 @@ func TestSilentConnectionClosedAtFirstFrameDeadline(t *testing.T) {
 	}
 }
 
-// assertServerClosed reads from conn until the server closes it. Data already
-// buffered is drained first; only EOF, a reset or a locally closed connection
-// prove the close. A read timeout proves the connection stayed open, so it
-// fails instead of counting as a close.
+// assertServerClosed reads from conn until the server closes it. Only EOF, a
+// reset or a locally closed connection prove the close; a read timeout fails
+// because it proves the connection stayed open.
 func assertServerClosed(t *testing.T, conn net.Conn, what string) {
 	t.Helper()
 	if err := conn.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
@@ -398,16 +377,15 @@ func assertServerClosed(t *testing.T, conn net.Conn, what string) {
 	}
 }
 
-// TestUnauthenticatedCapAppliesToListener checks the cap is enforced on the
-// real listener: the oldest unauthenticated connection is closed, and a
-// legitimate peer can still establish a link afterwards.
+// TestUnauthenticatedCapAppliesToListener checks that the real listener closes
+// the oldest unauthenticated connection and a legitimate peer can still
+// establish a link afterwards.
 func TestUnauthenticatedCapAppliesToListener(t *testing.T) {
 	acceptor := newListenNode(t)
 	dialer := newListenNode(t)
 	linktest.Introduce(dialer.peers, acceptor.peers, "dialer", "acceptor")
 
-	// SetTestKnobs changes the fields only; the registry is built in New, so the
-	// listener cap is replaced here before the first Listen.
+	// The registry is built in New, so replace it before the first Listen.
 	acceptor.l.unauth = newUnauthRegistry(2, 8, acceptor.l.firstFrameTimeout, acceptor.l.logger, acceptor.clock.AfterFunc)
 	addr := listenNodeAddr(t, acceptor)
 
@@ -432,8 +410,8 @@ func TestUnauthenticatedCapAppliesToListener(t *testing.T) {
 	acceptor.waitUps(t, 1)
 }
 
-// TestCloseStopsCallbacksAndGoroutines checks that Close returns, tears the
-// links down and leaves no callback or handler running afterwards.
+// TestCloseStopsCallbacksAndGoroutines checks that Close tears the links down
+// and leaves no callback or handler running afterwards.
 func TestCloseStopsCallbacksAndGoroutines(t *testing.T) {
 	acceptor := newListenNode(t)
 	dialerB := newListenNode(t)
@@ -453,7 +431,6 @@ func TestCloseStopsCallbacksAndGoroutines(t *testing.T) {
 	connC := dialOnce(t, dialerC.l, addr)
 	acceptor.waitUps(t, 2)
 
-	// Prove the state handler runs before Close.
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
 	err := connB.sendDirect(ctx, &linkpb.Frame{Kind: 200})
 	cancel()
@@ -478,9 +455,8 @@ func TestCloseStopsCallbacksAndGoroutines(t *testing.T) {
 	connB.closeAsync(FailConnectionLost)
 	connC.closeAsync(FailConnectionLost)
 	acceptor.clock.Advance(time.Hour)
-	// Teardown of the two accepted connections is what could post a late
-	// notification. Once both records are back to waiting, any further callback
-	// would have to come from the stopped notifier, which cannot deliver.
+	// Once both records are back to waiting, any late callback would have to
+	// come from the stopped notifier.
 	for _, fp := range []Fingerprint{dialerB.fingerprint(), dialerC.fingerprint()} {
 		waitFor(t, func() bool { return acceptor.l.State(fp).Phase == PhaseWaiting })
 	}

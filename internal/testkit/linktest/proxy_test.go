@@ -8,8 +8,6 @@ import (
 	"time"
 )
 
-// startEchoServer starts a TCP server that echoes every byte back to the
-// sender, and returns its address.
 func startEchoServer(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -32,6 +30,8 @@ func startEchoServer(t *testing.T) string {
 	return ln.Addr().String()
 }
 
+// TestProxyForwardsPausesAndCaptures checks that the proxy forwards bytes,
+// holds them while paused and captures what it forwards.
 func TestProxyForwardsPausesAndCaptures(t *testing.T) {
 	proxy := NewProxy(t, startEchoServer(t))
 	conn, err := net.Dial("tcp", proxy.Addr())
@@ -55,7 +55,6 @@ func TestProxyForwardsPausesAndCaptures(t *testing.T) {
 		return bytes.Contains(proxy.Captured(), []byte("hello"))
 	})
 
-	// Wait until nothing is left in flight, then pause forwarding.
 	proxy.waitBuffered(t, func(n int) bool { return n == 0 })
 	proxy.Pause()
 

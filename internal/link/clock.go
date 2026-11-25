@@ -2,7 +2,6 @@ package link
 
 import "time"
 
-// realClock is the Clock backed by the standard library.
 type realClock struct{}
 
 // RealClock returns a Clock backed by time.Now and time.AfterFunc.

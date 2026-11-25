@@ -18,10 +18,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TestUnauthenticatedReadBudgetClosesLargeFirstFrame reproduces the unbounded
-// pre-authentication read: a connection that has not authenticated sends one
-// PairRequest larger than the 64 KiB read budget. serveInbound must never
-// receive that frame, and the close must be logged with cause byte_budget.
+// TestUnauthenticatedReadBudgetClosesLargeFirstFrame checks that a frame above
+// the 64 KiB read budget on an unauthenticated connection is never handed to
+// serveInbound and the close is logged with cause byte_budget.
 func TestUnauthenticatedReadBudgetClosesLargeFirstFrame(t *testing.T) {
 	var logs bytes.Buffer
 	server := newTransportTestLinkWithLogger(t, slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -66,10 +65,8 @@ func TestUnauthenticatedReadBudgetClosesLargeFirstFrame(t *testing.T) {
 	}
 }
 
-// TestHeaderListLimitRejectsOversizedMetadata reproduces the unbounded header
-// list: an unauthenticated stream carries 32 KiB of metadata, above the 16 KiB
-// HTTP/2 header list limit. The stream must be rejected before the Connect
-// handler runs, and the client must see ResourceExhausted.
+// TestHeaderListLimitRejectsOversizedMetadata checks that a stream carrying 32
+// KiB of metadata is rejected before the Connect handler runs.
 func TestHeaderListLimitRejectsOversizedMetadata(t *testing.T) {
 	server := newTransportTestLink(t)
 	started := make(chan struct{}, 1)
@@ -106,9 +103,6 @@ func TestHeaderListLimitRejectsOversizedMetadata(t *testing.T) {
 		if err == nil {
 			t.Fatal("a stream carrying 32 KiB of metadata was accepted")
 		}
-		// The client refuses to send the header list after learning the server's
-		// limit, or the server rejects it on the wire; both are the rejection
-		// under test and leave the Connect handler unrun.
 		if code := status.Code(err); code != codes.ResourceExhausted &&
 			!strings.Contains(err.Error(), "header list size") {
 			t.Fatalf("oversized metadata error = %v, want a header-list rejection", err)

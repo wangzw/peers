@@ -10,8 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// oversizedFrame returns a state frame whose encoded form is one byte above the
-// message limit.
 func oversizedFrame() Frame {
 	return Frame{Kind: 200, Payload: make([]byte, MaxMessageSize)}
 }

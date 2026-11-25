@@ -11,8 +11,8 @@ var _ pairing.Transport = (*Link)(nil)
 
 // PairDial dials address for the pairing handshake, hands the connection to
 // run, and turns it into a link once pairing committed the peer. A run error is
-// returned unchanged; the caller's context only bounds dialing and run, never
-// the link that starts afterwards.
+// returned unchanged; the caller's context bounds only dialing and run, never
+// the link that starts afterwards. It implements pairing.Transport.
 func (l *Link) PairDial(ctx context.Context, address string, run func(pairing.PairConn) error) error {
 	l.mu.Lock()
 	closed := l.closed
@@ -68,8 +68,6 @@ func (l *Link) PairDial(ctx context.Context, address string, run func(pairing.Pa
 		l.mu.Unlock()
 
 		if failure == FailNotAPeer {
-			// pairing committed the peer, so PairDial still succeeds; the link
-			// stops redialing until the user pairs again.
 			l.auditPeerRejected(fp)
 			return nil
 		}

@@ -23,38 +23,20 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// eventTimeout is the package-wide fallback for the real-time waits in these
-// tests that move a control-sized frame. The large-payload round trip uses
-// largePayloadTimeout instead. It only decides how long a wait that will never
-// complete takes to fail: the success path selects on the event itself and
-// never spends this time, so a larger value costs nothing. It equals the
-// product's default link.keepalive_interval (15s) plus link.keepalive_timeout
-// (10s), the same values linktest.FakeSettings returns: a link the product
-// still considers alive must not be declared dead by the test before the
-// product's own keepalive policy would.
+// eventTimeout is the fallback bound for a wait that would never complete; it
+// must not be shorter than the product's default keepalive interval plus
+// timeout (15s + 10s), the values linktest.FakeSettings returns.
 const eventTimeout = 15*time.Second + 10*time.Second
 
-// largePayloadTimeout is the guard for one wait on the large-payload round
-// trip. It is derived from the product's own liveness bound rather than picked
-// for the test: a Link keeps a silent connection alive until one keepalive
-// interval has passed and the keepalive that interval prompts goes unanswered
-// for a keepalive timeout (settings.go). A test guard shorter than that would
-// fail a transfer the product still considers alive, which is how the fixed
-// three-second bound fired on a 1.5 MiB frame that was merely slow to be
-// delivered under CI load. The success path is event-driven, so the guard only
-// turns a frame that never arrives into a failure instead of a hang.
+// largePayloadTimeout derives the large-payload guard from the product's
+// keepalive liveness bound so a slow transfer the product still considers alive
+// is not failed.
 func largePayloadTimeout(settings *linktest.FakeSettings) time.Duration {
 	return settings.KeepaliveInterval() + settings.KeepaliveTimeout()
 }
 
-// authReadyTimeout is the fallback bound for the wait on the server finishing
-// authentication in TestLargePayloadRoundTrip. It only turns a wait that would
-// never complete into a failure instead of a hang: the success path selects on
-// the authentication event itself and never spends this time, so a larger
-// value costs nothing. It is 30 seconds because the test packages use 30
-// seconds as the uniform fallback for event waits, not because it is derived
-// from a product timer: authentication readiness has no product timer of its
-// own to follow.
+// authReadyTimeout bounds the wait for the server to finish authenticating a
+// stream; the success path never spends it.
 const authReadyTimeout = 30 * time.Second
 
 // transportTestLink bundles a Link with the fakes behind it.
@@ -70,8 +52,6 @@ func newTransportTestLink(t *testing.T) *transportTestLink {
 	return newTransportTestLinkWithLogger(t, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-// newTransportTestLinkWithLogger is newTransportTestLink with a caller-chosen
-// logger, so a test can assert on a Debug record.
 func newTransportTestLinkWithLogger(t *testing.T, logger *slog.Logger) *transportTestLink {
 	t.Helper()
 	peers := linktest.NewFakePeers(t)
@@ -89,9 +69,6 @@ func newTransportTestLinkWithLogger(t *testing.T, logger *slog.Logger) *transpor
 	return &transportTestLink{Link: l, peers: peers, settings: settings, clock: clock}
 }
 
-// startTransportServer serves l's gRPC endpoint on a loopback port and returns
-// its address. The listener tracks inbound connections with l's unauth
-// registry, as Listen does.
 func startTransportServer(t *testing.T, l *Link, onStream func(*conn, *trackedConn)) string {
 	t.Helper()
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
@@ -108,7 +85,6 @@ func startTransportServer(t *testing.T, l *Link, onStream func(*conn, *trackedCo
 	return raw.Addr().String()
 }
 
-// dialTestConnection dials addr and returns the authenticated TLS connection.
 func dialTestConnection(t *testing.T, l *Link, addr string) (*tls.Conn, peerIdentity) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), eventTimeout)
@@ -121,7 +97,6 @@ func dialTestConnection(t *testing.T, l *Link, addr string) (*tls.Conn, peerIden
 	return tc, id
 }
 
-// openTestStream dials addr and opens the link stream over it.
 func openTestStream(t *testing.T, l *Link, addr string) (*conn, peerIdentity) {
 	t.Helper()
 	tc, id := dialTestConnection(t, l, addr)
@@ -133,6 +108,8 @@ func openTestStream(t *testing.T, l *Link, addr string) (*conn, peerIdentity) {
 	return c, id
 }
 
+// TestDialTLSReturnsServerIdentity checks that dialTLS returns the server's
+// fingerprint and negotiates TLS 1.3.
 func TestDialTLSReturnsServerIdentity(t *testing.T) {
 	server := newTransportTestLink(t)
 	addr := startTransportServer(t, server.Link, func(*conn, *trackedConn) {})
@@ -150,6 +127,8 @@ func TestDialTLSReturnsServerIdentity(t *testing.T) {
 	}
 }
 
+// TestServerSeesClientIdentity checks that the server reads the client's
+// fingerprint from the handshake.
 func TestServerSeesClientIdentity(t *testing.T) {
 	server := newTransportTestLink(t)
 	seen := make(chan peerIdentity, 1)
@@ -170,6 +149,8 @@ func TestServerSeesClientIdentity(t *testing.T) {
 	}
 }
 
+// TestServerRejectsClientWithoutCertificate checks that a client presenting no
+// certificate is disconnected before onStream runs.
 func TestServerRejectsClientWithoutCertificate(t *testing.T) {
 	server := newTransportTestLink(t)
 	called := make(chan struct{}, 1)
@@ -211,6 +192,8 @@ func TestServerRejectsClientWithoutCertificate(t *testing.T) {
 	}
 }
 
+// TestServerRejectsTLS12 checks that a TLS 1.2 handshake fails and onStream
+// never runs.
 func TestServerRejectsTLS12(t *testing.T) {
 	server := newTransportTestLink(t)
 	called := make(chan struct{}, 1)
@@ -242,6 +225,8 @@ func TestServerRejectsTLS12(t *testing.T) {
 	}
 }
 
+// TestFramesRoundTripOverGRPC checks that frames travel both ways over the gRPC
+// stream.
 func TestFramesRoundTripOverGRPC(t *testing.T) {
 	server := newTransportTestLink(t)
 	received := make(chan []*linkpb.Frame, 1)
@@ -300,6 +285,8 @@ func TestFramesRoundTripOverGRPC(t *testing.T) {
 	}
 }
 
+// TestSecondStreamOnSameTransportRejected checks that a second stream on one
+// connection fails and never reaches onStream.
 func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 	server := newTransportTestLink(t)
 	started := make(chan struct{}, 2)
@@ -329,11 +316,8 @@ func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 		t.Fatal("first stream did not reach the server")
 	}
 
-	// The server advertises one stream per connection, so the second stream
-	// either waits for the first to finish or is refused by the handler; both
-	// end in an error and never reach onStream. The gRPC client takes the
-	// waiting branch and holds for a slot until this context ends, so the
-	// deadline is how the expected path terminates, not a fallback.
+	// The gRPC client takes the waiting branch and holds for a slot until this
+	// context ends, so the deadline is how the expected path terminates.
 	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
 	defer secondCancel()
 	second, err := cli.Connect(secondCtx)
@@ -344,8 +328,6 @@ func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 		t.Fatal("second Connect stream was served")
 	}
 
-	// The first stream still holds the single stream slot, so the server cannot
-	// call onStream for the second one now that its Recv failed.
 	select {
 	case <-started:
 		t.Fatal("second stream reached the server")
@@ -353,6 +335,8 @@ func TestSecondStreamOnSameTransportRejected(t *testing.T) {
 	}
 }
 
+// TestDialTimeoutUsesClock checks that dialTLS is canceled when the injected
+// clock advances past the dial timeout.
 func TestDialTimeoutUsesClock(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -408,6 +392,8 @@ func TestDialTimeoutUsesClock(t *testing.T) {
 	}
 }
 
+// TestOnDialHookCalled checks that dialTLS calls the onDial test hook with the
+// address.
 func TestOnDialHookCalled(t *testing.T) {
 	server := newTransportTestLink(t)
 	addr := startTransportServer(t, server.Link, func(*conn, *trackedConn) {})
@@ -427,6 +413,8 @@ func TestOnDialHookCalled(t *testing.T) {
 	}
 }
 
+// TestLargePayloadRoundTrip checks that a 1.5 MiB frame survives a round trip
+// once the connection is authenticated.
 func TestLargePayloadRoundTrip(t *testing.T) {
 	const payloadSize = 1572864
 	payload := make([]byte, payloadSize)
@@ -438,7 +426,7 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 	guard := largePayloadTimeout(server.settings)
 	serverReceived := make(chan []byte, 1)
 	serverFailed := make(chan error, 1)
-	// authenticated is closed once the handler below has marked the connection
+	// authenticated is closed once the handler has marked the connection
 	// authenticated, so the client can wait before it sends the large frame.
 	authenticated := make(chan struct{})
 	addr := startTransportServer(t, server.Link, func(c *conn, tr *trackedConn) {
@@ -457,8 +445,6 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 			return
 		}
 		serverReceived <- append([]byte(nil), f.GetPayload()...)
-		// The echo gets its own deadline for the same reason the client gives
-		// each phase one: the receive above may have used much of the guard.
 		echoCtx, echoCancel := context.WithTimeout(context.Background(), guard)
 		defer echoCancel()
 		_ = c.sendDirect(echoCtx, &linkpb.Frame{Kind: 200, Payload: payload})
@@ -466,14 +452,9 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 	client := newTransportTestLink(t)
 	c, _ := openTestStream(t, client.Link, addr)
 
-	// The product marks a connection authenticated before it sends or accepts a
-	// Hello (serveInbound in handshake.go), and only then may a frame larger
-	// than the 64 KiB pre-authentication read budget arrive. The reader
-	// goroutine charges bytes to that budget independently of the handler
-	// goroutine above, so wait for the handler's authentication before sending
-	// the large frame. Otherwise the reader can charge its first bytes to the
-	// budget and close the connection. Keep this wait: removing it restores the
-	// race.
+	// The reader goroutine charges bytes independently, so wait for the
+	// handler's authentication before sending the large frame; removing this
+	// wait restores the race.
 	select {
 	case <-authenticated:
 	case <-time.After(authReadyTimeout):
@@ -509,10 +490,10 @@ func TestLargePayloadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestOversizedFrameRejectedBySender checks that sending a frame above the
+// message limit fails with ResourceExhausted and never reaches the server.
 func TestOversizedFrameRejectedBySender(t *testing.T) {
 	server := newTransportTestLink(t)
-	// serverDone reports the frame the server received, or nil when its Recv
-	// ended without one. Closing the client stream drives it to completion.
 	serverDone := make(chan *linkpb.Frame, 1)
 	started := make(chan struct{})
 	addr := startTransportServer(t, server.Link, func(c *conn, _ *trackedConn) {
@@ -539,8 +520,6 @@ func TestOversizedFrameRejectedBySender(t *testing.T) {
 		t.Fatalf("oversized send error code = %v (%v), want ResourceExhausted", code, err)
 	}
 
-	// End the stream so the server's Recv returns. If the oversized frame had
-	// reached the wire, the handler would report it here.
 	c.closeAsync(FailConnectionLost)
 	select {
 	case f := <-serverDone:
@@ -552,10 +531,8 @@ func TestOversizedFrameRejectedBySender(t *testing.T) {
 	}
 }
 
-// TestAbortDoesNotBlock calls abort on the test goroutine while the close of
-// the gRPC client connection is held open by the injected close function. A
-// synchronous ClientConn.Close would block abort until the close returns, which
-// the close function reports as a failure.
+// TestAbortDoesNotBlock checks that abort returns while the gRPC client
+// connection close is still in progress.
 func TestAbortDoesNotBlock(t *testing.T) {
 	server := newTransportTestLink(t)
 	started := make(chan struct{}, 1)
@@ -574,8 +551,6 @@ func TestAbortDoesNotBlock(t *testing.T) {
 		select {
 		case <-release:
 		case <-time.After(eventTimeout):
-			// abort called the close synchronously; it should have returned
-			// while the close was still in progress.
 			t.Error("abort waited for the client connection close")
 		}
 		return nil
@@ -608,9 +583,8 @@ func TestAbortDoesNotBlock(t *testing.T) {
 	}
 }
 
-// TestConnectDoesNotStartAfterClose holds an inbound stream before the handler
-// joins the link WaitGroup, closes the Link, then releases the stream. The
-// handler must see the closed state and return without calling onStream.
+// TestConnectDoesNotStartAfterClose checks that a stream arriving during Close
+// is refused without calling onStream.
 func TestConnectDoesNotStartAfterClose(t *testing.T) {
 	server := newTransportTestLink(t)
 	entered := make(chan struct{})
@@ -656,9 +630,8 @@ func TestConnectDoesNotStartAfterClose(t *testing.T) {
 	}
 	close(release)
 
-	// The client sees Unavailable when the released handler refuses the stream.
-	// That status is sent only after the handler decided, so checking called
-	// then is race free and needs no fixed wait.
+	// The status is sent only after the handler decided, so checking called
+	// here is race free.
 	if _, err := stream.Recv(); status.Code(err) != codes.Unavailable {
 		t.Fatalf("client stream error = %v, want Unavailable", err)
 	}
@@ -669,9 +642,8 @@ func TestConnectDoesNotStartAfterClose(t *testing.T) {
 	}
 }
 
-// TestServerOversizedFrameRejected pins the server side of the 4 MiB message
-// limit: sending a larger frame fails locally instead of travelling to the
-// peer, which would only break the link.
+// TestServerOversizedFrameRejected checks that the server's send of a frame
+// above the message limit fails locally with ResourceExhausted.
 func TestServerOversizedFrameRejected(t *testing.T) {
 	server := newTransportTestLink(t)
 	sendErr := make(chan error, 1)
@@ -696,7 +668,6 @@ func TestServerOversizedFrameRejected(t *testing.T) {
 	}
 }
 
-// recordingSendStream records whether a frame reached the transport.
 type recordingSendStream struct {
 	sent atomic.Bool
 }
@@ -708,7 +679,6 @@ func (s *recordingSendStream) Send(*linkpb.Frame) error {
 
 func (s *recordingSendStream) Recv() (*linkpb.Frame, error) { return nil, io.EOF }
 
-// frameOfEncodedSize builds a frame whose marshaled form is exactly size bytes.
 func frameOfEncodedSize(t *testing.T, size int) *linkpb.Frame {
 	t.Helper()
 	payload := size
@@ -724,9 +694,8 @@ func frameOfEncodedSize(t *testing.T, size int) *linkpb.Frame {
 	return nil
 }
 
-// TestFrameSizeLimit pins the boundary of the transport's message limit: an
-// encoded frame of exactly the limit reaches the transport, and one byte more
-// is rejected as ResourceExhausted before the transport is touched.
+// TestFrameSizeLimit checks that an encoded frame exactly at the limit reaches
+// the transport and one byte more is refused.
 func TestFrameSizeLimit(t *testing.T) {
 	atLimit := frameOfEncodedSize(t, MaxMessageSize)
 	stream := new(recordingSendStream)
@@ -750,13 +719,8 @@ func TestFrameSizeLimit(t *testing.T) {
 	}
 }
 
-// TestOversizedFrameRejectedWithoutTransport pins that the 4 MiB limit is
-// enforced before the frame reaches the transport, whatever state the
-// connection is in. gRPC rejects an oversized frame locally on Send, but
-// sendDirect waits for that result in a separate goroutine; when the
-// connection closes in the same window, the close branch wins and reports
-// ErrNotEstablished, whose status code is Unknown instead of
-// ResourceExhausted.
+// TestOversizedFrameRejectedWithoutTransport checks that the limit is enforced
+// before the transport even when the connection is closing.
 func TestOversizedFrameRejectedWithoutTransport(t *testing.T) {
 	stream := new(recordingSendStream)
 	c := newConn(stream, nil, peerIdentity{}, 8)
@@ -771,8 +735,6 @@ func TestOversizedFrameRejectedWithoutTransport(t *testing.T) {
 	}
 }
 
-// untrackedServerStream is a server stream whose connection was not registered
-// with the unauthenticated-connection registry.
 type untrackedServerStream struct {
 	grpc.ServerStream
 	ctx context.Context
@@ -782,9 +744,8 @@ func (s *untrackedServerStream) Context() context.Context     { return s.ctx }
 func (s *untrackedServerStream) Send(*linkpb.Frame) error     { return nil }
 func (s *untrackedServerStream) Recv() (*linkpb.Frame, error) { return nil, io.EOF }
 
-// TestConnectRejectsUntrackedStream pins the fail-closed branch: a stream
-// whose transport is not tracked cannot enforce the first-frame rules, so the
-// handler refuses it instead of serving it.
+// TestConnectRejectsUntrackedStream checks that a stream whose transport is not
+// tracked is refused with Internal instead of served.
 func TestConnectRejectsUntrackedStream(t *testing.T) {
 	l := newTransportTestLink(t)
 	called := make(chan struct{}, 1)

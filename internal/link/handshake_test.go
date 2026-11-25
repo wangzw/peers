@@ -20,27 +20,23 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// hsEvent is one link up or down notification recorded by the harness.
 type hsEvent struct {
 	up   bool
 	peer Fingerprint
 	salt []byte
 }
 
-// hsResult is what serveInbound returned.
 type hsResult struct {
 	delivered <-chan struct{}
 	ok        bool
 }
 
-// hsPairFirst is the first frame an accept function received.
 type hsPairFirst struct {
 	kind    uint32
 	payload []byte
 	err     error
 }
 
-// hsDialResult is what dialerHandshake returned.
 type hsDialResult struct {
 	salt        []byte
 	failure     FailReason
@@ -48,7 +44,6 @@ type hsDialResult struct {
 	err         error
 }
 
-// hsBuffer is a concurrency-safe log destination.
 type hsBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -66,8 +61,6 @@ func (b *hsBuffer) String() string {
 	return b.buf.String()
 }
 
-// handshakeHarness is a Link with fake dependencies, a recording subscription
-// and a started notifier.
 type handshakeHarness struct {
 	l        *Link
 	peers    *linktest.FakePeers
@@ -141,15 +134,11 @@ func (h *handshakeHarness) eventCount() int {
 	return len(h.events)
 }
 
-// newConn builds a conn around one end of an in-memory pipe and starts its
-// reader. local is the conn's stream end; peer is the other side.
 func (h *handshakeHarness) newConn(t *testing.T, fp Fingerprint) (c *conn, local, peer *pipeEnd) {
 	t.Helper()
 	return h.newConnFrom(t, fp, "127.0.0.1:1")
 }
 
-// newConnFrom builds a conn whose recorded remote address is remote, so a test
-// can exercise behaviour that depends on the network source.
 func (h *handshakeHarness) newConnFrom(t *testing.T, fp Fingerprint, remote string) (c *conn, local, peer *pipeEnd) {
 	t.Helper()
 	local, peer = newPipe(t)
@@ -158,7 +147,6 @@ func (h *handshakeHarness) newConnFrom(t *testing.T, fp Fingerprint, remote stri
 	return c, local, peer
 }
 
-// serve runs serveInbound in a goroutine and returns its result channel.
 func (h *handshakeHarness) serve(c *conn, tr *trackedConn) <-chan hsResult {
 	ch := make(chan hsResult, 1)
 	go func() {
@@ -393,10 +381,8 @@ func TestRoleMismatchRejected(t *testing.T) {
 	}
 }
 
-// TestRejectLingerExitsWhenLinkCloses checks that the goroutine rejectAndLinger
-// starts does not outlive the Link. Close must end the linger without waiting
-// for its timer, and the exiting goroutine must stop that timer instead of
-// leaving it scheduled.
+// TestRejectLingerExitsWhenLinkCloses checks that closing the Link ends the
+// reject linger goroutine and leaves no timer pending.
 func TestRejectLingerExitsWhenLinkCloses(t *testing.T) {
 	h := newHandshakeHarness(t)
 	exited := make(chan struct{})
@@ -565,9 +551,6 @@ func TestSaltIsDialerNonceThenAcceptorNonce(t *testing.T) {
 	}
 }
 
-// pairHandshake drives both ends of a PairRequest-first handshake through the
-// pairing frames and Hello. It returns the first frame the accept function
-// received and the serveInbound result.
 func pairHandshake(t *testing.T, h *handshakeHarness, peer Fingerprint) (hsPairFirst, <-chan hsResult) {
 	t.Helper()
 	firsts := make(chan hsPairFirst, 1)

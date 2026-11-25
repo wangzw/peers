@@ -11,6 +11,8 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
+// TestHelloRoundTrip checks that Hello encodes and decodes with its version,
+// alias, nonce and addresses.
 func TestHelloRoundTrip(t *testing.T) {
 	nonce := bytes.Repeat([]byte{0xab}, nonceSize)
 	addrs := []config.AdvertisedAddr{
@@ -44,6 +46,8 @@ func TestHelloRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHelloRoundTripWithoutAddresses checks that a nil and an empty address
+// list encode as an empty list.
 func TestHelloRoundTripWithoutAddresses(t *testing.T) {
 	for _, addrs := range [][]config.AdvertisedAddr{nil, {}} {
 		f := encodeHello(1, "bob", bytes.Repeat([]byte{1}, nonceSize), addrs)
@@ -57,6 +61,8 @@ func TestHelloRoundTripWithoutAddresses(t *testing.T) {
 	}
 }
 
+// TestDecodeHelloRejectsBadNonce checks that a nonce whose length is not 32
+// bytes is malformed.
 func TestDecodeHelloRejectsBadNonce(t *testing.T) {
 	for _, n := range []int{31, 33} {
 		f := encodeHello(1, "alice", bytes.Repeat([]byte{1}, n), nil)
@@ -66,6 +72,8 @@ func TestDecodeHelloRejectsBadNonce(t *testing.T) {
 	}
 }
 
+// TestDecodeRejectsWrongKind checks that decoding a frame with the wrong kind
+// is malformed.
 func TestDecodeRejectsWrongKind(t *testing.T) {
 	f := encodePeerInfo("alice", nil)
 	if _, err := decodeHello(f); !errors.Is(err, errMalformed) {
@@ -76,11 +84,12 @@ func TestDecodeRejectsWrongKind(t *testing.T) {
 	}
 }
 
+// TestDecodeIgnoresUnknownFields checks that an unknown protobuf field in the
+// payload is ignored.
 func TestDecodeIgnoresUnknownFields(t *testing.T) {
 	f := encodeHello(1, "alice", bytes.Repeat([]byte{1}, nonceSize), nil)
-	// Field number 99, wire type 0 (varint), value 1: the tag is 99<<3|0 = 792,
-	// which encodes as the bytes below. A later version may add fields; the
-	// decoder must ignore them rather than reject the frame.
+	// Field 99, wire type 0, value 1 encodes as 0x98 0x06 0x01; a later version
+	// may add fields and the decoder must ignore them.
 	f.Payload = append(f.Payload, 0x98, 0x06, 0x01)
 
 	hello, err := decodeHello(f)
@@ -92,6 +101,8 @@ func TestDecodeIgnoresUnknownFields(t *testing.T) {
 	}
 }
 
+// TestAddrsFromPBKeepsUnknownKinds checks that the conversion keeps unknown
+// kinds and order and skips nil elements.
 func TestAddrsFromPBKeepsUnknownKinds(t *testing.T) {
 	in := []config.AdvertisedAddr{
 		{Kind: config.AdvertisedKindDirect, Addr: "a"},
@@ -113,6 +124,8 @@ func TestAddrsFromPBKeepsUnknownKinds(t *testing.T) {
 	}
 }
 
+// TestUnsupportedReply checks that the unsupported reply carries the request id
+// and the refused kind.
 func TestUnsupportedReply(t *testing.T) {
 	req := &linkpb.Frame{Kind: 777, RequestId: 9}
 	reply := unsupportedReply(req)
@@ -135,6 +148,8 @@ func TestUnsupportedReply(t *testing.T) {
 	}
 }
 
+// TestDecodeRejectRejectsUnknownReason checks that an unspecified or unknown
+// reject reason is malformed.
 func TestDecodeRejectRejectsUnknownReason(t *testing.T) {
 	for name, reason := range map[string]linkpb.RejectReason{
 		"unspecified": linkpb.RejectReason_REJECT_REASON_UNSPECIFIED,
@@ -156,6 +171,8 @@ func TestDecodeRejectRejectsUnknownReason(t *testing.T) {
 	}
 }
 
+// TestClassify checks that classify separates state, request, reply and invalid
+// frames.
 func TestClassify(t *testing.T) {
 	tests := []struct {
 		name string

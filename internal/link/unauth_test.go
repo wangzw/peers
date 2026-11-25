@@ -15,8 +15,6 @@ import (
 	"time"
 )
 
-// manualTimers is an afterFunc seam for tests. It records callbacks and runs
-// them only when the test calls fireAll.
 type manualTimers struct {
 	mu     sync.Mutex
 	timers []*manualTimer
@@ -73,8 +71,6 @@ func (m *manualTimers) pending() int {
 	return n
 }
 
-// newTrackedPair returns an accepted tracked server connection and the client
-// side of the same local TCP connection.
 func newTrackedPair(t *testing.T, reg *unauthRegistry) (*trackedConn, net.Conn) {
 	t.Helper()
 
@@ -123,7 +119,6 @@ func newTrackedPair(t *testing.T, reg *unauthRegistry) (*trackedConn, net.Conn) 
 	return tc, client
 }
 
-// expectEOF asserts that the client side observes the server connection close.
 func expectEOF(t *testing.T, c net.Conn) {
 	t.Helper()
 	if err := c.SetReadDeadline(time.Now().Add(eventTimeout)); err != nil {
@@ -136,8 +131,6 @@ func expectEOF(t *testing.T, c net.Conn) {
 	}
 }
 
-// roundTrip writes from the client and reads the same bytes on the tracked
-// connection, proving both sides are still usable.
 func roundTrip(t *testing.T, tc *trackedConn, client net.Conn) {
 	t.Helper()
 	msg := []byte("ping")
@@ -156,11 +149,12 @@ func roundTrip(t *testing.T, tc *trackedConn, client net.Conn) {
 	}
 }
 
-// newTestRegistry builds a registry with a discard logger and manual timers.
 func newTestRegistry(max, maxPerSource int, timers *manualTimers) *unauthRegistry {
 	return newUnauthRegistry(max, maxPerSource, 10*time.Second, slog.New(slog.NewTextHandler(io.Discard, nil)), timers.afterFunc)
 }
 
+// TestFirstFrameDeadlineClosesSilentConn checks that the deadline closes a
+// connection that sends nothing and removes it from the registry.
 func TestFirstFrameDeadlineClosesSilentConn(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -178,6 +172,8 @@ func TestFirstFrameDeadlineClosesSilentConn(t *testing.T) {
 	}
 }
 
+// TestFirstFrameSeenStopsDeadline checks that a first frame stops the deadline
+// while the connection stays counted.
 func TestFirstFrameSeenStopsDeadline(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -193,13 +189,8 @@ func TestFirstFrameSeenStopsDeadline(t *testing.T) {
 	}
 }
 
-// TestCapEvictsOldest checks the global cap. It is rewritten for per-source
-// limits: the old version opened three connections over real localhost sockets,
-// which now share one source and would hit the per-source limit first, so it no
-// longer exercised the global limit. Distinct sources keep the per-source limit
-// out of the way; with the global cap at two, the third connection closes the
-// oldest connection (the earliest of the tied busiest sources) and the two
-// survivors stay open.
+// TestCapEvictsOldest checks that the global cap closes the oldest connection
+// when distinct sources fill the pool.
 func TestCapEvictsOldest(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(2, 8, timers)
@@ -222,6 +213,8 @@ func TestCapEvictsOldest(t *testing.T) {
 	}
 }
 
+// TestAuthenticatedLeavesRegistry checks that authentication removes the
+// connection from the registry and stops its deadline.
 func TestAuthenticatedLeavesRegistry(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(2, 8, timers)
@@ -244,6 +237,8 @@ func TestAuthenticatedLeavesRegistry(t *testing.T) {
 	roundTrip(t, tc1, c1)
 }
 
+// TestClaimStreamOnce checks that only the first claimStream call succeeds,
+// including under concurrency.
 func TestClaimStreamOnce(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -277,9 +272,6 @@ func TestClaimStreamOnce(t *testing.T) {
 	}
 }
 
-// fakeSourceConn is a net.Conn with a fixed remote address and a recorded
-// Close, so registry tests can place connections at chosen sources without
-// opening sockets.
 type fakeSourceConn struct {
 	remote string
 	mu     sync.Mutex
@@ -312,11 +304,8 @@ type testSourceAddr string
 func (a testSourceAddr) Network() string { return "tcp" }
 func (a testSourceAddr) String() string  { return string(a) }
 
-// TestPerSourceLimitKeepsOtherSources reproduces the denial of service where a
-// single source filling the shared unauthenticated pool evicted a connection
-// from a different source. One connection from source B arrives first; source A
-// then registers more connections than the global cap. B must stay open,
-// because A's own connections are the ones over the per-source limit.
+// TestPerSourceLimitKeepsOtherSources checks that one source filling its
+// per-source limit does not close another source's connection.
 func TestPerSourceLimitKeepsOtherSources(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -365,9 +354,9 @@ func TestPerSourceLimitClosesOldestOfSource(t *testing.T) {
 	}
 }
 
-// TestGlobalLimitClosesOldestOfBusiestSource fills the global cap from eight
-// sources, then adds a ninth source. The global limit closes the earliest
-// connection of the earliest busiest source, and the ninth source survives.
+// TestGlobalLimitClosesOldestOfBusiestSource checks that the global limit
+// closes the earliest connection of the earliest busiest source and keeps the
+// newest source's connection.
 func TestGlobalLimitClosesOldestOfBusiestSource(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -406,10 +395,7 @@ func TestGlobalLimitClosesOldestOfBusiestSource(t *testing.T) {
 }
 
 // TestGlobalLimitSparesEarlierLighterSource checks that the global limit picks
-// its victim by source load, not by age. Source B registers first but holds one
-// connection; eight sources then fill the global cap with eight connections
-// each. The connection closed must be the earliest connection of the earliest
-// busiest source, not B, which is the oldest connection in the pool.
+// its victim by source load, not by age.
 func TestGlobalLimitSparesEarlierLighterSource(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -444,8 +430,6 @@ func TestGlobalLimitSparesEarlierLighterSource(t *testing.T) {
 	}
 }
 
-// findClosedLog returns the last "link: closed an unauthenticated connection"
-// record decoded from logs, or nil when there is none.
 func findClosedLog(t *testing.T, logs string) map[string]any {
 	t.Helper()
 	var found map[string]any
@@ -461,10 +445,9 @@ func findClosedLog(t *testing.T, logs string) map[string]any {
 	return found
 }
 
-// TestKnownPeerPoolClosesOldestOfFingerprint checks that a fingerprint holds at
-// most two known-peer connections and that a third closes the oldest, with the
-// known_peer_limit cause. Known-peer connections do not count toward the
-// stranger pool.
+// TestKnownPeerPoolClosesOldestOfFingerprint checks that a fingerprint keeps at
+// most two known-peer connections and a third closes the oldest with cause
+// known_peer_limit.
 func TestKnownPeerPoolClosesOldestOfFingerprint(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -522,8 +505,8 @@ func TestKnownPeerKeepsFirstFrameDeadline(t *testing.T) {
 	}
 }
 
-// TestAuthenticatedLeavesKnownPool checks that authentication still removes a
-// known-peer connection from the registry and stops its deadline.
+// TestAuthenticatedLeavesKnownPool checks that authentication removes a
+// known-peer connection and stops its deadline.
 func TestAuthenticatedLeavesKnownPool(t *testing.T) {
 	timers := &manualTimers{}
 	reg := newTestRegistry(64, 8, timers)
@@ -551,8 +534,8 @@ func TestAuthenticatedLeavesKnownPool(t *testing.T) {
 	}
 }
 
-// TestEvictionLogsSourceAndCause checks the Debug record written for each
-// eviction: the event name plus the source prefix and the cause.
+// TestEvictionLogsSourceAndCause checks the Debug record written for a
+// source-limit eviction and a global-limit eviction.
 func TestEvictionLogsSourceAndCause(t *testing.T) {
 	tests := []struct {
 		name         string

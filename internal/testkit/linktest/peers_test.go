@@ -12,6 +12,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
+// TestIdentityFingerprintMatchesPairing checks that a fake identity's
+// fingerprint matches pairing's derivation over both the public key and the
+// certificate.
 func TestIdentityFingerprintMatchesPairing(t *testing.T) {
 	id := NewIdentity(t)
 	if len(id.PublicKey) != ed25519.PublicKeySize {
@@ -30,6 +33,8 @@ func TestIdentityFingerprintMatchesPairing(t *testing.T) {
 	}
 }
 
+// TestFakePeersCandidatesOrder checks that Candidates orders observed direct
+// addresses before static candidates and deduplicates them.
 func TestFakePeersCandidatesOrder(t *testing.T) {
 	peers := NewFakePeers(t)
 	dialPeer := NewIdentity(t).Fingerprint
@@ -63,14 +68,11 @@ func TestFakePeersCandidatesOrder(t *testing.T) {
 	}
 }
 
-// memFrame is one frame on a memPairConn.
 type memFrame struct {
 	kind    uint32
 	payload []byte
 }
 
-// memPairConn is an in-memory pairing.PairConn used to run the two fake
-// handshake halves against each other.
 type memPairConn struct {
 	fingerprint pairing.Fingerprint
 	remote      string
@@ -90,8 +92,6 @@ func (c *memPairConn) PeerPublicKey() []byte { return nil }
 
 func (c *memPairConn) RemoteAddr() string { return c.remote }
 
-// memProtocolVersion stands in for the link protocol version the fake
-// connections speak. The fake pairing flows do not compare versions.
 const memProtocolVersion uint32 = 1
 
 func (c *memPairConn) ProtocolVersion() uint32 { return memProtocolVersion }
@@ -138,6 +138,8 @@ func (c *memPairConn) Close() error {
 	return nil
 }
 
+// TestFakePairAcceptAndRunInterlock checks that the two fake pairing flows
+// complete against each other and record each side's role and alias.
 func TestFakePairAcceptAndRunInterlock(t *testing.T) {
 	dialer := NewFakePeers(t)
 	acceptor := NewFakePeers(t)

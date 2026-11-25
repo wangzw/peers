@@ -8,8 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// Default durations FakeSettings reports until a setter changes them. They
-// match the defaults of the corresponding configuration keys.
+// Default durations FakeSettings reports until a setter changes them; they
+// match the configuration defaults.
 const (
 	defaultDialTimeout       = 5 * time.Second
 	defaultReconnectMin      = time.Second
@@ -154,7 +154,7 @@ func (s *FakeSettings) Events() []config.Event {
 }
 
 // WaitEvent blocks until the first event of kind has been recorded and returns
-// it, failing the test after three seconds.
+// it, failing the test once eventTimeout passes.
 func (s *FakeSettings) WaitEvent(t testing.TB, kind config.EventKind) config.Event {
 	t.Helper()
 	waitUntil(t, "audit event "+string(kind), s.changedCh, func() bool {

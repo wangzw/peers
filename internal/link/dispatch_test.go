@@ -17,7 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// logBuffer is a concurrency-safe bytes.Buffer for a slog JSON handler.
 type logBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -35,7 +34,6 @@ func (b *logBuffer) String() string {
 	return b.buf.String()
 }
 
-// dispatchHarness is a Link with a started notifier and the fakes it needs.
 type dispatchHarness struct {
 	t        *testing.T
 	l        *Link
@@ -61,7 +59,6 @@ func newDispatchHarness(t *testing.T) *dispatchHarness {
 	return &dispatchHarness{t: t, l: l, peers: peers, settings: settings, clock: clock, logs: logs}
 }
 
-// dispatchConn is one installed connection and the pipe end the test drives.
 type dispatchConn struct {
 	c         *conn
 	link      *pipeEnd // the conn's stream end
@@ -70,7 +67,6 @@ type dispatchConn struct {
 	delivered <-chan struct{}
 }
 
-// attach installs a connection for fp and starts running it.
 func (h *dispatchHarness) attach(fp Fingerprint, role pairing.Role) *dispatchConn {
 	h.t.Helper()
 	a, b := newPipe(h.t)
@@ -96,7 +92,6 @@ func (h *dispatchHarness) attach(fp Fingerprint, role pairing.Role) *dispatchCon
 	return dc
 }
 
-// awaitUp waits until every onUp callback of the connection finished.
 func (dc *dispatchConn) awaitUp(t *testing.T) {
 	t.Helper()
 	select {
@@ -106,7 +101,6 @@ func (dc *dispatchConn) awaitUp(t *testing.T) {
 	}
 }
 
-// sendPeer sends a raw frame to the link under test.
 func (dc *dispatchConn) sendPeer(t *testing.T, f *linkpb.Frame) {
 	t.Helper()
 	if err := dc.peer.Send(f); err != nil {
@@ -114,7 +108,6 @@ func (dc *dispatchConn) sendPeer(t *testing.T, f *linkpb.Frame) {
 	}
 }
 
-// recvPeer waits up to eventTimeout for one frame from the link.
 func (dc *dispatchConn) recvPeer(t *testing.T) *linkpb.Frame {
 	t.Helper()
 	f, ok := tryRecvPeer(dc, eventTimeout)
@@ -124,7 +117,6 @@ func (dc *dispatchConn) recvPeer(t *testing.T) *linkpb.Frame {
 	return f
 }
 
-// expectNoPeerFrame fails when the link sends a frame within d.
 func (dc *dispatchConn) expectNoPeerFrame(t *testing.T, d time.Duration) {
 	t.Helper()
 	if f, ok := tryRecvPeer(dc, d); ok {
@@ -147,7 +139,6 @@ func tryRecvPeer(dc *dispatchConn, d time.Duration) (*linkpb.Frame, bool) {
 	}
 }
 
-// dispatchWait polls cond until it holds or eventTimeout passed.
 func dispatchWait(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -159,13 +150,14 @@ func dispatchWait(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// dispatchIntPayload encodes a frame sequence number.
 func dispatchIntPayload(n int) []byte {
 	b := make([]byte, 8)
 	binary.BigEndian.PutUint64(b, uint64(n))
 	return b
 }
 
+// TestRegisterRejectsReservedAndDuplicate checks that handler registration
+// panics on reserved kinds, nil handlers and duplicate kinds.
 func TestRegisterRejectsReservedAndDuplicate(t *testing.T) {
 	h := newDispatchHarness(t)
 	mustPanic := func(name string, f func()) {
@@ -193,6 +185,8 @@ func TestRegisterRejectsReservedAndDuplicate(t *testing.T) {
 	})
 }
 
+// TestSendWhenNotEstablished checks that Send returns ErrNotEstablished
+// without a record and while the link waits.
 func TestSendWhenNotEstablished(t *testing.T) {
 	h := newDispatchHarness(t)
 	peer := Fingerprint{1}
@@ -209,6 +203,8 @@ func TestSendWhenNotEstablished(t *testing.T) {
 	}
 }
 
+// TestSendReservedKind checks that Send and Request refuse a reserved frame
+// kind with ErrInvalidKind.
 func TestSendReservedKind(t *testing.T) {
 	h := newDispatchHarness(t)
 	peer := Fingerprint{1}
@@ -221,6 +217,8 @@ func TestSendReservedKind(t *testing.T) {
 	}
 }
 
+// TestStateFramesInArrivalOrder checks that state frames reach the handler in
+// arrival order.
 func TestStateFramesInArrivalOrder(t *testing.T) {
 	h := newDispatchHarness(t)
 	got := make(chan int, 500)
@@ -256,6 +254,8 @@ func TestStateFramesInArrivalOrder(t *testing.T) {
 	}
 }
 
+// TestOnUpCompletesBeforeFirstStateFrame checks that no state frame is handled
+// before every onUp callback returned.
 func TestOnUpCompletesBeforeFirstStateFrame(t *testing.T) {
 	h := newDispatchHarness(t)
 	var calls atomic.Int32
@@ -267,9 +267,8 @@ func TestOnUpCompletesBeforeFirstStateFrame(t *testing.T) {
 		default:
 		}
 	})
-	// The request is routed independently of the state handler, so its reply is
-	// a barrier that proves the state frame has been routed while onUp is still
-	// blocked.
+	// The request is routed independently of the state handler, so its reply
+	// proves the state frame was routed while onUp is still blocked.
 	h.l.HandleRequest(301, func(context.Context, Fingerprint, Frame) Frame {
 		return Frame{Kind: 302}
 	})
@@ -305,6 +304,8 @@ func TestOnUpCompletesBeforeFirstStateFrame(t *testing.T) {
 	}
 }
 
+// TestNoStateFrameAfterOnDown checks that no state frame is handled after
+// onDown was called.
 func TestNoStateFrameAfterOnDown(t *testing.T) {
 	h := newDispatchHarness(t)
 	var calls atomic.Int32
@@ -353,6 +354,8 @@ func TestNoStateFrameAfterOnDown(t *testing.T) {
 	}
 }
 
+// TestRequestNotBlockedByStateHandler checks that a request is answered while
+// a state handler is still running.
 func TestRequestNotBlockedByStateHandler(t *testing.T) {
 	h := newDispatchHarness(t)
 	stateEntered := make(chan struct{}, 1)
@@ -383,6 +386,8 @@ func TestRequestNotBlockedByStateHandler(t *testing.T) {
 	}
 }
 
+// TestStateHandlerCanAwaitReplyOnSameLink checks that a state handler can send
+// a Request on the same link and receive its reply.
 func TestStateHandlerCanAwaitReplyOnSameLink(t *testing.T) {
 	h := newDispatchHarness(t)
 	result := make(chan error, 1)
@@ -419,6 +424,8 @@ func TestStateHandlerCanAwaitReplyOnSameLink(t *testing.T) {
 	}
 }
 
+// TestUnknownRequestGetsUnsupported checks that an unregistered request kind
+// gets an Unsupported reply that carries the request id.
 func TestUnknownRequestGetsUnsupported(t *testing.T) {
 	h := newDispatchHarness(t)
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)
@@ -438,6 +445,8 @@ func TestUnknownRequestGetsUnsupported(t *testing.T) {
 	}
 }
 
+// TestUnknownStateFrameDropped checks that an unknown state frame is dropped
+// while a registered one is still handled.
 func TestUnknownStateFrameDropped(t *testing.T) {
 	h := newDispatchHarness(t)
 	handled := make(chan *linkpb.Frame, 1)
@@ -491,11 +500,8 @@ func waitRequestResult(t *testing.T, res <-chan requestResult) requestResult {
 	}
 }
 
-// manualDeadline is a context the test expires explicitly. It reports
-// DeadlineExceeded once expired, so a Request takes exactly the branch a real
-// expired deadline takes. A test that must observe the frame written before the
-// deadline fires cannot use a real timer without racing the scheduler to the
-// deadline; firing this one only after the write removes that race.
+// manualDeadline is a context the test expires explicitly, so a Request
+// observes the written branch before its deadline fires.
 type manualDeadline struct {
 	done chan struct{}
 }
@@ -524,15 +530,15 @@ func (m *manualDeadline) Err() error {
 
 func (m *manualDeadline) Value(any) any { return nil }
 
-// expire fires the deadline.
 func (m *manualDeadline) expire() { close(m.done) }
 
+// TestRequestReplyAndUnsupported checks a normal reply and an Unsupported reply
+// to Request.
 func TestRequestReplyAndUnsupported(t *testing.T) {
 	h := newDispatchHarness(t)
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)
 	dc.awaitUp(t)
 
-	// A normal reply.
 	res := startRequest(h, dc.fp, 300)
 	req := dc.recvPeer(t)
 	if req.GetKind() != 300 || req.GetRequestId() == 0 || req.GetIsReply() {
@@ -544,7 +550,6 @@ func TestRequestReplyAndUnsupported(t *testing.T) {
 		t.Fatalf("reply = %+v, want kind 300 payload pong sent true", r)
 	}
 
-	// An Unsupported reply.
 	res = startRequest(h, dc.fp, 301)
 	req = dc.recvPeer(t)
 	dc.sendPeer(t, &linkpb.Frame{
@@ -560,6 +565,9 @@ func TestRequestReplyAndUnsupported(t *testing.T) {
 	}
 }
 
+// TestRequestSentSemantics checks the sent flag and error for a request that is
+// not established, canceled while queued, written before a context expiry and
+// written before the link goes down.
 func TestRequestSentSemantics(t *testing.T) {
 	t.Run("not established", func(t *testing.T) {
 		h := newDispatchHarness(t)
@@ -587,9 +595,6 @@ func TestRequestSentSemantics(t *testing.T) {
 		}
 		dispatchWait(t, "the writer to take one frame", func() bool { return len(dc.c.out) == 1 })
 
-		// The writer stays blocked for the whole deadline, so the result is
-		// fixed: Request queues the frame, gives up when the deadline expires,
-		// and reports that it never wrote it.
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 		_, sent, err := h.l.Request(ctx, dc.fp, Frame{Kind: 300})
@@ -598,18 +603,12 @@ func TestRequestSentSemantics(t *testing.T) {
 		}
 
 		release()
-		// The writer drains the queue: it writes the two fillers and skips the
-		// canceled request. Read the two known frames, then hold a negative
-		// window for a third: the writer may already have taken the canceled
-		// request from the queue but not yet sent it when the queue empties, so
-		// a synchronous count alone can miss the late write.
 		for i := 0; i < 2; i++ {
 			if f := dc.recvPeer(t); f.GetKind() != 200 {
 				t.Fatalf("frame %d has kind %d, want the filler kind 200", i, f.GetKind())
 			}
 		}
 		dc.expectNoPeerFrame(t, 100*time.Millisecond)
-		// Supplement: the synchronous count once the queue drained.
 		dispatchWait(t, "the writer to drain the queue", func() bool { return len(dc.c.out) == 0 })
 		if frames := dc.link.sent(); len(frames) != 2 {
 			t.Fatalf("peer got %d frames, want the two fillers only", len(frames))
@@ -621,8 +620,6 @@ func TestRequestSentSemantics(t *testing.T) {
 		dc := h.attach(Fingerprint{1}, pairing.RoleDialer)
 		dc.awaitUp(t)
 
-		// Expire the deadline only after the frame reached the transport, so the
-		// Request is in the written state when it observes the deadline.
 		ctx := newManualDeadline()
 		res := make(chan requestResult, 1)
 		go func() {
@@ -658,6 +655,8 @@ func TestRequestSentSemantics(t *testing.T) {
 	})
 }
 
+// TestSendDoesNotBlockUnderTopicLock checks that Send returns ErrQueueFull
+// instead of blocking while the caller holds a lock.
 func TestSendDoesNotBlockUnderTopicLock(t *testing.T) {
 	h := newDispatchHarness(t)
 	SetTestKnobs(h.l, TestKnobs{SendQueueSize: 8})
@@ -701,6 +700,8 @@ func TestSendDoesNotBlockUnderTopicLock(t *testing.T) {
 	}
 }
 
+// TestPeerInfoObservedByRole checks that a dialer records the peer's alias and
+// advertised addresses while an acceptor records only the alias.
 func TestPeerInfoObservedByRole(t *testing.T) {
 	addrs := []config.AdvertisedAddr{
 		{Kind: config.AdvertisedKindDirect, Addr: "x"},
@@ -714,9 +715,8 @@ func TestPeerInfoObservedByRole(t *testing.T) {
 		dc.awaitUp(t)
 
 		dc.sendPeer(t, encodePeerInfo("b2", addrs))
-		// handlePeerInfo records the alias and the address list in two
-		// separate calls. Waiting on the alias alone can return in the window
-		// before the address list is recorded, so wait for both.
+		// handlePeerInfo records the alias and the addresses in separate calls,
+		// so wait for both.
 		h.peers.Wait(t, func() bool {
 			obs := h.peers.Observed(peer)
 			return len(obs.Aliases) == 1 && len(obs.AcceptorAddresses) == 1
@@ -743,9 +743,8 @@ func TestPeerInfoObservedByRole(t *testing.T) {
 	t.Run("acceptor", func(t *testing.T) {
 		h := newDispatchHarness(t)
 		peer := Fingerprint{4}
-		// A marker state frame behind the PeerInfo frame is the barrier: state
-		// frames of one connection are handled in arrival order, so the marker
-		// runs only after PeerInfo was fully processed.
+		// The marker state frame behind PeerInfo is the barrier: state frames of
+		// one connection are handled in arrival order.
 		processed := make(chan struct{})
 		h.l.HandleState(201, func(Fingerprint, Frame) { close(processed) })
 		dc := h.attach(peer, pairing.RoleAcceptor)
@@ -768,6 +767,8 @@ func TestPeerInfoObservedByRole(t *testing.T) {
 	})
 }
 
+// TestAnnounceAliasAndAddresses checks that AnnounceAlias reaches every
+// established link and AnnounceAddresses reaches only acceptors.
 func TestAnnounceAliasAndAddresses(t *testing.T) {
 	h := newDispatchHarness(t)
 	addrs := []config.AdvertisedAddr{
@@ -812,20 +813,15 @@ func TestAnnounceAliasAndAddresses(t *testing.T) {
 	if len(got) != len(addrs) || got[0] != addrs[0] || got[1] != addrs[1] {
 		t.Fatalf("announced addresses = %+v, want %+v", got, addrs)
 	}
-	// Supplement: AnnounceAddresses targets acceptors only, so the dialer must
-	// not have received a second announcement. The synchronous count is only a
-	// quick extra check; the negative window below is what catches a late frame.
 	dispatchWait(t, "the dialer writer to drain", func() bool { return len(dial.c.out) == 0 })
 	if got := len(dial.link.sent()); got != 1 {
 		t.Fatalf("dialer wrote %d frames, want only the alias announcement", got)
 	}
-	// Negative window: a frame queued after the check still shows up here.
 	dial.expectNoPeerFrame(t, 100*time.Millisecond)
 }
 
-// TestCloseWaitsForRequestHandler pins the promise that Close returns only
-// after every request handler returned. The handler holds a gate open, so a
-// Close that does not wait for it returns early and fails the test.
+// TestCloseWaitsForRequestHandler checks that Close returns only after every
+// request handler returned.
 func TestCloseWaitsForRequestHandler(t *testing.T) {
 	h := newDispatchHarness(t)
 	dc := h.attach(Fingerprint{7}, pairing.RoleAcceptor)
@@ -852,10 +848,6 @@ func TestCloseWaitsForRequestHandler(t *testing.T) {
 		close(closed)
 	}()
 
-	// Close must block until the handler returns. A correct Close waits for the
-	// handler and cannot return while the gate stays open, so this window only
-	// detects the bug and cannot fail a correct Close. There is no state that
-	// says "Close is blocked", so the window is the assertion, not a fallback.
 	select {
 	case <-closed:
 		close(gate)

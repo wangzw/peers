@@ -8,15 +8,12 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// errPipeClosed reports a frame stream whose both ends have been closed.
 var errPipeClosed = errors.New("link: pipe closed")
 
 // pipeBuffer is how many frames one direction of a pipe buffers before Send
 // blocks.
 const pipeBuffer = 64
 
-// pipeEnd is one end of an in-memory frame stream. It records the frames it
-// sent, can suspend Send, and signals when a goroutine is blocked in Recv.
 type pipeEnd struct {
 	in  chan *linkpb.Frame
 	out chan *linkpb.Frame
@@ -24,8 +21,6 @@ type pipeEnd struct {
 	mu         sync.Mutex
 	sentFrames []*linkpb.Frame
 
-	// blockSend, when non-nil, makes Send wait until the channel is closed.
-	// Tests set it before the goroutine that sends starts.
 	blockSend chan struct{}
 
 	closed    chan struct{}
@@ -35,7 +30,6 @@ type pipeEnd struct {
 	recvOnce *sync.Once
 }
 
-// newPipe returns the two ends of an in-memory bidirectional stream.
 func newPipe(t testing.TB) (a, b *pipeEnd) {
 	t.Helper()
 	ab := make(chan *linkpb.Frame, pipeBuffer)
@@ -56,8 +50,8 @@ func newPipe(t testing.TB) (a, b *pipeEnd) {
 	return a, b
 }
 
-// Send records f and hands it to the peer. It blocks while blockSend is set and
-// not closed, and while the peer's buffer is full.
+// Send records f and hands it to the peer, blocking while blockSend is set and
+// not closed and while the peer's buffer is full.
 func (p *pipeEnd) Send(f *linkpb.Frame) error {
 	if p.blockSend != nil {
 		select {
@@ -82,7 +76,7 @@ func (p *pipeEnd) Send(f *linkpb.Frame) error {
 	}
 }
 
-// Recv returns the next frame from the peer. It closes recvWaiting once a
+// Recv returns the next frame from the peer and closes recvWaiting once a
 // goroutine has to wait for one.
 func (p *pipeEnd) Recv() (*linkpb.Frame, error) {
 	select {
@@ -99,12 +93,11 @@ func (p *pipeEnd) Recv() (*linkpb.Frame, error) {
 	}
 }
 
-// closeBoth closes both ends. It is safe to call more than once.
+// closeBoth closes both ends; it is safe to call more than once.
 func (p *pipeEnd) closeBoth() {
 	p.closeOnce.Do(func() { close(p.closed) })
 }
 
-// sent returns a copy of the frames this end sent, in order.
 func (p *pipeEnd) sent() []*linkpb.Frame {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -113,13 +106,12 @@ func (p *pipeEnd) sent() []*linkpb.Frame {
 	return out
 }
 
-// recvWaiting is closed once a goroutine blocked in Recv on this end.
 func (p *pipeEnd) recvWaiting() <-chan struct{} {
 	return p.recvWait
 }
 
-// cloneFrame copies a frame so a test can inspect it after it was handed to
-// the stream.
+// cloneFrame copies a frame so a test can inspect it after it was handed to the
+// stream.
 func cloneFrame(f *linkpb.Frame) *linkpb.Frame {
 	if f == nil {
 		return nil

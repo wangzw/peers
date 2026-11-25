@@ -14,8 +14,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// recvPeerKind waits up to eventTimeout for the next frame of the given kind,
-// discarding other frames such as replies to the blocked handlers.
 func recvPeerKind(t *testing.T, dc *dispatchConn, kind FrameKind) *linkpb.Frame {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -34,8 +32,6 @@ func recvPeerKind(t *testing.T, dc *dispatchConn, kind FrameKind) *linkpb.Frame 
 	}
 }
 
-// waitConnClosed fails when the connection under test does not close within
-// eventTimeout.
 func waitConnClosed(t *testing.T, c *conn) {
 	t.Helper()
 	select {
@@ -45,8 +41,6 @@ func waitConnClosed(t *testing.T, c *conn) {
 	}
 }
 
-// waitLogEvent returns the first log entry whose message is msg, failing when
-// none appears within eventTimeout.
 func waitLogEvent(t *testing.T, logs *logBuffer, msg string) map[string]any {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -71,10 +65,8 @@ func waitLogEvent(t *testing.T, logs *logBuffer, msg string) map[string]any {
 	}
 }
 
-// TestStateQueueFrameLimitClosesLink reproduces the unbounded state-frame
-// queue: with the state handler blocked, a peer sends one frame more than the
-// queue holds. The connection must close with inbound_limit, and the close must
-// be audited and logged.
+// TestStateQueueFrameLimitClosesLink checks that a state-frame queue over its
+// frame count closes the connection with inbound_limit.
 func TestStateQueueFrameLimitClosesLink(t *testing.T) {
 	h := newDispatchHarness(t)
 	release := make(chan struct{})
@@ -112,8 +104,8 @@ func TestStateQueueFrameLimitClosesLink(t *testing.T) {
 		t.Errorf("log limit = %v, want state_frames", entry["limit"])
 	}
 
-	// The state handler still holds the consumer. Let it return so the teardown
-	// runs and the down event is audited.
+	// Let the state handler return so the teardown runs and the down event is
+	// audited.
 	unblock()
 	ev := h.settings.WaitEvent(t, config.EventLinkDown)
 	if ev.Detail != "inbound_limit" {
@@ -127,9 +119,8 @@ func TestStateQueueFrameLimitClosesLink(t *testing.T) {
 	}
 }
 
-// TestStateQueueByteLimitClosesLink reproduces the unbounded state-frame queue
-// measured in bytes: a few large frames exceed the byte limit while the frame
-// count stays low.
+// TestStateQueueByteLimitClosesLink checks that a few large state frames
+// exceeding the byte limit close the connection with inbound_limit.
 func TestStateQueueByteLimitClosesLink(t *testing.T) {
 	h := newDispatchHarness(t)
 	SetTestKnobs(h.l, TestKnobs{MaxStateBytes: 1024})
@@ -164,9 +155,8 @@ func TestStateQueueByteLimitClosesLink(t *testing.T) {
 	}
 }
 
-// TestRequestConcurrencyLimit reproduces the unbounded request goroutines: a
-// peer sends more request frames than one connection may handle at once while
-// the handler blocks. Only 64 may run.
+// TestRequestConcurrencyLimit checks that at most 64 request handlers run at
+// once for one peer.
 func TestRequestConcurrencyLimit(t *testing.T) {
 	h := newDispatchHarness(t)
 	var started atomic.Int32
@@ -193,9 +183,8 @@ func TestRequestConcurrencyLimit(t *testing.T) {
 	}
 }
 
-// TestRequestSlotFreedResumesInboundAndReplies proves the router resumes after
-// a slot frees: the 65th request starts, and a request from this side still
-// gets its reply over the same link.
+// TestRequestSlotFreedResumesInboundAndReplies checks that freeing a slot
+// starts the next handler and that a reply still arrives over the same link.
 func TestRequestSlotFreedResumesInboundAndReplies(t *testing.T) {
 	h := newDispatchHarness(t)
 	var started atomic.Int32
@@ -221,13 +210,10 @@ func TestRequestSlotFreedResumesInboundAndReplies(t *testing.T) {
 		t.Fatalf("%d request handlers started at once, want 64", got)
 	}
 
-	// Free exactly one slot. The router must read the pending frame and start
-	// the 65th handler.
+	// Free one slot so the router starts the 65th handler.
 	release <- struct{}{}
 	dispatchWait(t, "the 65th request handler", func() bool { return started.Load() == 65 })
 
-	// The router is reading again, so a reply to a request from this side
-	// arrives even while 64 handlers are running.
 	res := startRequest(h, dc.fp, 400)
 	req := recvPeerKind(t, dc, 400)
 	dc.sendPeer(t, &linkpb.Frame{Kind: 400, RequestId: req.GetRequestId(), IsReply: true, Payload: []byte("ok")})
@@ -237,10 +223,8 @@ func TestRequestSlotFreedResumesInboundAndReplies(t *testing.T) {
 	}
 }
 
-// TestRequestSlotsArePerPeerAcrossReconnect reproduces the per-connection
-// accounting: while one connection's 64 handlers are still running, the peer
-// reconnects. The new connection must share the peer's 64 slots, so no further
-// handler starts until the old ones return.
+// TestRequestSlotsArePerPeerAcrossReconnect checks that a replacement
+// connection shares the peer's 64 slots while the old handlers still run.
 func TestRequestSlotsArePerPeerAcrossReconnect(t *testing.T) {
 	h := newDispatchHarness(t)
 	var started atomic.Int32
@@ -259,9 +243,8 @@ func TestRequestSlotsArePerPeerAcrossReconnect(t *testing.T) {
 		first.sendPeer(t, &linkpb.Frame{Kind: 300, RequestId: uint64(i + 1)})
 	}
 	dispatchWait(t, "64 request handlers", func() bool { return started.Load() >= 64 })
-	// The replacement connection installs while those handlers still run,
-	// because install waits only for the old connection's consumers, not for
-	// its request handlers.
+	// install waits only for the old connection's consumers, not its request
+	// handlers.
 	second := h.attach(fp, pairing.RoleAcceptor)
 	second.awaitUp(t)
 
@@ -274,8 +257,6 @@ func TestRequestSlotsArePerPeerAcrossReconnect(t *testing.T) {
 	}
 }
 
-// requestSlotEntry returns the request-slot semaphore the link holds for fp and
-// whether it holds one at all.
 func requestSlotEntry(h *dispatchHarness, fp Fingerprint) (chan struct{}, bool) {
 	h.l.mu.Lock()
 	defer h.l.mu.Unlock()
@@ -283,11 +264,8 @@ func requestSlotEntry(h *dispatchHarness, fp Fingerprint) (chan struct{}, bool) 
 	return slots, ok
 }
 
-// TestRequestSlotsForgottenOnUnpair reproduces the slot table that kept an entry
-// for every peer ever installed: unpairing a peer must forget its semaphore, so
-// the table stays bounded by the paired peers. An entry whose handlers are still
-// running must survive until the last one returns, because a replacement
-// connection has to share those slots.
+// TestRequestSlotsForgottenOnUnpair checks that unpairing forgets the slot
+// entry once no handler holds it, and keeps it while one does.
 func TestRequestSlotsForgottenOnUnpair(t *testing.T) {
 	t.Run("no handler running", func(t *testing.T) {
 		h := newDispatchHarness(t)
@@ -331,9 +309,8 @@ func TestRequestSlotsForgottenOnUnpair(t *testing.T) {
 		}
 
 		h.l.Drop(fp)
-		// The running handler still holds its slot, so the entry must stay:
-		// forgetting it would let a re-pair hand the peer a second set of 64
-		// slots on top of the handlers that are still running.
+		// Forgetting the entry while a handler holds a slot would let a re-pair
+		// hand the peer a second set of 64 slots.
 		if _, ok := requestSlotEntry(h, fp); !ok {
 			t.Fatal("the slot entry was forgotten while a handler still held a slot")
 		}
@@ -346,12 +323,8 @@ func TestRequestSlotsForgottenOnUnpair(t *testing.T) {
 	})
 }
 
-// TestStateQueueCountsInflightBytes reproduces the byte accounting that drops a
-// frame's size too early: a frame the consumer is still handling must keep
-// counting toward the byte limit until its handler returns. The handler blocks
-// on the first frame while a second arrives; together they exceed the limit, so
-// the connection must close. If pop subtracted the first frame, both would fit
-// and the connection would stay open.
+// TestStateQueueCountsInflightBytes checks that a frame being handled keeps
+// counting toward the byte limit until its handler returns.
 func TestStateQueueCountsInflightBytes(t *testing.T) {
 	h := newDispatchHarness(t)
 	SetTestKnobs(h.l, TestKnobs{MaxStateBytes: 1024})
@@ -370,7 +343,7 @@ func TestStateQueueCountsInflightBytes(t *testing.T) {
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)
 	dc.awaitUp(t)
 
-	// 900 bytes fit; the consumer pops the frame and the handler blocks, so it
+	// The consumer pops the first frame and its handler blocks, so the frame
 	// stays inflight and must keep counting.
 	if err := dc.peer.Send(&linkpb.Frame{Kind: 200, Payload: make([]byte, 900)}); err != nil {
 		t.Fatalf("send the first frame: %v", err)
@@ -381,9 +354,6 @@ func TestStateQueueCountsInflightBytes(t *testing.T) {
 		t.Fatal("the state handler did not start on the first frame")
 	}
 
-	// A second 900-byte frame cannot fit while the first is inflight
-	// (900 + 900 > 1024). It would fit only if the pop already subtracted the
-	// first frame's bytes.
 	if err := dc.peer.Send(&linkpb.Frame{Kind: 200, Payload: make([]byte, 900)}); err != nil {
 		t.Fatalf("send the second frame: %v", err)
 	}

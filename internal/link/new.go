@@ -10,8 +10,10 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// New creates a Link. It starts no goroutines, binds no port and does not read
-// the peer table; work begins with Listen or Start.
+// New creates a Link that has not started working; it starts no goroutine,
+// binds no port and reads no peer table, and work begins with Listen or Start.
+// It returns an error and a nil *Link when Options.Peers or Options.Settings is
+// nil.
 func New(opts Options) (*Link, error) {
 	if opts.Peers == nil {
 		return nil, errors.New("cannot create the Link: Options.Peers is nil")

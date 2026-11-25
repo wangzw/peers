@@ -7,9 +7,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// configSettings is the Settings view over the process-wide configuration.
-// The function fields are test seams; nil means the corresponding config
-// package function.
+// configSettings is the Settings view over the process-wide configuration; a
+// nil function field means the corresponding config package function.
 type configSettings struct {
 	get        func(string) (config.Value, error)
 	advertised func() []config.AdvertisedAddr

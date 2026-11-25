@@ -8,11 +8,10 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// Start starts the dial loop of every peer this Broker is the dialing side of.
-// It creates the link record of every peer in the table, returns without
-// waiting for any dial, and does nothing when called again or after Close.
-// Records that were already established by an inbound connection are left as
-// they are.
+// Start makes the peers on which this side is the dialer begin dialing. It
+// creates the link record of every peer in the table, returns without waiting
+// for a dial, does nothing when called again or after Close, and leaves an
+// already established record unchanged.
 func (l *Link) Start() {
 	l.mu.Lock()
 	if l.started || l.closed {
@@ -22,8 +21,8 @@ func (l *Link) Start() {
 	l.started = true
 	l.mu.Unlock()
 
-	// The notifier delivers the up event of a link installed later, including
-	// one established by an inbound connection before Start.
+	// Starting the notifier here delivers up events posted before Start,
+	// including one from a connection an inbound handshake established.
 	l.notifier.start()
 
 	for _, peer := range l.peers.Peers() {
@@ -44,9 +43,8 @@ func (l *Link) Start() {
 	}
 }
 
-// localNetworks returns the local interface networks used to rank dial
-// candidates. A failing enumeration only loses the same-network preference; it
-// is not a reason to stop dialing.
+// A failing enumeration only loses the same-network preference, not a reason to
+// stop dialing.
 func (l *Link) localNetworks() []*net.IPNet {
 	f := l.localNets
 	if f == nil {
@@ -63,9 +61,9 @@ func (l *Link) localNetworks() []*net.IPNet {
 // startDialLoop starts the dial loop of one record. initial, when not nil, is a
 // connection that was already paired and must run before the first backoff,
 // even when Drop removed the record or canceled the loop context between
-// install and this call; startWithBackoff makes the loop wait one reconnect
-// interval before dialing, which is what a PairDial whose Hello exchange failed
-// uses. A loop that is already running for the same peer is canceled first.
+// install and this call. startWithBackoff makes the loop wait one reconnect
+// interval before dialing. A loop already running for the same peer is
+// canceled first.
 func (l *Link) startDialLoop(fp Fingerprint, initial *conn, delivered <-chan struct{}, startWithBackoff bool) {
 	l.mu.Lock()
 	rec := l.records[fp]
@@ -76,22 +74,19 @@ func (l *Link) startDialLoop(fp Fingerprint, initial *conn, delivered <-chan str
 			return
 		}
 		if closed {
-			// Close collected the connections in the records it could see; this
-			// one lost its record to Drop, so Close did not close it. Close it
-			// here before running it, or a buffered state frame would reach its
-			// handler after Close returned. It must not join wg either: Close
-			// may already be waiting on it.
+			// Close did not collect this connection: its record was lost to Drop,
+			// so close it before running it, or a buffered state frame would
+			// reach its handler after Close returned. It must not join wg either:
+			// Close may already be waiting on it.
 			l.mu.Unlock()
 			initial.closeAsync(FailConnectionLost)
 			l.runConn(initial, delivered)
 			return
 		}
-		// Drop removed the record after install but is still waiting for the
-		// state handler of the installed connection to exit. The connection
-		// must run regardless of the record: without it stateDone never
-		// closes, Drop blocks forever, onDown never fires and every later
-		// install of the peer waits on that Drop. No dial loop follows, since
-		// the peer is gone.
+		// The connection must run even though Drop removed the record: Drop
+		// waits for its state handler, so without it Drop blocks forever and
+		// every later install of the peer waits on that Drop. No dial loop
+		// follows, since the peer is gone.
 		l.wg.Add(1)
 		l.mu.Unlock()
 		go func() {
@@ -115,33 +110,23 @@ func (l *Link) startDialLoop(fp Fingerprint, initial *conn, delivered <-chan str
 		}
 		// install accepted the connection, so it must run whatever happened to
 		// the record or this loop's context since: Drop waits for its state
-		// handler before posting onDown, and every later install of the peer
-		// waits for that Drop. Running it only inside the loop, after the
-		// context check, left the peer stuck when Drop canceled the context
-		// before this goroutine was scheduled.
+		// handler before posting onDown.
 		if initial != nil {
 			l.runConn(initial, delivered)
-			// The connection that just ended was established, so the next dial
-			// waits one reconnect interval.
 			startWithBackoff = true
 		}
 		l.dialLoop(ctx, rec, startWithBackoff)
 	}()
 }
 
-// dialOutcome is the result of one dial round that the loop acts on.
 type dialOutcome int
 
 const (
-	roundEstablished dialOutcome = iota // the connection ran and ended
-	roundFailed                         // try again after a backoff
-	roundRejected                       // the peer does not know us; stop dialing
+	roundEstablished dialOutcome = iota
+	roundFailed
+	roundRejected
 )
 
-// dialLoop redials fp until the record disappears, the Link closes or the peer
-// rejects the Broker. The reconnect interval starts at the configured minimum
-// after a successful link ends or a failed round, and doubles with every
-// consecutive failure up to the configured maximum.
 func (l *Link) dialLoop(ctx context.Context, rec *record, startWithBackoff bool) {
 	failures := 0
 	for {
@@ -189,8 +174,6 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 
 	l.mu.Lock()
 	if l.staleLocked(rec) {
-		// A connection was installed by someone else, the peer was dropped, or
-		// the Link closed. This loop is stale.
 		l.mu.Unlock()
 		return roundRejected
 	}
@@ -211,8 +194,8 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 			continue
 		}
 		if id.fp != fp {
-			// A different Broker answers on this address. Nothing was sent over
-			// the stream, and the TLS peer already saw our certificate.
+			// A different Broker answers: send nothing; the TLS peer already saw
+			// our certificate.
 			_ = tc.Close()
 			continue
 		}
@@ -228,8 +211,7 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 
 		c, err := l.openClientStream(tc, id, addr)
 		if err != nil {
-			// openClientStream closed the transport on failure; try the next
-			// address.
+			// openClientStream closed the transport; try the next address.
 			continue
 		}
 		c.role = pairing.RoleDialer
@@ -277,8 +259,7 @@ func (l *Link) dialRound(ctx context.Context, rec *record) dialOutcome {
 	return roundFailed
 }
 
-// waitBackoff records the next dial time and waits for it, for Kick, or for the
-// loop context to end. It reports false when the loop must exit.
+// It reports false when the loop must exit.
 func (l *Link) waitBackoff(ctx context.Context, rec *record, failures int) bool {
 	// The interval bounds are read for every round, so a configuration change
 	// applies to the next one.
@@ -292,11 +273,9 @@ func (l *Link) waitBackoff(ctx context.Context, rec *record, failures int) bool 
 		return false
 	}
 
-	// The timer is armed before the backoff is published. A state observer that
-	// sees PhaseBackoff with this NextDial may advance the clock to it at once;
-	// arming the timer after the unlock would instead schedule it at the already
-	// advanced now+delay, with no later advance to fire it, and the loop would
-	// wait forever.
+	// Arm the timer before publishing the backoff: an observer that sees
+	// PhaseBackoff may advance the clock to NextDial at once, and a timer armed
+	// after the unlock would wait for an advance that never comes.
 	signal := make(chan struct{})
 	var once sync.Once
 	stop := l.clock.AfterFunc(delay, func() {

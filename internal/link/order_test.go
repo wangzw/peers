@@ -27,9 +27,8 @@ func assertAddresses(t *testing.T, got, want []string) {
 	}
 }
 
-// TestOrderCandidatesWalkthrough follows the walkthrough in design-link.md: the
-// last connected address goes first, then the address on a local network, then
-// the rest.
+// TestOrderCandidatesWalkthrough checks that the last connected address goes
+// first, then the address on a local network, then the rest.
 func TestOrderCandidatesWalkthrough(t *testing.T) {
 	addrs := []string{"203.0.113.5:17443", "10.0.0.5:17443"}
 	local := []*net.IPNet{mustCIDR(t, "10.0.0.0/24")}
@@ -41,9 +40,8 @@ func TestOrderCandidatesWalkthrough(t *testing.T) {
 	assertAddresses(t, got, []string{"10.0.0.5:17443", "203.0.113.5:17443"})
 }
 
-// TestOrderCandidatesLastNotInList keeps the last connected address even when
-// the peer advertises no candidate matching it, and does not duplicate it when
-// it is also a candidate.
+// TestOrderCandidatesLastNotInList checks that the last connected address is
+// kept when it is not a candidate and is not duplicated when it is one.
 func TestOrderCandidatesLastNotInList(t *testing.T) {
 	addrs := []string{"198.51.100.7:17443"}
 	local := []*net.IPNet{mustCIDR(t, "10.0.0.0/24")}
@@ -55,9 +53,9 @@ func TestOrderCandidatesLastNotInList(t *testing.T) {
 	assertAddresses(t, got, []string{"198.51.100.7:17443"})
 }
 
-// TestOrderCandidatesNamesAndIPv6 sorts host names and malformed addresses into
-// the rest group, while a bracketed IPv6 literal on a local network goes into
-// the same-network group.
+// TestOrderCandidatesNamesAndIPv6 checks that host names and malformed
+// addresses fall in the rest group while a bracketed local IPv6 literal does
+// not.
 func TestOrderCandidatesNamesAndIPv6(t *testing.T) {
 	addrs := []string{"a.example:1", "[fd00::5]:1", "not-a-host-port", "203.0.113.5:1"}
 	local := []*net.IPNet{mustCIDR(t, "fd00::/64")}
@@ -66,8 +64,8 @@ func TestOrderCandidatesNamesAndIPv6(t *testing.T) {
 	assertAddresses(t, got, []string{"[fd00::5]:1", "a.example:1", "not-a-host-port", "203.0.113.5:1"})
 }
 
-// TestBackoffDelaySequence doubles the delay from min to max and never wraps
-// around, which would make the dial loop spin.
+// TestBackoffDelaySequence checks that the delay doubles from min to max and
+// never wraps around.
 func TestBackoffDelaySequence(t *testing.T) {
 	const min, max = time.Second, 60 * time.Second
 	want := []time.Duration{
@@ -91,8 +89,7 @@ func TestBackoffDelaySequence(t *testing.T) {
 	}
 }
 
-// TestBackoffDelayMaxBelowMin returns min so a misconfigured range does not
-// produce a zero delay.
+// TestBackoffDelayMaxBelowMin checks that a max below min still returns min.
 func TestBackoffDelayMaxBelowMin(t *testing.T) {
 	if got := backoffDelay(3, 5*time.Second, time.Second); got != 5*time.Second {
 		t.Fatalf("backoffDelay(3, 5s, 1s) = %v, want 5s", got)

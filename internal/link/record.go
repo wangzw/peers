@@ -7,7 +7,7 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// record is the link state for one peer. Every field is guarded by Link.mu.
+// record is the link state for one peer; every field is guarded by Link.mu.
 type record struct {
 	fp          Fingerprint
 	role        pairing.Role
@@ -19,15 +19,14 @@ type record struct {
 	conn *conn
 	salt []byte
 
-	// kick signals the dial loop to end a backoff early. It has capacity one so
-	// Kick never blocks.
-	kick chan struct{}
-	// cancelLoop cancels the dial loop of this record, when one runs.
+	// kick signals the dial loop to end a backoff early; its capacity one keeps
+	// Kick from blocking.
+	kick       chan struct{}
 	cancelLoop context.CancelFunc
 }
 
-// Subscribe registers a pair of link up and down callbacks. Callbacks run in
-// subscription order on the notifier goroutine and must not be nil.
+// Subscribe registers a pair of link up and down callbacks that run in
+// subscription order on the notifier goroutine; neither may be nil.
 func (l *Link) Subscribe(onUp func(peer Fingerprint, salt []byte), onDown func(peer Fingerprint)) {
 	if onUp == nil || onDown == nil {
 		panic("link: Subscribe requires non-nil callbacks")
@@ -55,12 +54,11 @@ func (l *Link) State(peer Fingerprint) LinkState {
 	}
 }
 
-// Drop forgets the peer, its request-slot semaphore once no handler holds a
-// slot, and closes its connection, if any. It does not wait: the down
-// notification is posted by a goroutine once the state handler of the
-// connection exited. Dropping an absent peer has no effect and may be repeated,
-// and a repeated drop retries the slot cleanup. A peer whose handlers were
-// still running at the drop is forgotten when its last handler returns.
+// Drop forgets the peer and closes its connection without waiting; the down
+// notification is posted once the connection's state handler exited. It always
+// invalidates the drop generation an earlier install for that peer obtained, so
+// an install holding an old generation fails afterwards, and a drop may be
+// repeated.
 func (l *Link) Drop(peer Fingerprint) {
 	l.mu.Lock()
 	rec := l.records[peer]
@@ -96,8 +94,8 @@ func (l *Link) Drop(peer Fingerprint) {
 	}()
 }
 
-// Kick ends the backoff of a dialer peer early. It does nothing for accept-side
-// records, for links in any other phase, and after the queue holds a signal.
+// Kick ends the backoff of a dialer peer early; it does nothing for accept-side
+// records, other phases, or while a kick is already queued.
 func (l *Link) Kick(peer Fingerprint) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -111,22 +109,20 @@ func (l *Link) Kick(peer Fingerprint) {
 	}
 }
 
-// dropGeneration returns the current drop generation of peer. A handshake takes
-// it before installing and passes it back to install, so a Drop in between
-// prevents the stale connection from being installed.
+// dropGeneration returns the current drop generation of peer; a handshake takes
+// it before installing and passes it to install, so a Drop in between rejects
+// the stale connection.
 func (l *Link) dropGeneration(peer Fingerprint) uint64 {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.dropGen[peer]
 }
 
-// install makes c the current connection of peer. It waits for a connection it
-// replaces to finish and for an in-flight Drop of the same peer to complete. It
-// returns false when the Link closed or peer was dropped since gen was taken.
-//
-// The returned channel is closed after every onUp callback of the up event
-// returned; callers use it to hold back state frames until subscribers know the
-// link is up.
+// install makes c the current connection of peer, waiting for a replaced
+// connection and for an in-flight Drop of the same peer to finish; it returns
+// false when the Link closed or peer was dropped since gen was taken. The
+// returned channel is closed after every onUp callback returned, which holds
+// back state frames until subscribers know the link is up.
 func (l *Link) install(peer Fingerprint, role pairing.Role, c *conn, salt []byte, gen uint64) (<-chan struct{}, bool) {
 	var old *conn
 	for {
@@ -183,9 +179,8 @@ func (l *Link) install(peer Fingerprint, role pairing.Role, c *conn, salt []byte
 	}
 }
 
-// teardown records that c finished. The caller must have closed c.done() and
-// c.stateDone. A connection that was replaced or dropped in the meantime is
-// ignored.
+// teardown records that c finished; the caller must have closed c.done() and
+// c.stateDone, and a connection since replaced or dropped is ignored.
 func (l *Link) teardown(c *conn) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -205,7 +200,7 @@ func (l *Link) teardown(c *conn) {
 }
 
 // ensureRecord returns the record of peer, creating it with role and phase when
-// it does not exist. The caller must hold l.mu.
+// absent; the caller must hold l.mu.
 func (l *Link) ensureRecord(peer Fingerprint, role pairing.Role, phase Phase) *record {
 	if rec := l.records[peer]; rec != nil {
 		return rec
@@ -215,8 +210,8 @@ func (l *Link) ensureRecord(peer Fingerprint, role pairing.Role, phase Phase) *r
 	return rec
 }
 
-// setPhase changes the phase and last failure of rec. It does nothing when rec
-// has been replaced in the meantime. The caller must hold l.mu.
+// setPhase changes the phase and last failure of rec, and does nothing when rec
+// was replaced; the caller must hold l.mu.
 func (l *Link) setPhase(rec *record, phase Phase, failure FailReason) {
 	if l.records[rec.fp] != rec {
 		return

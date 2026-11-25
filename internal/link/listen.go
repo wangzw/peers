@@ -2,17 +2,14 @@ package link
 
 import "net"
 
-// acceptStream is the gRPC handler body of one accepted stream. It reads and
-// judges the first frame, which may first complete a pairing handshake, and
-// runs the connection when it became a link.
 func (l *Link) acceptStream(c *conn, t *trackedConn) {
 	if d, ok := l.serveInbound(c, t); ok {
 		l.runConn(c, d)
 	}
 }
 
-// Listen binds address and starts accepting inbound links. A host part that is
-// empty binds every local address; an empty address stops listening and leaves
+// Listen binds address and starts accepting inbound links. An empty host part
+// binds every local address; an empty address stops listening and leaves
 // established links alone. A bind failure is returned unchanged and the
 // previous listener keeps serving.
 func (l *Link) Listen(address string) error {

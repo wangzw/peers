@@ -19,27 +19,20 @@ import (
 )
 
 // MaxMessageSize is the largest frame either side accepts or sends. It applies
-// to the gRPC message, so a frame's payload is a little smaller. The same
-// constant is passed to grpc.MaxCallSendMsgSize and grpc.MaxSendMsgSize, and
-// checkFrameSize enforces it before a frame reaches the transport.
+// to the encoded gRPC message, so a frame's payload is a little smaller.
 const MaxMessageSize = 4 << 20
 
-// maxHeaderListSize is the largest HTTP/2 header list an inbound connection may
-// send. Link uses no custom metadata, so the limit does not affect an
-// established link; it only bounds what a pre-authentication connection can
-// make the server parse.
+// maxHeaderListSize bounds what a pre-authentication connection can make the
+// server parse; link uses no custom metadata.
 const maxHeaderListSize = 16 << 10
 
-// frameExceedsLimit reports whether f's encoded form is above MaxMessageSize.
-// The limit applies to the encoded message, so proto.Size is the matching
-// measure: it is the serialized length gRPC compares with MaxSendMsgSize, and no
-// compressor is configured on either side.
+// frameExceedsLimit measures the encoded message: proto.Size is the length gRPC
+// compares with MaxSendMsgSize, and no compressor is configured on either side.
 func frameExceedsLimit(f *linkpb.Frame) bool {
 	return proto.Size(f) > MaxMessageSize
 }
 
-// checkFrameSize rejects a frame the transport would refuse. The check runs
-// before the frame reaches the transport because a close that races with the
+// checkFrameSize runs before the transport because a close racing the
 // transport's own Send can replace ResourceExhausted with a generic
 // closed-connection error.
 func checkFrameSize(f *linkpb.Frame) error {
@@ -49,10 +42,8 @@ func checkFrameSize(f *linkpb.Frame) error {
 	return nil
 }
 
-// dialTLS opens a TCP connection and completes a TLS 1.3 handshake with the
-// peer's own TLS configuration. It does not check the fingerprint; the caller
-// does that before anything is sent. The dial timeout from settings bounds the
-// whole operation through a context canceled by the injected clock.
+// dialTLS does not check the fingerprint; the caller does that before anything
+// is sent.
 func (l *Link) dialTLS(ctx context.Context, address string) (*tls.Conn, peerIdentity, error) {
 	if l.onDial != nil {
 		l.onDial(address)
@@ -90,9 +81,8 @@ func (l *Link) dialTLS(ctx context.Context, address string) (*tls.Conn, peerIden
 	return tc, id, nil
 }
 
-// clientKeepalive returns the gRPC keepalive parameters for dialed links. The
-// probe interval is read from settings; gRPC raises intervals below ten
-// seconds to its own minimum.
+// clientKeepalive returns the gRPC keepalive parameters for dialed links; gRPC
+// raises a probe interval below ten seconds to its own minimum.
 func (l *Link) clientKeepalive() keepalive.ClientParameters {
 	return keepalive.ClientParameters{
 		Time:                l.settings.KeepaliveInterval(),
@@ -101,10 +91,9 @@ func (l *Link) clientKeepalive() keepalive.ClientParameters {
 	}
 }
 
-// openClientStream hands an already authenticated TLS connection to gRPC and
-// opens the single Connect stream on it. The abort function stops the stream,
-// closes the transport and closes the client connection without waiting; it is
-// safe to call repeatedly.
+// openClientStream hands an authenticated TLS connection to gRPC and opens the
+// single Connect stream on it. abort does not wait and is safe to call
+// repeatedly.
 func (l *Link) openClientStream(tc *tls.Conn, id peerIdentity, address string) (*conn, error) {
 	streamCtx, cancel := context.WithCancel(l.rootCtx)
 	var (
@@ -145,9 +134,8 @@ func (l *Link) openClientStream(tc *tls.Conn, id peerIdentity, address string) (
 }
 
 // newGRPCClientConn builds the gRPC client connection around an already
-// handshaked TLS connection. The dialer returns that connection exactly once;
-// later calls fail, so gRPC can never open a second transport behind link's
-// back.
+// handshaked TLS connection; the dialer returns that connection exactly once so
+// gRPC cannot open a second transport.
 func (l *Link) newGRPCClientConn(tc *tls.Conn, id peerIdentity, address string) (*grpc.ClientConn, error) {
 	var used atomic.Bool
 	dial := func(context.Context, string) (net.Conn, error) {
@@ -168,16 +156,13 @@ func (l *Link) newGRPCClientConn(tc *tls.Conn, id peerIdentity, address string) 
 	)
 }
 
-// isKnownPeer reports whether fp is in the peer table. serverCreds calls it
-// after the TLS handshake to decide whether the connection leaves the
-// stranger-source pool.
 func (l *Link) isKnownPeer(fp Fingerprint) bool {
 	return l.peers.Role(fp) != pairing.RoleUnknown
 }
 
-// serverOptions returns the gRPC server options for accepted links. The
-// keepalive parameters are read when the server is created, so a later
-// configuration change applies to the next server.
+// serverOptions returns the gRPC server options for accepted links; the
+// keepalive parameters are read when the server is created, so a configuration
+// change applies to the next server.
 func (l *Link) serverOptions() []grpc.ServerOption {
 	return []grpc.ServerOption{
 		grpc.Creds(serverCreds{cfg: l.peers.TLSConfig, known: l.isKnownPeer}),
@@ -197,17 +182,12 @@ func (l *Link) serverOptions() []grpc.ServerOption {
 	}
 }
 
-// newGRPCServer creates the gRPC server used by Listen and registers the
-// Connect handler on it. Each accepted connection is handed to onStream once,
-// as a conn, and the handler stays alive until that conn closes.
 func (l *Link) newGRPCServer(onStream func(c *conn, t *trackedConn)) *grpc.Server {
 	srv := grpc.NewServer(l.serverOptions()...)
 	linkpb.RegisterLinkServer(srv, &linkServer{link: l, onStream: onStream})
 	return srv
 }
 
-// linkServer is the linkpb.Link service. Its single Connect method is the only
-// stream a connection may carry.
 type linkServer struct {
 	linkpb.UnimplementedLinkServer
 	link     *Link

@@ -8,9 +8,10 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// The peer table must satisfy the narrow interface link depends on.
 var _ Peers = (*pairing.Pairing)(nil)
 
+// TestErrQueueFullIsNotEstablished checks that ErrQueueFull wraps
+// ErrNotEstablished one way only.
 func TestErrQueueFullIsNotEstablished(t *testing.T) {
 	if !errors.Is(ErrQueueFull, ErrNotEstablished) {
 		t.Fatalf("errors.Is(ErrQueueFull, ErrNotEstablished) = false, want true")
@@ -20,6 +21,8 @@ func TestErrQueueFullIsNotEstablished(t *testing.T) {
 	}
 }
 
+// TestUnsupportedErrorMessage checks the error text and that errors.As recovers
+// the unsupported kind.
 func TestUnsupportedErrorMessage(t *testing.T) {
 	e := &UnsupportedError{Kind: 301}
 	if got, want := e.Error(), "the peer does not support request kind 301"; got != want {

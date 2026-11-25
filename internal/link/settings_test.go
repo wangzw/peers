@@ -47,6 +47,8 @@ func newTestConfigSettings(values map[string]config.Value, logBuf *bytes.Buffer)
 	}
 }
 
+// TestConfigSettingsReadsKeys checks that each Settings method reads its key
+// and that Advertised returns a copy.
 func TestConfigSettingsReadsKeys(t *testing.T) {
 	values := map[string]config.Value{
 		"broker.alias":            {Kind: config.KindString, String: "alice"},
@@ -95,6 +97,8 @@ func TestConfigSettingsReadsKeys(t *testing.T) {
 	}
 }
 
+// TestConfigSettingsFallsBackOnError checks that defaults replace values that
+// are unavailable or of the wrong kind, and that each fallback is logged.
 func TestConfigSettingsFallsBackOnError(t *testing.T) {
 	keys := []string{"broker.alias"}
 	for _, d := range defaultDurationCases() {

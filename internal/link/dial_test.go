@@ -17,21 +17,16 @@ import (
 	"github.com/wangzw/peers/internal/testkit/linktest"
 )
 
-// unreachableAddr is a dial candidate the harness's dialer refuses to reach.
-// It is not a real endpoint: dialContext intercepts it and returns an error,
-// so a test that needs a failed dial does not depend on an ephemeral port
-// staying free after it was released.
+// unreachableAddr is intercepted by dialContext and fails the dial, so a test
+// that needs a failed dial does not depend on a port staying free.
 const unreachableAddr = "127.0.0.1:1"
 
-// dialEvent is one link up or down notification recorded by a dial harness.
 type dialEvent struct {
 	up   bool
 	peer Fingerprint
 	salt []byte
 }
 
-// dialHarness is a Link with fake dependencies, a started notifier and a
-// recording subscription. It also records the addresses handed to l.onDial.
 type dialHarness struct {
 	l        *Link
 	peers    *linktest.FakePeers
@@ -48,9 +43,6 @@ func newDialHarness(t *testing.T) *dialHarness {
 	return newDialHarnessWithClock(t, nil)
 }
 
-// newDialHarnessWithClock builds a harness whose Link uses wrap(clock) as its
-// time source when wrap is not nil. h.clock stays the fake clock the test
-// advances.
 func newDialHarnessWithClock(t *testing.T, wrap func(*linktest.FakeClock) Clock) *dialHarness {
 	t.Helper()
 	peers := linktest.NewFakePeers(t)
@@ -71,9 +63,6 @@ func newDialHarnessWithClock(t *testing.T, wrap func(*linktest.FakeClock) Clock)
 		t.Fatalf("New: %v", err)
 	}
 	h.l = l
-	// A dial to unreachableAddr fails deterministically, without a real
-	// connection and without depending on a released port; every other
-	// address reaches the real dialer.
 	l.dialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 		if address == unreachableAddr {
 			return nil, &net.OpError{Op: "dial", Net: network, Err: errors.New("connection refused")}
@@ -103,7 +92,6 @@ func (h *dialHarness) onDown(peer Fingerprint) {
 	h.mu.Unlock()
 }
 
-// recordDial is the OnDial hook.
 func (h *dialHarness) recordDial(address string) {
 	h.mu.Lock()
 	h.dialed = append(h.dialed, address)
@@ -132,7 +120,6 @@ func (h *dialHarness) waitDialCount(t *testing.T, n int) {
 	waitFor(t, func() bool { return h.dialCount() >= n })
 }
 
-// waitEventCount waits until at least n up or down events were delivered.
 func (h *dialHarness) waitEventCount(t *testing.T, n int) []dialEvent {
 	t.Helper()
 	waitFor(t, func() bool {
@@ -145,8 +132,6 @@ func (h *dialHarness) waitEventCount(t *testing.T, n int) []dialEvent {
 	return append([]dialEvent(nil), h.events...)
 }
 
-// waitUp waits until the peer's first up event was delivered and returns its
-// salt. The events must already contain it.
 func (h *dialHarness) waitUp(t *testing.T, peer Fingerprint) []byte {
 	t.Helper()
 	waitFor(t, func() bool {
@@ -197,7 +182,6 @@ func (h *dialHarness) state(peer Fingerprint) LinkState {
 	return h.l.State(peer)
 }
 
-// waitState waits until cond holds for the link state of peer and returns it.
 func (h *dialHarness) waitState(t *testing.T, peer Fingerprint, what string, cond func(LinkState) bool) LinkState {
 	t.Helper()
 	waitFor(t, func() bool { return cond(h.l.State(peer)) })
@@ -208,9 +192,6 @@ func (h *dialHarness) waitState(t *testing.T, peer Fingerprint, what string, con
 	return st
 }
 
-// waitWorkers waits until every goroutine the Link joined to its WaitGroup
-// returned: the dial loops and the request handlers. Use it after the peer was
-// dropped or rejected to prove that no dial can follow.
 func (h *dialHarness) waitWorkers(t *testing.T) {
 	t.Helper()
 	done := make(chan struct{})
@@ -234,8 +215,6 @@ func (h *dialHarness) hasEvent(kind config.EventKind) bool {
 	return false
 }
 
-// serveAcceptor serves h's gRPC endpoint on a loopback port with the standard
-// inbound handler, so this work item does not depend on Listen.
 func serveAcceptor(t *testing.T, h *dialHarness) string {
 	return serveAcceptorWith(t, h, nil)
 }
@@ -264,6 +243,9 @@ func serveAcceptorWith(t *testing.T, h *dialHarness, onStream func(c *conn, tr *
 	return raw.Addr().String()
 }
 
+// TestREQBrokerPairing019_StartDialsDialerPeersImmediately checks that Start
+// dials every peer this side is the dialer of and never dials an
+// acceptor-side peer.
 func TestREQBrokerPairing019_StartDialsDialerPeersImmediately(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
@@ -274,7 +256,6 @@ func TestREQBrokerPairing019_StartDialsDialerPeersImmediately(t *testing.T) {
 	dialer.peers.Add(acceptorFP, pairing.RoleDialer, "acceptor", addr)
 	acceptor.peers.Add(dialerFP, pairing.RoleAcceptor, "dialer")
 
-	// A peer this Broker is the acceptor of must never be dialed.
 	otherFP := linktest.NewIdentity(t).Fingerprint
 	dialer.peers.Add(otherFP, pairing.RoleAcceptor, "other")
 
@@ -292,6 +273,8 @@ func TestREQBrokerPairing019_StartDialsDialerPeersImmediately(t *testing.T) {
 	}
 }
 
+// TestDialOrderUsesLastConnectedFirst checks that a dial round tries the last
+// connected address first.
 func TestDialOrderUsesLastConnectedFirst(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
@@ -313,6 +296,8 @@ func TestDialOrderUsesLastConnectedFirst(t *testing.T) {
 	}
 }
 
+// TestFingerprintMismatchSkipsAddress checks that an address whose certificate
+// fingerprint is not the peer's is abandoned and the next one is tried.
 func TestFingerprintMismatchSkipsAddress(t *testing.T) {
 	dialer := newDialHarness(t)
 	target := newDialHarness(t)
@@ -341,6 +326,9 @@ func TestFingerprintMismatchSkipsAddress(t *testing.T) {
 	}
 }
 
+// TestAllCandidatesFailBackoff checks that a round in which every candidate
+// fails enters backoff, with the interval doubling and the timer armed for the
+// published NextDial.
 func TestAllCandidatesFailBackoff(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
@@ -370,8 +358,6 @@ func TestAllCandidatesFailBackoff(t *testing.T) {
 		t.Fatalf("next dial = %v, want %v", second.NextDial, want)
 	}
 
-	// The timer must be armed for the same instant the state reports; a timer
-	// armed with any other interval would fire before or after NextDial.
 	dialer.clock.WaitPending(t, 1)
 	earliest, ok := dialer.clock.Earliest()
 	if !ok {
@@ -382,9 +368,8 @@ func TestAllCandidatesFailBackoff(t *testing.T) {
 	}
 }
 
-// delayedAfterFuncClock delays every timer registration. It widens the window
-// between a backoff becoming visible to a state observer and its timer being
-// armed, so a test can tell whether the two were published together.
+// delayedAfterFuncClock delays every timer registration, widening the window
+// between a backoff becoming visible and its timer being armed.
 type delayedAfterFuncClock struct {
 	Clock
 	delay time.Duration
@@ -396,11 +381,7 @@ func (c delayedAfterFuncClock) AfterFunc(d time.Duration, f func()) func() bool 
 }
 
 // TestBackoffTimerIsRegisteredWhenPhaseIsVisible checks that a dialer which
-// publishes PhaseBackoff with a NextDial has already armed the timer that ends
-// the backoff. An observer that sees the phase advances the clock to NextDial;
-// a timer armed only after the phase became visible would be scheduled at the
-// already advanced now+delay, never fire without a second advance, and leave
-// the dial loop waiting forever.
+// publishes PhaseBackoff has already armed the timer that ends the backoff.
 func TestBackoffTimerIsRegisteredWhenPhaseIsVisible(t *testing.T) {
 	dialer := newDialHarnessWithClock(t, func(c *linktest.FakeClock) Clock {
 		return delayedAfterFuncClock{Clock: c, delay: 250 * time.Millisecond}
@@ -417,6 +398,8 @@ func TestBackoffTimerIsRegisteredWhenPhaseIsVisible(t *testing.T) {
 	dialer.waitDialCount(t, before+1)
 }
 
+// TestKickEndsBackoff checks that Kick makes a dial loop in backoff dial at
+// once.
 func TestKickEndsBackoff(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
@@ -432,13 +415,14 @@ func TestKickEndsBackoff(t *testing.T) {
 	dialer.waitDialCount(t, before+1)
 }
 
+// TestREQBrokerPairing035_RejectedStopsRedialing checks that a peer rejecting
+// with not-a-peer moves the link to rejected, audits it and stops dialing.
 func TestREQBrokerPairing035_RejectedStopsRedialing(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
 	addr := serveAcceptor(t, acceptor)
 
 	acceptorFP := acceptor.peers.Fingerprint()
-	// The acceptor does not know the dialer, so it answers Reject{NOT_A_PEER}.
 	dialer.peers.Add(acceptorFP, pairing.RoleDialer, "acceptor", addr)
 
 	dialer.start()
@@ -478,6 +462,8 @@ func TestREQBrokerPairing035_RejectedStopsRedialing(t *testing.T) {
 	}
 }
 
+// TestRoleMismatchBacksOff checks that a role mismatch puts the dialer into
+// backoff and it dials again after the interval.
 func TestRoleMismatchBacksOff(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
@@ -486,7 +472,6 @@ func TestRoleMismatchBacksOff(t *testing.T) {
 	dialerFP := dialer.peers.Fingerprint()
 	acceptorFP := acceptor.peers.Fingerprint()
 	dialer.peers.Add(acceptorFP, pairing.RoleDialer, "acceptor", addr)
-	// Both sides have the other as the dialing side.
 	acceptor.peers.Add(dialerFP, pairing.RoleDialer, "dialer")
 
 	dialer.start()
@@ -504,11 +489,8 @@ func TestRoleMismatchBacksOff(t *testing.T) {
 	dialer.waitDialCount(t, before+1)
 }
 
-// A link that was established and then breaks can only end with
-// connection_lost: the transport reported the error, and a malformed frame on
-// a running link is logged and dropped instead of failing the link. The
-// protocol reason can only come out of the handshake, which finished before
-// the link was established.
+// TestREQBrokerPairing018_ReconnectAfterOutage checks that a dialer backs off
+// with connection_lost after an outage and reconnects after the interval.
 func TestREQBrokerPairing018_ReconnectAfterOutage(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
@@ -550,6 +532,8 @@ func TestREQBrokerPairing018_ReconnectAfterOutage(t *testing.T) {
 	}
 }
 
+// TestBackoffCappedOverManyFailures checks that the backoff interval stays
+// within the configured maximum over many failures.
 func TestBackoffCappedOverManyFailures(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
@@ -570,6 +554,8 @@ func TestBackoffCappedOverManyFailures(t *testing.T) {
 	}
 }
 
+// TestBackoffReadsSettingsEachTime checks that a reconnect bound changed during
+// a backoff applies to the next round.
 func TestBackoffReadsSettingsEachTime(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint
@@ -588,15 +574,13 @@ func TestBackoffReadsSettingsEachTime(t *testing.T) {
 	st := dialer.waitState(t, fp, "second backoff", func(st LinkState) bool {
 		return st.Phase == PhaseBackoff && st.NextDial.After(dialer.clock.Now())
 	})
-	// One consecutive failure: the new minimum doubles to six seconds.
 	if want := dialer.clock.Now().Add(6 * time.Second); !st.NextDial.Equal(want) {
 		t.Fatalf("next dial = %v, want %v", st.NextDial, want)
 	}
 }
 
 // TestSuccessResetsBackoff checks that an established link resets the doubling
-// backoff. Two failed rounds come first, so a link that comes back and then
-// breaks must wait reconnect_min again instead of four times it.
+// backoff to the configured minimum.
 func TestSuccessResetsBackoff(t *testing.T) {
 	dialer := newDialHarness(t)
 	acceptor := newDialHarness(t)
@@ -621,15 +605,12 @@ func TestSuccessResetsBackoff(t *testing.T) {
 		t.Fatalf("second next dial = %v, want %v", second.NextDial, want)
 	}
 
-	// Point the peer at a reachable address and let the second backoff expire.
 	dialer.peers.SetCandidates(acceptorFP, []string{proxy.Addr()}, "")
 	dialer.clock.WaitPending(t, 1)
 	dialer.clock.Advance(2 * time.Second)
 	dialer.waitUp(t, acceptorFP)
 	acceptor.waitUp(t, dialerFP)
 
-	// The link breaks again: with the failure count reset by the success, the
-	// next backoff is reconnect_min, not a continuation of the doubling.
 	proxy.CloseConns()
 	waitFor(t, func() bool { return dialer.downCount(acceptorFP) >= 1 })
 	st := dialer.waitState(t, acceptorFP, "backoff after outage", func(st LinkState) bool {
@@ -640,12 +621,9 @@ func TestSuccessResetsBackoff(t *testing.T) {
 	}
 }
 
-// TestPairDialRunsConnAfterDrop checks that a connection PairDial already
-// installed still runs after Drop removes the link record between install and
-// the start of the dial loop. Drop posts onDown only after the connection's
-// state handler exits, so a connection that never runs blocks Drop forever,
-// leaves the down notification unsent and makes every later install of the
-// same peer wait on the unfinished Drop.
+// TestPairDialRunsConnAfterDrop checks that a connection PairDial installed
+// still runs after Drop removes the record, so Drop's down notification
+// completes.
 func TestPairDialRunsConnAfterDrop(t *testing.T) {
 	dialer, acceptor, addr := pairHarness(t)
 	acceptorFP := acceptor.peers.Fingerprint()
@@ -655,7 +633,6 @@ func TestPairDialRunsConnAfterDrop(t *testing.T) {
 		if fp != acceptorFP {
 			return
 		}
-		// ObserveConnected runs between install and startDialLoop.
 		dropOnce.Do(func() { dialer.l.Drop(fp) })
 	})
 
@@ -665,7 +642,6 @@ func TestPairDialRunsConnAfterDrop(t *testing.T) {
 
 	waitFor(t, func() bool { return dialer.downCount(acceptorFP) >= 1 })
 
-	// Drop has finished by now; pairing the peer again must not wait on it.
 	dialed := make(chan error, 1)
 	go func() {
 		dialed <- dialer.l.PairDial(context.Background(), addr, linktest.FakePairRun(dialer.peers, "acceptor"))
@@ -692,12 +668,8 @@ func TestPairDialRunsConnAfterDrop(t *testing.T) {
 	}
 }
 
-// TestClosedDialLoopClosesInitialConnection covers the closed branch of
-// startDialLoop. When Drop removed the record and Close ran before PairDial
-// reached the loop, the installed connection belongs to no record, so Close
-// never collected and closed it. The loop must close the connection before
-// running it, or a buffered state frame reaches its handler after Close
-// returned, breaking the promise that Close ends every frame handler.
+// TestClosedDialLoopClosesInitialConnection checks that startDialLoop closes an
+// initial connection Close never collected before running it.
 func TestClosedDialLoopClosesInitialConnection(t *testing.T) {
 	h := newDialHarness(t)
 	var (
@@ -713,8 +685,6 @@ func TestClosedDialLoopClosesInitialConnection(t *testing.T) {
 	fp := Fingerprint{0xC1}
 	c = newConn(nil, nil, peerIdentity{fp: fp}, 8)
 	c.in <- &linkpb.Frame{Kind: 200}
-	// Close stopped the notifier, which releases the up event and closes its
-	// delivered channel, as Close did before startDialLoop runs here.
 	delivered := make(chan struct{})
 	close(delivered)
 	h.l.startDialLoop(fp, c, delivered, false)
@@ -724,6 +694,8 @@ func TestClosedDialLoopClosesInitialConnection(t *testing.T) {
 	}
 }
 
+// TestDropStopsDialLoop checks that Drop removes the record, stops the dial loop
+// and cancels its timer.
 func TestDropStopsDialLoop(t *testing.T) {
 	dialer := newDialHarness(t)
 	fp := linktest.NewIdentity(t).Fingerprint

@@ -9,31 +9,10 @@ import (
 	"time"
 )
 
-// maxKnownPerPeer is the number of unauthenticated connections the known-peer
-// pool keeps for one fingerprint. A third connection for the same fingerprint
-// closes the oldest one.
 const maxKnownPerPeer = 2
 
-// maxUnauthenticatedReadBytes is the number of bytes a connection may read
-// from its raw socket before it authenticates. It covers the TLS handshake,
-// the HTTP/2 preface and frames, and the first link frame. Once the connection
-// leaves the registry, reads are no longer counted.
 const maxUnauthenticatedReadBytes = 64 << 10
 
-// unauthRegistry tracks inbound connections until the peer behind them is
-// authenticated. It enforces three limits from the design: a connection that
-// has not sent its first frame within firstFrame is closed; the number of
-// unauthenticated connections from one source never exceeds maxPerSource; and
-// the total never exceeds max. When a source is over its own limit, that
-// source's oldest connection is closed. When the total is over max, the oldest
-// connection of the source with the most connections is closed, so a source
-// that floods the pool spends its own connections before anyone else's.
-//
-// A connection whose TLS fingerprint is already in the peer table moves to the
-// known-peer pool, which neither limit counts; a stranger flood then cannot
-// evict a paired peer that is reconnecting. That pool holds at most
-// maxKnownPerPeer connections per fingerprint, and the first-frame deadline
-// still applies to it.
 type unauthRegistry struct {
 	mu           sync.Mutex
 	conns        list.List // of *trackedConn from stranger sources, oldest first
@@ -44,8 +23,7 @@ type unauthRegistry struct {
 	logger       *slog.Logger
 	afterFunc    func(time.Duration, func()) func() bool
 	// onRead, when not nil, receives the bytes an accepted connection has read
-	// so far. Tests use it to observe the read budget without polling. It is
-	// set before the listener starts and never changes afterwards.
+	// so far; it is set before the listener starts and never changed.
 	onRead func(total int64)
 }
 
@@ -62,8 +40,6 @@ func newUnauthRegistry(max, maxPerSource int, firstFrame time.Duration, logger *
 	}
 }
 
-// track registers c as unauthenticated and starts its first-frame deadline.
-// The caller receives the tracked wrapper and should use it in place of c.
 func (r *unauthRegistry) track(c net.Conn) *trackedConn {
 	source := ""
 	if addr := c.RemoteAddr(); addr != nil {
@@ -98,19 +74,13 @@ func (r *unauthRegistry) track(c net.Conn) *trackedConn {
 	return t
 }
 
-// count returns the number of connections in the stranger-source pool. The
-// known-peer pool is not included: it is bounded per fingerprint by
-// maxKnownPerPeer and has no global cap. Tests read the known pool directly
-// under the registry lock.
 func (r *unauthRegistry) count() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.conns.Len()
 }
 
-// evict enforces the per-source and global limits after t joined the registry.
-// At most one connection is closed for each limit, and the raw connections are
-// closed and logged outside the registry lock.
+// evict closes the raw connections and logs outside the registry lock.
 func (r *unauthRegistry) evict(t *trackedConn) {
 	type victim struct {
 		source string
@@ -142,17 +112,14 @@ func (r *unauthRegistry) evict(t *trackedConn) {
 	}
 }
 
-// evictLocked marks v closed and removes it from the registry, returning its
-// timer stop function. Caller holds reg.mu and must call the stop function
-// outside the lock.
+// Caller holds r.mu and must call the returned stop function outside it.
 func (r *unauthRegistry) evictLocked(v *trackedConn) func() bool {
 	v.closed = true
 	v.detachLocked()
 	return v.stopTimerLocked()
 }
 
-// countSourceLocked returns the number of tracked connections from source.
-// Caller holds reg.mu.
+// Caller holds r.mu.
 func (r *unauthRegistry) countSourceLocked(source string) int {
 	n := 0
 	for e := r.conns.Front(); e != nil; e = e.Next() {
@@ -163,8 +130,7 @@ func (r *unauthRegistry) countSourceLocked(source string) int {
 	return n
 }
 
-// oldestOfSourceLocked returns the oldest tracked connection from source.
-// Caller holds reg.mu.
+// Caller holds r.mu.
 func (r *unauthRegistry) oldestOfSourceLocked(source string) *trackedConn {
 	for e := r.conns.Front(); e != nil; e = e.Next() {
 		if t := e.Value.(*trackedConn); t.source == source {
@@ -174,10 +140,7 @@ func (r *unauthRegistry) oldestOfSourceLocked(source string) *trackedConn {
 	return nil
 }
 
-// oldestOfBusiestSourceLocked returns the earliest connection of the source
-// with the most tracked connections. Ties go to the source whose earliest
-// connection is earliest, found by taking the first element of the oldest-first
-// list whose source has the maximum count. Caller holds reg.mu.
+// Caller holds r.mu; ties go to the source whose earliest connection is oldest.
 func (r *unauthRegistry) oldestOfBusiestSourceLocked() *trackedConn {
 	counts := make(map[string]int)
 	maxCount := 0
@@ -199,39 +162,32 @@ func (r *unauthRegistry) oldestOfBusiestSourceLocked() *trackedConn {
 	return nil
 }
 
-// trackedConn is an inbound connection under the first-frame deadline. All of
-// its mutable state is guarded by reg.mu so that authentication and eviction
-// cannot interleave: whichever reaches the lock first decides the outcome.
+// The non-atomic mutable fields (elem, source, fp, known, timer, seen, closed,
+// claimed) are guarded by reg.mu.
 type trackedConn struct {
 	net.Conn
 
 	reg    *unauthRegistry
 	elem   *list.Element // nil once detached from the registry
-	source string        // sourcePrefix of the remote address; "" groups unknown sources together
-	fp     Fingerprint   // fingerprint once the connection moved to the known-peer pool
-	known  bool          // true while the connection is in the known-peer pool
+	source string
+	fp     Fingerprint
+	known  bool
 
 	timer   func() bool // first-frame deadline; nil when none is pending
 	seen    bool
 	closed  bool
 	claimed bool
 
-	// readBytes counts bytes read from the raw connection while counting is
-	// true, that is, until the connection leaves the registry. Both are atomic
-	// so the read path never takes the registry lock after authentication.
+	// Both counters are atomic so the read path never takes the registry lock
+	// after authentication.
 	readBytes atomic.Int64
 	counting  atomic.Bool
-	// observedReads accumulates every byte read from the raw connection for
-	// the test-only onRead callback. It is used only when onRead is set.
+	// observedReads is the test-only total for onRead, used only when onRead is set.
 	observedReads atomic.Int64
 }
 
-// Read counts the bytes the raw connection delivers while it is still in the
-// registry. The TLS handshake, the HTTP/2 preface and every frame go through
-// this method, so a connection cannot make the host buffer more than
-// maxUnauthenticatedReadBytes before it authenticates. Once the connection
-// leaves the registry, the check is one atomic load and the read path no
-// longer takes the registry lock.
+// Every byte read before authentication goes through here, including the TLS
+// handshake and the HTTP/2 preface.
 func (t *trackedConn) Read(p []byte) (int, error) {
 	n, err := t.Conn.Read(p)
 	if n > 0 && t.counting.Load() {
@@ -239,18 +195,15 @@ func (t *trackedConn) Read(p []byte) (int, error) {
 			t.closeForByteBudget()
 		}
 	}
-	// The observer runs after the budget check, so a test that waits for it
-	// sees the close already decided when the byte budget was exceeded.
+	// The observer runs after the budget check, so a waiting test sees the
+	// close already decided when the byte budget was exceeded.
 	if n > 0 && t.reg.onRead != nil {
 		t.reg.onRead(t.observedReads.Add(int64(n)))
 	}
 	return n, err
 }
 
-// closeForByteBudget closes a connection that read past the pre-authentication
-// budget. It closes the raw connection and writes the Debug record outside the
-// registry lock. A connection that already left the registry, or that another
-// path closed first, is left alone.
+// closeForByteBudget closes the raw connection and logs outside the registry lock.
 func (t *trackedConn) closeForByteBudget() {
 	r := t.reg
 	r.mu.Lock()
@@ -271,13 +224,8 @@ func (t *trackedConn) closeForByteBudget() {
 	r.logger.Debug("link: closed an unauthenticated connection", "source", source, "cause", "byte_budget")
 }
 
-// promoteKnown moves t from the stranger-source pool to the known-peer pool,
-// which neither the per-source nor the global limit counts. The first-frame
-// deadline keeps running. When the fingerprint already holds maxKnownPerPeer
-// connections, the oldest one is closed with cause known_peer_limit.
-//
-// The caller decides whether fp is in the peer table before calling, outside
-// the registry lock: this method takes the lock but never calls Peers.
+// The caller decides whether fp is known before calling; this method takes the
+// lock but never calls Peers.
 func (t *trackedConn) promoteKnown(fp Fingerprint) {
 	r := t.reg
 	var (
@@ -311,8 +259,7 @@ func (t *trackedConn) promoteKnown(fp Fingerprint) {
 	}
 }
 
-// countKnownOfFingerprintLocked returns the number of known-peer connections
-// for fp. Caller holds reg.mu.
+// Caller holds r.mu.
 func (r *unauthRegistry) countKnownOfFingerprintLocked(fp Fingerprint) int {
 	n := 0
 	for e := r.known.Front(); e != nil; e = e.Next() {
@@ -323,8 +270,7 @@ func (r *unauthRegistry) countKnownOfFingerprintLocked(fp Fingerprint) int {
 	return n
 }
 
-// oldestKnownOfFingerprintLocked returns the oldest known-peer connection for
-// fp. Caller holds reg.mu.
+// Caller holds r.mu.
 func (r *unauthRegistry) oldestKnownOfFingerprintLocked(fp Fingerprint) *trackedConn {
 	for e := r.known.Front(); e != nil; e = e.Next() {
 		if t := e.Value.(*trackedConn); t.fp == fp {
@@ -334,8 +280,6 @@ func (r *unauthRegistry) oldestKnownOfFingerprintLocked(fp Fingerprint) *tracked
 	return nil
 }
 
-// firstFrameSeen records that the peer sent its first frame. The connection
-// stays counted as unauthenticated but is no longer closed by the deadline.
 func (t *trackedConn) firstFrameSeen() {
 	r := t.reg
 	r.mu.Lock()
@@ -352,8 +296,6 @@ func (t *trackedConn) firstFrameSeen() {
 	}
 }
 
-// authenticated removes the connection from the registry. It is no longer
-// counted or eligible for eviction, and its deadline no longer applies.
 func (t *trackedConn) authenticated() {
 	r := t.reg
 	r.mu.Lock()
@@ -370,8 +312,7 @@ func (t *trackedConn) authenticated() {
 	}
 }
 
-// Close is idempotent. It removes the connection from the registry and closes
-// the raw connection outside the registry lock.
+// Close is idempotent and closes the raw connection outside the registry lock.
 func (t *trackedConn) Close() error {
 	r := t.reg
 	r.mu.Lock()
@@ -390,9 +331,6 @@ func (t *trackedConn) Close() error {
 	return t.Conn.Close()
 }
 
-// claimStream reports whether this is the first call. A tracked connection may
-// carry only one gRPC stream, so later calls are refused before they can skip
-// the first-frame check.
 func (t *trackedConn) claimStream() bool {
 	r := t.reg
 	r.mu.Lock()
@@ -404,7 +342,6 @@ func (t *trackedConn) claimStream() bool {
 	return true
 }
 
-// deadline runs when the first-frame timer fires.
 func (t *trackedConn) deadline() {
 	r := t.reg
 	r.mu.Lock()
@@ -420,7 +357,7 @@ func (t *trackedConn) deadline() {
 	_ = t.Conn.Close()
 }
 
-// detachLocked removes t from whichever pool holds it. Caller holds reg.mu.
+// detachLocked removes t from whichever pool holds it. Caller holds t.reg.mu.
 func (t *trackedConn) detachLocked() {
 	if t.elem != nil {
 		if t.known {
@@ -430,20 +367,18 @@ func (t *trackedConn) detachLocked() {
 		}
 		t.elem = nil
 	}
-	// Leaving the registry ends the read budget: reads after this point are
-	// not counted and do not take the registry lock.
+	// Leaving the registry ends the read budget: later reads are not counted
+	// and do not take the registry lock.
 	t.counting.Store(false)
 }
 
-// stopTimerLocked clears the recorded timer and returns its stop function.
-// Caller holds reg.mu and must call the returned function outside the lock.
+// Caller holds t.reg.mu and must call the returned function outside it.
 func (t *trackedConn) stopTimerLocked() func() bool {
 	stop := t.timer
 	t.timer = nil
 	return stop
 }
 
-// trackingListener wraps a listener so every accepted connection is tracked.
 type trackingListener struct {
 	net.Listener
 	reg *unauthRegistry

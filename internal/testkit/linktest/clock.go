@@ -7,13 +7,6 @@ import (
 	"time"
 )
 
-// eventTimeout is the package-wide fallback for every real-time wait in this
-// package's tests, including FakeClock.waitUntil and the proxy forwarding
-// checks. It only decides how long a wait that will never complete takes to
-// fail: the success path selects on the event itself and never spends this
-// time, so a larger value costs nothing. Thirty seconds is far above the worst
-// normal latency under a loaded runner; it is not a claim that an event should
-// take that long.
 const eventTimeout = 30 * time.Second
 
 // FakeClock is a manually advanced time source. Tests call Advance to make
@@ -46,16 +39,9 @@ func (c *FakeClock) Now() time.Time {
 	return c.now
 }
 
-// AfterFunc registers f to run at Now()+d and returns a stop function.
-//
-// A non-positive d runs f immediately in a new goroutine; the returned stop
-// function then reports false. For a positive d the stop function cancels the
-// timer and reports true when the timer had not fired yet, and reports false
-// once it has fired or was already stopped.
-//
-// Advance runs due callbacks one at a time in deadline order, each in its own
-// goroutine: a callback that blocks delays later callbacks but never Advance
-// itself.
+// AfterFunc registers f to run at Now()+d and returns a stop function that
+// reports whether it cancelled the timer before it fired. A non-positive d runs
+// f immediately in a new goroutine and the stop function reports false.
 func (c *FakeClock) AfterFunc(d time.Duration, f func()) (stop func() bool) {
 	c.mu.Lock()
 	if d <= 0 {
@@ -81,8 +67,9 @@ func (c *FakeClock) AfterFunc(d time.Duration, f func()) (stop func() bool) {
 }
 
 // Advance moves the clock forward by d and runs every timer that becomes due.
-// Callbacks run in deadline order, ties in registration order, and in a
-// separate goroutine each. Advance returns without waiting for them.
+// Callbacks run one at a time in deadline order, ties in registration order,
+// each in its own goroutine: a blocking callback delays later callbacks but
+// never Advance itself, which returns without waiting for them.
 func (c *FakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
 	c.now = c.now.Add(d)
@@ -103,9 +90,8 @@ func (c *FakeClock) Advance(d time.Duration) {
 		return due[i].deadline.Before(due[j].deadline)
 	})
 
-	// Chain the goroutines: each callback waits for the previous one to return.
-	// The callbacks therefore write in deadline order even though Advance does
-	// not wait for any of them.
+	// Chain the callbacks so they run in deadline order even though Advance
+	// does not wait for any of them.
 	var previous chan struct{}
 	for _, tm := range due {
 		done := make(chan struct{})
@@ -128,9 +114,8 @@ func (c *FakeClock) Pending() int {
 	return c.pendingLocked()
 }
 
-// Earliest returns the deadline of the timer that will fire first among the
-// pending ones, and reports whether any timer is pending. It is read-only and
-// lets a test compare the scheduled instant with the link's NextDial.
+// Earliest returns the deadline of the first timer that will fire among the
+// pending ones, and reports whether any timer is pending.
 func (c *FakeClock) Earliest() (time.Time, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -158,9 +143,8 @@ func (c *FakeClock) pendingLocked() int {
 	return n
 }
 
-// WaitPending blocks until at least n timers are pending, failing the test
-// after three seconds. It lets a test observe that code under test has reached
-// a backoff or timeout without sleeping.
+// WaitPending blocks until at least n timers are pending, failing the test once
+// eventTimeout passes.
 func (c *FakeClock) WaitPending(t testing.TB, n int) {
 	t.Helper()
 	waitUntil(t, "pending fake timers", c.changedCh, func() bool {
@@ -180,10 +164,9 @@ func (c *FakeClock) notifyLocked() {
 	c.changed = make(chan struct{})
 }
 
-// waitUntil evaluates cond every time the channel returned by changed fires,
-// and fails the test when cond is still false after eventTimeout. cond and
-// changed must not be called with any lock held by the caller; each fakes type
-// evaluates cond without its own lock so cond may call the fake's methods.
+// waitUntil fails the test when cond stays false after eventTimeout; call it
+// with no caller lock held, since each fake evaluates cond without its own lock
+// so cond may call the fake's methods.
 func waitUntil(t testing.TB, what string, changed func() <-chan struct{}, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)

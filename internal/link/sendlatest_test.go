@@ -9,8 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// blockWriter fills the peer's buffer and returns once the writer is blocked on
-// the next frame, so items queued afterwards are not taken.
 func blockWriter(t *testing.T, h *dispatchHarness, dc *dispatchConn) {
 	t.Helper()
 	for i := 0; i < pipeBuffer+1; i++ {
@@ -27,7 +25,6 @@ func blockWriter(t *testing.T, h *dispatchHarness, dc *dispatchConn) {
 	}
 }
 
-// drainFiller reads the frames used to block the writer.
 func drainFiller(t *testing.T, dc *dispatchConn) {
 	t.Helper()
 	for i := 0; i < pipeBuffer+1; i++ {
@@ -38,7 +35,7 @@ func drainFiller(t *testing.T, dc *dispatchConn) {
 }
 
 // TestSendLatestReplacesInPlace checks that a queued SendLatest frame is
-// replaced where it was queued, keeping the order of the frames around it.
+// replaced in place, keeping the order of the frames around it.
 func TestSendLatestReplacesInPlace(t *testing.T) {
 	h := newDispatchHarness(t)
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)
@@ -78,7 +75,7 @@ func TestSendLatestReplacesInPlace(t *testing.T) {
 }
 
 // TestSendLatestDoesNotFillQueue checks that repeated replacement of one queued
-// frame never fills the send queue, and only the last content is delivered, at
+// frame never fills the send queue and only the last content is delivered, at
 // the first frame's position.
 func TestSendLatestDoesNotFillQueue(t *testing.T) {
 	h := newDispatchHarness(t)
@@ -107,10 +104,8 @@ func TestSendLatestDoesNotFillQueue(t *testing.T) {
 	}
 }
 
-// TestSendLatestAfterWriterTookFrame checks that once the writer has taken a
-// queued latest frame, its slot is released: a later SendLatest of the same
-// kind is queued as a new frame and delivered, not folded into a slot the
-// writer already drained.
+// TestSendLatestAfterWriterTookFrame checks that a later SendLatest of the same
+// kind is queued as a new frame once the writer took the earlier one.
 func TestSendLatestAfterWriterTookFrame(t *testing.T) {
 	h := newDispatchHarness(t)
 	dc := h.attach(Fingerprint{1}, pairing.RoleAcceptor)

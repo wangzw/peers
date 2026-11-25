@@ -15,16 +15,17 @@ import (
 	"github.com/wangzw/peers/internal/pairing/pairingpb"
 )
 
-// kindHello is the link protocol's first frame. pairing recognises it and link
-// interprets its payload; the fake handshakes below only need its number.
 const kindHello uint32 = 1
 
-// Observations records what link told the peer table about one peer. Each
-// slice is appended in call order.
+// Observations records what link told the peer table about one peer.
 type Observations struct {
-	Aliases           []string
+	// Aliases holds the aliases link learned from the peer, in call order.
+	Aliases []string
+	// AcceptorAddresses holds each advertised address list link learned, in
+	// call order.
 	AcceptorAddresses [][]config.AdvertisedAddr
-	Connected         []string
+	// Connected holds the addresses link used to reach the peer, in call order.
+	Connected []string
 }
 
 // FakePeers is an in-memory peer table with its own identity. It implements the
@@ -109,8 +110,8 @@ func (p *FakePeers) SetAccept(f func(pairing.PairConn) error) {
 	p.notifyLocked()
 }
 
-// SetRoleHook installs a function called by Role just before it returns. A
-// test uses it to slip a Remove between link's role query and link's install of
+// SetRoleHook installs a function called by Role just before it returns,
+// letting a test change the table between link's role query and its install of
 // the connection.
 func (p *FakePeers) SetRoleHook(f func(fp pairing.Fingerprint)) {
 	p.mu.Lock()
@@ -120,7 +121,7 @@ func (p *FakePeers) SetRoleHook(f func(fp pairing.Fingerprint)) {
 }
 
 // SetConnectedHook installs a function called by ObserveConnected after the
-// address is recorded. A test uses it to drop the peer between link's install
+// address is recorded, letting a test change the table between link's install
 // of a paired connection and the start of its dial loop.
 func (p *FakePeers) SetConnectedHook(f func(fp pairing.Fingerprint, address string)) {
 	p.mu.Lock()
@@ -141,7 +142,7 @@ func (p *FakePeers) Observed(fp pairing.Fingerprint) Observations {
 }
 
 // Wait blocks until cond is true, re-evaluating it after every change to the
-// table, and fails the test after three seconds.
+// table, and fails the test once eventTimeout passes.
 func (p *FakePeers) Wait(t testing.TB, cond func() bool) {
 	t.Helper()
 	waitUntil(t, "fake peers state", p.changedCh, cond)
@@ -333,10 +334,10 @@ func Introduce(dialer, acceptor *FakePeers, dialerAlias, acceptorAlias string, a
 	acceptor.Add(dialer.Fingerprint(), pairing.RoleAcceptor, dialerAlias)
 }
 
-// FakePairAccept returns a minimal acceptor-side pairing flow for exercising a
-// PairConn hand-off. It expects the request, challenge, confirm and link Hello
-// frames in order, unreads the Hello, records the dialer in p, and returns nil.
-// Any unexpected frame or transport error closes conn and is returned.
+// FakePairAccept returns a minimal acceptor-side pairing flow: it expects the
+// request, challenge, confirm and link Hello frames in order, unreads the
+// Hello, records the dialer in p and returns nil. Any unexpected frame or
+// transport error closes conn and is returned.
 func FakePairAccept(p *FakePeers, alias string) func(pairing.PairConn) error {
 	return func(conn pairing.PairConn) error {
 		fail := func(err error) error {
@@ -396,7 +397,6 @@ func FakePairRun(p *FakePeers, alias string) func(pairing.PairConn) error {
 	}
 }
 
-// pairReceive reads one frame and requires the expected kind.
 func pairReceive(ctx context.Context, conn pairing.PairConn, want uint32) error {
 	kind, _, err := conn.Receive(ctx)
 	if err != nil {

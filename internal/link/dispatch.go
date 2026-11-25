@@ -8,28 +8,19 @@ import (
 	"github.com/wangzw/peers/internal/pairing"
 )
 
-// Inbound limits of one connection. A state-frame queue larger than the frame
-// or byte limit closes the connection instead of growing without bound, and at
-// most maxConcurrentRequests request handlers of one peer run at once, shared
-// by every connection of that peer.
 const (
 	defaultMaxStateFrames = 4096
 	defaultMaxStateBytes  = 64 << 20
 	maxConcurrentRequests = 64
 
-	// evInboundLimit is the runtime log event recorded when a connection
-	// exceeds an inbound limit.
-	evInboundLimit = "link_inbound_limit"
-	// stateLimitFrames and stateLimitBytes name the limit that closed the
-	// connection in the evInboundLimit log entry.
+	evInboundLimit   = "link_inbound_limit"
 	stateLimitFrames = "state_frames"
 	stateLimitBytes  = "state_bytes"
 )
 
-// runConn runs one installed connection until it ends: it starts the writer and
-// the two consumers, then records the teardown of the link. It is called by the
-// goroutine that installed the connection and returns only after the connection
-// and its state handler finished.
+// runConn runs one installed connection until it ends and records the
+// teardown; it returns only after the connection and its state handler
+// finished.
 func (l *Link) runConn(c *conn, delivered <-chan struct{}) {
 	c.startWriter()
 
@@ -54,13 +45,7 @@ func (l *Link) runConn(c *conn, delivered <-chan struct{}) {
 
 // requestSlots returns the request slot semaphore of a peer, creating it on
 // first use. All connections of one peer share it, so a reconnect cannot stack
-// another maxConcurrentRequests handlers on top of the ones still running: a
-// replaced connection's handlers outlive its consumers, and a per-connection
-// semaphore would hand the peer a fresh set on every install.
-//
-// The map holds one small channel per paired peer, not per peer ever installed:
-// unpairing a peer forgets its entry once no handler of that peer holds a slot,
-// and the last such handler forgets it when it returns.
+// another maxConcurrentRequests handlers on top of the ones still running.
 func (l *Link) requestSlots(peer Fingerprint) chan struct{} {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -76,10 +61,9 @@ func (l *Link) requestSlots(peer Fingerprint) chan struct{} {
 }
 
 // forgetSlotsLocked removes the slot semaphore of an unpaired peer when no
-// handler holds a slot. An entry whose handlers still run must stay: a
-// replacement connection would otherwise get a fresh set of slots on top of
-// them. The last of those handlers removes it when it returns. The caller must
-// hold l.mu.
+// handler holds a slot. An entry whose handlers still run must stay, because a
+// replacement connection would otherwise get a fresh set on top of them; the
+// last handler removes it. The caller must hold l.mu.
 func (l *Link) forgetSlotsLocked(peer Fingerprint) {
 	if slots := l.slots[peer]; slots != nil && len(slots) == 0 {
 		delete(l.slots, peer)
@@ -98,10 +82,9 @@ func (l *Link) releaseSlot(peer Fingerprint, slots chan struct{}) {
 	}
 }
 
-// routeFrames reads frames from the connection and sends each one to its
-// destination: replies go to the waiting request, requests wait for a handler
-// slot, and state frames enter the connection's bounded queue. It stops reading
-// when the connection closes or either inbound limit is exceeded.
+// routeFrames sends each frame to its destination: replies to the waiting
+// request, requests to a handler slot, and state frames into the connection's
+// bounded queue.
 func (l *Link) routeFrames(c *conn, q *stateQueue, slots chan struct{}) {
 	defer q.close()
 	for {
@@ -136,19 +119,11 @@ func (l *Link) routeFrames(c *conn, q *stateQueue, slots chan struct{}) {
 	}
 }
 
-// dispatchRequest waits for a free request slot, then starts the handler of one
-// request frame and joins it to the link WaitGroup, so Close waits until every
-// request handler returned. It reports whether the router may keep reading:
-// false means the connection closed while a slot was awaited.
-//
-// At most maxConcurrentRequests handlers of one peer run, across all its
-// connections: a replacement connection shares the slots its predecessor's
-// still-running handlers hold. When every slot is taken the router waits here
-// instead of reading, and the transport's flow control pushes back on the peer.
-// Waiting ends as soon as the connection closes, so Close never hangs on it.
-//
-// The closed check and the Add share Link.mu with Close, which keeps Add from
-// racing with the Wait in Close. A request that arrives after Close is dropped.
+// dispatchRequest waits for a free request slot, then starts the handler and
+// joins it to the link WaitGroup, so Close waits until every handler returned.
+// At most maxConcurrentRequests handlers of one peer run across all its
+// connections; waiting ends as soon as the connection closes. The closed check
+// and the Add share Link.mu with Close, keeping Add from racing with its Wait.
 func (l *Link) dispatchRequest(c *conn, f *linkpb.Frame, slots chan struct{}) bool {
 	select {
 	case slots <- struct{}{}:
@@ -173,8 +148,8 @@ func (l *Link) dispatchRequest(c *conn, f *linkpb.Frame, slots chan struct{}) bo
 	return true
 }
 
-// handleRequest answers one request frame. An unregistered kind gets an
-// Unsupported reply; the payload is never interpreted by link itself.
+// handleRequest answers one request frame; an unregistered kind gets an
+// Unsupported reply, and link never interprets the payload itself.
 func (l *Link) handleRequest(c *conn, f *linkpb.Frame) {
 	l.regMu.RLock()
 	h := l.requestHandlers[f.GetKind()]
@@ -203,9 +178,8 @@ func (l *Link) handleRequest(c *conn, f *linkpb.Frame) {
 	}
 }
 
-// processStateFrames handles state frames one at a time, in arrival order. It
-// waits until every onUp callback of the connection returned, so upper layers
-// never see state from a link they do not know is up. State frames still queued
+// processStateFrames handles state frames one at a time in arrival order,
+// after every onUp callback of the connection returned; frames still queued
 // when the connection ends are discarded.
 func (l *Link) processStateFrames(c *conn, delivered <-chan struct{}, q *stateQueue) {
 	select {
@@ -228,9 +202,8 @@ func (l *Link) processStateFrames(c *conn, delivered <-chan struct{}, q *stateQu
 	}
 }
 
-// handleStateFrame dispatches one state frame to the handler registered for its
-// kind. Handshake frames that arrive late and kinds with no handler are dropped
-// without changing the link.
+// handleStateFrame dispatches a state frame to its handler; late handshake
+// frames and kinds with no handler are dropped without changing the link.
 func (l *Link) handleStateFrame(c *conn, f *linkpb.Frame) {
 	switch f.GetKind() {
 	case linkpb.KindPeerInfo:
@@ -243,16 +216,12 @@ func (l *Link) handleStateFrame(c *conn, f *linkpb.Frame) {
 		h := l.stateHandlers[f.GetKind()]
 		l.regMu.RUnlock()
 		if h == nil {
-			// Unknown state frames are dropped; the link stays up.
 			return
 		}
 		h(c.id.fp, Frame{Kind: f.GetKind(), Payload: f.GetPayload()})
 	}
 }
 
-// handlePeerInfo passes the peer's self-reported alias to the peer table and,
-// when this side placed the call, the advertised addresses as dial candidates.
-// An accept-side link ignores the address list.
 func (l *Link) handlePeerInfo(c *conn, f *linkpb.Frame) {
 	info, err := decodePeerInfo(f)
 	if err != nil {
@@ -266,20 +235,16 @@ func (l *Link) handlePeerInfo(c *conn, f *linkpb.Frame) {
 	}
 }
 
-// stateQueue is the bounded state-frame queue of one connection. It is bounded
-// by both the number of frames and their total payload, counting the frame the
-// consumer is currently handling: a peer that exceeds either limit has its
-// connection closed, which is the only way to stop one authenticated peer from
-// exhausting this host's memory. Closing only this peer's connection keeps a
-// state handler that waits for a reply on the same link from deadlocking,
-// because the router never blocks on a state frame.
+// stateQueue bounds the state frames of one connection by count and payload,
+// counting the frame being handled. Exceeding either limit closes only this
+// connection; the router never blocks on a state frame, so a state handler that
+// waits for a reply on the same link cannot deadlock.
 type stateQueue struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	frames   []*linkpb.Frame
-	inflight int // frames popped and not yet released
-	bytes    int // total payload length of frames and inflight frames
-	// maxFrames bounds frames plus inflight; maxBytes bounds bytes.
+	mu        sync.Mutex
+	cond      *sync.Cond
+	frames    []*linkpb.Frame
+	inflight  int
+	bytes     int
 	maxFrames int
 	maxBytes  int
 	closed    bool
@@ -291,9 +256,9 @@ func newStateQueue(maxFrames, maxBytes int) *stateQueue {
 	return q
 }
 
-// push appends a frame unless it would exceed the frame or byte limit. It
-// returns the name of the limit that was exceeded; an empty string means the
-// frame was queued. It never blocks and drops the frame after close.
+// push appends a frame unless it would exceed the frame or byte limit, and
+// returns the name of the exceeded limit; an empty string means queued. It
+// never blocks and drops the frame after close.
 func (q *stateQueue) push(f *linkpb.Frame) string {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -313,7 +278,6 @@ func (q *stateQueue) push(f *linkpb.Frame) string {
 	return ""
 }
 
-// close discards queued frames and wakes the consumer.
 func (q *stateQueue) close() {
 	q.mu.Lock()
 	q.closed = true
@@ -324,8 +288,8 @@ func (q *stateQueue) close() {
 	q.mu.Unlock()
 }
 
-// pop returns the oldest frame. It returns false once the queue is closed. The
-// frame stays under the limit until done is called.
+// pop returns the oldest frame, or false once the queue is closed; the frame
+// stays under the limit until done is called.
 func (q *stateQueue) pop() (*linkpb.Frame, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -342,8 +306,6 @@ func (q *stateQueue) pop() (*linkpb.Frame, bool) {
 	return f, true
 }
 
-// done releases a frame returned by pop after the consumer finished with it.
-// It is safe to call after close.
 func (q *stateQueue) done(f *linkpb.Frame) {
 	q.mu.Lock()
 	if q.inflight > 0 {
