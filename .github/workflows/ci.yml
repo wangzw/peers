@@ -78,8 +78,21 @@ jobs:
         with:
           go-version: "1.27"
           cache: true
+      # Linux sun_path holds 108 bytes including the trailing NUL, so a TMPDIR
+      # deep enough to push a test's socket path past that limit exposes sites
+      # that build it by hand.
       - name: Run the tests
-        run: make test JOBS=4 COVER_DIR="${{ runner.temp }}/cover"
+        shell: bash
+        run: |
+          deep="$RUNNER_TEMP/deep-tmpdir-for-socket-paths-over-sun-path-linux-test-run"
+          if [ "${#deep}" -lt 80 ]; then
+            echo "::error::TMPDIR $deep is ${#deep} bytes, want at least 80" >&2
+            exit 1
+          fi
+          mkdir -p "$deep"
+          echo "TMPDIR is ${#deep} bytes: $deep"
+          export TMPDIR="$deep"
+          make test JOBS=4 COVER_DIR="${{ runner.temp }}/cover"
       # These tests change file ownership or start a child as another account,
       # so they need root and skip themselves otherwise. PATH keeps the
       # setup-go toolchain visible and HOME keeps the Go caches in the same
