@@ -26,13 +26,40 @@ outputFormats:
     mediaType: text/plain
     isPlainText: true
     notAlternative: true
+  # Hugo's built-in markdown format sets ugly and would write docs/faq.md; the
+  # rewrite rule below needs docs/faq/index.md.
+  markdown:
+    name: markdown
+    baseName: index
+    mediaType: text/markdown
+    isPlainText: true
+    ugly: false
 
+# Every page is also published as Markdown, as index.md next to its
+# index.html. GitHub Pages cannot choose a representation from the Accept
+# header, so a Cloudflare URL rewrite rule on the zone does it:
+#   when:    http.host eq "zhanwei.wang"
+#            and starts_with(http.request.uri.path, "/peers/")
+#            and ends_with(http.request.uri.path, "/")
+#            and any(http.request.headers["accept"][*] contains "text/markdown")
+#   rewrite: the path to concat(http.request.uri.path, "index.md")
+# The rule matches every path under /peers/ that ends in a slash, so an
+# index.html without an index.md answers such a request with 404; make
+# site-check fails on one.
 outputs:
   home:
     - HTML
     - RSS
     - llms
     - llmsfull
+    - markdown
+  section:
+    - HTML
+    - RSS
+    - markdown
+  page:
+    - HTML
+    - markdown
 
 module:
   imports:

@@ -2,7 +2,8 @@
   Extra head metadata appended at the end of <head> by Hextra.
 
   Emits reciprocal hreflang links (including the page itself), an x-default
-  pointing at the English version, and Open Graph locales. The Open Graph and
+  pointing at the English version, the link to the page's Markdown rendition,
+  and Open Graph locales. The Open Graph and
   Twitter image tags come from the theme's opengraph partial and Hugo's
   twitter_cards template, which read the per-language params.images. JSON-LD
   lives in custom/jsonld.html.
@@ -25,6 +26,9 @@
 {{- end -}}
 {{- with $xdefault -}}
 <link rel="alternate" hreflang="x-default" href="{{ . }}" />
+{{- end }}
+{{- with .OutputFormats.Get "markdown" }}
+<link rel="alternate" type="{{ .MediaType.Type }}" href="{{ .Permalink }}" />
 {{- end }}
 
 {{- /* Open Graph locales. The theme emits og:locale only from a page param,

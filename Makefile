@@ -279,8 +279,9 @@ site:
 	fi
 	hugo server --source $(SITE_DIR)
 
-# Check that the English and Chinese pages match, build the website strictly
-# and check the internal links of the generated pages. The link check maps the
+# Check that the English and Chinese pages match, build the website strictly,
+# check that every generated index.html has an index.md next to it, and check
+# the internal links of the generated pages. The link check maps the
 # /peers/ prefix onto the generated tree through a temporary root; page
 # relative links still resolve against the file that contains them. The build
 # cleans the destination first, so a page that was deleted or renamed cannot
@@ -301,6 +302,14 @@ site-check:
 	esac
 	go run -p $(JOBS) ./scripts/site-parity -en $(SITE_DIR)/content/en -zh $(SITE_DIR)/content/zh
 	GOMAXPROCS=$(JOBS) hugo --source $(SITE_DIR) --cleanDestinationDir --gc --minify --panicOnWarning
+	@missing="$$(find $(SITE_DIR)/public -name index.html | sort | while read -r page; do \
+		[ -f "$${page%.html}.md" ] || echo "$$page"; \
+	done)"; \
+	if [ -n "$$missing" ]; then \
+		echo "site-check: pages without a Markdown rendition (index.md):" >&2; \
+		echo "$$missing" >&2; \
+		exit 1; \
+	fi
 	@root="$$(mktemp -d)"; trap 'rm -rf "$$root"' EXIT; \
 		ln -s "$(CURDIR)/$(SITE_DIR)/public" "$$root/peers"; \
 		lychee --offline --no-progress --max-concurrency $(JOBS) --root-dir "$$root" '$(SITE_DIR)/public/**/*.html'
