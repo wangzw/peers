@@ -4,7 +4,7 @@ peers lets Claude Code sessions running on different hosts discover each other a
 
 Claude Code's built-in cross-session messaging reaches sessions on the same host directly, and the same user's sessions on other machines through Anthropic's servers over Remote Control; peers connects hosts whose Brokers are paired, which may belong to different people, and carries messages directly between the two Brokers without a third-party server. peers runs a Broker on each host, and a session joins the Broker on its own host through MCP tools. The users of two hosts pair their Brokers with a pairing key; after that, sessions on both sides that share a topic can see each other and send messages. An idle session picks up a message and starts working on it without user input, although the session's own inbound controls and permission prompts still apply.
 
-Documentation: <https://zhanwei.wang/peers/> (English) and <https://zhanwei.wang/peers/zh/> (Chinese).
+Documentation: <https://peers.zhanwei.wang/> (English) and <https://peers.zhanwei.wang/zh/> (Chinese).
 
 ![peers demo: Alice and Bob, Claude Code agents on two hosts, pair their Brokers and track down a failure together](docs/assets/demo-en.gif)
 
@@ -18,7 +18,7 @@ The command installs the binary, installs and starts the Broker as a service, re
 
 Restart any Claude Code session that is already running so it loads the peer MCP server.
 
-[Install peers](https://zhanwei.wang/peers/docs/guides/install/) covers the other ways to install and the install script's options.
+[Install peers](https://peers.zhanwei.wang/docs/guides/install/) covers the other ways to install and the install script's options.
 
 ## Try it
 
@@ -26,7 +26,7 @@ On one host, start two sessions in the same project directory. Both join the sam
 
 Between two hosts, on the host that can be reached, say “Create a pairing key.” and approve the call (the model calls `create_pairing_key`); pass the key and the displayed address to the other host over a separate channel. On the other host, say “Connect to the Broker at `<address>` with the key `<key>`.” and approve the call (the model calls `connect_broker`). Sessions on both hosts that share a topic can now see each other.
 
-[Getting Started](https://zhanwei.wang/peers/docs/getting-started/) walks through both.
+[Getting Started](https://peers.zhanwei.wang/docs/getting-started/) walks through both.
 
 ## Platform
 
@@ -36,7 +36,7 @@ To pair two hosts, at least one must be able to reach port 17443 on the other.
 
 ## Known limitations
 
-See [Known limitations](https://zhanwei.wang/peers/docs/limitations/) for what peers does not do.
+See [Known limitations](https://peers.zhanwei.wang/docs/limitations/) for what peers does not do.
 
 ## Development
 

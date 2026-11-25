@@ -8,6 +8,7 @@ on:
       - docs/site/**
       - docs/assets/**
       - scripts/site-parity/**
+      - scripts/site-baseurl-check.sh
       - Makefile
       - go.mod
       - go.sum
@@ -17,6 +18,7 @@ on:
       - docs/site/**
       - docs/assets/**
       - scripts/site-parity/**
+      - scripts/site-baseurl-check.sh
       - Makefile
       - go.mod
       - go.sum
@@ -79,6 +81,9 @@ jobs:
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6
+      - name: Check the deployment address
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: bash scripts/site-baseurl-check.sh "${{ steps.pages.outputs.base_url }}"
       - name: Build for deployment
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: hugo --source docs/site --gc --minify --panicOnWarning

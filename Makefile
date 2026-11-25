@@ -281,11 +281,11 @@ site:
 
 # Check that the English and Chinese pages match, build the website strictly,
 # check that every generated index.html has an index.md next to it, and check
-# the internal links of the generated pages. The link check maps the
-# /peers/ prefix onto the generated tree through a temporary root; page
-# relative links still resolve against the file that contains them. The build
-# cleans the destination first, so a page that was deleted or renamed cannot
-# keep passing the link check through its stale output.
+# the internal links of the generated pages. The link check uses the
+# generated tree as its root, so a root-relative link resolves inside the
+# site; page relative links resolve against the file that contains them. The
+# build cleans the destination first, so a page that was deleted or renamed
+# cannot keep passing the link check through its stale output.
 site-check:
 	@missing=""; \
 	for tool in hugo lychee go; do \
@@ -310,9 +310,7 @@ site-check:
 		echo "$$missing" >&2; \
 		exit 1; \
 	fi
-	@root="$$(mktemp -d)"; trap 'rm -rf "$$root"' EXIT; \
-		ln -s "$(CURDIR)/$(SITE_DIR)/public" "$$root/peers"; \
-		lychee --offline --no-progress --max-concurrency $(JOBS) --root-dir "$$root" '$(SITE_DIR)/public/**/*.html'
+	lychee --offline --no-progress --max-concurrency $(JOBS) --root-dir "$(CURDIR)/$(SITE_DIR)/public" '$(SITE_DIR)/public/**/*.html'
 
 # Run every gate in a fixed order. Each gate is a separate recursive make so
 # the order also holds when the caller passes -j.

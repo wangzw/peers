@@ -4,5 +4,5 @@ contact_links:
     url: https://github.com/wangzw/peers/security/advisories/new
     about: Do not open a public issue for a vulnerability; report it privately here.
   - name: Documentation
-    url: https://zhanwei.wang/peers/
+    url: https://peers.zhanwei.wang/
     about: Guides, reference and Known limitations. Check here before opening an issue.

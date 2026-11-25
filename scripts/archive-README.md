@@ -102,5 +102,5 @@ When another account runs it at a terminal, it is asked whether to run the unins
 
 ## Documentation
 
-- Website: <https://zhanwei.wang/peers/docs/>
+- Website: <https://peers.zhanwei.wang/docs/>
 - Full README and source: <https://github.com/wangzw/peers>

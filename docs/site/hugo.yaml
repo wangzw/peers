@@ -1,4 +1,4 @@
-baseURL: https://zhanwei.wang/peers/
+baseURL: https://peers.zhanwei.wang/
 title: peers
 locale: en
 
@@ -9,6 +9,11 @@ defaultContentLanguageInSubdir: false
 disableKinds:
   - taxonomy
   - term
+
+# Every crawler, AI ones included, may read the whole site. The template in
+# layouts/robots.txt allows them all and points to the sitemap derived from
+# baseURL; Hugo writes it once, for the default content language.
+enableRobotsTXT: true
 
 # llms.txt and llms-full.txt are generated for each language from the site's
 # pages by the templates in layouts/. They are plain text for models to read,
@@ -38,12 +43,11 @@ outputFormats:
 # Every page is also published as Markdown, as index.md next to its
 # index.html. GitHub Pages cannot choose a representation from the Accept
 # header, so a Cloudflare URL rewrite rule on the zone does it:
-#   when:    http.host eq "zhanwei.wang"
-#            and starts_with(http.request.uri.path, "/peers/")
+#   when:    http.host eq "peers.zhanwei.wang"
 #            and ends_with(http.request.uri.path, "/")
 #            and any(http.request.headers["accept"][*] contains "text/markdown")
 #   rewrite: the path to concat(http.request.uri.path, "index.md")
-# The rule matches every path under /peers/ that ends in a slash, so an
+# The rule matches every path on this host that ends in a slash, so an
 # index.html without an index.md answers such a request with 404; make
 # site-check fails on one.
 outputs:
