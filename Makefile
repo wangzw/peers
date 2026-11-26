@@ -244,7 +244,7 @@ test:
 	go run ./scripts/testreport -label test-env "$$scratch/testenv.json" || cleanup $$?; \
 	cleanup $$status
 	@if [ "$$(go env GOOS)" = darwin ]; then \
-		go -C $(CURDIR)/third_party/fsnotify test -race -count=1 -p $(JOBS) -parallel $(JOBS) -run '^Test(KqueueCloseDoesNotCloseAReusedDescriptor|AddWatchKeepsAnExistingDescriptorWhenReregisterFails|WriteAfterCreateIsReported)$$' ./; \
+		go -C $(CURDIR)/third_party/fsnotify test -race -count=1 -p $(JOBS) -parallel $(JOBS) -run '^Test(KqueueCloseDoesNotCloseAReusedDescriptor|AddWatchKeepsAnExistingDescriptorWhenReregisterFails|WriteAfterCreateIsReported|KqueueInternalReregisterKeepsUserFlags|KqueueInternalReregisterAfterUserAddKeepsFlags|KqueueUserAddSerializedAgainstInternalRegister|KqueueRemoveDuringCommitDoesNotRecordStaleDescriptor|KqueueUserAddFailsWhenRetriesAreExhausted|KqueueRetryAfterCloseReturnsErrClosed)$$' ./; \
 	else \
 		echo "skipping the kqueue backend tests: GOOS is not darwin"; \
 	fi

@@ -5,10 +5,14 @@
 // because a concurrent remove may already have closed it and released the
 // number for reuse (the defect from upstream #740, still present in v1.10.1);
 // addWatch no longer closes the descriptor of an existing watch when a
-// re-registration fails; and sendCreateIfNew installs the watch for a new file
-// before sending its Create event, so a write made after a consumer sees
-// Create is reported instead of lost. Remove the replace directive and these
-// patches once a release fixes them upstream.
+// re-registration fails; addWatch unions a re-registration's flags with those
+// already recorded, so an internal watch cannot drop NOTE_WRITE from a user
+// watch, and reports an error when a user Add loses every retry to a
+// concurrent Remove instead of returning success for an unwatched path; and
+// sendCreateIfNew installs the watch for a new file before sending its Create
+// event, so a write made after a consumer sees Create is reported instead of
+// lost. Remove the replace directive and these patches once a release fixes
+// them upstream.
 
 package fsnotify
 
@@ -35,6 +39,14 @@ type kqueue struct {
 	kq        int    // File descriptor (as returned by the kqueue() syscall).
 	closepipe [2]int // Pipe used for closing kq.
 	watches   *watches
+
+	// addMu serializes addWatch's merge-register-record step so a re-registration
+	// unions flags instead of overwriting them; watchDirectoryFiles re-enters
+	// addWatch, so it is never held across that call. Remove and Close do not take
+	// it, so a call already inside can still register a descriptor a concurrent
+	// Remove closed, and a retried internal watch can re-add a path removed in
+	// that window.
+	addMu sync.Mutex
 }
 
 type (
@@ -360,101 +372,203 @@ func (w *kqueue) WatchList() []string {
 // Watch all events (except NOTE_EXTEND, NOTE_LINK, NOTE_REVOKE)
 const noteAllEvents = unix.NOTE_DELETE | unix.NOTE_WRITE | unix.NOTE_ATTRIB | unix.NOTE_RENAME
 
+// addPlan is the out-of-lock result of addWatch's filesystem work.
+type addPlan struct {
+	info     watch // descriptor and metadata for a new watch
+	opened   bool  // info.wd was opened here and must be closed if it goes unused
+	linkOnly bool  // name is a symlink whose target is already watched
+}
+
+// addWatchAttempts bounds how often addWatch rebuilds a plan whose watch a
+// concurrent Remove closed before commit. That needs a Remove to land exactly
+// between prepare and commit, so a second loss is already pathological.
+const addWatchAttempts = 3
+
 // addWatch adds name to the watched file set; the flags are interpreted as
 // described in kevent(2).
 //
 // Returns the real path to the file which was added, with symlinks resolved.
 func (w *kqueue) addWatch(name string, flags uint32, listDir bool) (string, error) {
-	if w.isClosed() {
-		return "", ErrClosed
-	}
-
 	name = filepath.Clean(name)
 
-	info, alreadyWatching := w.watches.byPath(name)
-	if !alreadyWatching {
-		fi, err := os.Lstat(name)
+	// Resolve and open before taking addMu: Lstat, Readlink and Open can block on
+	// a network, autofs or FUSE mount, and holding the lock there would stall
+	// every other Add and the event loop's internal watches.
+	attempts := addWatchAttempts
+	if n := testAddWatchAttempts.Load(); n > 0 {
+		attempts = int(n)
+	}
+	resolved := name
+	for attempt := 0; attempt < attempts; attempt++ {
+		// A retry that lands after Close must not open a descriptor nobody will
+		// close: Close has already taken its snapshot of the watches.
+		if w.isClosed() {
+			return "", ErrClosed
+		}
+		plan, resolvedNow, done, err := w.prepareWatch(name, listDir)
+		if err != nil || done {
+			return resolvedNow, err
+		}
+		resolved = resolvedNow
+
+		// Serialize only the merge-register-record step. A re-registration that
+		// read dirFlags before a user Add completed must not overwrite it, and
+		// two Adds of one path must not leave two descriptors or entries.
+		w.addMu.Lock()
+		resolved, scanDir, retry, err := w.commitWatch(name, resolved, flags, plan)
+		w.addMu.Unlock()
+		if retry {
+			continue
+		}
 		if err != nil {
+			return resolved, err
+		}
+		if scanDir == "" {
+			return resolved, nil
+		}
+		if err := w.watchDirectoryFiles(scanDir); err != nil {
 			return "", err
 		}
-
-		// Don't watch sockets or named pipes.
-		if (fi.Mode()&os.ModeSocket == os.ModeSocket) || (fi.Mode()&os.ModeNamedPipe == os.ModeNamedPipe) {
-			return "", nil
-		}
-
-		// Follow symlinks, but only for paths added with Add(), and not paths
-		// we're adding from internalWatch from a listdir.
-		if !listDir && fi.Mode()&os.ModeSymlink == os.ModeSymlink {
-			link, err := os.Readlink(name)
-			if err != nil {
-				return "", err
-			}
-			if !filepath.IsAbs(link) {
-				link = filepath.Join(filepath.Dir(name), link)
-			}
-
-			_, alreadyWatching = w.watches.byPath(link)
-			if alreadyWatching {
-				// Add to watches so we don't get spurious Create events later
-				// on when we diff the directories.
-				w.watches.addLink(name, 0)
-				return link, nil
-			}
-
-			info.linkName = name
-			name = link
-			fi, err = os.Lstat(name)
-			if err != nil {
-				return "", err
-			}
-		}
-
-		info.wd, err = internal.IgnoringEINTR(func() (int, error) {
-			return unix.Open(name, openMode, 0)
-		})
-		if err != nil {
-			return "", err
-		}
-		info.isDir = fi.IsDir()
+		return resolved, nil
 	}
 
-	err := w.register([]int{info.wd}, unix.EV_ADD|unix.EV_CLEAR|unix.EV_ENABLE, flags)
+	// Every attempt lost its watch to a concurrent Remove. A user Add must not
+	// report success for a path it does not watch: AddWith would record it and
+	// WatchList would list a path that receives no events. An internal watch
+	// keeps returning without a watch, as it does when it loses the same race
+	// upstream.
+	if listDir {
+		return resolved, nil
+	}
+	return resolved, fmt.Errorf("fsnotify: add %q: a concurrent Remove took the watch on every attempt", name)
+}
+
+// prepareWatch resolves name and opens a descriptor without holding addMu. done
+// is true for a path that needs no registration (a socket, a pipe, or a symlink
+// whose target is already watched).
+func (w *kqueue) prepareWatch(name string, listDir bool) (plan addPlan, resolved string, done bool, err error) {
+	if cur, ok := w.watches.byPath(name); ok {
+		return addPlan{info: cur}, name, false, nil
+	}
+
+	fi, err := os.Lstat(name)
 	if err != nil {
-		// A watch that already exists keeps its descriptor and its mapping
-		// entry: closing it here would leave the entry pointing at a number
-		// another watch may already have reused. Only a descriptor opened by
-		// this call can be closed.
-		if !alreadyWatching {
-			unix.Close(info.wd)
+		return plan, "", true, err
+	}
+
+	// Don't watch sockets or named pipes.
+	if (fi.Mode()&os.ModeSocket == os.ModeSocket) || (fi.Mode()&os.ModeNamedPipe == os.ModeNamedPipe) {
+		return plan, "", true, nil
+	}
+
+	// Follow symlinks, but only for paths added with Add(), and not paths
+	// we're adding from internalWatch from a listdir.
+	if !listDir && fi.Mode()&os.ModeSymlink == os.ModeSymlink {
+		link, err := os.Readlink(name)
+		if err != nil {
+			return plan, "", true, err
 		}
-		return "", err
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(name), link)
+		}
+
+		if _, ok := w.watches.byPath(link); ok {
+			// Record the link so a later diff does not report a spurious Create.
+			return addPlan{linkOnly: true}, link, false, nil
+		}
+
+		plan.info.linkName = name
+		name = link
+		fi, err = os.Lstat(name)
+		if err != nil {
+			return plan, "", true, err
+		}
+	}
+
+	plan.info.wd, err = internal.IgnoringEINTR(func() (int, error) {
+		return unix.Open(name, openMode, 0)
+	})
+	if err != nil {
+		return plan, "", true, err
+	}
+	plan.info.isDir = fi.IsDir()
+	plan.opened = true
+	return plan, name, false, nil
+}
+
+// commitWatch re-checks what is recorded, merges the requested flags with the
+// recorded ones, then registers and records, all under addMu. It returns the
+// path of a directory addWatch must scan after unlocking. retry is true when
+// prepareWatch's descriptor came from a watch that a concurrent Remove has
+// since closed; the caller must rebuild the plan and must not register, because
+// the number may already belong to another file.
+func (w *kqueue) commitWatch(name, resolved string, flags uint32, plan addPlan) (resolvedOut, scanDir string, retry bool, err error) {
+	if plan.linkOnly {
+		w.watches.addLink(name, 0)
+		return resolved, "", false, nil
+	}
+
+	cur, alreadyWatching := w.watches.byPath(resolved)
+	if !alreadyWatching && !plan.opened {
+		// prepareWatch borrowed an existing watch's descriptor without opening
+		// it, and that watch is gone from the map by the time this call re-reads
+		// it. Registering the number could add a filter to, and recording it
+		// would hand ownership of, whatever file now holds it, so rebuild the
+		// plan from a descriptor this call opens itself.
+		return resolved, "", true, nil
+	}
+	if alreadyWatching {
+		// Another caller registered this path while prepareWatch opened our
+		// descriptor: its watch wins, so close ours rather than leak or
+		// duplicate it. A symlink followed on the way still needs recording,
+		// or a later diff reports a spurious Create for it.
+		if plan.opened {
+			unix.Close(plan.info.wd)
+			plan.opened = false
+			if plan.info.linkName != "" {
+				w.watches.addLink(plan.info.linkName, 0)
+			}
+		}
+		plan.info = cur
+		flags |= plan.info.dirFlags
+	}
+
+	if hook := testBeforeRegister.Load(); hook != nil {
+		(*hook)(resolved)
+	}
+
+	err = w.register([]int{plan.info.wd}, unix.EV_ADD|unix.EV_CLEAR|unix.EV_ENABLE, flags)
+	if err != nil {
+		// Only a descriptor this call opened may be closed; an existing watch
+		// keeps its descriptor and its mapping entry.
+		if plan.opened && !alreadyWatching {
+			unix.Close(plan.info.wd)
+		}
+		return "", "", false, err
 	}
 
 	if !alreadyWatching {
-		w.watches.add(name, info.linkName, info.wd, info.isDir)
+		w.watches.add(resolved, plan.info.linkName, plan.info.wd, plan.info.isDir)
 	}
 
 	// Watch the directory if it has not been watched before, or if it was
 	// watched before, but perhaps only a NOTE_DELETE (watchDirectoryFiles)
-	if info.isDir {
+	if plan.info.isDir {
 		watchDir := (flags&unix.NOTE_WRITE) == unix.NOTE_WRITE &&
-			(!alreadyWatching || (info.dirFlags&unix.NOTE_WRITE) != unix.NOTE_WRITE)
-		if !w.watches.updateDirFlags(name, flags) {
-			return "", nil
+			(!alreadyWatching || (cur.dirFlags&unix.NOTE_WRITE) != unix.NOTE_WRITE)
+		if !w.watches.updateDirFlags(resolved, flags) {
+			return "", "", false, nil
 		}
 
 		if watchDir {
-			d := name
-			if info.linkName != "" {
-				d = info.linkName
+			d := resolved
+			if plan.info.linkName != "" {
+				d = plan.info.linkName
 			}
-			if err := w.watchDirectoryFiles(d); err != nil {
-				return "", err
-			}
+			return resolved, d, false, nil
 		}
 	}
-	return name, nil
+	return resolved, "", false, nil
 }
 
 // readEvents reads from kqueue and converts the received kevents into
@@ -680,6 +794,23 @@ func (w *kqueue) dirChange(dir string) error {
 // while the backend goroutine is already running. Production leaves it nil.
 var testBeforeCreateEvent atomic.Pointer[func()]
 
+// testBeforeInternalAddWatch, when set by a test, runs after internalWatch
+// computes a directory's re-registration flags and before addWatch registers
+// them, so a test can interleave a user Add on the same path; production
+// leaves it nil.
+var testBeforeInternalAddWatch atomic.Pointer[func(name string, flags uint32)]
+
+// testBeforeRegister, when set by a test, runs inside addWatch's locked section
+// after a path's flags are decided and before the kernel registration, so a
+// test can hold the registering call while a user Add of the same path runs;
+// production leaves it nil.
+var testBeforeRegister atomic.Pointer[func(name string)]
+
+// testAddWatchAttempts, when positive, replaces addWatchAttempts so a test can
+// exhaust the retry loop without racing several real losses. Production leaves
+// it zero.
+var testAddWatchAttempts atomic.Int32
+
 // Send a create event if the file isn't already being tracked, and start
 // watching this file.
 func (w *kqueue) sendCreateIfNew(path string, fi os.FileInfo) error {
@@ -714,7 +845,11 @@ func (w *kqueue) internalWatch(name string, fi os.FileInfo) (string, error) {
 		// mimic Linux providing delete events for subdirectories, but preserve
 		// the flags used if currently watching subdirectory
 		info, _ := w.watches.byPath(name)
-		return w.addWatch(name, info.dirFlags|unix.NOTE_DELETE|unix.NOTE_RENAME, true)
+		flags := info.dirFlags | unix.NOTE_DELETE | unix.NOTE_RENAME
+		if hook := testBeforeInternalAddWatch.Load(); hook != nil {
+			(*hook)(name, flags)
+		}
+		return w.addWatch(name, flags, true)
 	}
 
 	// Watch file to mimic Linux inotify.
