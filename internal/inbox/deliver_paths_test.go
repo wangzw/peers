@@ -139,7 +139,7 @@ func TestDeliver_ClassificationAnchoredToLibrary(t *testing.T) {
 	// Each case observes the vendored library's own error, asserts its prefix,
 	// and only then checks that Deliver reports the same class.
 	t.Run("dial-failure", func(t *testing.T) {
-		missing := filepath.Join(t.TempDir(), "absent.sock")
+		missing := filepath.Join(bShortTempDir(t), "absent.sock")
 		m := ccsock.Message{Text: "hello", Priority: ccsock.PriorityNext, FromName: "sender", MsgID: "msg-dial"}
 		libErr := gLibrarySend(t, missing, m)
 		gWantClass(t, libErr, "ccsock: connecting to", ErrNotWritten)

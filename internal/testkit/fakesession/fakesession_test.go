@@ -10,8 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
 // eventTimeout is the package-wide fallback for a wait on an event the fake
@@ -425,7 +428,7 @@ func TestSetMode(t *testing.T) {
 }
 
 func TestNoBindWithPath(t *testing.T) {
-	missing := filepath.Join(t.TempDir(), "missing.sock")
+	missing := socktest.Path(t, "missing.sock")
 	f := New(t, Options{PID: 6800, NoBind: true, SocketPath: missing})
 
 	if got := f.SocketPath(); got != missing {
@@ -451,7 +454,7 @@ func TestNoBindEmptyPath(t *testing.T) {
 }
 
 func TestSocketRefusesConnections(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "regular-file")
+	path := filepath.Join(socktest.Dir(t), "regular-file")
 	if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
 		t.Fatalf("writing regular file: %v", err)
 	}
@@ -460,8 +463,12 @@ func TestSocketRefusesConnections(t *testing.T) {
 	if got := readRecord(t, f.RecordPath())["messagingSocketPath"]; got != path {
 		t.Errorf("messagingSocketPath = %v, want %q", got, path)
 	}
-	if _, err := net.Dial("unix", path); err == nil {
+	_, err := net.Dial("unix", path)
+	if err == nil {
 		t.Fatal("dialing a regular file succeeded")
+	}
+	if !errors.Is(err, syscall.ECONNREFUSED) && !strings.Contains(err.Error(), "not a socket") {
+		t.Fatalf("dialing a regular file: %v, want ECONNREFUSED or a not-a-socket error", err)
 	}
 }
 
