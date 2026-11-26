@@ -9,17 +9,16 @@ import (
 	"strings"
 )
 
-// projectConfigName is the project configuration file read from a workspace.
 const projectConfigName = ".peers.yaml"
 
-// GitWorkspace creates dir when it does not exist, initialises a git
-// repository there and, when origin is not empty, adds origin as the remote of
-// the same name. No commit is made. It returns the absolute path of the
-// workspace.
+// GitWorkspace creates dir when it does not exist, initialises a git repository
+// there, adds origin as a remote when it is not empty, and returns the absolute
+// path of the workspace. No commit is made.
 //
-// env is the complete environment of git. It should contain HOME and
-// GIT_CONFIG_NOSYSTEM=1 so that the host's git configuration is not read;
-// GIT_CONFIG_NOSYSTEM=1 is added when it is missing.
+// env is the complete environment of git; it should contain HOME pointing at an
+// isolated directory. GIT_CONFIG_NOSYSTEM=1 is added when it is missing to keep
+// the system-level git configuration out of the run; the user-level
+// configuration is kept out only by that HOME.
 func GitWorkspace(dir, origin string, env []string) (string, error) {
 	root, err := prepareWorkspaceDir(dir)
 	if err != nil {
@@ -37,9 +36,9 @@ func GitWorkspace(dir, origin string, env []string) (string, error) {
 }
 
 // ProjectWorkspace creates dir when it does not exist and writes projectYAML
-// as .peers.yaml in it. When origin is not empty it also initialises a
-// git repository with origin, like GitWorkspace; when origin is empty the
-// directory stays a plain one. It returns the absolute path of the workspace.
+// as .peers.yaml in it. With origin it also initialises a git repository, like
+// GitWorkspace; without it the directory stays plain. It returns the absolute
+// path of the workspace.
 func ProjectWorkspace(dir, projectYAML, origin string, env []string) (string, error) {
 	root, err := prepareWorkspaceDir(dir)
 	if err != nil {
@@ -66,7 +65,6 @@ func PlainWorkspace(dir string) (string, error) {
 	return prepareWorkspaceDir(dir)
 }
 
-// prepareWorkspaceDir creates dir and returns it as an absolute path.
 func prepareWorkspaceDir(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("node: creating workspace %s: %w", dir, err)
@@ -78,8 +76,6 @@ func prepareWorkspaceDir(dir string) (string, error) {
 	return root, nil
 }
 
-// gitRun runs git in dir with env and reports the command's standard error on
-// failure.
 func gitRun(dir string, env []string, args ...string) error {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
@@ -96,8 +92,7 @@ func gitRun(dir string, env []string, args ...string) error {
 	return nil
 }
 
-// withGitNoSystem returns env with GIT_CONFIG_NOSYSTEM=1 added unless the
-// caller already set it. The slice passed in is never modified.
+// withGitNoSystem never modifies the slice passed in.
 func withGitNoSystem(env []string) []string {
 	for _, entry := range env {
 		if strings.HasPrefix(entry, "GIT_CONFIG_NOSYSTEM=") {

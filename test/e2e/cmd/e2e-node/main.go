@@ -22,35 +22,25 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// shutdownBound bounds the HTTP server shutdown.
 const shutdownBound = 2 * time.Second
 
-// probeHelloBound bounds one probe-hello invocation.
 const probeHelloBound = 10 * time.Second
 
-// oneshotCallBound bounds the single tool call of oneshot-session. The call
-// itself answers at once while the Broker is unavailable; the bound only keeps
-// a broken MCP server from hanging the command.
 const oneshotCallBound = 30 * time.Second
 
-// oneshotReadyBound bounds how long oneshot-session waits for the MCP server's
-// background connection loop to finish its first selection. A tool call made
-// immediately after the handshake can still see the loop's starting state. It
-// is the fallback for an event the command cannot force, so it is generous; a
-// timeout is reported as an error rather than returned as a starting result.
+// oneshotReadyBound bounds the wait for the first connection-loop result; a
+// timeout is an error, not a starting result. It is the fallback for an event
+// the command cannot force, so it is generous.
 const oneshotReadyBound = 30 * time.Second
 
-// oneshotStartingText is the part of the starting-state tool error that tells
-// the loop has not classified the Broker yet.
+// oneshotStartingText must be a substring of the product's starting-state tool
+// error; update it when the product changes the wording.
 const oneshotStartingText = "still being set up"
 
-// coverageDirEnv names the e2e coverage directory, the same variable the
-// harness and syscontainer use.
+// coverageDirEnv is the coverage directory variable the harness and syscontainer
+// also read.
 const coverageDirEnv = "E2E_COVER_DIR"
 
-// withCoverage adds GOCOVERDIR to env when coverage collection is on, so the
-// children started with env write their counters to the directory the container
-// mounted. env is left untouched when coverage is off.
 func withCoverage(env node.BaseEnv) node.BaseEnv {
 	dir := os.Getenv(coverageDirEnv)
 	if dir == "" {
@@ -73,7 +63,6 @@ func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
-// run carries out one invocation of the command and returns its exit code.
 func run(args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
@@ -92,9 +81,6 @@ func run(args []string) int {
 	}
 }
 
-// runProbeHello sends one unpaired Link Hello to addr and prints the reject
-// reason as REASON=<reason>. The end-to-end tests run it inside a container,
-// where the Broker's link address is reachable.
 func runProbeHello(args []string) int {
 	flags := flag.NewFlagSet("probe-hello", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -117,10 +103,8 @@ func runProbeHello(args []string) int {
 	return 0
 }
 
-// envFlags collects repeated --env NAME=value flags into one map.
 type envFlags map[string]string
 
-// String renders the collected values for the flag package's usage message.
 func (e envFlags) String() string {
 	entries := make([]string, 0, len(e))
 	for name, value := range e {
@@ -129,8 +113,6 @@ func (e envFlags) String() string {
 	return strings.Join(entries, ",")
 }
 
-// Set records one NAME=value pair. The first "=" splits the pair, so a value
-// may contain "=".
 func (e envFlags) Set(pair string) error {
 	name, value, ok := strings.Cut(pair, "=")
 	if !ok || name == "" {
@@ -140,13 +122,9 @@ func (e envFlags) Set(pair string) error {
 	return nil
 }
 
-// runOneshotSession runs one simulated Claude Code session of the account that
-// invokes the command, starts an MCP server process, calls list_agents and
-// prints the ToolResult as JSON. The account's own "$HOME/.claude" is
-// the Claude configuration directory, so the session record and inbox socket
-// live in that account's home. A tool call that fails is still a successful
-// invocation: it prints the error result and exits 0. Only an infrastructure
-// failure, such as a session that will not start, exits 1.
+// runOneshotSession calls list_agents in one simulated session and prints the
+// ToolResult as JSON; a tool error exits 0 and only an infrastructure failure
+// exits 1.
 func runOneshotSession(args []string) int {
 	flags := flag.NewFlagSet("oneshot-session", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -179,10 +157,7 @@ func runOneshotSession(args []string) int {
 		return 1
 	}
 
-	// The MCP server reports its background connection loop before it reports
-	// the loop's first result. Repeat the call while that starting state is
-	// showing, so the printed result carries the actual outcome, and make the
-	// ordinary path one call.
+	// The MCP server can report its starting state before the loop's first result.
 	result, err := oneshotListAgents(context.Background(), session)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "e2e-node: oneshot-session: calling list_agents: %v\n", err)
@@ -199,10 +174,8 @@ func runOneshotSession(args []string) int {
 	return 0
 }
 
-// oneshotListAgents calls list_agents once and, while the MCP server says its
-// connection loop is still starting, calls it again every 50ms for up to
-// oneshotReadyBound. A tool error that is not the starting state is a result,
-// not a failure of the command.
+// oneshotListAgents retries list_agents every 50ms while the MCP server reports
+// its starting state, up to oneshotReadyBound.
 func oneshotListAgents(ctx context.Context, session *node.Session) (node.ToolResult, error) {
 	deadline := time.Now().Add(oneshotReadyBound)
 	for {
@@ -222,7 +195,6 @@ func oneshotListAgents(ctx context.Context, session *node.Session) (node.ToolRes
 	}
 }
 
-// runServe carries out one serve invocation.
 func runServe(args []string) int {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -250,7 +222,7 @@ func runServe(args []string) int {
 		_, _ = fmt.Fprintf(logFile, format+"\n", args...)
 	}
 
-	// A socket left behind by a previous run would make Listen fail.
+	// A socket left behind by a previous run makes Listen fail.
 	if err := os.Remove(*socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(os.Stderr, "e2e-node: removing the stale socket: %v\n", err)
 		return 1

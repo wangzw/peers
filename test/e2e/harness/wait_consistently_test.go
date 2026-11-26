@@ -6,6 +6,9 @@ import (
 	"time"
 )
 
+// TestConsistentlyPollSeparatesUnobservableFromViolation checks that inconclusive
+// samples are retried, a window with no answer fails as unobservable, and a
+// violation fails at once.
 func TestConsistentlyPollSeparatesUnobservableFromViolation(t *testing.T) {
 	t.Run("unobservable samples are retried", func(t *testing.T) {
 		tb := &recordTB{}
@@ -80,12 +83,9 @@ func TestConsistentlyPollSeparatesUnobservableFromViolation(t *testing.T) {
 	})
 }
 
-// TestConsistentlyPollStallsWhenTheWindowEndsBeforeTheCallBound reproduces the
-// short-window defect: a sample starts with less time left than its call bound
-// and its call stalls. The old code shortened the call to the time the window
-// had left and did not mark the timeout as a stall, so the window ended without
-// stall evidence. The call must run its full bound, be reported as a stall, and
-// end the window at once.
+// TestConsistentlyPollStallsWhenTheWindowEndsBeforeTheCallBound checks that a
+// sample starting with less time left than its call bound still runs the full
+// bound and is reported as a stall.
 func TestConsistentlyPollStallsWhenTheWindowEndsBeforeTheCallBound(t *testing.T) {
 	backend := &blockingBackend{}
 	session := &Session{name: "short-window", impl: backend}

@@ -17,10 +17,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// TestLocalRegistration covers registration, naming and listing on one host.
-// The Broker runs as a real process and every session is a fakesession record
-// plus, unless the case says otherwise, a real peers mcp process. These
-// cases do not send messages, so they need no Broker delivery.
+// TestLocalRegistration checks registration, naming and listing on one host
+// with a real Broker process and real MCP server processes.
 func TestLocalRegistration(t *testing.T) {
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "registration"})
 	registrationStartBroker(t, host, harness.ConfigYAML("broker:\n  listen: "+host.FreeAddr(t)))
@@ -44,8 +42,6 @@ func TestLocalRegistration(t *testing.T) {
 		defer api.End(t)
 		self := registrationWaitRegistered(t, api, "api-worker").Self
 
-		// ghost has a registry record and a bound inbox socket but no MCP
-		// server process, so it must not become an agent.
 		ghost := host.StartSession(t, harness.SessionSpec{Name: "ghost", Workdir: workspace})
 		defer ghost.End(t)
 
@@ -114,7 +110,6 @@ func TestLocalRegistration(t *testing.T) {
 			return true, ""
 		})
 
-		// A lone twin no longer needs the ref.
 		second.End(t)
 		registrationEventually(t, harness.ListAgentsWaitBound, "the remaining twin carries no ref", func(deadline time.Time) (bool, string) {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
@@ -174,9 +169,6 @@ func TestLocalRegistration(t *testing.T) {
 			return true, ""
 		})
 
-		// A name that changes under signature cleaning always carries a ref,
-		// and that ref depends on the socket path only, so renaming and
-		// clearing the conversation leave it unchanged.
 		odd := registrationSession(t, host, "a<b", workspace)
 		defer odd.End(t)
 		var refBefore string
@@ -240,7 +232,6 @@ func TestLocalRegistration(t *testing.T) {
 			return registrationSameSet(entry.SharedTopics, want), fmt.Sprintf("shared topics are %v, want %v", entry.SharedTopics, want)
 		})
 
-		// A topic filter selects entries but must not trim shared_topics.
 		out, state := registrationListAgents(t, a, map[string]any{"topic": "t1"})
 		if state != "" {
 			t.Fatalf("list_agents with a topic filter failed: %s", state)
@@ -273,13 +264,6 @@ func TestLocalRegistration(t *testing.T) {
 		defer observer.End(t)
 		registrationWaitRegistered(t, observer, "observer")
 
-		// The Broker's not_registered event carries a reason that names the
-		// first failing rule, and the MCP server renders that detail verbatim.
-		// The exact sentence is asserted so that the general "empty, or contains
-		// @ or *" sentence cannot satisfy any of these cases.
-		// Renaming the session after the Broker reported the "@" lets the
-		// registration connection that was left open finish: the MCP server
-		// process is not restarted and no second session is started.
 		at := registrationSession(t, host, "a@b", workspace)
 		defer at.End(t)
 		registrationRejected(t, at, observer, "a@b", `the session name contains "@"`, func(addr string) bool {
@@ -323,8 +307,6 @@ func TestLocalRegistration(t *testing.T) {
 
 		main.StartExtraMCP(t)
 
-		// The extra process registers through the same inbox socket, so it
-		// shares the main session's agent ID and must not add a second entry.
 		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "the extra MCP process does not become a second agent", nil, func(deadline time.Time) harness.Observation {
 			out, state := registrationListAgentsInWait(t, observer, deadline, nil)
 			if state != "" {
@@ -345,10 +327,6 @@ func TestLocalRegistration(t *testing.T) {
 			return harness.Observed(true, "")
 		})
 
-		// The harness has no tool channel to the extra process itself; the
-		// observable identity is checked by sending through the session's
-		// process while the extra one is running. The delivered signature must
-		// still be the single main address.
 		r := main.Call(t, "send_message", map[string]any{"to": observerAddr, "message": "from the main session"})
 		r.MustOK(t)
 		frame := observer.WaitFrame(t, harness.EventTimeout)
@@ -358,15 +336,11 @@ func TestLocalRegistration(t *testing.T) {
 	})
 }
 
-// registrationSession starts one simulated session with a real MCP server
-// process working in workdir.
 func registrationSession(t *testing.T, host *harness.Node, name, workdir string) *harness.Session {
 	t.Helper()
 	return host.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, Workdir: workdir})
 }
 
-// registrationStartBroker starts the node's Broker and fails when it does not
-// come up.
 func registrationStartBroker(t *testing.T, host *harness.Node, config string) {
 	t.Helper()
 	start := host.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -375,8 +349,6 @@ func registrationStartBroker(t *testing.T, host *harness.Node, config string) {
 	}
 }
 
-// registrationGitEnv is the environment of the git commands that create test
-// workspaces. It never reads the host's git configuration.
 func registrationGitEnv(t *testing.T) []string {
 	t.Helper()
 	return []string{
@@ -387,8 +359,6 @@ func registrationGitEnv(t *testing.T) []string {
 	}
 }
 
-// registrationWorkspace creates the shared git workspace whose origin names
-// the default topic github.com/org/repo.
 func registrationWorkspace(t *testing.T) string {
 	t.Helper()
 	ws, err := node.GitWorkspace(filepath.Join(t.TempDir(), "repo"), "https://github.com/org/repo", registrationGitEnv(t))
@@ -398,8 +368,6 @@ func registrationWorkspace(t *testing.T) string {
 	return ws
 }
 
-// registrationWaitRegistered waits until the session is registered and lists
-// itself, and returns that listing.
 func registrationWaitRegistered(t *testing.T, s *harness.Session, name string) mcpserver.ListAgentsOut {
 	t.Helper()
 	var out mcpserver.ListAgentsOut
@@ -417,10 +385,6 @@ func registrationWaitRegistered(t *testing.T, s *harness.Session, name string) m
 	return out
 }
 
-// registrationRejected waits until the Broker reports s's session name as
-// unusable and renders detail verbatim, and checks that observer never lists an
-// agent whose address matches listed. The wait retries a stalled list_agents
-// call: its transport error is a state, not a failure.
 func registrationRejected(t *testing.T, s, observer *harness.Session, name, detail string, listed func(addr string) bool) {
 	t.Helper()
 	registrationEventually(t, harness.RegistrationReportBound, fmt.Sprintf("session name %q is reported unusable", name), func(deadline time.Time) (bool, string) {
@@ -453,23 +417,19 @@ func registrationRejected(t *testing.T, s, observer *harness.Session, name, deta
 	})
 }
 
-// registrationListAgents calls list_agents outside a wait, with the harness's
-// ordinary sixty-second call bound. A single call and a Consistently window
-// observe the Broker once by design, so a transport failure fails the test
-// rather than turning into a retryable state: a retry would change what those
-// cases assert. A tool error is returned as a state string so the caller can
-// inspect it.
+// registrationListAgents calls list_agents outside a wait with the harness's
+// ordinary sixty-second call bound. A single call or one Consistently window
+// observes the Broker once by design, so a transport failure fails the test
+// instead of turning into a retryable state that would change the assertion.
 func registrationListAgents(t *testing.T, s *harness.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return registrationDecodeListAgents(t, s.Call(t, "list_agents", args))
 }
 
-// registrationListAgentsInWait calls list_agents from inside an Eventually. The
-// call is bounded by ListAgentsPollBound and by the time the wait has left, not
-// by the harness's sixty-second call bound, so one stalled call costs a poll of
-// the wait instead of outliving it. A tool error or a transport failure is
-// returned as a state string so the wait retries it instead of failing the test
-// inside the condition.
+// registrationListAgentsInWait calls list_agents from inside a wait: each call
+// runs ListAgentsPollBound in full once the wait's deadline has not passed, and
+// a tool error or transport failure returns as a state string so the wait
+// retries it.
 func registrationListAgentsInWait(t *testing.T, s *harness.Session, deadline time.Time, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	r, err := s.PollCall(t, deadline, "list_agents", args)
@@ -480,18 +440,15 @@ func registrationListAgentsInWait(t *testing.T, s *harness.Session, deadline tim
 }
 
 // registrationEventually runs harness.Eventually and hands the condition the
-// wait's deadline, so every tool call it makes is bounded by the tool's own
-// poll bound, not clamped to the time the wait has left. A wait that polls
-// list_agents uses at least harness.ListAgentsWaitBound, or one stall consumes
-// the whole wait.
+// wait's deadline, so each tool call is bounded by its own poll bound rather
+// than clamped to the time left. A wait that polls list_agents uses at least
+// harness.ListAgentsWaitBound, or one stall consumes the whole wait.
 func registrationEventually(t *testing.T, bound time.Duration, what string, cond func(deadline time.Time) (bool, string)) {
 	t.Helper()
 	deadline := time.Now().Add(bound)
 	harness.Eventually(t, bound, what, func() (bool, string) { return cond(deadline) })
 }
 
-// registrationDecodeListAgents decodes a list_agents result. A tool error is
-// returned as the state string.
 func registrationDecodeListAgents(t *testing.T, r harness.Result) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	if r.IsError {
@@ -505,9 +462,8 @@ func registrationDecodeListAgents(t *testing.T, r harness.Result) (mcpserver.Lis
 }
 
 // registrationJoin joins name, retrying while the session is still
-// registering. join_topic's handler may spend topicRPCTimeout, ten seconds, in
-// the Broker RPC before the update hint runs, so the poll uses
-// harness.TopicCallPollBound rather than the list_agents bound.
+// registering. The poll uses harness.TopicCallPollBound because join_topic's
+// handler may spend topicRPCTimeout before the update hint runs.
 func registrationJoin(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	registrationEventually(t, harness.TopicCallWaitBound, "join_topic "+name+" succeeds", func(deadline time.Time) (bool, string) {
@@ -522,7 +478,6 @@ func registrationJoin(t *testing.T, s *harness.Session, name string) {
 	})
 }
 
-// registrationAlias returns the Broker alias from an agent address.
 func registrationAlias(t *testing.T, addr string) string {
 	t.Helper()
 	at := strings.LastIndexByte(addr, '@')
@@ -532,8 +487,6 @@ func registrationAlias(t *testing.T, addr string) string {
 	return addr[at+1:]
 }
 
-// registrationSplitAddress splits "name [ref]@alias" into name and ref. ref is
-// empty when the address carries none.
 func registrationSplitAddress(addr string) (name, ref string) {
 	at := strings.LastIndexByte(addr, '@')
 	if at < 0 {
@@ -546,13 +499,11 @@ func registrationSplitAddress(addr string) (name, ref string) {
 	return head, ""
 }
 
-// registrationAddressName returns the name part of an address, without a ref.
 func registrationAddressName(addr string) string {
 	name, _ := registrationSplitAddress(addr)
 	return name
 }
 
-// registrationFindAgent returns the entry whose name part is name.
 func registrationFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if registrationAddressName(agent.Address) == name {
@@ -562,7 +513,6 @@ func registrationFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.
 	return mcpserver.AgentOut{}, false
 }
 
-// registrationSameSet reports whether got and want contain the same strings.
 func registrationSameSet(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -579,8 +529,6 @@ func registrationSameSet(got, want []string) bool {
 	return true
 }
 
-// registrationRefMatchesAny reports whether ref is a 6- to 12-character
-// lowercase hex prefix of sha256("session:"+socket) for some agent socket.
 func registrationRefMatchesAny(ref string, bySocket map[string]bool) bool {
 	if len(ref) < 6 || len(ref) > 12 {
 		return false

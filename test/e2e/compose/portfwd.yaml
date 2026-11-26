@@ -1,5 +1,4 @@
-# TopoPortForward: hostA behind the router on lana, hostB on the WAN.
-# The router DNATs its own 17443 to hostA; hostA's lana address itself is not
+# The router DNATs its own port 17443 to hostA; hostA's lana address is not
 # reachable from hostB because the router forwards only the DNATed connection.
 services:
   hostA:
@@ -29,11 +28,9 @@ services:
     volumes: ["${CTL_HOSTB}:/ctl"]
     networks: [wan]
 
-# See nat.yaml: routed gateway mode is what lets the router container forward
-# between the networks on Docker 29, and the subnets are pinned inside
-# 198.18.0.0/15 so a bridge route never captures this k8s node's own networks.
-# The harness overrides them per project because concurrent copies of the
-# topology cannot share a subnet.
+# Routed gateway mode lets the router forward between networks on Docker 29;
+# the subnets are pinned inside 198.18.0.0/15 so a bridge route never captures
+# this k8s node's own networks, and the harness overrides them per project.
 networks:
   lana:
     driver_opts:

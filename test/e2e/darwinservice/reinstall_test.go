@@ -8,17 +8,14 @@ import (
 )
 
 const (
-	// reinstallCommandBound bounds one `service install` over a running
-	// service. The worst case is the 20-second stop budget shared by the unload
-	// wait and the address wait, the 10-second bootstrap retry bound and the
-	// 20-second readiness wait, 20 + 10 + 20 = 50 seconds, with margin for a
-	// loaded runner.
+	// reinstallCommandBound covers the worst case of the 20-second stop budget,
+	// the 10-second bootstrap retry and the 20-second readiness wait, 50 seconds
+	// in all, plus margin for a loaded runner.
 	reinstallCommandBound = 75 * time.Second
 )
 
-// TestSystemServiceReinstall covers the user report of 2026-11-20: installing
-// the system service while it runs must replace the running Broker, not
-// fail while launchd tears the old job down.
+// TestSystemServiceReinstall checks that installing the system service while it
+// runs replaces the running Broker.
 func TestSystemServiceReinstall(t *testing.T) {
 	resetSystemService(t)
 	t.Cleanup(func() { resetSystemService(t) })
@@ -27,7 +24,7 @@ func TestSystemServiceReinstall(t *testing.T) {
 		"sudo", "-n", installedBinary, "service", "install", "--system")
 }
 
-// TestUserServiceReinstall covers the same reinstall in the account's gui
+// TestUserServiceReinstall checks the same reinstall in the account's gui
 // domain.
 func TestUserServiceReinstall(t *testing.T) {
 	resetUserService(t)
@@ -37,9 +34,6 @@ func TestUserServiceReinstall(t *testing.T) {
 		installedBinary, "service", "install")
 }
 
-// reinstallRunningService installs the service, waits for the Broker launchd
-// started, runs the same install again over the running service and checks that
-// launchd replaced the process and that the new one serves.
 func reinstallRunningService(t *testing.T, domain, name string, args ...string) {
 	t.Helper()
 
@@ -51,8 +45,6 @@ func reinstallRunningService(t *testing.T, domain, name string, args ...string) 
 	first := waitForPID(t, domain, serviceStartBound)
 	t.Logf("launchd started the first Broker with pid %d in %s", first, domain)
 
-	// Log what launchctl print reports before the reinstall, so a failure shows
-	// what the unload wait saw in this domain.
 	if out, loaded := launchctlPrint(domain); loaded {
 		t.Logf("before the reinstall, %s/%s is loaded:\n%s", domain, serviceLabel, out)
 	} else {
@@ -76,9 +68,6 @@ func reinstallRunningService(t *testing.T, domain, name string, args ...string) 
 	}
 }
 
-// argsForStatus returns the arguments that run `peers service status` against the
-// level's Broker: as root for the system service, as this account for the
-// user one.
 func argsForStatus(domain string) []string {
 	if domain == "system" {
 		return []string{"sudo", "-n", installedBinary, "service", "status"}

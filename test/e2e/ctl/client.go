@@ -13,16 +13,14 @@ import (
 )
 
 const (
-	// defaultTimeout bounds one control request when the caller sets no
-	// deadline.
-	defaultTimeout = 30 * time.Second
-	// callTimeoutSlack is added to a tool call's own timeout for the answer.
+	defaultTimeout   = 30 * time.Second
 	callTimeoutSlack = 5 * time.Second
-	// maxAnswerBody caps the answer the client reads.
-	maxAnswerBody = 64 << 20
+	maxAnswerBody    = 64 << 20
 )
 
-// Client drives a node agent over its control socket.
+// Client drives a node agent over its control socket. A request whose context
+// has no deadline uses defaultTimeout, 30 seconds, and an answer is read up to
+// maxAnswerBody, 64 MiB.
 type Client struct {
 	http      *http.Client
 	transport *http.Transport
@@ -272,7 +270,6 @@ func (c *Client) Shutdown(ctx context.Context) error {
 	return c.do(ctx, "/v1/shutdown", struct{}{}, nil)
 }
 
-// do sends one request and decodes the answer.
 func (c *Client) do(ctx context.Context, path string, req, out any) error {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc

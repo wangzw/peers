@@ -20,44 +20,24 @@ import (
 )
 
 const (
-	// agGroup is the default administration group a system install
-	// provides for the Broker's configuration file.
-	agGroup = "peers"
-	// agConfigPath is the system Broker's configuration file.
-	agConfigPath = "/etc/peers/config.yaml"
-	// agSeedMember is the account the confirmation case adds to the group
-	// before installing, so the install meets an existing membership.
-	agSeedMember = "peer"
-	// agNonMember is an ordinary account that never joins the group.
-	agNonMember = "other"
-	// agPeerListen is the listen address of the user Broker the system
-	// Broker pairs with.
-	agPeerListen = "127.0.0.1:17445"
-	// agServiceBound bounds the wait for the installed system Broker to answer.
-	agServiceBound = 10 * time.Second
-	// agAuditBound is the fallback for the wait for an audit record to appear.
-	agAuditBound = harness.EventTimeout
-	// agDefaultPort is the port broker.listen defaults to.
-	agDefaultPort = 17443
-	// agPrivilegedPort and agRootOnlyPort are below 1024, so only root may
-	// bind them.
+	agGroup          = "peers"
+	agConfigPath     = "/etc/peers/config.yaml"
+	agSeedMember     = "peer"
+	agNonMember      = "other"
+	agPeerListen     = "127.0.0.1:17445"
+	agServiceBound   = 10 * time.Second
+	agAuditBound     = harness.EventTimeout
+	agDefaultPort    = 17443
 	agPrivilegedPort = 80
 	agRootOnlyPort   = 81
-	// agListenerHold is how long a refused change must leave the listener as
-	// it was.
-	agListenerHold = time.Second
-	// agDialBound bounds one TCP dial used to observe a listener.
-	agDialBound = 200 * time.Millisecond
+	agListenerHold   = time.Second
+	agDialBound      = 200 * time.Millisecond
 )
 
-// TestREQBrokerConfig043_SystemInstallAdminGroup covers REQ-broker-config-043:
-// a system install provides the administration group, gives a new
-// configuration file to that group with mode 0660, and asks the account that
-// ran sudo whether to join the group, defaulting to no. A member manages the
-// Broker without sudo, except for a privileged listen port, which needs root
-// and a configuration file that only root can write. An account outside the
-// group is refused, and a reinstall leaves an existing configuration file
-// alone.
+// TestREQBrokerConfig043_SystemInstallAdminGroup checks that a system install
+// provides the administration group, writes a group-writable configuration
+// file, asks the account that ran sudo whether to join the group, and lets a
+// member manage the Broker without sudo.
 func TestREQBrokerConfig043_SystemInstallAdminGroup(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -71,10 +51,6 @@ func TestREQBrokerConfig043_SystemInstallAdminGroup(t *testing.T) {
 	configureInstallSudo(t)
 	agSeedGroup(t)
 
-	// The acceptance answers the level question and the admin-group question
-	// on the same terminal. Run the archive's script without a level flag so
-	// that it asks, re-executes itself through sudo and then asks for the
-	// group.
 	t.Run("the level and group questions share one terminal", func(t *testing.T) {
 		agAssertNotInGroup(t, installAccount)
 		res := runInstallScriptWithTerminal(t, installAccount, installUserEnv(), installArchiveDir,
@@ -92,7 +68,6 @@ func TestREQBrokerConfig043_SystemInstallAdminGroup(t *testing.T) {
 		agAssertConfigFile(t)
 		agAssertInGroup(t, installAccount)
 
-		// The subtests below start from an account outside the group.
 		agRunRoot(t, "gpasswd", "-d", installAccount, agGroup)
 	})
 
@@ -361,12 +336,10 @@ func TestREQBrokerConfig043_SystemInstallAdminGroup(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation covers the rule
-// that an existing administration group which lists members is only reused
-// when the administrator names it with --admin-group. The refused installation
-// writes no configuration file; the accepted one keeps the members. Naming the
-// group settles the decision, so the member lookup is skipped and the summary
-// only says the group was reused.
+// TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation checks that an
+// existing administration group with members is reused only when it is named
+// with --admin-group, and that the refused installation writes no
+// configuration file.
 func TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -407,7 +380,6 @@ func TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation(t *testing.T) {
 	}
 }
 
-// agConfigState is the part of a file's state a reinstall must preserve.
 type agConfigState struct {
 	sum  string
 	uid  uint32
@@ -415,7 +387,6 @@ type agConfigState struct {
 	mode os.FileMode
 }
 
-// agReadConfigState reads the configuration file's bytes, owner, group and mode.
 func agReadConfigState(t *testing.T) agConfigState {
 	t.Helper()
 	data, err := os.ReadFile(agConfigPath)
@@ -439,8 +410,6 @@ func agReadConfigState(t *testing.T) agConfigState {
 	}
 }
 
-// agAssertConfigFile checks that a new configuration file belongs to root, has
-// the administration group and is readable and writable by that group only.
 func agAssertConfigFile(t *testing.T) {
 	t.Helper()
 	state := agReadConfigState(t)
@@ -453,10 +422,6 @@ func agAssertConfigFile(t *testing.T) {
 	}
 }
 
-// agSeedGroup creates the administration group without members, so the first
-// install reuses a group it did not create. A group with members is only reused
-// when the administrator names it, which
-// TestREQBrokerConfig043_ExistingAdminGroupNeedsConfirmation covers.
 func agSeedGroup(t *testing.T) {
 	t.Helper()
 	if !agGroupExists(t) {
@@ -464,20 +429,17 @@ func agSeedGroup(t *testing.T) {
 	}
 }
 
-// agGroupExists reports whether the group is in the account database.
 func agGroupExists(t *testing.T) bool {
 	t.Helper()
 	cmd := syscontainer.Command("root", nil, "getent", "group", agGroup)
 	return cmd.Run() == nil
 }
 
-// agGroupLine returns the group's getent line.
 func agGroupLine(t *testing.T) string {
 	t.Helper()
 	return strings.TrimSpace(agRunRootOut(t, "getent", "group", agGroup))
 }
 
-// agGroupGID returns the group's id.
 func agGroupGID(t *testing.T) uint32 {
 	t.Helper()
 	fields := strings.Split(agGroupLine(t), ":")
@@ -491,7 +453,6 @@ func agGroupGID(t *testing.T) uint32 {
 	return uint32(gid)
 }
 
-// agGroupHas reports whether account is a direct member of the group.
 func agGroupHas(t *testing.T, account string) bool {
 	t.Helper()
 	for _, member := range agGroupMembers(t) {
@@ -502,7 +463,6 @@ func agGroupHas(t *testing.T, account string) bool {
 	return false
 }
 
-// agGroupMembers returns the group's direct member list.
 func agGroupMembers(t *testing.T) []string {
 	t.Helper()
 	fields := strings.Split(agGroupLine(t), ":")
@@ -515,8 +475,6 @@ func agGroupMembers(t *testing.T) []string {
 	return strings.Split(fields[3], ",")
 }
 
-// agAssertInGroup checks both the group's member list and the group list the
-// account database reports.
 func agAssertInGroup(t *testing.T, account string) {
 	t.Helper()
 	if !agGroupHas(t, account) {
@@ -528,7 +486,6 @@ func agAssertInGroup(t *testing.T, account string) {
 	}
 }
 
-// agAssertNotInGroup checks that account is absent from the group.
 func agAssertNotInGroup(t *testing.T, account string) {
 	t.Helper()
 	if agGroupHas(t, account) {
@@ -536,7 +493,6 @@ func agAssertNotInGroup(t *testing.T, account string) {
 	}
 }
 
-// agContains reports whether values holds want.
 func agContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -546,8 +502,6 @@ func agContains(values []string, want string) bool {
 	return false
 }
 
-// agAskedToJoin reports whether the install output carries a question that
-// offers to add an account to the administration group.
 func agAskedToJoin(output string) bool {
 	for _, line := range strings.Split(output, "\n") {
 		if !strings.Contains(line, "?") {
@@ -560,9 +514,6 @@ func agAskedToJoin(output string) bool {
 	return false
 }
 
-// agRunInstall runs install.sh --system as the ordinary account through sudo.
-// tty gives the process a pseudo-terminal through script, and answer is
-// written to its standard input. The extra arguments follow --system.
 func agRunInstall(t *testing.T, answer string, tty bool, args ...string) syscontainer.Result {
 	t.Helper()
 
@@ -576,8 +527,8 @@ func agRunInstall(t *testing.T, answer string, tty bool, args ...string) syscont
 
 	cmd := syscontainer.Command(installAccount, installUserEnv(), name, argv...)
 	if !tty {
-		// Detach from any controlling terminal so this case really has none:
-		// the script must neither prompt nor read the answer from stdin.
+		// Detach from any controlling terminal so the script neither prompts nor
+		// reads the answer from stdin.
 		if cmd.SysProcAttr == nil {
 			cmd.SysProcAttr = &syscall.SysProcAttr{}
 		}
@@ -601,18 +552,14 @@ func agRunInstall(t *testing.T, answer string, tty bool, args ...string) syscont
 	return res
 }
 
-// agManualJoinCommand is the command the install prints when it leaves the
-// account out of the admin group.
 func agManualJoinCommand() string {
 	return "sudo usermod -aG " + agGroup + " " + installAccount
 }
 
-// agLoopback returns the loopback address of port.
 func agLoopback(port int) string {
 	return net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 }
 
-// agPortOpen reports whether a TCP connection to addr succeeds.
 func agPortOpen(addr string) bool {
 	conn, err := net.DialTimeout("tcp", addr, agDialBound)
 	if err != nil {
@@ -622,8 +569,6 @@ func agPortOpen(addr string) bool {
 	return true
 }
 
-// agWaitPort waits until addr accepts connections (want true) or stops
-// accepting them (want false).
 func agWaitPort(t *testing.T, addr string, want bool) {
 	t.Helper()
 	state := "stop"
@@ -635,8 +580,6 @@ func agWaitPort(t *testing.T, addr string, want bool) {
 	})
 }
 
-// agWaitSystemBroker waits until the installed system Broker answers the root
-// account's terminal commands.
 func agWaitSystemBroker(t *testing.T) {
 	t.Helper()
 	harness.Eventually(t, agServiceBound, "the installed system Broker to answer broker list", func() (bool, string) {
@@ -645,7 +588,6 @@ func agWaitSystemBroker(t *testing.T) {
 	})
 }
 
-// agCreatePairingKey creates a one-time pairing key at account's own Broker.
 func agCreatePairingKey(t *testing.T, account string) string {
 	t.Helper()
 	res := syscontainer.RunAs(t, account, nil, "key", "create")
@@ -662,8 +604,6 @@ func agCreatePairingKey(t *testing.T, account string) string {
 	return ""
 }
 
-// agWaitAudit waits until the audit log holds every event with account as its
-// account.
 func agWaitAudit(t *testing.T, events []string, account string) {
 	t.Helper()
 	harness.Eventually(t, agAuditBound, "the audit log to record "+strings.Join(events, ", ")+" for "+account,
@@ -681,7 +621,6 @@ func agWaitAudit(t *testing.T, events []string, account string) {
 		})
 }
 
-// agAuditHas reports whether one audit line names event and account.
 func agAuditHas(audit, event, account string) bool {
 	want := "account=" + account
 	for _, line := range strings.Split(audit, "\n") {
@@ -696,13 +635,11 @@ func agAuditHas(audit, event, account string) bool {
 	return false
 }
 
-// agRunRoot runs a command as root and fails the test when it does not succeed.
 func agRunRoot(t *testing.T, argv ...string) {
 	t.Helper()
 	_ = agRunRootOut(t, argv...)
 }
 
-// agRunRootOut runs a command as root and returns its combined output.
 func agRunRootOut(t *testing.T, argv ...string) string {
 	t.Helper()
 	cmd := syscontainer.Command("root", nil, argv[0], argv[1:]...)

@@ -13,10 +13,8 @@ import (
 const unixAcceptingFlag = 0x00010000
 
 // InboxConnections returns how many peers are connected to the session's inbox
-// socket. It reads /proc/net/unix and counts the entries whose path is the
-// socket path and whose state is 03 (connected), then subtracts listening
-// entries. The fakesession listener itself is in state 01, so the subtraction
-// is defensive.
+// socket, read from the /proc/net/unix entries whose path is the socket path and
+// whose state is 03 (connected).
 func (s *Session) InboxConnections() (int, error) {
 	path := s.fake.SocketPath()
 	if path == "" {
@@ -35,7 +33,6 @@ func (s *Session) InboxConnections() (int, error) {
 	first := true
 	for scanner.Scan() {
 		if first {
-			// The first line is the column header.
 			first = false
 			continue
 		}
@@ -50,9 +47,9 @@ func (s *Session) InboxConnections() (int, error) {
 		connectedEntry := fields[5] == "03"
 		if connectedEntry {
 			connected++
-			// A listening socket is normally in state 01 and is therefore not
-			// counted above. Subtract it anyway when the kernel reports an
-			// accepting socket as connected.
+			// A listening socket is normally state 01 and is not counted above;
+			// subtract it anyway when the kernel reports an accepting socket as
+			// connected.
 			if flags, err := strconv.ParseUint(fields[3], 16, 32); err == nil && flags&unixAcceptingFlag != 0 {
 				listening++
 			}

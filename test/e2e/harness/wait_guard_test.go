@@ -14,71 +14,29 @@ import (
 	"testing"
 )
 
-// eventuallyCallExempt exempts one direct or indirect tool call inside a wait
-// callback. The comment must stand on the same line as the call or on the line
-// directly above it, and the marker must be followed by a reason. A line
-// comment and a block comment are both accepted. The reason is not checked
-// beyond being present: it is there for the next reader, who needs to know why
-// this wait cannot retry with PollCall.
+// eventuallyCallExempt marks one direct or indirect tool call inside a wait
+// callback as exempt. The marker must stand on the same line as the call or on
+// the line directly above it, and must be followed by a reason.
 const eventuallyCallExempt = "eventually-call-allow:"
 
-// minWaitCallChecks is the least number of wait and wrapper call sites the walk
-// must find under test/e2e. The tree holds roughly 310; a count far below that
-// means the walk stopped seeing the tree, not that the tests stopped using
-// waits.
+// minWaitCallChecks is far below the roughly 310 wait and wrapper call sites
+// the tree holds; a count below it means the walk stopped seeing the tree.
 const minWaitCallChecks = 100
 
-// TestEventuallyCallbacksUsePollBoundedCalls rejects a tool call made inside
-// an Eventually, EventuallyPoll, ConsistentlyPoll or WaitFor callback when the
-// call bypasses the wait's bounds. Session.Call bounds one tool call at
-// sessionCallBound, sixty seconds, and fails the test on a transport error, so
-// a callback that uses it turns one stalled MCP call into a failed wait
-// instead of retrying it. A callback makes poll-bounded calls with
-// Session.PollCall or Session.PollCallWithin, which takes the deadline the
-// wait passes in and runs each call's own poll bound in full.
-//
-// The callback's direct calls are checked, and so is one level of indirection:
-// a call to a function in the same directory whose own body makes a direct
-// .Call is rejected too, because the helper hides the call from a guard that
-// only reads the callback. The helper is matched whether it is called by name,
-// in method form as in w.poll(s), or generically as in poll[int](s). A
-// selector call is also matched against the helpers of every directory under
-// test/e2e, because a callback reaches another package's helper that way, as
-// in s.CallUntilOK. Session.CallErr and Session.CallErrWithin take the same
-// sixty-second bound without a direct .Call, so the guard names them too.
-//
-// A closure held in a variable is followed to its function literal. A callback
-// handed to a wrapper function such as registrationEventually is inspected at
-// the wrapper's call site: every func-typed parameter the wrapper forwards is
-// followed, including through another wrapper, and a wrapper held in a closure
-// variable such as drWaitStatus is followed the same way.
-//
-// The test counts the wait and wrapper calls it checked and fails when the
-// count falls below minWaitCallChecks, so a walk that silently stops seeing
-// the tree cannot pass.
-//
-// The guard stops at these known boundaries, which still need a reader:
-//   - a wrapper declared in another package under test/e2e is not in the
-//     per-directory wrapper index;
-//   - a wrapper that stores its callback in a closure variable before passing
-//     it to the wait is not followed through both levels;
-//   - Consistently is checked separately: it observes a window without
-//     retrying, so its callback may not make an unbounded .Call or .CallErr,
-//     directly or through one level of a same-directory helper; a callback
-//     that needs a tool call uses ConsistentlyPoll and Session.PollCall, which
-//     the wait check covers;
-//   - closureLiterals and local wrapper names are matched by name within the
-//     file or function and do not resolve lexical scope.
-//
-// A wait that genuinely needs the sixty-second bound exempts the call with
-// // eventually-call-allow: <reason> on the call's line or the line above it.
-// A wait whose callback is a named function also needs an exemption, because
-// the guard cannot see that function's body from the wait call.
-//
-// The test walks the Go sources under test/e2e rather than the compiled
-// packages because most of them carry the e2e build tag, and it lives in the
-// harness package so make test runs it.
+// TestEventuallyCallbacksUsePollBoundedCalls rejects a tool call inside a wait
+// callback that bypasses the wait's bounds.
 func TestEventuallyCallbacksUsePollBoundedCalls(t *testing.T) {
+	// The guard follows one level of indirection, a helper function whose own
+	// body makes a direct .Call; wrapper functions that forward the callback are
+	// followed through any depth. Its known blind spots still need a reader: a
+	// wrapper declared in another package under test/e2e is not in the
+	// per-directory index, a wrapper that stores its callback in a closure
+	// variable is not followed through both levels, local names are matched by
+	// name without resolving scope, and a wait whose callback is a named
+	// function needs an exemption because the guard cannot see that function's
+	// body. Consistently is checked separately. The walk reads Go sources rather
+	// than the compiled packages because most of them carry the e2e build tag,
+	// and the test lives here so make test runs it.
 	root, err := repositoryRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -115,9 +73,8 @@ func TestEventuallyCallbacksUsePollBoundedCalls(t *testing.T) {
 		t.Fatalf("walking %s: %v", e2eDir, err)
 	}
 
-	// callFuncs maps a directory to the names of its functions whose body makes
-	// a direct .Call. A wait callback that calls such a function is reported,
-	// one level deep; the function's own callees are not followed.
+	// callFuncs maps a directory to the functions whose body makes a direct
+	// .Call.
 	callFuncs := make(map[string]map[string]bool)
 	globalCallFuncs := make(map[string]bool)
 	filesByDir := make(map[string][]*ast.File)
@@ -148,9 +105,7 @@ func TestEventuallyCallbacksUsePollBoundedCalls(t *testing.T) {
 		found, checks := waitCallbackViolations(fset, src.file, indexes[dir])
 		violations = append(violations, found...)
 		checked += checks
-		// Consistently is not retried and passes no deadline, so its callback
-		// gets its own check: a tool call there must use ConsistentlyPoll with
-		// Session.PollCall, not the unbounded Session.Call.
+		// Consistently passes no deadline, so its callback gets its own check.
 		violations = append(violations, consistentlyCallbackViolations(fset, src.file, indexes[dir], exemptLines(fset, src.file))...)
 	}
 	if checked < minWaitCallChecks {
@@ -167,8 +122,6 @@ func TestEventuallyCallbacksUsePollBoundedCalls(t *testing.T) {
 	}
 }
 
-// repositoryRoot returns the module root, found by walking up from this source
-// file to the directory holding go.mod.
 func repositoryRoot() (string, error) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -187,8 +140,6 @@ func repositoryRoot() (string, error) {
 	}
 }
 
-// directCallFuncs returns the names of the functions declared in file whose
-// body makes a call bounded at the session call bound.
 func directCallFuncs(file *ast.File) []string {
 	var names []string
 	for _, decl := range file.Decls {
@@ -203,9 +154,6 @@ func directCallFuncs(file *ast.File) []string {
 	return names
 }
 
-// longCallMethod reports whether a method call is bounded at sessionCallBound,
-// sixty seconds. CallErr and CallErrWithin take the same bound and make no
-// direct .Call themselves, so a name-only index would miss them.
 func longCallMethod(name string) bool {
 	switch name {
 	case "Call", "CallErr", "CallErrWithin":
@@ -214,8 +162,6 @@ func longCallMethod(name string) bool {
 	return false
 }
 
-// callFun unwraps a call's function expression through parentheses and type
-// arguments, so a generic call such as f[T](...) yields its identifier.
 func callFun(fun ast.Expr) ast.Expr {
 	for {
 		switch f := fun.(type) {
@@ -231,10 +177,6 @@ func callFun(fun ast.Expr) ast.Expr {
 	}
 }
 
-// bodyCallsCall reports whether body makes a call bounded at the session call
-// bound, anywhere in the body including a nested function literal. Session's
-// method is what the guard is concerned with; a method with one of these names
-// on another type is rejected too, which the exemption covers.
 func bodyCallsCall(body *ast.BlockStmt) bool {
 	found := false
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -254,32 +196,15 @@ func bodyCallsCall(body *ast.BlockStmt) bool {
 	return found
 }
 
-// guardIndex is what the guard knows about the functions in one directory. A
-// callback can hide a bounded call behind three shapes: a helper called by name
-// or in method form, a closure held in a variable, and a callback forwarded by
-// a wrapper function. directCalls and wrappers describe the first and the
-// third; closureLiterals describes the second.
+// guardIndex is what the guard knows about the functions in one directory: the
+// direct calls declared there, the direct calls anywhere under test/e2e, and
+// the wrappers.
 type guardIndex struct {
-	// directCalls names the functions and methods declared in the directory
-	// whose body makes a call bounded at the session call bound, including one
-	// inside a nested function literal.
-	directCalls map[string]bool
-	// globalDirectCalls names every function and method under test/e2e with the
-	// same property. A callback reaches another package's helper through a
-	// selector, as in s.CallUntilOK, so a selector call is matched against this
-	// wider set.
+	directCalls       map[string]bool
 	globalDirectCalls map[string]bool
-	// wrappers maps a function or method declared in the directory to every
-	// position of a func-typed parameter it forwards to a wait. A callback
-	// passed at one of those positions is inspected like a callback written
-	// directly at the wait.
-	wrappers map[string][]int
+	wrappers          map[string][]int
 }
 
-// wrapperFuncs returns the functions and methods in files that forward a
-// func-typed parameter to a wait, mapped to every forwarded position. A
-// function that forwards through another wrapper is found by repeating the
-// walk until no new position appears.
 func wrapperFuncs(files []*ast.File) map[string][]int {
 	wrappers := make(map[string][]int)
 	var decls []*ast.FuncDecl
@@ -312,7 +237,6 @@ func wrapperFuncs(files []*ast.File) map[string][]int {
 	return wrappers
 }
 
-// mergePositions returns the union of two position slices, sorted.
 func mergePositions(dst, more []int) []int {
 	seen := make(map[int]bool, len(dst)+len(more))
 	for _, at := range dst {
@@ -329,10 +253,6 @@ func mergePositions(dst, more []int) []int {
 	return positions
 }
 
-// forwardedToWait reports every position of a func-typed parameter of fn that
-// is referenced inside the callback of a wait call in body. A wrapper usually
-// calls the parameter, as registrationEventually does with cond(deadline), but
-// it may also pass the parameter itself as the callback.
 func forwardedToWait(paramsType *ast.FuncType, body *ast.BlockStmt) ([]int, bool) {
 	params := funcParamPositions(paramsType)
 	if len(params) == 0 {
@@ -373,15 +293,10 @@ func forwardedToWait(paramsType *ast.FuncType, body *ast.BlockStmt) ([]int, bool
 	return sortedPositions(found), len(found) > 0
 }
 
-// forwardedThroughWrapper reports every position of a func-typed parameter of
-// fn that fn hands to another wrapper at one of that wrapper's callback
-// positions.
 func forwardedThroughWrapper(fn *ast.FuncDecl, wrappers map[string][]int) ([]int, bool) {
 	return forwardedThroughWrapperBody(fn.Type, fn.Body, wrappers)
 }
 
-// forwardedThroughWrapperBody is forwardedThroughWrapper for a function
-// declaration and for a function literal held in a closure variable.
 func forwardedThroughWrapperBody(paramsType *ast.FuncType, body *ast.BlockStmt, wrappers map[string][]int) ([]int, bool) {
 	params := funcParamPositions(paramsType)
 	if len(params) == 0 {
@@ -414,7 +329,6 @@ func forwardedThroughWrapperBody(paramsType *ast.FuncType, body *ast.BlockStmt, 
 	return sortedPositions(found), len(found) > 0
 }
 
-// sortedPositions returns the positions in found in order.
 func sortedPositions(found map[int]bool) []int {
 	positions := make([]int, 0, len(found))
 	for at := range found {
@@ -424,9 +338,6 @@ func sortedPositions(found map[int]bool) []int {
 	return positions
 }
 
-// funcParamPositions maps each func-typed parameter name of ft to its position
-// in a call. Parameters grouped in one field, as in "a, b func()", occupy
-// consecutive positions.
 func funcParamPositions(ft *ast.FuncType) map[string]int {
 	params := make(map[string]int)
 	if ft == nil || ft.Params == nil {
@@ -448,14 +359,10 @@ func funcParamPositions(ft *ast.FuncType) map[string]int {
 	return params
 }
 
-// forwardedParamNames returns the names of the func-typed parameters of fn
-// that fn forwards to a wait. A wait inside fn that passes one of them as a
-// named callback is not reported: the guard checks every caller instead.
 func forwardedParamNames(fn *ast.FuncDecl, wrappers map[string][]int) map[string]bool {
 	return forwardedParamNamesOf(fn.Type, wrappers[fn.Name.Name])
 }
 
-// forwardedParamNamesOf returns the parameter names at positions in ft.
 func forwardedParamNamesOf(ft *ast.FuncType, positions []int) map[string]bool {
 	names := make(map[string]bool)
 	if ft == nil || ft.Params == nil {
@@ -480,14 +387,13 @@ func forwardedParamNamesOf(ft *ast.FuncType, positions []int) map[string]bool {
 }
 
 // localWrapperFuncs returns the closure variables in fn that forward a
-// func-typed parameter to a wait, mapped to every forwarded position, and the
-// wait calls inside those wrappers whose callback is the forwarded parameter.
-// Those calls would otherwise be reported as named callbacks; the guard checks
-// the wrapper's call sites instead. A name bound to more than one literal, or
-// to anything that is not a literal, is left out: the guard cannot tell which
-// body a call reaches. Scope is not resolved, so a name is matched for the
-// whole function. A wrapper call that hands its parameter to another wrapper is
-// left to the named-callback report.
+// func-typed parameter to a wait, mapped to every forwarded parameter position,
+// and the wait calls inside those wrappers whose callback is the forwarded
+// parameter. Those calls would otherwise be reported as named callbacks, so the
+// guard checks the wrapper's call sites instead. A name bound to more than one
+// literal, or to anything that is not a literal, is left out because the call
+// cannot be resolved to one body; scope is not resolved, so a name is matched
+// for the whole function.
 func localWrapperFuncs(fn *ast.FuncDecl) (map[string][]int, map[*ast.CallExpr]bool) {
 	bindings := make(map[string][]*ast.FuncLit)
 	ambiguous := make(map[string]bool)
@@ -586,11 +492,6 @@ func localWrapperFuncs(fn *ast.FuncDecl) (map[string][]int, map[*ast.CallExpr]bo
 	return wrappers, skips
 }
 
-// closureLiterals maps a variable in file to the function literal assigned to
-// it, when every assignment to that name in the file assigns the same literal.
-// A callback passed as such a variable is inspected as if the literal had been
-// written at the wait. A name assigned anything else is left out, and the
-// callback stays a named callback the guard reports.
 func closureLiterals(file *ast.File) map[string]*ast.FuncLit {
 	literals := make(map[string]*ast.FuncLit)
 	ambiguous := make(map[string]bool)
@@ -646,8 +547,6 @@ func closureLiterals(file *ast.File) map[string]*ast.FuncLit {
 	return literals
 }
 
-// callName returns the name a call invokes, for a plain function, a method or
-// a generic instantiation.
 func callName(call *ast.CallExpr) (string, bool) {
 	switch fun := callFun(call.Fun).(type) {
 	case *ast.Ident:
@@ -658,12 +557,6 @@ func callName(call *ast.CallExpr) (string, bool) {
 	return "", false
 }
 
-// waitCallbackViolations returns one message for every tool call in the
-// callback passed to an Eventually, EventuallyPoll or WaitFor call in file, and
-// in a callback handed to a wrapper function, that bypasses the wait's bounds.
-// index describes the functions the callback can reach, and the returned count
-// is the number of wait and wrapper calls the walk checked. A callback held in
-// a variable is followed to its literal.
 func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardIndex) ([]string, int) {
 	exempt := exemptLines(fset, file)
 	closures := closureLiterals(file)
@@ -674,9 +567,6 @@ func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardInd
 		return exempt[line] || exempt[line-1]
 	}
 
-	// inspectCallback reports the calls in one callback body. owner names the
-	// wait or the wrapper, for the message. local names the closure wrappers in
-	// the enclosing function, and seen guards against a recursive closure.
 	var inspectCallback func(owner string, body *ast.BlockStmt, local map[string][]int, seen map[*ast.FuncLit]bool)
 	inspectCallback = func(owner string, body *ast.BlockStmt, local map[string][]int, seen map[*ast.FuncLit]bool) {
 		ast.Inspect(body, func(n ast.Node) bool {
@@ -685,14 +575,12 @@ func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardInd
 				return true
 			}
 			if _, nested := waitCallName(inner); nested {
-				// The walk over the file reports a nested wait's callback
-				// on its own; do not count its calls twice.
+				// The walk over the file reports a nested wait's callback on
+				// its own.
 				return false
 			}
 			if name, ok := callName(inner); ok {
-				// The walk over the file inspects a wrapper's callback at the
-				// wrapper's call site. Descending into it here as well would
-				// report the same call twice.
+				// The wrapper's callback is inspected at its call site.
 				if _, ok := local[name]; ok {
 					return false
 				}
@@ -732,9 +620,6 @@ func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardInd
 		})
 	}
 
-	// checkCallback follows the callback argument arg of a wait or wrapper
-	// call. forwarded names the wrapper's own parameters that are checked at
-	// its call sites instead, so they are not reported here.
 	checkCallback := func(owner string, arg ast.Expr, forwarded map[string]bool, local map[string][]int) {
 		if arg == nil {
 			return
@@ -766,16 +651,12 @@ func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardInd
 		}
 	}
 
-	// checkCall reports a wait call's callback, or the callbacks a wrapper
-	// forwards at the positions its parameters occupy. local names the closure
-	// wrappers in the enclosing function, and skips names the wait calls inside
-	// them whose callback is the forwarded parameter.
 	checkCall := func(call *ast.CallExpr, forwarded map[string]bool, local map[string][]int, skips map[*ast.CallExpr]bool) {
 		if name, ok := waitCallName(call); ok {
 			checked++
 			if skips[call] {
-				// The wrapper hands this parameter to the wait; its call
-				// sites are checked instead.
+				// The wrapper hands this parameter to the wait; its call sites
+				// are checked instead.
 				return
 			}
 			checkCallback(name, lastArg(call), forwarded, local)
@@ -812,8 +693,6 @@ func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardInd
 			})
 			continue
 		}
-		// A wait can also sit in a package-level value. It has no parameters
-		// to forward.
 		ast.Inspect(decl, func(n ast.Node) bool {
 			if call, ok := n.(*ast.CallExpr); ok {
 				checkCall(call, nil, nil, nil)
@@ -824,7 +703,6 @@ func waitCallbackViolations(fset *token.FileSet, file *ast.File, index *guardInd
 	return violations, checked
 }
 
-// lastArg returns the last argument of call, or nil when it takes none.
 func lastArg(call *ast.CallExpr) ast.Expr {
 	if len(call.Args) == 0 {
 		return nil
@@ -832,8 +710,6 @@ func lastArg(call *ast.CallExpr) ast.Expr {
 	return call.Args[len(call.Args)-1]
 }
 
-// waitCallName reports whether call invokes Eventually, EventuallyPoll,
-// WaitFor or ConsistentlyPoll, and returns the name for the message.
 func waitCallName(call *ast.CallExpr) (string, bool) {
 	var name string
 	switch fun := callFun(call.Fun).(type) {
@@ -851,25 +727,11 @@ func waitCallName(call *ast.CallExpr) (string, bool) {
 	return "", false
 }
 
-// consistentlyCallName reports whether call invokes the window-only
-// Consistently, whose callback has no deadline and therefore cannot make a
-// poll-bounded call. Its callback is checked separately.
 func consistentlyCallName(call *ast.CallExpr) bool {
 	name, ok := callName(call)
 	return ok && name == "Consistently"
 }
 
-// consistentlyCallbackViolations reports every unbounded tool call in the
-// callback of a Consistently call in file, directly or through one level of a
-// same-directory helper. Consistently observes a window instead of retrying, so
-// it passes no deadline; a callback that needs a tool call uses
-// ConsistentlyPoll and Session.PollCall, which that guard checks. A callback
-// that genuinely needs the sixty-second bound exempts the call with the same
-// marker. A callback held in a variable is followed to its literal.
-//
-// index supplies the same direct-call and wrapper knowledge the wait guard
-// uses. Without it, a callback that calls a helper such as discListTopics is
-// invisible even though the helper's body calls Session.Call.
 func consistentlyCallbackViolations(fset *token.FileSet, file *ast.File, index *guardIndex, exempt map[int]bool) []string {
 	closures := closureLiterals(file)
 	var violations []string
@@ -950,9 +812,6 @@ func consistentlyCallbackViolations(fset *token.FileSet, file *ast.File, index *
 	return violations
 }
 
-// exemptLines returns the lines carrying an exemption marker with a reason. A
-// line comment and a block comment are both accepted; a block comment marks
-// every line it covers.
 func exemptLines(fset *token.FileSet, file *ast.File) map[int]bool {
 	lines := make(map[int]bool)
 	for _, group := range file.Comments {
@@ -970,8 +829,6 @@ func exemptLines(fset *token.FileSet, file *ast.File) map[int]bool {
 	return lines
 }
 
-// hasExemptionReason reports whether text is an exemption marker followed by a
-// reason, in a line comment or a block comment.
 func hasExemptionReason(text string) bool {
 	text = strings.TrimSpace(text)
 	text = strings.TrimPrefix(text, "//")
@@ -985,11 +842,9 @@ func hasExemptionReason(text string) bool {
 	return strings.TrimSpace(strings.TrimPrefix(text, eventuallyCallExempt)) != ""
 }
 
-// TestWaitGuardSeesNamedAndIndirectCallbacks covers the two cases the walk must
-// not pass silently: a named callback, whose body the guard cannot see from the
-// wait call, and a call to a same-package function whose body makes a direct
-// .Call. The last case checks that a block comment exempts the call, as the
-// marker's documentation says.
+// TestWaitGuardSeesNamedAndIndirectCallbacks checks that the guard reports a
+// named callback and an indirect .Call while accepting a block-comment
+// exemption.
 func TestWaitGuardSeesNamedAndIndirectCallbacks(t *testing.T) {
 	const src = `package p
 
@@ -1033,10 +888,9 @@ func f() {
 	}
 }
 
-// TestWaitGuardSeesMethodClosureAndWrapperCallbacks covers the three callback
-// shapes the walk must not pass silently: a same-package helper called in
-// method form, a closure held in a variable, and a callback handed to a
-// wrapper function such as registrationEventually.
+// TestWaitGuardSeesMethodClosureAndWrapperCallbacks checks that the guard
+// reports calls hidden behind a method-form helper, a closure variable, and a
+// wrapper function.
 func TestWaitGuardSeesMethodClosureAndWrapperCallbacks(t *testing.T) {
 	const src = `package p
 
@@ -1101,10 +955,8 @@ func f(s S, w W) {
 	}
 }
 
-// TestWaitGuardSeesClosureWrapperCallbacks covers a wrapper held in a closure
-// variable, as drWaitStatus is. The callback it forwards is written at the
-// wrapper's call site, so the guard must follow the variable to the function
-// literal and inspect the argument at the forwarded position.
+// TestWaitGuardSeesClosureWrapperCallbacks checks that a wrapper held in a
+// closure variable is followed to the callback written at its call site.
 func TestWaitGuardSeesClosureWrapperCallbacks(t *testing.T) {
 	const src = `package p
 
@@ -1131,10 +983,8 @@ func f(s S) {
 	}
 }
 
-// TestWaitGuardSeesCallErrAndCallErrWithin covers the helpers that take a long
-// bound but make no direct .Call themselves, so the direct-call index does not
-// name them, both when the callback calls them and when it calls a helper that
-// does.
+// TestWaitGuardSeesCallErrAndCallErrWithin checks that CallErr and CallErrWithin
+// are reported both directly and through a helper.
 func TestWaitGuardSeesCallErrAndCallErrWithin(t *testing.T) {
 	const src = `package p
 
@@ -1166,9 +1016,8 @@ func f(s S) {
 	}
 }
 
-// TestWaitGuardSeesClosureVariableCalls covers a closure variable called by
-// name inside a callback. The call is not a helper in the direct-call index,
-// so the guard must follow the variable to its literal.
+// TestWaitGuardSeesClosureVariableCalls checks that a closure variable called
+// by name inside a callback is followed to its literal.
 func TestWaitGuardSeesClosureVariableCalls(t *testing.T) {
 	const src = `package p
 
@@ -1194,8 +1043,7 @@ func f(s S) {
 }
 
 // TestWaitGuardReportsWrapperCallbackOnce checks that a wrapper called inside
-// another callback is reported once, not once by the callback walk and again
-// at the wrapper's call site.
+// another callback is reported once.
 func TestWaitGuardReportsWrapperCallbackOnce(t *testing.T) {
 	const src = `package p
 
@@ -1229,9 +1077,8 @@ func f(s S) {
 	}
 }
 
-// TestWaitGuardSeesMultipleForwardedParams covers a wrapper with two
-// func-typed parameters, both forwarded to waits. The guard must record every
-// forwarded position, not only the first one it meets.
+// TestWaitGuardSeesMultipleForwardedParams checks that a wrapper with two
+// forwarded func-typed parameters has both checked.
 func TestWaitGuardSeesMultipleForwardedParams(t *testing.T) {
 	const src = `package p
 
@@ -1260,9 +1107,8 @@ func f(s S) {
 	}
 }
 
-// TestWaitGuardSeesGenericCalls covers a generic wrapper call and a generic
-// direct-call helper, whose Fun is an IndexExpr rather than an Ident or a
-// SelectorExpr.
+// TestWaitGuardSeesGenericCalls checks that generic wrapper and helper calls
+// are reported.
 func TestWaitGuardSeesGenericCalls(t *testing.T) {
 	const src = `package p
 
@@ -1298,7 +1144,6 @@ func f(s S) {
 	}
 }
 
-// newGuardIndex builds the index a fixture needs from its own declarations.
 func newGuardIndex(file *ast.File) *guardIndex {
 	index := &guardIndex{
 		directCalls:       make(map[string]bool),
@@ -1312,10 +1157,8 @@ func newGuardIndex(file *ast.File) *guardIndex {
 	return index
 }
 
-// TestWaitGuardSeesConsistentlyHelperCalls covers a Consistently callback that
-// delegates its tool call to a same-directory helper, as the discovery windows
-// did with discListTopics. The helper is one level from Session.Call, so the
-// direct-call index names it.
+// TestWaitGuardSeesConsistentlyHelperCalls checks that a Consistently callback
+// that delegates its tool call to a same-directory helper is reported.
 func TestWaitGuardSeesConsistentlyHelperCalls(t *testing.T) {
 	const src = `package p
 
@@ -1344,8 +1187,8 @@ func f(s S) {
 	}
 }
 
-// TestExemptionCommentForms checks that the marker accepts the line and block
-// comment forms its documentation names, and requires a reason.
+// TestExemptionCommentForms checks that the exemption marker accepts line and
+// block comments and requires a reason.
 func TestExemptionCommentForms(t *testing.T) {
 	for _, tc := range []struct {
 		comment string

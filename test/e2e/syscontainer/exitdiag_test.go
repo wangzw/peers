@@ -8,9 +8,7 @@ import (
 )
 
 // TestExitDiagnosticOnlyForKilledRun checks the 137 filter and the exact events
-// query: the owner label and the project's start bound the events, and --until
-// keeps a query against a live daemon from blocking. It also checks that any
-// other exit status runs no command and adds no text.
+// query, and that any other exit status runs no command and adds no text.
 func TestExitDiagnosticOnlyForKilledRun(t *testing.T) {
 	started := time.Date(2026, 11, 21, 10, 0, 0, 0, time.UTC)
 	now := started.Add(30 * time.Second)

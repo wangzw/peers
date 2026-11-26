@@ -14,21 +14,13 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// The two acceptance cases run on a pair of containers. Host A runs the system
-// Broker with two local accounts; host B runs its own user Broker and reaches
-// host A over a paired link. The two roles meet in the shared pair directory.
 const (
 	caTopic = "cross-account-names"
 
-	// caSystemConfig names host A so host B can dial the advertised address.
 	caSystemConfig = "broker:\n  alias: sys\n  advertise: \"hostA:17443\"\n"
 
-	// caPeerListen keeps host B's user Broker off the system Broker's default
-	// link port. The two containers do not share a port space, but the explicit
-	// value matches the other pair tests and leaves nothing to derive.
 	caPeerListen = ":17444"
 
-	// The shared-directory markers that order the two roles.
 	caPairingFile   = "ca-pairing"
 	caConnectedFile = "ca-connected"
 	caImpObserved   = "ca-impersonation-observed"
@@ -38,9 +30,6 @@ const (
 	caSentFile      = "ca-sent"
 	caDoneFile      = "ca-done"
 
-	// Message bodies that mark one probe in a recipient's inbox. Each test run
-	// gets its own compose project and shared volume, so fixed strings cannot
-	// collide across runs.
 	caLocalBare  = "ca-local-bare-probe"
 	caLocalRef   = "ca-local-ref-probe"
 	caRemoteBare = "ca-remote-bare-probe"
@@ -48,41 +37,29 @@ const (
 )
 
 const (
-	// caPairingBound covers host B's start and its pairing call after host A
-	// publishes the key.
 	caPairingBound = 90 * time.Second
 
-	// caLinkBound covers the topic roster crossing the link.
 	caLinkBound = 30 * time.Second
 
-	// caMarkerBound bounds a wait for the other role's marker.
 	caMarkerBound = 60 * time.Second
 
-	// caRemoveBound covers the local unregister and its propagation to the
-	// peer's roster.
 	caRemoveBound = 15 * time.Second
 )
 
-// caAgentEntry is the part of a list_agents entry these cases read. It is a
-// local shape rather than the server's struct so the test also builds against a
-// Broker that does not report the account field yet, which is what the pre-fix
-// run needs.
+// caAgentEntry is a local shape so the test also builds against a Broker that
+// does not report the account field.
 type caAgentEntry struct {
 	Address string `json:"address"`
 	Account string `json:"account"`
 }
 
-// caListOut is the part of a list_agents result these cases read.
 type caListOut struct {
 	Self   string         `json:"self_address"`
 	Agents []caAgentEntry `json:"agents"`
 }
 
-// TestREQAgentMessaging047_CrossAccountImpersonation proves that a second
-// account cannot impersonate the account that registered a name first: the
-// owner keeps its ref-free address, the later account's address carries a full
-// twelve-character ref, and the peer's list_agents shows both with their
-// accounts.
+// TestREQAgentMessaging047_CrossAccountImpersonation checks that a second
+// account cannot impersonate the account that registered a name first.
 func TestREQAgentMessaging047_CrossAccountImpersonation(t *testing.T) {
 	if !syscontainer.InContainer() {
 		t.Parallel()
@@ -101,11 +78,9 @@ func TestREQAgentMessaging047_CrossAccountImpersonation(t *testing.T) {
 	}
 }
 
-// TestREQAgentMessaging048_CrossAccountInterception proves that a bare name is
-// delivered only to the name's owner: after the owner leaves, a by-name send
-// from the same Broker and from the paired host is refused with not_found and
-// reaches neither the later account nor the departed owner's address, while
-// the later account's full ref still delivers.
+// TestREQAgentMessaging048_CrossAccountInterception checks that after the name's
+// owner leaves, a by-name send to the bare name is refused with not_found, and
+// the later account receives only the full-ref sends.
 func TestREQAgentMessaging048_CrossAccountInterception(t *testing.T) {
 	if !syscontainer.InContainer() {
 		t.Parallel()
@@ -124,8 +99,6 @@ func TestREQAgentMessaging048_CrossAccountInterception(t *testing.T) {
 	}
 }
 
-// caHostASetup starts host A's system Broker, a root observer in the shared
-// topic, and the pairing, then waits for host B to connect.
 func caHostASetup(t *testing.T) *syscontainer.Session {
 	t.Helper()
 
@@ -139,8 +112,6 @@ func caHostASetup(t *testing.T) *syscontainer.Session {
 	return root
 }
 
-// caHostBSetup starts host B's user Broker and its sender session, pairs with
-// host A, and announces the completed pairing.
 func caHostBSetup(t *testing.T) *syscontainer.Session {
 	t.Helper()
 
@@ -157,8 +128,6 @@ func caHostBSetup(t *testing.T) *syscontainer.Session {
 	return sender
 }
 
-// caImpersonationOnHostA registers the same name under both accounts and checks
-// host A's own view, then waits for host B to confirm the peer view.
 func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 	t.Helper()
 
@@ -171,8 +140,6 @@ func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 
 	caWaitNamed(t, root, "twin", 2)
 
-	// The first registrant keeps the address it had before the other account
-	// arrived. Before the fix this poll ends with a ref in the owner's address.
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the owner's address carries no ref", func(deadline time.Time) (bool, string) {
 		out, state := sysPollDecode[caListOut](t, deadline, peer, "list_agents", map[string]any{})
 		if state != "" {
@@ -209,7 +176,6 @@ func caImpersonationOnHostA(t *testing.T, root *syscontainer.Session) {
 	syscontainer.PairWrite(t, caImpDone, []byte("done\n"))
 }
 
-// caImpersonationOnHostB checks the peer's view of both accounts' entries.
 func caImpersonationOnHostB(t *testing.T, sender *syscontainer.Session) {
 	t.Helper()
 
@@ -218,9 +184,6 @@ func caImpersonationOnHostB(t *testing.T, sender *syscontainer.Session) {
 	syscontainer.PairAwait(t, caImpDone, caMarkerBound)
 }
 
-// caInterceptionOnHostA registers the name under both accounts, lets the owner
-// leave, and then proves a by-name send from the same Broker is refused while
-// the later account's full ref still delivers.
 func caInterceptionOnHostA(t *testing.T, root *syscontainer.Session) {
 	t.Helper()
 
@@ -232,7 +195,7 @@ func caInterceptionOnHostA(t *testing.T, root *syscontainer.Session) {
 	caJoin(t, other, caTopic)
 
 	caWaitNamed(t, root, "worker", 2)
-	// Let the peer observe both entries before the owner leaves, so its own
+	// Wait for the peer to observe both entries before the owner leaves, so its
 	// assertion does not race the removal.
 	syscontainer.PairAwait(t, caWorkersSeen, caMarkerBound)
 
@@ -240,8 +203,8 @@ func caInterceptionOnHostA(t *testing.T, root *syscontainer.Session) {
 	remaining := caWaitSingle(t, root, "worker")
 	syscontainer.PairWrite(t, caOwnerLeft, []byte(remaining.Address+"\n"))
 
-	// The bare name belongs to the departed account, so only that account may
-	// receive it. Before the fix this send reaches the later account.
+	// The bare name belongs to the departed account, so the send must be
+	// refused.
 	if text, isError := root.Call(t, "send_message", map[string]any{"to": "worker@sys", "message": caLocalBare}); !isError {
 		t.Fatalf("a by-name send reached the account that does not own the name: %s", text)
 	} else {
@@ -261,8 +224,6 @@ func caInterceptionOnHostA(t *testing.T, root *syscontainer.Session) {
 	syscontainer.PairWrite(t, caDoneFile, []byte("done\n"))
 }
 
-// caInterceptionOnHostB proves the same refusal for a send that arrives over
-// the link.
 func caInterceptionOnHostB(t *testing.T, sender *syscontainer.Session) {
 	t.Helper()
 
@@ -283,7 +244,6 @@ func caInterceptionOnHostB(t *testing.T, sender *syscontainer.Session) {
 		t.Fatalf("the remaining entry names account %q, want other: %q", remaining.Account, remaining.Address)
 	}
 
-	// A bare name never reaches a member whose publisher requires a ref.
 	if text, isError := sender.Call(t, "send_message", map[string]any{"to": "worker@" + alias, "message": caRemoteBare}); !isError {
 		t.Fatalf("a by-name send over the link reached the account that does not own the name: %s", text)
 	} else {
@@ -302,8 +262,6 @@ func caInterceptionOnHostB(t *testing.T, sender *syscontainer.Session) {
 	syscontainer.PairAwait(t, caDoneFile, caMarkerBound)
 }
 
-// caPublishPairing creates a pairing key at host A's system Broker and writes
-// the advertised address and the key to the shared directory.
 func caPublishPairing(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 
@@ -331,7 +289,6 @@ func caPublishPairing(t *testing.T, session *syscontainer.Session) {
 	syscontainer.PairWrite(t, caPairingFile, []byte(address+"\n"+out.Key+"\n"))
 }
 
-// caReadPairing splits the shared pairing file into its address and key lines.
 func caReadPairing(t *testing.T, data []byte) (address, key string) {
 	t.Helper()
 	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
@@ -341,7 +298,6 @@ func caReadPairing(t *testing.T, data []byte) (address, key string) {
 	return lines[0], lines[1]
 }
 
-// caWaitRegistered waits until the MCP server has registered the session.
 func caWaitRegistered(t *testing.T, s *syscontainer.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+s.Account+" to register", func(deadline time.Time) (bool, string) {
@@ -350,7 +306,6 @@ func caWaitRegistered(t *testing.T, s *syscontainer.Session) {
 	})
 }
 
-// caJoin joins topic, retrying while the session is still registering.
 func caJoin(t *testing.T, s *syscontainer.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, caLinkBound, "join_topic "+topic+" as "+s.Account, func(deadline time.Time) (bool, string) {
@@ -365,9 +320,6 @@ func caJoin(t *testing.T, s *syscontainer.Session, topic string) {
 	})
 }
 
-// caWaitNamed waits until want agents named name are listed. The bound is
-// derived from list_agents, the tool it polls, so a caller cannot pass a
-// shorter one.
 func caWaitNamed(t *testing.T, s *syscontainer.Session, name string, want int) caListOut {
 	t.Helper()
 	var last caListOut
@@ -385,16 +337,12 @@ func caWaitNamed(t *testing.T, s *syscontainer.Session, name string, want int) c
 	return last
 }
 
-// caWaitSingle waits until exactly one agent named name remains and returns it.
 func caWaitSingle(t *testing.T, s *syscontainer.Session, name string) caAgentEntry {
 	t.Helper()
 	out := caWaitNamed(t, s, name, 1)
 	return caNamed(out, name)[0]
 }
 
-// caRequireLocalRoster checks the Broker's own view of the two entries of name:
-// the owner's carries no ref, the later account's carries a twelve-character
-// ref, and the account field names the registering account.
 func caRequireLocalRoster(t *testing.T, out caListOut, name, owner, later string) {
 	t.Helper()
 	entries := caRequireBothAccounts(t, out, name, owner, later)
@@ -413,10 +361,6 @@ func caRequireLocalRoster(t *testing.T, out caListOut, name, owner, later string
 	}
 }
 
-// caRequirePeerRoster checks the peer's view. The owner's entry must be
-// ref-free and name its account, and the later account's entry must carry a
-// twelve-character ref and its account name: a name owned by one account is
-// addressed without a disambiguator on every Broker that sees it.
 func caRequirePeerRoster(t *testing.T, out caListOut, name, owner, later string) {
 	t.Helper()
 	entries := caRequireBothAccounts(t, out, name, owner, later)
@@ -435,8 +379,6 @@ func caRequirePeerRoster(t *testing.T, out caListOut, name, owner, later string)
 	}
 }
 
-// caRequireBothAccounts checks that the listing has one entry for each account
-// and returns those entries.
 func caRequireBothAccounts(t *testing.T, out caListOut, name, owner, later string) []caAgentEntry {
 	t.Helper()
 	entries := caNamed(out, name)
@@ -458,8 +400,6 @@ func caRequireBothAccounts(t *testing.T, out caListOut, name, owner, later strin
 	return entries
 }
 
-// caRequireOwnerRefusal checks the refusal a bare-name send gets when the name
-// belongs to another account.
 func caRequireOwnerRefusal(t *testing.T, text string) {
 	t.Helper()
 	if !strings.Contains(text, "(code: not_found)") {
@@ -470,8 +410,6 @@ func caRequireOwnerRefusal(t *testing.T, text string) {
 	}
 }
 
-// caRequireProbes waits for the holding account to receive one copy of each
-// ref-addressed probe and no copy of either bare-name probe.
 func caRequireProbes(t *testing.T, holder *syscontainer.Session, wantFirst, wantSecond, refuseFirst, refuseSecond string) {
 	t.Helper()
 	harness.Eventually(t, caRemoveBound, "the holding account receives both ref-addressed probes and no bare-name one", func() (bool, string) {
@@ -490,7 +428,6 @@ func caRequireProbes(t *testing.T, holder *syscontainer.Session, wantFirst, want
 	})
 }
 
-// caCountFrames counts the frames whose content carries probe.
 func caCountFrames(frames []fakesession.Frame, probe string) int {
 	count := 0
 	for _, frame := range frames {
@@ -501,7 +438,6 @@ func caCountFrames(frames []fakesession.Frame, probe string) int {
 	return count
 }
 
-// caNamed returns the entries whose address's name part is name.
 func caNamed(out caListOut, name string) []caAgentEntry {
 	var entries []caAgentEntry
 	for _, entry := range out.Agents {
@@ -512,7 +448,6 @@ func caNamed(out caListOut, name string) []caAgentEntry {
 	return entries
 }
 
-// caAddresses returns the addresses of entries for a failure message.
 func caAddresses(entries []caAgentEntry) []string {
 	out := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -521,8 +456,7 @@ func caAddresses(entries []caAgentEntry) []string {
 	return out
 }
 
-// caSplitAddress splits "name [ref]@alias" into its three parts. ref and alias
-// are empty when the address carries neither.
+// caSplitAddress splits "name [ref]@alias" into its three parts.
 func caSplitAddress(address string) (name, ref, alias string) {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 {
@@ -536,7 +470,6 @@ func caSplitAddress(address string) (name, ref, alias string) {
 	return strings.TrimSpace(name), ref, strings.TrimSpace(alias)
 }
 
-// caHex reports whether s is a non-empty lowercase hexadecimal string.
 func caHex(s string) bool {
 	if s == "" {
 		return false

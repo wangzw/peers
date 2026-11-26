@@ -36,13 +36,11 @@ func TestMain(m *testing.M) {
 	}
 }
 
-// stubEchoOut is the structured result of the echo_env stub tool.
 type stubEchoOut struct {
 	Env map[string]string `json:"env"`
 	Cwd string            `json:"cwd"`
 }
 
-// runMCPStub serves an MCP server with the echo_env and fail tools.
 func runMCPStub() int {
 	server := mcp.NewServer(&mcp.Implementation{Name: "ctl-stub", Version: "0"}, nil)
 	mcp.AddTool[any, stubEchoOut](
@@ -78,16 +76,12 @@ func runMCPStub() int {
 	return 0
 }
 
-// runBrokerFailStub writes a JSON log line and a prefixed error line, then
-// exits with the exit code of a Broker whose listen address is unavailable.
 func runBrokerFailStub() int {
 	fmt.Fprintln(os.Stderr, `{"time":"2026-01-01T00:00:00Z","level":"INFO","event":"starting"}`)
 	fmt.Fprintln(os.Stderr, "peers service run: listen address :1 is not available")
 	return 4
 }
 
-// newTestAgent starts a node agent behind a real control socket and returns a
-// client for it.
 func newTestAgent(t *testing.T) (node.BaseEnv, *ctl.Client) {
 	t.Helper()
 
@@ -120,9 +114,7 @@ func newTestAgent(t *testing.T) (node.BaseEnv, *ctl.Client) {
 	return env, client
 }
 
-// TestCtlSessionRoundTrip drives a session through every session endpoint and
-// compares the tool answers with a session started directly through the node
-// library.
+// TestCtlSessionRoundTrip starts, calls, renames, reads frames from, lists tools of and ends a session through the control protocol, and checks its tools match a session started directly through the node library.
 func TestCtlSessionRoundTrip(t *testing.T) {
 	env, client := newTestAgent(t)
 	ctx := context.Background()
@@ -184,8 +176,6 @@ func TestCtlSessionRoundTrip(t *testing.T) {
 		t.Errorf("frames = %d, want 0", len(frames.Frames))
 	}
 
-	// A session started directly through the node library must expose the
-	// same tools as the one driven through the control protocol.
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatalf("locating the test binary: %v", err)
@@ -226,8 +216,7 @@ func TestCtlFatalBecomesErrorResponse(t *testing.T) {
 	_, client := newTestAgent(t)
 	ctx := context.Background()
 
-	// A parent that is a regular file cannot become a directory, so binding
-	// fails for root and for an ordinary user alike.
+	// A regular file cannot become a directory, so binding fails even for root.
 	parent := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(parent, []byte("x"), 0o600); err != nil {
 		t.Fatalf("creating the blocking file: %v", err)

@@ -11,48 +11,80 @@ import (
 	"github.com/wangzw/peers/test/e2e/ctl"
 )
 
-// fakeAnswerSlack is added to a frame wait's own timeout for the control
-// answer, so the node agent's timeout fires before the client's.
+// fakeAnswerSlack is added to a frame wait's own timeout so the node agent's
+// timeout fires before the client's.
 const fakeAnswerSlack = 5 * time.Second
 
 // FakeSession is the simulated session surface a test drives. A local session
-// returns the real *fakesession.Fake; a session in a container returns a proxy
-// that forwards each operation to the node agent over the control protocol.
-// The methods the control protocol cannot express fail the test with an
-// unsupported-operation message.
+// returns the real *fakesession.Fake; a container session returns a proxy that
+// forwards each operation to the node agent. Methods the control protocol
+// cannot express fail the test.
 type FakeSession interface {
+	// ConfigDir returns the configuration directory holding the registry record.
 	ConfigDir() string
+	// PID returns the session process ID.
 	PID() int
+	// RecordPath returns the path of the registry record.
 	RecordPath() string
+	// SocketPath returns the inbox socket path named by the record; it is empty
+	// when no socket was bound.
 	SocketPath() string
+	// SetName changes the session name in the record.
 	SetName(name string)
+	// Rename is an alias for SetName.
 	Rename(name string)
+	// SetStatus changes the status field in the record.
 	SetStatus(status string)
+	// SetBusy writes "busy" when busy is true and "idle" otherwise.
 	SetBusy(busy bool)
+	// SetSessionID changes the session identifier in the record.
 	SetSessionID(sessionID string)
+	// RemoveRecord deletes the registry record but leaves the socket bound.
 	RemoveRecord()
+	// RestoreRecord writes the record again from the current fields.
 	RestoreRecord()
+	// WritePartialRecord writes exactly prefix to the record, for testing the
+	// partial-read path.
 	WritePartialRecord(prefix string)
+	// SetRecordModTime sets the record's modification time; later writes still
+	// advance past it.
 	SetRecordModTime(mod time.Time)
+	// SetMode changes how subsequent connections are handled.
 	SetMode(mode fakesession.Mode)
+	// SetBusyDelay changes how long each accepted connection waits before its
+	// frames are read.
 	SetBusyDelay(delay time.Duration)
+	// Release ends one hold created by HoldOpen.
 	Release()
+	// Frames returns the message frames received so far, in arrival order.
 	Frames() []fakesession.Frame
+	// WaitFrame waits for the next frame not yet returned by WaitFrame or
+	// WaitFrameN, and reports false when the frame did not arrive within timeout
+	// or the local fake was closed first.
 	WaitFrame(timeout time.Duration) (fakesession.Frame, bool)
+	// WaitFrameN waits for the nth frame, counting from 1, and marks every frame
+	// up to n as returned. It reports false when the frame did not arrive within
+	// timeout or the local fake was closed first.
 	WaitFrameN(n int, timeout time.Duration) (fakesession.Frame, bool)
+	// WaitNoConnections waits until the fake tracks no connection, up to
+	// timeout, and reports false when a connection remains at the deadline or
+	// the local fake is closed while one remains.
 	WaitNoConnections(timeout time.Duration) bool
+	// TakeErrors returns the background failures recorded since the previous
+	// call and forgets them.
 	TakeErrors() []error
+	// InjectBackgroundError records err as a background failure.
 	InjectBackgroundError(err error)
+	// Close stops the listener, releases held connections and removes the
+	// socket; it is idempotent.
 	Close()
+	// RemoveSocket stops accepting connections and removes the bound socket while
+	// leaving the registry record in place.
 	RemoveSocket()
 }
 
-// A local session returns the real fake, so the interface must accept it.
 var _ FakeSession = (*fakesession.Fake)(nil)
 
-// remoteFake is the container session's proxy. Every operation travels over
-// the control protocol to the node agent holding the fakesession.Fake, and a
-// control failure fails the test the way a local fake would.
 type remoteFake struct {
 	tb     testing.TB
 	name   string
@@ -63,57 +95,38 @@ type remoteFake struct {
 	cursor int
 }
 
-// ConfigDir returns the session's configuration directory.
 func (f *remoteFake) ConfigDir() string { return f.info.ConfigDir }
 
-// PID returns the fake session's process ID.
 func (f *remoteFake) PID() int { return f.info.FakePID }
 
-// RecordPath returns the path of the registry record.
 func (f *remoteFake) RecordPath() string { return f.info.RecordPath }
 
-// SocketPath returns the inbox socket path.
 func (f *remoteFake) SocketPath() string { return f.info.SocketPath }
 
-// SetName changes the session name in the record.
 func (f *remoteFake) SetName(name string) { f.apply("rename", name) }
 
-// Rename is an alias for SetName.
 func (f *remoteFake) Rename(name string) { f.SetName(name) }
 
-// SetStatus changes the status field in the record.
 func (f *remoteFake) SetStatus(status string) { f.apply("set_status", status) }
 
-// SetBusy writes "busy" or "idle" to the record.
 func (f *remoteFake) SetBusy(busy bool) { f.apply("set_busy", busy) }
 
-// SetSessionID changes the session identifier in the record.
 func (f *remoteFake) SetSessionID(sessionID string) { f.apply("set_session_id", sessionID) }
 
-// RemoveRecord deletes the registry record but leaves the socket bound.
 func (f *remoteFake) RemoveRecord() { f.apply("remove_record", nil) }
 
-// RestoreRecord writes the record again from the current fields.
 func (f *remoteFake) RestoreRecord() { f.apply("restore_record", nil) }
 
-// RemoveSocket stops accepting connections and removes the bound socket while
-// leaving the registry record in place.
 func (f *remoteFake) RemoveSocket() { f.apply("remove_socket", nil) }
 
-// SetMode changes how subsequent connections are handled.
 func (f *remoteFake) SetMode(mode fakesession.Mode) { f.apply("set_mode", modeName(mode)) }
 
-// SetBusyDelay changes how long each accepted connection waits before its
-// frames are read.
 func (f *remoteFake) SetBusyDelay(delay time.Duration) {
 	f.apply("set_busy_delay", delay.Milliseconds())
 }
 
-// Release ends one hold created by HoldOpen.
 func (f *remoteFake) Release() { f.apply("release", nil) }
 
-// TakeErrors returns the background failures the fake recorded since the
-// previous call and forgets them.
 func (f *remoteFake) TakeErrors() []error {
 	f.tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
@@ -130,8 +143,6 @@ func (f *remoteFake) TakeErrors() []error {
 	return errs
 }
 
-// InjectBackgroundError records err in the fake as a background failure. It
-// exists for tests of the reporting path.
 func (f *remoteFake) InjectBackgroundError(err error) {
 	if err == nil {
 		return
@@ -139,16 +150,12 @@ func (f *remoteFake) InjectBackgroundError(err error) {
 	f.apply("inject_background_error", err.Error())
 }
 
-// WritePartialRecord is not expressible over the control protocol.
 func (f *remoteFake) WritePartialRecord(string) { f.unsupported("WritePartialRecord") }
 
-// SetRecordModTime is not expressible over the control protocol.
 func (f *remoteFake) SetRecordModTime(time.Time) { f.unsupported("SetRecordModTime") }
 
-// Close is not expressible over the control protocol; use Session.End.
 func (f *remoteFake) Close() { f.unsupported("Close") }
 
-// Frames returns the message frames received so far, in arrival order.
 func (f *remoteFake) Frames() []fakesession.Frame {
 	f.tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
@@ -161,8 +168,6 @@ func (f *remoteFake) Frames() []fakesession.Frame {
 	return remoteFrames(res.Frames)
 }
 
-// WaitFrame waits for the next frame not yet returned by WaitFrame or
-// WaitFrameN, walking the frames in arrival order as the local fake does.
 func (f *remoteFake) WaitFrame(timeout time.Duration) (fakesession.Frame, bool) {
 	f.tb.Helper()
 	f.mu.Lock()
@@ -171,8 +176,6 @@ func (f *remoteFake) WaitFrame(timeout time.Duration) (fakesession.Frame, bool) 
 	return f.waitFrameN(n, timeout)
 }
 
-// WaitFrameN waits for the nth frame and marks every frame up to n as
-// returned.
 func (f *remoteFake) WaitFrameN(n int, timeout time.Duration) (fakesession.Frame, bool) {
 	f.tb.Helper()
 	if n < 1 {
@@ -182,8 +185,6 @@ func (f *remoteFake) WaitFrameN(n int, timeout time.Duration) (fakesession.Frame
 	return f.waitFrameN(n, timeout)
 }
 
-// waitFrameN waits until the node agent has recorded n frames and returns the
-// nth. It reports false when the frame did not arrive in time.
 func (f *remoteFake) waitFrameN(n int, timeout time.Duration) (fakesession.Frame, bool) {
 	f.tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+fakeAnswerSlack)
@@ -208,9 +209,6 @@ func (f *remoteFake) waitFrameN(n int, timeout time.Duration) (fakesession.Frame
 	return remoteFrame(res.Frames[n-1]), true
 }
 
-// WaitNoConnections waits until the fake in the container tracks no inbox
-// connection. The node agent's fake wakes the wait when a handler leaves its
-// connection, so the answer does not depend on polling.
 func (f *remoteFake) WaitNoConnections(timeout time.Duration) bool {
 	f.tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+fakeAnswerSlack)
@@ -226,8 +224,6 @@ func (f *remoteFake) WaitNoConnections(timeout time.Duration) bool {
 	return res.OK
 }
 
-// apply forwards one operation and fails the test when the node agent rejects
-// it.
 func (f *remoteFake) apply(op string, arg any) {
 	f.tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
@@ -237,14 +233,11 @@ func (f *remoteFake) apply(op string, arg any) {
 	}
 }
 
-// unsupported fails the test for an operation the control protocol cannot
-// carry.
 func (f *remoteFake) unsupported(method string) {
 	f.tb.Helper()
 	f.tb.Fatalf("harness: session %s: Fake.%s is not supported for a session in a container", f.name, method)
 }
 
-// remoteFrames converts frames from the control protocol.
 func remoteFrames(frames []ctl.SessionFrame) []fakesession.Frame {
 	out := make([]fakesession.Frame, 0, len(frames))
 	for _, frame := range frames {
@@ -253,9 +246,8 @@ func remoteFrames(frames []ctl.SessionFrame) []fakesession.Frame {
 	return out
 }
 
-// remoteFrame converts one frame, keeping the local fake's invariants: AuthRaw
-// is nil unless an authentication line preceded the frame, and Fields is
-// always non-nil.
+// remoteFrame keeps the local fake's invariants: AuthRaw is nil unless an
+// authentication line preceded the frame, and Fields is always non-nil.
 func remoteFrame(frame ctl.SessionFrame) fakesession.Frame {
 	var authRaw []byte
 	if frame.Auth && frame.AuthRaw != "" {

@@ -21,6 +21,8 @@ func bodyOf(t *testing.T, rec *directorypb.Record) *directorypb.RecordBody {
 	return body
 }
 
+// TestBuildRecordVerifies checks that an untampered card or topic record
+// verifies and carries the seed's publisher fingerprint.
 func TestBuildRecordVerifies(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	specs := []Spec{
@@ -59,6 +61,8 @@ func TestBuildRecordVerifies(t *testing.T) {
 	}
 }
 
+// TestTamperAddressesBreaksSignature checks that changing addresses after
+// signing makes verification fail.
 func TestTamperAddressesBreaksSignature(t *testing.T) {
 	rec, err := Build(Spec{
 		Seed:      "card-seed",
@@ -78,6 +82,8 @@ func TestTamperAddressesBreaksSignature(t *testing.T) {
 	}
 }
 
+// TestTamperPublisherMismatch checks that a valid signature over a publisher
+// that does not match the public key is still detectable.
 func TestTamperPublisherMismatch(t *testing.T) {
 	rec, err := Build(Spec{
 		Seed:      "card-seed",
@@ -100,6 +106,8 @@ func TestTamperPublisherMismatch(t *testing.T) {
 	}
 }
 
+// TestSeedDeterministic checks that the same seed and clock yield the same key
+// and publisher.
 func TestSeedDeterministic(t *testing.T) {
 	now := time.Unix(1700000000, 0).UTC()
 	s := Spec{Seed: "same-seed", Kind: "card", Alias: "alpha", Version: 1, ExpiresIn: time.Hour}

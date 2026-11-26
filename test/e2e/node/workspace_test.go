@@ -11,9 +11,6 @@ import (
 	"testing"
 )
 
-// gitTestEnv returns an environment for git that is isolated from the host's
-// configuration: HOME points into a temporary directory and the system
-// configuration is disabled.
 func gitTestEnv(t *testing.T) []string {
 	t.Helper()
 	return []string{
@@ -24,7 +21,6 @@ func gitTestEnv(t *testing.T) []string {
 	}
 }
 
-// gitRemoteURL returns the URL of the named remote of the repository in dir.
 func gitRemoteURL(t *testing.T, env []string, dir, name string) string {
 	t.Helper()
 	cmd := exec.Command("git", "-C", dir, "remote", "get-url", name)
@@ -36,6 +32,9 @@ func gitRemoteURL(t *testing.T, env []string, dir, name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// TestGitWorkspaceOrigin checks that the git and project workspaces carry the
+// requested origin and project configuration, and that a project workspace
+// without an origin is not a repository.
 func TestGitWorkspaceOrigin(t *testing.T) {
 	env := gitTestEnv(t)
 	const origin = "https://github.com/example/repo.git"
@@ -87,6 +86,7 @@ func TestGitWorkspaceOrigin(t *testing.T) {
 	})
 }
 
+// TestPlainWorkspace checks that a plain workspace is an empty directory.
 func TestPlainWorkspace(t *testing.T) {
 	root, err := PlainWorkspace(filepath.Join(t.TempDir(), "plain"))
 	if err != nil {

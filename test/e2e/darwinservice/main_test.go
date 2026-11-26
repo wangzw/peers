@@ -22,58 +22,37 @@ import (
 )
 
 const (
-	// installedBinary is the root-owned copy of the product the tests run.
-	// The system installation refuses binaries outside a root-owned
-	// directory, and a user installation accepts the same copy.
-	installedBinary = "/usr/local/libexec/peers-test"
-	// e2eBinary is a root-owned copy of this test binary. The multi-group test
-	// runs a role as another account, which can execute this copy but may not
-	// be able to traverse the go test temporary directory.
-	e2eBinary = "/usr/local/libexec/peers-e2e"
-	// serviceLabel is the launchd label of both service levels.
-	serviceLabel = "io.github.wangzw.peers"
-	// daemonPlist is where the system installation writes its plist.
-	daemonPlist = "/Library/LaunchDaemons/" + serviceLabel + ".plist"
-	// systemSocketPath is the system Broker's local socket.
+	// installedBinary is the root-owned copy of the product the tests run: the
+	// system installation refuses a binary outside a root-owned directory.
+	installedBinary  = "/usr/local/libexec/peers-test"
+	e2eBinary        = "/usr/local/libexec/peers-e2e"
+	serviceLabel     = "io.github.wangzw.peers"
+	daemonPlist      = "/Library/LaunchDaemons/" + serviceLabel + ".plist"
 	systemSocketPath = "/var/run/peers/broker.sock"
 
-	// roleEnv selects an internal helper role of the test binary. The role runs
-	// before the build step, so it also works when sudo re-executes the binary.
-	roleEnv = "PEERS_DARWIN_E2E_ROLE"
-	// systemPairKeyRole creates a one-time pairing key on the system Broker and
-	// prints it. It runs as root, where the system configuration file grants
-	// write permission without changing the file mode.
-	systemPairKeyRole = "system-pair-key"
-	// systemUpdateStatusRole reads the version the system Broker runs and prints
-	// it. It runs as root, where the system socket admits the caller.
+	// roleEnv selects a helper role of the test binary; TestMain dispatches it
+	// before the build so a sudo re-execution does not build again.
+	roleEnv                = "PEERS_DARWIN_E2E_ROLE"
+	systemPairKeyRole      = "system-pair-key"
 	systemUpdateStatusRole = "system-update-status"
 
-	// serviceStartBound bounds the wait for launchd to start the Broker after
-	// install. RunAtLoad starts it immediately; the bound leaves room for a
-	// loaded runner.
+	// serviceStartBound covers launchd's RunAtLoad start after install, with
+	// room for a loaded runner.
 	serviceStartBound = 30 * time.Second
-	// restartBound bounds the wait for launchd to relaunch a SIGKILLed Broker.
-	// launchd applies its default ThrottleInterval of 10 seconds before it
-	// relaunches a process that exited too quickly, so this bound is set by
-	// that throttle, not by the unit.
+	// restartBound is set by launchd's default 10-second ThrottleInterval, not
+	// by the unit.
 	restartBound = 30 * time.Second
-	// serviceStopBound bounds the wait for the Broker to disappear after
-	// uninstall. It covers launchd's default 5-second exit timeout for the job
-	// plus the Broker's SIGTERM shutdown, with margin for a loaded runner.
+	// serviceStopBound is launchd's default 5-second exit timeout plus the
+	// Broker's SIGTERM shutdown, with margin for a loaded runner.
 	serviceStopBound = 20 * time.Second
-	// pollInterval separates two probes of launchd state.
-	pollInterval = 250 * time.Millisecond
-	// eventTimeout is the package fallback for an event the tests cannot force:
-	// a local-interface call answering, the uninstall prompt appearing, or a
-	// role subprocess printing its result. It only decides how long a wait that
-	// never completes takes to fail; the success path returns on the event, so
-	// a larger value costs nothing.
-	eventTimeout = 30 * time.Second
+	pollInterval     = 250 * time.Millisecond
+	eventTimeout     = 30 * time.Second
 )
 
-// pidPattern matches the "pid = <n>" line of launchctl print.
 var pidPattern = regexp.MustCompile(`(?m)^\s*pid = (\d+)$`)
 
+// TestMain dispatches the helper roles, refuses service resets outside CI,
+// installs the test binaries and runs the tests.
 func TestMain(m *testing.M) {
 	if runtime.GOOS != "darwin" {
 		fmt.Fprintln(os.Stderr, "darwinservice: these tests run on macOS only")
@@ -94,9 +73,6 @@ func TestMain(m *testing.M) {
 	case systemUpdateStatusRole:
 		os.Exit(runSystemUpdateStatusRole())
 	}
-	// These tests uninstall the real io.github.wangzw.peers services. A
-	// developer machine may have them installed for everyday use, so refuse to
-	// run outside CI unless the caller opts in explicitly.
 	if os.Getenv("CI") == "" && os.Getenv("PEERS_E2E_ALLOW_SERVICE_RESET") != "1" {
 		fmt.Fprintln(os.Stderr, "darwinservice: refusing to uninstall a possibly real service outside CI; set PEERS_E2E_ALLOW_SERVICE_RESET=1 to allow it")
 		os.Exit(1)
@@ -114,9 +90,6 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// runSystemPairKeyRole creates a one-time pairing key on the system Broker and
-// prints it. The test runs this binary through sudo so the system Broker's
-// configuration-file write permission is satisfied by root.
 func runSystemPairKeyRole() int {
 	oracle, err := node.DialOracle(systemSocketPath)
 	if err != nil {
@@ -136,8 +109,6 @@ func runSystemPairKeyRole() int {
 	return 0
 }
 
-// runSystemUpdateStatusRole prints the version the system Broker reports. The
-// test runs this binary as root so the system socket admits the caller.
 func runSystemUpdateStatusRole() int {
 	oracle, err := node.DialOracle(systemSocketPath)
 	if err != nil {
@@ -157,8 +128,6 @@ func runSystemUpdateStatusRole() int {
 	return 0
 }
 
-// buildAndInstallBinary builds cmd/peers as the current user and installs
-// it into the root-owned directory the system test needs.
 func buildAndInstallBinary() error {
 	root, err := repoRoot()
 	if err != nil {
@@ -184,8 +153,6 @@ func buildAndInstallBinary() error {
 	return sudo("install", "-o", "root", "-g", "wheel", "-m", "0755", built, installedBinary)
 }
 
-// installE2EBinary copies this test binary to a root-owned path so another
-// account can execute a role from it.
 func installE2EBinary() error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -197,13 +164,11 @@ func installE2EBinary() error {
 	return sudo("install", "-o", "root", "-g", "wheel", "-m", "0755", exe, e2eBinary)
 }
 
-// removeInstalledBinary removes the copies installed by TestMain.
 func removeInstalledBinary() {
 	_ = sudo("rm", "-f", installedBinary)
 	_ = sudo("rm", "-f", e2eBinary)
 }
 
-// repoRoot returns the repository root from this file's location.
 func repoRoot() (string, error) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -212,7 +177,6 @@ func repoRoot() (string, error) {
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", "..")), nil
 }
 
-// sudo runs one command through sudo without a password prompt.
 func sudo(args ...string) error {
 	cmd := exec.Command("sudo", append([]string{"-n"}, args...)...)
 	out, err := cmd.CombinedOutput()
@@ -222,15 +186,12 @@ func sudo(args ...string) error {
 	return nil
 }
 
-// result is the outcome of one command run to completion.
 type result struct {
 	stdout   string
 	stderr   string
 	exitCode int
 }
 
-// run runs name with args and returns its output and exit code. A process that
-// cannot be started fails the test.
 func run(t *testing.T, name string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(name, args...)
@@ -248,8 +209,6 @@ func run(t *testing.T, name string, args ...string) result {
 	return res
 }
 
-// launchctlPrint returns the output of launchctl print for domain/label and
-// whether the service is loaded.
 func launchctlPrint(domain string) (string, bool) {
 	target := domain + "/" + serviceLabel
 	var cmd *exec.Cmd
@@ -262,7 +221,6 @@ func launchctlPrint(domain string) (string, bool) {
 	return string(out), err == nil
 }
 
-// launchdPID returns the running pid of the service in domain, or 0.
 func launchdPID(domain string) int {
 	out, loaded := launchctlPrint(domain)
 	if !loaded {
@@ -279,7 +237,6 @@ func launchdPID(domain string) int {
 	return pid
 }
 
-// waitForPID waits until launchd reports a running pid for domain.
 func waitForPID(t *testing.T, domain string, bound time.Duration) int {
 	t.Helper()
 	var pid int
@@ -290,7 +247,6 @@ func waitForPID(t *testing.T, domain string, bound time.Duration) int {
 	return pid
 }
 
-// waitForNewPID waits until launchd reports a running pid other than old.
 func waitForNewPID(t *testing.T, domain string, old int, bound time.Duration) int {
 	t.Helper()
 	var pid int
@@ -301,7 +257,6 @@ func waitForNewPID(t *testing.T, domain string, old int, bound time.Duration) in
 	return pid
 }
 
-// waitForGone waits until launchd no longer reports a pid for domain.
 func waitForGone(t *testing.T, domain string, bound time.Duration) {
 	t.Helper()
 	waitFor(t, bound, "the service to disappear from "+domain, func() (bool, string) {
@@ -310,7 +265,6 @@ func waitForGone(t *testing.T, domain string, bound time.Duration) {
 	})
 }
 
-// waitFor calls check until it reports true or bound elapses.
 func waitFor(t *testing.T, bound time.Duration, what string, check func() (bool, string)) {
 	t.Helper()
 	deadline := time.Now().Add(bound)
@@ -326,13 +280,11 @@ func waitFor(t *testing.T, bound time.Duration, what string, check func() (bool,
 	}
 }
 
-// processAlive reports whether pid is still running.
 func processAlive(pid int) bool {
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "pid=").Output()
 	return err == nil && len(out) > 0
 }
 
-// killPID kills pid with SIGKILL, through sudo for a root-owned process.
 func killPID(t *testing.T, pid int, root bool) {
 	t.Helper()
 	var err error
@@ -347,8 +299,6 @@ func killPID(t *testing.T, pid int, root bool) {
 	}
 }
 
-// bootout unloads the service from domain, ignoring the error launchd reports
-// when it is not loaded.
 func bootout(domain string) {
 	target := domain + "/" + serviceLabel
 	if domain == "system" {

@@ -14,11 +14,10 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// maxRequestBody caps the size of one control request. Writing a file through
-// the control protocol is the only large body, and tests write small files.
+// maxRequestBody caps one control request body at 32 MiB; a larger body is
+// truncated before decoding.
 const maxRequestBody = 32 << 20
 
-// handler serves the control protocol on the node agent.
 type handler struct {
 	agent *node.Agent
 }
@@ -28,7 +27,6 @@ func NewHandler(a *node.Agent) http.Handler {
 	return &handler{agent: a}
 }
 
-// ServeHTTP accepts one POST request and answers with an Envelope.
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
@@ -54,7 +52,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, Envelope{OK: true, Result: data})
 }
 
-// handle decodes and carries out one request.
 func (h *handler) handle(path string, body []byte) (any, error) {
 	switch path {
 	case "/v1/session/start":
@@ -163,9 +160,7 @@ func (h *handler) handle(path string, body []byte) (any, error) {
 		}
 		return struct{}{}, nil
 
-	// The wait_no_conns endpoint serves the end-to-end test harness only: it
-	// lets a test observe a simulated session dropping its inbox connection
-	// without polling.
+	// The wait_no_conns endpoint serves the end-to-end test harness only.
 	case "/v1/session/wait_no_conns":
 		req, err := decode[SessionWaitNoConnectionsRequest](body)
 		if err != nil {
@@ -461,7 +456,7 @@ func (h *handler) handle(path string, body []byte) (any, error) {
 	}
 }
 
-// decode unmarshals a request body into T. An empty body is a zero request.
+// decode unmarshals a request body into T; an empty body is a zero request.
 func decode[T any](body []byte) (T, error) {
 	var req T
 	if len(body) == 0 {
@@ -473,19 +468,16 @@ func decode[T any](body []byte) (T, error) {
 	return req, nil
 }
 
-// writeEnvelope writes one JSON envelope.
 func writeEnvelope(w http.ResponseWriter, envelope Envelope) {
 	w.Header().Set("Content-Type", "application/json")
 	data, err := json.Marshal(envelope)
 	if err != nil {
-		// Every field of Envelope is marshalable; this cannot fail.
 		http.Error(w, "ctl: encoding envelope", http.StatusInternalServerError)
 		return
 	}
 	_, _ = w.Write(data)
 }
 
-// parseSignal turns a signal name or number into a signal.
 func parseSignal(name string) (syscall.Signal, error) {
 	switch strings.ToUpper(strings.TrimSpace(name)) {
 	case "", "SIGINT", "INT":
@@ -507,7 +499,6 @@ func parseSignal(name string) (syscall.Signal, error) {
 	return 0, fmt.Errorf("ctl: unknown signal %q", name)
 }
 
-// sessionInfo converts a started session.
 func sessionInfo(info node.AgentSessionInfo) SessionInfo {
 	return SessionInfo{
 		ID:         info.ID,
@@ -519,7 +510,6 @@ func sessionInfo(info node.AgentSessionInfo) SessionInfo {
 	}
 }
 
-// sessionCallResult converts a tool call.
 func sessionCallResult(result node.AgentCallResult) SessionCallResult {
 	out := SessionCallResult{
 		IsError:   result.IsError,
@@ -532,7 +522,6 @@ func sessionCallResult(result node.AgentCallResult) SessionCallResult {
 	return out
 }
 
-// sessionFramesResult converts a frame wait.
 func sessionFramesResult(result node.AgentFrames) SessionFramesResult {
 	frames := make([]SessionFrame, 0, len(result.Frames))
 	for _, frame := range result.Frames {
@@ -553,7 +542,6 @@ func sessionFramesResult(result node.AgentFrames) SessionFramesResult {
 	return SessionFramesResult{Frames: frames, OK: result.OK}
 }
 
-// localResult converts a local interface answer.
 func localResult(result node.AgentLocalResult) LocalResult {
 	out := LocalResult{}
 	if result.Response != nil {

@@ -13,14 +13,12 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
-// certValidity is how long a probe or relay certificate stays valid. Nothing
-// trusts these certificates, so the window only has to outlive a test run.
+// certValidity is 24 hours, long enough to outlive one test run; nothing trusts
+// these certificates.
 const certValidity = 24 * time.Hour
 
-// NewSelfSignedCert returns a fresh self-signed Ed25519 certificate. The link
-// probe and the relay present it to the Broker they talk to; a Broker checks
-// that a client certificate exists and then authenticates the pairing key, so
-// the certificate carries no name or chain that anyone could rely on.
+// NewSelfSignedCert returns a fresh self-signed Ed25519 certificate that the
+// link probe and the relay present to a Broker.
 func NewSelfSignedCert() (tls.Certificate, error) {
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -55,9 +53,6 @@ func NewSelfSignedCert() (tls.Certificate, error) {
 	}, nil
 }
 
-// clientTLS returns the transport credentials of a Link client that presents
-// cert and accepts any server certificate. The pairing key, not a CA or a host
-// name, is what authenticates a Broker on this link.
 func clientTLS(cert tls.Certificate) credentials.TransportCredentials {
 	return credentials.NewTLS(&tls.Config{
 		MinVersion:         tls.VersionTLS13,
@@ -66,9 +61,8 @@ func clientTLS(cert tls.Certificate) credentials.TransportCredentials {
 	})
 }
 
-// serverTLS returns the transport credentials of a Link server that presents
-// cert and requires any client certificate, matching the Broker's own TLS
-// settings.
+// serverTLS returns credentials whose TLS settings must match the Broker's own
+// server settings.
 func serverTLS(cert tls.Certificate) credentials.TransportCredentials {
 	return credentials.NewTLS(&tls.Config{
 		MinVersion:   tls.VersionTLS13,

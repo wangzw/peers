@@ -13,17 +13,13 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// inboxWriteBound bounds the wait for the account helper's connection to the
-// inbox socket and for the credential read on it. No product timer governs
-// either event, so it uses the tree's fallback.
+// inboxWriteBound bounds the wait for the inbox connection and its credential read;
+// no product timer governs either, so it uses the tree's fallback.
 const inboxWriteBound = harness.EventTimeout
 
-// TestREQBrokerConfig018_WriteRunsAsTargetAccount checks that the system
-// Broker reaches another account's inbox through a process running as that
-// account. The test binds the inbox socket, hands it to other, and reads
-// SO_PEERCRED from the accepted connection: the uid must be other's, not
-// root's. A root write would let the Broker's own identity stand in for every
-// served account.
+// TestREQBrokerConfig018_WriteRunsAsTargetAccount checks that the system Broker
+// reaches another account's inbox through a process running as that account,
+// not as root.
 func TestREQBrokerConfig018_WriteRunsAsTargetAccount(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)

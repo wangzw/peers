@@ -1,12 +1,9 @@
 //go:build e2e
 
-// Command fakepeer is an end-to-end test peer. It joins a real Broker's link
-// through pairing and then serves directory records supplied by the test, so a
-// test can present cards and announcements the Broker could not produce
-// itself.
-//
-// Commands arrive as one JSON object per line on stdin. Events go out as one
-// JSON object per line on stdout.
+// Command fakepeer is an end-to-end test peer: it joins a real Broker's link
+// through pairing and serves directory records the test supplies. Commands
+// arrive as one JSON object per line on stdin and events go out one JSON object
+// per line on stdout.
 package main
 
 import (
@@ -37,13 +34,12 @@ import (
 	"github.com/wangzw/peers/internal/topic/topicpb"
 )
 
-// commandTimeout bounds one pairing or dial command.
 const commandTimeout = 10 * time.Second
 
 var _ pairing.Transport = (*lateTransport)(nil)
 
-// lateTransport lets pairing.Open run before the Link exists. Pairing never
-// dials during Open, so the Link is installed before the first command.
+// lateTransport lets pairing.Open run before the Link exists; pairing never
+// dials during Open.
 type lateTransport struct {
 	mu sync.Mutex
 	l  *link.Link
@@ -68,8 +64,7 @@ func (t *lateTransport) Drop(fp pairing.Fingerprint) {
 	}
 }
 
-// emitter serializes event writes: link callbacks and the command loop emit
-// from different goroutines.
+// emitter serializes event writes from link callbacks and the command loop.
 type emitter struct {
 	mu  sync.Mutex
 	enc *json.Encoder
@@ -103,7 +98,6 @@ type recordsSetEvent struct {
 	Count int    `json:"count"`
 }
 
-// wireRecordListEntry is one identifier and version a RecordList carried.
 type wireRecordListEntry struct {
 	Publisher string `json:"publisher"`
 	Kind      string `json:"kind"`
@@ -111,9 +105,6 @@ type wireRecordListEntry struct {
 	Version   uint64 `json:"version"`
 }
 
-// recordListEvent reports a RecordList the fake peer received from the Broker.
-// A test uses it to see which identifiers reached the Broker and at which
-// versions.
 type recordListEvent struct {
 	Event   string                `json:"event"`
 	Peer    string                `json:"peer"`
@@ -130,16 +121,14 @@ type errorEvent struct {
 	Message string `json:"message"`
 }
 
-// echoedEvent reports the digest count an echo_digests command resent.
 type echoedEvent struct {
 	Event string `json:"event"`
 	Peer  string `json:"peer"`
 	Count int    `json:"count"`
 }
 
-// digestsSentEvent reports a TopicDigests the fake peer sent. Sent holds the
-// digests computed under the fake peer's fingerprint; want holds, per topic
-// name, the digest the Broker uses when it sends a Roster for that name.
+// Sent holds the digests computed under the fake peer's fingerprint; Want
+// holds, per topic, the digest the Broker uses when it sends a Roster.
 type digestsSentEvent struct {
 	Event  string   `json:"event"`
 	Peer   string   `json:"peer"`
@@ -148,9 +137,7 @@ type digestsSentEvent struct {
 	Topics []string `json:"topics"`
 }
 
-// rosterSentEvent reports a Roster the fake peer sent. The member count uses
-// its own key so the line still decodes as a fakePeerWire, whose members key
-// holds an array.
+// The count uses its own key because a fakePeerWire's members key holds an array.
 type rosterSentEvent struct {
 	Event  string `json:"event"`
 	Peer   string `json:"peer"`
@@ -158,8 +145,7 @@ type rosterSentEvent struct {
 	Count  int    `json:"count"`
 }
 
-// rosterDeltaSentEvent reports a RosterDelta the fake peer sent. Count is the
-// number of added entries, generated plus extra.
+// Count is the number of added entries, generated plus extra.
 type rosterDeltaSentEvent struct {
 	Event  string `json:"event"`
 	Peer   string `json:"peer"`
@@ -167,14 +153,12 @@ type rosterDeltaSentEvent struct {
 	Count  int    `json:"count"`
 }
 
-// topicDigestsEvent reports a TopicDigests the fake peer received.
 type topicDigestsEvent struct {
 	Event   string   `json:"event"`
 	Peer    string   `json:"peer"`
 	Digests []string `json:"digests"`
 }
 
-// topicRosterEvent reports a Roster the fake peer received.
 type topicRosterEvent struct {
 	Event   string       `json:"event"`
 	Peer    string       `json:"peer"`
@@ -182,14 +166,12 @@ type topicRosterEvent struct {
 	Members []wireMember `json:"members"`
 }
 
-// topicRosterDeltaEvent reports a RosterDelta the fake peer received.
 type topicRosterDeltaEvent struct {
 	Event  string `json:"event"`
 	Peer   string `json:"peer"`
 	Digest string `json:"digest"`
 }
 
-// peerSet is the set of peers whose link is up.
 type peerSet struct {
 	mu    sync.Mutex
 	peers map[pairing.Fingerprint]struct{}
@@ -219,10 +201,8 @@ func (s *peerSet) snapshot() []pairing.Fingerprint {
 	return out
 }
 
-// topicDigest is SHA-256 over the salt, the sender's fingerprint and the topic
-// name, the value docs/adr/adr-salted-topic-digest.md defines. The fake peer
-// derives it from the ADR text rather than from product code, so a change to
-// the digest the ADR does not describe breaks the test.
+// topicDigest is computed independently of product code, so a digest change
+// breaks the test.
 func topicDigest(salt []byte, sender pairing.Fingerprint, name string) [32]byte {
 	h := sha256.New()
 	h.Write(salt)
@@ -233,9 +213,6 @@ func topicDigest(salt []byte, sender pairing.Fingerprint, name string) [32]byte 
 	return d
 }
 
-// topicFrames records the topic protocol state of each link: the handshake salt
-// and the last TopicDigests received. The commands use it to echo a set
-// verbatim or to compute one direction's digests.
 type topicFrames struct {
 	mu      sync.Mutex
 	salts   map[pairing.Fingerprint][]byte
@@ -268,7 +245,6 @@ func (t *topicFrames) recordDigests(peer pairing.Fingerprint, payload []byte) {
 	t.mu.Unlock()
 }
 
-// peer returns the peer that sent the latest TopicDigests and its salt.
 func (t *topicFrames) peer() (pairing.Fingerprint, []byte, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -282,7 +258,6 @@ func (t *topicFrames) peer() (pairing.Fingerprint, []byte, bool) {
 	return t.last, append([]byte(nil), salt...), true
 }
 
-// echo resends the latest TopicDigests verbatim.
 func (t *topicFrames) echo(l *link.Link, e *emitter) {
 	t.mu.Lock()
 	peer, payload, ok := t.last, append([]byte(nil), t.payload...), t.have
@@ -300,8 +275,6 @@ func (t *topicFrames) echo(l *link.Link, e *emitter) {
 	e.emit(echoedEvent{Event: "echoed", Peer: peer.String(), Count: len(msg.Digests)})
 }
 
-// sendDigests sends a TopicDigests holding the fake peer's direction for names.
-// An empty names list sends an empty set, which leaves every topic.
 func (t *topicFrames) sendDigests(l *link.Link, self pairing.Fingerprint, names []string, e *emitter) {
 	peer, salt, ok := t.peer()
 	if !ok {
@@ -336,7 +309,6 @@ func (t *topicFrames) sendDigests(l *link.Link, self pairing.Fingerprint, names 
 	})
 }
 
-// sendRoster sends a Roster under digest (lowercase hex) with members.
 func (t *topicFrames) sendRoster(l *link.Link, digest string, members []wireMember, e *emitter) {
 	peer, _, ok := t.peer()
 	if !ok {
@@ -364,13 +336,8 @@ func (t *topicFrames) sendRoster(l *link.Link, digest string, members []wireMemb
 	e.emit(rosterSentEvent{Event: "roster_sent", Peer: peer.String(), Digest: digest, Count: len(members)})
 }
 
-// sendRosterDelta sends a RosterDelta under the digest the fake peer itself
-// uses for one topic. That digest binds the fake peer's fingerprint, which is
-// the direction the Broker matches incoming frames against, so the test must
-// first send its TopicDigests for the topic; otherwise the Broker ignores the
-// frame as outside the peer's latest set. The delta holds count generated
-// added members named namePrefix plus their six-hex Ref, the first Ref being
-// refBase, followed by extra members.
+// sendRosterDelta uses the digest bound to the fake peer's fingerprint, so the
+// test must send its TopicDigests for the topic first or the Broker ignores it.
 func (t *topicFrames) sendRosterDelta(l *link.Link, self pairing.Fingerprint, cmd command, e *emitter) {
 	if len(cmd.Topics) != 1 {
 		e.emit(errorEvent{Event: "error", Message: "roster_delta: exactly one topic name is required"})
@@ -407,7 +374,6 @@ func (t *topicFrames) sendRosterDelta(l *link.Link, self pairing.Fingerprint, cm
 	e.emit(rosterDeltaSentEvent{Event: "roster_delta_sent", Peer: peer.String(), Digest: hex.EncodeToString(d[:]), Count: len(added)})
 }
 
-// hexDigests renders digests as lowercase hex.
 func hexDigests(ds [][32]byte) []string {
 	out := make([]string, len(ds))
 	for i, d := range ds {
@@ -416,8 +382,6 @@ func hexDigests(ds [][32]byte) []string {
 	return out
 }
 
-// statusFromName maps a status name to its wire value; an unknown name is
-// AGENT_STATUS_UNSPECIFIED.
 func statusFromName(s string) topicpb.AgentStatus {
 	switch s {
 	case "idle":
@@ -433,7 +397,6 @@ func statusFromName(s string) topicpb.AgentStatus {
 	}
 }
 
-// command is one stdin line.
 type command struct {
 	Cmd        string       `json:"cmd"`
 	Address    string       `json:"address"`
@@ -519,8 +482,6 @@ func run() error {
 		return link.Frame{Kind: directorypb.KindRecords, Payload: marshal(set.answer(req))}
 	})
 
-	// The topic handlers record every topic frame and report it as an event, so
-	// a test can observe what the Broker sent and in which order.
 	l.HandleState(topicpb.KindTopicDigests, func(peer link.Fingerprint, f link.Frame) {
 		topics.recordDigests(peer, f.Payload)
 		var msg topicpb.TopicDigests
@@ -561,8 +522,7 @@ func run() error {
 
 	e.emit(readyEvent{Event: "ready", Fingerprint: p.Fingerprint().String()})
 
-	// A record may be 64 KiB, so its base64 form in one command line is about
-	// 87 KiB; the scanner's default 64 KiB token limit would reject it.
+	// A 64 KiB record is about 87 KiB in base64, above the scanner's default limit.
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for scanner.Scan() {
@@ -574,8 +534,8 @@ func run() error {
 	return nil
 }
 
-// prepareHome creates the data directory and, when absent, a config file that
-// keeps the fake peer from listening on the default port.
+// prepareHome creates the data directory and, when absent, a config file with
+// an empty listen address so the fake peer never binds the default port.
 func prepareHome() error {
 	home := os.Getenv("PEERS_TEST_HOME")
 	if home == "" {
@@ -657,8 +617,6 @@ func handleCommand(line []byte, p *pairing.Pairing, l *link.Link, set *recordSet
 	}
 }
 
-// decodeRecords turns the stdin form of a record into the wire message. Both
-// fields are standard base64.
 func decodeRecords(wire []wireRecord) ([]*directorypb.Record, error) {
 	recs := make([]*directorypb.Record, 0, len(wire))
 	for i, w := range wire {

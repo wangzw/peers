@@ -12,12 +12,11 @@ import (
 	"syscall"
 )
 
-// portStateDir holds one file per reserved loopback port, away from the
-// runtime roots so the residue scan does not mistake it for a root. The files
-// make the allocation cross-process: a second suite on the same host sees the
-// first suite's live reservations and chooses other ports. Kernel allocation
-// of port zero is sticky: a fresh process often gets 32769, so without the
-// reservation two suites started together collide on their first addresses.
+// portStateDir holds one file per reserved loopback port, away from the runtime
+// roots so the residue scan does not mistake it for a root. The files make the
+// allocation cross-process: kernel port-zero allocation is sticky (a fresh
+// process often gets 32769), so two suites started together would otherwise
+// collide on their first addresses.
 const (
 	portStateDir = "/tmp/.ape2e-ports"
 	portLockName = ".lock"
@@ -35,9 +34,6 @@ var portMu sync.Mutex
 // Broker binds it.
 var ephemeralPortLow = readEphemeralPortLow()
 
-// readEphemeralPortLow returns the lower bound of
-// /proc/sys/net/ipv4/ip_local_port_range, or zero when the file cannot be
-// read.
 func readEphemeralPortLow() int {
 	data, err := os.ReadFile("/proc/sys/net/ipv4/ip_local_port_range")
 	if err != nil {
@@ -54,10 +50,6 @@ func readEphemeralPortLow() int {
 	return low
 }
 
-// reservePort returns the loopback address whose port this owner now holds.
-// The reservation lives until releasePorts runs or the owner is gone, so a
-// second call in this process and a second suite on the same host both move to
-// another port.
 func reservePort(o owner) (string, int, error) {
 	portMu.Lock()
 	defer portMu.Unlock()
@@ -90,8 +82,6 @@ func reservePort(o owner) (string, int, error) {
 	return "", 0, fmt.Errorf("reserving a loopback port: every candidate was claimed")
 }
 
-// findFreePort scans the preferred range first and then the rest for a port
-// that is neither reserved nor in use.
 func findFreePort(taken map[int]bool) (int, error) {
 	for _, r := range portScanRanges(ephemeralPortLow) {
 		for port := r.first; port <= r.last; port++ {
@@ -107,15 +97,10 @@ func findFreePort(taken map[int]bool) (int, error) {
 	return 0, fmt.Errorf("no free loopback port in %d-%d", portScanFirst, portScanLast)
 }
 
-// portRange is one inclusive span of ports to scan.
 type portRange struct {
 	first, last int
 }
 
-// portScanRanges puts the ports below the kernel's ephemeral range first. A
-// port there cannot be taken by an outbound connect, so the reservation stays
-// free until the Broker binds it. When the low bound is unknown or leaves no
-// room, the whole range is scanned in order.
 func portScanRanges(low int) []portRange {
 	if low <= 0 {
 		return []portRange{{portScanFirst, portScanLast}}
@@ -137,7 +122,6 @@ func portScanRanges(low int) []portRange {
 	return ranges
 }
 
-// portBindable reports whether port can be bound on loopback.
 func portBindable(port int) bool {
 	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
@@ -149,9 +133,7 @@ func portBindable(port int) bool {
 	return true
 }
 
-// readPortReservations returns the ports whose owner is still alive and
-// removes the files of owners that are gone. Owners are compared by their
-// marker text so one liveness check serves every reservation.
+// readPortReservations returns the ports whose owner is still alive and removes the files of owners that are gone.
 func readPortReservations() (map[int]bool, error) {
 	entries, err := os.ReadDir(portStateDir)
 	if err != nil {
@@ -191,7 +173,6 @@ func readPortReservations() (map[int]bool, error) {
 	return taken, nil
 }
 
-// writePortReservation records port under this owner's marker.
 func writePortReservation(port int, o owner) error {
 	path := portStatePath(port)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -206,7 +187,6 @@ func writePortReservation(port int, o owner) error {
 	return f.Close()
 }
 
-// releasePorts removes the reservations this owner wrote for ports.
 func releasePorts(ports []int, o owner) {
 	portMu.Lock()
 	defer portMu.Unlock()
@@ -226,8 +206,6 @@ func releasePorts(ports []int, o owner) {
 	}
 }
 
-// cleanPortReservations removes reservation files whose owner is gone and
-// leaves a live suite's ports reserved.
 func cleanPortReservations(logf func(format string, args ...any)) {
 	if _, err := os.Stat(portStateDir); err != nil {
 		return
@@ -243,7 +221,6 @@ func cleanPortReservations(logf func(format string, args ...any)) {
 	}
 }
 
-// lockPortState takes the cross-process lock and returns its release.
 func lockPortState() (func(), error) {
 	if err := os.MkdirAll(portStateDir, 0o700); err != nil {
 		return nil, err

@@ -1,10 +1,6 @@
-# Container image for the system Broker end-to-end tests.
-#
-# It derives from the image built by test/e2e/compose/Dockerfile, which provides
-# the release builds of peers and e2e-node and the peer and other accounts.
-# This image adds systemd and the two groups the permission tests use:
-#   peers-users (gid 2001) holds peer and restricts use of the system socket
-#   peers-admins (gid 2002) starts empty; a test adds members at run time
+# Container image for the system Broker end-to-end tests: the base image plus
+# systemd and the peers-users (gid 2001) and peers-admins (gid 2002) groups. A
+# test adds members to peers-admins at run time.
 ARG BASE
 FROM ${BASE}
 
@@ -30,13 +26,11 @@ RUN groupadd --gid 2001 peers-users \
  && groupadd --gid 2002 peers-admins \
  && usermod -aG peers-users peer
 
-# diruser and dirgroup exist only in the extrausers source, not in /etc/passwd
-# or /etc/group. A static Go binary that reads those files directly cannot see
-# them; the account database tests require the Broker to resolve them through
-# NSS. dirshare is a supplementary group of diruser, never its primary group,
-# so only an initgroups lookup can grant access through it. The shadow entry
-# has a locked password; it exists because starting diruser's user manager goes
-# through PAM, which cannot set up the session without one.
+# diruser and dirgroup exist only in the extrausers source so the Broker must
+# resolve them through NSS. dirshare is only a supplementary group of diruser,
+# so only an initgroups lookup grants access through it. The locked shadow entry
+# exists because starting diruser's user manager goes through PAM, which needs
+# one to set up the session.
 RUN mkdir -p /var/lib/extrausers \
  && printf 'diruser:x:2100:2100:Directory Services User:/home/diruser:/bin/sh\n' \
         > /var/lib/extrausers/passwd \

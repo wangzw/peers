@@ -21,16 +21,10 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// pkWaitBound bounds a wait that no product timer governs.
 const pkWaitBound = harness.EventTimeout
 
-// pkRelinkBound is reconnect_max + dial_timeout plus the shared fallback: the
-// timers that govern a link coming back under FastTimers.
 const pkRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
-// pkStatic16 and pkStaticB are 16-character static keys, the shortest legal
-// length. pkStatic128 is the longest legal length; pkStaticRuntimeBad is one
-// character over it.
 var (
 	pkStatic16         = "static-key-00001"
 	pkStaticB          = "static-key-00002"
@@ -40,11 +34,8 @@ var (
 	pkStaticShort      = strings.Repeat("x", 15)
 )
 
-// TestPairingKeys covers one-time keys, the preset static key, wrong keys,
-// an unpaired dial and the hot replacement of the static key on a flat
-// topology. The minute-scale parts of the requirements are covered by the
-// pairing unit tests named below; waiting ten minutes here would not exercise
-// any additional production code.
+// TestPairingKeys covers one-time keys, the preset static key, wrong keys, an
+// unpaired dial and hot replacement of the static key.
 func TestPairingKeys(t *testing.T) {
 	c := harness.Up(t, harness.TopoFlat(4))
 	nodes := map[string]*harness.Node{}
@@ -62,9 +53,7 @@ func TestPairingKeys(t *testing.T) {
 	opA, opB, opC, opD := ops["hostA"], ops["hostB"], ops["hostC"], ops["hostD"]
 	addrA := pkAddr(c, "hostA")
 
-	// The fingerprint of A's identity is derived independently from its
-	// certificate so that a connect result can be checked against it rather
-	// than against itself.
+	// Check the connect result against A's certificate-derived identity, not against itself.
 	aFingerprint := pkIdentityFingerprint(t, a)
 
 	t.Run("REQ-broker-pairing-006 key within validity", func(t *testing.T) {
@@ -89,14 +78,6 @@ func TestPairingKeys(t *testing.T) {
 		}
 		pkWaitConnected(t, b, "hostA.peer", pkRelinkBound)
 		pkWaitConnected(t, a, "hostB.peer", pkRelinkBound)
-
-		// This subtest leaves B paired; the reuse test below re-pairs it and
-		// still expects A's only peer to be B.
-		// The validity limit itself (the tenth minute and beyond) is covered by
-		// internal/pairing/pairkey_expired_test.go's
-		// TestREQBrokerPairing006_NineMinutesSucceedsElevenMinutesExpired and
-		// internal/pairing/pairkey_test.go's
-		// TestREQBrokerPairing006_KeyExpiredAtElevenMinutes.
 	})
 
 	t.Run("REQ-broker-pairing-038 connect prompt", func(t *testing.T) {
@@ -104,8 +85,6 @@ func TestPairingKeys(t *testing.T) {
 		if key.ConnectPrompt == "" {
 			t.Fatal("create_pairing_key returned no connect prompt")
 		}
-		// The prompt fills in the key and a shown address and carries the
-		// terminal command a user can paste on the other host.
 		for _, want := range []string{
 			"Connect to the peers Broker at ",
 			"using the one-time pairing key " + key.Key,
@@ -125,9 +104,9 @@ func TestPairingKeys(t *testing.T) {
 			}
 		}
 
-		// REQ-broker-pairing-006 above left B paired with A. Unpair B first so
-		// the command is exercised as the first pairing on B, not as a
-		// reconnection of an existing peer.
+		// The earlier subtest left B paired with A; unpair B first so this
+		// exercises the first pairing on B, not a reconnection of an existing
+		// peer.
 		pkDisconnect(t, opB, "hostA.peer")
 		for _, peer := range pkPeers(t, b) {
 			if peer.GetAlias() == "hostA.peer" && peer.GetIsPeer() {
@@ -135,8 +114,6 @@ func TestPairingKeys(t *testing.T) {
 			}
 		}
 
-		// Running the command from the prompt verbatim on the other host must
-		// pair it with A: the prompt is usable, not only printed.
 		cmd := pkPromptCommand(t, key.ConnectPrompt)
 		res := b.Exec(t, []string{"sh", "-c", cmd}, map[string]string{
 			"PATH": "/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -155,15 +132,6 @@ func TestPairingKeys(t *testing.T) {
 		pkWaitConnected(t, b, "hostA.peer", pkRelinkBound)
 		pkWaitConnected(t, a, "hostB.peer", pkRelinkBound)
 
-		// Neither the key nor the prompt that embeds it reaches a run log. B
-		// is the dialer, so its log carries the peer_paired record that makes
-		// the absence meaningful. The Broker never receives the prompt (the
-		// MCP server builds it) and its log is JSON, so the multi-line prompt
-		// cannot appear as one string; the first line stands in for it, and
-		// the key check above covers every line that embeds the key. The audit
-		// log's absence of the key is covered by
-		// TestConfigToolsCluster/AuditHasNoSecrets and
-		// TestConfigToolsCluster/AuditHasNoSecretsTerminalConnect.
 		bLog := b.BrokerLog(t)
 		if !bytes.Contains(bLog, []byte(`"event":"peer_paired"`)) {
 			t.Fatalf("B's Broker log has no peer_paired record:\n%s", bLog)
@@ -179,14 +147,14 @@ func TestPairingKeys(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-007 one-time key used once", func(t *testing.T) {
+		// The subtest above left B paired with A; this re-pairing must still
+		// leave A with B as its only peer.
 		key := pkCreateKey(t, opA)
 		address := pkShownAddress(t, c, "hostA", key.Addresses)
 
 		pkConnect(t, opB, address, key.Key, "").MustOK(t)
 		pkWaitConnected(t, b, "hostA.peer", pkRelinkBound)
 
-		// A one-time key used once is gone, not expired; the acceptor's audit
-		// reason tells the two causes apart.
 		since := time.Now().Add(-time.Second)
 		r := pkConnect(t, opC, address, key.Key, "")
 		pkRejectReason(t, r, a, nodeC, since, "key invalid")
@@ -201,7 +169,7 @@ func TestPairingKeys(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-008 no static key", func(t *testing.T) {
-		// A runs the default configuration and therefore has no static key.
+		// A runs the default configuration here and therefore has no static key.
 		for _, key := range []string{"hello-world-key-123", "wrong-key-one", "wrong-key-two", "wrong-key-three"} {
 			since := time.Now().Add(-time.Second)
 			r := pkConnect(t, opD, addrA, key, "")
@@ -246,8 +214,6 @@ func TestPairingKeys(t *testing.T) {
 		pkRestart(t, a, pkConfig(pkStaticKeyYAML(pkStatic16)), opA)
 		opA = pkOperator(t, a)
 
-		// The address is written plainly as <A address>:17443 rather than
-		// copied from the key's shown_addresses.
 		r := pkConnect(t, opB, addrA, pkStatic16, "")
 		r.MustOK(t)
 		out := pkDecodeConnect(t, r)
@@ -270,10 +236,6 @@ func TestPairingKeys(t *testing.T) {
 				t.Fatalf("%s saw fingerprint %q, want A's identity %q", name, out.Fingerprint, aFingerprint)
 			}
 		}
-		// "Still usable after 11 minutes" is covered by
-		// internal/pairing/pairkey_test.go's
-		// TestREQBrokerPairing009_StaticKeyNotExpired; waiting here would only
-		// repeat the unit test's clock.
 	})
 
 	t.Run("REQ-broker-pairing-025 never generates a static key", func(t *testing.T) {
@@ -300,8 +262,6 @@ func TestPairingKeys(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-029 static key length", func(t *testing.T) {
-		// Start a Broker with a 15-character key and no MCP sessions running:
-		// the startup must fail with the invalid-configuration exit code.
 		opA.End(t)
 		a.StopBroker(t, syscall.SIGTERM)
 		start := a.StartBroker(t, harness.BrokerSpec{ConfigYAML: pkConfig(pkStaticKeyYAML(pkStaticShort))})
@@ -323,9 +283,6 @@ func TestPairingKeys(t *testing.T) {
 		opA = pkOperator(t, a)
 		pkConnect(t, opD, addrA, pkStatic128, "").MustOK(t)
 
-		// An invalid replacement written while the Broker runs must be ignored:
-		// the log line is the observable event, and the old value keeps
-		// working for the next handshake.
 		a.WriteConfig(t, pkConfig(pkStaticKeyYAML(pkStaticRuntimeBad)))
 		harness.Eventually(t, pkWaitBound, "the Broker keeps the current invalid static key", func() (bool, string) {
 			log := a.BrokerLog(t)
@@ -341,8 +298,8 @@ func TestPairingKeys(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-033 replace static key", func(t *testing.T) {
-		// B paired with the old static key in REQ-broker-pairing-009 and must
-		// stay connected across the replacement.
+		// B paired with the old static key in the earlier static-key case and
+		// must stay connected across the replacement.
 		since := time.Now().Add(-time.Second)
 		a.WriteConfig(t, pkConfig(pkStaticKeyYAML(pkStaticReplace)))
 		pkWaitAuditConfigChange(t, a, "pairing.static_key", since)
@@ -370,22 +327,18 @@ func TestPairingKeys(t *testing.T) {
 	})
 }
 
-// pkConfig merges the shortened timers with the given fragments.
 func pkConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// pkStaticKeyYAML writes the preset static key as a configuration fragment.
 func pkStaticKeyYAML(key string) string {
 	return fmt.Sprintf("pairing:\n  static_key: %q\n", key)
 }
 
-// pkAddr is the address of node's Broker on the flat network.
 func pkAddr(c *harness.Cluster, node string) string {
 	return net.JoinHostPort(c.Addr(node, "net"), "17443")
 }
 
-// pkStartBroker starts a Broker and fails when it does not come up.
 func pkStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -394,10 +347,9 @@ func pkStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// pkRestart stops the Broker and starts it with config. Every MCP server
-// process passed in stop is ended first.
 func pkRestart(t *testing.T, node *harness.Node, config string, stop ...*harness.Session) {
 	t.Helper()
+	// End the MCP server processes before stopping the Broker.
 	for _, s := range stop {
 		s.End(t)
 	}
@@ -405,9 +357,6 @@ func pkRestart(t *testing.T, node *harness.Node, config string, stop ...*harness
 	pkStartBroker(t, node, config)
 }
 
-// pkOperator starts the operator session: an MCP server process without
-// CLAUDE_CODE_MESSAGING_SOCKET. It never registers as an agent but can call
-// the tools that manage pairing.
 func pkOperator(t *testing.T, node *harness.Node) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -415,7 +364,6 @@ func pkOperator(t *testing.T, node *harness.Node) *harness.Session {
 	return s
 }
 
-// pkCreateKey creates one pairing key and returns its decoded result.
 func pkCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := op.Call(t, "create_pairing_key", map[string]any{})
@@ -427,8 +375,6 @@ func pkCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOu
 	return out
 }
 
-// pkPromptCommand returns the terminal command line from a connect prompt: the
-// line that starts with "peers broker connect ".
 func pkPromptCommand(t *testing.T, prompt string) string {
 	t.Helper()
 	for _, line := range strings.Split(prompt, "\n") {
@@ -440,8 +386,6 @@ func pkPromptCommand(t *testing.T, prompt string) string {
 	return ""
 }
 
-// pkPairedOutput parses the alias and fingerprint from "Paired with <alias>
-// (<fingerprint>)", the line a successful terminal broker connect prints.
 func pkPairedOutput(t *testing.T, stdout string) (alias, fingerprint string) {
 	t.Helper()
 	const prefix = "Paired with "
@@ -457,8 +401,6 @@ func pkPairedOutput(t *testing.T, stdout string) (alias, fingerprint string) {
 	return strings.TrimSpace(rest[:open]), rest[open+2 : len(rest)-1]
 }
 
-// pkConnect calls connect_broker and returns the raw result so the caller can
-// assert an error code or decode a success.
 func pkConnect(t *testing.T, op *harness.Session, address, key, localAlias string) harness.Result {
 	t.Helper()
 	args := map[string]any{"address": address, "key": key}
@@ -468,17 +410,11 @@ func pkConnect(t *testing.T, op *harness.Session, address, key, localAlias strin
 	return op.Call(t, "connect_broker", args)
 }
 
-// pkRejectReason asserts the connect was rejected and that the acceptor
-// audited the failure with reason since since. The acceptor owns the reason,
-// so its audit record is where an invalid key and an expired one are told
-// apart; the dialer only learns that the connection closed. The acceptor never
-// records the initiator's alias before the proof verifies, so the failure is
-// matched by the initiator's fingerprint instead.
+// The acceptor audits the failure by the initiator's fingerprint, whose alias
+// stays empty until the proof verifies.
 func pkRejectReason(t *testing.T, r harness.Result, acceptor, initiator *harness.Node, since time.Time, reason string) {
 	t.Helper()
 	r.MustCode(t, "pairing_rejected")
-	// The dialer learns the cause from the acceptor's reject frame. Both sides
-	// are asserted: the tool text the dialer sees and the acceptor's audit.
 	wantText := "invalid"
 	if strings.Contains(reason, "expired") {
 		wantText = "expired"
@@ -512,7 +448,6 @@ func pkRejectReason(t *testing.T, r harness.Result, acceptor, initiator *harness
 	})
 }
 
-// pkDecodeConnect decodes a successful connect_broker result.
 func pkDecodeConnect(t *testing.T, r harness.Result) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	out, err := harness.Decode[mcpserver.ConnectBrokerOut](string(r.Structured))
@@ -522,7 +457,6 @@ func pkDecodeConnect(t *testing.T, r harness.Result) mcpserver.ConnectBrokerOut 
 	return out
 }
 
-// pkShownAddress picks the shown address of node on the flat network.
 func pkShownAddress(t *testing.T, c *harness.Cluster, node string, shown []string) string {
 	t.Helper()
 	want := net.JoinHostPort(c.Addr(node, "net"), "17443")
@@ -538,7 +472,6 @@ func pkShownAddress(t *testing.T, c *harness.Cluster, node string, shown []strin
 	return ""
 }
 
-// pkPeers lists node's peers through the local interface probe.
 func pkPeers(t *testing.T, node *harness.Node) []*localpb.BrokerInfo {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -548,7 +481,6 @@ func pkPeers(t *testing.T, node *harness.Node) []*localpb.BrokerInfo {
 	return resp.GetBrokers()
 }
 
-// pkAliases renders the peer aliases for failure messages.
 func pkAliases(peers []*localpb.BrokerInfo) []string {
 	out := make([]string, 0, len(peers))
 	for _, peer := range peers {
@@ -557,7 +489,6 @@ func pkAliases(peers []*localpb.BrokerInfo) []string {
 	return out
 }
 
-// pkWaitConnected waits until node lists the peer alias as connected.
 func pkWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the link to "+alias+" is connected", func() (bool, string) {
@@ -578,14 +509,12 @@ func pkWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.
 	})
 }
 
-// pkDisconnect unpairs broker using the operator tool.
 func pkDisconnect(t *testing.T, op *harness.Session, broker string) {
 	t.Helper()
 	r := op.Call(t, "disconnect_broker", map[string]any{"broker": broker})
 	r.MustOK(t)
 }
 
-// pkPeersJSON returns the peer table's bytes, or nil when it does not exist.
 func pkPeersJSON(t *testing.T, node *harness.Node) []byte {
 	t.Helper()
 	path := filepath.Join(node.AccountHome(), ".peers", "peers.json")
@@ -596,15 +525,11 @@ func pkPeersJSON(t *testing.T, node *harness.Node) []byte {
 	return []byte(res.Stdout)
 }
 
-// pkDataDirContains reports whether any file under the account's .peers
-// directory contains needle.
 func pkDataDirContains(t *testing.T, node *harness.Node, needle string) bool {
 	t.Helper()
 	dir := filepath.Join(node.AccountHome(), ".peers")
-	// The peers table is rewritten through a temporary file that is renamed
-	// into place. A recursive grep can open one of those temporary files and
-	// find it gone a moment later, so the search walks the durable files and
-	// ignores a file that disappears between listing and reading.
+	// The peer table is renamed into place from a temp file, so skip *.tmp-*
+	// and tolerate a file vanishing between listing and reading.
 	const script = `dir=$1; needle=$2; status=1
 for f in $(find "$dir" -type f ! -name '*.tmp-*' 2>/dev/null); do
 	if grep -qF -e "$needle" -- "$f" 2>/dev/null; then status=0; break; fi
@@ -622,8 +547,6 @@ exit $status`
 	}
 }
 
-// pkIdentityFingerprint derives a node's fingerprint from its certificate:
-// the SHA-256 of the DER SubjectPublicKeyInfo.
 func pkIdentityFingerprint(t *testing.T, node *harness.Node) string {
 	t.Helper()
 	path := filepath.Join(node.AccountHome(), ".peers", "identity.crt")
@@ -640,8 +563,6 @@ func pkIdentityFingerprint(t *testing.T, node *harness.Node) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// pkWaitAuditConfigChange waits for a config_file_changed record for key after
-// since and returns it.
 func pkWaitAuditConfigChange(t *testing.T, node *harness.Node, key string, since time.Time) *localpb.AuditEvent {
 	t.Helper()
 	var found *localpb.AuditEvent
@@ -661,9 +582,6 @@ func pkWaitAuditConfigChange(t *testing.T, node *harness.Node, key string, since
 	return found
 }
 
-// pkProbeUnpairedHello runs an unpaired Link Hello from node to addr and
-// returns the reject reason. The probe runs inside the container, where addr
-// is reachable; the node's own e2e-node binary performs it with node.ProbeHello.
 func pkProbeUnpairedHello(t *testing.T, c *harness.Cluster, fromNode, addr string) string {
 	t.Helper()
 	res := c.Node(fromNode).Exec(t, []string{"/usr/local/bin/e2e-node", "probe-hello", "--addr", addr}, nil)

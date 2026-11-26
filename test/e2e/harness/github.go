@@ -16,9 +16,8 @@ import (
 	"testing"
 )
 
-// The updater addresses one fixed repository and requires one archive name and
-// one checksum asset. The fake mirrors those names so a test can hand its URL to
-// a Broker through PEERS_TEST_UPDATE_API.
+// The fake mirrors the one fixed repository and asset names the updater
+// requires, so a test can hand its URL to a Broker through PEERS_TEST_UPDATE_API.
 const (
 	// ChecksumsAsset is the release asset holding the sha256sum lines.
 	ChecksumsAsset = "checksums.txt"
@@ -72,14 +71,16 @@ func ChecksumLine(assetName string, data []byte) []byte {
 	return []byte(hex.EncodeToString(sum[:]) + "  " + assetName + "\n")
 }
 
-// Release is one release the fake GitHub API serves. Version is without the
-// leading v. ArchiveName names the platform archive inside Assets; Archive and
-// Checksums are the bytes the download endpoints return.
+// Release is one release the fake GitHub API serves.
 type Release struct {
-	Version     string
+	// Version is the release version without the leading v.
+	Version string
+	// ArchiveName names the platform archive inside Assets.
 	ArchiveName string
-	Archive     []byte
-	Checksums   []byte
+	// Archive is the bytes the archive download returns.
+	Archive []byte
+	// Checksums is the bytes the checksums asset returns.
+	Checksums []byte
 }
 
 // NewRelease builds version for goos/goarch from the binary at path and
@@ -97,8 +98,8 @@ func NewRelease(tb testing.TB, version, goos, goarch, binary string) Release {
 }
 
 // FakeGitHub serves the two endpoints the updater uses: the latest release and
-// its assets. It binds 127.0.0.1 through httptest and is built by the test
-// process itself, so no network or external service is involved.
+// its assets. It binds 127.0.0.1 through httptest, so no external service is
+// involved.
 type FakeGitHub struct {
 	server *httptest.Server
 

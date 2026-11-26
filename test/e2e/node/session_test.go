@@ -19,14 +19,13 @@ import (
 	"github.com/wangzw/peers/test/e2e/internal/pathcmp"
 )
 
-// sessionTestEnv returns a BaseEnv isolated from the test process.
 func sessionTestEnv(t *testing.T) BaseEnv {
 	t.Helper()
 	return BaseEnv{Home: t.TempDir(), Path: os.Getenv("PATH")}
 }
 
-// sessionTestCommand returns an MCP command that re-executes the test binary;
-// TestMain turns it into the MCP stub when E2E_NODE_STUB=mcp.
+// sessionTestCommand re-executes the test binary, which TestMain turns into the
+// MCP stub when E2E_NODE_STUB=mcp.
 func sessionTestCommand(t *testing.T) MCPCommand {
 	t.Helper()
 	exe, err := os.Executable()
@@ -36,17 +35,15 @@ func sessionTestCommand(t *testing.T) MCPCommand {
 	return MCPCommand{Path: exe}
 }
 
-// startStubSession starts a session with the MCP stub and fails the test on
-// error.
 func startStubSession(t *testing.T, env BaseEnv, spec SessionSpec) *Session {
 	t.Helper()
 	if spec.Env == nil {
 		spec.Env = make(map[string]string)
 	}
 	spec.Env["E2E_NODE_STUB"] = "mcp"
-	// The stub is the race-instrumented test binary. Its race runtime sleeps a
-	// second before exiting by default, which would make StopMCP's 100 ms and
-	// 400 ms escalation steps kill a stub that already exited.
+	// The stub is the race-instrumented test binary, whose race runtime sleeps a
+	// second before exiting by default; that would let StopMCP's 100 ms and
+	// 400 ms escalation kill a stub that already exited.
 	if _, ok := spec.Env["GORACE"]; !ok {
 		spec.Env["GORACE"] = "atexit_sleep_ms=0"
 	}
@@ -58,13 +55,11 @@ func startStubSession(t *testing.T, env BaseEnv, spec SessionSpec) *Session {
 	return s
 }
 
-// sessionTestEcho is the structured result of the stub's echo_env tool.
 type sessionTestEcho struct {
 	Env map[string]string `json:"env"`
 	Cwd string            `json:"cwd"`
 }
 
-// callEchoEnv calls echo_env and returns its structured result.
 func callEchoEnv(t *testing.T, ctx context.Context, proc interface {
 	Call(context.Context, string, map[string]any) (ToolResult, error)
 }) sessionTestEcho {
@@ -187,8 +182,8 @@ func TestSessionCallResults(t *testing.T) {
 	}
 }
 
-// TestStopMCPEscalates checks that StopMCP sends SIGINT first, escalates to
-// SIGTERM when the process survives the interrupt, and returns the exit code.
+// TestStopMCPEscalates checks that StopMCP escalates the signal until the
+// process exits and returns its exit code.
 func TestStopMCPEscalates(t *testing.T) {
 	t.Run("ignores interrupt", func(t *testing.T) {
 		logPath := filepath.Join(t.TempDir(), "signals")
@@ -232,7 +227,6 @@ func TestStopMCPEscalates(t *testing.T) {
 	})
 }
 
-// readSignalLog returns the signal names the stub recorded.
 func readSignalLog(t *testing.T, path string) []string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -243,7 +237,7 @@ func readSignalLog(t *testing.T, path string) []string {
 }
 
 // TestEndRemovesRecord checks that ending a session removes its registry
-// record, which is what Claude Code does when the session exits.
+// record.
 func TestEndRemovesRecord(t *testing.T) {
 	s := startStubSession(t, sessionTestEnv(t), SessionSpec{Name: "end"})
 	recordPath := s.Fake().RecordPath()
@@ -256,8 +250,8 @@ func TestEndRemovesRecord(t *testing.T) {
 	}
 }
 
-// TestExtraMCPSharesEnvironment checks that an extra MCP server process, as a
-// subagent definition declares, gets the same environment as the first one.
+// TestExtraMCPSharesEnvironment checks that an extra MCP server process gets
+// the same environment as the first one.
 func TestExtraMCPSharesEnvironment(t *testing.T) {
 	ctx := context.Background()
 	s := startStubSession(t, sessionTestEnv(t), SessionSpec{Name: "extra"})
@@ -322,8 +316,6 @@ func TestInboxConnectionsCountsWriters(t *testing.T) {
 	}
 }
 
-// sessionTestWaitInbox polls InboxConnections until it reaches want or two
-// seconds pass.
 func sessionTestWaitInbox(t *testing.T, s *Session, want int) int {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

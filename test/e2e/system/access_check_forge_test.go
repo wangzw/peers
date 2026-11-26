@@ -26,32 +26,19 @@ import (
 )
 
 const (
-	// forgeAccessCheckRole is the TestMain role that runs the attack loop as
-	// the unprivileged account.
 	forgeAccessCheckRole = "forge-access-check"
-	// forgeAttempts is how many configuration writes the test attempts while
-	// the attack loop runs.
-	forgeAttempts = 150
-	// forgeStartBound is the fallback for the wait for the attack loop to write
-	// its ready file. The loop writes it before its first scan; the fallback
-	// covers starting the test binary as another account in a loaded container.
-	forgeStartBound = harness.EventTimeout
-	// forgeScanPause paces the attack loop. The loop runs in the unprivileged
+	forgeAttempts        = 150
+	forgeStartBound      = harness.EventTimeout
+	// forgeScanPause paces the attack loop: the loop runs in the unprivileged
 	// account's own process, where harness.Eventually is unavailable, so it
-	// sleeps between scans itself. The pause keeps a core free while still
-	// scanning often enough to catch a short-lived check process.
+	// sleeps between scans, and the pause must be short enough to catch a
+	// short-lived check process while still leaving a core free.
 	forgeScanPause = 50 * time.Microsecond
 )
 
 // TestREQBrokerConfig021_AccessCheckCannotBeForged checks that an account
 // cannot substitute the access-check result by stopping the helper and writing
-// a forged response into its standard output. Every write must stay denied.
-//
-// The check's stdout pipe belongs to the root Broker, so a plain open of
-// /proc/<pid>/fd/1 is refused to the account even before the fix;
-// pidfd_getfd duplicates the same descriptor but is gated by ptrace access.
-// The test therefore also requires that the account can neither stop nor
-// inspect the check process, and that no write reached its stdout.
+// a forged response into its standard output.
 func TestREQBrokerConfig021_AccessCheckCannotBeForged(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)
@@ -98,7 +85,6 @@ func TestREQBrokerConfig021_AccessCheckCannotBeForged(t *testing.T) {
 	}
 }
 
-// forger is one running attack-loop process.
 type forger struct {
 	cmd      *exec.Cmd
 	stopPath string
@@ -110,13 +96,10 @@ type forger struct {
 	waitErr  error
 }
 
-// startAccessCheckForger starts the test binary's attack role as other.
 func startAccessCheckForger(t *testing.T) *forger {
 	t.Helper()
 
 	otherUID := syscontainer.AccountUID(t, "other")
-	// The attack loop runs as other, so the directory holding its ready and
-	// stop files must be writable by that account.
 	dir, err := os.MkdirTemp("/tmp", "ap-e2e-forge-")
 	if err != nil {
 		t.Fatalf("creating the forger directory: %v", err)
@@ -169,7 +152,6 @@ func startAccessCheckForger(t *testing.T) *forger {
 	return f
 }
 
-// stop ends the attack loop and waits for it to exit. It is idempotent.
 func (f *forger) stop(t *testing.T) {
 	t.Helper()
 	f.stopOnce.Do(func() {
@@ -187,7 +169,6 @@ func (f *forger) stop(t *testing.T) {
 	}
 }
 
-// stats returns the counters the attack loop printed when it exited.
 func (f *forger) stats(t *testing.T) forgeSummary {
 	t.Helper()
 	var stats forgeSummary
@@ -205,7 +186,6 @@ func (f *forger) stats(t *testing.T) forgeSummary {
 	return stats
 }
 
-// forgeSummary is the line the attack role prints when it exits.
 type forgeSummary struct {
 	Pids      int    `json:"pids"`
 	Stops     int    `json:"stops"`
@@ -214,9 +194,6 @@ type forgeSummary struct {
 	FirstErr  string `json:"first_error,omitempty"`
 }
 
-// runForgeAccessCheckRole is the body of the attack role. It repeatedly finds
-// access-check processes, stops them, writes a forged successful response into
-// their standard output and continues them.
 func runForgeAccessCheckRole() int {
 	uid, err := strconv.ParseUint(os.Getenv("PEERS_E2E_FORGE_UID"), 10, 32)
 	if err != nil {
@@ -276,7 +253,6 @@ func runForgeAccessCheckRole() int {
 				_ = procsig.SendSignal(pid, syscall.SIGCONT)
 			}
 		}
-		// Pace the loop; see forgeScanPause.
 		time.Sleep(forgeScanPause)
 	}
 
@@ -285,7 +261,6 @@ func runForgeAccessCheckRole() int {
 	return 0
 }
 
-// accessCheckPids returns the pids whose command line is an access-check run.
 func accessCheckPids() []int {
 	procs, err := node.ListProcs(func(p node.Proc) bool {
 		args := p.Args

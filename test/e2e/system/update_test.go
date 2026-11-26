@@ -13,16 +13,11 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// updateFrameBound is the fallback for a local message to reach the receiver's
-// session. The same host needs no link or retry delay, so the success path
-// answers at once.
 const updateFrameBound = harness.EventTimeout
 
-// TestREQUpdate001_PeriodicCheck covers REQ-update-001: a Broker running below
-// the latest release learns it within the first-check bound; with checking
-// disabled a restarted Broker sends no request for the window in which an
-// enabled check would have fired; and a failing check leaves listing Agents and
-// sending a message working.
+// TestREQUpdate001_PeriodicCheck checks that an enabled Broker learns a newer
+// release, a disabled one sends no request, and a failing check leaves
+// messaging working.
 func TestREQUpdate001_PeriodicCheck(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -34,12 +29,10 @@ func TestREQUpdate001_PeriodicCheck(t *testing.T) {
 	fake := harness.StartFakeGitHub(t, updateLoadRelease(t, updateNewVersion, updateGoodReleaseArtifact, updateGoodChecksumsArtifact))
 	exe := updateStagedOldBinary()
 
-	// The enabled Broker learns the release within the bound.
 	broker := updateStartPeerBroker(t, fake, true)
 	updateWaitStatusLine(t, exe, updateStatusLine(updateNewVersion, updateOldVersion))
 	broker.Stop(t)
 
-	// The disabled Broker must stay silent for the same window.
 	fake.ResetRequests()
 	broker = updateStartPeerBroker(t, fake, false)
 	harness.Consistently(t, updateFirstCheckBound, "no update request while checking is disabled", func() (bool, string) {
@@ -53,7 +46,6 @@ func TestREQUpdate001_PeriodicCheck(t *testing.T) {
 	}
 	broker.Stop(t)
 
-	// A check that fails leaves the rest of the Broker working.
 	fake.SetFailure(true)
 	fake.ResetRequests()
 	updateStartPeerBroker(t, fake, true)
@@ -84,9 +76,9 @@ func TestREQUpdate001_PeriodicCheck(t *testing.T) {
 	}
 }
 
-// TestREQUpdate002_StatusShowsAvailableVersion covers REQ-update-002: with a
-// newer release the status output carries both versions and the update
-// command; with no newer release it carries no update line.
+// TestREQUpdate002_StatusShowsAvailableVersion checks that status carries both
+// versions and the update command when a newer release exists and no update
+// line when it does not.
 func TestREQUpdate002_StatusShowsAvailableVersion(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -102,8 +94,6 @@ func TestREQUpdate002_StatusShowsAvailableVersion(t *testing.T) {
 	updateWaitStatusLine(t, exe, updateStatusLine(updateNewVersion, updateOldVersion))
 	broker.Stop(t)
 
-	// The release the API returns is now the running version, so a check finds
-	// nothing newer.
 	fake.SetRelease(updateLoadRelease(t, updateOldVersion, updateGoodReleaseArtifact, updateGoodChecksumsArtifact))
 	fake.ResetRequests()
 	updateStartPeerBroker(t, fake, true)
@@ -122,9 +112,9 @@ func TestREQUpdate002_StatusShowsAvailableVersion(t *testing.T) {
 	})
 }
 
-// TestREQUpdate003_SessionHintOncePerSession covers REQ-update-003: the first
-// tool call of a session carries the update hint, the next call does not, and a
-// new session gets the hint again.
+// TestREQUpdate003_SessionHintOncePerSession checks that only the first tool
+// call of a session carries the update hint and that a new session gets it
+// again.
 func TestREQUpdate003_SessionHintOncePerSession(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -136,8 +126,8 @@ func TestREQUpdate003_SessionHintOncePerSession(t *testing.T) {
 	fake := harness.StartFakeGitHub(t, updateLoadRelease(t, updateNewVersion, updateGoodReleaseArtifact, updateGoodChecksumsArtifact))
 	exe := updateStagedOldBinary()
 
-	// Wait for the Broker to learn the release before starting a session, so
-	// the first call always sees it.
+	// Wait for the Broker to learn the release before starting a session, so the
+	// first call always sees the update hint.
 	updateStartPeerBroker(t, fake, true)
 	updateWaitStatusLine(t, exe, updateStatusLine(updateNewVersion, updateOldVersion))
 
@@ -171,10 +161,8 @@ func TestREQUpdate003_SessionHintOncePerSession(t *testing.T) {
 	}
 }
 
-// TestREQUpdate004_ConfirmedUpdateRestartsUserService covers the confirmation
-// half of REQ-update-004: answering yes shows both versions, downloads and
-// verifies the package, replaces the binary, and restarts the user service on
-// the new version.
+// TestREQUpdate004_ConfirmedUpdateRestartsUserService checks that a confirmed
+// update replaces the binary and restarts the user service on the new version.
 func TestREQUpdate004_ConfirmedUpdateRestartsUserService(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -223,9 +211,8 @@ func TestREQUpdate004_ConfirmedUpdateRestartsUserService(t *testing.T) {
 	}
 }
 
-// TestREQUpdate004_RefusedUpdateChangesNothing covers the refusal half of
-// REQ-update-004: declining the question leaves both the binary and the running
-// service untouched.
+// TestREQUpdate004_RefusedUpdateChangesNothing checks that declining the update
+// leaves the binary and the running service untouched.
 func TestREQUpdate004_RefusedUpdateChangesNothing(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -242,7 +229,7 @@ func TestREQUpdate004_RefusedUpdateChangesNothing(t *testing.T) {
 	res := updateRunInteractive(t, "peer", env, svc.target, "n\n", "update")
 	combined := res.Stdout + res.Stderr
 	// The command asks before it contacts the Broker, so a refusal names only
-	// the installed version; asking GitHub first would be a wasted request.
+	// the installed version.
 	for _, want := range []string{updateOldVersion, "Update canceled"} {
 		if !strings.Contains(combined, want) {
 			t.Fatalf("the update output does not contain %q:\n%s", want, combined)
@@ -263,9 +250,8 @@ func TestREQUpdate004_RefusedUpdateChangesNothing(t *testing.T) {
 	}
 }
 
-// TestREQUpdate004_YesSkipsPrompt covers the --yes half of REQ-update-004: the
-// command does not ask, and completes the update with standard input that is
-// not a terminal.
+// TestREQUpdate004_YesSkipsPrompt checks that --yes completes the update
+// without asking, with non-terminal standard input.
 func TestREQUpdate004_YesSkipsPrompt(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -288,8 +274,6 @@ func TestREQUpdate004_YesSkipsPrompt(t *testing.T) {
 		t.Fatalf("peers update --yes exited %d with non-terminal input\nstdout:\n%s\nstderr:\n%s",
 			res.ExitCode, res.Stdout, res.Stderr)
 	}
-	// --yes skips the question, so the command never prints the installed
-	// version; the restarted Broker is what reports the new one.
 	if !strings.Contains(combined, updateNewVersion) {
 		t.Fatalf("update --yes output does not name version %s:\n%s", updateNewVersion, combined)
 	}
@@ -308,10 +292,9 @@ func TestREQUpdate004_YesSkipsPrompt(t *testing.T) {
 	})
 }
 
-// TestREQUpdate005_FailedUpdateKeepsBinaryAndService covers REQ-update-005:
-// a checksum mismatch, a corrupt package and a binary that reports another
-// version each fail the update, leave the binary byte-for-byte unchanged and
-// keep the service running.
+// TestREQUpdate005_FailedUpdateKeepsBinaryAndService checks that a checksum
+// mismatch, a corrupt package and a lying binary each fail the update leaving
+// the binary and service unchanged.
 func TestREQUpdate005_FailedUpdateKeepsBinaryAndService(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)
@@ -364,9 +347,8 @@ func TestREQUpdate005_FailedUpdateKeepsBinaryAndService(t *testing.T) {
 	}
 }
 
-// TestREQUpdate006_UpdateRequiresWritePermission covers REQ-update-006: an
-// ordinary account updating a binary in a root-owned directory fails before
-// any download and names sudo as the way to update a system install.
+// TestREQUpdate006_UpdateRequiresWritePermission checks that an ordinary account
+// updating a root-owned binary fails before downloading and names sudo.
 func TestREQUpdate006_UpdateRequiresWritePermission(t *testing.T) {
 	if !syscontainer.InContainer() {
 		updateStageAssets(t)

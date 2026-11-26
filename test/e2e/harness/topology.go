@@ -213,9 +213,6 @@ var TopoFlatV6 = Topology{
 	},
 }
 
-// randomULA returns a random ULA subnet of the form fdXX:XXXX:XXXX:suffix::/64.
-// Each compose project gets its own prefix, so two concurrent projects never
-// share an IPv6 subnet.
 func randomULA(suffix byte) string {
 	var b [5]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -224,17 +221,9 @@ func randomULA(suffix byte) string {
 	return fmt.Sprintf("fd%02x:%02x%02x:%02x%02x:%x::/64", b[0], b[1], b[2], b[3], b[4], suffix)
 }
 
-// blockHostEgress removes every path from the routed topology's containers to
-// the host. For each node it drops locally generated packets to the host-side
-// gateway of every network the node is attached to: on a routed network that
-// gateway is a host address, so the test host's services stay out of reach even
-// though the container shares the host's view of the bridge. It also empties
-// /etc/resolv.conf because this Docker writes the host's resolver into the
-// container instead of the embedded 127.0.0.11, so dropping 127.0.0.11 alone
-// leaves name resolution working.
-//
-// Every rule and the resolver file stay inside the containers. The host's
-// routes and netfilter are never touched.
+// blockHostEgress empties every node's /etc/resolv.conf, because this Docker
+// writes the host's resolver into the container instead of the embedded
+// 127.0.0.11.
 func (c *Cluster) blockHostEgress(t testing.TB) {
 	t.Helper()
 	for _, node := range c.order {
@@ -246,9 +235,8 @@ func (c *Cluster) blockHostEgress(t testing.TB) {
 }
 
 // RemoveDefaultRoute deletes node's IPv4 default route and asserts that none
-// remains. Deleting it is not best effort: a topology that keeps the route
-// still sends packets toward the Docker bridge, and a probe that only times out
-// cannot tell that apart from a router that drops them.
+// remains; this is not best effort, because a kept route and a router that drops
+// packets look the same to a probe that only times out.
 func (c *Cluster) RemoveDefaultRoute(t testing.TB, node string) {
 	t.Helper()
 	c.Root(t, node, "ip", "route", "del", "default")
@@ -263,8 +251,6 @@ func (c *Cluster) AssertNoDefaultRoute(t testing.TB, node string) {
 	}
 }
 
-// device returns the network interface of node that carries the IPv4 address
-// of network.
 func (c *Cluster) device(t testing.TB, node, network string) string {
 	t.Helper()
 	addr := c.Addr(node, network)
@@ -276,7 +262,6 @@ func (c *Cluster) device(t testing.TB, node, network string) string {
 	return strings.TrimSuffix(fields[1], ":")
 }
 
-// subnet returns the IPv4 subnet of dev on node.
 func (c *Cluster) subnet(t testing.TB, node, dev string) string {
 	t.Helper()
 	out := c.Root(t, node, "ip", "-o", "-4", "route", "show", "dev", dev, "scope", "link")

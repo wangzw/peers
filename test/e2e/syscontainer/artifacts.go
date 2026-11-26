@@ -8,11 +8,9 @@ import (
 	"testing"
 )
 
-// ReleaseArtifactPath returns the path under which a staged artifact is
-// visible to the caller. The host stages artifacts next to the test binary,
-// which compose mounts at testBinaryPath; inside the container the path is
-// read-only. The name carries Release to keep it distinct from the install
-// script unit's ArtifactPath, whose host-side result is the container path.
+// ReleaseArtifactPath returns the path under which a staged artifact is visible
+// to the caller: inside the container the read-only mount path, on the host the
+// directory next to the test binary.
 func ReleaseArtifactPath(name string) string {
 	if InContainer() {
 		return filepath.Join(testBinaryPath, name)
@@ -21,10 +19,9 @@ func ReleaseArtifactPath(name string) string {
 }
 
 // StageReleaseArtifact makes data available to the container under name and
-// returns the path the caller uses. Names must be plain file names: compose
-// mounts one directory, and a path separator would leave it. On the host the
-// file is written next to the test binary with mode; inside the container it
-// is already on the read-only mount and only its path is returned.
+// returns the path the caller uses; name must be a plain file name because
+// compose mounts one directory. On the host the file is written next to the
+// test binary with mode, and inside the container only its path is returned.
 func StageReleaseArtifact(t testing.TB, name string, data []byte, mode os.FileMode) string {
 	t.Helper()
 
@@ -66,10 +63,9 @@ func StageReleaseArtifact(t testing.TB, name string, data []byte, mode os.FileMo
 	return ReleaseArtifactPath(name)
 }
 
-// CopyReleaseArtifact writes a staged artifact to path. It is meant for the
-// container: the staged directory is read-only, so a test that needs a
-// writable binary or a root-owned copy reads it from there and creates its
-// own. The caller handles ownership afterwards.
+// CopyReleaseArtifact writes a staged artifact to path; the staged directory is
+// read-only, so a test that needs a writable binary or a root-owned copy reads
+// it from there and creates its own. The caller handles ownership afterwards.
 func CopyReleaseArtifact(t testing.TB, name, path string, mode os.FileMode) {
 	t.Helper()
 

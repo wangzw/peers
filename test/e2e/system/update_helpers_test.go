@@ -24,17 +24,16 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// The release versions and artifact names the update scenarios build. The old
-// version is the running release; the new one is what the fake GitHub API
-// offers; the other version is inside a package whose binary lies about itself.
+// The release versions the update scenarios build: old is the running release,
+// new is what the fake GitHub API offers, and other lies about itself.
 const (
 	updateOldVersion   = "0.1.0"
 	updateNewVersion   = "0.1.2"
 	updateOtherVersion = "0.9.9"
 )
 
-// Artifact names under the directory compose mounts for the test binary. Names
-// are unique per content, so parallel tests stage the same files harmlessly.
+// Artifact names are unique per content, so parallel tests stage the same files
+// harmlessly.
 const (
 	updateOldArtifact            = "update-old-" + updateOldVersion
 	updateGoodReleaseArtifact    = "update-release-good.tar.gz"
@@ -47,52 +46,40 @@ const (
 )
 
 const (
-	// updateBrokerListen is the user Broker's listen address in the
-	// update scenarios. One Broker runs per container, so no other listener
-	// competes for it.
+	// updateBrokerListen is the user Broker's listen address; one Broker runs per
+	// container, so no other listener competes for it.
 	updateBrokerListen = "127.0.0.1:17461"
 
-	// updateInitialCheckDelay is the first-check delay the staged old release
-	// is started with through the test-build hook. Only a build carrying the
-	// peers_testenv tag reads the variable; a release build waits one minute.
+	// updateInitialCheckDelay is the first-check delay the staged old release reads
+	// through the test-build hook; a release build waits one minute.
 	updateInitialCheckDelay = 3 * time.Second
 
 	// updateFirstCheckBound is the quiet window in which a Broker with checking
-	// disabled must send no request. An enabled check fires one
-	// updateInitialCheckDelay after the Broker starts its timer, so four times
-	// the delay still leaves nine seconds for startup before the timer starts.
-	// The window proves the first check after the check is disabled sends no
-	// request.
+	// disabled sends no request; an enabled check fires one delay after the timer
+	// starts, so four times the delay still leaves nine seconds for startup
+	// before the timer starts.
 	updateFirstCheckBound = 4 * updateInitialCheckDelay
 
-	// updateCheckArrivalBound bounds an enabled Broker's first check: the
-	// shortened delay plus slack for container startup, the loopback request
-	// and the status read. It replaces the product's one-minute delay that the
-	// earlier two-minute bound had to cover.
+	// updateCheckArrivalBound bounds an enabled Broker's first check: the shortened
+	// delay plus slack for startup, the request and the status read.
 	updateCheckArrivalBound = 30 * time.Second
 
-	// updateCheckSettleWindow is how long a Broker whose check found no newer
-	// release must keep status free of an update line after its request was
-	// observed. The fake API answers on loopback, so a check result is stored
-	// well inside this window.
+	// updateCheckSettleWindow is how long status must stay free of an update line
+	// after a check found nothing newer; the fake API answers on loopback, so a
+	// check result is stored well inside this window.
 	updateCheckSettleWindow = 2 * time.Second
 
-	// updateServiceBound covers systemd starting the restarted user service.
-	// The unit has Restart=always and RestartSec=5; the update command waits
-	// for readiness itself, so this bound only absorbs the status read.
+	// updateServiceBound covers systemd restarting the user service, whose unit has
+	// RestartSec=5.
 	updateServiceBound = 15 * time.Second
 )
 
-// updateStagedOldBinary returns the old release binary visible to the
-// container.
 func updateStagedOldBinary() string {
 	return syscontainer.ReleaseArtifactPath(updateOldArtifact)
 }
 
-// updateStageAssets builds every binary and package the update scenarios serve
-// and stages them next to the test binary. It runs on the host: the container
-// has no Go toolchain, and compose mounts the test binary's directory read-only
-// at syscontainer.ReleaseArtifactPath.
+// updateStageAssets builds and stages the binaries and packages the update
+// scenarios serve; it runs on the host because the container has no Go toolchain.
 func updateStageAssets(t *testing.T) {
 	t.Helper()
 
@@ -122,7 +109,6 @@ func updateStageAssets(t *testing.T) {
 	syscontainer.StageReleaseArtifact(t, updateWrongChecksumsFile, harness.ChecksumLine(assetName, wrongArchive), 0o644)
 }
 
-// updateReadFile reads path and fails the test when it cannot.
 func updateReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -132,7 +118,6 @@ func updateReadFile(t *testing.T, path string) []byte {
 	return data
 }
 
-// updateReadStaged reads an artifact the host staged.
 func updateReadStaged(t *testing.T, name string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(syscontainer.ReleaseArtifactPath(name))
@@ -142,8 +127,6 @@ func updateReadStaged(t *testing.T, name string) []byte {
 	return data
 }
 
-// updateLoadRelease reads a staged package and checksum file into a release the
-// shared fake GitHub API serves.
 func updateLoadRelease(t *testing.T, version, archiveArtifact, checksumsArtifact string) harness.Release {
 	t.Helper()
 	return harness.Release{
@@ -154,32 +137,24 @@ func updateLoadRelease(t *testing.T, version, archiveArtifact, checksumsArtifact
 	}
 }
 
-// updateBrokerConfig is a user Broker configuration with the given update
-// check setting. The interval is the smallest the design permits; the first
-// check follows the startup delay, not the interval.
 func updateBrokerConfig(check bool) string {
 	return fmt.Sprintf("broker:\n  listen: %q\nupdate:\n  check: %t\n  check_interval: 1h\n",
 		updateBrokerListen, check)
 }
 
-// updateStartPeerBroker writes the configuration and starts the old release as
-// peer's user Broker. The fake API base is handed to it through the
-// test-build hook.
 func updateStartPeerBroker(t *testing.T, fake *harness.FakeGitHub, check bool) *syscontainer.Proc {
 	t.Helper()
 	writeAccountFile(t, "peer", "/home/peer/.peers/config.yaml", updateBrokerConfig(check))
 	env := []string{
 		"PEERS_TEST_UPDATE_API=" + fake.URL(),
-		// The staged old release is built with peers_testenv, so it reads this
-		// hook and checks after updateInitialCheckDelay instead of the
-		// product's one minute. A release build ignores the variable.
+		// The staged old release is built with peers_testenv, so it reads this hook and
+		// checks after updateInitialCheckDelay instead of the product's one minute.
 		"PEERS_TEST_UPDATE_INITIAL_DELAY=" + updateInitialCheckDelay.String(),
 	}
 	return syscontainer.StartUserBrokerPath(t, updateStagedOldBinary(), "peer", env,
 		"--listen", updateBrokerListen)
 }
 
-// updatePeerEnv returns the user-manager environment of an account.
 func updatePeerEnv(t *testing.T, account string) []string {
 	t.Helper()
 	uid := syscontainer.AccountUID(t, account)
@@ -190,21 +165,16 @@ func updatePeerEnv(t *testing.T, account string) []string {
 	}
 }
 
-// updateStatus runs the terminal status command against peer's user Broker.
 func updateStatus(t *testing.T, exe string) syscontainer.Result {
 	t.Helper()
 	env := append(updatePeerEnv(t, "peer"), "PEERS_TEST_SOCKET="+syscontainer.UserSocketPath(t, "peer"))
 	return runWithEnv(t, "peer", env, exe, "service", "status")
 }
 
-// updateStatusClientRole is the TestMain role that reads the Broker's running
-// version as the account that owns it.
 const updateStatusClientRole = "update-status-client"
 
-// updateBrokerVersion runs the test binary as account in the update-status
-// client role and returns the version the Broker reports. A user Broker
-// admits only its own account's peer credentials, so the read runs as that
-// account instead of the root test process.
+// updateBrokerVersion reads through the update-status client role as account,
+// because a user Broker admits only its own account's peer credentials.
 func updateBrokerVersion(t *testing.T, account string) (string, error) {
 	t.Helper()
 	base := syscontainer.Command(account, []string{
@@ -226,8 +196,6 @@ func updateBrokerVersion(t *testing.T, account string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// runUpdateStatusClientRole is the body of the test binary when TestMain
-// selects the update-status role. It prints the version the Broker runs.
 func runUpdateStatusClientRole() int {
 	oracle, err := node.DialOracle(os.Getenv("PEERS_TEST_SOCKET"))
 	if err != nil {
@@ -250,8 +218,6 @@ func runUpdateStatusClientRole() int {
 	return 0
 }
 
-// updateWaitStatusLine waits until status prints want, which is the observable
-// point at which the Broker has learned the check's result.
 func updateWaitStatusLine(t *testing.T, exe, want string) {
 	t.Helper()
 	harness.Eventually(t, updateCheckArrivalBound, "status to report the available version", func() (bool, string) {
@@ -263,9 +229,8 @@ func updateWaitStatusLine(t *testing.T, exe, want string) {
 	})
 }
 
-// updateWaitAgentListed waits until the terminal status lists the session,
-// which proves the MCP server registered without the test spending a tool
-// call. A tool call would consume the session's first-call update hint.
+// updateWaitAgentListed waits for status to list the session; a tool call would
+// consume the session's first-call update hint.
 func updateWaitAgentListed(t *testing.T, name, exe string) {
 	t.Helper()
 	harness.Eventually(t, updateCheckArrivalBound, "the session "+name+" to register", func() (bool, string) {
@@ -277,9 +242,8 @@ func updateWaitAgentListed(t *testing.T, name, exe string) {
 	})
 }
 
-// updateRequireFeature fails fast when the build lacks the update command.
-// Without the gate, a test that waits for a Broker's first check would sit in
-// its bound when the whole feature is absent.
+// updateRequireFeature fails fast when the build lacks the update command, so a
+// test does not sit in its bound.
 func updateRequireFeature(t *testing.T) {
 	t.Helper()
 	res := syscontainer.RunAs(t, "root", nil, "--help")
@@ -289,21 +253,16 @@ func updateRequireFeature(t *testing.T) {
 	}
 }
 
-// updateHint is the sentence a session's first tool result carries when a
-// newer release is available.
 func updateHint(available, current string) string {
 	return fmt.Sprintf("peers %s is available (this Broker runs %s). "+
 		"To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal.",
 		available, current)
 }
 
-// updateStatusLine is the line the status output carries when a newer release
-// is available.
 func updateStatusLine(available, current string) string {
 	return fmt.Sprintf("Update: %s available (current %s); run peers update", available, current)
 }
 
-// updatePeerIDs returns the peer account and its numeric ids.
 func updatePeerIDs(t *testing.T) (*user.User, int, int) {
 	t.Helper()
 	u, err := user.Lookup("peer")
@@ -321,17 +280,12 @@ func updatePeerIDs(t *testing.T) (*user.User, int, int) {
 	return u, uid, gid
 }
 
-// updateUserService is one installed user service running the old
-// release from a peer-owned directory.
 type updateUserService struct {
 	target    string
 	userEnv   []string
 	beforePID int
 }
 
-// updateSetupUserService copies the old release to /home/peer/bin, installs it
-// as peer's user service through the product's subcommand, and returns the
-// running service's state.
 func updateSetupUserService(t *testing.T) updateUserService {
 	t.Helper()
 
@@ -378,9 +332,8 @@ func updateSetupUserService(t *testing.T) updateUserService {
 	return updateUserService{target: target, userEnv: userEnv, beforePID: beforePID}
 }
 
-// updateRunInteractive runs the update command under a pseudo-terminal and
-// feeds answer to its prompt. Without a terminal the command would refuse
-// before asking, so the confirmation and refusal cases need one.
+// updateRunInteractive runs update under a pseudo-terminal; without a terminal
+// the command would refuse before asking.
 func updateRunInteractive(t *testing.T, account string, env []string, exe, answer string, args ...string) syscontainer.Result {
 	t.Helper()
 
@@ -408,14 +361,12 @@ func updateRunInteractive(t *testing.T, account string, env []string, exe, answe
 	return res
 }
 
-// updateFileHash returns the SHA-256 of a file.
 func updateFileHash(t *testing.T, path string) string {
 	t.Helper()
 	sum := sha256.Sum256(updateReadFile(t, path))
 	return hex.EncodeToString(sum[:])
 }
 
-// updateBinaryVersion runs --version and returns its trimmed output.
 func updateBinaryVersion(t *testing.T, exe string) string {
 	t.Helper()
 	res := runWithEnv(t, "peer", nil, exe, "--version")
@@ -425,7 +376,6 @@ func updateBinaryVersion(t *testing.T, exe string) string {
 	return strings.TrimSpace(res.Stdout)
 }
 
-// updateServiceState returns systemd's is-active answer for the user unit.
 func updateServiceState(t *testing.T, userEnv []string) string {
 	t.Helper()
 	res := runWithEnv(t, "peer", userEnv, "systemctl", "--user", "is-active", "peers.service")

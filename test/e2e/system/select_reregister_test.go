@@ -28,30 +28,21 @@ import (
 )
 
 const (
-	// srSystemSocket is the system Broker's local socket.
-	srSystemSocket = "/run/peers/broker.sock"
-	// srSystemService is the systemd unit of the system Broker.
+	srSystemSocket  = "/run/peers/broker.sock"
 	srSystemService = "peers.service"
-	// srLaunchBudget is the reconnect deadline after a selection round that
-	// probed a stale system socket: mcpserver.SystemRetryDeadline for that round
-	// plus mcpserver.ConnBackoffCap for the next reconnect, with a small margin
-	// for the dial, Hello and registration. The waits that use it add
-	// harness.EventTimeout as the fallback a scheduling delay needs.
+	// srLaunchBudget is the reconnect deadline after a selection round that probed a
+	// stale system socket; waits add harness.EventTimeout as the fallback.
 	srLaunchBudget = mcpserver.SystemRetryDeadline + mcpserver.ConnBackoffCap + 5*time.Second
-	// srRestartBudget is systemd's RestartSec=5 plus a small margin. A wait that
+	// srRestartBudget is systemd's RestartSec=5 plus a small margin; a wait that
 	// uses it adds harness.EventTimeout, and its list_agents waits also cover
-	// ListAgentsWaitBound: one stalled list_agents call can run for
-	// ListAgentsPollBound before the wait sees it again.
-	srRestartBudget = 5*time.Second + 3*time.Second
-	// statusClientRole is the TestMain role that reads an agent ID as the
-	// account that owns the Broker.
+	// ListAgentsWaitBound because one stalled poll can run for
+	// ListAgentsPollBound.
+	srRestartBudget  = 5*time.Second + 3*time.Second
 	statusClientRole = "status-client"
 	// srStatusBound bounds one status-client run, matching the Broker call bound.
 	srStatusBound = 10 * time.Second
 )
 
-// srInit starts the systemd container, unless this is the inner run, and
-// reports whether the test should continue inside the container.
 func srInit(t *testing.T) bool {
 	t.Helper()
 	if !syscontainer.InContainer() {
@@ -61,8 +52,6 @@ func srInit(t *testing.T) bool {
 	return true
 }
 
-// srSetup starts the system service and peer's user Broker at :17444,
-// with peer's configuration naming the same address.
 func srSetup(t *testing.T) *syscontainer.Proc {
 	t.Helper()
 	syscontainer.StartSystemService(t, "")
@@ -70,8 +59,6 @@ func srSetup(t *testing.T) *syscontainer.Proc {
 	return syscontainer.StartUserBroker(t, "peer", "--listen", ":17444")
 }
 
-// srWriteAccountConfig writes config.yaml for account, owned by that account
-// with the modes the design requires.
 func srWriteAccountConfig(t *testing.T, account, content string) {
 	t.Helper()
 	u, err := user.Lookup(account)
@@ -102,7 +89,6 @@ func srWriteAccountConfig(t *testing.T, account, content string) {
 	}
 }
 
-// srWaitRegistered waits until the session has registered with its Broker.
 func srWaitRegistered(t *testing.T, s *syscontainer.Session, what string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+what+" to register", func(deadline time.Time) (bool, string) {
@@ -114,8 +100,6 @@ func srWaitRegistered(t *testing.T, s *syscontainer.Session, what string) {
 	})
 }
 
-// srMustStatus returns the output of peers service status as account and fails
-// when the command does not succeed.
 func srMustStatus(t *testing.T, account string) string {
 	t.Helper()
 	res := syscontainer.RunAs(t, account, nil, "service", "status")
@@ -125,8 +109,6 @@ func srMustStatus(t *testing.T, account string) string {
 	return res.Stdout
 }
 
-// srAgentAddress returns the address column of the status row whose address
-// contains name, or "" when there is no such row.
 func srAgentAddress(status, name string) string {
 	for _, line := range strings.Split(status, "\n") {
 		fields := strings.Fields(line)
@@ -137,7 +119,6 @@ func srAgentAddress(status, name string) string {
 	return ""
 }
 
-// srIdentityHash returns the lowercase hex SHA-256 of account's identity key.
 func srIdentityHash(t *testing.T, account string) string {
 	t.Helper()
 	u, err := user.Lookup(account)
@@ -153,10 +134,8 @@ func srIdentityHash(t *testing.T, account string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// srAgentID returns the agent ID the Broker of account reports for the agent
-// at address. A user Broker admits only its own account's peer
-// credentials, so the read runs in the status-client role as that account; the
-// role takes the ID from the Oracle's Status RPC.
+// srAgentID reads the ID through the status-client role as account, because a
+// user Broker admits only its own account's peer credentials.
 func srAgentID(t *testing.T, account, address string) string {
 	t.Helper()
 	base := syscontainer.Command(account, []string{
@@ -186,9 +165,6 @@ func srAgentID(t *testing.T, account, address string) string {
 	return id
 }
 
-// runStatusClientRole is the body of the test binary when TestMain selects the
-// status-client role. It runs as the account that owns the Broker, reads the
-// agent ID of one address through the Oracle, and prints that ID.
 func runStatusClientRole() int {
 	oracle, err := node.DialOracle(os.Getenv("PEERS_TEST_SOCKET"))
 	if err != nil {
@@ -212,13 +188,11 @@ func runStatusClientRole() int {
 	return failStatusClientRole(fmt.Errorf("the Broker reports no agent at %q: %v", address, resp.GetAgents()))
 }
 
-// failStatusClientRole prints err to standard error and returns a failure code.
 func failStatusClientRole(err error) int {
 	fmt.Fprintln(os.Stderr, "status-client:", err)
 	return 1
 }
 
-// srBrokerProcs returns the Broker processes of account.
 func srBrokerProcs(t *testing.T, account string) []syscontainer.ProcInfo {
 	t.Helper()
 	uid := syscontainer.AccountUID(t, account)
@@ -231,8 +205,6 @@ func srBrokerProcs(t *testing.T, account string) []syscontainer.ProcInfo {
 	return out
 }
 
-// srProc is one process the MCP server selection inspects: its pid, its parent
-// pid, the real uid that owns it, and its argv.
 type srProc struct {
 	PID  int
 	PPID int
@@ -240,9 +212,6 @@ type srProc struct {
 	Args []string
 }
 
-// srMCPPIDs returns the pids of the MCP server processes this test process
-// started for account, sorted. A pid set that stays the same across recovery
-// proves the session did not reconnect the service.
 func srMCPPIDs(t *testing.T, account string) []int {
 	t.Helper()
 	uid := syscontainer.AccountUID(t, account)
@@ -253,12 +222,9 @@ func srMCPPIDs(t *testing.T, account string) []int {
 	return srSelectMCPPIDs(procs, uid, os.Getpid(), syscontainer.PeersBinary())
 }
 
-// srSelectMCPPIDs returns the pids among procs that are the MCP server one
-// session runs: the account's peers binary started as "peers mcp" by the
-// process that opened the session (launcher). A forked but not yet exec'd child
-// of that server inherits the server's argv and has the server, not launcher,
-// as its parent, so the parent check excludes it. The argv must match exactly,
-// which keeps a command line that merely mentions "peers mcp" out.
+// srSelectMCPPIDs keeps a process only when launcher is its parent, its uid matches,
+// and its argv is exactly exe and "mcp"; a forked-but-not-yet-exec'd child of the
+// server inherits the server's argv and has the server as its parent, so it is excluded.
 func srSelectMCPPIDs(procs []srProc, uid uint32, launcher int, exe string) []int {
 	var out []int
 	for _, p := range procs {
@@ -274,15 +240,9 @@ func srSelectMCPPIDs(procs []srProc, uid uint32, launcher int, exe string) []int
 	return out
 }
 
-// TestSrSelectMCPPIDs checks the filter that picks a session's MCP server from
-// the processes whose command line mentions peers and mcp. The account's server
-// is the child of the process that started it whose argv is exactly the peers
-// binary and "mcp". A forked but not yet exec'd child of that server, such as
-// the git child that reads the default topic, inherits the server's argv and
-// has the server as its parent, so it must not count: such a transient child
-// made the restart snapshot flaky. Another account's server, another
-// subcommand, a different binary path, an extra argument, a command line that
-// only mentions "peers mcp", and another session's server are excluded too.
+// TestSrSelectMCPPIDs checks that the MCP server filter accepts only the
+// launcher's exact peers mcp process and rejects a child of the server, another
+// account, another command or an inexact argv.
 func TestSrSelectMCPPIDs(t *testing.T) {
 	const (
 		exe      = "/usr/local/bin/peers"
@@ -304,9 +264,8 @@ func TestSrSelectMCPPIDs(t *testing.T) {
 	}
 }
 
-// TestSrSelectMCPPIDsReconnect checks that a server which reconnected under a
-// new pid is still selected, so the recovery assertion catches a real
-// reconnection rather than ignoring it.
+// TestSrSelectMCPPIDsReconnect checks that a server that reconnected under a
+// new pid is still selected.
 func TestSrSelectMCPPIDsReconnect(t *testing.T) {
 	const (
 		exe      = "/usr/local/bin/peers"
@@ -326,7 +285,6 @@ func TestSrSelectMCPPIDsReconnect(t *testing.T) {
 	}
 }
 
-// srMainPID returns the MainPID systemd reports for the system service.
 func srMainPID() (int, error) {
 	out, err := syscontainer.Command("root", nil, "systemctl", "show", "-p", "MainPID", srSystemService).Output()
 	if err != nil {
@@ -342,18 +300,15 @@ func srMainPID() (int, error) {
 	return 0, fmt.Errorf("systemctl show printed no MainPID")
 }
 
-// TestSelectOrderReq026 checks REQ-broker-config-026: with the system Broker
-// on :17443 and peer's user Broker on :17444 both available, peer's
-// session uses the user Broker; a peer session opened after that Broker
-// stops uses the system Broker; an account without a user Broker uses
-// the system Broker; and AGENT_PEER_SOCKET has no effect on the choice.
+// TestSelectOrderReq026 checks that a session uses its account's user Broker
+// ahead of the system Broker and falls back to the system Broker when none
+// runs, and that AGENT_PEER_SOCKET does not change the choice.
 func TestSelectOrderReq026(t *testing.T) {
 	if !srInit(t) {
 		return
 	}
 	userBroker := srSetup(t)
 
-	// 1. peer's session: peer's user Broker, ahead of the system Broker.
 	s1 := syscontainer.NewSession(t, "peer", "s1")
 	srWaitRegistered(t, s1, "s1")
 	if strings.Contains(srMustStatus(t, "root"), "s1") {
@@ -363,8 +318,6 @@ func TestSelectOrderReq026(t *testing.T) {
 		t.Fatal("s1 is not on peer's user Broker")
 	}
 
-	// 2. AGENT_PEER_SOCKET names the system Broker; the choice does not change,
-	// so the session still registers on peer's user Broker.
 	s2 := syscontainer.NewSession(t, "peer", "s2",
 		syscontainer.WithEnv("AGENT_PEER_SOCKET="+srSystemSocket))
 	srWaitRegistered(t, s2, "s2")
@@ -375,8 +328,6 @@ func TestSelectOrderReq026(t *testing.T) {
 		t.Fatal("s2 is not on peer's user Broker")
 	}
 
-	// 3. peer's user Broker stops; a session opened afterwards uses the
-	// system Broker.
 	userBroker.Stop(t)
 	s3 := syscontainer.NewSession(t, "peer", "s3")
 	srWaitRegistered(t, s3, "s3")
@@ -387,7 +338,6 @@ func TestSelectOrderReq026(t *testing.T) {
 		t.Fatalf("peer runs a user Broker although it was stopped: %v", procs)
 	}
 
-	// 4. an account without a user Broker: the system Broker.
 	s4 := syscontainer.NewSession(t, "other", "s4")
 	srWaitRegistered(t, s4, "s4")
 	if !strings.Contains(srMustStatus(t, "root"), "s4") {
@@ -398,11 +348,9 @@ func TestSelectOrderReq026(t *testing.T) {
 	}
 }
 
-// TestReregisterUserBrokerReq037 checks the user half of
-// REQ-broker-config-037: after its Broker is killed, the session reports that
-// no Broker is available and the MCP server process starts nothing; once the
-// user starts a Broker again, the session registers with the same identity and
-// Agent address and does not move to the system Broker.
+// TestReregisterUserBrokerReq037 checks that after its user Broker is killed a
+// session reports no Broker and rejoins with the same identity once the Broker
+// restarts, without moving to the system Broker.
 func TestReregisterUserBrokerReq037(t *testing.T) {
 	if !srInit(t) {
 		return
@@ -448,8 +396,6 @@ func TestReregisterUserBrokerReq037(t *testing.T) {
 		return true, ""
 	})
 
-	// The user starts the Broker again in a terminal. The session reconnects to
-	// it without reconnecting the MCP server process.
 	syscontainer.StartUserBroker(t, "peer", "--listen", ":17444")
 	harness.EventuallyPoll(t, srLaunchBudget+harness.EventTimeout, "s1 registers again with the restarted user Broker", func(deadline time.Time) (bool, string) {
 		_, isError, err := s1.PollCall(t, deadline, "list_agents", map[string]any{})
@@ -480,10 +426,9 @@ func TestReregisterUserBrokerReq037(t *testing.T) {
 	}
 }
 
-// TestReregisterSystemBrokerReq037 checks the system half of
-// REQ-broker-config-037: systemd restarts the system Broker, the session
-// registers again with it, and the session never starts a user Broker
-// while the system Broker is down.
+// TestReregisterSystemBrokerReq037 checks that systemd restarts the system
+// Broker, the session rejoins it, and no user Broker starts while the system
+// Broker is down.
 func TestReregisterSystemBrokerReq037(t *testing.T) {
 	if !srInit(t) {
 		return
@@ -506,17 +451,9 @@ func TestReregisterSystemBrokerReq037(t *testing.T) {
 	if oldPID == 0 {
 		t.Fatal("systemd reports MainPID 0 before the kill")
 	}
-	// Kill the main process directly rather than through systemctl kill. Its
-	// default --kill-whom=all enumerates the unit's cgroup after signaling the
-	// main process, and systemd 252 returns EIO when cgroup.procs holds a pid it
-	// cannot map, including a task that exits between the listing and the signal
-	// ("Failed to send signal SIGKILL to auxiliary processes: Input/output
-	// error"). systemd fixes this in v255/v256, which skip unmapped pids
-	// (systemd PR #32534, commit 9a361df), but Debian bookworm ships 252. The
-	// auxiliary processes need no signal: the Broker's helpers carry
-	// Pdeathsig=SIGKILL. SIGKILL to MainPID still exercises what this test
-	// checks, because systemd sees the main process die by signal and restarts
-	// the unit.
+	// Kill MainPID directly, not through systemctl kill: systemd 252 returns EIO when
+	// cgroup.procs holds an unmapped pid, and the helpers carry Pdeathsig=SIGKILL
+	// so they need no signal.
 	if !procsig.Alive(oldPID) {
 		t.Fatalf("the system Broker %d is not running before the kill", oldPID)
 	}

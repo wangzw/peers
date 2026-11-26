@@ -8,11 +8,9 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// TestSystemSubnetsDisjointFromRoutedAllocator checks that the /24s the system
-// container network can take never intersect the /24s the harness allocator
-// hands to routed topologies. Docker refuses a second live network whose subnet
-// overlaps an existing one, so an overlap breaks system and routed tests that
-// run at the same time.
+// TestSystemSubnetsDisjointFromRoutedAllocator checks that the subnets the
+// system container network can take never overlap the subnets the harness routed
+// allocator hands out.
 func TestSystemSubnetsDisjointFromRoutedAllocator(t *testing.T) {
 	routed := harness.RoutedSubnetPrefixes()
 	if len(routed) == 0 {
@@ -30,6 +28,8 @@ func TestSystemSubnetsDisjointFromRoutedAllocator(t *testing.T) {
 	}
 }
 
+// TestRunCommandLine checks that runTestFlag anchors and escapes each
+// slash-separated segment of a test name.
 func TestRunCommandLine(t *testing.T) {
 	cases := []struct {
 		name string
@@ -45,9 +45,6 @@ func TestRunCommandLine(t *testing.T) {
 		}
 	}
 
-	// -test.run matches each slash-separated segment as its own expression, so
-	// the pattern must match the named test and nothing that merely contains
-	// it, while regular-expression characters in the name stay literal.
 	pattern := runTestFlag("TestX/sub.plus+")
 	if !matchesTestRun(pattern, "TestX/sub.plus+") {
 		t.Errorf("pattern %q does not match its own test name", pattern)
@@ -59,8 +56,6 @@ func TestRunCommandLine(t *testing.T) {
 	}
 }
 
-// matchesTestRun applies a -test.run pattern the way the testing package does:
-// one regular expression per slash-separated segment.
 func matchesTestRun(pattern, name string) bool {
 	patterns := strings.Split(pattern, "/")
 	names := strings.Split(name, "/")

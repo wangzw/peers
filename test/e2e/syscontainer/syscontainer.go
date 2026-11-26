@@ -1,9 +1,5 @@
 //go:build e2e
 
-// Package syscontainer runs the system end-to-end tests inside
-// containers. The host test process forwards each test to a fresh container of
-// the requested service, so tests that need root, several accounts, or systemd
-// see the environment the system Broker is designed for.
 package syscontainer
 
 import (
@@ -36,59 +32,49 @@ const (
 	Systemd Service = "systemd"
 )
 
-// inContainerEnv marks a test process that runs inside the container.
+// inContainerEnv is set by every compose service; its name must match the
+// literal in compose/system/compose.yaml.
 const inContainerEnv = "PEERS_E2E_IN_CONTAINER"
 
-// sudoersCoverPath is the sudoers drop-in that keeps GOCOVERDIR across sudo. It
-// is written inside the container, not bind-mounted: sudo ignores a file not
-// owned by uid 0, and a host file carries the invoking uid. The name has no dot,
-// so sudo's includedir reads it.
+// sudoersCoverPath is the sudoers drop-in that keeps GOCOVERDIR across sudo; it
+// is written inside the container because sudo ignores a file not owned by uid
+// 0, and its name has no dot so sudo's includedir reads it.
 const sudoersCoverPath = "/etc/sudoers.d/e2e-cover"
 
-// sudoersCoverContent is the drop-in's content.
 const sudoersCoverContent = `Defaults env_keep += "GOCOVERDIR"`
 
-// sudoersWriteScript writes and validates the sudoers drop-in inside a
-// container. sudo refuses a file whose owner is not root or that group or
-// others can write, so the script sets root ownership and mode 0440 and then
-// validates the result with visudo.
+// sudoersWriteScript writes the drop-in with root ownership and mode 0440,
+// which sudo requires, and validates it with visudo.
 const sudoersWriteScript = "mkdir -p /etc/sudoers.d && " +
 	"printf '%s\\n' '" + sudoersCoverContent + "' > " + sudoersCoverPath + " && " +
 	"chown root:root " + sudoersCoverPath + " && " +
 	"chmod 0440 " + sudoersCoverPath + " && " +
 	"visudo -cf " + sudoersCoverPath
 
-// systemdCoverDropInName is the host file name of the systemd drop-in mounted
-// into the systemd services.
 const systemdCoverDropInName = "90-e2e-cover.conf"
 
-// systemdCoverDropInPath is where the drop-in mounts inside the container.
 const systemdCoverDropInPath = "/etc/systemd/system.conf.d/" + systemdCoverDropInName
 
 // systemdCoverDropInContent puts GOCOVERDIR into the manager's environment, so
-// every unit it starts inherits the variable. The [Manager] header is required:
-// a drop-in without it is ignored.
+// every unit it starts inherits it; the [Manager] header is required, because a
+// drop-in without it is ignored.
 const systemdCoverDropInContent = "[Manager]\nDefaultEnvironment=GOCOVERDIR=" + harness.CoverMountPath + "\n"
 
-// expectFailEnv forwards an intentional failure request into the container. It
-// is set only by the smoke test that checks failure propagation.
+// expectFailEnv is read by the smoke test; its name must match the literal in
+// test/e2e/system/harness_smoke_test.go.
 const expectFailEnv = "PEERS_E2E_EXPECT_FAIL"
 
 const (
 	// systemdReadyBound is the total budget for one systemd container to finish
-	// booting. It covers every probe, the one rebuild and the stop before it.
-	// Evidence collection after this budget is given up has its own bound and
-	// does not count here.
+	// booting, covering every probe, the one rebuild and the stop before it;
+	// evidence collection after this budget has its own bound.
 	systemdReadyBound = 90 * time.Second
 
-	// systemdProbeBound bounds one is-system-running --wait probe. A healthy
-	// boot returns in under a second. A boot still in the initial transaction
-	// blocks until this bound kills the probe, and that timeout is the first
-	// moment the stall is observable, so it equals systemdBootRebuildDelay.
+	// systemdProbeBound bounds one is-system-running --wait probe. It equals
+	// systemdBootRebuildDelay because the stall becomes observable only when the
+	// probe bound expires.
 	systemdProbeBound = systemdBootRebuildDelay
 
-	// systemdPollInterval separates two probes that returned without a ready
-	// state and without using the probe bound.
 	systemdPollInterval = 100 * time.Millisecond
 )
 
@@ -97,11 +83,10 @@ func InContainer() bool {
 	return os.Getenv(inContainerEnv) == "1"
 }
 
-// testBinary is the host path of the test binary built by Main. Run mounts it
-// into the container.
 var testBinary string
 
-// testBinaryPath is the path the container sees.
+// testBinaryPath must equal the container-side mount path of the test binary
+// directory, /opt/peers-test in compose/system/compose.yaml.
 const testBinaryPath = "/opt/peers-test"
 
 // ArtifactPath returns the path inside the container of a file staged with
@@ -110,11 +95,9 @@ func ArtifactPath(rel string) string {
 	return filepath.Join(testBinaryPath, rel)
 }
 
-// StageArtifact writes data to rel under the directory mounted into the
-// container at testBinaryPath and returns the path the container sees. It lets
-// a host-side test give the inner test a file from the repository, such as the
-// install script the release archive carries. The mount is read-only inside
-// the container, so the file must be staged before Run starts it.
+// StageArtifact writes data to rel under the directory mounted at
+// testBinaryPath and returns the path the container sees; it runs on the host
+// and must be called before Run starts the read-only mount.
 func StageArtifact(t *testing.T, rel string, data []byte, mode os.FileMode) string {
 	t.Helper()
 
@@ -140,9 +123,10 @@ func StageArtifact(t *testing.T, rel string, data []byte, mode os.FileMode) stri
 	return ArtifactPath(rel)
 }
 
-// Main is called from a package's TestMain. On the host it builds the calling
-// package's test binary once for linux, runs the tests, and removes the
-// binary's directory. Inside the container it just runs the tests.
+// Main is called from a package's TestMain; on the host it builds the calling
+// package's test binary once for linux and runs the tests, and inside the
+// container it just runs the tests. It returns the tests' exit code, 1 when the
+// build fails, and removes the build directory when it returns.
 func Main(m *testing.M) int {
 	if InContainer() {
 		return m.Run()
@@ -158,8 +142,8 @@ func Main(m *testing.M) int {
 	return m.Run()
 }
 
-// buildTestBinary compiles the calling package's tests for linux. The binary is
-// built without cgo so it runs in the debian-based image.
+// buildTestBinary compiles the calling package's tests for linux; CGO_ENABLED=0
+// keeps the binary runnable in the debian-based image.
 func buildTestBinary() (string, func(), error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -192,8 +176,8 @@ var (
 )
 
 // systemImage builds the systemd-derived image once per test process and
-// returns its tag. The tag is derived from the base image tag, and an existing
-// image with that tag is reused.
+// returns its tag; the tag covers the base image and the system Dockerfile, and
+// an existing image with that tag is reused.
 func systemImage(t *testing.T) string {
 	t.Helper()
 
@@ -203,8 +187,8 @@ func systemImage(t *testing.T) string {
 		if err != nil {
 			t.Fatalf("syscontainer: %v", err)
 		}
-		// The tag covers the system Dockerfile as well as the base image: a
-		// change confined to the system layer must not reuse an older image.
+		// The tag covers the system Dockerfile as well as the base image, so a
+		// change confined to the system layer builds a new image.
 		dockerfile, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
 		if err != nil {
 			t.Fatalf("syscontainer: reading the system Dockerfile: %v", err)
@@ -233,21 +217,17 @@ func systemImage(t *testing.T) string {
 	return systemImageTag
 }
 
-// shortHash returns the first twelve hexadecimal characters of the SHA-256 of
-// s.
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])[:12]
 }
 
-// imageExists reports whether the tag is in the local image store.
 func imageExists(tag string) bool {
 	cmd := exec.Command("docker", "image", "inspect", tag)
 	cmd.Env = os.Environ()
 	return cmd.Run() == nil
 }
 
-// composeDir returns the absolute path of test/e2e/compose/system.
 func composeDir() (string, error) {
 	root, err := moduleRoot()
 	if err != nil {
@@ -262,7 +242,6 @@ var (
 	moduleRootErr  error
 )
 
-// moduleRoot returns the root directory of the Go module.
 func moduleRoot() (string, error) {
 	moduleRootOnce.Do(func() {
 		out, err := exec.Command("go", "env", "GOMOD").Output()
@@ -281,9 +260,10 @@ func moduleRoot() (string, error) {
 }
 
 // Run runs the current test inside a fresh container of svc and fails t when
-// the inner run fails. The test must not touch the container itself. Each
-// extraEnv entry is a NAME=value pair the inner test needs, such as an address
-// the host chose at run time.
+// the inner run fails. It calls t.Parallel, so a t.Setenv before Run panics.
+// The test must not touch the container itself. Each extraEnv entry is a
+// NAME=value pair the inner test needs, such as an address the host chose at
+// run time.
 func Run(t *testing.T, svc Service, extraEnv ...string) {
 	t.Helper()
 	t.Parallel()
@@ -328,9 +308,9 @@ func Run(t *testing.T, svc Service, extraEnv ...string) {
 		t.Logf("syscontainer: output of %s in %s:\n%s", t.Name(), c.project, strings.TrimSpace(string(out)))
 	}
 	if err != nil {
-		// Compose passes the inner process's exit status through. A SIGKILL
-		// (137, usually the OOM killer) leaves logs that end before the kill, so
-		// the daemon's events for this project are what explain the failure.
+		// Compose passes the inner process's exit status through; a SIGKILL (137,
+		// usually the OOM killer) leaves logs that end before the kill, so the
+		// daemon's events for this project explain the failure.
 		if diagnostic := c.exitDiagnostic(err); diagnostic != "" {
 			t.Fatalf("syscontainer: %s failed inside the %s container: %v\n%s", t.Name(), svc, err, diagnostic)
 		}
@@ -338,10 +318,10 @@ func Run(t *testing.T, svc Service, extraEnv ...string) {
 	}
 }
 
-// newTestContainer allocates a subnet, derives a compose project for the test,
-// and builds the container handle Run and RunPairTest drive. extraEnv entries
-// are added to the compose environment and forwarded to the inner process. The
-// project is torn down when the test ends.
+// newTestContainer allocates a subnet and a compose project for one test and
+// returns the handle Run and RunPairTest drive; the project is torn down when
+// the test ends. extraEnv entries are added to the compose environment and
+// forwarded to the inner process.
 func newTestContainer(t *testing.T, extraEnv ...string) *container {
 	t.Helper()
 	if testBinary == "" {
@@ -356,8 +336,8 @@ func newTestContainer(t *testing.T, extraEnv ...string) *container {
 	if err != nil {
 		t.Fatalf("syscontainer: %v", err)
 	}
-	// Copy the compose file into the test's temporary directory so the
-	// coverage override can sit next to it without touching the repository.
+	// Copy the file into the test's temporary directory so the coverage
+	// override can sit next to it without touching the repository.
 	composeData, err := os.ReadFile(filepath.Join(sourceDir, "compose.yaml"))
 	if err != nil {
 		t.Fatalf("syscontainer: reading the compose file: %v", err)
@@ -394,8 +374,7 @@ func newTestContainer(t *testing.T, extraEnv ...string) *container {
 		started:      time.Now(),
 		composeFile:  composePath,
 		composeFiles: composeFiles,
-		// The compose file mounts this directory at /opt/peers-test.
-		env: append(os.Environ(), env...),
+		env:          append(os.Environ(), env...),
 		// The inner process needs the values; compose exec reads them from the
 		// docker CLI environment, which is this build of env.
 		forward: forward,
@@ -404,11 +383,6 @@ func newTestContainer(t *testing.T, extraEnv ...string) *container {
 	return c
 }
 
-// writeSystemCoverage writes the coverage override the system topology needs
-// under dir. It returns the override path and the E2E_COVER_DIR entry forwarded
-// to the inner test, whose value is the container path. Every service gets the
-// mounted coverage directory; the two systemd services also get a read-only
-// DefaultEnvironment drop-in, which is how their units inherit GOCOVERDIR.
 func writeSystemCoverage(t testing.TB, dir string) (string, string) {
 	t.Helper()
 	dropInPath := filepath.Join(dir, systemdCoverDropInName)
@@ -432,34 +406,23 @@ func writeSystemCoverage(t testing.TB, dir string) (string, string) {
 	return overridePath, harness.CoverageDirEnv + "=" + harness.CoverMountPath
 }
 
-// pairHostA and pairHostB are the compose services a pair run starts. hostA
-// carries the system Broker; hostB is its equal and carries the Broker that
-// pairs from the other host.
+// pairHostA and pairHostB are the compose services a pair run starts; hostA
+// carries the system Broker and hostB its pair.
 const (
 	pairHostA Service = "systemd"
 	pairHostB Service = "hostB"
 )
 
-// pairInnerTestTimeout bounds one role's test binary inside its container. Even
-// at every bound, one role's waits add up to about two and a half minutes: its
-// startup including the MCP handshake, at most two exchange waits (72s is the
-// longest) and its terminal commands. Five minutes is more than four times the
-// longest exchange wait and over twice that sum, which leaves room for a loaded
-// CI host while ending a role stuck in an unbounded call well before the outer
-// 30-minute e2e bound (E2E_TIMEOUT in the Makefile).
+// pairInnerTestTimeout bounds the test binary of a single role inside its
+// container. It must exceed the sum of that role's PairAwait bounds and stay far
+// below the outer e2e bound, E2E_TIMEOUT in the Makefile.
 const pairInnerTestTimeout = 5 * time.Minute
 
 // RunPair is the TestMain entry point of a package that runs one of its tests
-// on two hosts. Inside either pair container it runs the selected tests as the
-// role the container carries. On the test host it builds the test binary and
-// runs the package's tests as Main does; the test that needs both hosts calls
-// RunPairTest from its body, because only a *testing.T can build the image and
-// own the teardown.
-//
-// opts is the same value the test passes to RunPairTest. RunPair checks that
-// opts.SharedDir is PairSharedMount and, inside a pair container, that the
-// value the harness forwarded matches it, so a misconfigured TestMain fails
-// before the test body runs.
+// on two hosts; inside a pair container it runs the selected tests as that
+// host's role, and on the test host it does what Main does. opts must be the
+// value the test passes to RunPairTest, with SharedDir equal to PairSharedMount;
+// a mismatch returns 1.
 func RunPair(m *testing.M, opts PairOptions) int {
 	if opts.SharedDir != PairSharedMount {
 		fmt.Fprintf(os.Stderr, "syscontainer: the pair shared directory is %q, want %q\n",
@@ -478,10 +441,8 @@ func RunPair(m *testing.M, opts PairOptions) int {
 }
 
 // RunPairTest runs the current test on hostA and hostB at the same time and
-// fails t when either side fails. Both containers come from one compose
-// project on one internal network, so hostA resolves by name as hostA and
-// hostB as hostB. The two roles exchange data through opts.SharedDir, a volume
-// mounted at the same path in both containers.
+// fails t when either side fails; both come from one compose project and
+// exchange data through opts.SharedDir, mounted at the same path in both.
 func RunPairTest(t *testing.T, opts PairOptions) {
 	t.Helper()
 	if InContainer() {
@@ -563,8 +524,6 @@ func RunPairTest(t *testing.T, opts PairOptions) {
 	}
 }
 
-// forwardEnvArgs returns compose flags that forward the intentional-failure
-// variable and the host gateway into the container.
 func (c *container) forwardEnvArgs() []string {
 	var args []string
 	if value, ok := os.LookupEnv(expectFailEnv); ok {
@@ -576,27 +535,17 @@ func (c *container) forwardEnvArgs() []string {
 	return args
 }
 
-// container is one compose project started for one test.
 type container struct {
-	t       *testing.T
-	project string
-	// owner is this process's owner marker as stored in harness.OwnerLabel. It
-	// names the docker events a failed run is diagnosed with.
-	owner string
-	// started is when the project was created, the start of the event window a
-	// failed run is diagnosed with.
-	started time.Time
-	// composeFile is the copied base file, the one evidence collection reads.
-	composeFile string
-	// composeFiles are every file a compose command passes, the copied base
-	// file and, under coverage, its override.
+	t            *testing.T
+	project      string
+	owner        string
+	started      time.Time
+	composeFile  string
 	composeFiles []string
 	env          []string
-	// forward is passed into the container with -e, one NAME=value per entry.
-	forward []string
+	forward      []string
 }
 
-// command builds one docker invocation for the project.
 func (c *container) command(args ...string) *exec.Cmd {
 	cmd := exec.Command("docker", args...)
 	cmd.Env = c.env
@@ -614,8 +563,8 @@ func (c *container) composeArgs(args ...string) []string {
 }
 
 // sudoersInstall returns the command that writes the sudoers drop-in inside
-// service, or nil when coverage is off. The write runs as root through compose
-// exec, so sudo keeps GOCOVERDIR for the commands a test runs through it.
+// service, or nil when coverage is off; it runs as root through compose exec so
+// sudo keeps GOCOVERDIR for the commands a test runs through it.
 func (c *container) sudoersInstall(service string) []string {
 	if !harness.CoverageEnabled() {
 		return nil
@@ -623,7 +572,6 @@ func (c *container) sudoersInstall(service string) []string {
 	return c.composeArgs("exec", "-T", "-u", "root", service, "sh", "-c", sudoersWriteScript)
 }
 
-// writeSudoers installs the sudoers drop-in in service when coverage is on.
 func (c *container) writeSudoers(t *testing.T, service string) {
 	t.Helper()
 	argv := c.sudoersInstall(service)
@@ -636,9 +584,9 @@ func (c *container) writeSudoers(t *testing.T, service string) {
 	}
 }
 
-// plainCommand wraps a plain-container test command so the sudoers drop-in is
-// written inside the container the run starts, before the test replaces the
-// shell. A compose run has no separate exec step to write it from the host.
+// plainCommand wraps a test command for a plain container so the sudoers
+// drop-in is written before the test replaces the shell; a compose run has no
+// separate exec step to write it from the host.
 func plainCommand(argv []string) []string {
 	if !harness.CoverageEnabled() {
 		return argv
@@ -646,10 +594,6 @@ func plainCommand(argv []string) []string {
 	return append([]string{"sh", "-c", sudoersWriteScript + ` && exec "$@"`, "sh"}, argv...)
 }
 
-// exitDiagnostic returns the text that explains an inner run that exited with
-// killedExitCode, or "" for any other failure. It asks the daemon for the
-// events of this project's owner label since the project started, under its
-// own bound so a hung daemon cannot delay the failure report.
 func (c *container) exitDiagnostic(err error) string {
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
@@ -661,20 +605,14 @@ func (c *container) exitDiagnostic(err error) string {
 	return collectExitDiagnostic(exitErr.ExitCode(), run, c.owner, c.started, time.Now())
 }
 
-// systemdRebuildLedger records every systemd container rebuild. make e2e prints
-// it after the test run, so a gate that does not pass -v still shows how often
-// and why a container was rebuilt. The path is repeated in the Makefile.
+// systemdRebuildLedger records every systemd container rebuild; make e2e
+// prints it after the test run, and the Makefile repeats the path.
 const systemdRebuildLedger = "/tmp/ape2e-systemd-rebuilds.log"
 
-// waitSystemd waits until service's systemd reports running or degraded.
-// systemctl --wait blocks until the state settles, so a probe returns either a
-// settled state or, when its own bound expires, the stall.
-//
-// A container is recreated at most once, and only for the two failure modes
-// observed under the full gate; bootretry.go names them. The whole wait,
-// including the probe, the rebuild and the stop before it, shares one
-// systemdReadyBound context. Evidence collection after that budget is given up
-// has its own bound and does not extend it.
+// waitSystemd waits until service's systemd reports running or degraded. The
+// whole wait, including the probe, the at-most-one rebuild and the stop before
+// it, shares one systemdReadyBound context; evidence collection after that
+// budget has its own bound and does not extend it.
 func (c *container) waitSystemd(service string) {
 	ctx, cancel := context.WithTimeout(context.Background(), systemdReadyBound)
 	defer cancel()
@@ -742,8 +680,6 @@ func (c *container) waitSystemd(service string) {
 	}
 }
 
-// rebuildReason describes the observation for the rebuild ledger and the test
-// log.
 func rebuildReason(o systemdBootObservation) string {
 	if o.exited {
 		return fmt.Sprintf("process 1 exited with code %d and docker logs is empty", o.exitCode)
@@ -751,16 +687,14 @@ func rebuildReason(o systemdBootObservation) string {
 	return fmt.Sprintf("is-system-running --wait timed out after %s and the state is %q", systemdProbeBound, o.state)
 }
 
-// failSystemdBoot writes the evidence and ends the test at the readiness bound.
 func (c *container) failSystemdBoot(service, lastState string) {
 	c.logBootEvidence(service)
 	c.t.Fatalf("%s to finish booting: not within %s (last state: %s)", service, systemdReadyBound, lastState)
 }
 
-// probeSystemd runs one readiness probe under the shared context. The probe's
-// own bound is shorter than the readiness bound, and a probe that expires
-// while the outer context is still alive is the timeout that can precede a
-// rebuild.
+// probeSystemd runs one readiness probe under the shared context; a probe that
+// expires while the outer context is still alive is the timeout that can
+// precede a rebuild.
 func (c *container) probeSystemd(ctx context.Context, service string) systemdProbeResult {
 	probeCtx, cancel := context.WithTimeout(ctx, systemdProbeBound)
 	defer cancel()
@@ -772,9 +706,6 @@ func (c *container) probeSystemd(ctx context.Context, service string) systemdPro
 	return interpretSystemdState(string(out), err, timedOut)
 }
 
-// systemdCurrentState reads the state without --wait, which reports the current
-// text instead of blocking. It confirms that a timed-out probe was looking at a
-// system that was still initializing.
 func (c *container) systemdCurrentState(ctx context.Context, service string) string {
 	probeCtx, cancel := context.WithTimeout(ctx, systemdProbeBound)
 	defer cancel()
@@ -789,8 +720,6 @@ func (c *container) systemdCurrentState(ctx context.Context, service string) str
 	return text
 }
 
-// containerID returns the project's container id for service, including an
-// exited one.
 func (c *container) containerID(ctx context.Context, service string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", c.composeArgs("ps", "-aq", service)...)
 	cmd.Env = c.env
@@ -801,8 +730,6 @@ func (c *container) containerID(ctx context.Context, service string) (string, er
 	return strings.TrimSpace(string(out)), nil
 }
 
-// containerExit returns process 1's exit code and docker logs for a container
-// that compose reported as not running.
 func (c *container) containerExit(ctx context.Context, service string) (int, string, error) {
 	id, err := c.containerID(ctx, service)
 	if err != nil {
@@ -831,8 +758,8 @@ func (c *container) containerExit(ctx context.Context, service string) (int, str
 }
 
 // recreateSystemd stops the container with a one-second timeout and rebuilds it
-// in place, keeping the project's network. Both commands share the readiness
-// context. A failure is reported rather than fatal, so the wait continues and
+// in place, keeping the project's network; both commands share the readiness
+// context, and a failure is logged rather than fatal so the wait continues and
 // the final state still explains the outcome.
 func (c *container) recreateSystemd(ctx context.Context, service string) {
 	if id, err := c.containerID(ctx, service); err == nil && id != "" {
@@ -851,9 +778,8 @@ func (c *container) recreateSystemd(ctx context.Context, service string) {
 	}
 }
 
-// recordRebuild appends one line to systemdRebuildLedger. The ledger is
-// appended to with O_APPEND, so concurrent suites do not lose each other's
-// lines.
+// recordRebuild appends one line to systemdRebuildLedger; O_APPEND keeps
+// concurrent suites from losing each other's lines.
 func (c *container) recordRebuild(service, reason string) {
 	line := fmt.Sprintf("%s %s %s %s\n", time.Now().UTC().Format(time.RFC3339), c.project, service, reason)
 	f, err := os.OpenFile(systemdRebuildLedger, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
@@ -868,12 +794,10 @@ func (c *container) recordRebuild(service, reason string) {
 	}
 }
 
-// down tears the project down and removes the network. It is idempotent. The
-// one-second stop timeout force-kills a container whose process 1 does not exit
-// on the image's stop signal, so a container torn down here can end with exit
-// code 137; the residue cleanup only force-removes containers whose owner
-// process is already gone. Under coverage the timeout is longer, so an
-// instrumented process can flush its counters while it stops.
+// down tears the project down and removes the network. The one-second stop
+// timeout can end a container with exit code 137, which residue cleanup leaves
+// alone because this owner is still alive; under coverage the timeout is
+// longer, so an instrumented process can flush its counters while it stops.
 func (c *container) down() {
 	cmd := c.command(c.composeArgs("down", "-v", "--remove-orphans", "--timeout", harness.DownTimeout())...)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -881,8 +805,8 @@ func (c *container) down() {
 	}
 }
 
-// checkCompose reports whether docker and the compose plugin are usable. A
-// host without them fails the test with a reason; it does not skip.
+// checkCompose reports whether docker and the compose plugin are usable; a host
+// without them fails the test rather than skipping it.
 func checkCompose() error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker is required for container scenarios: %w", err)
@@ -932,7 +856,6 @@ func projectName(testName string) string {
 	}
 }
 
-// randomHex6 returns six random hexadecimal digits.
 func randomHex6() string {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err == nil {
@@ -943,13 +866,9 @@ func randomHex6() string {
 }
 
 // WaitFor waits up to the package-wide fallback for cond to return true,
-// delegating the polling to harness.Eventually. It is for a filesystem, socket
-// or process condition that makes no tool call. A condition that calls a tool
-// uses harness.EventuallyPoll with Session.PollCall instead: the callback
-// receives the wait's deadline, so each call runs its own poll bound in full
-// rather than being cut short when the wait has little time left. Longer
-// non-tool waits use harness.Eventually with the sum of the relevant timers
-// plus the fallback.
+// delegating the polling to harness.Eventually. A condition that makes a tool
+// call uses harness.EventuallyPoll with Session.PollCall instead, so each call
+// runs its own poll bound in full.
 func WaitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	harness.Eventually(t, harness.EventTimeout, what, func() (bool, string) {

@@ -17,10 +17,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// mcpHandshakeBound is the upper bound for the MCP server handshake.
 const mcpHandshakeBound = 30 * time.Second
 
-// toolCallBound bounds one tool call.
 const toolCallBound = 15 * time.Second
 
 // Session is one simulated Claude Code session running as an account.
@@ -66,11 +64,10 @@ func WithSocket(path string) SessionOption {
 	}
 }
 
-// NewSession creates a fake session for account under
-// /home/<account>/.claude, hands the configuration directory, registry record
-// and socket to the account, then starts "peers mcp" as the account with
-// CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CONFIG_DIR set and connects an MCP
-// client over its standard streams.
+// NewSession creates a fake session for account under /home/<account>/.claude,
+// makes the account own the configuration directory, registry record and
+// socket, then connects an MCP client over the standard streams of "peers mcp"
+// running as that account.
 func NewSession(t *testing.T, account, name string, opts ...SessionOption) *Session {
 	t.Helper()
 	if !InContainer() {
@@ -161,18 +158,11 @@ func (s *Session) Call(t *testing.T, tool string, args map[string]any) (text str
 	return toolResultText(result)
 }
 
-// PollCall invokes a tool from inside a wait. The call is bounded by
-// harness.ToolPollBound(tool), the tool's handler bound plus the update hint and
-// a margin, and runs that bound in full: it is not shortened when the wait has
-// less time left, because a call cut short by the window would report a healthy
-// Broker as unobservable on a loaded runner. A stalled call can therefore
-// outlast the wait that made it by up to one poll bound. A deadline that has
-// already passed makes no call and returns an error.
-//
-// A transport or protocol failure is returned as an error and logged with the
-// session, the tool, the elapsed time and the error instead of failing the
-// test, so the wait can poll again; a call that reaches its poll bound carries
-// the harness stall marker. The result has the same shape as Call's.
+// PollCall invokes a tool from inside a wait, bounded by
+// harness.ToolPollBound(tool) and run in full even when the wait has little time
+// left; a deadline that has passed makes no call, and a failure is returned and
+// logged so the wait can poll again. A call that reaches its poll bound carries
+// the stall marker, and the result has the same shape as Call's.
 func (s *Session) PollCall(t *testing.T, deadline time.Time, tool string, args map[string]any) (text string, isError bool, err error) {
 	t.Helper()
 	return pollCallWithin(s.Account, tool, deadline, harness.ToolPollBound(tool), func(ctx context.Context) (*mcp.CallToolResult, error) {

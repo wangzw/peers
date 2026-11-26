@@ -12,35 +12,26 @@ import (
 	"time"
 )
 
-// systemAuditPath is where the system Broker writes its audit log.
 const systemAuditPath = "/var/log/peers/audit.log"
 
-// userConfigPath returns the running account's configuration file.
 func userConfigPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".peers", "config.yaml")
 }
 
-// userAuditPath returns the running account's audit log.
 func userAuditPath() string {
 	return filepath.Join(os.Getenv("HOME"), ".peers", "audit.log")
 }
 
-// userRunLogPath returns the log launchd writes for the user Broker.
 func userRunLogPath() string {
 	return filepath.Join(os.Getenv("HOME"), "Library", "Logs", "peers", "broker.log")
 }
 
-// TestREQBrokerConfig050_UserServiceInstallPrintsSummary covers the summary a
-// user installation prints on macOS: no sudo prefix, starts at login, the
-// account's configuration file and log locations, the control commands and the
-// uninstall command. The paths it prints must exist. A second installation over
-// the kept configuration says (kept).
+// TestREQBrokerConfig050_UserServiceInstallPrintsSummary checks the summary a
+// user installation prints and that the paths it prints exist.
 func TestREQBrokerConfig050_UserServiceInstallPrintsSummary(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
 
-	// Start from no configuration file so the first installation generates
-	// one; preserveUserConfig restores the account's file when the test ends.
 	configPath := preserveUserConfig(t)
 	if err := os.Remove(configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("removing %s: %v", configPath, err)
@@ -77,16 +68,11 @@ func TestREQBrokerConfig050_UserServiceInstallPrintsSummary(t *testing.T) {
 		"config:": configPath + " (kept)",
 	})
 
-	// The commands the summary printed must exist and run, in order, as the
-	// account that installed the service. The binary name resolves to the test
-	// copy because it is not installed under the printed name.
 	t.Run("the printed commands exist and run", func(t *testing.T) {
 		for _, label := range []string{"start:", "stop:", "restart:", "uninstall:"} {
 			args := printedCommandArgs(t, summaryValue(t, again.stdout, label))
-			// The summary prints "peers uninstall" for a person at a terminal.
-			// The test has no terminal, and without one the confirmation needs
-			// --yes, so the test passes it; the printed summary keeps its form
-			// without --yes.
+			// The test has no terminal, so uninstall needs --yes; the printed
+			// summary keeps its form without it.
 			note := ""
 			if label == "uninstall:" {
 				args = append(args, "--yes")
@@ -101,7 +87,7 @@ func TestREQBrokerConfig050_UserServiceInstallPrintsSummary(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig050_SystemServiceInstallPrintsSummary covers the same
+// TestREQBrokerConfig050_SystemServiceInstallPrintsSummary checks the same
 // summary for a system installation: the sudo prefix, starts at boot, and
 // the system paths.
 func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
@@ -109,8 +95,6 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 	t.Cleanup(func() { resetSystemService(t) })
 	preserveSystemFile(t, systemConfigPath)
 
-	// Start from no configuration file so the first installation generates
-	// one; preserveSystemFile restores a pre-existing file when the test ends.
 	if err := sudo("rm", "-f", systemConfigPath); err != nil {
 		t.Fatalf("removing %s: %v", systemConfigPath, err)
 	}
@@ -146,17 +130,11 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 		"config:": systemConfigPath + " (kept)",
 	})
 
-	// The commands the summary printed must exist and run, in order. The
-	// printed sudo prefix is applied through runSudo, and the binary name
-	// resolves to the test copy because it is not installed under the printed
-	// name.
 	t.Run("the printed commands exist and run", func(t *testing.T) {
 		for _, label := range []string{"start:", "stop:", "restart:", "uninstall:"} {
 			args := printedCommandArgs(t, summaryValue(t, again.stdout, label))
-			// The summary prints "peers uninstall" for a person at a terminal.
-			// The test has no terminal, and without one the confirmation needs
-			// --yes, so the test passes it; the printed summary keeps its form
-			// without --yes.
+			// The test has no terminal, so uninstall needs --yes; the printed
+			// summary keeps its form without it.
 			note := ""
 			if label == "uninstall:" {
 				args = append(args, "--yes")
@@ -171,13 +149,9 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog covers the first half
-// of REQ-broker-config-064 on macOS, at both levels: after a successful
-// installation, making the audit log unusable and reinstalling must keep the
-// installed, running service, name the fault and the repair command, exit 3,
-// print the summary, and leave a Broker that peers service status reports as
-// degraded. The listen-port half is covered by
-// TestUserServiceInstallRefusesAnOccupiedListenPort.
+// TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog checks that
+// reinstalling after making the audit log unusable keeps the service running
+// degraded at both levels.
 func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 	t.Run("user installation", func(t *testing.T) {
 		resetUserService(t)
@@ -206,7 +180,6 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 		})
 		assertDegradedOutput(t, res.stderr, userAuditPath())
 
-		// The relaunched service still runs, with a new pid.
 		afterPID := waitForPID(t, domain, serviceStartBound)
 		if afterPID == 0 || !processAlive(afterPID) {
 			t.Errorf("the user service did not survive the degraded reinstall; pid before %d, after %d", beforePID, afterPID)
@@ -260,8 +233,6 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 	})
 }
 
-// assertDegradedOutput checks the two degraded lines the command writes to
-// standard error: the level and reason, then the fix that names auditPath.
 func assertDegradedOutput(t *testing.T, stderr, auditPath string) {
 	t.Helper()
 
@@ -282,7 +253,7 @@ func assertDegradedOutput(t *testing.T, stderr, auditPath string) {
 }
 
 // breakAuditPath replaces path with a directory, which cannot be opened for
-// appending even by root. root selects the sudo path for a system file.
+// appending even by root.
 func breakAuditPath(t *testing.T, path string, root bool) {
 	t.Helper()
 
@@ -303,8 +274,6 @@ func breakAuditPath(t *testing.T, path string, root bool) {
 	}
 }
 
-// preserveUserAudit restores the account's audit log and removes the directory
-// that breakAuditPath created, so a developer machine keeps its log.
 func preserveUserAudit(t *testing.T) {
 	t.Helper()
 
@@ -326,14 +295,11 @@ func preserveUserAudit(t *testing.T) {
 	})
 }
 
-// preserveSystemFile keeps a copy of path and restores it when the test ends.
-// A later cleanup removes whatever the test left at path first.
 func preserveSystemFile(t *testing.T, path string) {
 	t.Helper()
 
 	backup := path + ".e2e-backup"
 	if err := sudo("cp", "-p", path, backup); err != nil {
-		// The file did not exist; remove whatever the test creates.
 		t.Cleanup(func() { _ = sudo("rm", "-rf", path) })
 		return
 	}
@@ -345,8 +311,6 @@ func preserveSystemFile(t *testing.T, path string) {
 	})
 }
 
-// assertInstallSummary checks the first line of an install summary and every
-// value the caller names.
 func assertInstallSummary(t *testing.T, stdout, level, start string, wants map[string]string) {
 	t.Helper()
 
@@ -370,11 +334,6 @@ func assertInstallSummary(t *testing.T, stdout, level, start string, wants map[s
 	}
 }
 
-// printedCommandArgs splits a command from the install summary into the
-// arguments that follow its binary name. The caller runs the arguments with the
-// installed test binary, which is the copy the printed peers names; the
-// sudo prefix a system summary prints is dropped and applied by the
-// caller.
 func printedCommandArgs(t *testing.T, command string) []string {
 	t.Helper()
 
@@ -388,8 +347,6 @@ func printedCommandArgs(t *testing.T, command string) []string {
 	return words[1:]
 }
 
-// summaryValue returns the value of the line that starts with label, or fails
-// the test when the line is absent.
 func summaryValue(t *testing.T, output, label string) string {
 	t.Helper()
 
@@ -403,7 +360,6 @@ func summaryValue(t *testing.T, output, label string) string {
 	return ""
 }
 
-// waitForFile waits until path exists.
 func waitForFile(t *testing.T, path string, bound time.Duration) {
 	t.Helper()
 
@@ -413,7 +369,6 @@ func waitForFile(t *testing.T, path string, bound time.Duration) {
 	})
 }
 
-// waitForRootFile waits until a root-owned path exists.
 func waitForRootFile(t *testing.T, path string, bound time.Duration) {
 	t.Helper()
 
@@ -423,7 +378,6 @@ func waitForRootFile(t *testing.T, path string, bound time.Duration) {
 	})
 }
 
-// errDetail renders err for a wait's failure detail.
 func errDetail(err error) string {
 	if err == nil {
 		return ""
@@ -431,8 +385,6 @@ func errDetail(err error) string {
 	return err.Error()
 }
 
-// runSudo runs name with args through sudo and returns its output and exit
-// code. A process that cannot be started fails the test.
 func runSudo(t *testing.T, name string, args ...string) result {
 	t.Helper()
 

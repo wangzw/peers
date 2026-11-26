@@ -1,13 +1,7 @@
 //go:build e2e
 
-// Package fakerec builds signed directory records for the end-to-end tests.
-//
-// The records are shaped after the rules the directory applies when it parses
-// and verifies a Record: the publisher fingerprint and the raw public key live
-// in the body, the signature covers the deterministic serialization of the
-// body, and the payload carries either a broker card or a topic announcement.
-// Build can also produce deliberately broken records for the hostile-source
-// tests.
+// Package fakerec builds signed directory records for the end-to-end tests,
+// including deliberately broken records for the hostile-source tests.
 package fakerec
 
 import (
@@ -24,7 +18,9 @@ import (
 
 // Addr is an advertised address on a broker card.
 type Addr struct {
+	// Kind names the address kind, such as "direct".
 	Kind string
+	// Addr is the advertised address, in host:port form.
 	Addr string
 }
 
@@ -36,12 +32,12 @@ type Spec struct {
 	Addresses   []Addr // card only
 	Topic       string // topic only
 	Description string // topic only
-	Version     uint64
-	ExpiresIn   time.Duration // expires = now + ExpiresIn
-	Tamper      string        // "", "addresses" or "publisher"
+	// Version is the record version.
+	Version   uint64
+	ExpiresIn time.Duration // expires = now + ExpiresIn
+	Tamper    string        // "", "addresses" or "publisher"
 }
 
-// publisherKey derives the publisher key pair from a seed.
 func publisherKey(seed string) (ed25519.PrivateKey, ed25519.PublicKey) {
 	sum := sha256.Sum256([]byte(seed))
 	priv := ed25519.NewKeyFromSeed(sum[:])
@@ -57,7 +53,8 @@ func PublisherOf(seed string) pairing.Fingerprint {
 
 // Build constructs a signed directory record from s. now fixes the expiration
 // time together with s.ExpiresIn; the caller passes the clock the receiving
-// broker observes.
+// broker observes. It returns an error for an unknown Kind or Tamper, or when
+// the addresses tamper is used on a record that is not a card.
 func Build(s Spec, now time.Time) (*directorypb.Record, error) {
 	priv, pub := publisherKey(s.Seed)
 	fp := pairing.FingerprintOf(pub)
@@ -96,8 +93,7 @@ func Build(s Spec, now time.Time) (*directorypb.Record, error) {
 	switch s.Tamper {
 	case "":
 	case "publisher":
-		// Sign over a body whose publisher does not match the public key, so the
-		// signature verifies while the claimed publisher is someone else.
+		// The signature verifies over a publisher that does not match the public key.
 		other := sha256.Sum256([]byte("other:" + s.Seed))
 		body.Publisher = append([]byte(nil), other[:]...)
 	case "addresses":
@@ -116,8 +112,7 @@ func Build(s Spec, now time.Time) (*directorypb.Record, error) {
 	sig := ed25519.Sign(priv, raw)
 
 	if s.Tamper == "addresses" {
-		// Replace the advertised addresses after signing while keeping the old
-		// signature, so verification fails over the new raw bytes.
+		// The addresses change after signing while the old signature stays.
 		card := body.GetBrokerCard()
 		card.Addresses = []*directorypb.AdvertisedAddress{
 			{Kind: "direct", Addr: "203.0.113.99:1"},

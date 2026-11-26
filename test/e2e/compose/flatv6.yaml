@@ -1,7 +1,5 @@
-# TopoFlatV6: hostA and hostB on a dual-stack network, hostB also on a second
-# dual-stack network. Docker allocates the IPv4 subnets; the test passes a
-# random ULA prefix for each IPv6 subnet. No IPv6 default route is set, so the
-# harness can add one with AddDefaultRoute6.
+# Docker allocates the IPv4 subnets and the test passes a random ULA prefix for
+# each IPv6 subnet; no IPv6 default route is set, so the harness adds one.
 services:
   hostA:
     image: ${E2E_IMAGE}

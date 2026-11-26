@@ -17,17 +17,14 @@ import (
 )
 
 const (
-	// versionLocalRecoveryBudget is the reconnect deadline after the user starts
-	// a compatible Broker: mcpserver.ConnBackoffCap is the longest wait between
-	// attempts, and harness.EventTimeout is the fallback for the dial, Hello and
-	// registration that follow. The wait that uses it also covers
+	// versionLocalRecoveryBudget is the reconnect deadline after the user
+	// starts a compatible Broker; the wait that uses it also covers
 	// ListAgentsWaitBound because it polls list_agents.
 	versionLocalRecoveryBudget = mcpserver.ConnBackoffCap + harness.EventTimeout
 )
 
-// versionLocalBrokerProcs returns the node's Broker processes. The
-// environment is the filter because every process the node starts inherits it,
-// including a Broker a test starts.
+// versionLocalBrokerProcs lists the node's Broker processes, filtered by the
+// environment every process the node starts inherits.
 func versionLocalBrokerProcs(n *harness.Node) ([]node.Proc, error) {
 	home := n.AccountHome()
 	return node.ListProcs(func(p node.Proc) bool {
@@ -38,8 +35,6 @@ func versionLocalBrokerProcs(n *harness.Node) ([]node.Proc, error) {
 	})
 }
 
-// versionLocalMustBrokerProcs is versionLocalBrokerProcs for a call outside an
-// Eventually condition.
 func versionLocalMustBrokerProcs(t *testing.T, n *harness.Node) []node.Proc {
 	t.Helper()
 	procs, err := versionLocalBrokerProcs(n)
@@ -49,9 +44,6 @@ func versionLocalMustBrokerProcs(t *testing.T, n *harness.Node) []node.Proc {
 	return procs
 }
 
-// versionLocalMCPPIDs returns the node's MCP server pids, sorted. A pid set
-// that stays the same across recovery proves the session did not reconnect the
-// MCP service.
 func versionLocalMCPPIDs(t *testing.T, n *harness.Node) []int {
 	t.Helper()
 	home := n.AccountHome()
@@ -72,8 +64,6 @@ func versionLocalMCPPIDs(t *testing.T, n *harness.Node) []int {
 	return out
 }
 
-// versionLocalLogRecord returns the last JSON log record whose event field is
-// event, or nil when the log has none.
 func versionLocalLogRecord(log []byte, event string) map[string]any {
 	var found map[string]any
 	for _, line := range strings.Split(string(log), "\n") {
@@ -91,7 +81,6 @@ func versionLocalLogRecord(log []byte, event string) map[string]any {
 	return found
 }
 
-// versionLocalAddressName returns the name part of an agent address.
 func versionLocalAddressName(addr string) string {
 	if at := strings.LastIndexByte(addr, '@'); at >= 0 {
 		return addr[:at]
@@ -99,10 +88,6 @@ func versionLocalAddressName(addr string) string {
 	return addr
 }
 
-// versionLocalSetup starts a node whose Broker speaks the default local
-// protocol version, starts session a at that version, and starts session b at
-// version 2. It waits until b reports the mismatch so the caller does not race
-// the background Broker selection.
 func versionLocalSetup(t *testing.T) (*harness.Node, harness.BrokerStart, *harness.Session, *harness.Session) {
 	t.Helper()
 
@@ -150,10 +135,9 @@ func versionLocalSetup(t *testing.T) (*harness.Node, harness.BrokerStart, *harne
 	return n, st, a, b
 }
 
-// TestLocalVersionMismatchReq016 checks the REQ-broker-config-016 acceptance:
-// a session whose MCP server process speaks another local protocol version
-// fails every tool call with version_mismatch, the Broker keeps running and
-// keeps its registered agents, and no second Broker appears.
+// TestLocalVersionMismatchReq016 checks that a session whose MCP server speaks
+// another local protocol version fails list_agents with version_mismatch while
+// the Broker keeps running with its registered agents.
 func TestLocalVersionMismatchReq016(t *testing.T) {
 	n, st, a, b := versionLocalSetup(t)
 
@@ -203,11 +187,9 @@ func TestLocalVersionMismatchReq016(t *testing.T) {
 	}
 }
 
-// TestLocalVersionMismatchRecoveryReq016 checks the other half of
-// REQ-broker-config-016: after the incompatible Broker stops, b's MCP server
-// process reports that no Broker is available and starts nothing. When the
-// user starts a Broker at a version this MCP server speaks, the session
-// recovers without reconnecting the MCP server process.
+// TestLocalVersionMismatchRecoveryReq016 checks that after the incompatible
+// Broker stops the session reports no Broker and starts none, and recovers
+// without reconnecting its MCP server when a compatible Broker starts.
 func TestLocalVersionMismatchRecoveryReq016(t *testing.T) {
 	n, st, a, b := versionLocalSetup(t)
 
@@ -264,7 +246,6 @@ func TestLocalVersionMismatchRecoveryReq016(t *testing.T) {
 	}
 }
 
-// versionLocalWithout returns procs without the process whose PID is pid.
 func versionLocalWithout(procs []node.Proc, pid int) []node.Proc {
 	out := procs[:0]
 	for _, p := range procs {

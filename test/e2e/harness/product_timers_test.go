@@ -10,10 +10,8 @@ import (
 	"time"
 )
 
-// TestMirroredProductTimersMatch keeps the harness's copies of the product's
-// unexported timers in step with their definitions. The e2e package cannot read
-// an unexported constant from another package, so it repeats the value; a
-// product change would otherwise silently leave every derived wait wrong.
+// TestMirroredProductTimersMatch checks that the harness's copies of the
+// product's unexported timer constants match the product source.
 func TestMirroredProductTimersMatch(t *testing.T) {
 	root, err := repositoryRoot()
 	if err != nil {
@@ -44,10 +42,8 @@ func TestMirroredProductTimersMatch(t *testing.T) {
 }
 
 // TestToolPollBoundsDeriveFromHandlerBound checks that every tool's poll bound
-// is derived from its handler bound by adding the update hint and one margin.
-// A tool missing from ToolPollBound would fall back to ToolCallPollBound and
-// could cut a healthy call, so each of the thirteen tools is named here with
-// the mirror its handler uses.
+// is its handler bound plus the update hint and margin, and that its wait bound
+// is twice its poll bound.
 func TestToolPollBoundsDeriveFromHandlerBound(t *testing.T) {
 	margin := updateHintTimeoutMirror + pollBoundMargin
 	tools := []struct {
@@ -75,8 +71,6 @@ func TestToolPollBoundsDeriveFromHandlerBound(t *testing.T) {
 			t.Errorf("ToolPollBound(%q) = %s, want the handler bound %s plus the update hint %s and margin %s",
 				tc.name, got, tc.handler, updateHintTimeoutMirror, pollBoundMargin)
 		}
-		// The bound must outlast the handler and the hint it runs with, or a
-		// healthy call would be cut and reported as a stall.
 		if got <= tc.handler+updateHintTimeoutMirror {
 			t.Errorf("ToolPollBound(%q) = %s does not exceed its handler %s plus the update hint %s",
 				tc.name, got, tc.handler, updateHintTimeoutMirror)
@@ -88,17 +82,11 @@ func TestToolPollBoundsDeriveFromHandlerBound(t *testing.T) {
 	if got := ToolPollBound("no_such_tool"); got != ToolCallPollBound {
 		t.Errorf("ToolPollBound(%q) = %s, want the fallback %s", "no_such_tool", got, ToolCallPollBound)
 	}
-	// list_agents is the tool whose handler bound grew past the old unified
-	// value, so pin it explicitly: a mapping back to ToolCallPollBound would
-	// reintroduce the flake this table guards against.
 	if ListAgentsPollBound <= ToolCallPollBound {
 		t.Errorf("ListAgentsPollBound = %s is not above the fallback %s", ListAgentsPollBound, ToolCallPollBound)
 	}
 }
 
-// sourceDuration returns the value of the named constant in path. It evaluates
-// the small duration expressions the product uses: an integer multiplied or
-// divided by a time unit, with parentheses.
 func sourceDuration(path, name string) (time.Duration, bool) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, 0)
@@ -126,7 +114,6 @@ func sourceDuration(path, name string) (time.Duration, bool) {
 	return 0, false
 }
 
-// evalDurationExpr evaluates the duration expression forms the product uses.
 func evalDurationExpr(expr ast.Expr) (time.Duration, bool) {
 	switch e := expr.(type) {
 	case *ast.ParenExpr:

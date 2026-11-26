@@ -12,8 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// openRelayClient opens a Link stream to addr with a fresh certificate and
-// returns the stream and the SHA-256 of its certificate.
 func openRelayClient(t *testing.T, addr string) (grpc.BidiStreamingClient[linkpb.Frame, linkpb.Frame], [sha256.Size]byte) {
 	t.Helper()
 	cert, err := NewSelfSignedCert()
@@ -32,7 +30,6 @@ func openRelayClient(t *testing.T, addr string) (grpc.BidiStreamingClient[linkpb
 	return stream, sha256.Sum256(cert.Certificate[0])
 }
 
-// roundTrip sends frames and checks that the same frames come back unchanged.
 func roundTrip(t *testing.T, stream grpc.BidiStreamingClient[linkpb.Frame, linkpb.Frame], frames []*linkpb.Frame) {
 	t.Helper()
 	for _, frame := range frames {
@@ -51,7 +48,6 @@ func roundTrip(t *testing.T, stream grpc.BidiStreamingClient[linkpb.Frame, linkp
 	}
 }
 
-// waitRelayStats waits for the relay's counters to reach the wanted values.
 // The counters advance after the copy writes to the peer, so a client can see
 // its frame before the relay has counted it.
 func waitRelayStats(t *testing.T, r *Relay, streams, up, down int) {
@@ -70,6 +66,8 @@ func waitRelayStats(t *testing.T, r *Relay, streams, up, down int) {
 	}
 }
 
+// TestRelayCopiesFramesBothWays checks that the relay copies frames in both
+// directions and presents its own certificate to upstream, never a client's.
 func TestRelayCopiesFramesBothWays(t *testing.T) {
 	echo := &linkTestServer{echo: true}
 	upstreamAddr := startLinkTestServer(t, echo)
@@ -94,8 +92,7 @@ func TestRelayCopiesFramesBothWays(t *testing.T) {
 	waitRelayStats(t, relay, 1, 3, 3)
 
 	// A second client checks that upstream always sees the relay's own
-	// certificate. Passing each client's certificate through would make the
-	// relay an ordinary proxy, not a man in the middle.
+	// certificate; passing the client's through would make it an ordinary proxy.
 	second := []*linkpb.Frame{{Kind: linkpb.KindPeerInfo, RequestId: 7, Payload: []byte("second")}}
 	stream, secondFingerprint := openRelayClient(t, relayAddr)
 	roundTrip(t, stream, second)

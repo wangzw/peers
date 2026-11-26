@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// TestRedactSecretsRemovesPairingKeysAndSecretAssignments checks that redaction removes pairing keys and secret assignments and keeps ordinary lines.
 func TestRedactSecretsRemovesPairingKeysAndSecretAssignments(t *testing.T) {
 	text := []byte("pairing key 0000-0000-0000-0000\nPEERS_PAIRING_KEY=abc123\nSESSION_TOKEN=xyz\nan ordinary line\n")
 	got := string(redactSecrets(text))
@@ -21,6 +22,7 @@ func TestRedactSecretsRemovesPairingKeysAndSecretAssignments(t *testing.T) {
 	}
 }
 
+// TestLocalBrokerStackIsAGoroutineDump checks that a local node's Broker stack dump carries the goroutine dump.
 func TestLocalBrokerStackIsAGoroutineDump(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "stack"})
 	addr := host.FreeAddr(t)
@@ -36,9 +38,7 @@ func TestLocalBrokerStackIsAGoroutineDump(t *testing.T) {
 	}
 }
 
-// TestBrokerStackRefusesReapedBroker checks the rule the SIGQUIT path must
-// keep: once the Broker has been waited for, its pid may name another process,
-// so the stack dump returns a note instead of sending a signal.
+// TestBrokerStackRefusesReapedBroker checks that brokerStack returns a note instead of signalling a Broker that has already been waited for.
 func TestBrokerStackRefusesReapedBroker(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "reaped"})
 	addr := host.FreeAddr(t)

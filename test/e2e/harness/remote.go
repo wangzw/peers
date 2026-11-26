@@ -17,13 +17,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// brokerStopBound is the fallback for the wait for a Broker that was just
-// signalled. The Broker exits as soon as its context is cancelled on SIGTERM
-// and has no drain timer, so the success path answers at once.
 const brokerStopBound = EventTimeout
 
-// oracleRemote is the container node's half of OracleClient: the five local
-// interface RPCs travel over the control protocol to the node agent.
 type oracleRemote interface {
 	hello(t testing.TB) *localpb.HelloResponse
 	listBrokers(t testing.TB) (*localpb.ListBrokersResponse, *localpb.ErrorDetail)
@@ -33,7 +28,6 @@ type oracleRemote interface {
 	close()
 }
 
-// remoteNode drives the node agent of one container over the control socket.
 type remoteNode struct {
 	t       *testing.T
 	name    string
@@ -114,8 +108,6 @@ func (r *remoteNode) startSession(tb testing.TB, spec SessionSpec) *Session {
 	return r.newSession(spec, info, tb)
 }
 
-// tryStartSession starts a session without failing the test, for a caller in
-// another goroutine that reports the error itself.
 func (r *remoteNode) tryStartSession(spec SessionSpec) (*Session, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionStartBound)
 	defer cancel()
@@ -139,7 +131,6 @@ func (r *remoteNode) tryStartSession(spec SessionSpec) (*Session, error) {
 	return r.newSession(spec, info, r.t), nil
 }
 
-// newSession builds the harness session for a start answer.
 func (r *remoteNode) newSession(spec SessionSpec, info ctl.SessionInfo, tb testing.TB) *Session {
 	s := &Session{
 		name: spec.Name,
@@ -156,9 +147,8 @@ func (r *remoteNode) newSession(spec SessionSpec, info ctl.SessionInfo, tb testi
 			},
 		},
 	}
-	// A session that the test did not end itself is still ended before the
-	// project goes down, so a background failure recorded in the container is
-	// reported rather than lost with it.
+	// End a session the test did not end before the project goes down, so a
+	// background failure is reported rather than lost.
 	r.t.Cleanup(func() {
 		if err := s.endIfNotEnded(); err != nil {
 			r.t.Errorf("harness: session %s: %v", s.name, err)
@@ -234,7 +224,6 @@ func (r *remoteNode) readFile(tb testing.TB, path string) []byte {
 	return data
 }
 
-// workspace creates a workspace through the node agent's workspace endpoint.
 func (r *remoteNode) workspace(tb testing.TB, kind, origin, projectYAML string) string {
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
@@ -247,13 +236,10 @@ func (r *remoteNode) workspace(tb testing.TB, kind, origin, projectYAML string) 
 	return res.Path
 }
 
-// configPath is the account's configuration file inside the container.
 func (r *remoteNode) configPath() string {
 	return r.homeDir + "/.peers/config.yaml"
 }
 
-// readFileMaybe reads through the node agent, reporting a missing file
-// separately.
 func (r *remoteNode) readFileMaybe(tb testing.TB, path string) ([]byte, bool, error) {
 	tb.Helper()
 	res, err := r.client.ReadFile(context.Background(), ctl.FileReadRequest{Path: path})
@@ -263,7 +249,6 @@ func (r *remoteNode) readFileMaybe(tb testing.TB, path string) ([]byte, bool, er
 	return res.Data, res.Missing, nil
 }
 
-// writeFile writes through the node agent with the given mode.
 func (r *remoteNode) writeFile(tb testing.TB, path string, data []byte, mode uint32) {
 	tb.Helper()
 	if err := r.client.WriteFile(context.Background(), ctl.FileWriteRequest{Path: path, Data: data, Mode: mode}); err != nil {
@@ -271,7 +256,6 @@ func (r *remoteNode) writeFile(tb testing.TB, path string, data []byte, mode uin
 	}
 }
 
-// modeName is the control protocol's name for a fakesession mode.
 func modeName(mode fakesession.Mode) string {
 	switch mode {
 	case fakesession.HoldOpen:
@@ -283,7 +267,6 @@ func modeName(mode fakesession.Mode) string {
 	}
 }
 
-// remoteSession drives one simulated session that lives in a container.
 type remoteSession struct {
 	name   string
 	id     string
@@ -321,15 +304,13 @@ func (s *remoteSession) callErrWithin(bound time.Duration, tool string, args map
 	return result, nil
 }
 
-// mcpLogTail reports no log: the MCP server process runs inside a container and
-// the harness does not carry the path of its standard error back here.
+// mcpLogTail always reports no log: the MCP server's standard error stays in
+// the container.
 func (s *remoteSession) mcpLogTail(int) (string, bool) { return "", false }
 
 // logBrokerStack asks the node agent to send SIGQUIT to the Broker inside the
-// container, then reads the Broker log the runtime writes its stack to. The
-// signal is delivered inside the container by the agent, which calls
-// procsig.SendSignal there; a test process on the host cannot signal a pid in
-// the container's namespace.
+// container and reads the log the runtime writes its stack to; a host process
+// cannot signal a pid in the container's namespace.
 func (s *remoteSession) logBrokerStack(tb testing.TB) string {
 	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -393,16 +374,13 @@ func (s *remoteSession) inboxConnections(tb testing.TB) int {
 	return res.N
 }
 
-// fake returns the proxy that forwards fake operations to the container's node
-// agent. The session and its frames live in the container process, so the
-// host works through the control protocol rather than a local fakesession.
 func (s *remoteSession) fake() FakeSession {
 	return s.proxy
 }
 
-// fakeErrors reads the background failures the fake in the container
-// recorded. It returns a control failure as an error rather than ending the
-// test, because the teardown cleanup reports it.
+// fakeErrors reads the background failures the fake in the container recorded;
+// it returns a control failure as an error rather than ending the test, because
+// the teardown cleanup reports it.
 func (s *remoteSession) fakeErrors() ([]error, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
 	defer cancel()
@@ -413,8 +391,6 @@ func (s *remoteSession) fakeErrors() ([]error, error) {
 	return stringErrors(res.Errors), nil
 }
 
-// takeFakeErrors is the test-facing form: a control failure is an
-// infrastructure failure and fails the test.
 func (s *remoteSession) takeFakeErrors(tb testing.TB) []error {
 	tb.Helper()
 	errs, err := s.fakeErrors()
@@ -447,8 +423,7 @@ func (s *remoteSession) end() error {
 }
 
 // remoteOracle calls the five local interface RPCs over /v1/local. Product
-// errors come back as an ErrorDetail; infrastructure errors fail the test,
-// matching the local oracle.
+// errors come back as an ErrorDetail; infrastructure errors fail the test.
 type remoteOracle struct {
 	name   string
 	client *ctl.Client
@@ -516,7 +491,6 @@ func (o *remoteOracle) close() {
 	// The control client belongs to the cluster and outlives this oracle.
 }
 
-// local performs one control request.
 func (o *remoteOracle) local(t testing.TB, req ctl.LocalRequest) ctl.LocalResult {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), oracleBound)
@@ -529,8 +503,6 @@ func (o *remoteOracle) local(t testing.TB, req ctl.LocalRequest) ctl.LocalResult
 	return res
 }
 
-// errorDetail decodes the product error in an answer, or nil when there is
-// none.
 func (o *remoteOracle) errorDetail(t testing.TB, res ctl.LocalResult) *localpb.ErrorDetail {
 	t.Helper()
 	if len(res.ErrorDetail) == 0 {
@@ -544,7 +516,6 @@ func (o *remoteOracle) errorDetail(t testing.TB, res ctl.LocalResult) *localpb.E
 	return detail
 }
 
-// decode fills message from the answer and returns the product error, if any.
 func (o *remoteOracle) decode(t testing.TB, res ctl.LocalResult, message proto.Message) *localpb.ErrorDetail {
 	t.Helper()
 	if detail := o.errorDetail(t, res); detail != nil {

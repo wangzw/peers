@@ -21,31 +21,28 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// Broker process timing. brokerReadyBound is the harness readiness bound plus
-// three seconds; brokerRecoverBound is the MCP server's longest connection
-// backoff (5s) plus the same margin. Both are the product timers a wait must
-// outlast, so the wait constants add harness.EventTimeout as the fallback and
-// also cover one list_agents poll, which alone can run for ListAgentsPollBound.
 const (
+	// brokerReadyBound is BrokerSpec.Bound's default of 13s (ten seconds to bind
+	// the socket plus three). brokerRecoverBound is the MCP server's longest
+	// connection backoff (5s) plus the whole brokerReadyBound, 18s. A wait must
+	// outlast both, so the wait constants add harness.EventTimeout as the
+	// fallback and also cover one list_agents poll, which alone can run for
+	// ListAgentsWaitBound.
 	brokerReadyBound   = 13 * time.Second
 	brokerRecoverBound = 5*time.Second + brokerReadyBound
 	brokerReadyWait    = max(brokerReadyBound+harness.EventTimeout, harness.ListAgentsWaitBound)
 	brokerRecoverWait  = max(brokerRecoverBound+harness.EventTimeout, harness.ListAgentsWaitBound)
 
-	// brokerDefaultListen is broker.listen's default value.
 	brokerDefaultListen = ":17443"
 
-	// brokerAbsenceWindow is how long a failed Broker start is watched for a
-	// process it may have left behind. The failed process has already exited,
-	// so half a second is long enough for any other process to show up in
-	// /proc, and long compared with the lock and socket setup.
+	// brokerAbsenceWindow is long enough because the failed process has already
+	// exited: any other process shows up in /proc within half a second, and it
+	// is long compared with the lock and socket setup.
 	brokerAbsenceWindow = 500 * time.Millisecond
 )
 
-// TestBrokerProcessLocal covers the user Broker process on the test
-// host: a session with no Broker, the account lock that keeps a single
-// instance, the --listen override, and the process exit codes and standard
-// error line.
+// TestBrokerProcessLocal checks the user Broker process on the test host: no
+// Broker until started, one instance per account, --listen, and exit codes.
 func TestBrokerProcessLocal(t *testing.T) {
 	t.Run("REQ-broker-config-038 no Broker until started", func(t *testing.T) {
 		host := harness.NewLocalHost(t, harness.LocalOptions{Name: "nobroker"})
@@ -54,7 +51,6 @@ func TestBrokerProcessLocal(t *testing.T) {
 
 		session := host.StartSession(t, harness.SessionSpec{Name: "solo", StartMCP: true})
 
-		// The MCP server process must not start a Broker of its own.
 		harness.Consistently(t, brokerAbsenceWindow, "no Broker process appears", func() (bool, string) {
 			if n := len(bpLocalProcs(t, host, "broker")); n != 0 {
 				return false, fmt.Sprintf("%d Broker processes", n)
@@ -84,8 +80,6 @@ func TestBrokerProcessLocal(t *testing.T) {
 		}
 		mcpPID := mcpProcs[0].PID
 
-		// Starting the Broker in a terminal is enough: the session registers
-		// without reconnecting the MCP server process.
 		start := host.StartBroker(t, harness.BrokerSpec{})
 		if !start.Running {
 			t.Fatalf("the explicit Broker did not start: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
@@ -111,8 +105,6 @@ func TestBrokerProcessLocal(t *testing.T) {
 		listen := host.FreeAddr(t)
 		host.WriteConfig(t, "broker:\n  listen: "+listen+"\n")
 
-		// Five terminal starts race for the account lock. One keeps running and
-		// the other four exit with the already-running code.
 		bin := harness.BuildBinary(t, runtime.GOOS, runtime.GOARCH, "peers_testenv")
 		out := t.TempDir()
 		host.Exec(t, []string{"sh", "-c", bpConcurrentStartScript, "sh", bin, listen, out}, nil)
@@ -172,8 +164,6 @@ func TestBrokerProcessLocal(t *testing.T) {
 			t.Fatalf("the Broker lists %d agents, want 5", got)
 		}
 
-		// A second start with another listen address still fails on the account
-		// lock and leaves the first Broker untouched.
 		other := host.FreeAddr(t)
 		second := host.Exec(t, []string{bin, "service", "run", "--user", "--listen", other}, nil)
 		if second.ExitCode != 3 {
@@ -216,11 +206,9 @@ func TestBrokerProcessLocal(t *testing.T) {
 			t.Fatalf("the Broker did not start: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
 		}
 
-		// The one retry rewrites the FreeAddr addresses it finds in the
-		// arguments and in the configuration file. Check the listener and the
-		// file the product leaves behind against those actual addresses; the
-		// assertion itself is unchanged: --listen must not touch the file and
-		// only the override may be listening.
+		// Only the one retry after an "address already in use" failure rewrites
+		// the FreeAddr addresses in the arguments and the file; on a clean start
+		// nothing is rewritten, so compare against the addresses the Broker used.
 		override = start.Address(override)
 		configured = start.Address(configured)
 		expectedConfig := string(before)
@@ -252,10 +240,6 @@ func TestBrokerProcessLocal(t *testing.T) {
 	})
 }
 
-// bpConcurrentStartScript starts five Brokers on one address, waits until four
-// have exited, and leaves the winner running. Each exit code goes to $out/i.code
-// and each standard error to $out/i.err; the process that wins never writes
-// either file while this script runs.
 const bpConcurrentStartScript = `
 bin=$1; listen=$2; out=$3
 i=1
@@ -274,13 +258,14 @@ done
 exit 1
 `
 
-// TestBrokerProcessInContainer covers the default listen address, the Broker's
-// unavailability while that address is taken, recovery without reconnecting
-// the MCP server process, and the structured runtime log. The subtests share
-// one node and run in order.
+// TestBrokerProcessInContainer checks the default listen address, unavailability
+// while it is taken, recovery without reconnecting the MCP server, and the
+// structured runtime log.
 func TestBrokerProcessInContainer(t *testing.T) {
 	c := harness.Up(t, harness.TopoSingle)
 	host := c.Node("hostA")
+	// The subtests share one node and run in order; do not reorder or
+	// parallelize them.
 
 	var (
 		session     *harness.Session
@@ -313,9 +298,8 @@ func TestBrokerProcessInContainer(t *testing.T) {
 			return true, ""
 		})
 
-		// Run ss as the node account: inside the container root lacks
-		// CAP_SYS_PTRACE, so ss -p would omit the owner of a listener held by
-		// the peer account. The same account reads its own process.
+		// Run ss as the node account: container root lacks CAP_SYS_PTRACE and
+		// would see no listener owner.
 		ss := host.Exec(t, []string{"ss", "-ltnp"}, nil)
 		if ss.ExitCode != 0 {
 			t.Fatalf("ss -ltnp exited %d: %s", ss.ExitCode, strings.TrimSpace(ss.Stderr))
@@ -331,8 +315,6 @@ func TestBrokerProcessInContainer(t *testing.T) {
 			t.Fatalf("the listener on %s belongs to %q, want the node agent", brokerDefaultListen, listeners[0])
 		}
 
-		// The MCP handshake does not depend on the Broker, so the session
-		// starts and lists its tools even while no Broker can listen.
 		session = host.StartSession(t, harness.SessionSpec{Name: "s", StartMCP: true})
 		if tools := session.Tools(t); len(tools) != 13 {
 			t.Fatalf("the MCP server exposes %d tools, want 13: %v", len(tools), tools)
@@ -368,8 +350,6 @@ func TestBrokerProcessInContainer(t *testing.T) {
 
 		c.ReleasePort(t, "hostA", heldPort)
 
-		// The user starts the Broker in a terminal; the session must recover
-		// without a new MCP server process.
 		brokerStart = host.StartBroker(t, harness.BrokerSpec{})
 		if !brokerStart.Running {
 			t.Fatalf("the explicit Broker did not start: exit code %d: %s", brokerStart.ExitCode, strings.TrimSpace(brokerStart.StderrLast))
@@ -446,8 +426,6 @@ func TestBrokerProcessInContainer(t *testing.T) {
 	})
 }
 
-// bpProc is one process of a node, as read from the local process table or
-// from a container node agent.
 type bpProc struct {
 	PID  int
 	PPID int
@@ -456,10 +434,8 @@ type bpProc struct {
 	Args []string
 }
 
-// bpLocalProcs returns the processes of the local node of the given kind:
-// "broker", "mcp" or "all". A process belongs to the node when its environment
-// carries the node's PEERS_TEST_HOME, which every process the node starts
-// inherits, including Brokers started from a terminal.
+// A process belongs to the node when its environment carries the node's
+// PEERS_TEST_HOME.
 func bpLocalProcs(t *testing.T, host *harness.Node, kind string) []bpProc {
 	t.Helper()
 
@@ -481,9 +457,6 @@ func bpLocalProcs(t *testing.T, host *harness.Node, kind string) []bpProc {
 	return out
 }
 
-// bpContainerProcs returns the processes of the container node of the given
-// kind. It asks the node agent over the control protocol; the agent lists the
-// processes of its own account.
 func bpContainerProcs(t *testing.T, c *harness.Cluster, name, kind string) []bpProc {
 	t.Helper()
 
@@ -504,8 +477,6 @@ func bpContainerProcs(t *testing.T, c *harness.Cluster, name, kind string) []bpP
 	return out
 }
 
-// bpHasSubcommand reports whether args name the peers subcommand kind.
-// A Broker runs as "service run"; "all" matches every process.
 func bpHasSubcommand(args []string, kind string) bool {
 	if kind == "all" {
 		return true
@@ -516,7 +487,6 @@ func bpHasSubcommand(args []string, kind string) bool {
 	return len(args) >= 2 && args[1] == kind
 }
 
-// bpContainsString reports whether values contains want.
 func bpContainsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -526,7 +496,6 @@ func bpContainsString(values []string, want string) bool {
 	return false
 }
 
-// bpLastLine returns the last non-empty line of text.
 func bpLastLine(text string) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
@@ -537,10 +506,8 @@ func bpLastLine(text string) string {
 	return ""
 }
 
-// bpListenLines returns the data rows of ss -ltnp, one per listening socket,
-// without Docker's embedded DNS listener. Every Docker container runs that
-// resolver on 127.0.0.11 for the container's whole lifetime, so it is not one
-// of the listeners the Broker or the node agent created.
+// Docker's embedded DNS listener on 127.0.0.11 runs in every container and is
+// not a Broker listener.
 func bpListenLines(ss string) []string {
 	var listeners []string
 	for _, line := range strings.Split(ss, "\n") {
@@ -553,7 +520,6 @@ func bpListenLines(ss string) []string {
 	return listeners
 }
 
-// bpAlias returns the alias part of a name@alias address.
 func bpAlias(address string) string {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 || at == len(address)-1 {
@@ -562,15 +528,11 @@ func bpAlias(address string) string {
 	return address[at+1:]
 }
 
-// bpListAgentsPoll calls list_agents from a wait and returns the decoded answer.
-// The call is bounded by the wait's deadline and a transport error is returned
-// as state.
 func bpListAgentsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", nil)
 }
 
-// bpJoinTopic joins topic, retrying while the session is still registering.
 func bpJoinTopic(t *testing.T, session *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+topic, func(deadline time.Time) (bool, string) {
@@ -585,7 +547,6 @@ func bpJoinTopic(t *testing.T, session *harness.Session, topic string) {
 	})
 }
 
-// bpSelfAddress waits until the session reports its own address and returns it.
 func bpSelfAddress(t *testing.T, session *harness.Session) string {
 	t.Helper()
 	var address string
@@ -603,7 +564,6 @@ func bpSelfAddress(t *testing.T, session *harness.Session) string {
 	return address
 }
 
-// bpWaitVisible waits until observer lists an agent at address.
 func bpWaitVisible(t *testing.T, observer *harness.Session, address string) {
 	t.Helper()
 	harness.EventuallyPoll(t, brokerReadyWait, "the agent "+address+" is visible", func(deadline time.Time) (bool, string) {
@@ -620,9 +580,7 @@ func bpWaitVisible(t *testing.T, observer *harness.Session, address string) {
 	})
 }
 
-// bpCheckStructuredLog asserts that every line of data is one JSON record with
-// time, level and event, and that the sent body never appears. The only
-// permitted non-JSON line is the final failure line cmd writes as
+// The only permitted non-JSON line is the final failure line cmd writes as
 // "peers service run: ..."; a normal SIGTERM shutdown writes none.
 func bpCheckStructuredLog(t *testing.T, data []byte, forbidden string) {
 	t.Helper()
@@ -691,9 +649,8 @@ func bpCheckStructuredLog(t *testing.T, data []byte, forbidden string) {
 }
 
 // TestLocalOracleReconnectsAfterBrokerRestart checks that the one Oracle client
-// a local node keeps survives a Broker restart: the cached connection reports
-// the Broker down, then reconnects with gRPC's backoff once it is back, rather
-// than the harness dialing a new client.
+// a local node keeps survives a Broker restart and reconnects once the Broker
+// is back.
 func TestLocalOracleReconnectsAfterBrokerRestart(t *testing.T) {
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "oracle-restart"})
 	host.WriteConfig(t, "broker:\n  listen: "+host.FreeAddr(t)+"\n")

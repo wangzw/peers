@@ -19,10 +19,7 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// TestMain turns the test binary into the MCP stand-in that
-// TestOneshotSessionPrintsResult passes as --bin when E2E_NODE_STUB is set.
-// The node library's own tests use the same re-execution technique; this copy
-// lives here because a test binary serves only its own package's TestMain.
+// TestMain turns the test binary into the MCP stand-in when E2E_NODE_STUB is set.
 func TestMain(m *testing.M) {
 	if os.Getenv("E2E_NODE_STUB") == "mcp" {
 		os.Exit(runMCPStub())
@@ -30,20 +27,16 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// stubListAgent is one entry of the stub's list_agents answer.
 type stubListAgent struct {
 	Address string `json:"address"`
 	Status  string `json:"status"`
 }
 
-// stubListOut is the structured result of the stub's list_agents tool.
 type stubListOut struct {
 	Self   string          `json:"self_address"`
 	Agents []stubListAgent `json:"agents"`
 }
 
-// runMCPStub serves an MCP server on standard input and output with a
-// list_agents tool that always succeeds.
 func runMCPStub() int {
 	server := mcp.NewServer(&mcp.Implementation{Name: "e2e-node-stub", Version: "0"}, nil)
 	mcp.AddTool[any, stubListOut](
@@ -63,9 +56,7 @@ func runMCPStub() int {
 	return 0
 }
 
-// TestOneshotSessionPrintsResult runs oneshot-session against the MCP stand-in
-// and checks that standard output carries a parseable ToolResult with no tool
-// error.
+// TestOneshotSessionPrintsResult checks that oneshot-session prints a parseable ToolResult with no tool error.
 func TestOneshotSessionPrintsResult(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "e2e-node")
@@ -87,8 +78,7 @@ func TestOneshotSessionPrintsResult(t *testing.T) {
 		"--name", "stub-session",
 		"--bin", stub,
 		"--env", "E2E_NODE_STUB=mcp")
-	// The session writes its record and MCP log under $HOME, so give it a
-	// temporary home rather than the test runner's.
+	// The session writes its record and MCP log under $HOME.
 	cmd.Env = append(os.Environ(), "HOME="+t.TempDir())
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -115,9 +105,7 @@ func TestOneshotSessionPrintsResult(t *testing.T) {
 	}
 }
 
-// TestWithCoverageAddsGoCoverDir checks that GOCOVERDIR joins the BaseEnv the
-// command builds only when coverage is on, that it keeps the caller's entries,
-// and that it does not mutate the map it was given.
+// TestWithCoverageAddsGoCoverDir checks that withCoverage adds GOCOVERDIR only when coverage is on.
 func TestWithCoverageAddsGoCoverDir(t *testing.T) {
 	base := node.BaseEnv{
 		Home:  "/home/peer",
@@ -150,14 +138,12 @@ func TestWithCoverageAddsGoCoverDir(t *testing.T) {
 		t.Fatal("withCoverage mutated the caller's extra map")
 	}
 
-	// An environment with no extras gets one.
 	bare := withCoverage(node.BaseEnv{Home: "/home/peer", Path: "/usr/bin"})
 	if got := envValues(bare.Build(nil))["GOCOVERDIR"]; got != "/e2e-cover" {
 		t.Fatalf("GOCOVERDIR for a bare environment = %q, want /e2e-cover", got)
 	}
 }
 
-// envValues turns NAME=value strings into a map.
 func envValues(env []string) map[string]string {
 	values := make(map[string]string, len(env))
 	for _, entry := range env {
@@ -168,8 +154,7 @@ func envValues(env []string) map[string]string {
 	return values
 }
 
-// TestServeShutdown starts the command, asks it to stop over the control
-// socket, and checks that it exits with zero and removes the socket.
+// TestServeShutdown checks that serve stops on a shutdown request and removes its socket.
 func TestServeShutdown(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "e2e-node")

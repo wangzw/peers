@@ -16,11 +16,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// TestLocalTopics covers joining, leaving and visibility on one host, and
-// every branch that decides which topics a new agent joins automatically. The
-// Broker and the MCP server processes are real processes; workspaces are
-// created per case because the automatic topic depends on the working
-// directory.
+// TestLocalTopics covers joining, leaving and visibility on one host and every
+// branch that decides which topics a new agent joins automatically.
 func TestLocalTopics(t *testing.T) {
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "topics"})
 	listen := host.FreeAddr(t)
@@ -31,8 +28,6 @@ func TestLocalTopics(t *testing.T) {
 		s := topicsSession(t, host, "joiner", topicsPlain(t))
 		defer s.End(t)
 		topicsJoin(t, s, "release")
-		// The acceptance criterion is the agent's own topic list, not the echo
-		// join_topic returns.
 		out, state := topicsList(t, s)
 		if state != "" {
 			t.Fatalf("list_topics failed: %s", state)
@@ -83,8 +78,6 @@ func TestLocalTopics(t *testing.T) {
 		defer s.End(t)
 		topicsJoin(t, s, "t1")
 		topicsJoin(t, s, "t2")
-		// Read the resulting membership from list_topics rather than from the
-		// echo of the last join.
 		out, state := topicsList(t, s)
 		if state != "" {
 			t.Fatalf("list_topics failed: %s", state)
@@ -190,8 +183,6 @@ func TestLocalTopics(t *testing.T) {
 		s := topicsSession(t, host, "no-join", topicsOrigin(t, "https://github.com/org/repo"))
 		defer s.End(t)
 		topicsWaitRegistered(t, s)
-		// The session is registered; stay long enough for a wrong auto-join to
-		// show up.
 		harness.ConsistentlyPoll(t, 1*time.Second, harness.TopicCallPollBound, "Broker configuration turns automatic joining off", nil, func(deadline time.Time) harness.Observation {
 			out, state := topicsListPoll(t, deadline, s)
 			if state != "" {
@@ -241,8 +232,6 @@ func TestLocalTopics(t *testing.T) {
 	})
 
 	t.Run("REQ-topics-026 join default without name", func(t *testing.T) {
-		// The origin names the default topic. Leaving it by name empties the
-		// membership; a nameless join brings it back.
 		origin := topicsSession(t, host, "nameless-origin", topicsOrigin(t, "https://github.com/org/repo"))
 		defer origin.End(t)
 		topicsWaitJoinedSet(t, origin, "github.com/org/repo")
@@ -251,8 +240,6 @@ func TestLocalTopics(t *testing.T) {
 		topicsJoinDefault(t, origin)
 		topicsWaitJoinedSet(t, origin, "github.com/org/repo")
 
-		// A project configuration that declares two topics: a nameless join
-		// joins both.
 		project := topicsSession(t, host, "nameless-project",
 			topicsProject(t, "topics: [t1, t2]\n", "https://github.com/org/repo"))
 		defer project.End(t)
@@ -263,8 +250,6 @@ func TestLocalTopics(t *testing.T) {
 		topicsJoinDefault(t, project)
 		topicsWaitJoinedSet(t, project, "t1", "t2")
 
-		// A workspace without a default topic: the call fails and names the
-		// missing default topic.
 		none := topicsSession(t, host, "nameless-none", topicsPlain(t))
 		defer none.End(t)
 		topicsWaitRegistered(t, none)
@@ -279,8 +264,9 @@ func TestLocalTopics(t *testing.T) {
 
 	t.Run("REQ-topics-026 join default with broker auto_join off", func(t *testing.T) {
 		listen = topicsRestartBroker(t, host, topicsConfig(listen, false), listen)
-		// The session ends before the Broker is restored, so the restore does
-		// not reach a session that is still running.
+		// The defers run in reverse: this restore is registered before the
+		// session's End below, so the session ends first and the restore never
+		// reaches a session that is still running.
 		defer func() {
 			listen = topicsRestartBroker(t, host, defaultConfig, listen)
 		}()
@@ -298,7 +284,6 @@ func TestLocalTopics(t *testing.T) {
 			}
 			return harness.Observed(true, "")
 		})
-		// The nameless call is an explicit request, so it ignores the switch.
 		topicsJoinDefault(t, s)
 		topicsWaitJoinedSet(t, s, "github.com/org/repo")
 	})
@@ -309,24 +294,20 @@ func TestLocalTopics(t *testing.T) {
 		defer s.End(t)
 		topicsWaitJoinedSet(t, s, "github.com/org/repo")
 
-		// A named topic survives the restart and is restored by the session's
-		// re-registration. Waiting for exactly it after the restart proves the
-		// restore ran; an empty set could otherwise be read before it started.
 		topicsJoin(t, s, "sentinel")
 		topicsWaitJoinedSet(t, s, "github.com/org/repo", "sentinel")
 
 		topicsLeaveDefault(t, s)
 		topicsWaitJoinedSet(t, s, "sentinel")
 
-		// A Broker restart makes the MCP server register again; the default
-		// topic must not come back in this session, while the sentinel must.
 		listen = topicsRestartBroker(t, host, defaultConfig, listen)
+		// Waiting for exactly this set after the restart proves the restore
+		// ran; an empty set could otherwise be read before it started.
 		topicsWaitJoinedSetWithin(t, s, harness.TopicCallWaitBound, "sentinel")
 
 		// The restore joins topics one at a time, so it can reach the sentinel
-		// before it decides about the default topic. Holding the exact set for
-		// a second keeps a default topic joined late in the restore from
-		// passing unseen between two samples of the wait above.
+		// before it decides about the default topic; holding the exact set for
+		// a second keeps a default topic joined late from passing unseen.
 		harness.ConsistentlyPoll(t, 1*time.Second, harness.TopicCallPollBound, "the default topic stays out once the sentinel is restored", nil, func(deadline time.Time) harness.Observation {
 			out, state := topicsListPoll(t, deadline, s)
 			if state != "" {
@@ -338,15 +319,12 @@ func TestLocalTopics(t *testing.T) {
 			return harness.Observed(true, "")
 		})
 
-		// A new session in the same workspace still joins the default topic.
 		fresh := topicsSession(t, host, "nameless-leave-fresh", ws)
 		defer fresh.End(t)
 		topicsWaitJoinedSet(t, fresh, "github.com/org/repo")
 	})
 }
 
-// topicsConfig builds the Broker configuration with the given listener and
-// automatic-join setting.
 func topicsConfig(listen string, autoJoin bool) string {
 	parts := []string{"broker:\n  listen: " + listen}
 	if !autoJoin {
@@ -355,15 +333,11 @@ func topicsConfig(listen string, autoJoin bool) string {
 	return harness.ConfigYAML(parts...)
 }
 
-// topicsSession starts one simulated session with a real MCP server process
-// working in workdir.
 func topicsSession(t *testing.T, host *harness.Node, name, workdir string) *harness.Session {
 	t.Helper()
 	return host.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, Workdir: workdir})
 }
 
-// topicsStartBroker starts the node's Broker and fails when it does not come
-// up. It returns the address the Broker actually uses in place of requested.
 func topicsStartBroker(t *testing.T, host *harness.Node, config, requested string) string {
 	t.Helper()
 	start := host.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -373,18 +347,12 @@ func topicsStartBroker(t *testing.T, host *harness.Node, config, requested strin
 	return start.Address(requested)
 }
 
-// topicsRestartBroker stops the Broker and starts it with config, returning the
-// address the Broker actually uses in place of requested. The MCP server
-// processes never start a Broker, so the restart is the only process that can
-// answer.
 func topicsRestartBroker(t *testing.T, host *harness.Node, config, requested string) string {
 	t.Helper()
 	host.StopBroker(t, syscall.SIGTERM)
 	return topicsStartBroker(t, host, config, requested)
 }
 
-// topicsGitEnv is the environment of the git commands that create test
-// workspaces. It never reads the host's git configuration.
 func topicsGitEnv(t *testing.T) []string {
 	t.Helper()
 	return []string{
@@ -395,8 +363,6 @@ func topicsGitEnv(t *testing.T) []string {
 	}
 }
 
-// topicsPlain creates a workspace without a repository or a project
-// configuration file.
 func topicsPlain(t *testing.T) string {
 	t.Helper()
 	ws, err := node.PlainWorkspace(filepath.Join(t.TempDir(), "plain"))
@@ -406,7 +372,6 @@ func topicsPlain(t *testing.T) string {
 	return ws
 }
 
-// topicsOrigin creates a git workspace whose origin is origin.
 func topicsOrigin(t *testing.T, origin string) string {
 	t.Helper()
 	ws, err := node.GitWorkspace(filepath.Join(t.TempDir(), "repo"), origin, topicsGitEnv(t))
@@ -416,7 +381,6 @@ func topicsOrigin(t *testing.T, origin string) string {
 	return ws
 }
 
-// topicsProject creates a git workspace with a project configuration file.
 func topicsProject(t *testing.T, projectYAML, origin string) string {
 	t.Helper()
 	ws, err := node.ProjectWorkspace(filepath.Join(t.TempDir(), "repo"), projectYAML, origin, topicsGitEnv(t))
@@ -426,7 +390,6 @@ func topicsProject(t *testing.T, projectYAML, origin string) string {
 	return ws
 }
 
-// topicsWaitRegistered waits until the session is registered.
 func topicsWaitRegistered(t *testing.T, s *harness.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.EventTimeout, "the session is registered", func(deadline time.Time) (bool, string) {
@@ -438,8 +401,6 @@ func topicsWaitRegistered(t *testing.T, s *harness.Session) {
 	})
 }
 
-// topicsList calls list_topics and returns the decoded listing. A tool error is
-// reported as a state string so Eventually can retry.
 func topicsList(t *testing.T, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	r := s.Call(t, "list_topics", nil)
@@ -453,14 +414,11 @@ func topicsList(t *testing.T, s *harness.Session) (mcpserver.ListTopicsOut, stri
 	return out, ""
 }
 
-// topicsListPoll is topicsList for a wait callback: the call is bounded by the
-// wait's deadline and a transport error is returned as state.
 func topicsListPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListTopicsOut](t, deadline, s, "list_topics", nil)
 }
 
-// topicsListAgents calls list_agents and returns the decoded listing.
 func topicsListAgents(t *testing.T, s *harness.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	r := s.Call(t, "list_agents", args)
@@ -474,20 +432,16 @@ func topicsListAgents(t *testing.T, s *harness.Session, args map[string]any) (mc
 	return out, ""
 }
 
-// topicsListAgentsPoll is topicsListAgents for a wait callback: the call is
-// bounded by the wait's deadline and a transport error is returned as state.
 func topicsListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", args)
 }
 
-// brokerTopicTool reports whether tool is a topic tool that reaches the
+// brokerTopicTool reports whether a tool is a topic tool that reaches the
 // Broker, whose handler may spend topicRPCTimeout before the update hint runs.
-// A wait polling it uses harness.TopicCallPollBound and, when the caller's
-// bound is shorter, harness.TopicCallWaitBound. list_topics makes one ListTopics
-// RPC bounded by topicRPCTimeout, so it belongs here too: polling it with the
-// generic bound would cut the call before the product's own timeout and hide a
-// Broker that stopped answering.
+// list_topics makes one ListTopics RPC bounded by topicRPCTimeout, so it
+// belongs here too: polling it with the generic bound would cut the call before
+// the product's own timeout and hide a Broker that stopped answering.
 func brokerTopicTool(tool string) bool {
 	switch tool {
 	case "join_topic", "leave_topic", "list_topics":
@@ -496,14 +450,8 @@ func brokerTopicTool(tool string) bool {
 	return false
 }
 
-// pollableTool reports whether a wait may retry tool after a transport error.
-// Only a tool with no side effect or with a design-guaranteed idempotent effect
-// qualifies. design-mcpserver.md marks list_agents, list_topics, list_brokers
-// and get_config read-only. design-topic.md makes joining an already joined
-// topic and leaving an unjoined one succeed without changing state. Every other
-// tool is a side effect: a transport error leaves it unknown whether the server
-// applied the call, so it goes through harness.Session.CallUntilOK, which fails
-// on a transport error and retries only the tool's own error result.
+// pollableTool reports whether a wait may retry a tool after a transport error:
+// only a tool with no side effect or a guaranteed idempotent effect qualifies.
 func pollableTool(tool string) bool {
 	switch tool {
 	case "list_agents", "list_brokers", "list_topics", "get_config", "join_topic", "leave_topic":
@@ -512,8 +460,6 @@ func pollableTool(tool string) bool {
 	return false
 }
 
-// topicsJoin joins name and returns the resulting topic list, retrying while
-// the session is still registering.
 func topicsJoin(t *testing.T, s *harness.Session, name string) mcpserver.TopicsOut {
 	t.Helper()
 	var out mcpserver.TopicsOut
@@ -535,7 +481,6 @@ func topicsJoin(t *testing.T, s *harness.Session, name string) mcpserver.TopicsO
 	return out
 }
 
-// topicsLeave leaves name, retrying while the session is still registering.
 func topicsLeave(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "leave_topic "+name+" succeeds", func(deadline time.Time) (bool, string) {
@@ -550,9 +495,6 @@ func topicsLeave(t *testing.T, s *harness.Session, name string) {
 	})
 }
 
-// topicsJoinDefault joins the session's default topics, retrying while the
-// session is still registering. It is for a workspace that has a default
-// topic; a session without one fails the call instead.
 func topicsJoinDefault(t *testing.T, s *harness.Session) mcpserver.TopicsOut {
 	t.Helper()
 	var out mcpserver.TopicsOut
@@ -574,8 +516,6 @@ func topicsJoinDefault(t *testing.T, s *harness.Session) mcpserver.TopicsOut {
 	return out
 }
 
-// topicsLeaveDefault leaves the session's default topics, retrying while the
-// session is still registering.
 func topicsLeaveDefault(t *testing.T, s *harness.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "leave_topic without a name succeeds", func(deadline time.Time) (bool, string) {
@@ -590,16 +530,15 @@ func topicsLeaveDefault(t *testing.T, s *harness.Session) {
 	})
 }
 
-// topicsWaitJoinedSet waits until the joined topics are exactly want.
 func topicsWaitJoinedSet(t *testing.T, s *harness.Session, want ...string) {
 	t.Helper()
 	topicsWaitJoinedSetWithin(t, s, harness.EventTimeout, want...)
 }
 
-// topicsWaitJoinedSetWithin waits until the joined topics are exactly want,
-// within bound. bound must be at least harness.TopicCallWaitBound, the
-// list_topics wait bound; a wait that has to cover a reconnect and the restore
-// that follows passes lifecycleRestoreWait instead.
+// topicsWaitJoinedSetWithin waits until the joined set is exactly want. bound
+// must be at least harness.TopicCallWaitBound, the list_topics wait bound;
+// EventuallyPoll lifts only to ToolCallWaitBound, so a wait that covers a
+// reconnect and the follow-on restore passes lifecycleRestoreWait instead.
 func topicsWaitJoinedSetWithin(t *testing.T, s *harness.Session, bound time.Duration, want ...string) {
 	t.Helper()
 	harness.EventuallyPoll(t, bound, "the joined topics are exactly "+strings.Join(want, ", "), func(deadline time.Time) (bool, string) {
@@ -611,8 +550,6 @@ func topicsWaitJoinedSetWithin(t *testing.T, s *harness.Session, bound time.Dura
 	})
 }
 
-// topicsWaitVisible waits until observer lists an agent whose name part is
-// name.
 func topicsWaitVisible(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the agent "+name+" is visible", func(deadline time.Time) (bool, string) {
@@ -627,7 +564,6 @@ func topicsWaitVisible(t *testing.T, observer *harness.Session, name string) {
 	})
 }
 
-// topicsWaitInvisible waits until observer no longer lists name.
 func topicsWaitInvisible(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the agent "+name+" is no longer visible", func(deadline time.Time) (bool, string) {
@@ -642,7 +578,6 @@ func topicsWaitInvisible(t *testing.T, observer *harness.Session, name string) {
 	})
 }
 
-// topicsContains reports whether values contains value.
 func topicsContains(values []string, value string) bool {
 	for _, candidate := range values {
 		if candidate == value {
@@ -652,7 +587,6 @@ func topicsContains(values []string, value string) bool {
 	return false
 }
 
-// topicsSplitAddress splits "name [ref]@alias" into name and ref.
 func topicsSplitAddress(addr string) (name, ref string) {
 	at := strings.LastIndexByte(addr, '@')
 	if at < 0 {
@@ -665,7 +599,6 @@ func topicsSplitAddress(addr string) (name, ref string) {
 	return head, ""
 }
 
-// topicsFindAgent returns the entry whose name part is name.
 func topicsFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if got, _ := topicsSplitAddress(agent.Address); got == name {
@@ -675,7 +608,6 @@ func topicsFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentO
 	return mcpserver.AgentOut{}, false
 }
 
-// topicsSameSet reports whether got and want contain the same strings.
 func topicsSameSet(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

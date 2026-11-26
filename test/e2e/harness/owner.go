@@ -12,44 +12,32 @@ import (
 	"github.com/wangzw/peers/internal/procsig"
 )
 
-// owner identifies one incarnation of a test process: its PID, the kernel's
-// start time for that PID, and the inode of its PID namespace. A reused PID
-// belongs to a different process and has a different start time, so the pair
-// distinguishes a live run from residue left by an earlier one. The namespace
-// keeps a cleanup from reading another namespace's /proc entry, where the same
-// PID may name an unrelated process or no process at all.
+// owner identifies one incarnation of a test process: its PID, the kernel's start
+// time for that PID, and its PID namespace inode. A reused PID has a different
+// start time, and a PID from another namespace is not comparable.
 type owner struct {
 	pid   int
 	start uint64
 	ns    uint64
 }
 
-// ownerNamespacePrefix marks the PID namespace field of a name's owner marker.
-// The field is spelled out so it cannot be confused with the slug that follows
-// the marker.
+// ownerNamespacePrefix marks the PID namespace field of a name's owner marker, spelled out so it cannot be confused with the slug that follows.
 const ownerNamespacePrefix = "pidns"
 
 // OwnerLabel is the docker label that carries a project's owner marker on its
-// containers, networks and volumes. Compose project names built by the harness
-// carry the marker themselves, but a project started from a compose file
-// (test/e2e/compose/system/compose.yaml) keeps its readable name and is
-// identified through this label instead. CleanResidue reads the label before
-// the project name, and a manual cleanup can select the same way:
-//
-//	docker ps -a --filter label=peers.e2e.owner
+// containers, networks and volumes. A project started from a compose file keeps
+// its readable name and is identified through this label, which CleanResidue
+// reads before the project name.
 const OwnerLabel = "peers.e2e.owner"
 
-// OwnerMarker returns this process's owner marker as a label value, in the
-// same "ape2e-<pid>-<start>-pidns<inode>" form a project name carries. A
-// cleanup reads it back with the same parser, so a label value and a project
-// name cannot disagree about who owns the resource.
+// OwnerMarker returns this process's owner marker as a label value, in the same
+// "ape2e-<pid>-<start>-pidns<inode>" form a project name carries.
 func OwnerMarker() string {
 	return "ape2e-" + currentOwner().String()
 }
 
-// String formats the marker that names carry: "<pid>-<start>-pidns<inode>".
-// A platform without PID namespaces records zero, which a cleanup treats as
-// unknown and therefore leaves alone on a host that does have namespaces.
+// String formats the marker names carry: "<pid>-<start>-pidns<inode>"; a platform
+// without PID namespaces records zero, which a cleanup treats as unknown.
 func (o owner) String() string {
 	return fmt.Sprintf("%d-%d-%s%d", o.pid, o.start, ownerNamespacePrefix, o.ns)
 }
@@ -59,9 +47,6 @@ var (
 	currentOwnerVal  owner
 )
 
-// currentOwner returns the owner of this process. The start time and PID
-// namespace are read once, so every project and runtime root of one test
-// process carries the same marker.
 func currentOwner() owner {
 	currentOwnerOnce.Do(func() {
 		pid := os.Getpid()
@@ -78,10 +63,9 @@ func currentOwner() owner {
 	return currentOwnerVal
 }
 
-// parseOwner reads the marker from a name built as
-// "ape2e-<pid>-<start>-pidns<inode>...". The fields after the marker do not
-// matter. A name written before the namespace field existed parses with a zero
-// namespace; a name without the marker returns false.
+// parseOwner reads the marker from a name built as "ape2e-<pid>-<start>-pidns<inode>...";
+// the fields after the marker do not matter, and a name without the marker returns
+// false.
 func parseOwner(name string) (owner, bool) {
 	fields := strings.Split(name, "-")
 	if len(fields) < 3 || fields[0] != "ape2e" {
@@ -97,9 +81,6 @@ func parseOwner(name string) (owner, bool) {
 	return o, true
 }
 
-// parseOwnerValue reads a marker stored by itself, as
-// "<pid>-<start>-pidns<inode>". A reservation written before the namespace
-// field existed has two fields and parses with a zero namespace.
 func parseOwnerValue(text string) (owner, bool) {
 	fields := strings.Split(strings.TrimSpace(text), "-")
 	if len(fields) != 2 && len(fields) != 3 {
@@ -115,9 +96,6 @@ func parseOwnerValue(text string) (owner, bool) {
 	return o, true
 }
 
-// parseNamespaceField returns the inode of a namespace field. A field without
-// the prefix, or with a number that does not parse, yields zero: the namespace
-// is then unknown and the cleanup leaves the resource alone.
 func parseNamespaceField(field string) uint64 {
 	if !strings.HasPrefix(field, ownerNamespacePrefix) {
 		return 0
@@ -141,23 +119,19 @@ func makeOwner(pidText, startText string) (owner, bool) {
 	return owner{pid: pid, start: start}, true
 }
 
-// alive reports whether the process that carries this owner still runs. It is
-// conservative on purpose: a marker from another PID namespace, or one whose
-// /proc entry cannot be read for a reason other than "no such process", is
-// treated as alive so a cleanup never removes another suite's resources.
+// alive reports whether the process that carries this owner still runs; a marker
+// from another PID namespace, or one whose /proc entry cannot be read for a reason
+// other than "no such process", is treated as alive so a cleanup never removes
+// another suite's resources.
 func (o owner) alive() bool {
 	return o.aliveIn(currentOwner().ns, processStartTime, processExists)
 }
 
-// aliveIn reports whether the owner is alive as observed from selfNS. The
-// start-time reader and the existence check are parameters so the decision can
-// be tested without the system.
-//
-// A different PID namespace means the marker's PID says nothing about this
-// namespace, and an absent namespace on either side means the comparison is
-// impossible; both are kept. In the same namespace, only a confirmed ESRCH or
-// ENOENT, or a different start time, proves the process is gone. Every other
-// read error keeps the resource.
+// aliveIn reports whether the owner is alive as observed from selfNS, with the
+// start-time reader and existence check passed in so the decision can be tested
+// without the system. A different or absent namespace on either side is kept; in
+// the same namespace only a confirmed ESRCH or ENOENT, or a changed start time,
+// proves the process gone.
 func (o owner) aliveIn(selfNS uint64, startTime func(int) (uint64, error), exists func(int) bool) bool {
 	if o.pid <= 0 {
 		return false
@@ -181,23 +155,19 @@ func (o owner) aliveIn(selfNS uint64, startTime func(int) (uint64, error), exist
 	case errors.Is(err, syscall.ESRCH), errors.Is(err, os.ErrNotExist):
 		return false
 	case errors.Is(err, errors.ErrUnsupported):
-		// The platform cannot report a start time, as on a system without
-		// /proc; the PID alone decides.
+		// The platform cannot report a start time, as on a system without /proc;
+		// the PID alone decides.
 		return exists(o.pid)
 	default:
 		return true
 	}
 }
 
-// ownerGone reports whether name carries an owner marker and that owner is
-// gone. A name without the marker has an unknown owner and is left alone: it
-// may belong to a live suite that predates the marker.
 func ownerGone(name string) bool {
 	o, ok := parseOwner(name)
 	return ok && !o.alive()
 }
 
-// processExists reports whether pid names a process.
 func processExists(pid int) bool {
 	return procsig.Alive(pid)
 }

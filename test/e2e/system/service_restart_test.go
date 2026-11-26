@@ -17,24 +17,18 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// serviceRestartBound bounds the wait for systemd to replace a SIGKILLed
-// system Broker. The drop-in below sets RestartSec to 100ms, so the bound is
-// set by systemd's restart, not by the unit's default five seconds.
+// serviceRestartBound bounds the wait for systemd to replace a killed system
+// Broker; the drop-in below sets RestartSec to 100ms.
 const serviceRestartBound = 3 * time.Second
 
-// TestSystemServiceStartsAndRestarts starts the installed system service,
-// kills the Broker with SIGKILL, and checks that systemd starts a new process
-// with a different non-zero MainPID. This is the system counterpart of
-// the user unit's restart check: a service manager, not a session, owns the
-// Broker's lifetime.
+// TestSystemServiceStartsAndRestarts checks that systemd restarts the system
+// Broker under a new MainPID after it is killed with SIGKILL.
 func TestSystemServiceStartsAndRestarts(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
 		return
 	}
 
-	// RestartSec=5 in the unit would make the restart outlast the acceptance
-	// bound. A drop-in in /run shortens it for this test only.
 	dropInDir := "/run/systemd/system/peers.service.d"
 	if err := os.MkdirAll(dropInDir, 0o755); err != nil {
 		t.Fatalf("creating %s: %v", dropInDir, err)
@@ -68,11 +62,9 @@ func TestSystemServiceStartsAndRestarts(t *testing.T) {
 			if pid == 0 || pid == before {
 				return false, fmt.Sprintf("MainPID = %d, want a new non-zero pid (was %d)", pid, before)
 			}
-			// systemd records the new MainPID when it forks the replacement,
-			// before the child execs peers. Until the exec the child still
-			// carries systemd's command line, so the Broker listing can be empty
-			// while MainPID already names the new process. Wait for the pid to
-			// appear rather than scanning once after the wait.
+			// systemd sets the new MainPID when it forks the replacement, before the child
+			// execs peers, so the Broker listing can lag; wait for the pid rather than
+			// scanning once.
 			procs := syscontainer.Pids("peers", "service", "run", "--system")
 			if !hasPID(procs, pid) {
 				return false, fmt.Sprintf("MainPID = %d, but the running system Brokers are %v", pid, procs)
@@ -83,7 +75,6 @@ func TestSystemServiceStartsAndRestarts(t *testing.T) {
 	t.Logf("systemd restarted the system Broker with MainPID %d", after)
 }
 
-// systemServiceMainPID returns the MainPID systemd reports for the system unit.
 func systemServiceMainPID(t *testing.T) (int, bool) {
 	t.Helper()
 	cmd := syscontainer.Command("root", nil,
@@ -99,7 +90,6 @@ func systemServiceMainPID(t *testing.T) (int, bool) {
 	return pid, true
 }
 
-// hasPID reports whether procs contains pid.
 func hasPID(procs []syscontainer.ProcInfo, pid int) bool {
 	for _, proc := range procs {
 		if proc.PID == pid {

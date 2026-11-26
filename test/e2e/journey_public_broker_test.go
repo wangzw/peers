@@ -14,11 +14,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// journeyBrokerPort is the port a Broker listens on with the default
-// configuration.
 const journeyBrokerPort = "17443"
 
-// journeyConfig is the configuration every Broker in the journey uses.
 func journeyConfig(public bool, noListen bool) string {
 	broker := "broker:"
 	if public {
@@ -37,19 +34,15 @@ func journeyConfig(public bool, noListen bool) string {
 	return harness.ConfigYAML(parts...)
 }
 
-// journeyNodeAddr returns the node's address on the flat network and its
-// Broker port.
 func journeyNodeAddr(c *harness.Cluster, node string) string {
 	return net.JoinHostPort(c.Addr(node, "net"), journeyBrokerPort)
 }
 
-// journeyCallOK retries a tool that must succeed, covering the short window in
-// which a fresh MCP server process is still connecting. A read-only or
-// idempotent tool polls with Session.PollCallWithin, so a transport error is
-// retried; any other tool is a side effect and goes through
-// Session.CallUntilOK, which fails on a transport error instead of repeating a
-// call the server may already have applied. Each tool polls with its own
-// harness.ToolPollBound, and the wait uses at least harness.ToolWaitBound(tool).
+// journeyCallOK retries a tool call until it succeeds within bound. The two
+// paths differ only in transport errors: a pollable tool retries a transport
+// error too, while another tool goes through CallUntilOK, which retries an
+// error result but fails at once on a transport error rather than repeating a
+// call the server may already have applied.
 func journeyCallOK(t *testing.T, session *harness.Session, tool string, args map[string]any, bound time.Duration) harness.Result {
 	t.Helper()
 	if !pollableTool(tool) {
@@ -74,7 +67,6 @@ func journeyCallOK(t *testing.T, session *harness.Session, tool string, args map
 	return result
 }
 
-// journeyCreateKey creates a one-time pairing key.
 func journeyCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := journeyCallOK(t, session, "create_pairing_key", nil, harness.EventTimeout)
@@ -85,7 +77,6 @@ func journeyCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePa
 	return out
 }
 
-// journeyConnect dials a Broker with a pairing key.
 func journeyConnect(t *testing.T, session *harness.Session, address, key string) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	r := journeyCallOK(t, session, "connect_broker", map[string]any{"address": address, "key": key}, harness.EventTimeout)
@@ -96,14 +87,11 @@ func journeyConnect(t *testing.T, session *harness.Session, address, key string)
 	return out
 }
 
-// journeyWorkspace creates a plain workspace inside the node and returns its
-// path, which a session in that node uses as its working directory.
 func journeyWorkspace(t *testing.T, node *harness.Node) string {
 	t.Helper()
 	return node.Workspace(t, "plain", "", "")
 }
 
-// journeyPair has acceptor create a key and dialer use it.
 func journeyPair(t *testing.T, acceptor, dialer *harness.Node, acceptorAddr string) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	acceptorOperator := pairOperator(t, acceptor, journeyWorkspace(t, acceptor))
@@ -114,8 +102,6 @@ func journeyPair(t *testing.T, acceptor, dialer *harness.Node, acceptorAddr stri
 	return journeyConnect(t, dialerOperator, acceptorAddr, key.Key)
 }
 
-// journeyWaitPeer waits until the session lists alias as a connected peer with
-// the given role.
 func journeyWaitPeer(t *testing.T, session *harness.Session, alias, role string, bound time.Duration) {
 	t.Helper()
 	harness.EventuallyPoll(t, bound, "the session reports "+alias+" connected as "+role, func(deadline time.Time) (bool, string) {
@@ -140,11 +126,10 @@ func journeyWaitPeer(t *testing.T, session *harness.Session, alias, role string,
 	})
 }
 
-// TestJourneyConnectPublicBroker walks the "discover and connect to a public
-// Broker" journey on real containers: discover a public Broker from its card,
-// see its public topic, pair with it, join the topic, list its Agent and send
-// it a message. Two alternatives cover a fingerprint mismatch warning and an
-// acceptor that does not listen.
+// TestJourneyConnectPublicBroker covers discovering a public Broker from its
+// card, seeing its public topic, pairing, joining the topic, listing its agent
+// and messaging it, plus a fingerprint-mismatch warning and an acceptor that
+// does not listen.
 func TestJourneyConnectPublicBroker(t *testing.T) {
 	t.Run("main", func(t *testing.T) {
 		c := harness.Up(t, harness.TopoFlat(3))
@@ -164,12 +149,10 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 		pairWaitRegistered(t, infra, "infra-agent")
 		pairWaitRegistered(t, scout, "scout")
 
-		// Precondition: A declares infra-help publicly.
 		journeyCallOK(t, infra, "join_topic", map[string]any{
 			"name": "infra-help", "public": true, "description": "ask infra",
 		}, harness.EventTimeout)
 
-		// Step 1: C discovers A's card and its public topic.
 		var discovered mcpserver.BrokerOut
 		harness.EventuallyPoll(t, discBound(2), "C discovers A's card", func(deadline time.Time) (bool, string) {
 			out, state := pairListBrokersPoll(t, deadline, scout)
@@ -196,7 +179,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return true, ""
 		})
 
-		// Step 2: C sees A's public declaration.
 		harness.EventuallyPoll(t, harness.TopicCallWaitBound, "C sees A's public topic", func(deadline time.Time) (bool, string) {
 			r, err := scout.PollCall(t, deadline, "list_topics", nil)
 			if err != nil {
@@ -217,11 +199,8 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return false, fmt.Sprintf("public topics are %v", out.Public)
 		})
 
-		// Step 4: A creates a pairing key.
 		key := journeyCreateKey(t, infra)
 
-		// Step 5: C connects with the address in A's card. Its fingerprint is
-		// the one the card announced and no warning is attached.
 		connected := journeyConnect(t, scout, aAddr, key.Key)
 		if connected.Fingerprint != discovered.Fingerprint {
 			t.Fatalf("connect_broker fingerprint is %q, want the card's %q", connected.Fingerprint, discovered.Fingerprint)
@@ -230,8 +209,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			t.Fatalf("connect_broker warnings are %v, want none", connected.Warnings)
 		}
 
-		// Step 6: C joins the same topic, which makes the agents visible to
-		// each other. Step 7: list_agents shows A's Agent.
 		journeyCallOK(t, scout, "join_topic", map[string]any{"name": "infra-help"}, harness.EventTimeout)
 		var target string
 		harness.EventuallyPoll(t, max(discBound(1), harness.ListAgentsWaitBound), "C sees A's Agent in infra-help", func(deadline time.Time) (bool, string) {
@@ -249,7 +226,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return false, fmt.Sprintf("agents are %v", out.Agents)
 		})
 
-		// Step 8: C sends a message and A's simulated session receives it.
 		const request = "can you look at the deploy?"
 		journeyCallOK(t, scout, "send_message", map[string]any{"to": target, "message": request}, harness.EventTimeout)
 		frame := infra.WaitFrame(t, harness.EventTimeout)
@@ -260,7 +236,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			t.Fatalf("the delivered body is %q, want %q", body, request)
 		}
 
-		// Result: A is now C's peer, as the Broker it dialed.
 		harness.EventuallyPoll(t, harness.EventTimeout, "C lists A as its connected peer", func(deadline time.Time) (bool, string) {
 			out, state := pairListBrokersPoll(t, deadline, scout)
 			if state != "" {
@@ -276,7 +251,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return true, ""
 		})
 
-		// The reverse view: A accepted C's connection and sees its Agent.
 		journeyWaitPeer(t, infra, "hostC.peer", "acceptor", discBound(1))
 		var scoutAddr string
 		harness.EventuallyPoll(t, max(discBound(1), harness.ListAgentsWaitBound), "A sees scout in infra-help", func(deadline time.Time) (bool, string) {
@@ -294,7 +268,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return false, fmt.Sprintf("agents are %v", out.Agents)
 		})
 
-		// The reverse message: A's Agent answers the request it received.
 		const reply = "yes, I am on it"
 		journeyCallOK(t, infra, "send_message", map[string]any{"to": scoutAddr, "message": reply}, harness.EventTimeout)
 		frame = scout.WaitFrame(t, harness.EventTimeout)
@@ -334,8 +307,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return true, ""
 		})
 
-		// A restarts with a fresh identity at the same address. Its old card
-		// is still in the directory.
 		hostA.StopBroker(t, syscall.SIGTERM)
 		c.Root(t, "hostA", "rm", "-rf", "/home/peer/.peers")
 		pairStartBroker(t, hostA, journeyConfig(true, false))
@@ -367,8 +338,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 		pairStartBroker(t, hostB, journeyConfig(false, false))
 		pairStartBroker(t, hostC, journeyConfig(false, false))
 
-		// A has no listener, so it dials B; C dials B as well. A's card still
-		// reaches C, with an empty address list.
 		journeyPair(t, hostB, hostA, journeyNodeAddr(c, "hostB"))
 		journeyPair(t, hostB, hostC, journeyNodeAddr(c, "hostB"))
 
@@ -397,7 +366,6 @@ func TestJourneyConnectPublicBroker(t *testing.T) {
 			return true, ""
 		})
 
-		// C creates the key and A dials C.
 		key := journeyCreateKey(t, scout)
 		operator := pairOperator(t, hostA, journeyWorkspace(t, hostA))
 		defer operator.End(t)

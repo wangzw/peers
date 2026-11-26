@@ -1,8 +1,5 @@
-# Every service, network and volume carries the owner label below. The Go
-# caller (syscontainer.newTestContainer) passes this process's marker as
-# ape2e-<pid>-<start>-pidns<inode>, and harness.CleanResidue removes only
-# resources whose owner is gone. A manual cleanup uses the same filter:
-#   docker ps -a --filter label=peers.e2e.owner
+# Every service, network and volume carries the owner label; harness.CleanResidue
+# removes only resources whose owner is gone.
 services:
   plain:
     image: ${PEERS_E2E_SYSTEM_IMAGE:?}
@@ -10,9 +7,8 @@ services:
     user: root
     labels:
       peers.e2e.owner: ${PEERS_E2E_OWNER:?}
-    # The no-egress check installs an OUTPUT DROP rule inside this container
-    # when the internal network's gateway is reachable. Only this container's
-    # netns is changed.
+    # The no-egress check installs an OUTPUT DROP rule inside this container, so
+    # it needs NET_ADMIN and NET_RAW; only this container's netns is changed.
     cap_add: [NET_ADMIN, NET_RAW]
     entrypoint: []
     command: ["sleep", "infinity"]
@@ -22,9 +18,8 @@ services:
       - ${PEERS_E2E_BIN:?}:/opt/peers-test:ro
     networks:
       - system
-  # The first host of a pair. The service keeps its historical name so Run and
-  # every existing test start it unchanged; hostA is the network name the other
-  # host dials.
+  # The systemd service Run starts and the first host of a pair; the other host
+  # dials it as hostA.
   systemd:
     image: ${PEERS_E2E_SYSTEM_IMAGE:?}
     privileged: true
@@ -46,9 +41,8 @@ services:
       system:
         aliases:
           - hostA
-  # The second host of a pair. It is host A's equal: systemd as process 1 and
-  # the extrausers accounts from the image, so either side can run a system or
-  # user Broker. It is started only by syscontainer.RunPairTest.
+  # The second host of a pair, equal to hostA so either side can run a system or
+  # user Broker; only syscontainer.RunPairTest starts it.
   hostB:
     image: ${PEERS_E2E_SYSTEM_IMAGE:?}
     privileged: true
@@ -75,14 +69,10 @@ volumes:
       peers.e2e.owner: ${PEERS_E2E_OWNER:?}
 
 networks:
-  # Explicitly declared and internal so the containers have no way out. The
-  # subnet lies in the high-end block of 198.18.0.0/15 that the harness routed
-  # allocator reserves for these networks, so the two allocators never hand out
-  # overlapping subnets. Docker therefore never picks an address from the host's
-  # own networks for a bridge route.
-  # syscontainer.Run overrides the subnet per compose project because Docker
-  # refuses two live networks with overlapping subnets and system tests run in
-  # parallel; the default is what a manual compose invocation uses.
+  # Internal network with a subnet in the high-end block of 198.18.0.0/15 that
+  # the harness routed allocator reserves, so the two allocators never overlap.
+  # syscontainer.Run overrides the subnet per project because Docker refuses two
+  # live overlapping networks; the default serves a manual compose invocation.
   system:
     internal: true
     labels:

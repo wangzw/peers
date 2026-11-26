@@ -20,62 +20,48 @@ import (
 )
 
 const (
-	// installAccount is the ordinary account the install script runs as. It
-	// exists only in the image's extrausers source, so the script, sudo and the
-	// user manager reach it through NSS.
+	// installAccount exists only through NSS, so the script, sudo and the user
+	// manager reach it.
 	installAccount = "diruser"
-	// installUID and installHome are that account's id and home directory.
-	installUID  = uint32(2100)
-	installHome = "/home/diruser"
+	installUID     = uint32(2100)
+	installHome    = "/home/diruser"
 
-	// installUserPrefix and installSystemPrefix are the default binary paths at
-	// the two scopes.
 	installUserPrefix   = installHome + "/.local/bin/peers"
 	installSystemPrefix = "/usr/local/bin/peers"
 
-	// installArchiveDir is where the inner test assembles a release-shaped
-	// directory from the staged archive files and the image's peers binary.
 	installArchiveDir = "/var/lib/peers-install-archive"
 
-	// installClaudePath is the fake claude the script resolves through PATH.
 	installClaudePath = "/usr/local/bin/claude"
 
-	// installStateDir holds the fake claude's invocation log and the marker
-	// that answers claude mcp get peer. It is world-writable because the script
-	// runs claude as the ordinary account in both scenarios.
+	// installStateDir is world-writable because the script runs claude as the
+	// ordinary account in both scenarios.
 	installStateDir = "/var/lib/peers-install-state"
 
-	// installSudoersPath grants the ordinary account the passwordless sudo the
-	// system scenario needs. The name has no dot, which sudo requires of
-	// a file it reads from /etc/sudoers.d.
+	// installSudoersPath has no dot, which sudo requires of a file in
+	// /etc/sudoers.d.
 	installSudoersPath = "/etc/sudoers.d/peers-install-script"
 
-	// installPath is the PATH the user scenario gives the script. The
-	// image keeps the fake claude in /usr/local/bin, which the default account
-	// PATH in syscontainer.Command omits.
+	// installPath includes /usr/local/bin, which syscontainer.Command's default
+	// account PATH omits.
 	installPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 	// installServiceStartBound bounds the wait for the Broker that the freshly
-	// installed service starts. service install returns after starting it, so
-	// the wait only covers systemd dispatching the unit.
+	// installed service starts; service install returns after starting it, so the
+	// wait only covers systemd dispatching the unit.
 	installServiceStartBound = 10 * time.Second
 
-	// installStagedDir is the directory under the test binary mount where the
-	// host stages the files copied from the repository.
 	installStagedDir = "install-script-e2e"
 
-	// installExpectedVersion is what the image's peers binary reports. The image
-	// is built through harness.BuildBinary, which stamps -X main.version=e2e.
+	// installExpectedVersion is the version harness.BuildBinary stamps into the
+	// image's binary.
 	installExpectedVersion = "peers e2e"
 
-	// installUserConfigDir, installSystemConfigDir and the two unit paths are
-	// the state a refused install must leave untouched.
+	// These paths are the state a refused install must leave untouched.
 	installUserConfigDir   = installHome + "/.peers"
 	installSystemConfigDir = "/etc/peers"
 	installUserUnitPath    = installHome + "/.config/systemd/user/peers.service"
 	installSystemUnitPath  = "/etc/systemd/system/peers.service"
 
-	// The shell completion and man page paths the install script writes.
 	installUserBashCompletion   = installHome + "/.local/share/bash-completion/completions/peers"
 	installUserFishCompletion   = installHome + "/.config/fish/completions/peers.fish"
 	installSystemBashCompletion = "/usr/local/share/bash-completion/completions/peers"
@@ -84,28 +70,19 @@ const (
 	installSystemManPage        = "/usr/local/share/man/man1/peers.1"
 	installSystemUpdateManPage  = "/usr/local/share/man/man1/peers-update.1"
 
-	// installLevelPrompt and installUpgradePrompt are the questions the script
-	// asks on the controlling terminal.
 	installLevelPrompt   = "Install for every account on this host? [y/N]"
 	installUpgradePrompt = "Upgrade the system installation? [Y/n]"
 )
 
-// installManPage and installUpdateManPage stand in for the man pages a release
-// archive carries under man/.
 const (
 	installManPage       = ".TH PEERS 1\n.SH NAME\npeers - test stub\n"
 	installUpdateManPage = ".TH PEERS-UPDATE 1\n.SH NAME\npeers-update - test stub\n"
 )
 
-// installArchiveReadme stands in for the user-facing README a release archive
-// carries. The install script does not read it; its presence keeps the staged
-// directory shaped like the archive.
 const installArchiveReadme = "peers release archive for the install-script end-to-end test.\n"
 
-// installFakeClaudeScript is the stand-in for Claude Code's CLI. It appends one
-// tab-separated line per call to the invocation log and answers claude mcp get
-// peer from a marker file, so the second install sees the registration the
-// first one made.
+// installFakeClaudeScript records each call and answers claude mcp get peer
+// from a marker an earlier mcp add wrote.
 const installFakeClaudeScript = `#!/bin/sh
 state=/var/lib/peers-install-state
 log="$state/invocations"
@@ -140,11 +117,9 @@ fi
 exit 0
 `
 
-// TestREQBrokerConfig041_UserInstallScript runs the release archive's install
-// script as the ordinary account and checks that it installs the binary at the
-// user default path, starts the user service and registers the MCP
-// server once. It runs the script a second time and checks that the install
-// succeeds again without adding the MCP server a second time.
+// TestREQBrokerConfig041_UserInstallScript checks that a user install places the
+// binary at the user default path, starts the user service, registers the MCP
+// server once, and stays idempotent on a second run.
 func TestREQBrokerConfig041_UserInstallScript(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -174,11 +149,9 @@ func TestREQBrokerConfig041_UserInstallScript(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig041_SystemInstallScript runs the install script with
-// --system through sudo as the ordinary account and checks that the system
-// service runs, that the binary belongs to root and that the account sudo ran
-// as received the MCP registration once. It runs the script a second time and
-// checks that it succeeds again without adding the MCP server a second time.
+// TestREQBrokerConfig041_SystemInstallScript checks that a system install through
+// sudo runs the system service, leaves a root-owned binary, registers the MCP
+// server once for the account sudo ran as, and stays idempotent on a second run.
 func TestREQBrokerConfig041_SystemInstallScript(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -213,11 +186,9 @@ func TestREQBrokerConfig041_SystemInstallScript(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory checks
-// that a system install leaves a completion directory owned by another account
-// alone. An account that owns such a directory could otherwise place a symlink
-// under it and have root write through it. The install still succeeds and warns
-// with the command that installs the completion by hand.
+// TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory checks that
+// a system install leaves a completion directory owned by another account alone,
+// warns with the manual command, and still succeeds.
 func TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -231,10 +202,8 @@ func TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory(t *test
 	removePreinstalledSystemBinary(t)
 	configureInstallSudo(t)
 
-	// Hand the zsh completion directory to another account, the way a host
-	// where an account other than root owns it would have it. 65534 is neither
-	// root nor the account that ran sudo (2100), so the install must leave the
-	// directory alone.
+	// 65534 is neither root nor the account that ran sudo, so the install must
+	// leave this directory alone.
 	zshDir := filepath.Dir(installSystemZshCompletion)
 	mustRun(t, "root", nil, "mkdir", "-p", zshDir)
 	mustRun(t, "root", nil, "chown", "65534:65534", zshDir)
@@ -255,8 +224,6 @@ func TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory(t *test
 	if _, err := os.Stat(installSystemZshCompletion); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the zsh completion %s was written into a directory owned by another account: %v", installSystemZshCompletion, err)
 	}
-	// The completions and man pages in directories owned by root are still
-	// installed.
 	for _, path := range []string{installSystemBashCompletion, installSystemManPage, installSystemUpdateManPage} {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("the install skipped %s as well: %v", path, err)
@@ -264,11 +231,9 @@ func TestREQBrokerConfig041_SystemInstallSkipsForeignCompletionDirectory(t *test
 	}
 }
 
-// TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory checks
-// that a system install into a completion directory owned by the account that
-// ran sudo writes the file as that account. Root creating the file would let a
-// process of the account swap a temporary file for a link that root writes
-// through, so the file's owner proves which account performed the write.
+// TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory checks that a
+// system install into a completion directory owned by the sudo user writes the
+// file as that account, not as root.
 func TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -305,9 +270,8 @@ func TestREQBrokerConfig041_SystemInstallWritesIntoTheSudoUsersDirectory(t *test
 	}
 }
 
-// TestREQBrokerConfig041_InstallScriptFilesRemovedByUninstall installs through
-// the script at both levels and checks that uninstall removes the completion
-// files it wrote, and the system man pages with them.
+// TestREQBrokerConfig041_InstallScriptFilesRemovedByUninstall checks that
+// uninstall removes both levels' completion files and the system man pages.
 func TestREQBrokerConfig041_InstallScriptFilesRemovedByUninstall(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -352,9 +316,9 @@ func TestREQBrokerConfig041_InstallScriptFilesRemovedByUninstall(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel answers the
-// level question with y and checks that the ordinary account gets a system
-// install, with the MCP server registered for that account.
+// TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel checks that
+// answering the level question with y gives the ordinary account a system install
+// with its MCP registration.
 func TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -391,8 +355,8 @@ func TestREQBrokerConfig044_InstallScriptLevelPromptAcceptsSystemLevel(t *testin
 	})
 }
 
-// TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser presses Enter at the
-// level question and checks that the account gets a user install.
+// TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser checks that pressing
+// Enter at the level question gives the account a user install.
 func TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -423,9 +387,8 @@ func TestREQBrokerConfig044_InstallScriptLevelPromptDefaultsToUser(t *testing.T)
 	})
 }
 
-// TestREQBrokerConfig045_InstallScriptRootDoesNotAsk runs the script as root without
-// any arguments and checks that it installs for every account without a
-// level question.
+// TestREQBrokerConfig045_InstallScriptRootDoesNotAsk checks that the script run as
+// root installs for every account without a level question.
 func TestREQBrokerConfig045_InstallScriptRootDoesNotAsk(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -456,9 +419,8 @@ func TestREQBrokerConfig045_InstallScriptRootDoesNotAsk(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig046_InstallScriptWithoutTerminal runs the script in a new session
-// without a controlling terminal and checks that it installs for this account without
-// waiting for input.
+// TestREQBrokerConfig046_InstallScriptWithoutTerminal checks that the script without
+// a controlling terminal installs for this account without waiting for input.
 func TestREQBrokerConfig046_InstallScriptWithoutTerminal(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -471,8 +433,8 @@ func TestREQBrokerConfig046_InstallScriptWithoutTerminal(t *testing.T) {
 	startInstallUserManager(t)
 
 	t.Run("REQ-broker-config-046 no terminal installs for this account", func(t *testing.T) {
-		// runInstallScriptAs starts the command in a new session with stdin on
-		// /dev/null, the same shape as "setsid sh ./install.sh </dev/null".
+		// The command starts in a new session with stdin from /dev/null, so it
+		// sees no controlling terminal.
 		res := runInstallScriptAs(t, installAccount, installUserEnv(), archive, "sh", "./install.sh")
 		if res.ExitCode != 0 {
 			t.Fatalf("no-terminal install: exit %d\nstdout:\n%s\nstderr:\n%s",
@@ -489,9 +451,8 @@ func TestREQBrokerConfig046_InstallScriptWithoutTerminal(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig047_InstallScriptUpgradePrompt installs the system service first,
-// then checks the upgrade question: Enter upgrades it and keeps the existing
-// configuration, while n leaves everything unchanged.
+// TestREQBrokerConfig047_InstallScriptUpgradePrompt checks that Enter upgrades the
+// system install and keeps its configuration while n leaves everything unchanged.
 func TestREQBrokerConfig047_InstallScriptUpgradePrompt(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -520,10 +481,8 @@ func TestREQBrokerConfig047_InstallScriptUpgradePrompt(t *testing.T) {
 		if strings.Contains(res.Output, installLevelPrompt) {
 			t.Errorf("the terminal showed the install question instead of the upgrade question:\n%s", res.Output)
 		}
-		// The image's binary reports the version "e2e", which has no
-		// MAJOR.MINOR.PATCH form. The binary installed first is the same build,
-		// so the two version strings are identical and name the same version:
-		// the script reports a reinstall of it rather than a replacement.
+		// Both binaries are the same build, so the script reports a reinstall
+		// rather than a replacement.
 		reinstalled := "Reinstalled " + installExpectedVersion + "."
 		if !strings.Contains(res.Output, reinstalled) {
 			t.Errorf("the upgrade run did not report the reinstalled version %q:\n%s", reinstalled, res.Output)
@@ -560,8 +519,8 @@ func TestREQBrokerConfig047_InstallScriptUpgradePrompt(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig048_InstallScriptBothFlags checks that giving both level
-// options is a usage error that changes nothing.
+// TestREQBrokerConfig048_InstallScriptBothFlags checks that --system and --user
+// together are a usage error that changes nothing.
 func TestREQBrokerConfig048_InstallScriptBothFlags(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -590,8 +549,8 @@ func TestREQBrokerConfig048_InstallScriptBothFlags(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig048_InstallScriptUserFlag checks that --user skips the
-// level question and installs for the account.
+// TestREQBrokerConfig048_InstallScriptUserFlag checks that --user skips the level
+// question and installs for the account.
 func TestREQBrokerConfig048_InstallScriptUserFlag(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -619,7 +578,7 @@ func TestREQBrokerConfig048_InstallScriptUserFlag(t *testing.T) {
 }
 
 // TestREQBrokerConfig048_InstallScriptSystemFlag checks that --system skips the
-// level question, runs the script through sudo and installs for every account.
+// level question and installs for every account.
 func TestREQBrokerConfig048_InstallScriptSystemFlag(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -647,9 +606,8 @@ func TestREQBrokerConfig048_InstallScriptSystemFlag(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig050_InstallScriptUserSummary checks the summary a
-// user install prints and that the printed commands run. The summary is
-// produced by service install, so it must be there after a successful install.
+// TestREQBrokerConfig050_InstallScriptUserSummary checks the summary a user install
+// prints and that the commands it prints run.
 func TestREQBrokerConfig050_InstallScriptUserSummary(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -683,8 +641,8 @@ func TestREQBrokerConfig050_InstallScriptUserSummary(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig050_InstallScriptSystemSummary checks the same summary for
-// a system install.
+// TestREQBrokerConfig050_InstallScriptSystemSummary checks the same summary for a
+// system install.
 func TestREQBrokerConfig050_InstallScriptSystemSummary(t *testing.T) {
 	if !syscontainer.InContainer() {
 		stageInstallArchive(t)
@@ -718,9 +676,8 @@ func TestREQBrokerConfig050_InstallScriptSystemSummary(t *testing.T) {
 	})
 }
 
-// assertInstallScriptSummary checks the summary the install script printed and
-// that every path it names exists. It uses the same summary parser as the
-// service-install tests.
+// assertInstallScriptSummary checks the summary the install script printed and that
+// every path it names exists.
 func assertInstallScriptSummary(t *testing.T, output, level, start string, wants map[string]string) {
 	t.Helper()
 	assertInstallSummary(t, output, level, start, false, wants)
@@ -733,15 +690,13 @@ func assertInstallScriptSummary(t *testing.T, output, level, start string, wants
 }
 
 // assertInstallScriptCommandsRun runs the start, stop, restart and uninstall
-// commands exactly as the install script printed them. A user install
-// needs its prefix on PATH; a system install runs them as root, so the
-// printed sudo prefix is dropped.
+// commands as the install script printed them.
 func assertInstallScriptCommandsRun(t *testing.T, output, account string, env []string, dir string) {
 	t.Helper()
 	for _, label := range []string{"start:", "stop:", "restart:", "uninstall:"} {
 		args := printedCommandArgs(t, summaryValue(t, output, label))
-		// The summary prints "peers uninstall" for a person at a terminal. The
-		// test runs without one, so it passes --yes to skip the data question.
+		// The summary prints "peers uninstall" for a person at a terminal; the
+		// test passes --yes to skip the data question.
 		if label == "uninstall:" {
 			args = append(args, "--yes")
 		}
@@ -753,7 +708,6 @@ func assertInstallScriptCommandsRun(t *testing.T, output, account string, env []
 	}
 }
 
-// installClaudeCall is one invocation recorded by the fake claude.
 type installClaudeCall struct {
 	UID      uint32
 	User     string
@@ -762,9 +716,6 @@ type installClaudeCall struct {
 	Args     string
 }
 
-// stageInstallArchive copies the install script and the license from the
-// repository into the directory mount the container reads. It runs on the host;
-// the inner run assembles them with the image's peers binary.
 func stageInstallArchive(t *testing.T) {
 	t.Helper()
 
@@ -785,8 +736,6 @@ func stageInstallArchive(t *testing.T) {
 	syscontainer.StageArtifact(t, filepath.Join(rel, "man", "peers-update.1"), []byte(installUpdateManPage), 0o644)
 }
 
-// readRepositoryFile reads a file at rel from the repository root and fails the
-// test with the path when it cannot.
 func readRepositoryFile(t *testing.T, rel string) []byte {
 	t.Helper()
 
@@ -801,8 +750,6 @@ func readRepositoryFile(t *testing.T, rel string) []byte {
 	return data
 }
 
-// stagedArchiveRel returns the per-test relative directory the host stages the
-// archive files in.
 func stagedArchiveRel(t *testing.T) string {
 	t.Helper()
 
@@ -818,9 +765,6 @@ func stagedArchiveRel(t *testing.T) string {
 	return filepath.Join(installStagedDir, b.String())
 }
 
-// installUserEnv returns the environment the user script and its service
-// manager need. The account's user manager is running, so the runtime directory
-// and the session bus path are set the way a login sets them.
 func installUserEnv() []string {
 	uid := strconv.FormatUint(uint64(installUID), 10)
 	return []string{
@@ -830,9 +774,6 @@ func installUserEnv() []string {
 	}
 }
 
-// prepareInstallArchive builds a directory shaped like the release archive:
-// the peers binary, the staged install script, the license and a README. It
-// returns the directory.
 func prepareInstallArchive(t *testing.T) string {
 	t.Helper()
 
@@ -864,7 +805,6 @@ func prepareInstallArchive(t *testing.T) string {
 	return installArchiveDir
 }
 
-// copyInstallFile copies src to dst with mode.
 func copyInstallFile(src, dst string, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", filepath.Dir(dst), err)
@@ -882,8 +822,6 @@ func copyInstallFile(src, dst string, mode os.FileMode) error {
 	return nil
 }
 
-// installFakeClaude writes the fake claude into the image's PATH and clears its
-// state, so the scenario starts with no registration.
 func installFakeClaude(t *testing.T) {
 	t.Helper()
 
@@ -904,9 +842,6 @@ func installFakeClaude(t *testing.T) {
 	}
 }
 
-// removePreinstalledSystemBinary removes the peers binary the image already
-// carries at the system default path, so the owner and mode checked after
-// the install are the install's own.
 func removePreinstalledSystemBinary(t *testing.T) {
 	t.Helper()
 
@@ -918,8 +853,6 @@ func removePreinstalledSystemBinary(t *testing.T) {
 	}
 }
 
-// configureInstallSudo grants the ordinary account passwordless sudo, which the
-// system scenario needs to run the script the way an administrator does.
 func configureInstallSudo(t *testing.T) {
 	t.Helper()
 
@@ -937,8 +870,6 @@ func configureInstallSudo(t *testing.T) {
 	}
 }
 
-// startInstallUserManager starts the ordinary account's user manager the way a
-// login would and waits for its runtime directory and bus.
 func startInstallUserManager(t *testing.T) {
 	t.Helper()
 
@@ -948,9 +879,6 @@ func startInstallUserManager(t *testing.T) {
 	waitUserManager(t, installUID)
 }
 
-// assertInstallScriptRefusesRoot runs the script through sudo with --user and
-// checks that root cannot take the user path and that the host stays
-// unchanged: no binary, no unit, no MCP registration, no configuration.
 func assertInstallScriptRefusesRoot(t *testing.T, archive string) {
 	t.Helper()
 
@@ -992,8 +920,6 @@ func assertInstallScriptRefusesRoot(t *testing.T, archive string) {
 	}
 }
 
-// runSystemInstallScript runs the script with --system through sudo as the
-// ordinary account, so the script sees root and SUDO_USER naming that account.
 func runSystemInstallScript(t *testing.T, archive string) {
 	t.Helper()
 
@@ -1004,16 +930,13 @@ func runSystemInstallScript(t *testing.T, archive string) {
 	}
 }
 
-// runInstallScriptAs runs name in dir as account with env and returns its
-// output and exit code. A process that cannot be started fails the test.
 func runInstallScriptAs(t *testing.T, account string, env []string, dir, name string, args ...string) syscontainer.Result {
 	t.Helper()
 
 	cmd := syscontainer.Command(account, env, name, args...)
 	cmd.Dir = dir
 	// A new session has no controlling terminal, so a run without --system or
-	// --user exercises the no-terminal level choice instead of blocking on the
-	// terminal that runs the tests.
+	// --user exercises the no-terminal level choice.
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -1034,17 +957,14 @@ func runInstallScriptAs(t *testing.T, account string, env []string, dir, name st
 	return res
 }
 
-// installTerminalResult is a command's output and exit code when it runs under
-// a pseudo-terminal.
 type installTerminalResult struct {
 	Output   string
 	ExitCode int
 }
 
-// runInstallScriptWithTerminal runs name with args as account under a
-// pseudo-terminal, so the install script can read /dev/tty for its level and
-// admin group questions. answer is typed on that terminal, and the command's
-// own standard input is /dev/null, the way a piped install sees it.
+// runInstallScriptWithTerminal runs name under script(1) so the install script can
+// read /dev/tty, typing answer on that terminal while the command's own stdin is
+// /dev/null.
 func runInstallScriptWithTerminal(t *testing.T, account string, env []string, dir, answer, name string, args ...string) installTerminalResult {
 	t.Helper()
 
@@ -1076,15 +996,12 @@ func runInstallScriptWithTerminal(t *testing.T, account string, env []string, di
 	return res
 }
 
-// installShellQuote returns a single-quoted shell word.
 func installShellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
-// assertInstallImageHasNoFish checks the image contract the completion checks
-// rely on. The e2e images do not install fish, so the script must skip the fish
-// completion; an image that starts carrying fish fails here rather than letting
-// the absence checks pass without exercising the skip.
+// assertInstallImageHasNoFish fails if the image starts carrying fish, which would
+// let the completion absence checks pass without exercising the skip.
 func assertInstallImageHasNoFish(t *testing.T) {
 	t.Helper()
 	if path, err := exec.LookPath("fish"); err == nil {
@@ -1092,10 +1009,6 @@ func assertInstallImageHasNoFish(t *testing.T) {
 	}
 }
 
-// assertUserInstallCompletions checks the completion files a user install
-// writes. The image has no fish, so the fish completion and its configuration
-// directory must be absent; the zsh completion is deliberately absent, and
-// output, when given, must name the manual step.
 func assertUserInstallCompletions(t *testing.T, output string) {
 	t.Helper()
 	if _, err := os.Stat(installUserBashCompletion); err != nil {
@@ -1119,9 +1032,6 @@ func assertUserInstallCompletions(t *testing.T, output string) {
 	}
 }
 
-// assertSystemInstallCompletionsAndMan checks the completion files and man
-// pages a system install writes. The image has no fish, so the fish
-// completion and its configuration directory must be absent.
 func assertSystemInstallCompletionsAndMan(t *testing.T) {
 	t.Helper()
 	for _, path := range []string{
@@ -1142,8 +1052,6 @@ func assertSystemInstallCompletionsAndMan(t *testing.T) {
 	}
 }
 
-// assertUserInstallCompletionsRemoved checks that an uninstall removed the
-// user completion files and left no fish configuration directory.
 func assertUserInstallCompletionsRemoved(t *testing.T) {
 	t.Helper()
 	for _, path := range []string{installUserBashCompletion, installUserFishCompletion} {
@@ -1156,9 +1064,6 @@ func assertUserInstallCompletionsRemoved(t *testing.T) {
 	}
 }
 
-// assertSystemInstallCompletionsAndManRemoved checks that an uninstall removed
-// the system completion files and man pages and left no fish
-// configuration directory.
 func assertSystemInstallCompletionsAndManRemoved(t *testing.T) {
 	t.Helper()
 	for _, path := range []string{
@@ -1177,8 +1082,6 @@ func assertSystemInstallCompletionsAndManRemoved(t *testing.T) {
 	}
 }
 
-// assertUserInstall checks the binary, the version output and the running user
-// service after a user install.
 func assertUserInstall(t *testing.T) {
 	t.Helper()
 
@@ -1198,8 +1101,6 @@ func assertUserInstall(t *testing.T) {
 	}
 }
 
-// assertSystemInstall checks the binary, the version output and the running
-// system service after a system install.
 func assertSystemInstall(t *testing.T) {
 	t.Helper()
 
@@ -1222,7 +1123,6 @@ func assertSystemInstall(t *testing.T) {
 	}
 }
 
-// assertInstallBinary checks that path is a regular 0755 file owned by wantUID.
 func assertInstallBinary(t *testing.T, path string, wantUID uint32) {
 	t.Helper()
 
@@ -1242,8 +1142,6 @@ func assertInstallBinary(t *testing.T, path string, wantUID uint32) {
 	}
 }
 
-// assertInstallVersion runs the installed binary with --version and checks that
-// it reports the version the test build was stamped with.
 func assertInstallVersion(t *testing.T, account string, env []string, binary string) {
 	t.Helper()
 
@@ -1257,7 +1155,6 @@ func assertInstallVersion(t *testing.T, account string, env []string, binary str
 	}
 }
 
-// waitInstallSocket waits for a Broker socket to appear.
 func waitInstallSocket(t *testing.T, socket string) {
 	t.Helper()
 
@@ -1269,8 +1166,8 @@ func waitInstallSocket(t *testing.T, socket string) {
 	})
 }
 
-// waitInstallUnitState waits until systemctl reports want for the peers
-// unit. scopeArgs selects the user manager ("--user") or the system manager.
+// waitInstallUnitState waits until systemctl reports want; scopeArgs selects the
+// user manager ("--user") or the system manager.
 func waitInstallUnitState(t *testing.T, account string, env []string, want string, scopeArgs ...string) {
 	t.Helper()
 
@@ -1283,10 +1180,8 @@ func waitInstallUnitState(t *testing.T, account string, env []string, want strin
 	})
 }
 
-// assertInstallMCPAdd checks that the fake claude received exactly want add
-// calls, all as wantUID with wantHome, and that each named the binary. Every
-// invocation whose arguments start with "mcp add" counts, so an install that
-// registered twice under different arguments cannot hide behind the alias.
+// assertInstallMCPAdd checks that the fake claude received exactly want mcp add
+// calls, all as wantUID with wantHome, each naming binary.
 func assertInstallMCPAdd(t *testing.T, want int, binary string, wantUID uint32, wantHome string) {
 	t.Helper()
 
@@ -1309,8 +1204,6 @@ func assertInstallMCPAdd(t *testing.T, want int, binary string, wantUID uint32, 
 	}
 }
 
-// installMCPAddCalls returns every fake claude invocation that starts with
-// "mcp add", whatever arguments follow.
 func installMCPAddCalls(t *testing.T) []installClaudeCall {
 	t.Helper()
 
@@ -1323,9 +1216,8 @@ func installMCPAddCalls(t *testing.T) []installClaudeCall {
 	return matching
 }
 
-// assertInstallMCPGet checks that the fake claude received exactly want get
-// calls, all as wantUID with wantHome. The second install relies on the answer
-// the first registration left behind.
+// assertInstallMCPGet checks that the fake claude received exactly want mcp get
+// calls, all as wantUID with wantHome.
 func assertInstallMCPGet(t *testing.T, want int, wantUID uint32, wantHome string) {
 	t.Helper()
 
@@ -1345,8 +1237,6 @@ func assertInstallMCPGet(t *testing.T, want int, wantUID uint32, wantHome string
 	}
 }
 
-// installMCPCalls returns the fake claude's invocations whose arguments equal
-// args.
 func installMCPCalls(t *testing.T, args string) []installClaudeCall {
 	t.Helper()
 
@@ -1359,7 +1249,6 @@ func installMCPCalls(t *testing.T, args string) []installClaudeCall {
 	return matching
 }
 
-// readInstallClaudeCalls reads and parses the fake claude's invocation log.
 func readInstallClaudeCalls(t *testing.T) []installClaudeCall {
 	t.Helper()
 
@@ -1393,7 +1282,6 @@ func readInstallClaudeCalls(t *testing.T) []installClaudeCall {
 	return calls
 }
 
-// installClaudeLog renders the fake claude's invocations for a failure message.
 func installClaudeLog(t *testing.T) string {
 	t.Helper()
 

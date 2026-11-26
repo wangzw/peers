@@ -12,9 +12,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// Oracle is a direct client of a Broker's local interface. Tests use it to
-// read Broker state without being an Agent, as a cross-check of what the MCP
-// tools report.
+// Oracle is a direct client of a Broker's local interface, used to read Broker
+// state without being an Agent.
 type Oracle struct {
 	conn   *grpc.ClientConn
 	client localpb.LocalClient
@@ -40,7 +39,7 @@ func (o *Oracle) ListBrokers(ctx context.Context) (*localpb.ListBrokersResponse,
 	return o.client.ListBrokers(ctx, &localpb.ListBrokersRequest{})
 }
 
-// ListTopics returns the topics the agent named by id joined and the public
+// ListTopics returns the topics the agent with agentID joined and the public
 // topics it has not joined.
 func (o *Oracle) ListTopics(ctx context.Context, agentID string) (*localpb.ListTopicsResponse, error) {
 	return o.client.ListTopics(ctx, &localpb.ListTopicsRequest{AgentId: agentID})

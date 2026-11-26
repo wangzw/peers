@@ -19,8 +19,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// fakeLocalServer answers the two local-interface calls OracleClient exercises
-// without starting a Broker.
 type fakeLocalServer struct {
 	localpb.UnimplementedLocalServer
 
@@ -33,9 +31,9 @@ type fakeLocalServer struct {
 	blockListBrokersAfter int
 }
 
-// ListBrokers answers normally until blockListBrokersAfter calls have been
-// made, then hangs until ctx is done. It models a Broker that stops answering
-// partway through a consistency window.
+// ListBrokers answers normally until blockListBrokersAfter calls, then hangs
+// until ctx is done, modelling a Broker that stops answering partway through a
+// consistency window.
 func (f *fakeLocalServer) ListBrokers(ctx context.Context, _ *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error) {
 	f.mu.Lock()
 	f.listBrokersCalls++
@@ -79,8 +77,6 @@ func (f *fakeLocalServer) requests() (*localpb.GetConfigRequest, *localpb.AuditR
 	return f.getConfigReq, f.auditReq
 }
 
-// newFakeOracleClient serves srv on a Unix socket and returns an OracleClient
-// connected to it.
 func newFakeOracleClient(t *testing.T, srv localpb.LocalServer) *OracleClient {
 	t.Helper()
 	socket := filepath.Join(newSocketTempDir(t, "broker.sock"), "broker.sock")
@@ -101,7 +97,6 @@ func newFakeOracleClient(t *testing.T, srv localpb.LocalServer) *OracleClient {
 	return &OracleClient{oracle: oracle}
 }
 
-// countingListener counts the connections a gRPC server accepts.
 type countingListener struct {
 	net.Listener
 
@@ -125,10 +120,8 @@ func (l *countingListener) count() int {
 	return l.conns
 }
 
-// TestLocalOracleReusesOneConnection checks that a local node's Oracle does not
-// open a new connection on every call. The Broker caps the connections one
-// account may hold, so a polling test that asked for a new Oracle each time
-// would exhaust the limit and fail with a reset connection.
+// TestLocalOracleReusesOneConnection checks that a local node's Oracle reuses
+// one connection across calls instead of opening a new one each time.
 func TestLocalOracleReusesOneConnection(t *testing.T) {
 	root := newSocketTempDir(t, "broker.sock")
 	socket := filepath.Join(root, strconv.Itoa(os.Geteuid()), "broker.sock")
@@ -167,6 +160,8 @@ func TestLocalOracleReusesOneConnection(t *testing.T) {
 	}
 }
 
+// TestOracleGetConfigAndAudit checks that OracleClient forwards GetConfig and
+// Audit arguments and returns product errors as an ErrorDetail.
 func TestOracleGetConfigAndAudit(t *testing.T) {
 	since := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 
@@ -252,20 +247,16 @@ func TestOracleGetConfigAndAudit(t *testing.T) {
 	})
 }
 
-// TestListBrokersWithinStallsAtTheWindowEnd reproduces the truncated-Oracle
-// defect. A consistency window used to shorten each Oracle call to the time it
-// had left, so a call that hung late in the window was cut off below the call
-// bound and returned as an unobservable sample. The window then passed on an
-// earlier conclusive sample even though the Broker had stopped answering. The
-// call must run its own bound in full and report a stall, which ends the
-// window.
+// TestListBrokersWithinStallsAtTheWindowEnd checks that a consistency window
+// whose Oracle call hangs late reports a stall instead of passing on an earlier
+// conclusive sample.
 func TestListBrokersWithinStallsAtTheWindowEnd(t *testing.T) {
 	const (
 		window    = 100 * time.Millisecond
 		callBound = 400 * time.Millisecond
 	)
-	// Answer the first call, so the window holds a conclusive sample before the
-	// hang: the old code passed on that sample when the hung call was cut short.
+	// Answer the first call so the window holds a conclusive sample before the
+	// hang.
 	fake := &fakeLocalServer{blockListBrokersAfter: 1}
 	oracle := newFakeOracleClient(t, fake)
 	tb := &recordTB{}

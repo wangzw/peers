@@ -25,36 +25,29 @@ import (
 )
 
 const (
-	// listBrokersRole selects the test binary role that reads ListBrokers over
-	// the local socket as the account running it.
 	listBrokersRole = "list-brokers"
 	// userServiceRecoveryBound is the acceptance bound for the Broker and its
-	// link after the user manager restarts. The peer configuration sets
-	// link.reconnect_min to 1s and link.reconnect_max to 2s, so a dialer redials
-	// within at most two seconds of the Broker starting, inside this bound.
+	// link after the user manager restarts; the peer configuration redials within
+	// two seconds.
 	userServiceRecoveryBound = 3 * time.Second
 	// noUnitQuietWindow is how long the positive control watches for a peer
-	// Broker when no unit was installed. Nothing can start one, so a second is
-	// long enough to see any unit that would have been enabled by accident.
+	// Broker when no unit is installed; nothing can start one, so a second is
+	// enough to see a wrongly enabled unit.
 	noUnitQuietWindow = time.Second
 )
 
-// brokerListing is the answer of the list-brokers role.
 type brokerListing struct {
 	Brokers []brokerEntry `json:"brokers"`
 }
 
-// brokerEntry is one Broker in the listing.
 type brokerEntry struct {
 	Alias  string `json:"alias"`
 	Status string `json:"status"`
 }
 
-// TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink installs the
-// user service with the real subcommand, simulates a login by restarting
-// the account's user manager, and checks that the Broker and its paired link
-// come back without any session being started. The positive control restarts
-// the same manager before installing and finds no Broker.
+// TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink checks that an
+// installed user service starts the Broker and restores its paired link across
+// a user manager restart, without a session.
 func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -69,15 +62,12 @@ func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T
 	}
 	socket := "/tmp/peers-" + uid + "/broker.sock"
 
-	// The peer has a configuration that lets a Broker start on its own and
-	// redial quickly, so the recovery bound below is set by those timers.
 	writeAccountFile(t, "peer", "/home/peer/.peers/config.yaml",
 		"broker:\n  listen: \":17445\"\nlink:\n  reconnect_min: 1s\n  reconnect_max: 2s\n")
 
 	otherBroker := syscontainer.StartUserBroker(t, "other", "--listen", ":17444")
 	t.Logf("the paired Broker runs as other with pid %d", otherBroker.PID)
 
-	// Logging in before installing must start nothing: there is no unit yet.
 	mustRun(t, "root", nil, "loginctl", "enable-linger", "peer")
 	mustRun(t, "root", nil, "systemctl", "start", "user@"+uid+".service")
 	waitUserManager(t, peerUID)
@@ -89,9 +79,6 @@ func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T
 		return true, ""
 	})
 
-	// Install the user service as peer through the product's subcommand.
-	// The interface is "service install [--system]": omitting --system is what
-	// selects the user unit, and there is no separate --user flag.
 	install := runWithEnv(t, "peer", userEnv, "peers", "service", "install")
 	if install.ExitCode != 0 {
 		t.Fatalf("peers service install as peer: exit %d\nstdout: %s\nstderr: %s",
@@ -100,10 +87,9 @@ func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T
 	assertUserUnitEnabled(t, userEnv)
 	assertUserUnitVerifies(t, userEnv)
 
-	// The installation starts the service in the running user manager, so the
-	// Broker must be running without a new login. Pairing now means the only
-	// peer Broker is the one the user manager owns; a Broker launched by a
-	// session would survive the manager restart and hold the account lock.
+	// Wait for the user manager's Broker before opening a session; a Broker a
+	// session launches would survive the manager restart and hold the account
+	// lock, so the test would miss the manager-started recovery path.
 	syscontainer.WaitFor(t, "the peer Broker socket "+socket+" after install", func() bool {
 		_, err := os.Stat(socket)
 		return err == nil
@@ -117,8 +103,6 @@ func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T
 		t.Fatalf("MainPID = %d, but the peer Broker process is %d", beforePID, got)
 	}
 
-	// Pair peer's Broker with other's, then end both sessions. The link is
-	// Broker state and survives the last session per REQ-broker-config-014.
 	otherSession := syscontainer.NewSession(t, "other", "b1")
 	peerSession := syscontainer.NewSession(t, "peer", "a1")
 	waitRegistered(t, otherSession)
@@ -140,8 +124,6 @@ func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T
 		return len(syscontainer.Pids("peers", "mcp")) == 0
 	})
 
-	// Login again without starting a session. The enabled unit starts the
-	// Broker, which reloads the pair from its data directory and redials.
 	mustRun(t, "root", nil, "systemctl", "restart", "user@"+uid+".service")
 	harness.Eventually(t, userServiceRecoveryBound, "the peer Broker and its link after the user manager restarts", func() (bool, string) {
 		if procs := peerBrokers(peerUID); len(procs) == 0 {
@@ -165,7 +147,6 @@ func TestREQBrokerConfig015_UserServiceStartsAtLoginAndRestoresLink(t *testing.T
 	}
 }
 
-// assertUserUnitEnabled checks that systemd records the user unit as enabled.
 func assertUserUnitEnabled(t *testing.T, userEnv []string) {
 	t.Helper()
 	res := runWithEnv(t, "peer", userEnv, "systemctl", "--user", "is-enabled", "peers.service")
@@ -175,8 +156,6 @@ func assertUserUnitEnabled(t *testing.T, userEnv []string) {
 	}
 }
 
-// assertUserUnitVerifies checks that systemd accepts the installed user unit
-// without a warning.
 func assertUserUnitVerifies(t *testing.T, userEnv []string) {
 	t.Helper()
 	unitPath := userUnitPath(t)
@@ -187,7 +166,6 @@ func assertUserUnitVerifies(t *testing.T, userEnv []string) {
 	}
 }
 
-// userUnitPath returns the path of the peer account's user unit.
 func userUnitPath(t *testing.T) string {
 	t.Helper()
 	u, err := user.Lookup("peer")
@@ -197,7 +175,6 @@ func userUnitPath(t *testing.T) string {
 	return filepath.Join(u.HomeDir, ".config", "systemd", "user", "peers.service")
 }
 
-// userServiceMainPID returns the MainPID systemd reports for the user unit.
 func userServiceMainPID(t *testing.T, userEnv []string) int {
 	t.Helper()
 	res := runWithEnv(t, "peer", userEnv, "systemctl", "--user", "show", "--property", "MainPID", "--value", "peers.service")
@@ -211,8 +188,6 @@ func userServiceMainPID(t *testing.T, userEnv []string) int {
 	return pid
 }
 
-// solePeerBroker returns the pid of the only running peer Broker process and
-// fails when there is not exactly one.
 func solePeerBroker(t *testing.T, peerUID uint32) int {
 	t.Helper()
 	procs := peerBrokers(peerUID)
@@ -222,7 +197,6 @@ func solePeerBroker(t *testing.T, peerUID uint32) int {
 	return procs[0].PID
 }
 
-// peerBrokers returns the running peer Broker processes.
 func peerBrokers(peerUID uint32) []syscontainer.ProcInfo {
 	var peer []syscontainer.ProcInfo
 	for _, proc := range syscontainer.Pids("peers", "service", "run") {
@@ -233,14 +207,11 @@ func peerBrokers(peerUID uint32) []syscontainer.ProcInfo {
 	return peer
 }
 
-// userManagerBound bounds the wait for the user manager's runtime directory
-// and bus after systemd starts it. It is setup for the acceptance below, not
-// the acceptance itself, so it follows systemd's own startup allowance rather
-// than the three-second bound on the Broker and its link.
+// userManagerBound bounds the setup wait for the user manager's runtime
+// directory and bus; it follows systemd's own startup allowance, not the
+// three-second acceptance bound on the Broker and its link.
 const userManagerBound = 10 * time.Second
 
-// waitUserManager waits for the runtime directory and the bus of the user
-// manager of uid.
 func waitUserManager(t *testing.T, uid uint32) {
 	t.Helper()
 
@@ -259,8 +230,6 @@ func waitUserManager(t *testing.T, uid uint32) {
 	})
 }
 
-// writeAccountFile writes content to path, creating its directory, and hands
-// both to account with a configuration directory's permissions.
 func writeAccountFile(t *testing.T, account, path, content string) {
 	t.Helper()
 
@@ -298,8 +267,6 @@ func writeAccountFile(t *testing.T, account, path, content string) {
 	}
 }
 
-// mustRun runs name with args as account with env and fails the test when it
-// does not exit 0.
 func mustRun(t *testing.T, account string, env []string, name string, args ...string) syscontainer.Result {
 	t.Helper()
 
@@ -312,7 +279,6 @@ func mustRun(t *testing.T, account string, env []string, name string, args ...st
 	return res
 }
 
-// runWithEnv runs name with args as account with env and returns its output.
 func runWithEnv(t *testing.T, account string, env []string, name string, args ...string) syscontainer.Result {
 	t.Helper()
 
@@ -333,7 +299,6 @@ func runWithEnv(t *testing.T, account string, env []string, name string, args ..
 	return res
 }
 
-// createPairingKey calls create_pairing_key on session and returns the key.
 func createPairingKey(t *testing.T, session *syscontainer.Session) string {
 	t.Helper()
 
@@ -348,8 +313,6 @@ func createPairingKey(t *testing.T, session *syscontainer.Session) string {
 	return out.Key
 }
 
-// connectBroker calls connect_broker on session and returns the local alias of
-// the other Broker.
 func connectBroker(t *testing.T, session *syscontainer.Session, address, key string) string {
 	t.Helper()
 
@@ -367,8 +330,6 @@ func connectBroker(t *testing.T, session *syscontainer.Session, address, key str
 	return out.Alias
 }
 
-// callStructured calls one tool and returns its structured content, the error
-// flag and the joined text.
 func callStructured(t *testing.T, session *syscontainer.Session, tool string, args map[string]any) (json.RawMessage, bool, string) {
 	t.Helper()
 
@@ -395,9 +356,8 @@ func callStructured(t *testing.T, session *syscontainer.Session, tool string, ar
 	return structured, result.IsError, text
 }
 
-// closeSession closes the MCP client session so no session process survives
-// the user manager restart. It also closes the simulated session, which
-// releases the inbox socket, so a later session with the same account and name
+// closeSession closes the MCP client session and the simulated session, which
+// releases the inbox socket so a later session with the same account and name
 // can bind that path again.
 func closeSession(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
@@ -408,8 +368,6 @@ func closeSession(t *testing.T, session *syscontainer.Session) {
 	session.Fake.Close()
 }
 
-// listBrokerStatuses runs the list-brokers role as peer and returns the status
-// name of every listed Broker by alias.
 func listBrokerStatuses(t *testing.T, exe, socket string) (map[string]string, error) {
 	t.Helper()
 
@@ -438,9 +396,6 @@ func listBrokerStatuses(t *testing.T, exe, socket string) (map[string]string, er
 	return statuses, nil
 }
 
-// runListBrokersRole is the body of the test binary when TestMain selects the
-// list-brokers role. It reads ListBrokers over the local socket as the account
-// running it and writes the answer as one JSON line.
 func runListBrokersRole() int {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -470,8 +425,6 @@ func runListBrokersRole() int {
 	return 0
 }
 
-// failListBrokersRole reports an error from the list-brokers role on standard
-// error and returns a failure code.
 func failListBrokersRole(err error) int {
 	fmt.Fprintf(os.Stderr, "list-brokers: %v\n", err)
 	return 1

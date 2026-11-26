@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// StartSystemService installs and starts the system Broker through
-// systemd. When configYAML is non-empty it is written to the system
-// configuration file (owner root, mode 0600) before the installation, so the
-// Broker starts with it. The service is stopped when the test ends. Use
-// Run(t, Systemd) to get a container whose process 1 is systemd.
+// StartSystemService installs and starts the system Broker through systemd.
+// When configYAML is non-empty it is written to the system configuration file
+// (owner root, mode 0600) before the installation; the service is stopped when
+// the test ends. Use Run(t, Systemd) to get a container whose process 1 is
+// systemd.
 func StartSystemService(t *testing.T, configYAML string) {
 	t.Helper()
 	if !InContainer() {
@@ -44,7 +44,6 @@ func StartSystemService(t *testing.T, configYAML string) {
 	})
 }
 
-// systemdIsPID1 reports whether systemd runs as the container's init process.
 func systemdIsPID1() bool {
 	stat, err := os.ReadFile("/proc/1/comm")
 	if err != nil {

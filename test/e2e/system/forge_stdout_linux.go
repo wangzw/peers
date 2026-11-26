@@ -1,5 +1,8 @@
 //go:build e2e && linux
 
+// Package e2e holds the end-to-end tests that install the system and user
+// Brokers in containers and drive them through terminal commands and MCP
+// sessions.
 package e2e
 
 import (
@@ -9,12 +12,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// openProcessStdout returns a writable file for pid's standard output. It
-// first tries /proc/<pid>/fd/1, the path the forged-response attack names. The
-// stdout pipe belongs to the root Broker that created it, so an unprivileged
-// caller is refused there even when it may inspect the process; the same file
-// description is then duplicated with pidfd_getfd, which is gated by ptrace
-// access instead of the pipe inode's mode.
+// openProcessStdout tries /proc/<pid>/fd/1 first, then pidfd_getfd: the pipe's
+// mode refuses an unprivileged caller, while pidfd_getfd is gated by ptrace
+// access.
 func openProcessStdout(pid int) (*os.File, error) {
 	path := fmt.Sprintf("/proc/%d/fd/1", pid)
 	if f, err := os.OpenFile(path, os.O_WRONLY, 0); err == nil {

@@ -1,5 +1,5 @@
-# TopoMITM: the services and networks of TopoNAT. The harness adds the
-# REDIRECT rule on the router and starts the relay on the router's port 17443.
+# The harness adds the REDIRECT rule on the router and starts the relay on the
+# router's port 17443.
 services:
   hostA:
     image: ${E2E_IMAGE}
@@ -28,11 +28,9 @@ services:
     volumes: ["${CTL_HOSTB}:/ctl"]
     networks: [lanb]
 
-# See nat.yaml: routed gateway mode is what lets the router container forward
-# between the networks on Docker 29, and the subnets are pinned inside
-# 198.18.0.0/15 so a bridge route never captures this k8s node's own networks.
-# The harness overrides them per project because concurrent copies of the
-# topology cannot share a subnet.
+# Routed gateway mode lets the router forward between networks on Docker 29;
+# the subnets are pinned inside 198.18.0.0/15 so a bridge route never captures
+# this k8s node's own networks, and the harness overrides them per project.
 networks:
   wan:
     driver_opts:

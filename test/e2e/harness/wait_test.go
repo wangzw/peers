@@ -17,9 +17,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// recordTB captures Fatalf calls so a test can inspect the failure message
-// without ending the process. Fatalf panics with fatalStop to unwind the code
-// under test the way the real testing.T would.
+// recordTB captures Fatalf calls and panics with fatalStop so the code under
+// test unwinds the way it would under testing.T.
 type recordTB struct {
 	testing.TB // always nil; embedded for the unexported method only
 
@@ -54,8 +53,8 @@ func (r *recordTB) lastFatal() string {
 	return r.fatals[len(r.fatals)-1]
 }
 
-// captureFatal runs fn and returns the message of the Fatalf it raised. A
-// different panic is re-raised so a genuine bug is not swallowed.
+// captureFatal returns the message of the Fatalf fn raised and re-raises any
+// other panic.
 func captureFatal(t *testing.T, tb *recordTB, fn func()) string {
 	t.Helper()
 	var msg string
@@ -75,6 +74,9 @@ func captureFatal(t *testing.T, tb *recordTB, fn func()) string {
 	return msg
 }
 
+// TestEventuallyReportsLastState checks that a failed wait reports the last
+// state observed before the deadline, not the state of the final post-deadline
+// call.
 func TestEventuallyReportsLastState(t *testing.T) {
 	tb := &recordTB{}
 	bound := 120 * time.Millisecond
@@ -112,10 +114,8 @@ func TestEventuallyReportsLastState(t *testing.T) {
 	}
 }
 
-// TestEventuallyObservesSuccessJustBeforeTheDeadline checks that the wait keeps
-// its final observation. A condition that first succeeds a few milliseconds
-// before the deadline must be seen; skipping the last call would turn a
-// success into a failure and introduce a new flake.
+// TestEventuallyObservesSuccessJustBeforeTheDeadline checks that a condition
+// that first succeeds a few milliseconds before the deadline is still seen.
 func TestEventuallyObservesSuccessJustBeforeTheDeadline(t *testing.T) {
 	tb := &recordTB{}
 	bound := 120 * time.Millisecond
@@ -135,10 +135,9 @@ func TestEventuallyObservesSuccessJustBeforeTheDeadline(t *testing.T) {
 	}
 }
 
-// TestEventuallyPollObservesSuccessJustBeforeTheDeadline checks the same window
-// through the loop EventuallyPoll uses. EventuallyPoll lifts a short caller
-// bound to ToolCallWaitBound, so calling it directly would make every run of
-// this test wait fourteen seconds.
+// TestEventuallyPollObservesSuccessJustBeforeTheDeadline checks that the shared
+// wait loop keeps its final observation when a condition first succeeds just
+// before the deadline.
 func TestEventuallyPollObservesSuccessJustBeforeTheDeadline(t *testing.T) {
 	tb := &recordTB{}
 	bound := 120 * time.Millisecond
@@ -146,6 +145,9 @@ func TestEventuallyPollObservesSuccessJustBeforeTheDeadline(t *testing.T) {
 	target := deadline.Add(-5 * time.Millisecond)
 
 	msg := captureFatal(t, tb, func() {
+		// Call eventuallyUntil directly: EventuallyPoll lifts a short bound to
+		// ToolCallWaitBound, so the target would sit well inside the wait and
+		// the last-observation boundary would never be reached.
 		eventuallyUntil(tb, deadline, bound, "example condition", func(deadline time.Time) (bool, string) {
 			if !time.Now().Before(target) {
 				return true, ""
@@ -159,10 +161,9 @@ func TestEventuallyPollObservesSuccessJustBeforeTheDeadline(t *testing.T) {
 	}
 }
 
-// TestEventuallyReportsStateFromLastCallWithTimeLeft checks that the final
-// observation call made after the deadline does not replace the last state the
-// wait observed while it had time. PollCallWithin answers the final call with
-// "no time left", so that state must not reach the failure message.
+// TestEventuallyReportsStateFromLastCallWithTimeLeft checks that a post-deadline
+// call's "no time left" state does not replace the last state observed while
+// the wait had time.
 func TestEventuallyReportsStateFromLastCallWithTimeLeft(t *testing.T) {
 	tb := &recordTB{}
 	bound := 120 * time.Millisecond
@@ -195,11 +196,8 @@ func TestEventuallyReportsStateFromLastCallWithTimeLeft(t *testing.T) {
 	}
 }
 
-// TestEventuallyPollLiftsBoundAndPassesDeadline checks the two things a poll
-// callback depends on: the wait is not shorter than ToolCallWaitBound even when
-// the caller asks for less, and every call receives the deadline the wait
-// enforces so PollCall can tell whether the window still has time to start a
-// sample.
+// TestEventuallyPollLiftsBoundAndPassesDeadline checks that the wait bound is
+// lifted to ToolCallWaitBound and every call receives the same deadline.
 func TestEventuallyPollLiftsBoundAndPassesDeadline(t *testing.T) {
 	tb := &recordTB{}
 	var deadlines []time.Time
@@ -225,8 +223,8 @@ func TestEventuallyPollLiftsBoundAndPassesDeadline(t *testing.T) {
 	}
 }
 
-// TestEventuallyPollKeepsLongerBound checks that the lift is a minimum: a
-// caller that asks for more than ToolCallWaitBound keeps its own bound.
+// TestEventuallyPollKeepsLongerBound checks that a caller bound longer than
+// ToolCallWaitBound is kept.
 func TestEventuallyPollKeepsLongerBound(t *testing.T) {
 	tb := &recordTB{}
 	bound := ToolCallWaitBound + 2*time.Second
@@ -244,6 +242,8 @@ func TestEventuallyPollKeepsLongerBound(t *testing.T) {
 	}
 }
 
+// TestConsistentlyFailsOnFirstViolation checks that a violation ends the window
+// at once with the state that failed.
 func TestConsistentlyFailsOnFirstViolation(t *testing.T) {
 	tb := &recordTB{}
 	window := 2 * time.Second
@@ -272,9 +272,6 @@ func TestConsistentlyFailsOnFirstViolation(t *testing.T) {
 	}
 }
 
-// blockingBackend answers every call only when its bound expires. It models a
-// Broker that stopped answering, which is what a sample cut off by its own call
-// bound observes.
 type blockingBackend struct {
 	mu    sync.Mutex
 	calls int
@@ -309,13 +306,9 @@ func (b *blockingBackend) fake() FakeSession                   { return nil }
 func (b *blockingBackend) takeFakeErrors(t testing.TB) []error { return nil }
 func (b *blockingBackend) end() error                          { return nil }
 
-// TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound reproduces the defect
-// the discovery windows had: a sample calls a tool with a bound shorter than
-// the window's pollBound argument. The call is cut off by its own bound, not
-// by the window, so comparing the elapsed time with pollBound would miss it.
-// The sample must be reported as a stall, the window must fail at once as
-// "could not be observed", and the failure must name the stall count, the
-// first sample's duration and where the stack was logged.
+// TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound checks that a sample
+// cut off by its own call bound, shorter than pollBound, is reported as a stall
+// and ends the window at once.
 func TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound(t *testing.T) {
 	backend := &blockingBackend{}
 	session := &Session{name: "stalled", impl: backend}
@@ -323,8 +316,6 @@ func TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound(t *testing.T) {
 	const (
 		window    = 3 * time.Second
 		callBound = 50 * time.Millisecond
-		// pollBound is deliberately longer than the sample's own call bound:
-		// this is the mismatch the old criterion compared against.
 		pollBound = time.Second
 	)
 
@@ -357,9 +348,7 @@ func TestConsistentlyPollFailsWhenASampleIsCutByItsCallBound(t *testing.T) {
 }
 
 // TestTopicTimeoutStateMarksTopicRPCError checks that the product's topic RPC
-// timeout text, which returns after about ten seconds and therefore below the
-// tool's poll bound, is reported as a stalled sample rather than a retryable
-// state.
+// timeout text is reported as a stalled sample and an unrelated error is not.
 func TestTopicTimeoutStateMarksTopicRPCError(t *testing.T) {
 	const text = "list_topics failed: the Broker did not answer: context deadline exceeded (code: internal)"
 	state := TopicTimeoutState(text)
@@ -374,6 +363,8 @@ func TestTopicTimeoutStateMarksTopicRPCError(t *testing.T) {
 	}
 }
 
+// TestConfigYAMLMerge checks that ConfigYAML merges a later fragment over the
+// profile and is deterministic.
 func TestConfigYAMLMerge(t *testing.T) {
 	merged := ConfigYAML(FastTimers, "send:\n  request_timeout: 10s\n")
 
@@ -431,16 +422,10 @@ func TestConfigYAMLMerge(t *testing.T) {
 	}
 }
 
-// startupBackend answers the first startingCalls tool calls with the error the
-// MCP server returns while its background connection loop is still in
-// PhaseStarting, then answers successfully. The text is the product's
-// textStarting from internal/mcpserver/errtext.go.
 type startupBackend struct {
 	startingCalls int
 	calls         []string
-	// transportErr, when set, is returned by every call as a transport or
-	// protocol error.
-	transportErr error
+	transportErr  error
 }
 
 func (b *startupBackend) callErrWithin(_ time.Duration, tool string, args map[string]any) (Result, error) {
@@ -478,10 +463,8 @@ func (b *startupBackend) takeFakeErrors(t testing.TB) []error { return nil }
 
 func (b *startupBackend) end() error { return nil }
 
-// TestWaitConnectedWaitsOutStarting reproduces the startup race on an operator
-// session: the first management call runs while the MCP server is still in
-// PhaseStarting and fails. WaitConnected must keep polling an identity-free
-// tool until the connection exists, after which the management call succeeds.
+// TestWaitConnectedWaitsOutStarting checks that WaitConnected polls past the MCP
+// server's starting error until a management call succeeds.
 func TestWaitConnectedWaitsOutStarting(t *testing.T) {
 	backend := &startupBackend{startingCalls: 3}
 	session := &Session{name: "operator", impl: backend}
@@ -504,11 +487,8 @@ func TestWaitConnectedWaitsOutStarting(t *testing.T) {
 	}
 }
 
-// TestWaitConnectedAgainstStartingMCPServer reproduces the race deterministically
-// with the real MCP server process. The fake Broker's Hello blocks, which keeps
-// the server in PhaseStarting: a management call made then fails with the
-// product's starting text. WaitConnected must wait until Hello completes before
-// the next management call.
+// TestWaitConnectedAgainstStartingMCPServer reproduces the starting window with
+// the real MCP server and checks that WaitConnected waits until Hello completes.
 func TestWaitConnectedAgainstStartingMCPServer(t *testing.T) {
 	release := make(chan struct{})
 	socket := fakelocal.SocketPath(t)
@@ -551,11 +531,8 @@ func TestWaitConnectedAgainstStartingMCPServer(t *testing.T) {
 	}
 }
 
-// TestCallUntilOKDoesNotRetryTransportError checks the rule for a tool with a
-// side effect: a transport error leaves it unknown whether the server applied
-// the call, so a retry could duplicate it (a second pairing key, a second
-// message). The call must therefore be attempted exactly once and a transport
-// error must fail the test at once.
+// TestCallUntilOKDoesNotRetryTransportError checks that a transport error fails
+// the test after exactly one attempt.
 func TestCallUntilOKDoesNotRetryTransportError(t *testing.T) {
 	backend := &startupBackend{transportErr: errors.New("connection reset")}
 	session := &Session{name: "side-effect", impl: backend}
@@ -576,9 +553,8 @@ func TestCallUntilOKDoesNotRetryTransportError(t *testing.T) {
 	}
 }
 
-// TestCallUntilOKRetriesToolError checks the other half of the rule: a result
-// with IsError is a definite refusal, so the call is retried until the tool
-// succeeds within the bound.
+// TestCallUntilOKRetriesToolError checks that a tool error result is retried
+// until the tool succeeds.
 func TestCallUntilOKRetriesToolError(t *testing.T) {
 	backend := &startupBackend{startingCalls: 2}
 	session := &Session{name: "side-effect", impl: backend}

@@ -1,7 +1,5 @@
-# TopoFlat: up to four hosts on one flat network. Every host starts with the
-# default route on eth0 set by the harness. hostA always runs; the profiles
-# pick the first n hosts, so "docker compose --profile 2 up" starts hostA and
-# hostB, --profile 3 adds hostC, and --profile 4 adds hostD.
+# hostA has no profile and always runs; profile 2, 3 or 4 adds the next hosts,
+# so "docker compose --profile 3 up" starts hostA, hostB and hostC.
 services:
   hostA:
     image: ${E2E_IMAGE}

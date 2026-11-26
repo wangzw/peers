@@ -21,9 +21,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// TestSystemService installs the system Broker with the real subcommand,
-// checks that launchd runs it, kills it to see launchd start a new process, and
-// uninstalls it. The system and user tests run serially.
+// TestSystemService checks that installing the system service starts it under
+// launchd, that launchd restarts it after a kill, and that uninstall removes it.
 func TestSystemService(t *testing.T) {
 	resetSystemService(t)
 	t.Cleanup(func() { resetSystemService(t) })
@@ -58,9 +57,8 @@ func TestSystemService(t *testing.T) {
 	}
 }
 
-// TestUserService installs the user Broker in the account's launchd
-// domain, checks that it runs and answers `peers service status`, and uninstalls
-// it.
+// TestUserService checks that installing the user service starts it, that it
+// answers `peers service status`, and that uninstall removes it.
 func TestUserService(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
@@ -108,9 +106,6 @@ func TestUserService(t *testing.T) {
 	}
 }
 
-// userDomain returns the launchd domain the user service uses. The
-// product installs only into gui/<uid>; a runner without that domain cannot
-// install a user service at all.
 func userDomain(t *testing.T) string {
 	t.Helper()
 	uid := os.Getuid()
@@ -121,8 +116,6 @@ func userDomain(t *testing.T) string {
 	return domain
 }
 
-// resetSystemService removes any system installation left by an earlier
-// run. It is called before the test and from t.Cleanup.
 func resetSystemService(t *testing.T) {
 	t.Helper()
 	_ = sudo(installedBinary, "service", "remove", "--system")
@@ -130,7 +123,6 @@ func resetSystemService(t *testing.T) {
 	_ = sudo("rm", "-f", daemonPlist)
 }
 
-// resetUserService removes any user installation left by an earlier run.
 func resetUserService(t *testing.T) {
 	t.Helper()
 	_ = exec.Command(installedBinary, "service", "remove").Run()
@@ -139,23 +131,18 @@ func resetUserService(t *testing.T) {
 }
 
 const (
-	// reloginUserPort is the user Broker's listen port in the relogin test.
 	reloginUserPort = "17445"
-	// reloginPeerPort is the directly run system Broker's listen port. A
-	// separate port avoids the service tests' default and any launchd label.
 	reloginPeerPort = "17446"
-	// reloginRecoveryBound bounds the wait for the restarted user Broker's
-	// link. It covers installation readiness, launchd's default 10-second
-	// ThrottleInterval, and the user Broker's 2-second reconnect maximum.
+	// reloginRecoveryBound covers installation readiness, launchd's default
+	// 10-second ThrottleInterval and the user Broker's 2-second reconnect
+	// maximum.
 	reloginRecoveryBound = 30 * time.Second
-	// mutationEnv selects a negative control for the relogin test.
-	mutationEnv = "PEERS_E2E_MUTATION"
+	mutationEnv          = "PEERS_E2E_MUTATION"
 )
 
-// TestUserServiceRestoresLinkAfterRelogin installs the user service,
-// pairs it with a system Broker that the test runs directly, and then reloads
-// the single user plist with bootout and bootstrap. That reload is what launchd
-// does at login. The test asserts a new Broker pid and a CONNECTED link.
+// TestUserServiceRestoresLinkAfterRelogin checks that reloading the user plist,
+// as launchd does at login, starts a new Broker whose link to the system peer
+// reconnects.
 func TestUserServiceRestoresLinkAfterRelogin(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
@@ -169,7 +156,6 @@ func TestUserServiceRestoresLinkAfterRelogin(t *testing.T) {
 		}
 	})
 
-	// Start with empty peer tables so a rerun in the same job pairs afresh.
 	_ = os.Remove(filepath.Join(os.Getenv("HOME"), ".peers", "peers.json"))
 	_ = sudo("rm", "-f", "/var/lib/peers/peers.json")
 	writeUserConfig(t, ":"+reloginUserPort)
@@ -216,8 +202,6 @@ func TestUserServiceRestoresLinkAfterRelogin(t *testing.T) {
 	waitForLink(t, userSocket, alias, reloginRecoveryBound)
 }
 
-// writeUserConfig writes the user Broker's configuration with the relogin
-// test's listen port and fast reconnect timers.
 func writeUserConfig(t *testing.T, listen string) {
 	t.Helper()
 	dir := filepath.Join(os.Getenv("HOME"), ".peers")
@@ -233,8 +217,6 @@ func writeUserConfig(t *testing.T, listen string) {
 	}
 }
 
-// systemPeer is a system Broker started directly by the test rather than
-// through a LaunchDaemon, so it has no launchd label to collide with.
 type systemPeer struct {
 	pid     int
 	done    chan struct{}
@@ -242,8 +224,6 @@ type systemPeer struct {
 	stopped bool
 }
 
-// startSystemPeer runs the system Broker as root on reloginPeerPort and waits
-// for its socket and TCP listener.
 func startSystemPeer(t *testing.T) *systemPeer {
 	t.Helper()
 	if _, err := unixPeerPID(systemSocketPath); err == nil {
@@ -277,8 +257,6 @@ func startSystemPeer(t *testing.T) *systemPeer {
 		_ = conn.Close()
 		return true, ""
 	})
-	// Prefer the process that owns the socket; sudo normally execs the command,
-	// so this is the same pid.
 	if pid, err := unixPeerPID(systemSocketPath); err == nil {
 		peer.pid = pid
 	}
@@ -286,9 +264,6 @@ func startSystemPeer(t *testing.T) *systemPeer {
 	return peer
 }
 
-// ensureSystemConfig creates the system Broker's configuration file when this
-// test runs without the system service test before it. The system Broker's
-// access check reads this file; a missing file is a permission denial.
 func ensureSystemConfig(t *testing.T) {
 	t.Helper()
 	const path = "/etc/peers/config.yaml"
@@ -315,7 +290,6 @@ func ensureSystemConfig(t *testing.T) {
 	}
 }
 
-// stop terminates the peer Broker and reports its log when the test failed.
 func (p *systemPeer) stop(t *testing.T) {
 	t.Helper()
 	if p.stopped {
@@ -325,10 +299,8 @@ func (p *systemPeer) stop(t *testing.T) {
 	if err := sudo("kill", "-TERM", strconv.Itoa(p.pid)); err != nil {
 		t.Logf("stopping the peer Broker: %v", err)
 	}
-	// These are the failure-path escalation from SIGTERM to SIGKILL, not a wait
-	// a correct run depends on: if SIGTERM does not converge in ten seconds the
-	// process is killed, and if it still does not exit within five the test only
-	// logs it. Neither bound can fail the test, so their fixed intervals stay.
+	// These bounds are failure-path escalations, not waits a correct run
+	// depends on, so neither may fail the test.
 	select {
 	case <-p.done:
 	case <-time.After(10 * time.Second):
@@ -347,8 +319,6 @@ func (p *systemPeer) stop(t *testing.T) {
 	}
 }
 
-// unixPeerPID returns the pid at the other end of a connection to the Unix
-// socket at path.
 func unixPeerPID(path string) (int, error) {
 	conn, err := net.DialTimeout("unix", path, time.Second)
 	if err != nil {
@@ -381,8 +351,6 @@ func unixPeerPID(path string) (int, error) {
 	return pid, nil
 }
 
-// createSystemPairingKey creates a one-time key on the system Broker by running
-// the test binary as root, where the system configuration file is writable.
 func createSystemPairingKey(t *testing.T) string {
 	t.Helper()
 	binary, err := os.Executable()
@@ -403,8 +371,6 @@ func createSystemPairingKey(t *testing.T) string {
 	return key
 }
 
-// connectUserBroker pairs the user Broker with address and returns the alias
-// the user Broker uses for the peer.
 func connectUserBroker(t *testing.T, socket, address, key, localAlias string) string {
 	t.Helper()
 	oracle, err := node.DialOracle(socket)
@@ -427,13 +393,9 @@ func connectUserBroker(t *testing.T, socket, address, key, localAlias string) st
 	return alias
 }
 
-// waitForLink waits until the user Broker reports alias as CONNECTED.
 func waitForLink(t *testing.T, socket, alias string, bound time.Duration) {
 	t.Helper()
 	waitFor(t, bound, "the link to "+alias+" to be connected", func() (bool, string) {
-		// One ListBrokers sample gets five seconds. A transport error is retried
-		// by the outer waitFor within bound, so a slow sample costs a retry
-		// rather than failing the wait.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		oracle, err := node.DialOracle(socket)

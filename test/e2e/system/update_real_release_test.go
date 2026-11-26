@@ -15,43 +15,31 @@ import (
 )
 
 const (
-	// realReleaseOldTag and realReleaseOldVersion name the released tree this
-	// scenario installs. The test builds the tag itself, so the old binary has
-	// the real 0.4.0 command tree instead of a current-tree build stamped with
-	// the old version. That difference is the point: 0.4.0 starts its Broker
-	// with "broker --system" and the next release starts it with
-	// "service run --system".
+	// realReleaseOldTag and realReleaseOldVersion name the released tree; the test
+	// builds the tag itself so the old binary has the real 0.4.0 command tree, not a
+	// current-tree build stamped with the old version.
 	realReleaseOldTag     = "v0.4.0"
 	realReleaseOldVersion = "0.4.0"
-	// realReleaseNewVersion is the branch build the old release updates to. The
-	// version only has to be newer than the old one; the source is the tree
-	// under test.
+	// realReleaseNewVersion is the branch build the old release updates to; only
+	// its version has to be newer, the source is the tree under test.
 	realReleaseNewVersion = "0.5.0"
 
 	realReleaseOldArtifact          = "update-real-old-" + realReleaseOldVersion
 	realReleaseNewReleaseArtifact   = "update-real-release-" + realReleaseNewVersion + ".tar.gz"
 	realReleaseNewChecksumsArtifact = "update-real-checksums-" + realReleaseNewVersion + ".txt"
 
-	// The ExecStart suffixes the two command trees write. The unit assertion
-	// names the binary because both releases install it at the same path.
+	// realReleaseOld/NewSystemCommand and realReleaseOld/NewUserCommand are the
+	// ExecStart suffixes of the two command trees; the unit assertion names the
+	// binary because both releases install it at the same path.
 	realReleaseOldSystemCommand = "broker --system --allow-degraded"
 	realReleaseNewSystemCommand = "service run --system --allow-degraded"
 	realReleaseOldUserCommand   = "broker --allow-degraded"
 	realReleaseNewUserCommand   = "service run --user --allow-degraded"
 )
 
-// TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree covers the core of
-// REQ-update-009 from the release boundary the other update tests do not cross:
-// the running old binary is a build of the v0.4.0 tag, so it knows only the
-// "broker" command tree, and the next release rewrites the unit into the
-// "service run" tree. A current-tree build stamped with 0.4.0 would share the
-// new tree and pass even if the cross-version rewrite were broken.
-//
-// The system half installs 0.4.0 directly through its own
-// "service install --system", updates it from the fake GitHub API, and checks
-// that the unit, the binary and the running Broker all moved to the new
-// release. The user half does the same for an account's user service in
-// the same test.
+// TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree checks that a real
+// v0.4.0 install updates across the release boundary, moving both its system and
+// its user unit to the new command tree.
 func TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree(t *testing.T) {
 	if !syscontainer.InContainer() {
 		realReleaseStageHostAssets(t)
@@ -67,7 +55,6 @@ func TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree(t *testing.T) {
 		Checksums:   updateReadStaged(t, realReleaseNewChecksumsArtifact),
 	})
 
-	// System installation.
 	realReleaseInstallSystemService(t, fake)
 	beforeUnit := postUpdateReadFile(t, postUpdateUnitPath)
 	realReleaseAssertUnit(t, "the installed system unit", beforeUnit, selfUpdateBinary, realReleaseOldSystemCommand)
@@ -97,9 +84,8 @@ func TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree(t *testing.T) {
 	realReleaseRequireStatus(t, installAccount, nil, "--system")
 	selfUpdateWaitAuditEventFor(t, installAccount, realReleaseOldVersion, realReleaseNewVersion)
 
-	// User installation. The system binary now belongs to the new release, so the
-	// update command selects the account's user Broker and that Broker is still
-	// the 0.4.0 build.
+	// The system binary now belongs to the new release, so the update selects the
+	// account's user Broker, which is still the 0.4.0 build.
 	userTarget, userEnv := selfUpdateSetupUserServiceFrom(t, installAccount, realReleaseOldArtifact)
 	selfUpdateSetUserUnitEnv(t, installAccount, userEnv, fake.URL())
 	selfUpdateWaitUserBrokerVersion(t, installAccount, realReleaseOldVersion)
@@ -131,8 +117,6 @@ func TestREQUpdate009_UpdatesARealV040InstallToTheNewCommandTree(t *testing.T) {
 	realReleaseRequireStatus(t, installAccount, userEnv)
 }
 
-// realReleaseStageHostAssets builds the released tag and the branch build and
-// stages them next to the test binary. It runs on the host.
 func realReleaseStageHostAssets(t *testing.T) {
 	t.Helper()
 
@@ -144,9 +128,8 @@ func realReleaseStageHostAssets(t *testing.T) {
 		realReleaseNewChecksumsArtifact, newBinary)
 }
 
-// realReleaseBuildTag extracts tag on the host and builds cmd/peers from it with
-// the peers_testenv tag, so the result reads the fake GitHub API base exactly as
-// a real release would not. Nothing is downloaded.
+// realReleaseBuildTag builds cmd/peers from tag with the peers_testenv tag, so
+// it reads the fake GitHub API base; nothing is downloaded.
 func realReleaseBuildTag(t *testing.T, tag, version string) string {
 	t.Helper()
 
@@ -181,11 +164,6 @@ func realReleaseBuildTag(t *testing.T, tag, version string) string {
 	return binary
 }
 
-// realReleaseInstallSystemService installs the staged 0.4.0 binary as the
-// system service through its own "service install --system", grants the
-// install account write access through the administration group, and points the
-// service at the fake API. It also verifies that the service runs the old
-// release.
 func realReleaseInstallSystemService(t *testing.T, fake *harness.FakeGitHub) {
 	t.Helper()
 
@@ -214,8 +192,6 @@ func realReleaseInstallSystemService(t *testing.T, fake *harness.FakeGitHub) {
 	selfUpdateWaitBrokerVersion(t, selfUpdateSystemSocket, realReleaseOldVersion)
 }
 
-// realReleaseAssertUnit checks that unit names binary followed by command as its
-// ExecStart line.
 func realReleaseAssertUnit(t *testing.T, name, unit, binary, command string) {
 	t.Helper()
 
@@ -224,7 +200,6 @@ func realReleaseAssertUnit(t *testing.T, name, unit, binary, command string) {
 	}
 }
 
-// realReleaseBinaryVersion runs --version as account and returns its output.
 func realReleaseBinaryVersion(t *testing.T, account, exe string) string {
 	t.Helper()
 
@@ -236,8 +211,6 @@ func realReleaseBinaryVersion(t *testing.T, account, exe string) string {
 	return strings.TrimSpace(res.Stdout)
 }
 
-// realReleaseRequireStatus checks that "peers service status" answers for the
-// level args select, as account.
 func realReleaseRequireStatus(t *testing.T, account string, env []string, args ...string) {
 	t.Helper()
 

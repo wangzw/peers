@@ -12,12 +12,13 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// Relay is a man in the middle on the Link protocol. It terminates the TLS
-// connection from a client and opens its own TLS connection to upstream, so
-// it sees and can copy every frame while holding none of the pairing keys.
-// Keeping the two certificates apart is the point: a Relay that forwarded the
-// client's certificate would prove nothing about a MITM.
+// Relay is a man in the middle on the Link protocol: it terminates the client's
+// TLS connection and opens its own to upstream, so it copies every frame while
+// holding none of the pairing keys. Forwarding the client's certificate instead
+// would prove nothing about a MITM.
 type Relay struct {
+	// UnimplementedLinkServer keeps Relay satisfying LinkServer when the service
+	// gains a method the relay does not forward.
 	linkpb.UnimplementedLinkServer
 
 	upstream     string
@@ -114,9 +115,6 @@ func (r *Relay) Connect(clientStream grpc.BidiStreamingServer[linkpb.Frame, link
 	return nil
 }
 
-// frameStream is the part of a Link stream the relay copies between: one side
-// is a server stream, the other a client stream, and both speak the same
-// Frame.
 type frameStream interface {
 	Recv() (*linkpb.Frame, error)
 	Send(*linkpb.Frame) error

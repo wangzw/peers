@@ -17,6 +17,7 @@ type listAgentsShape struct {
 	Agents []agentShape `json:"agents"`
 }
 
+// TestDecode checks that Decode unmarshals structured content and rejects empty and malformed text.
 func TestDecode(t *testing.T) {
 	text := `{"self_address":"a@h","agents":[{"address":"b@h","status":"busy"}],"unknown":true}`
 
@@ -44,6 +45,7 @@ func TestDecode(t *testing.T) {
 	}
 }
 
+// TestToolError checks that a tool error's code and originating Broker fingerprint are read from the last code marker in the text.
 func TestToolError(t *testing.T) {
 	fingerprint := strings.Repeat("a", 64)
 
@@ -102,6 +104,7 @@ func TestToolError(t *testing.T) {
 	}
 }
 
+// TestResultCodeAndOrigin checks Code, Origin and HasPrefix on successful and failed tool results.
 func TestResultCodeAndOrigin(t *testing.T) {
 	ok := Result{ToolResult: node.ToolResult{Text: "fine"}}
 	if got := ok.Code(); got != "" {

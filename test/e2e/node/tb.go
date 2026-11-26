@@ -1,3 +1,6 @@
+// Package node provides the Broker, MCP server and simulated session processes
+// the end-to-end suite drives, together with the probes and helpers that
+// inspect them.
 package node
 
 import (
@@ -9,11 +12,10 @@ import (
 
 // TB satisfies testing.TB for fakesession outside a test binary. Only the
 // methods fakesession calls are implemented; any other method panics.
-//
-// The embedded interface is always nil. It exists only to promote the
-// unexported methods of testing.TB, so that *TB satisfies the interface at
-// compile time.
 type TB struct {
+	// The embedded interface is always nil; it exists only to promote the
+	// unexported methods of testing.TB, so that *TB satisfies the interface at
+	// compile time.
 	testing.TB
 
 	mu       sync.Mutex
@@ -116,6 +118,7 @@ func (t *TB) TakeErrors() []string {
 // FatalError is raised by TB.Fatalf. Guard recovers it and returns it as an
 // error.
 type FatalError struct {
+	// Msg is the formatted message the failing check passed to Fatalf.
 	Msg string
 }
 

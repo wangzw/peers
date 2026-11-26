@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// linkedPaths creates a real directory with two files and a symbolic link to
-// it, and returns the link, the real directory, and the two file paths.
 func linkedPaths(t *testing.T) (link, real, fileA, fileB string) {
 	t.Helper()
 	root := t.TempDir()
@@ -30,6 +28,8 @@ func linkedPaths(t *testing.T) (link, real, fileA, fileB string) {
 	return link, real, fileA, fileB
 }
 
+// TestResolveExpandsSymlinks checks that Resolve turns a path through a link
+// into the link's target path.
 func TestResolveExpandsSymlinks(t *testing.T) {
 	link, _, fileA, _ := linkedPaths(t)
 
@@ -49,6 +49,8 @@ func TestResolveExpandsSymlinks(t *testing.T) {
 	}
 }
 
+// TestSamePath checks that SamePath compares two paths after resolving links
+// and reports an error for a missing path.
 func TestSamePath(t *testing.T) {
 	link, _, fileA, fileB := linkedPaths(t)
 

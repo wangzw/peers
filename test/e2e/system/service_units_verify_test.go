@@ -12,10 +12,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// TestSystemServiceUnitsVerify installs the user unit through the
-// product's subcommand and checks that systemd records it as enabled and
-// accepts it without a warning. The name keeps it distinct from
-// TestServiceUnitsVerify in the service work, which covers the same criteria.
+// TestSystemServiceUnitsVerify checks that the user unit installed through the
+// product's subcommand is enabled and accepted by systemd without a warning.
 func TestSystemServiceUnitsVerify(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -29,8 +27,8 @@ func TestSystemServiceUnitsVerify(t *testing.T) {
 		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + uid + "/bus",
 	}
 
-	// enable and verify both ask the account's user manager, so start it the
-	// way a login would and wait for its bus.
+	// enable and verify both ask the account's user manager, so start it and
+	// wait for its bus.
 	mustRun(t, "root", nil, "loginctl", "enable-linger", "peer")
 	mustRun(t, "root", nil, "systemctl", "start", "user@"+uid+".service")
 	waitUserManager(t, peerUID)

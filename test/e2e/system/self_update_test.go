@@ -19,53 +19,33 @@ import (
 )
 
 const (
-	// selfUpdateArchiveDir is where the inner test assembles a release-shaped
-	// archive around the old release binary.
-	selfUpdateArchiveDir = "/var/lib/peers-self-update-archive"
-	// selfUpdateBinary is the system binary the install script writes.
-	selfUpdateBinary = "/usr/local/bin/peers"
-	// selfUpdateConfigPath is the system Broker's configuration file.
-	selfUpdateConfigPath = "/etc/peers/config.yaml"
-	// selfUpdateSystemSocket is the system Broker's local socket.
+	selfUpdateArchiveDir   = "/var/lib/peers-self-update-archive"
+	selfUpdateBinary       = "/usr/local/bin/peers"
+	selfUpdateConfigPath   = "/etc/peers/config.yaml"
 	selfUpdateSystemSocket = "/run/peers/broker.sock"
-	// selfUpdateAdminGroup is the group the admin-group unit will grant. Until
-	// that unit is merged, the test performs the same chgrp and chmod itself.
-	selfUpdateAdminGroup = "peers-admins"
-	// selfUpdateUserListen is the user Broker's address when the system
-	// Broker is also running. The configuration template would otherwise give
-	// both the same port and the second Broker would refuse to start.
+	selfUpdateAdminGroup   = "peers-admins"
+	// selfUpdateUserListen is the user Broker's address when the system Broker also
+	// runs; the template would otherwise give both the same port.
 	selfUpdateUserListen = "127.0.0.1:17463"
 
-	// selfUpdateRestartBound covers systemd's RestartSec=5, the Broker's startup
-	// and the readiness wait the update path performs before it reports
-	// restarting. The same bound covers the MCP server's reconnect window after
-	// the Broker goes away.
+	// selfUpdateRestartBound covers systemd's RestartSec=5, the Broker's startup and
+	// readiness, and the MCP server's reconnect window.
 	selfUpdateRestartBound = 30 * time.Second
-	// selfUpdateAuditBound is the fallback for the wait for a local audit
-	// event; the Broker writes it right after applying the update.
-	selfUpdateAuditBound = harness.EventTimeout
-	// selfUpdateStatusRPCTimeout bounds one UpdateStatus call on a local
-	// socket. The Broker answers in milliseconds; the bound covers a loaded
-	// container without hiding a hung call.
+	selfUpdateAuditBound   = harness.EventTimeout
+	// selfUpdateStatusRPCTimeout bounds one UpdateStatus call on a local socket;
+	// the Broker answers in milliseconds, so the bound covers a loaded container
+	// without hiding a hung call.
 	selfUpdateStatusRPCTimeout = 5 * time.Second
-	// selfUpdateListToolsTimeout bounds one MCP tools/list call.
 	selfUpdateListToolsTimeout = 10 * time.Second
-	// selfUpdateNoRestartWindow is how long the already-latest case watches a
-	// Broker that must not restart. The Broker schedules a restart 500 ms after
-	// answering ApplyUpdate, so the window covers that timer with slack.
-	selfUpdateNoRestartWindow = 2 * time.Second
-	// selfUpdateInheritedInvocationID is a value a shell started by systemd
-	// carries into every child process.
+	// selfUpdateNoRestartWindow is how long the already-latest case watches a Broker
+	// that must not restart; the Broker schedules a restart 500 ms after ApplyUpdate.
+	selfUpdateNoRestartWindow       = 2 * time.Second
 	selfUpdateInheritedInvocationID = "3f0a6f0b1c2d4e5f8a9b0c1d2e3f4a5b"
 )
 
-// TestREQUpdate007_SystemUpdateByAdminGroup covers the first acceptance of
-// REQ-update-007: an account that may write the system Broker's configuration
-// file runs "peers update --yes" without root. The Broker downloads and
-// replaces the binary, the service manager restarts it on the new version, the
-// binary keeps its owner and mode, the audit log records update_applied, and a
-// session registered before the restart lists Agents again without being
-// reconnected.
+// TestREQUpdate007_SystemUpdateByAdminGroup checks that an account that may
+// write the system configuration updates the Broker without root, keeping the
+// binary's owner and mode and recording the update in the audit log.
 func TestREQUpdate007_SystemUpdateByAdminGroup(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -83,8 +63,6 @@ func TestREQUpdate007_SystemUpdateByAdminGroup(t *testing.T) {
 		t.Fatalf("the install script installed %q, want %q", beforeVersion, "peers "+updateOldVersion)
 	}
 
-	// Register a session on the old Broker. It must keep working after the
-	// restart without being closed and reopened.
 	session := syscontainer.NewSession(t, "peer", "selfupdate-registered")
 	selfUpdateWaitSession(t, session)
 
@@ -112,9 +90,9 @@ func TestREQUpdate007_SystemUpdateByAdminGroup(t *testing.T) {
 	selfUpdateWaitSession(t, session)
 }
 
-// TestREQUpdate007_SystemUpdateRefusedOutsideAdminGroup covers the denial half
-// of REQ-update-007: an account that may not write the configuration file gets
-// permission_denied, nothing is downloaded, and the binary is left alone.
+// TestREQUpdate007_SystemUpdateRefusedOutsideAdminGroup checks that an account
+// that may not write the configuration gets permission_denied, with nothing
+// downloaded and the binary untouched.
 func TestREQUpdate007_SystemUpdateRefusedOutsideAdminGroup(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -144,9 +122,8 @@ func TestREQUpdate007_SystemUpdateRefusedOutsideAdminGroup(t *testing.T) {
 	}
 }
 
-// TestREQUpdate007_CLIWithoutUserBrokerUsesSystemBroker covers the routing rule
-// for an ordinary account that runs no user Broker: the selection order
-// reaches the system Broker, so "peers update" delegates to it.
+// TestREQUpdate007_CLIWithoutUserBrokerUsesSystemBroker checks that an account
+// with no user Broker has its update delegated to the system Broker.
 func TestREQUpdate007_CLIWithoutUserBrokerUsesSystemBroker(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -174,10 +151,9 @@ func TestREQUpdate007_CLIWithoutUserBrokerUsesSystemBroker(t *testing.T) {
 	selfUpdateWaitAuditEvent(t, installAccount)
 }
 
-// TestREQUpdate007_CLIWithUserBrokerUsesUserBroker covers the other half of the
-// selection order: the same admin account also runs a user Broker, so
-// "peers update" must reach that Broker and leave the system Broker
-// and its binary untouched.
+// TestREQUpdate007_CLIWithUserBrokerUsesUserBroker checks that an account
+// running a user Broker has its update reach that Broker, leaving the system
+// Broker and binary untouched.
 func TestREQUpdate007_CLIWithUserBrokerUsesUserBroker(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -197,8 +173,8 @@ func TestREQUpdate007_CLIWithUserBrokerUsesUserBroker(t *testing.T) {
 	systemBeforeHash := updateFileHash(t, selfUpdateBinary)
 	selfUpdateWaitBrokerVersion(t, selfUpdateSystemSocket, updateOldVersion)
 
-	// The command is the system-installed binary, so only the Broker selection
-	// can send the update to the user install.
+	// The command is the system-installed binary, so only the Broker selection can
+	// send the update to the user install.
 	res := syscontainer.RunAs(t, installAccount, selfUpdateAPIEnv(fake), "update", "--yes")
 	if res.ExitCode != 0 {
 		t.Fatalf("peers update --yes as %s with a user Broker exited %d\nstdout:\n%s\nstderr:\n%s",
@@ -226,9 +202,8 @@ func TestREQUpdate007_CLIWithUserBrokerUsesUserBroker(t *testing.T) {
 	selfUpdateWaitBrokerVersion(t, selfUpdateSystemSocket, updateOldVersion)
 }
 
-// TestREQUpdate007_RootUpdateUsesSystemBroker covers the root route: a root
-// caller has no separate user Broker, so "peers update" reaches the
-// system Broker.
+// TestREQUpdate007_RootUpdateUsesSystemBroker checks that a root caller's
+// update reaches the system Broker.
 func TestREQUpdate007_RootUpdateUsesSystemBroker(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -260,10 +235,9 @@ func TestREQUpdate007_RootUpdateUsesSystemBroker(t *testing.T) {
 	selfUpdateWaitAuditEvent(t, "root")
 }
 
-// TestREQUpdate007_SudoWithUserBrokerUsesSystemBroker covers the routing rule
-// that keeps an administrator's user Broker out of the way: an admin-group
-// member who also runs a user Broker executes "sudo peers update",
-// and the system Broker is the one upgraded.
+// TestREQUpdate007_SudoWithUserBrokerUsesSystemBroker checks that sudo peers
+// update upgrades the system Broker even when the admin also runs a user
+// Broker.
 func TestREQUpdate007_SudoWithUserBrokerUsesSystemBroker(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -290,7 +264,6 @@ func TestREQUpdate007_SudoWithUserBrokerUsesSystemBroker(t *testing.T) {
 
 	selfUpdateWaitBrokerVersion(t, selfUpdateSystemSocket, updateNewVersion)
 
-	// The user Broker and the binary it runs must be exactly as they were.
 	if afterPID := selfUpdateUserServiceMainPID(t, installAccount, userEnv); afterPID != beforePID {
 		t.Errorf("the user Broker MainPID changed from %d to %d; sudo updated the wrong Broker",
 			beforePID, afterPID)
@@ -314,10 +287,9 @@ func TestREQUpdate007_SudoWithUserBrokerUsesSystemBroker(t *testing.T) {
 	selfUpdateWaitAuditEvent(t, "root")
 }
 
-// TestREQUpdate007_TerminalSystemBrokerNeedsServiceManager covers the third
-// acceptance of REQ-update-007: a system Broker started by hand is not under a
-// service manager, so the update is refused with an explanation and the binary
-// is unchanged.
+// TestREQUpdate007_TerminalSystemBrokerNeedsServiceManager checks that a system
+// Broker started by hand, outside a service manager, refuses the update and
+// leaves the binary unchanged.
 func TestREQUpdate007_TerminalSystemBrokerNeedsServiceManager(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, false)
@@ -328,8 +300,8 @@ func TestREQUpdate007_TerminalSystemBrokerNeedsServiceManager(t *testing.T) {
 
 	fake := harness.StartFakeGitHub(t, updateLoadRelease(t, updateNewVersion, updateGoodReleaseArtifact, updateGoodChecksumsArtifact))
 
-	// The manually started Broker runs this binary directly; no systemd unit
-	// sets INVOCATION_ID.
+	// The manually started Broker runs this binary directly; no systemd unit sets
+	// INVOCATION_ID.
 	syscontainer.CopyReleaseArtifact(t, updateOldArtifact, selfUpdateBinary, 0o755)
 	selfUpdateRunRoot(t, "chown", "0:0", selfUpdateBinary)
 	selfUpdateRunRoot(t, "chmod", "0755", selfUpdateBinary)
@@ -360,11 +332,8 @@ func TestREQUpdate007_TerminalSystemBrokerNeedsServiceManager(t *testing.T) {
 }
 
 // TestREQUpdate007_TerminalBrokerWithInheritedServiceEnvironmentIsRefused
-// covers the service-manager test without the environment shortcut: the Broker
-// is started by hand, but its shell carries INVOCATION_ID the way a terminal
-// started by systemd does. The Broker is still not the systemd unit's main
-// process, so both the CLI and update_broker refuse before any download and
-// leave the binary alone. update_broker names the terminal replacement.
+// checks that a hand-started Broker whose shell carries INVOCATION_ID still
+// refuses both the CLI and update_broker before any download.
 func TestREQUpdate007_TerminalBrokerWithInheritedServiceEnvironmentIsRefused(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, false)
@@ -400,7 +369,6 @@ func TestREQUpdate007_TerminalBrokerWithInheritedServiceEnvironmentIsRefused(t *
 		t.Fatalf("the binary at %s changed after the refused update", selfUpdateBinary)
 	}
 
-	// The same Broker refuses the tool and names the terminal command.
 	session := syscontainer.NewSession(t, "root", "terminal-env-update")
 	selfUpdateRequireUpdateTool(t, session)
 	selfUpdateWaitConnected(t, session)
@@ -423,10 +391,9 @@ func TestREQUpdate007_TerminalBrokerWithInheritedServiceEnvironmentIsRefused(t *
 	}
 }
 
-// TestREQUpdate008_UpdateBrokerAlreadyLatest covers an up-to-date Broker: the
-// tool answers with an empty target version and the already-current sentence,
-// nothing is downloaded, the Broker keeps its pid, and the session lists Agents
-// without reconnecting.
+// TestREQUpdate008_UpdateBrokerAlreadyLatest checks that update_broker on an
+// up-to-date Broker reports no target version, downloads nothing and restarts
+// nothing.
 func TestREQUpdate008_UpdateBrokerAlreadyLatest(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, false)
@@ -474,10 +441,8 @@ func TestREQUpdate008_UpdateBrokerAlreadyLatest(t *testing.T) {
 		t.Errorf("result = %q, want %q", out.Result, want)
 	}
 
-	// The session keeps working without being reopened.
 	selfUpdateWaitSession(t, session)
 
-	// Nothing may schedule a restart after the answer.
 	time.Sleep(selfUpdateNoRestartWindow)
 	if after := selfUpdateUserServiceMainPID(t, "peer", svc.userEnv); after != beforePID {
 		t.Errorf("the Broker MainPID changed from %d to %d without an update", beforePID, after)
@@ -493,12 +458,9 @@ func TestREQUpdate008_UpdateBrokerAlreadyLatest(t *testing.T) {
 	}
 }
 
-// TestREQUpdate008_UpdateBrokerUnderUserService covers the user half of
-// REQ-update-008: a real "peers mcp" session calls update_broker, the user
-// service's Broker replaces the binary and is restarted by the user manager,
-// the tool result names both versions and restarting, and the session reaches
-// the restarted Broker again without being reopened. The result also says the
-// session must be reopened to run the new MCP binary.
+// TestREQUpdate008_UpdateBrokerUnderUserService checks that update_broker
+// restarts a user service on the new version, reaches it again without
+// reopening, and tells the caller to reopen the session.
 func TestREQUpdate008_UpdateBrokerUnderUserService(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, false)
@@ -526,11 +488,9 @@ func TestREQUpdate008_UpdateBrokerUnderUserService(t *testing.T) {
 	}
 }
 
-// TestREQUpdate008_UpdateBrokerUnderSystemService covers the system half
-// of REQ-update-008: a real "peers mcp" session of an admin-group account
-// calls update_broker, the system Broker replaces the binary and systemd
-// restarts it, the binary keeps its owner and mode, the audit log records the
-// update, and the session reaches the new Broker without being reopened.
+// TestREQUpdate008_UpdateBrokerUnderSystemService checks that update_broker lets
+// the system Broker replace the binary and restart under systemd, keeping the
+// binary's owner and mode and recording the update.
 func TestREQUpdate008_UpdateBrokerUnderSystemService(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -561,9 +521,9 @@ func TestREQUpdate008_UpdateBrokerUnderSystemService(t *testing.T) {
 	selfUpdateRequireReopenHint(t, text)
 }
 
-// TestREQUpdate008_UpdateBrokerRefusedOutsideAdminGroup covers the denial half
-// of REQ-update-008: a session of an account outside the admin group gets
-// permission_denied from update_broker and the fake API serves no download.
+// TestREQUpdate008_UpdateBrokerRefusedOutsideAdminGroup checks that
+// update_broker from outside the admin group returns permission_denied and
+// serves no download.
 func TestREQUpdate008_UpdateBrokerRefusedOutsideAdminGroup(t *testing.T) {
 	if !syscontainer.InContainer() {
 		selfUpdateStageHostAssets(t, true)
@@ -595,9 +555,6 @@ func TestREQUpdate008_UpdateBrokerRefusedOutsideAdminGroup(t *testing.T) {
 	}
 }
 
-// selfUpdateStageHostAssets builds the two release versions and, when
-// withInstallScript is set, stages the install script the system
-// scenarios run. It runs on the host.
 func selfUpdateStageHostAssets(t *testing.T, withInstallScript bool) {
 	t.Helper()
 
@@ -607,15 +564,10 @@ func selfUpdateStageHostAssets(t *testing.T, withInstallScript bool) {
 	}
 }
 
-// selfUpdateAPIEnv returns the environment the old release reads the fake
-// GitHub API base from.
 func selfUpdateAPIEnv(fake *harness.FakeGitHub) []string {
 	return []string{"PEERS_TEST_UPDATE_API=" + fake.URL()}
 }
 
-// selfUpdatePrepareArchive assembles a release-shaped directory around the
-// staged binary named by artifact, with the install script and the two archive
-// files. It returns the directory.
 func selfUpdatePrepareArchive(t *testing.T, artifact string) string {
 	t.Helper()
 
@@ -643,22 +595,14 @@ func selfUpdatePrepareArchive(t *testing.T, artifact string) string {
 	return selfUpdateArchiveDir
 }
 
-// selfUpdateInstallSystemService installs the old release through the install
-// script as the system service, grants the extrausers account write access to
-// the configuration file, and points the service at the fake API. It also
-// verifies that the service is running the old release.
-//
-// When the install script knows --join-admin-group, the test lets the script do
-// the group grant. Until the admin-group unit is merged into main, the script
-// rejects the flag, so the test performs the same chgrp and chmod itself.
+// selfUpdateInstallSystemService installs the old release as the system service
+// and, when the install script rejects --join-admin-group, performs the group
+// grant itself.
 func selfUpdateInstallSystemService(t *testing.T, fake *harness.FakeGitHub) {
 	t.Helper()
 	selfUpdateInstallSystemServiceFrom(t, fake, updateOldArtifact, updateOldVersion)
 }
 
-// selfUpdateInstallSystemServiceFrom is selfUpdateInstallSystemService for a
-// caller that installs another built binary and expects it to run as
-// oldVersion.
 func selfUpdateInstallSystemServiceFrom(t *testing.T, fake *harness.FakeGitHub, artifact, oldVersion string) {
 	t.Helper()
 
@@ -694,8 +638,6 @@ func selfUpdateInstallSystemServiceFrom(t *testing.T, fake *harness.FakeGitHub, 
 	selfUpdateWaitBrokerVersion(t, selfUpdateSystemSocket, oldVersion)
 }
 
-// selfUpdateInstallScriptJoinsAdminGroup reports whether the staged install
-// script accepts --join-admin-group.
 func selfUpdateInstallScriptJoinsAdminGroup(t *testing.T) bool {
 	t.Helper()
 
@@ -708,8 +650,7 @@ func selfUpdateInstallScriptJoinsAdminGroup(t *testing.T) bool {
 }
 
 // selfUpdateSetSystemUnitEnv writes a systemd drop-in that hands the fake API
-// base to the system Broker and restarts the unit so it takes effect. The
-// drop-in stays in place across the restart the update itself performs.
+// base to the system Broker; it stays in place across the update's restart.
 func selfUpdateSetSystemUnitEnv(t *testing.T, apiURL string) {
 	t.Helper()
 
@@ -726,9 +667,8 @@ func selfUpdateSetSystemUnitEnv(t *testing.T, apiURL string) {
 	mustRun(t, "root", nil, "systemctl", "restart", "peers.service")
 }
 
-// selfUpdateSetUserUnitEnv writes a systemd user drop-in that hands the fake API
-// base to the account's user Broker and restarts it. The drop-in stays in place
-// across the restart the update itself performs.
+// selfUpdateSetUserUnitEnv writes a user drop-in that hands the fake API base to
+// the account's user Broker; it stays in place across the update's restart.
 func selfUpdateSetUserUnitEnv(t *testing.T, account string, userEnv []string, apiURL string) {
 	t.Helper()
 
@@ -762,16 +702,11 @@ func selfUpdateSetUserUnitEnv(t *testing.T, account string, userEnv []string, ap
 	})
 }
 
-// selfUpdateSetupUserServiceFor installs the old release as the account's
-// user service. It returns the target binary and the environment its user
-// manager commands need.
 func selfUpdateSetupUserServiceFor(t *testing.T, account string) (string, []string) {
 	t.Helper()
 	return selfUpdateSetupUserServiceFrom(t, account, updateOldArtifact)
 }
 
-// selfUpdateSetupUserServiceFrom is selfUpdateSetupUserServiceFor for a caller
-// that installs another staged artifact as the account's user service.
 func selfUpdateSetupUserServiceFrom(t *testing.T, account, artifact string) (string, []string) {
 	t.Helper()
 
@@ -819,8 +754,6 @@ func selfUpdateSetupUserServiceFrom(t *testing.T, account, artifact string) (str
 	return target, userEnv
 }
 
-// selfUpdateUserJournal returns the tail of the account's user unit log, for a
-// setup failure inside the container.
 func selfUpdateUserJournal(t *testing.T, account string, userEnv []string) string {
 	t.Helper()
 
@@ -828,8 +761,6 @@ func selfUpdateUserJournal(t *testing.T, account string, userEnv []string) strin
 	return strings.TrimSpace(res.Stdout + res.Stderr)
 }
 
-// selfUpdateUserServiceMainPID returns the MainPID systemd reports for the
-// account's user unit.
 func selfUpdateUserServiceMainPID(t *testing.T, account string, userEnv []string) int {
 	t.Helper()
 
@@ -845,8 +776,8 @@ func selfUpdateUserServiceMainPID(t *testing.T, account string, userEnv []string
 	return pid
 }
 
-// selfUpdatePasswd reads the uid, gid and home directory of account through
-// getent, so it also sees accounts that exist only in the extrausers source.
+// selfUpdatePasswd reads uid, gid and home through getent, so it also sees
+// accounts that exist only in the extrausers source.
 func selfUpdatePasswd(t *testing.T, account string) (uint32, uint32, string) {
 	t.Helper()
 
@@ -869,8 +800,6 @@ func selfUpdatePasswd(t *testing.T, account string) (uint32, uint32, string) {
 	return uint32(uid), uint32(gid), fields[5]
 }
 
-// selfUpdateWriteAccountConfig writes a configuration file owned by uid:gid in
-// a private directory.
 func selfUpdateWriteAccountConfig(t *testing.T, path string, uid, gid uint32, content string) {
 	t.Helper()
 
@@ -895,7 +824,6 @@ func selfUpdateWriteAccountConfig(t *testing.T, path string, uid, gid uint32, co
 	}
 }
 
-// selfUpdateUnitState returns systemctl's is-active answer for the unit.
 func selfUpdateUnitState(t *testing.T, account string, env []string, unit string, scopeArgs ...string) string {
 	t.Helper()
 
@@ -904,8 +832,6 @@ func selfUpdateUnitState(t *testing.T, account string, env []string, unit string
 	return strings.TrimSpace(res.Stdout)
 }
 
-// selfUpdateRunSudo runs the system-installed peers through sudo as
-// account, with the fake API base set in the root command's environment.
 func selfUpdateRunSudo(t *testing.T, account, apiURL string, args ...string) syscontainer.Result {
 	t.Helper()
 
@@ -913,9 +839,6 @@ func selfUpdateRunSudo(t *testing.T, account, apiURL string, args ...string) sys
 	return runWithEnv(t, account, nil, "sudo", argv...)
 }
 
-// selfUpdateWaitBrokerVersion waits until the Broker behind socket reports want
-// as its running version. The test process is root, so the system socket's
-// permission check is satisfied.
 func selfUpdateWaitBrokerVersion(t *testing.T, socket, want string) {
 	t.Helper()
 
@@ -936,9 +859,8 @@ func selfUpdateWaitBrokerVersion(t *testing.T, socket, want string) {
 	})
 }
 
-// selfUpdateWaitUserBrokerVersion waits until the account's user Broker reports
-// want. The Broker admits only that account's peer credentials, so the read
-// runs as the account.
+// selfUpdateWaitUserBrokerVersion reads as account, because a user Broker admits
+// only that account's peer credentials.
 func selfUpdateWaitUserBrokerVersion(t *testing.T, account, want string) {
 	t.Helper()
 
@@ -951,9 +873,6 @@ func selfUpdateWaitUserBrokerVersion(t *testing.T, account, want string) {
 	})
 }
 
-// selfUpdateWaitSession waits until a tool call on the existing session
-// succeeds. It proves the MCP server reconnected to the restarted Broker
-// without the session being reopened.
 func selfUpdateWaitSession(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 
@@ -966,10 +885,9 @@ func selfUpdateWaitSession(t *testing.T, session *syscontainer.Session) {
 	})
 }
 
-// selfUpdateWaitConnected waits until the session's MCP server has connected
-// to its Broker. A tool call made in the first moments after the server starts
-// answers with "still being set up", which is not what these tests exercise;
-// list_brokers needs no Agent identity, so it also works before registration.
+// selfUpdateWaitConnected polls list_brokers, which needs no Agent identity,
+// because a tool call in the first moments answers that the session is still
+// being set up.
 func selfUpdateWaitConnected(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 
@@ -982,9 +900,6 @@ func selfUpdateWaitConnected(t *testing.T, session *syscontainer.Session) {
 	})
 }
 
-// selfUpdateRequireUpdateTool checks that the MCP server exposes update_broker
-// with the annotations the design requires: it is not read-only and is
-// destructive, so a client can authorize it separately.
 func selfUpdateRequireUpdateTool(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 
@@ -1014,9 +929,6 @@ func selfUpdateRequireUpdateTool(t *testing.T, session *syscontainer.Session) {
 	t.Fatalf("the MCP server does not expose update_broker; tools: %s", strings.Join(names, ", "))
 }
 
-// selfUpdateCallBrokerUpdate calls update_broker and checks the from, to and
-// restarting values. It returns the whole tool result text, which also carries
-// the note about reopening the session.
 func selfUpdateCallBrokerUpdate(t *testing.T, session *syscontainer.Session, from, to string) string {
 	t.Helper()
 
@@ -1055,9 +967,8 @@ func selfUpdateCallBrokerUpdate(t *testing.T, session *syscontainer.Session, fro
 	return text
 }
 
-// selfUpdateJSONLine returns the first non-empty line of text that starts with
-// an object. The typed tool result is one JSON object; an update hint may be
-// appended after it as another text block.
+// selfUpdateJSONLine returns the first line that is a JSON object; an update hint
+// may be appended after it as another text block.
 func selfUpdateJSONLine(t *testing.T, text string) string {
 	t.Helper()
 
@@ -1070,8 +981,6 @@ func selfUpdateJSONLine(t *testing.T, text string) string {
 	return ""
 }
 
-// selfUpdateRequireReopenHint checks that the tool result tells the caller the
-// open session must be reopened to run the new MCP binary.
 func selfUpdateRequireReopenHint(t *testing.T, text string) {
 	t.Helper()
 
@@ -1082,15 +991,11 @@ func selfUpdateRequireReopenHint(t *testing.T, text string) {
 	}
 }
 
-// selfUpdateWaitAuditEvent waits until the Broker's audit log records
-// update_applied by account with both versions.
 func selfUpdateWaitAuditEvent(t *testing.T, account string) {
 	t.Helper()
 	selfUpdateWaitAuditEventFor(t, account, updateOldVersion, updateNewVersion)
 }
 
-// selfUpdateWaitAuditEventFor waits for update_applied by account between the
-// two named versions.
 func selfUpdateWaitAuditEventFor(t *testing.T, account, from, to string) {
 	t.Helper()
 
@@ -1111,8 +1016,6 @@ func selfUpdateWaitAuditEventFor(t *testing.T, account, from, to string) {
 	})
 }
 
-// selfUpdateRunRoot runs a command as root and fails the test when it does not
-// succeed.
 func selfUpdateRunRoot(t *testing.T, argv ...string) {
 	t.Helper()
 

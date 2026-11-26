@@ -20,7 +20,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// envMap turns NAME=value strings into a map.
 func envMap(env []string) map[string]string {
 	values := make(map[string]string, len(env))
 	for _, variable := range env {
@@ -32,6 +31,7 @@ func envMap(env []string) map[string]string {
 	return values
 }
 
+// TestLocalHostEnvIsolates checks that two local hosts get distinct runtime roots, account homes and HOME values.
 func TestLocalHostEnvIsolates(t *testing.T) {
 	first := NewLocalHost(t, LocalOptions{Name: "first"})
 	second := NewLocalHost(t, LocalOptions{Name: "second"})
@@ -72,9 +72,6 @@ func TestLocalHostEnvIsolates(t *testing.T) {
 	}
 }
 
-// pidsWithRuntimeRoot returns the process IDs whose environment carries the
-// given runtime root. It uses the node library's scan; no private /proc reader
-// lives in the harness.
 func pidsWithRuntimeRoot(t *testing.T, root string) []int {
 	t.Helper()
 	procs, err := node.ListProcs(func(p node.Proc) bool {
@@ -90,9 +87,7 @@ func pidsWithRuntimeRoot(t *testing.T, root string) []int {
 	return pids
 }
 
-// childBrokerPids returns the pids of this process's direct children whose
-// command line runs the test Broker. It reads them from ps, which reports the
-// same columns on Linux and macOS, so the check needs no /proc.
+// childBrokerPids returns the pids of this process's direct children whose command line runs the test Broker; it reads them from ps rather than /proc because TestLocalHostCleanupStopsBroker also runs on macOS.
 func childBrokerPids(t *testing.T) []int {
 	t.Helper()
 	out, err := exec.Command("ps", "-ww", "-A", "-o", "pid=,ppid=,command=").Output()
@@ -118,6 +113,7 @@ func childBrokerPids(t *testing.T) []int {
 	return pids
 }
 
+// TestLocalHostCleanupKillsDetached checks that cleanup kills a detached process carrying the node's runtime root.
 func TestLocalHostCleanupKillsDetached(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("looking up processes by environment scans /proc")
@@ -191,9 +187,8 @@ type sentSignal struct {
 	sig syscall.Signal
 }
 
-// TestKillPids fixes the process cleanup: without coverage every process gets
-// SIGKILL at once; under coverage every process gets SIGTERM first, one that
-// exits on it is never killed, and one that survives is killed after the wait.
+// TestKillPids checks that without coverage every process gets SIGKILL, while
+// under coverage the processes that survive SIGTERM are killed after the wait.
 func TestKillPids(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -240,9 +235,7 @@ func TestKillPids(t *testing.T) {
 	}
 }
 
-// TestKillPidsDropsAPidSeenDead checks that a pid observed dead is never
-// considered again. The number may report alive later because an unrelated
-// process reused it, and that process must not receive SIGKILL.
+// TestKillPidsDropsAPidSeenDead checks that a pid observed dead is never considered again even if the number is later reused.
 func TestKillPidsDropsAPidSeenDead(t *testing.T) {
 	t.Setenv(CoverageDirEnv, "/tmp/cover")
 	calls := map[int]int{}
@@ -266,9 +259,8 @@ func TestKillPidsDropsAPidSeenDead(t *testing.T) {
 	}
 }
 
-// TestKillPidsSkipsAReusedPid checks that a pid whose identity changed before
-// the SIGKILL deadline is left alone: the number now names a different
-// process, which the cleanup must not kill.
+// TestKillPidsSkipsAReusedPid checks that a pid whose start time changed before
+// the SIGKILL deadline is left alone.
 func TestKillPidsSkipsAReusedPid(t *testing.T) {
 	t.Setenv(CoverageDirEnv, "/tmp/cover")
 	calls := map[int]int{}
@@ -315,6 +307,7 @@ func containsPID(pids []int, want int) bool {
 	return false
 }
 
+// TestFreeAddrIsLoopback checks that FreeAddr returns a 127.0.0.1 address with a non-zero port.
 func TestFreeAddrIsLoopback(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "addr"})
 
@@ -336,6 +329,7 @@ func TestFreeAddrIsLoopback(t *testing.T) {
 	}
 }
 
+// TestNodeConfigFile checks that a node's configuration file is read back, written with mode 600, and kept alone in its directory.
 func TestNodeConfigFile(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "config"})
 
@@ -397,10 +391,7 @@ func (r *failureRecorder) Fatalf(format string, args ...any) {
 	r.message = fmt.Sprintf(format, args...)
 }
 
-// TestSessionEndReportsBackgroundError checks that a background failure the
-// fake recorded fails the test at the end of the session instead of being
-// lost. The injected failure is the positive control: without the check, End
-// would report nothing.
+// TestSessionEndReportsBackgroundError checks that a background failure the fake recorded fails the test at the end of the session instead of being lost.
 func TestSessionEndReportsBackgroundError(t *testing.T) {
 	n := NewLocalHost(t, LocalOptions{Name: "hostA"})
 	s := n.StartSession(t, SessionSpec{Name: "background"})
@@ -420,11 +411,7 @@ func TestSessionEndReportsBackgroundError(t *testing.T) {
 	}
 }
 
-// TestSessionCallReportsOnePrefix checks that a failed tool call names the
-// session and the tool in its failure message once. The call on a session
-// without an MCP server process fails in the backend, whose error already
-// carries that prefix; a second one added by Session.Call would make the
-// message read "harness: session ...: calling ...: harness: session ...".
+// TestSessionCallReportsOnePrefix checks that a failed tool call names the session and the tool in its failure message exactly once.
 func TestSessionCallReportsOnePrefix(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "prefix"})
 	s := host.StartSession(t, SessionSpec{Name: "a*b"})
@@ -437,6 +424,7 @@ func TestSessionCallReportsOnePrefix(t *testing.T) {
 	}
 }
 
+// TestSessionEndIsIdempotent checks that ending a session twice is safe and removes its record.
 func TestSessionEndIsIdempotent(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "end"})
 	session := host.StartSession(t, SessionSpec{Name: "e"})
@@ -450,11 +438,7 @@ func TestSessionEndIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestSessionStartAllowsSlowMCPLaunch checks that starting a session is bounded
-// by the startup allowance rather than by the three-second test wait. The
-// wrapper delays the real MCP server by four seconds, longer than the test wait
-// and shorter than the allowance: the start must succeed even though the
-// handshake has not begun when the test wait would have expired.
+// TestSessionStartAllowsSlowMCPLaunch checks that StartSession still succeeds when the MCP server's launch is delayed by four seconds, within sessionStartBound's 30 seconds.
 func TestSessionStartAllowsSlowMCPLaunch(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "slow-launch"})
 	local := host.impl.(*localNode)
@@ -499,7 +483,6 @@ exit 4
 	return script, record
 }
 
-// recordedRuns returns the lines the stand-in Broker wrote.
 func recordedRuns(t *testing.T, record string) []string {
 	t.Helper()
 	data, err := os.ReadFile(record)
@@ -509,7 +492,6 @@ func recordedRuns(t *testing.T, record string) []string {
 	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }
 
-// listenArg returns the value after --listen in a recorded command line.
 func listenArg(t *testing.T, line string) string {
 	t.Helper()
 	fields := strings.Fields(line)
@@ -522,6 +504,7 @@ func listenArg(t *testing.T, line string) string {
 	return ""
 }
 
+// TestStartBrokerRetriesFreeAddrConflict checks that a FreeAddr port taken before the bind is retried once, while a test-chosen address and another failure are not.
 func TestStartBrokerRetriesFreeAddrConflict(t *testing.T) {
 	const addressTaken = "listen address $listen is not available: listen tcp $listen: bind: address already in use"
 
@@ -605,10 +588,7 @@ func TestStartBrokerRetriesFreeAddrConflict(t *testing.T) {
 	})
 }
 
-// TestStartBrokerReportsActualAddrAfterRetry holds the address FreeAddr handed
-// out, so the first start fails on "address already in use" and the retry moves
-// the Broker to a new one. The caller must learn the address the Broker
-// actually listens on, and that address must answer.
+// TestStartBrokerReportsActualAddrAfterRetry checks that after a retry the caller learns the address the Broker actually listens on and that it answers.
 func TestStartBrokerReportsActualAddrAfterRetry(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "retry-address"})
 
@@ -645,12 +625,7 @@ func TestStartBrokerReportsActualAddrAfterRetry(t *testing.T) {
 	_ = conn.Close()
 }
 
-// TestLocalHostCleanupStopsBroker checks the rule the retry test depends on: a
-// running Broker is gone once its node is cleaned up. On a build whose handle
-// cannot signal a child it has not waited for, cleanup fails to stop the
-// Broker, which survives as an orphan that holds its port and account lock for
-// the rest of the run. The check reads the surviving children from ps rather
-// than trusting the pid alone, so it reports the process by what it runs.
+// TestLocalHostCleanupStopsBroker checks that cleanup leaves no child Broker process running.
 func TestLocalHostCleanupStopsBroker(t *testing.T) {
 	host := NewLocalHost(t, LocalOptions{Name: "cleanup-broker"})
 	local := host.impl.(*localNode)
@@ -667,9 +642,7 @@ func TestLocalHostCleanupStopsBroker(t *testing.T) {
 	}
 }
 
-// TestExportedTypeShapes pins the names and signatures downstream work items
-// quote from the plan: the three aliases, the field names of the broker and
-// exec results, and the methods scenarios call.
+// TestExportedTypeShapes is a compile-time check that the exported type names, field names and method signatures scenarios rely on keep their shape.
 func TestExportedTypeShapes(t *testing.T) {
 	var _ = BrokerStart(node.StartResult{})
 	var _ = SessionSpec(node.SessionSpec{})

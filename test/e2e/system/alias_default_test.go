@@ -13,59 +13,39 @@ import (
 )
 
 const (
-	// aliasSysHostname must carry a domain, so the assertion proves the alias
-	// keeps only the first label.
-	aliasSysHostname = "hostA.example.com"
-	// aliasSysSystemAlias is the system alias: the first hostname label.
+	// aliasSysHostname carries a domain so the assertions prove the alias keeps
+	// only the first label.
+	aliasSysHostname    = "hostA.example.com"
 	aliasSysSystemAlias = "hostA"
-	// aliasSysUserAlias is the user alias: the first label and the
-	// account running the Broker.
-	aliasSysUserAlias = "hostA.alice"
-	// aliasSysTopic is the topic both sessions join so each Broker forwards
-	// the other's agents across the link.
-	aliasSysTopic = "alias"
-	// aliasSysAliceConfig is the user Broker's configuration file.
+	aliasSysUserAlias   = "hostA.alice"
+	aliasSysTopic       = "alias"
 	aliasSysAliceConfig = "/home/alice/.peers/config.yaml"
-	// aliasSysRelinkBound is the product timer for the user Broker's redial
-	// after a restart: link.reconnect_max is 2s and the link is up the moment
-	// the system Broker lists alice's agent again, so 2s + 1s covers it.
-	// aliasSysRelinkWait adds harness.EventTimeout as the fallback for a frame
-	// wait; a wait that polls list_agents uses ListAgentsWaitBound instead.
+	// aliasSysRelinkBound is the user Broker's 2s reconnect_max plus 1s;
+	// aliasSysRelinkWait adds the EventTimeout fallback for a frame wait.
 	aliasSysRelinkBound = 3 * time.Second
 	aliasSysRelinkWait  = aliasSysRelinkBound + harness.EventTimeout
 )
 
-// TestREQBrokerPairing002_DefaultAliasHostAndAccount covers both forms of
-// REQ-broker-pairing-002 on one host: the system Broker takes the first
-// label of the hostname, and the user Broker run by alice takes that
-// label, a dot and the account name. Neither listen port nor advertise enters
-// either alias.
+// TestREQBrokerPairing002_DefaultAliasHostAndAccount checks that the system
+// Broker's default alias is the first hostname label and the user Broker's is
+// that label, a dot and the account name.
 func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 	if !syscontainer.InContainer() {
-		// The system Broker needs root and the two Brokers need two
-		// accounts, so this runs in the privileged systemd container.
 		syscontainer.Run(t, syscontainer.Systemd)
 		return
 	}
 
-	// The hostname is set from the account database's host, not taken from
-	// whatever name Docker gave the container.
 	if err := syscall.Sethostname([]byte(aliasSysHostname)); err != nil {
 		t.Fatalf("setting the hostname to %q: %v", aliasSysHostname, err)
 	}
 
-	// The image has no alice account, and the requirement names alice.
 	mustRun(t, "root", nil, "useradd", "--create-home", "--shell", "/bin/sh", "alice")
 
-	// The system Broker starts with the default configuration: an empty
-	// broker block, with no alias and no listen override. The file must exist
-	// for the root session's writes to be permitted. It takes the default port
-	// 17443.
+	// The configuration file must exist for the root session's writes to be
+	// permitted.
 	systemBroker := syscontainer.StartSystemBroker(t, "broker: {}\n")
 	t.Cleanup(func() { systemBroker.Stop(t) })
 
-	// The user Broker needs its own port because 17443 belongs to the
-	// system Broker. The link timers make the restart bound exact.
 	writeAccountFile(t, "alice", aliasSysAliceConfig,
 		"broker:\n  listen: \":17445\"\nlink:\n  reconnect_min: 1s\n  reconnect_max: 2s\n")
 	userBroker := syscontainer.StartUserBroker(t, "alice")
@@ -77,21 +57,17 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 	e2eSysJoinTopic(t, rootSession, aliasSysTopic)
 	e2eSysJoinTopic(t, aliceSession, aliasSysTopic)
 
-	// alice is the dialer, so a restart of the user Broker makes it
-	// redial the system Broker without a new connect_broker call.
+	// alice is the dialer, so a restart of its user Broker redials the system
+	// Broker without a new connect_broker call.
 	key := createPairingKey(t, rootSession)
 	if alias := connectBroker(t, aliceSession, "127.0.0.1:17443", key); alias == "" {
 		t.Fatal("connect_broker returned no alias")
 	}
 
-	// The system Broker: the hostname's first label alone.
 	aliasSysWaitSuffix(t, aliceSession, "x1", "@"+aliasSysSystemAlias)
-	// The user Broker: the first label and the account.
 	aliasSysWaitSuffix(t, rootSession, "a1", "@"+aliasSysUserAlias)
 	aliasSysRequireSelf(t, aliceSession, "a1", "@"+aliasSysUserAlias)
 
-	// A message crosses the two Brokers by the addresses their default aliases
-	// form, and each side sees the other's address as the sender.
 	rootSelf := e2eSysSelfAddress(t, rootSession)
 	aliceSelf := e2eSysSelfAddress(t, aliceSession)
 	if text, isError := aliceSession.Call(t, "send_message", map[string]any{"to": rootSelf, "message": "alias-ping"}); isError {
@@ -121,9 +97,6 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 		t.Fatalf("the delivered content %q does not contain alias-pong", pong.Content)
 	}
 
-	// Three settings that must not move the user alias. Each restarts
-	// the user Broker with a new configuration; the system Broker
-	// keeps running.
 	for _, tc := range []struct {
 		name   string
 		config string
@@ -154,15 +127,11 @@ func TestREQBrokerPairing002_DefaultAliasHostAndAccount(t *testing.T) {
 
 			aliasSysWaitSuffix(t, rootSession, "a1", "@"+aliasSysUserAlias)
 			aliasSysRequireSelf(t, aliceSession, "a1", "@"+aliasSysUserAlias)
-			// The system alias is untouched by the user restart.
 			aliasSysWaitSuffix(t, aliceSession, "x1", "@"+aliasSysSystemAlias)
 		})
 	}
 }
 
-// aliasSysWaitSuffix waits until session lists an agent named name whose
-// address ends with suffix. The wait derives its bound from list_agents, the
-// tool it polls, so a caller cannot pass a shorter one.
 func aliasSysWaitSuffix(t *testing.T, session *syscontainer.Session, name, suffix string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the address of "+name+" seen by "+session.Account+" ends with "+suffix, func(deadline time.Time) (bool, string) {
@@ -182,8 +151,6 @@ func aliasSysWaitSuffix(t *testing.T, session *syscontainer.Session, name, suffi
 	})
 }
 
-// aliasSysRequireSelf checks the session's own address, which the Broker
-// reports without waiting on the link.
 func aliasSysRequireSelf(t *testing.T, session *syscontainer.Session, name, suffix string) {
 	t.Helper()
 	self := e2eSysSelfAddress(t, session)

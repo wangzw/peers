@@ -26,13 +26,11 @@ const (
 	Outbound
 )
 
-// faultPlan describes how a topology is cut. A router topology inserts the
-// reject rules on the router's FORWARD chain; a flat topology inserts them on
-// both endpoints. peer maps each endpoint to the far end of its established
-// connection as that endpoint sees it, so ss -K can tear the socket down.
-// Masquerading and DNAT make that address differ from either host's own
-// address: the dialer sees the destination it dialed, the acceptor sees the
-// address the router rewrote the source to.
+// faultPlan describes how a topology is cut: a router topology inserts the
+// reject rules on the router's FORWARD chain, a flat topology on both
+// endpoints. peer maps each endpoint to the far end of its established
+// connection as that endpoint sees it, so ss -K can tear the socket down;
+// masquerading and DNAT make that address differ from either host's own.
 type faultPlan struct {
 	router  string
 	network string
@@ -40,25 +38,24 @@ type faultPlan struct {
 }
 
 var (
+	// faultPlanMu guards faultPlans and activeCuts.
 	faultPlanMu sync.Mutex
 	faultPlans  = map[*Cluster]*faultPlan{}
 	activeCuts  = map[*Cluster]*cutState{}
 
-	// counterSeq numbers the counter rules of one test process. The comment it
-	// produces is unique among the rules of every node, so a read cannot pick
-	// up another rule in the same chain.
+	// counterSeq numbers the counter rules of one test process, so a read
+	// cannot pick up another rule in the same chain.
 	counterSeq atomic.Uint64
 )
 
-// registerFaults records how Cut and Restore should treat c. The topology's
-// init function calls it once Up has created the cluster.
+// registerFaults records how Cut and Restore should treat c; a topology's init
+// function calls it once Up has created the cluster.
 func registerFaults(c *Cluster, plan faultPlan) {
 	faultPlanMu.Lock()
 	faultPlans[c] = &plan
 	faultPlanMu.Unlock()
 }
 
-// faultPlanOf returns the plan registered for c.
 func faultPlanOf(t testing.TB, c *Cluster) *faultPlan {
 	t.Helper()
 	faultPlanMu.Lock()
@@ -71,24 +68,21 @@ func faultPlanOf(t testing.TB, c *Cluster) *faultPlan {
 	return plan
 }
 
-// cutRule is one rule Cut inserted, remembered with the chain and
-// specification Restore deletes it by.
 type cutRule struct {
 	node  string
 	chain string
 	spec  []string
 }
 
-// cutState is the rules of one active Cut.
 type cutState struct {
 	rules []cutRule
 }
 
-// Cut makes node a and node b unreachable from each other. On a topology with
-// a router it rejects all forwarded traffic there; on a flat topology it
-// rejects the peer address in both directions on both endpoints. Established
-// connections are torn down immediately with ss -K. The test cleanup restores
-// the network even when the test does not call Restore.
+// Cut makes node a and node b unreachable from each other. On a router topology
+// it rejects all forwarded traffic at the router; on a flat topology it rejects
+// the peer address in both directions on both endpoints. Established
+// connections are torn down with ss -K, and the test cleanup restores the
+// network even when the test does not call Restore.
 func (c *Cluster) Cut(t testing.TB, a, b string) {
 	t.Helper()
 	plan := faultPlanOf(t, c)
@@ -103,9 +97,8 @@ func (c *Cluster) Cut(t testing.TB, a, b string) {
 	activeCuts[c] = st
 	faultPlanMu.Unlock()
 
-	// Register the teardown as soon as the cut is recorded. A failure while the
-	// rules are being inserted must not leave them behind, so the cleanup runs
-	// even when Cut stops before its last insertion.
+	// Register the teardown before inserting rules, so a failure midway leaves
+	// none behind.
 	t.Cleanup(func() { c.restore(t) })
 
 	insert := func(node, chain string, spec ...string) {
@@ -158,7 +151,6 @@ func (c *Cluster) Restore(t testing.TB) {
 	c.restore(t)
 }
 
-// restore implements Restore and the cleanup hook.
 func (c *Cluster) restore(t testing.TB) {
 	t.Helper()
 	faultPlanMu.Lock()
@@ -211,10 +203,9 @@ func (c *Cluster) Unblock(t testing.TB, from, toAddr string) {
 }
 
 // SYNCounter inserts a counting rule for TCP SYNs on node and returns a
-// function that reads the packet count. port 0 watches every destination port,
-// which is what an acceptor counter needs: a dial it must not make could aim
-// anywhere, not only at the port under test. The counter is not removed when
-// the test ends; the container goes away with the project.
+// function that reads the packet count. port 0 watches every destination port.
+// The counter is not removed when the test ends; the container goes away with
+// the project.
 func (c *Cluster) SYNCounter(t testing.TB, node string, dir Direction, peerAddr string, port int) func() int64 {
 	t.Helper()
 	var (
@@ -259,9 +250,9 @@ func (c *Cluster) ByteCounter(t testing.TB, node string, fromAddr string, port i
 	return c.addCounter(t, node, "INPUT", spec, false)
 }
 
-// addCounter inserts one counting rule with a unique comment and returns a
-// reader for it. The comment is what counter matches, so a rule that ACCEPTs
-// other traffic in the same chain cannot be read by mistake.
+// addCounter inserts one counting rule with a unique comment, which is what
+// counter matches, so a rule that ACCEPTs other traffic in the same chain cannot
+// be read by mistake.
 func (c *Cluster) addCounter(t testing.TB, node, chain string, spec []string, packets bool) func() int64 {
 	t.Helper()
 	comment := fmt.Sprintf("ape2e-counter-%d-%d", os.Getpid(), counterSeq.Add(1))
@@ -271,9 +262,8 @@ func (c *Cluster) addCounter(t testing.TB, node, chain string, spec []string, pa
 	return func() int64 { return c.counter(t, node, chain, comment, packets) }
 }
 
-// counter reads the packets or bytes of the one rule on chain carrying
-// comment. The rule is identified by that comment alone; a listing without it
-// means the rule was lost, not that the count is zero.
+// counter reads the packets or bytes of the one rule on chain carrying comment;
+// a listing without it means the rule was lost, not that the count is zero.
 func (c *Cluster) counter(t testing.TB, node, chain, comment string, packets bool) int64 {
 	t.Helper()
 	out := c.Root(t, node, "iptables", "-nvx", "-L", chain)
@@ -299,8 +289,6 @@ func (c *Cluster) counter(t testing.TB, node, chain, comment string, packets boo
 	return 0
 }
 
-// captureBound is the fallback for tcpdump's startup and exit. Both are local
-// process operations with no product timer; the success path answers at once.
 const captureBound = EventTimeout
 
 // Capture starts tcpdump on node for TCP port and returns a function that
@@ -311,9 +299,9 @@ func (c *Cluster) Capture(t testing.TB, node string, port int) (stop func() []by
 	path := fmt.Sprintf("/tmp/e2e-capture-%d.pcap", port)
 	logPath := fmt.Sprintf("/tmp/e2e-capture-%d.log", port)
 	pidPath := fmt.Sprintf("/tmp/e2e-capture-%d.pid", port)
-	// The pid file is what lets stop address this tcpdump and no other one on
-	// the node. Redirecting both streams lets the exec return while tcpdump
-	// keeps running under the container's init process.
+	// The pid file lets stop address this tcpdump and no other one on the node.
+	// Redirecting both output streams lets the exec return while tcpdump keeps
+	// running under the container's init process.
 	script := fmt.Sprintf("rm -f %s %s %s; nohup tcpdump -i any -w %s -U tcp port %d >%s 2>&1 & echo $! > %s",
 		path, logPath, pidPath, path, port, logPath, pidPath)
 	c.Root(t, node, "sh", "-c", script)
@@ -380,22 +368,15 @@ func (c *Cluster) ReleasePort(t testing.TB, node, id string) {
 	}
 }
 
-// tcpProbeAnswerMargin is how much longer the control request may live than
-// the TCP probe it carries. A blackhole probe answers false only when its dial
-// times out; if the control request's deadline matched the probe, the request
-// could be cancelled as the answer is being written, surface as a control
-// error, and fail the test instead of reporting the address unreachable. Five
-// seconds is well above one round trip on the node agent's Unix socket and
-// matches the slack the control client gives a tool call.
+// tcpProbeAnswerMargin keeps the control request alive longer than the TCP
+// probe it carries, so a blackhole probe answers false instead of the request
+// being cancelled as the answer is written.
 const tcpProbeAnswerMargin = 5 * time.Second
 
 // TCPReachable reports whether a TCP connection from node to addr succeeds
 // within timeout.
 func (c *Cluster) TCPReachable(t testing.TB, node, addr string, timeout time.Duration) bool {
 	t.Helper()
-	// Give the control request a deadline beyond the probe's own, so the probe
-	// answers before the request is cancelled. Without it the client applies
-	// its thirty-second default, which coincides with a thirty-second probe.
 	ctx, cancel := context.WithTimeout(context.Background(), timeout+tcpProbeAnswerMargin)
 	defer cancel()
 	res, err := c.control(node).ProbeTCP(ctx, ctl.ProbeTCPRequest{
@@ -472,8 +453,6 @@ func (c *Cluster) SetDefaultRoute(t testing.TB, node, gateway string) {
 	c.Root(t, node, "ip", "route", "replace", "default", "via", gateway)
 }
 
-// setDefaultRouteOn installs a device-only default route, the form the plan
-// asks for on flat networks.
 func (c *Cluster) setDefaultRouteOn(t testing.TB, node, dev string) {
 	t.Helper()
 	c.Root(t, node, "ip", "route", "replace", "default", "dev", dev)
@@ -499,13 +478,11 @@ func (c *Cluster) AddDefaultRoute6(t testing.TB, node string) {
 	c.Root(t, node, "ip", "-6", "route", "add", "default", "dev", dev)
 }
 
-// iptables runs one iptables command as root in node.
 func (c *Cluster) iptables(t testing.TB, node string, args ...string) string {
 	t.Helper()
 	return c.Root(t, node, append([]string{"iptables"}, args...)...)
 }
 
-// control returns the node agent client of node.
 func (c *Cluster) control(node string) *ctl.Client {
 	c.mu.Lock()
 	client := c.clients[node]
@@ -516,7 +493,6 @@ func (c *Cluster) control(node string) *ctl.Client {
 	return client
 }
 
-// allDigits reports whether s is a non-empty string of decimal digits.
 func allDigits(s string) bool {
 	if s == "" {
 		return false

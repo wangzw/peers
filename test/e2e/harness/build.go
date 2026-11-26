@@ -15,8 +15,6 @@ import (
 	"testing"
 )
 
-// buildEntry memoises one go build invocation. once runs the build exactly
-// once even when several callers ask for the same parameters.
 type buildEntry struct {
 	once sync.Once
 	path string
@@ -36,9 +34,7 @@ var (
 	modRootErr  error
 )
 
-// DefaultVersion is the version stamped into binaries the harness builds when
-// the caller does not name one. It is not a release version, so a build that
-// checks for updates treats it as a non-release build.
+// DefaultVersion is the version stamped into binaries the harness builds when the caller does not name one; it is not a release version, so an update check treats such a build as non-release.
 const DefaultVersion = "e2e"
 
 // CoverageDirEnv names the environment variable that turns on end-to-end
@@ -46,9 +42,6 @@ const DefaultVersion = "e2e"
 // processes write their counters to.
 const CoverageDirEnv = "E2E_COVER_DIR"
 
-// coverPackages is the -coverpkg pattern of an instrumented product build. The
-// harness passes it so every module package linked into the product binary is
-// instrumented and their counters can be attributed across the module.
 const coverPackages = "github.com/wangzw/peers/..."
 
 // CoverageDir returns the directory end-to-end coverage counters are written
@@ -68,11 +61,8 @@ func DownTimeout() string {
 	return "1"
 }
 
-// buildSpec is one go build invocation. instrument marks a product build whose
-// package gets coverage instrumentation when coverage collection is on. Helper
-// builds are test-only programs under test/, which the coverage denominator
-// does not count, and an overlay build replaces product sources, so its metadata
-// would not match the tree; both stay uninstrumented.
+// buildSpec is one go build invocation; helper and overlay builds are never
+// instrumented.
 type buildSpec struct {
 	pkg        string
 	version    string
@@ -83,25 +73,18 @@ type buildSpec struct {
 	instrument bool
 }
 
-// productSpec is the spec of an instrumentable product build.
 func productSpec(pkg, version, goos, goarch string, tags []string) buildSpec {
 	return buildSpec{pkg: pkg, version: version, goos: goos, goarch: goarch, tags: tags, instrument: true}
 }
 
-// helperSpec is the spec of a build that is never instrumented.
 func helperSpec(pkg, version, goos, goarch string, tags []string) buildSpec {
 	return buildSpec{pkg: pkg, version: version, goos: goos, goarch: goarch, tags: tags}
 }
 
-// overlaySpec is the spec of a build with an overlay, which is never
-// instrumented.
 func overlaySpec(pkg, version, goos, goarch, overlay string, tags []string) buildSpec {
 	return buildSpec{pkg: pkg, version: version, goos: goos, goarch: goarch, tags: tags, overlay: overlay}
 }
 
-// args returns the go build arguments for the spec. coverDir is the directory
-// coverage counters are written to; an empty value keeps the build
-// uninstrumented.
 func (s buildSpec) args(out, coverDir string) []string {
 	args := []string{"build"}
 	if s.instrument && coverDir != "" {
@@ -131,9 +114,6 @@ var (
 	coverCheckErr  error
 )
 
-// checkCoverageDir validates the coverage directory once per test process, on
-// the first instrumented build. The check lives here so both test/e2e and
-// test/e2e/system, which build product binaries, get it without a TestMain.
 func checkCoverageDir(dir string) error {
 	coverCheckOnce.Do(func() {
 		coverCheckErr = validateCoverageDir(dir)
@@ -141,7 +121,6 @@ func checkCoverageDir(dir string) error {
 	return coverCheckErr
 }
 
-// validateCoverageDir reports why dir cannot receive coverage counters.
 func validateCoverageDir(dir string) error {
 	if dir == "" {
 		return nil
@@ -177,18 +156,15 @@ func BuildBinary(tb testing.TB, goos, goarch string, tags ...string) string {
 	return BuildBinaryVersion(tb, DefaultVersion, goos, goarch, tags...)
 }
 
-// BuildBinaryVersion is BuildBinary with an explicit version stamped into
-// main.version. Tests that exercise the release version, such as the update
-// scenario, name the version they want here.
+// BuildBinaryVersion is BuildBinary with version stamped into main.version.
 func BuildBinaryVersion(tb testing.TB, version, goos, goarch string, tags ...string) string {
 	tb.Helper()
 	return build(tb, productSpec("./cmd/peers", version, goos, goarch, tags))
 }
 
-// BuildBinaryVersionOverlay is BuildBinaryVersion with a Go build overlay file
-// that substitutes source files for this build only. A test uses it to produce
-// a binary whose behavior differs from the tree without changing the tree; the
-// overlay is a JSON file in the form go build's -overlay flag accepts.
+// BuildBinaryVersionOverlay is BuildBinaryVersion with a Go build overlay file,
+// in the form go build's -overlay flag accepts, that substitutes source files for
+// this build only.
 func BuildBinaryVersionOverlay(tb testing.TB, version, goos, goarch, overlay string, tags ...string) string {
 	tb.Helper()
 	return build(tb, overlaySpec("./cmd/peers", version, goos, goarch, overlay, tags))
@@ -201,8 +177,7 @@ func BuildPackage(tb testing.TB, pkg, goos, goarch string, tags ...string) strin
 	return build(tb, helperSpec(pkg, DefaultVersion, goos, goarch, tags))
 }
 
-// ModuleRoot returns the root directory of the Go module under test. It lets a
-// test name a source file an overlay replaces.
+// ModuleRoot returns the root directory of the Go module under test.
 func ModuleRoot(tb testing.TB) string {
 	tb.Helper()
 	root, err := moduleRoot()
@@ -268,8 +243,6 @@ func goBuild(spec buildSpec) (string, error) {
 	return out, nil
 }
 
-// outputName derives a stable file name from the build parameters so that
-// binaries never overwrite each other inside the shared build directory.
 func outputName(pkg, version, goos, goarch string, tags []string) string {
 	tagPart := "notags"
 	if len(tags) > 0 {
@@ -279,8 +252,6 @@ func outputName(pkg, version, goos, goarch string, tags []string) string {
 		sanitize(filepath.Base(filepath.Clean(pkg))), sanitize(version), goos, goarch, sanitize(tagPart))
 }
 
-// sanitize keeps the characters that are safe in a file name and replaces the
-// rest, so a package path or tag list can be used verbatim in the output name.
 func sanitize(s string) string {
 	if s == "" || s == "." {
 		return "pkg"

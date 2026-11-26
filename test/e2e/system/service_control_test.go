@@ -16,23 +16,15 @@ import (
 )
 
 const (
-	// serviceControlUserPort is the user Broker's listen port for these tests.
-	// It is outside the kernel's ephemeral range and unused by the other system
-	// tests.
-	serviceControlUserPort = "17448"
-	// serviceControlSystemPort is the system Broker's listen port, kept apart
-	// from the user Broker's so the two levels can run at once.
+	serviceControlUserPort   = "17448"
 	serviceControlSystemPort = "17449"
-	// degradedObservationWindow is the acceptance window of
-	// REQ-broker-config-063. The unit's RestartSec is 5 seconds, so a service
-	// manager that restarts the degraded Broker would do so within it; 30
-	// seconds is six restart intervals.
+	// degradedObservationWindow is how long a degraded Broker is watched for a
+	// restart; the unit's RestartSec is 5 seconds, so 30 seconds is six intervals.
 	degradedObservationWindow = 30 * time.Second
 )
 
-// TestServiceControl covers REQ-broker-config-055 and the service-start half of
-// REQ-broker-config-063. Each subtest resets both service levels before it
-// starts, so a failure cannot leak into the next one.
+// TestServiceControl checks that stop, start and restart act on one service
+// level and that a degraded start keeps the Broker running.
 func TestServiceControl(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -75,8 +67,6 @@ func TestServiceControl(t *testing.T) {
 			t.Errorf("the system service MainPID = %d (found %v), want the unchanged %d", pid, ok, systemBefore)
 		}
 
-		// Root acts on the system service: restart it and leave the
-		// stopped user service alone.
 		res = syscontainer.RunAs(t, "root", nil, "service", "restart")
 		if res.ExitCode != 0 {
 			t.Fatalf("service restart as root: exit %d\nstdout: %s\nstderr: %s",
@@ -207,9 +197,6 @@ func TestServiceControl(t *testing.T) {
 	})
 }
 
-// serviceControlSetup resets both levels, starts the peer account's user
-// manager, writes both configurations and installs both services. It returns
-// the environment that reaches the peer account's user manager.
 func serviceControlSetup(t *testing.T) []string {
 	t.Helper()
 	userEnv := serviceControlReset(t)
@@ -234,9 +221,6 @@ func serviceControlSetup(t *testing.T) []string {
 	return userEnv
 }
 
-// serviceControlReset removes both installations and starts the peer account's
-// user manager. It is called before each subtest and from the subtest's
-// cleanup.
 func serviceControlReset(t *testing.T) []string {
 	t.Helper()
 
@@ -263,7 +247,6 @@ func serviceControlReset(t *testing.T) []string {
 	return userEnv
 }
 
-// waitForSocket waits until the Broker's local socket exists.
 func waitForSocket(t *testing.T, path string) {
 	t.Helper()
 	syscontainer.WaitFor(t, "the Broker socket "+path, func() bool {
@@ -272,16 +255,12 @@ func waitForSocket(t *testing.T, path string) {
 	})
 }
 
-// systemServiceIsActive reports whether systemd considers the system unit
-// active.
 func systemServiceIsActive(t *testing.T) bool {
 	t.Helper()
 	res := runCommandAs(t, "root", "systemctl", "is-active", "peers.service")
 	return strings.TrimSpace(res.Stdout) == "active"
 }
 
-// userServiceIsActive reports whether systemd considers the peer account's
-// user unit active.
 func userServiceIsActive(t *testing.T, userEnv []string) bool {
 	t.Helper()
 	res := runWithEnv(t, "peer", userEnv, "systemctl", "--user", "is-active", "peers.service")

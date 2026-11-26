@@ -10,36 +10,30 @@ import (
 )
 
 // The product timers FastTimers configures are exported so a test that derives
-// a wait bound from one of them tracks the profile instead of repeating a
-// literal that can drift away from it.
+// a wait bound from one tracks the profile instead of repeating a literal that
+// can drift.
 const (
 	// FastReconnectMax is link.reconnect_max in FastTimers: the longest the
 	// reconnect backoff waits between attempts.
 	FastReconnectMax = 400 * time.Millisecond
 
 	// FastDialTimeout is link.dial_timeout in FastTimers. It is the production
-	// default (internal/link/settings.go), so a successful dial keeps the
-	// headroom a production Broker has; a 500ms test value could be crossed by
-	// a healthy dial on a loaded runner and fail it before the product does.
+	// default, so a successful dial keeps the headroom a production Broker has;
+	// a short test value could be crossed by a healthy dial on a loaded runner.
 	FastDialTimeout = 5 * time.Second
 
-	// FastRequestTimeout is send.request_timeout in FastTimers. It is the
-	// sender's budget for one send: too short a value reports a send that would
-	// have completed as delivery_unknown under load, so it is sized far above
-	// the worst normal send latency (the production default is 20s). A case
-	// that asserts the delivery-unknown or unreachable result configures a
-	// short request_timeout of its own and derives its wait from that value.
+	// FastRequestTimeout is send.request_timeout in FastTimers, the sender's
+	// budget for one send. It is sized far above the worst normal send latency
+	// because too short a value reports a send that would have completed as
+	// delivery_unknown under load; a case that asserts that result configures a
+	// short request_timeout of its own.
 	FastRequestTimeout = 30 * time.Second
 )
 
 // FastTimers shortens the timers a scenario does not need at production
-// length. The reconnect backoff, the send link backoff and the advertised
-// address check stay short so the fault cases run quickly. The two product
-// timers that decide whether a send or a dial succeeds are not shortened:
-// request_timeout and dial_timeout keep values with generous headroom under
-// load, and only a case that asserts a timeout overrides them with a short
-// value of its own. A test with no product timer to assert waits with
-// EventTimeout instead of borrowing these values.
+// length: the reconnect backoff, the send link backoff and the advertised
+// address check. request_timeout and dial_timeout keep generous values, and
+// only a case that asserts a timeout overrides them.
 var FastTimers = fmt.Sprintf(`link:
   reconnect_min: 100ms
   reconnect_max: %s
@@ -82,8 +76,6 @@ func ConfigYAML(parts ...string) string {
 	return buf.String()
 }
 
-// mergeConfig recursively merges src into dst. Maps merge key by key; any
-// other value replaces the value already present.
 func mergeConfig(dst, src map[string]any) {
 	for key, value := range src {
 		if srcMap, ok := value.(map[string]any); ok {

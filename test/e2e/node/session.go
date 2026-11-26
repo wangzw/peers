@@ -19,25 +19,22 @@ import (
 )
 
 // mcpHandshakeBound is the upper bound for starting an MCP server process and
-// completing the MCP handshake, the thirty seconds the roadmap records as the
-// Claude Code startup allowance.
+// completing the MCP handshake; it matches the 30-second startup allowance
+// Claude Code gives a server.
 const mcpHandshakeBound = 30 * time.Second
 
 const (
-	// mcpInterruptWait is how long StopMCP waits after the requested signal
-	// before escalating to SIGTERM.
 	mcpInterruptWait = 100 * time.Millisecond
-	// mcpTerminateWait is how long StopMCP waits after SIGTERM before
-	// escalating to SIGKILL.
 	mcpTerminateWait = 400 * time.Millisecond
-	// mcpKillWait is how long StopMCP waits after SIGKILL.
-	mcpKillWait = 10 * time.Second
+	mcpKillWait      = 10 * time.Second
 )
 
 // MCPCommand names the MCP server program and its arguments. It is normally
 // the peers binary with the "mcp" argument.
 type MCPCommand struct {
+	// Path is the program to run.
 	Path string
+	// Args are its arguments.
 	Args []string
 }
 
@@ -58,10 +55,17 @@ type SessionSpec struct {
 	// $HOME.
 	Workdir string
 
-	// Mode, BusyDelay, NoBind and SocketPath are passed to fakesession.
-	Mode       fakesession.Mode
-	BusyDelay  time.Duration
-	NoBind     bool
+	// Mode selects how the fake handles accepted connections.
+	Mode fakesession.Mode
+
+	// BusyDelay delays reading each accepted connection, simulating a busy
+	// session; zero reads immediately.
+	BusyDelay time.Duration
+
+	// NoBind writes only the registry record and binds no socket.
+	NoBind bool
+
+	// SocketPath is the inbox socket path; empty means a generated one.
 	SocketPath string
 
 	// NoSocketEnv suppresses CLAUDE_CODE_MESSAGING_SOCKET in the MCP server
@@ -79,15 +83,17 @@ type SessionSpec struct {
 
 // ToolInfo describes one tool as tools/list reports it.
 type ToolInfo struct {
+	// Name is the tool name.
 	Name string `json:"name"`
 	// Annotations is the annotations block tools/list returned, or nil when the
 	// server sent none. A nil block carries no hints, so ReadOnly reports false.
 	Annotations *ToolAnnotations `json:"annotations,omitempty"`
 }
 
-// ToolAnnotations carries the tool annotations this harness reads. The product
-// sets only readOnlyHint; the spec's other hints are left at their defaults.
+// ToolAnnotations carries the tool annotations this harness reads; the product
+// sets only readOnlyHint.
 type ToolAnnotations struct {
+	// ReadOnlyHint reports whether the tool is annotated read-only.
 	ReadOnlyHint bool `json:"readOnlyHint"`
 }
 
@@ -172,8 +178,6 @@ func StartSession(ctx context.Context, tb testing.TB, env BaseEnv, mcpCommand MC
 	if spec.StartMCP {
 		proc, err := s.startMCP(ctx)
 		if err != nil {
-			// Do not leave a record and socket behind for a session that never
-			// came up.
 			fake.RemoveRecord()
 			fake.Close()
 			return nil, err
@@ -321,9 +325,9 @@ func (s *Session) End() error {
 }
 
 // MCPLogTail returns the last lines the current MCP server process wrote to
-// standard error. The second value reports whether a log exists at all: false
-// means there is no running process. The main process's log is the one reported
-// when an extra process runs.
+// standard error. The second value is false exactly when the session has no MCP
+// server process, for example after StopMCP, even though its log file stays on
+// disk. When an extra process runs, the main process's log is the one reported.
 func (s *Session) MCPLogTail(lines int) (string, bool) {
 	s.mu.Lock()
 	proc := s.proc
@@ -334,7 +338,6 @@ func (s *Session) MCPLogTail(lines int) (string, bool) {
 	return proc.logTail(lines), true
 }
 
-// currentProc returns the running MCP server process.
 func (s *Session) currentProc() (*MCPProc, error) {
 	s.mu.Lock()
 	proc := s.proc
@@ -345,7 +348,6 @@ func (s *Session) currentProc() (*MCPProc, error) {
 	return proc, nil
 }
 
-// startMCP launches an MCP server process and completes the handshake.
 func (s *Session) startMCP(ctx context.Context) (*MCPProc, error) {
 	s.mu.Lock()
 	s.mcpCount++
@@ -469,9 +471,11 @@ func (p *MCPProc) Call(ctx context.Context, tool string, args map[string]any) (T
 	return out, nil
 }
 
-// Stop sends sig to the process, escalates to SIGTERM after 100ms and SIGKILL
-// after another 400ms, and closes the client session. It returns the process
-// exit code, or -1 when a signal terminated the process.
+// Stop sends sig to the process, escalates to SIGTERM after mcpInterruptWait
+// and then to SIGKILL after another mcpTerminateWait, closes the client session
+// and returns the process exit code, or -1 when a signal terminated it. When
+// the process has still not exited within mcpKillWait it returns -1 and an
+// error.
 func (p *MCPProc) Stop(sig syscall.Signal) (int, error) {
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Signal(sig)
@@ -493,10 +497,8 @@ func (p *MCPProc) Stop(sig syscall.Signal) (int, error) {
 	return p.exitCode(), nil
 }
 
-// logTail returns the last lines the process wrote to standard error. The file
-// is still open for writing by the child, so it is read through a separate
-// descriptor; os.File writes are not buffered in this process, and the child
-// writes directly to the descriptor.
+// logTail returns the last lines the process wrote to standard error, read
+// through a separate descriptor because the child still has the file open.
 func (p *MCPProc) logTail(lines int) string {
 	if p.log == nil || lines <= 0 {
 		return ""
@@ -508,7 +510,6 @@ func (p *MCPProc) logTail(lines int) string {
 	return tailLines(string(data), lines)
 }
 
-// tailLines returns the last n lines of text.
 func tailLines(text string, n int) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	if len(lines) > n {
@@ -517,7 +518,6 @@ func tailLines(text string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// exited reports whether the process ended within bound.
 func (p *MCPProc) exited(bound time.Duration) bool {
 	select {
 	case <-p.done:
@@ -527,8 +527,6 @@ func (p *MCPProc) exited(bound time.Duration) bool {
 	}
 }
 
-// exitCode returns the exit code of the finished process, or -1 when a signal
-// terminated it.
 func (p *MCPProc) exitCode() int {
 	<-p.done
 	var exitErr *exec.ExitError
@@ -542,9 +540,6 @@ func (p *MCPProc) exitCode() int {
 	}
 }
 
-// closeClient closes the MCP client session and the log file once. Closing the
-// IOTransport closes the pipes; the process itself was already reaped by the
-// wait goroutine started in newMCPProc.
 func (p *MCPProc) closeClient() error {
 	p.closeOnce.Do(func() {
 		if p.client != nil {

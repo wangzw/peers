@@ -15,26 +15,15 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// tlBrokerPort is the port a container Broker listens on.
 const tlBrokerPort = "17443"
 
-// tlRefillWait is longer than the one second the topic token bucket takes to
-// add four tokens. The bucket is not observable, so this is a real-time wait
-// for a product timer rather than a poll.
+// tlRefillWait exceeds the second the topic token bucket takes to add four
+// tokens; the bucket is not observable.
 const tlRefillWait = 1100 * time.Millisecond
 
-// TestTopicRosterBounds proves REQ-topics-029 against a real Broker in a
-// container: a paired peer cannot make the entries the Broker keeps for it grow
-// without bound, and a member whose name is one byte over the limit is never
-// saved. The Broker runs in the single-host container topology; the fake peer
-// is the test-side process the pairing cases already use, dialing the Broker
-// over the container network.
-//
-// The observer Agent shares t2 and t3 with the peer but not the flooded t1, so
-// its list_agents walks three remote entries instead of 4096. The flood's own
-// bound is proved by the Broker log, which records the dropped frame; the
-// member that would have crossed it is never observable because listing t1 with
-// a full roster is quadratic in the Broker.
+// TestTopicRosterBounds checks that a paired peer cannot grow the entries a
+// Broker keeps for it without bound and that a member one byte over the name
+// limit is never saved.
 func TestTopicRosterBounds(t *testing.T) {
 	c := harness.Up(t, harness.TopoSingle)
 	node := c.Node("hostA")
@@ -47,6 +36,11 @@ func TestTopicRosterBounds(t *testing.T) {
 	secWaitRegistered(t, flooder, flooderName)
 	secJoin(t, flooder, "t1")
 
+	// The observer shares t2 and t3 with the peer but not the flooded t1: its
+	// list_agents then walks three remote entries instead of 4096, because
+	// listing a full roster is quadratic in the Broker. The flood's own bound
+	// is proved by the Broker log instead, since a dropped member cannot be
+	// observed.
 	observerName := "observer-" + token
 	observer := node.StartSession(t, harness.SessionSpec{Name: observerName, StartMCP: true})
 	defer observer.End(t)
@@ -64,23 +58,19 @@ func TestTopicRosterBounds(t *testing.T) {
 
 	prefix := "fill-" + token + "-"
 
-	// t1: the flood. The first frame fills 4095 entries, the second brings the
-	// digest to exactly 4096, and the third would make 4097, so the whole frame
-	// is dropped.
+	// The first frame fills 4095 entries, the second reaches exactly 4096, and
+	// the third would make 4097, so the whole frame is dropped.
 	f.SendRosterDeltaBatch(t, "t1", 4095, 0x000000, prefix)
 	f.SendRosterDeltaBatch(t, "t1", 1, 0x001000, prefix)
 	f.SendRosterDeltaBatch(t, "t1", 1, 0x001001, prefix)
 
-	// t3: one bounded member and a 129-byte name in the same frame. The long
-	// entry is dropped on its own while the bounded member is saved.
 	longName := strings.Repeat("x", 129)
 	savedName := prefix + "003000"
 	f.SendRosterDeltaBatch(t, "t3", 1, 0x003000, prefix,
 		fakePeerWireMember{Name: longName, Ref: "abcdef"})
 
-	// t2: a member under a third shared topic is a fence. Frames are ordered on
-	// the link, so its visibility proves every frame above was already applied
-	// or dropped.
+	// The t2 member is a fence: frames are ordered on the link, so its
+	// visibility proves every frame above was applied or dropped.
 	fenceName := "fence-" + token + "-00f000"
 	f.SendRosterDeltaBatch(t, "t2", 1, 0x00f000, "fence-"+token+"-")
 
@@ -92,8 +82,6 @@ func TestTopicRosterBounds(t *testing.T) {
 		return len(out.Agents) == 1, fmt.Sprintf("%d agents are named %s", len(out.Agents), fenceName)
 	})
 
-	// The bounded member beside the over-long name was saved, so the frame was
-	// applied rather than dropped whole.
 	out, state := topicsListAgents(t, observer, map[string]any{"name": savedName})
 	if state != "" {
 		t.Fatalf("list_agents %s: %s", savedName, state)
@@ -102,8 +90,8 @@ func TestTopicRosterBounds(t *testing.T) {
 		t.Fatalf("the Broker lists %d agents named %s, want the bounded member", len(out.Agents), savedName)
 	}
 
-	// The over-long name normalizes to the same 128-byte prefix as the request,
-	// so a saved entry would match even though its address is truncated.
+	// The over-long name normalizes to the same 128-byte prefix, so a saved
+	// entry would match even though its address is truncated.
 	out, state = topicsListAgents(t, observer, map[string]any{"name": longName})
 	if state != "" {
 		t.Fatalf("list_agents by the over-long name: %s", state)
@@ -128,12 +116,9 @@ func TestTopicRosterBounds(t *testing.T) {
 	}
 }
 
-// TestTopicChangeLimits proves REQ-topics-028 against a real Broker in a
-// container: one account's topic changes are rate limited, a refused change
-// leaves the membership unchanged, and tokens come back over time. The global
-// topic and per-topic member caps and the system Broker's per-account budget
-// are covered by the topic and broker unit tests, because reaching them needs
-// thousands of memberships.
+// TestTopicChangeLimits checks that one account's topic changes are rate
+// limited, that a refused change leaves membership unchanged, and that tokens
+// come back over time.
 func TestTopicChangeLimits(t *testing.T) {
 	c := harness.Up(t, harness.TopoSingle)
 	node := c.Node("hostA")
@@ -186,8 +171,6 @@ func TestTopicChangeLimits(t *testing.T) {
 	}
 }
 
-// tlStartBroker starts a container Broker with config and fails when it does
-// not come up.
 func tlStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -196,7 +179,6 @@ func tlStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// tlCreateKey creates one pairing key through an operator session.
 func tlCreateKey(t *testing.T, node *harness.Node) string {
 	t.Helper()
 	op := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -211,8 +193,6 @@ func tlCreateKey(t *testing.T, node *harness.Node) string {
 	return out.Key
 }
 
-// tlRequireLogEvent fails unless the Broker log holds a record named event with
-// the given frame kind and reason.
 func tlRequireLogEvent(t *testing.T, log []byte, event string, kind int, reason string) {
 	t.Helper()
 	for _, line := range strings.Split(string(log), "\n") {

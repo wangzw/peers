@@ -13,15 +13,12 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// collabTopic is the default topic both differently written origins normalize
-// to.
 const collabTopic = "github.com/org/repo"
 
-// TestJourneyCollaborateInTopic walks the "collaborate across hosts in one
-// topic" journey: two paired hosts whose workspaces name the same repository
-// in two spellings, sessions on both sides made visible through the automatic
-// topic, and a message and its reply delivered with the receiving side's
-// address.
+// TestJourneyCollaborateInTopic covers two paired hosts whose workspaces name
+// the same repository in two spellings, sessions visible through the automatic
+// topic, and a message and its reply signed with the sender's address, whose
+// alias is the receiving Broker's name for the sender's Broker.
 func TestJourneyCollaborateInTopic(t *testing.T) {
 	t.Parallel()
 
@@ -31,9 +28,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	collabStartBroker(t, hostA)
 	collabStartBroker(t, hostB)
 
-	// The precondition is a paired and connected link, arranged by operator
-	// sessions exactly as the previous journey does: hostA creates the key and
-	// hostB dials.
 	operatorA := collabOperator(t, hostA, hostA.Workspace(t, "plain", "", ""))
 	defer operatorA.End(t)
 	operatorB := collabOperator(t, hostB, hostB.Workspace(t, "plain", "", ""))
@@ -43,8 +37,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	collabWaitPeer(t, hostA, "hostB.peer", localpb.PeerRole_PEER_ROLE_ACCEPTOR, harness.EventTimeout)
 	collabWaitPeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 
-	// Steps 1 and 2: both sessions work in a repository named by a different
-	// origin spelling; no project configuration exists.
 	wsA := hostA.Workspace(t, "git", "git@github.com:org/repo.git", "")
 	wsB := hostB.Workspace(t, "git", "https://github.com/org/repo", "")
 	api := collabSession(t, hostA, "api-worker", wsA)
@@ -54,8 +46,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	collabWaitRegistered(t, api, "api-worker")
 	collabWaitRegistered(t, frontend, "frontend")
 
-	// Step 3: the automatic topic makes the other session visible, under the
-	// alias each Broker uses for its peer.
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "api-worker sees frontend in the shared default topic", func(deadline time.Time) (bool, string) {
 		out, state := collabListAgentsPoll(t, deadline, api)
 		if state != "" {
@@ -75,9 +65,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 		return true, ""
 	})
 
-	// Steps 4, 5 and 6: the message is signed by the receiving Broker. The
-	// address in the envelope is the one hostB uses for hostA, not the one
-	// hostA uses for itself.
 	const request = "API /v2/users changed"
 	r := api.Call(t, "send_message", map[string]any{"to": "frontend@hostB.peer", "message": request})
 	r.MustOK(t)
@@ -92,7 +79,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 		t.Fatalf("the delivered body is %q, want %q", body, request)
 	}
 
-	// Steps 7 and 8: the reply uses the signature verbatim as the target.
 	const replyText = "thanks, the frontend is updated"
 	r = frontend.Call(t, "send_message", map[string]any{"to": frame.FromName, "message": replyText})
 	r.MustOK(t)
@@ -105,8 +91,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	}
 
 	t.Run("busy target", func(t *testing.T) {
-		// A busy session delays reading; the send still succeeds and only
-		// returns once the frame has been written to its inbox.
 		frontend.Fake().SetBusy(true)
 		frontend.Fake().SetBusyDelay(time.Second)
 		r := api.Call(t, "send_message", map[string]any{"to": "frontend@hostB.peer", "message": "while busy"})
@@ -124,16 +108,13 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	})
 
 	t.Run("different origins then join", func(t *testing.T) {
-		// A workspace whose origin names another repository shares no topic
-		// with api-worker. Joining the repository topic explicitly makes it
-		// visible and the exchange works from step 3 on.
 		wsOther := hostB.Workspace(t, "git", "https://github.com/org/other", "")
 		frontend2 := collabSession(t, hostB, "frontend2", wsOther)
 		defer frontend2.End(t)
 		collabWaitRegistered(t, frontend2, "frontend2")
 
-		// The negative check is a short observation: the directory is already
-		// synchronised, so one second without an entry is the intended result.
+		// The directory is already synchronised, so one second without an entry
+		// is the intended negative result.
 		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "api-worker does not see frontend2 before it joins", nil, func(deadline time.Time) harness.Observation {
 			out, state := collabListAgentsPoll(t, deadline, api)
 			if state != "" {
@@ -175,7 +156,6 @@ func TestJourneyCollaborateInTopic(t *testing.T) {
 	})
 }
 
-// collabStartBroker starts the node's Broker with the default configuration.
 func collabStartBroker(t *testing.T, node *harness.Node) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{})
@@ -184,15 +164,11 @@ func collabStartBroker(t *testing.T, node *harness.Node) {
 	}
 }
 
-// collabSession starts one simulated session with a real MCP server process.
 func collabSession(t *testing.T, node *harness.Node, name, workdir string) *harness.Session {
 	t.Helper()
 	return node.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, Workdir: workdir})
 }
 
-// collabOperator starts a session that never registers as an Agent but can
-// call the pairing tools. It waits for the Broker connection before the
-// caller's first tool call.
 func collabOperator(t *testing.T, node *harness.Node, workdir string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true, Workdir: workdir})
@@ -200,7 +176,6 @@ func collabOperator(t *testing.T, node *harness.Node, workdir string) *harness.S
 	return s
 }
 
-// collabCreateKey creates a one-time pairing key and decodes the answer.
 func collabCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := session.Call(t, "create_pairing_key", nil)
@@ -212,7 +187,6 @@ func collabCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePai
 	return out
 }
 
-// collabConnect dials the paired Broker and requires success.
 func collabConnect(t *testing.T, session *harness.Session, address, key string) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	r := session.Call(t, "connect_broker", map[string]any{"address": address, "key": key})
@@ -224,7 +198,6 @@ func collabConnect(t *testing.T, session *harness.Session, address, key string) 
 	return out
 }
 
-// collabWaitRegistered waits until the session is registered and lists itself.
 func collabWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
@@ -239,15 +212,11 @@ func collabWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	})
 }
 
-// collabListAgentsPoll calls list_agents from a wait and returns the decoded
-// answer: the call is bounded by the wait's deadline and a transport error is
-// returned as state.
 func collabListAgentsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", nil)
 }
 
-// collabFindAgent returns the entry whose name part is name.
 func collabFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		got, _ := collabSplitAddress(agent.Address)
@@ -258,7 +227,6 @@ func collabFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentO
 	return mcpserver.AgentOut{}, false
 }
 
-// collabSplitAddress splits "name@alias" into its two parts.
 func collabSplitAddress(address string) (name, alias string) {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 {
@@ -267,7 +235,6 @@ func collabSplitAddress(address string) (name, alias string) {
 	return address[:at], address[at+1:]
 }
 
-// collabSameSet reports whether got and want hold the same strings.
 func collabSameSet(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -284,9 +251,6 @@ func collabSameSet(got, want []string) bool {
 	return true
 }
 
-// collabJoin joins a topic, retrying while the session is still registering.
-// join_topic's handler may spend topicRPCTimeout before the update hint runs,
-// so the poll uses harness.TopicCallPollBound.
 func collabJoin(t *testing.T, session *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+topic, func(deadline time.Time) (bool, string) {
@@ -301,8 +265,6 @@ func collabJoin(t *testing.T, session *harness.Session, topic string) {
 	})
 }
 
-// collabEnvelopeBody returns the message body from the attribution envelope
-// the transport wraps it in.
 func collabEnvelopeBody(t *testing.T, content string) string {
 	t.Helper()
 	openEnd := strings.Index(content, ">\n")
@@ -317,8 +279,6 @@ func collabEnvelopeBody(t *testing.T, content string) string {
 	return strings.TrimSuffix(body, closing)
 }
 
-// collabWaitPeer waits until node's local interface reports alias connected
-// with the given role.
 func collabWaitPeer(t *testing.T, node *harness.Node, alias string, role localpb.PeerRole, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the local interface reports "+alias+" connected", func() (bool, string) {

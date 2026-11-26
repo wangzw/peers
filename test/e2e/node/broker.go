@@ -16,28 +16,22 @@ import (
 )
 
 const (
-	// brokerStderrPrefix starts the line a Broker writes to standard error when
-	// it fails to start.
-	brokerStderrPrefix = "peers service run: "
-	// brokerProbeInterval is how often StartBroker tries the local socket while
-	// the Broker process is starting.
+	// brokerStderrPrefix copies the startup-failure line prefix cmd/peers's
+	// (*app).run writes; a product wording change must update this constant.
+	brokerStderrPrefix  = "peers service run: "
 	brokerProbeInterval = 50 * time.Millisecond
-	// brokerProbeTimeout bounds one readiness probe. A Broker that has not
-	// created its socket yet fails the probe quickly.
-	brokerProbeTimeout = 250 * time.Millisecond
+	brokerProbeTimeout  = 250 * time.Millisecond
 	// defaultBrokerBound is the bound used when the caller passes 0: ten
 	// seconds for the Broker to bind its socket, plus three.
 	defaultBrokerBound = 13 * time.Second
-	// brokerKillWait is how long StartBroker waits for a killed Broker to be
-	// reaped before giving up.
-	brokerKillWait = 2 * time.Second
+	brokerKillWait     = 2 * time.Second
 )
 
 // BrokerSpec describes one Broker process to start.
 type BrokerSpec struct {
 	// Path is the peers binary.
 	Path string
-	// Args follow "service run" on the command line, for example
+	// Args follow "service run --user" on the command line, for example
 	// ["--listen", "127.0.0.1:41234"].
 	Args []string
 	// Env is the complete environment, normally built by BaseEnv.Build.
@@ -48,13 +42,17 @@ type BrokerSpec struct {
 	Socket string
 }
 
-// StartResult reports how StartBroker ended. When the Broker process exited
-// before answering on its local socket, Running is false and ExitCode and
-// StderrLast describe the failure.
+// StartResult reports how StartBroker ended.
 type StartResult struct {
-	Running    bool
-	PID        int
-	ExitCode   int
+	// Running reports whether the Broker answered on its local socket before
+	// the bound expired.
+	Running bool
+	// PID is the Broker process ID.
+	PID int
+	// ExitCode is the exit code of a Broker that exited before becoming ready.
+	ExitCode int
+	// StderrLast is the last Broker failure line from its log, without the
+	// prefix.
 	StderrLast string
 	// Addrs maps each address the one retry replaced to the address the
 	// Broker actually used instead. It is nil when nothing was replaced.
@@ -71,8 +69,7 @@ func (s StartResult) Address(requested string) string {
 }
 
 // ErrBrokerReaped reports that a signal was refused because the Broker process
-// has already been waited for. After a process is reaped its pid may name an
-// unrelated process, so no signal may be sent through that pid.
+// has already been waited for; its pid may name an unrelated process.
 var ErrBrokerReaped = errors.New("node: broker process has already been reaped")
 
 // BrokerProc is one started Broker process.
@@ -81,34 +78,27 @@ type BrokerProc struct {
 	logPath string
 	pid     int
 
-	// done closes once the process has been reaped and its exit code recorded.
 	done chan struct{}
 
 	// mu guards the lifecycle state a signal must not race with. SendSignal
-	// holds mu across its reaped check and its send; the reaper sets reaped, and
-	// performs the wait that makes the pid reusable, under the same mutex. On
-	// Linux the exit is observed out of the lock with waitid(WNOWAIT) and then
-	// collected with cmd.Wait under the lock. Elsewhere there is no non-reaping
-	// observation, so the reaper polls wait4(WNOHANG) under the lock instead.
-	// Either way a child that has exited but not been reaped is a zombie whose
-	// pid cannot be reused, and no send can interleave with the reap itself.
+	// holds it across the reaped check and the send, and the reaper sets reaped
+	// and performs the wait that makes the pid reusable under the same mutex, so
+	// no send can interleave with the reap.
 	mu      sync.Mutex
 	exit    int
 	reaped  bool
 	signals int
 
-	// traceSends, when set, makes sendSignal record every signal it hands to
-	// procsig together with the reaped mark at that moment. A test enables it
-	// with TraceSends to prove no signal went out after the reap.
 	traceSends bool
 	sends      []SignalSend
 }
 
 // SignalSend is one signal a BrokerProc handed to procsig, with the handle's
-// reaped mark at the moment of the send. A test reads the records to assert
-// that no signal went out through a pid that may already be reusable.
+// reaped mark at the moment of the send.
 type SignalSend struct {
-	Sig    syscall.Signal
+	// Sig is the signal that was sent.
+	Sig syscall.Signal
+	// Reaped reports whether the handle had already reaped the process.
 	Reaped bool
 }
 
@@ -140,7 +130,6 @@ func StartBroker(ctx context.Context, spec BrokerSpec, bound time.Duration) (*Br
 		_ = logFile.Close()
 		return nil, StartResult{}, fmt.Errorf("node: starting broker %s: %w", spec.Path, err)
 	}
-	// The child holds its own descriptor; the parent copy is not needed.
 	_ = logFile.Close()
 
 	proc := newBrokerProc(cmd, spec.LogPath)
@@ -171,8 +160,6 @@ func StartBroker(ctx context.Context, spec BrokerSpec, bound time.Duration) (*Br
 	}
 }
 
-// newBrokerProc builds the handle for a started command and begins reaping it
-// in the background.
 func newBrokerProc(cmd *exec.Cmd, logPath string) *BrokerProc {
 	proc := &BrokerProc{
 		cmd:     cmd,
@@ -184,12 +171,9 @@ func newBrokerProc(cmd *exec.Cmd, logPath string) *BrokerProc {
 	return proc
 }
 
-// abandon kills a Broker that never became ready and returns the error
-// StartBroker reports for it.
 func (b *BrokerProc) abandon(bound time.Duration, socket string) error {
-	// Go through the lifecycle guard like every other signal: a Broker that
-	// exited and was reaped between the timeout and here must not be signalled
-	// through a pid that may already name another process.
+	// Go through the lifecycle guard: a Broker reaped between the timeout and
+	// here must not be signalled through a pid that may already be reused.
 	_ = b.SendSignal(syscall.SIGKILL)
 	select {
 	case <-b.done:
@@ -201,7 +185,6 @@ func (b *BrokerProc) abandon(bound time.Duration, socket string) error {
 	return fmt.Errorf("node: broker process %d did not answer on %s within %s", b.pid, socket, bound)
 }
 
-// brokerHello reports whether the local socket accepts a Hello.
 func brokerHello(ctx context.Context, socket string) bool {
 	if socket == "" {
 		return false
@@ -223,9 +206,6 @@ func brokerHello(ctx context.Context, socket string) bool {
 	return detail != nil && detail.GetCode() == localpb.ErrorCode_ERROR_CODE_VERSION_MISMATCH
 }
 
-// lastBrokerStderr returns the last line of the log that starts with
-// brokerStderrPrefix, without the prefix. It returns "" when the log has no
-// such line or cannot be read.
 func lastBrokerStderr(logPath string) string {
 	file, err := os.Open(logPath)
 	if err != nil {
@@ -248,11 +228,9 @@ func lastBrokerStderr(logPath string) string {
 // PID returns the process ID of the Broker.
 func (b *BrokerProc) PID() int { return b.pid }
 
-// SendSignal sends sig unless the Broker has been reaped. It holds the
-// lifecycle mutex across its check and its send, and the reaper sets the reaped
-// mark and reaps the process under the same mutex, so a signal can never reach
-// a pid that has become reusable. A process this handle has already reaped is
-// refused with ErrBrokerReaped.
+// SendSignal sends sig unless the Broker has been reaped, in which case it
+// returns ErrBrokerReaped. It holds the lifecycle mutex across its check and
+// its send, so a signal can never reach a pid that has become reusable.
 func (b *BrokerProc) SendSignal(sig syscall.Signal) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -266,9 +244,8 @@ func (b *BrokerProc) SendSignal(sig syscall.Signal) error {
 func (b *BrokerProc) Signal(sig syscall.Signal) error { return b.SendSignal(sig) }
 
 // TraceSends makes the handle record every signal SendSignal hands to procsig,
-// along with the reaped mark at the moment of the send. A test calls it before
-// the Broker is signalled and reads the records with SignalSends. Sends made
-// before it is called are not recorded.
+// with the reaped mark at the moment of the send; sends made before the call
+// are not recorded.
 func (b *BrokerProc) TraceSends() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -276,9 +253,8 @@ func (b *BrokerProc) TraceSends() {
 	b.traceSends = true
 }
 
-// SignalSends returns the signals recorded since TraceSends. Each record
-// carries the handle's reaped mark at the moment of the send, so a test can
-// assert that none was handed to procsig after the reap.
+// SignalSends returns a copy of the signals recorded since TraceSends, each
+// carrying the handle's reaped mark at the moment of the send.
 func (b *BrokerProc) SignalSends() []SignalSend {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -286,8 +262,8 @@ func (b *BrokerProc) SignalSends() []SignalSend {
 }
 
 // recordSend appends one signal hand-off to the trace when it is enabled. The
-// caller holds b.mu, the lock SendSignal holds across its reaped check and its
-// send, so Reaped records the check's view at the moment of the send.
+// caller holds b.mu, so Reaped records the check's view at the moment of the
+// send.
 func (b *BrokerProc) recordSend(sig syscall.Signal) {
 	if !b.traceSends {
 		return
@@ -295,8 +271,7 @@ func (b *BrokerProc) recordSend(sig syscall.Signal) {
 	b.sends = append(b.sends, SignalSend{Sig: sig, Reaped: b.reaped})
 }
 
-// SignalsSent reports how many signals SendSignal delivered. A test uses it to
-// assert that a reaped Broker received none.
+// SignalsSent reports how many signals SendSignal delivered.
 func (b *BrokerProc) SignalsSent() int {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -332,12 +307,10 @@ func (b *BrokerProc) exitCodeLocked() int {
 
 // interpretWait4 reads one wait4(WNOHANG) poll, the way the reaper on a
 // platform without waitid(WNOWAIT) does. A zero wpid means the child is still
-// running; EINTR means the poll was interrupted before it could look; ECHILD
-// means another waiter reaped the child first. When wpid names the child, the
-// poll has reaped it and exit is the exit code the status encodes, matching
-// exec.ExitError.ExitCode: the process's own code, or -1 when a signal ended
-// it. Any other error leaves nothing to wait for, so the poll reports the reap
-// with an unknown code rather than spinning forever.
+// running and EINTR that the poll was interrupted. When wpid names the child
+// the poll has reaped it, and exit is the code the status encodes, as
+// exec.ExitError.ExitCode reports it. Any other error leaves nothing to wait
+// for, so the poll reports the reap with an unknown code.
 func interpretWait4(pid, wpid int, err error, status syscall.WaitStatus) (reaped bool, exit int) {
 	switch {
 	case errors.Is(err, syscall.EINTR):
@@ -355,13 +328,19 @@ func interpretWait4(pid, wpid int, err error, status syscall.WaitStatus) (reaped
 	}
 }
 
-// Proc is one process as read from the operating system. Env is nil when the
-// environment could not be read, which happens for processes of other users.
+// Proc is one process as read from the operating system.
 type Proc struct {
-	PID  int
+	// PID is the process ID.
+	PID int
+	// PPID is the parent process ID.
 	PPID int
-	SID  int
-	UID  int
+	// SID is the session ID.
+	SID int
+	// UID is the real user ID.
+	UID int
+	// Args is the command line, argv[0] included.
 	Args []string
-	Env  map[string]string
+	// Env is the environment as a map, or nil when it could not be read, which
+	// happens for processes of other users.
+	Env map[string]string
 }

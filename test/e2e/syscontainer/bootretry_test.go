@@ -7,9 +7,7 @@ import (
 )
 
 // TestShouldRebuildSystemd checks that only the two observed boot failures are
-// rebuilt: process 1 exited with code 255 and left docker logs empty, or the
-// wait probe timed out while the state was still initializing. Every other
-// failure is a real defect and must not be swallowed by a rebuild.
+// rebuilt and every other failure is not.
 func TestShouldRebuildSystemd(t *testing.T) {
 	cases := []struct {
 		name string
@@ -103,9 +101,7 @@ func TestShouldRebuildSystemd(t *testing.T) {
 	}
 }
 
-// TestInterpretSystemdState checks the probe interpretation, including the exit
-// status 1 that systemctl returns for degraded despite the system being ready,
-// and the probe timeout that the rebuild decision reads.
+// TestInterpretSystemdState checks the probe interpretation, including degraded and a probe timeout.
 func TestInterpretSystemdState(t *testing.T) {
 	cases := []struct {
 		name      string

@@ -1,6 +1,6 @@
-// Package syscontainer runs the system end-to-end tests inside
-// containers. This file carries no e2e build tag so that the role parsing and
-// the shared-directory exchange compile and run on the host without one.
+// This file carries no e2e build tag so that the role parsing and the
+// shared-directory exchange compile on the host without one.
+
 package syscontainer
 
 import (
@@ -23,10 +23,9 @@ const (
 	// The value is the container path, not the host path.
 	pairSharedEnv = "PEERS_E2E_PAIR_SHARED"
 
-	// PairSharedMount is the container path test/e2e/compose/system/compose.yaml
-	// mounts the pair volume at. The compose file fixes the mount, so
-	// PairOptions.SharedDir must equal it: any other value names a directory
-	// neither host writes, and the exchange would fail only when a wait expires.
+	// PairSharedMount is the container path where the compose file mounts the
+	// pair volume. The compose file fixes the mount, so PairOptions.SharedDir
+	// must equal it, or the exchange fails only when a wait expires.
 	PairSharedMount = "/shared"
 )
 
@@ -75,7 +74,6 @@ func PairSharedDir() string {
 	return os.Getenv(pairSharedEnv)
 }
 
-// peerRole returns the other role of the pair.
 func peerRole(role Role) Role {
 	if role == RoleA {
 		return RoleB
@@ -83,8 +81,6 @@ func peerRole(role Role) Role {
 	return RoleA
 }
 
-// pairFailureName is the file a host writes when its test fails, so the other
-// host stops waiting instead of running out its own bound.
 func pairFailureName(role Role) string {
 	return "failed-" + string(role)
 }
@@ -95,7 +91,6 @@ var (
 	pairGuards   = make(map[*testing.T]bool)
 )
 
-// markPairGuard records whether t has an armed PairGuard.
 func markPairGuard(t *testing.T, armed bool) {
 	pairGuardsMu.Lock()
 	defer pairGuardsMu.Unlock()
@@ -106,19 +101,15 @@ func markPairGuard(t *testing.T, armed bool) {
 	delete(pairGuards, t)
 }
 
-// pairGuardArmed reports whether t armed a PairGuard.
 func pairGuardArmed(t *testing.T) bool {
 	pairGuardsMu.Lock()
 	defer pairGuardsMu.Unlock()
 	return pairGuards[t]
 }
 
-// requirePairGuard fails the test when it did not arm a PairGuard first.
-// "defer PairGuard(t)()" evaluates PairGuard now and defers the returned
-// function; the common mistake, "defer PairGuard(t)" without the last pair,
-// defers PairGuard itself, so the guard arms only when the test returns and the
-// other host waits out its bound. PairWrite and PairAwait check the arm so that
-// omission fails at once.
+// requirePairGuard fails the test when it did not arm a PairGuard first. The
+// last pair in "defer PairGuard(t)()" is required: without it the guard arms
+// only when the test returns, and the other host waits out its bound.
 func requirePairGuard(t *testing.T, what string) {
 	t.Helper()
 	if !pairGuardArmed(t) {
@@ -126,14 +117,12 @@ func requirePairGuard(t *testing.T, what string) {
 	}
 }
 
-// PairGuard records this host's failure in the shared directory. The test
-// defers the returned function, which runs as the test goroutine unwinds at the
-// failure, before any t.Cleanup call, so the other host learns of the failure
-// without waiting out its own bound. t.Failed still reports false while a panic
-// unwinds, so the returned function recovers the panic, writes the record and
-// panics again with the same value. A panic outside the test goroutine runs no
-// deferred call here, and a process killed without unwinding runs none at all,
-// so PairAwait's own bound has to cover those cases.
+// PairGuard returns a function the test must defer, as in defer PairGuard(t)(),
+// which records this host's failure in the shared directory when it runs as the
+// test goroutine unwinds, before any t.Cleanup call. It recovers a panic and
+// panics again because t.Failed still reports false while a panic unwinds; a
+// panic outside the test goroutine or a process killed without unwinding runs
+// none of this, which is why PairAwait has its own bound.
 func PairGuard(t *testing.T) func() {
 	t.Helper()
 	role := PairRole()
@@ -169,9 +158,8 @@ func PairWrite(t *testing.T, name string, data []byte) {
 }
 
 // PairAwait waits up to bound for the other host to write name and returns its
-// contents. The caller passes the bound its half of the scenario accounts for,
-// because only it knows what the other host still has to do before writing the
-// file. When the other host recorded a failure, the wait ends at once with that
+// contents; the caller passes the bound its half of the scenario accounts for.
+// When the other host recorded a failure, the wait ends at once with that
 // failure named.
 func PairAwait(t *testing.T, name string, bound time.Duration) []byte {
 	t.Helper()
@@ -204,8 +192,6 @@ func PairAwait(t *testing.T, name string, bound time.Duration) []byte {
 	return data
 }
 
-// writePairFile writes data to name under dir atomically. A name that is not a
-// plain file name is refused so the exchange cannot write outside the directory.
 func writePairFile(dir, name string, data []byte) error {
 	if dir == "" {
 		return fmt.Errorf("the shared directory is not set")

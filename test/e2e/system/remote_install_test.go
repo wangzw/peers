@@ -30,60 +30,44 @@ import (
 )
 
 const (
-	// remoteInstallLatestVersion is the release the fake service resolves as
-	// latest. The binary in its archive reports this version.
 	remoteInstallLatestVersion = "0.2.0"
 
-	// remoteInstallPinnedVersion is an older release the --version case pins. It
-	// differs from remoteInstallLatestVersion, so the installed version proves
-	// which archive the script downloaded.
+	// remoteInstallPinnedVersion differs from remoteInstallLatestVersion so the
+	// installed version proves which archive was downloaded.
 	remoteInstallPinnedVersion = "0.1.1"
 
-	// remoteInstallUnknownVersion is not served by the fake release service.
-	// Asking for it must report that the version was not found.
 	remoteInstallUnknownVersion = "0.9.9"
 
-	// remoteInstallAccount is the ordinary account that runs the user
-	// install, and the SUDO_USER of the system install.
 	remoteInstallAccount = "peer"
 
-	// remoteInstallReleasePath is the path prefix the fake service serves. The
-	// remote script replaces https://github.com/wangzw/peers/releases with
-	// PEERS_TEST_RELEASE_BASE, so the value ends at this prefix.
+	// The remote script replaces https://github.com/wangzw/peers/releases with
+	// PEERS_TEST_RELEASE_BASE, so the value ends at this prefix and the fake
+	// server serves every path under it.
 	remoteInstallReleasePath = "/releases"
 
-	// remoteInstallScriptPath is where the inner test writes the fetched remote
-	// script. The two accepted invocations run it from a file: "sh <file>" for
-	// the user install and "sudo sh -s -- --system" for the system installation.
 	remoteInstallScriptPath = "/tmp/remote-install.sh"
 
-	// remoteInstallFakeClaudePath is the fake Claude Code CLI. It must be in
-	// /usr/local/bin because install.sh looks it up through a login shell in the
-	// system case.
+	// install.sh looks the CLI up through a login shell in the system case, so it
+	// must be in /usr/local/bin.
 	remoteInstallFakeClaudePath = "/usr/local/bin/claude"
 
-	// remoteInstallFakeClaudeDir holds the fake CLI's call log and its record of
-	// the MCP servers registered so far. It lives under /tmp so the ordinary
-	// account can create it without root.
+	// remoteInstallFakeClaudeDir lives under /tmp so the ordinary account can
+	// create it without root.
 	remoteInstallFakeClaudeDir = "/tmp/peers-e2e-fakeclaude"
 
 	// remoteInstallServiceBound is the fallback for the wait for the installed
-	// service to report active. Install starts the service before it returns,
-	// so the success path answers at once.
+	// service to report active; install starts the service before it returns, so
+	// the success path answers at once.
 	remoteInstallServiceBound = harness.EventTimeout
 
-	// remoteInstallReleasePortEnv carries the fake release service's host port
-	// into the container. The host takes the port the kernel assigns and
-	// forwards it, so the two sides never derive a port independently.
+	// The host forwards the port the kernel assigns, so the two sides never derive
+	// it independently.
 	remoteInstallReleasePortEnv = "PEERS_E2E_SYSTEM_RELEASE_PORT"
 )
 
-// TestRemoteInstallUser installs through the remote script as an ordinary
-// account, using "sh <script>", and checks the outcome the in-package install
-// script promises for a user install: the binary lands in ~/.local/bin,
-// the user service runs, and the fake Claude Code CLI receives exactly
-// one "mcp add --scope user peer -- <path> mcp". A second run must succeed and
-// must not add the MCP server again.
+// TestREQBrokerConfig042_RemoteInstallUser checks that a user install through the
+// remote script places the binary in ~/.local/bin, runs the user service, and
+// registers the MCP server once, staying idempotent on a second run.
 func TestREQBrokerConfig042_RemoteInstallUser(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{})
@@ -118,13 +102,10 @@ func TestREQBrokerConfig042_RemoteInstallUser(t *testing.T) {
 	remoteInstallRequireMCPAdd(t, binary)
 }
 
-// TestREQBrokerConfig042_RemoteInstallSystem installs through the remote script
-// as an ordinary account, answers the level question with y, and checks the
-// system installation outcome: the packaged script reruns itself through sudo inside
-// the temporary directory, the binary is root-owned in /usr/local/bin and
-// reports the release version, the system service runs, and the fake
-// Claude Code CLI receives one registration for SUDO_USER with the system
-// binary.
+// TestREQBrokerConfig042_RemoteInstallSystem checks that a system install through
+// the remote script reruns itself through sudo, leaves a root-owned binary in
+// /usr/local/bin, runs the system service, and registers the MCP server once for
+// SUDO_USER.
 func TestREQBrokerConfig042_RemoteInstallSystem(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{})
@@ -167,8 +148,8 @@ func TestREQBrokerConfig042_RemoteInstallSystem(t *testing.T) {
 	remoteInstallRequireMCPAdd(t, releaseBinary)
 }
 
-// TestRemoteInstallPinnedVersion runs the remote script with "--version" and
-// checks that the archive for the pinned release was installed, not latest.
+// TestREQBrokerConfig042_RemoteInstallPinnedVersion checks that --version installs
+// the pinned release instead of latest.
 func TestREQBrokerConfig042_RemoteInstallPinnedVersion(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{
@@ -194,10 +175,9 @@ func TestREQBrokerConfig042_RemoteInstallPinnedVersion(t *testing.T) {
 	remoteInstallRequireVersion(t, remoteInstallAccount, binary, remoteInstallPinnedVersion)
 }
 
-// TestRemoteInstallUnknownVersion asks for a version the release service does
-// not have. The download fails, and the remote script must report that the
-// version was not found, leave the host untouched and clean its temporary
-// directory.
+// TestREQBrokerConfig042_RemoteInstallUnknownVersion checks that asking for a
+// version the release service does not have fails as not found, leaves the host
+// untouched, and cleans its temporary directory.
 func TestREQBrokerConfig042_RemoteInstallUnknownVersion(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{})
@@ -220,9 +200,9 @@ func TestREQBrokerConfig042_RemoteInstallUnknownVersion(t *testing.T) {
 	remoteInstallRequireUnchanged(t, remoteInstallHome(t), peerUID, tmp)
 }
 
-// TestRemoteInstallArchiveWithoutInstallScript serves an archive that has the
-// binary but no install.sh. The remote script must report the version as not
-// found instead of running a half install, and leave the host untouched.
+// TestREQBrokerConfig042_RemoteInstallArchiveWithoutInstallScript checks that an
+// archive without install.sh is refused as not found instead of running a half
+// install, leaving the host untouched.
 func TestREQBrokerConfig042_RemoteInstallArchiveWithoutInstallScript(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{omitInstallScript: true})
@@ -245,8 +225,6 @@ func TestREQBrokerConfig042_RemoteInstallArchiveWithoutInstallScript(t *testing.
 	remoteInstallRequireUnchanged(t, remoteInstallHome(t), peerUID, tmp)
 }
 
-// remoteInstallRequireNotFound requires the output to name version as not
-// found.
 func remoteInstallRequireNotFound(t *testing.T, res syscontainer.Result, version string) {
 	t.Helper()
 	want := "version " + version + " not found"
@@ -256,10 +234,9 @@ func remoteInstallRequireNotFound(t *testing.T, res syscontainer.Result, version
 	}
 }
 
-// TestRemoteInstallTruncatedScript removes the final call that the remote
-// script wraps its body in. The truncated file defines the function but never
-// runs it, so the host is untouched and the fake release service sees no
-// request at all.
+// TestREQBrokerConfig042_RemoteInstallTruncatedScript checks that a remote script
+// truncated before its final call does nothing and sends no request to the release
+// service.
 func TestREQBrokerConfig042_RemoteInstallTruncatedScript(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{})
@@ -282,10 +259,9 @@ func TestREQBrokerConfig042_RemoteInstallTruncatedScript(t *testing.T) {
 	remoteInstallRequireUnchanged(t, remoteInstallHome(t), peerUID, tmp)
 }
 
-// TestRemoteInstallChecksumMismatch serves a checksums.txt that disagrees with
-// the archive and checks that the remote script aborts without touching the
-// host: no binary, service unit, MCP registration or configuration file, and no
-// leftover temporary directory.
+// TestREQBrokerConfig042_RemoteInstallChecksumMismatch checks that a checksums.txt
+// that disagrees with the archive makes the remote script abort without touching
+// the host.
 func TestREQBrokerConfig042_RemoteInstallChecksumMismatch(t *testing.T) {
 	if !syscontainer.InContainer() {
 		remoteInstallRunInContainer(t, remoteInstallReleaseOptions{badChecksum: true})
@@ -316,28 +292,14 @@ func TestREQBrokerConfig042_RemoteInstallChecksumMismatch(t *testing.T) {
 	remoteInstallRequireUnchanged(t, remoteInstallHome(t), peerUID, tmp)
 }
 
-// remoteInstallReleaseOptions changes what the fake release service serves.
 type remoteInstallReleaseOptions struct {
-	// extraVersions are served in addition to the latest release.
-	extraVersions []string
-	// badChecksum makes the latest release's checksums.txt wrong on purpose.
-	badChecksum bool
-	// omitInstallScript leaves install.sh out of every served archive.
+	extraVersions     []string
+	badChecksum       bool
 	omitInstallScript bool
 }
 
-// remoteInstallServe starts the fake release service on the test host and
-// serves the repository's scripts as release assets. It runs on the host, and
-// the container reaches it through the bridge gateway of its internal network.
-//
-// The service must run on the host: the container has no copy of the
-// repository, so the host side is where the archive is built from
-// scripts/remote-install.sh and scripts/install.sh. The container fetches both
-// over HTTP, which is the transport the real install command uses.
-//
-// The kernel assigns the port from zero, so a second suite on the same host
-// gets a different one and never collides with this service. The returned port
-// is forwarded to the container, which cannot derive it on its own.
+// remoteInstallServe starts the fake release service on the host and returns its
+// kernel-assigned port, which the container reaches through the bridge gateway.
 func remoteInstallServe(t *testing.T, opts remoteInstallReleaseOptions) int {
 	t.Helper()
 
@@ -388,21 +350,18 @@ func remoteInstallServe(t *testing.T, opts remoteInstallReleaseOptions) int {
 }
 
 // remoteInstallRunInContainer starts the fake release service on the host and
-// runs the test in a systemd container with the service's port forwarded. It is
-// the host-side body of every remote install test.
+// reruns the test in a systemd container with the port forwarded.
 func remoteInstallRunInContainer(t *testing.T, opts remoteInstallReleaseOptions) {
 	t.Helper()
 	port := remoteInstallServe(t, opts)
 	syscontainer.Run(t, syscontainer.Systemd, remoteInstallReleasePortEnv+"="+strconv.Itoa(port))
 }
 
-// remoteInstallRelease is one served release.
 type remoteInstallRelease struct {
 	version string
 	tarball []byte
 }
 
-// remoteInstallReleaseSet is the fake release service's state.
 type remoteInstallReleaseSet struct {
 	newest             string
 	remoteScript       []byte
@@ -413,9 +372,8 @@ type remoteInstallReleaseSet struct {
 	requests []string
 }
 
-// ServeHTTP answers the paths the remote script requests. The two control
-// paths let the test read and clear the request log; they are not part of the
-// release tree and are not recorded.
+// ServeHTTP answers the paths the remote script requests; /__requests and /__reset
+// serve the test's request log and are not recorded.
 func (s *remoteInstallReleaseSet) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/__requests":
@@ -483,8 +441,6 @@ func (s *remoteInstallReleaseSet) ServeHTTP(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// checksums renders checksums.txt for release. The latest archive's line is
-// deliberately wrong when the test asks for a mismatch.
 func (s *remoteInstallReleaseSet) checksums(release *remoteInstallRelease) []byte {
 	sum := sha256.Sum256(release.tarball)
 	hash := hex.EncodeToString(sum[:])
@@ -494,14 +450,10 @@ func (s *remoteInstallReleaseSet) checksums(release *remoteInstallRelease) []byt
 	return []byte(fmt.Sprintf("%s  %s\n", hash, remoteInstallPackageName(release.version)))
 }
 
-// remoteInstallPackageName is the archive name the remote script asks for.
 func remoteInstallPackageName(version string) string {
 	return fmt.Sprintf("peers_%s_linux_%s.tar.gz", version, runtime.GOARCH)
 }
 
-// remoteInstallArchiveReadme returns the README the real archive carries. The
-// install-script unit adds scripts/archive-README.md; before it lands, the
-// repository README is used so only the missing scripts stop the test.
 func remoteInstallArchiveReadme(t *testing.T, root string) []byte {
 	t.Helper()
 	path := filepath.Join(root, "scripts", "archive-README.md")
@@ -511,8 +463,6 @@ func remoteInstallArchiveReadme(t *testing.T, root string) []byte {
 	return remoteInstallReadFile(t, filepath.Join(root, "README.md"), "archive README")
 }
 
-// remoteInstallReadFile returns path's content or fails with the unit that
-// adds it.
 func remoteInstallReadFile(t *testing.T, path, what string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -524,7 +474,6 @@ func remoteInstallReadFile(t *testing.T, path, what string) []byte {
 	return data
 }
 
-// remoteInstallModuleRoot returns the module root through go env GOMOD.
 func remoteInstallModuleRoot(t *testing.T) string {
 	t.Helper()
 	out, err := exec.Command("go", "env", "GOMOD").Output()
@@ -538,8 +487,6 @@ func remoteInstallModuleRoot(t *testing.T) string {
 	return filepath.Dir(gomod)
 }
 
-// remoteInstallBuildPeers builds ./cmd/peers for linux with the
-// release version in it.
 func remoteInstallBuildPeers(t *testing.T, root, version string) []byte {
 	t.Helper()
 	out := filepath.Join(t.TempDir(), "peers")
@@ -561,16 +508,12 @@ func remoteInstallBuildPeers(t *testing.T, root, version string) []byte {
 	return data
 }
 
-// remoteInstallArchiveFile is one entry of a served archive.
 type remoteInstallArchiveFile struct {
 	name string
 	mode int64
 	data []byte
 }
 
-// remoteInstallTarGz builds the release archive with the same root layout the
-// goreleaser archive uses. A nil installScript leaves install.sh out, for the
-// archive the remote script must reject.
 func remoteInstallTarGz(t *testing.T, version string, binary, installScript, readme, license []byte) []byte {
 	t.Helper()
 	files := []remoteInstallArchiveFile{
@@ -611,9 +554,8 @@ func remoteInstallTarGz(t *testing.T, version string, binary, installScript, rea
 	return buf.Bytes()
 }
 
-// remoteInstallPort returns the host port remoteInstallServe bound. The host
-// forwards it through remoteInstallReleasePortEnv, so the container learns the
-// kernel-assigned port instead of deriving one that two suites could share.
+// remoteInstallPort reads the kernel-assigned port the host forwards through
+// remoteInstallReleasePortEnv.
 func remoteInstallPort(t *testing.T) int {
 	t.Helper()
 	raw := os.Getenv(remoteInstallReleasePortEnv)
@@ -630,16 +572,13 @@ func remoteInstallPort(t *testing.T) int {
 	return port
 }
 
-// remoteInstallBaseURL is the value of PEERS_TEST_RELEASE_BASE inside the
-// container: the bridge gateway and the port passed to this test.
 func remoteInstallBaseURL(t *testing.T) string {
 	t.Helper()
 	return fmt.Sprintf("http://%s:%d%s", remoteInstallGateway(t), remoteInstallPort(t), remoteInstallReleasePath)
 }
 
-// remoteInstallGateway returns the container's bridge gateway. Run forwards
-// the allocated subnet, and the gateway is its first address. When it is
-// absent, the address on eth0 gives the same subnet.
+// remoteInstallGateway is the first address of the subnet Run allocated; when that
+// subnet is absent, the prefix on eth0 gives the same subnet.
 func remoteInstallGateway(t *testing.T) string {
 	t.Helper()
 	if subnet := os.Getenv("PEERS_E2E_SYSTEM_SUBNET"); subnet != "" {
@@ -666,7 +605,6 @@ func remoteInstallGateway(t *testing.T) string {
 	return ""
 }
 
-// remoteInstallHome returns the ordinary account's home.
 func remoteInstallHome(t *testing.T) string {
 	t.Helper()
 	u, err := user.Lookup(remoteInstallAccount)
@@ -676,9 +614,6 @@ func remoteInstallHome(t *testing.T) string {
 	return u.HomeDir
 }
 
-// remoteInstallPeerEnv is the environment of the user install. The
-// runtime directory and the bus are what let the in-package install script's
-// "service install" reach the account's user manager.
 func remoteInstallPeerEnv(uid uint32, base string) []string {
 	user := strconv.FormatUint(uint64(uid), 10)
 	return []string{
@@ -689,8 +624,6 @@ func remoteInstallPeerEnv(uid uint32, base string) []string {
 	}
 }
 
-// remoteInstallStartUserManager enables lingering and starts the account's user
-// manager, then waits for its runtime directory and bus.
 func remoteInstallStartUserManager(t *testing.T, uid uint32) {
 	t.Helper()
 	mustRun(t, "root", nil, "loginctl", "enable-linger", remoteInstallAccount)
@@ -698,8 +631,6 @@ func remoteInstallStartUserManager(t *testing.T, uid uint32) {
 	waitUserManager(t, uid)
 }
 
-// remoteInstallWriteFakeClaude installs the fake Claude Code CLI that records
-// every call and remembers which MCP servers were added.
 func remoteInstallWriteFakeClaude(t *testing.T) {
 	t.Helper()
 	if err := os.WriteFile(remoteInstallFakeClaudePath, []byte(remoteInstallFakeClaudeScript), 0o755); err != nil {
@@ -707,9 +638,8 @@ func remoteInstallWriteFakeClaude(t *testing.T) {
 	}
 }
 
-// remoteInstallGrantSudo gives the ordinary account passwordless sudo in this
-// container and keeps the test hook in its environment, so the system
-// case can run the same "sudo sh -s -- --system" a user would.
+// remoteInstallGrantSudo keeps PEERS_TEST_RELEASE_BASE across sudo so the system
+// case reaches the fake release service.
 func remoteInstallGrantSudo(t *testing.T) {
 	t.Helper()
 	path := "/etc/sudoers.d/peers-e2e"
@@ -726,8 +656,6 @@ func remoteInstallGrantSudo(t *testing.T) {
 	mustRun(t, remoteInstallAccount, nil, "sudo", "-n", "true")
 }
 
-// remoteInstallDownloadScript fetches the remote script from the fake release
-// service the way the documented install command does, and returns its path.
 func remoteInstallDownloadScript(t *testing.T, base string) string {
 	t.Helper()
 	res := runWithEnv(t, remoteInstallAccount, nil, "curl", "-fsSL",
@@ -739,14 +667,11 @@ func remoteInstallDownloadScript(t *testing.T, base string) string {
 	return remoteInstallScriptPath
 }
 
-// remoteInstallRun runs a command as account, optionally with stdin from a
-// file, and returns its output and exit code.
 func remoteInstallRun(t *testing.T, account string, env []string, stdinPath, name string, args ...string) syscontainer.Result {
 	t.Helper()
 	cmd := syscontainer.Command(account, env, name, args...)
 	// A new session has no controlling terminal, so an install without a level
-	// option exercises the no-terminal choice instead of blocking on the
-	// terminal that runs the tests.
+	// option exercises the no-terminal choice.
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
@@ -776,8 +701,6 @@ func remoteInstallRun(t *testing.T, account string, env []string, stdinPath, nam
 	return res
 }
 
-// remoteInstallPeerTempDir creates a temporary directory owned by the ordinary
-// account, so the remote script's mktemp -d and its cleanup are observable.
 func remoteInstallPeerTempDir(t *testing.T, uid uint32) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "remote-install-tmp-")
@@ -793,9 +716,6 @@ func remoteInstallPeerTempDir(t *testing.T, uid uint32) string {
 	return dir
 }
 
-// remoteInstallRequireUnchanged checks that a refused or inert install left no
-// binary, service unit, MCP registration or configuration file, started no
-// Broker, and cleaned its temporary directory.
 func remoteInstallRequireUnchanged(t *testing.T, home string, peerUID uint32, tmp string) {
 	t.Helper()
 	for _, path := range []string{
@@ -825,10 +745,8 @@ func remoteInstallRequireUnchanged(t *testing.T, home string, peerUID uint32, tm
 	}
 }
 
-// remoteInstallTruncateScript removes the last line of the fetched remote
-// script and returns the truncated file. The script wraps its body in a
-// function and calls it on the last line, so the result parses but does
-// nothing.
+// remoteInstallTruncateScript drops the last line, where the script calls the
+// function wrapping its body, so the result parses but does nothing.
 func remoteInstallTruncateScript(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -847,13 +765,10 @@ func remoteInstallTruncateScript(t *testing.T, path string) string {
 	return out
 }
 
-// remoteInstallServerRootURL is the fake service's origin without the release
-// path, where the control endpoints live.
 func remoteInstallServerRootURL(base string) string {
 	return strings.TrimSuffix(base, remoteInstallReleasePath)
 }
 
-// remoteInstallResetRequests clears the fake service's request log.
 func remoteInstallResetRequests(t *testing.T, base string) {
 	t.Helper()
 	res := runWithEnv(t, "root", nil, "curl", "-fsSL", remoteInstallServerRootURL(base)+"/__reset")
@@ -863,8 +778,6 @@ func remoteInstallResetRequests(t *testing.T, base string) {
 	}
 }
 
-// remoteInstallServerRequests returns the paths the fake service received since
-// the last reset.
 func remoteInstallServerRequests(t *testing.T, base string) []string {
 	t.Helper()
 	res := runWithEnv(t, "root", nil, "curl", "-fsSL", remoteInstallServerRootURL(base)+"/__requests")
@@ -881,8 +794,6 @@ func remoteInstallServerRequests(t *testing.T, base string) []string {
 	return requests
 }
 
-// remoteInstallRequireVersion runs binary --version as account and requires the
-// exact release version.
 func remoteInstallRequireVersion(t *testing.T, account, binary, version string) {
 	t.Helper()
 	res := runWithEnv(t, account, nil, binary, "--version")
@@ -893,9 +804,6 @@ func remoteInstallRequireVersion(t *testing.T, account, binary, version string) 
 	}
 }
 
-// remoteInstallRequireActive waits for a systemctl is-active check to report
-// active. Install starts the service before it returns; the wait only covers
-// the short window before systemd reports the state.
 func remoteInstallRequireActive(t *testing.T, account string, env []string, name string, args ...string) {
 	t.Helper()
 	harness.Eventually(t, remoteInstallServiceBound, "the installed service to be active", func() (bool, string) {
@@ -907,9 +815,6 @@ func remoteInstallRequireActive(t *testing.T, account string, env []string, name
 	})
 }
 
-// remoteInstallRequireMCPAdd requires exactly one successful MCP registration,
-// run as the ordinary account against binary, and at least one lookup before
-// it.
 func remoteInstallRequireMCPAdd(t *testing.T, binary string) {
 	t.Helper()
 	calls := remoteInstallMCPCalls(t)
@@ -940,8 +845,6 @@ func remoteInstallRequireMCPAdd(t *testing.T, binary string) {
 	}
 }
 
-// remoteInstallMCPCalls returns every fake Claude Code CLI call, one slice of
-// fields per call.
 func remoteInstallMCPCalls(t *testing.T) [][]string {
 	t.Helper()
 	entries, err := os.ReadDir(remoteInstallFakeClaudeDir)
@@ -970,8 +873,7 @@ func remoteInstallMCPCalls(t *testing.T) [][]string {
 }
 
 // remoteInstallFakeClaudeScript records each call as "<user> <args...>" in a
-// per-user log, returns exit 0 from "mcp get" once the server is registered,
-// and records a registration from "mcp add".
+// per-user log and answers mcp get from the registration mcp add wrote.
 const remoteInstallFakeClaudeScript = `#!/bin/sh
 set -u
 dir=/tmp/peers-e2e-fakeclaude

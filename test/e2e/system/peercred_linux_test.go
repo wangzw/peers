@@ -8,7 +8,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// unixPeerUID returns the uid of the process at the other end of conn.
 func unixPeerUID(conn *net.UnixConn) (uint32, error) {
 	raw, err := conn.SyscallConn()
 	if err != nil {

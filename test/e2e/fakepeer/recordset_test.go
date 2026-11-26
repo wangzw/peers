@@ -13,7 +13,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/fakepeer/fakerec"
 )
 
-// testNow fixes the expiration time of every record the tests build.
 var testNow = time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 
 func buildRecord(t *testing.T, spec fakerec.Spec) *directorypb.Record {
@@ -34,6 +33,8 @@ func recordBody(t *testing.T, rec *directorypb.Record) *directorypb.RecordBody {
 	return body
 }
 
+// TestRecordSetList checks that list reports every parsable record's identifier
+// and version.
 func TestRecordSetList(t *testing.T) {
 	card := buildRecord(t, fakerec.Spec{
 		Seed:      "card-seed",
@@ -51,7 +52,6 @@ func TestRecordSetList(t *testing.T) {
 		Version:     7,
 		ExpiresIn:   24 * time.Hour,
 	})
-	// A record whose raw body does not parse must be skipped.
 	broken := &directorypb.Record{Raw: []byte{0xff, 0x00}}
 
 	set := &recordSet{}
@@ -90,6 +90,8 @@ func TestRecordSetList(t *testing.T) {
 	}
 }
 
+// TestRecordSetAnswer checks that answer returns the requested record with its
+// raw bytes and signature unchanged.
 func TestRecordSetAnswer(t *testing.T) {
 	card := buildRecord(t, fakerec.Spec{
 		Seed:      "card-seed",

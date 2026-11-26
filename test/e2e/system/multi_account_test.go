@@ -14,12 +14,11 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// e2eSystemSocketPath is the system Broker's local socket.
 const e2eSystemSocketPath = "/run/peers/broker.sock"
 
-// TestREQBrokerConfig018_TwoAccountsShareSystemBroker registers one session as
-// each account with the same system Broker, then checks that they see each
-// other, can exchange messages, and that both appear in the root status.
+// TestREQBrokerConfig018_TwoAccountsShareSystemBroker checks that two accounts'
+// sessions on one system Broker see each other, exchange messages, and both
+// appear in the root status.
 func TestREQBrokerConfig018_TwoAccountsShareSystemBroker(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)
@@ -86,9 +85,6 @@ func TestREQBrokerConfig018_TwoAccountsShareSystemBroker(t *testing.T) {
 		t.Errorf("the delivered content %q does not contain %q", reply.Content, "pong-018")
 	}
 
-	// Each message names one recipient. The third session shares the system
-	// Broker and must receive neither of them, so delivery is addressed, not
-	// broadcast to every account.
 	thirdSelf := e2eSysSelfAddress(t, third)
 	if frames := third.Fake.Frames(); len(frames) != 0 {
 		t.Errorf("the third session received %d frames before the check, want none", len(frames))
@@ -121,8 +117,6 @@ func TestREQBrokerConfig018_TwoAccountsShareSystemBroker(t *testing.T) {
 	}
 }
 
-// e2eSysWaitRegistered waits until list_agents succeeds, which means the MCP
-// server has registered the session with the Broker.
 func e2eSysWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
@@ -134,7 +128,6 @@ func e2eSysWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	})
 }
 
-// e2eSysJoinTopic joins topic once and fails the test on a tool error.
 func e2eSysJoinTopic(t *testing.T, session *syscontainer.Session, topic string) {
 	t.Helper()
 	if text, isError := session.Call(t, "join_topic", map[string]any{"name": topic}); isError {
@@ -142,7 +135,6 @@ func e2eSysJoinTopic(t *testing.T, session *syscontainer.Session, topic string) 
 	}
 }
 
-// e2eSysSelfAddress waits until the session reports its own address.
 func e2eSysSelfAddress(t *testing.T, session *syscontainer.Session) string {
 	t.Helper()
 	var address string
@@ -160,8 +152,6 @@ func e2eSysSelfAddress(t *testing.T, session *syscontainer.Session) string {
 	return address
 }
 
-// e2eSysWaitVisible waits until observer lists address among the agents that
-// share topic.
 func e2eSysWaitVisible(t *testing.T, observer *syscontainer.Session, topic, address string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "agent "+address+" to be visible to "+observer.Account, func(deadline time.Time) (bool, string) {
@@ -178,15 +168,11 @@ func e2eSysWaitVisible(t *testing.T, observer *syscontainer.Session, topic, addr
 	})
 }
 
-// e2eSysListAgentsPoll calls list_agents from a wait and decodes the JSON text
-// result: the call is bounded by the wait's deadline and a transport error is
-// returned as state.
 func e2eSysListAgentsPoll(t *testing.T, deadline time.Time, session *syscontainer.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return sysPollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", args)
 }
 
-// e2eSysStatusLine returns the status table line that names address.
 func e2eSysStatusLine(t *testing.T, out, address string) string {
 	t.Helper()
 	for _, line := range strings.Split(out, "\n") {

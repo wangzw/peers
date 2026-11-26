@@ -17,17 +17,16 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// ProbeHello dials addr over TLS with a fresh certificate, sends a Hello as
-// the first frame, and returns the Reject reason. It is how a test asks a
-// Broker what it does with a client that is not a paired peer.
+// ProbeHello dials addr over TLS with a fresh certificate, sends a Hello as the
+// first frame and returns the Reject reason. It is how a test asks a Broker
+// what it does with a client that is not a paired peer.
 //
-// The TLS handshake is done here and the connection is then handed to gRPC,
-// exactly as the product dialer does. gRPC's own TLS credentials insist on the
-// h2 ALPN protocol, which the Broker's Link server deliberately does not
-// negotiate.
+// gRPC's own TLS credentials insist on the h2 ALPN protocol, which the Broker's
+// Link server does not negotiate, so the handshake is done here and the
+// connection is then handed to gRPC.
 //
 // A stream that ends, or a ctx that expires, before a Reject arrives is an
-// error: there was no answer to report.
+// error.
 func ProbeHello(ctx context.Context, addr string) (linkpb.RejectReason, error) {
 	cert, err := NewSelfSignedCert()
 	if err != nil {
@@ -107,8 +106,6 @@ func ProbeHello(ctx context.Context, addr string) (linkpb.RejectReason, error) {
 	}
 }
 
-// probeCreds hands the already handshaken connection to gRPC. The product
-// dialer does the same after it has authenticated the peer's certificate.
 type probeCreds struct{}
 
 func (probeCreds) ClientHandshake(_ context.Context, _ string, raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
@@ -127,8 +124,6 @@ func (probeCreds) Clone() credentials.TransportCredentials { return probeCreds{}
 
 func (probeCreds) OverrideServerName(string) error { return nil }
 
-// probeAuthInfo marks a connection whose TLS handshake the probe performed
-// itself.
 type probeAuthInfo struct{}
 
 func (probeAuthInfo) AuthType() string { return "peers-tls" }

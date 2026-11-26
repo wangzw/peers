@@ -29,25 +29,17 @@ import (
 )
 
 const (
-	// peersBinaryPath is the peers build in the base image.
-	peersBinaryPath = "/usr/local/bin/peers"
-	// registerClientRoleEnv selects the registration client in TestMain.
+	peersBinaryPath       = "/usr/local/bin/peers"
 	registerClientRoleEnv = "PEERS_E2E_ROLE"
-	// registerClientRole is the role that opens a Register stream directly.
-	registerClientRole = "register-client"
-	// registerClientBound is the wait before the registration client gives up.
-	// A registration that has not completed is reported after the Broker's
-	// 10-second wait; three more seconds let that event arrive.
-	registerClientBound = 13 * time.Second
-	// registerClientCopiedPath is where the test binary is copied so that the
-	// other account can execute it.
+	registerClientRole    = "register-client"
+	// registerClientBound is the Broker's 10-second registration wait plus
+	// three seconds for its event to arrive.
+	registerClientBound      = 13 * time.Second
 	registerClientCopiedPath = "/tmp/ap-e2e-register-client"
 )
 
 // TestREQBrokerConfig020_ForeignSocketOwnerRejected checks that one account
-// cannot register another account's session as an agent. The first subtest
-// covers a record the account cannot read; the second makes the record readable
-// and checks the socket owner check that then decides the outcome.
+// cannot register another account's session as an agent.
 func TestREQBrokerConfig020_ForeignSocketOwnerRejected(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)
@@ -60,9 +52,6 @@ func TestREQBrokerConfig020_ForeignSocketOwnerRejected(t *testing.T) {
 	t.Run("record readable but socket owned by another account", func(t *testing.T) {
 		foreignSessionRejected(t, true)
 	})
-	// The positive control runs the same register-client path that the
-	// refusals above use: the record exists and the socket belongs to the
-	// caller's account, so the same path must report registration_complete.
 	t.Run("session owner registers successfully", func(t *testing.T) {
 		_ = syscontainer.StartSystemBroker(t, "broker:\n  alias: sys\n")
 
@@ -87,10 +76,6 @@ func TestREQBrokerConfig020_ForeignSocketOwnerRejected(t *testing.T) {
 	})
 }
 
-// foreignSessionRejected registers a peer session and then tries to register
-// the same session as other. readableRecord makes the peer's registry record
-// readable by other so that the socket owner check, not the read permission,
-// decides the reason.
 func foreignSessionRejected(t *testing.T, readableRecord bool) {
 	t.Helper()
 
@@ -101,9 +86,8 @@ func foreignSessionRejected(t *testing.T, readableRecord bool) {
 	e2eSysWaitRegistered(t, a)
 	aSelf := e2eSysSelfAddress(t, a)
 
-	// The two subtests share one container. A record left by the earlier
-	// subtest is unreadable by other and would make Lookup fail for every
-	// record, so start from only this subtest's record.
+	// A record left by the earlier subtest is unreadable by other and would make
+	// Lookup fail for every record, so start from only this subtest's record.
 	sessionsDir := filepath.Join(a.Fake.ConfigDir(), "sessions")
 	entries, err := os.ReadDir(sessionsDir)
 	if err != nil {
@@ -130,8 +114,6 @@ func foreignSessionRejected(t *testing.T, readableRecord bool) {
 		}
 	}
 
-	// An MCP server for other that points at peer's configuration directory and
-	// inbox socket must never register.
 	foreign := startForeignMCPSession(t, "other", []string{
 		"CLAUDE_CODE_MESSAGING_SOCKET=" + a.Fake.SocketPath(),
 		"CLAUDE_CONFIG_DIR=" + a.Fake.ConfigDir(),
@@ -186,8 +168,6 @@ func foreignSessionRejected(t *testing.T, readableRecord bool) {
 	})
 }
 
-// startForeignMCPSession starts "peers mcp" as account with env and
-// connects an MCP client over its standard streams.
 func startForeignMCPSession(t *testing.T, account string, env []string) *mcp.ClientSession {
 	t.Helper()
 
@@ -211,8 +191,6 @@ func startForeignMCPSession(t *testing.T, account string, env []string) *mcp.Cli
 	return session
 }
 
-// callForeignTool invokes a tool on a session started by
-// startForeignMCPSession and returns its text and IsError flag.
 func callForeignTool(t *testing.T, session *mcp.ClientSession, tool string, args map[string]any) (string, bool) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -230,15 +208,11 @@ func callForeignTool(t *testing.T, session *mcp.ClientSession, tool string, args
 	return strings.Join(texts, "\n"), result.IsError
 }
 
-// registerClientResult is the one-line answer of the register-client role.
 type registerClientResult struct {
 	Event  string `json:"event"`
 	Reason string `json:"reason,omitempty"`
 }
 
-// runRegisterClient runs the test binary's register-client role as account. It
-// opens the Register stream for the given inbox socket and configuration
-// directory and returns the Broker's first event.
 func runRegisterClient(t *testing.T, account, inboxSocket, configDir string) registerClientResult {
 	t.Helper()
 
@@ -272,8 +246,6 @@ func runRegisterClient(t *testing.T, account, inboxSocket, configDir string) reg
 	return result
 }
 
-// copyTestBinary copies the running test binary to a world-readable path so
-// that an unprivileged account can execute it.
 func copyTestBinary(t *testing.T) string {
 	t.Helper()
 
@@ -300,9 +272,6 @@ func copyTestBinary(t *testing.T) string {
 	return registerClientCopiedPath
 }
 
-// runRegisterClientRole is the body of the test binary when TestMain selects
-// the register-client role. It opens a Register stream, writes the first
-// downstream event as one JSON line and exits.
 func runRegisterClientRole() int {
 	socket := os.Getenv("PEERS_TEST_SOCKET")
 	inboxSocket := os.Getenv("E2E_SOCKET")
@@ -356,7 +325,6 @@ func runRegisterClientRole() int {
 	}
 }
 
-// failRegisterClientRole writes an error answer and returns a failure code.
 func failRegisterClientRole(stage string, err error) int {
 	writeRegisterClientResult(registerClientResult{
 		Event:  "error",
@@ -365,7 +333,6 @@ func failRegisterClientRole(stage string, err error) int {
 	return 1
 }
 
-// writeRegisterClientResult writes one JSON line to standard output.
 func writeRegisterClientResult(result registerClientResult) {
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -375,7 +342,6 @@ func writeRegisterClientResult(result registerClientResult) {
 	fmt.Println(string(data))
 }
 
-// e2eStatusLine returns the status table line that names address.
 func e2eStatusLine(out, address string) (string, bool) {
 	for _, line := range strings.Split(out, "\n") {
 		if strings.Contains(line, address) {

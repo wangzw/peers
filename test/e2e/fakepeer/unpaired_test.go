@@ -21,14 +21,10 @@ import (
 	"github.com/wangzw/peers/test/e2e/fakepeer/fakerec"
 )
 
-// stubWait bounds every wait in these tests. The events it waits for cross a
-// local gRPC stream and a pipe, and no product timer governs them, so it uses
-// the same thirty-second fallback as harness.EventTimeout. This is a standalone
-// main package and does not import the harness.
+// stubWait is the thirty-second fallback the harness event timeout uses; no
+// product timer governs these waits.
 const stubWait = 30 * time.Second
 
-// stubLinkServer records the frames of one stream. After stopAfter frames it
-// optionally sends a Reject and ends the stream with endErr.
 type stubLinkServer struct {
 	linkpb.UnimplementedLinkServer
 
@@ -63,8 +59,6 @@ func (s *stubLinkServer) Connect(stream grpc.BidiStreamingServer[linkpb.Frame, l
 	}
 }
 
-// startStubServer runs stub behind TLS on the loopback interface and returns
-// its address. The identity comes from the link test kit; no Broker runs.
 func startStubServer(t *testing.T, stub *stubLinkServer) string {
 	t.Helper()
 	id := linktest.NewIdentity(t)
@@ -79,9 +73,8 @@ func startStubServer(t *testing.T, stub *stubLinkServer) string {
 	return ln.Addr().String()
 }
 
-// dialStub returns the open function dialUnpaired uses and a cleanup for the
-// client connection. The server certificate is not verified because the stub
-// has no fingerprint the client could compare against.
+// dialStub skips certificate verification because the stub has no fingerprint
+// the client could compare against.
 func dialStub(t *testing.T, address string) (func(context.Context) (linkpb.Link_ConnectClient, error), func()) {
 	t.Helper()
 	var conn *grpc.ClientConn
@@ -114,6 +107,8 @@ func waitFrame(t *testing.T, stub *stubLinkServer) *linkpb.Frame {
 	}
 }
 
+// TestDialUnpairedSendsHelloThenRecords checks the frames an unpaired dial
+// sends and the reject reason it reports.
 func TestDialUnpairedSendsHelloThenRecords(t *testing.T) {
 	stub := &stubLinkServer{
 		frames:     make(chan *linkpb.Frame, 8),
@@ -186,6 +181,8 @@ func TestDialUnpairedSendsHelloThenRecords(t *testing.T) {
 	}
 }
 
+// TestDialUnpairedReportsStreamError checks that a stream that ends without a
+// Reject still yields a non-empty reason.
 func TestDialUnpairedReportsStreamError(t *testing.T) {
 	stub := &stubLinkServer{
 		frames:    make(chan *linkpb.Frame, 8),

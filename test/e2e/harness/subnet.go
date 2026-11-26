@@ -14,35 +14,25 @@ import (
 	"testing"
 )
 
-// The routed topologies pin every IPv4 subnet inside 198.18.0.0/15. Docker
-// keeps neither its default bridge (172.17.0.0/16) nor the pool it allocates
-// from (172.16.0.0/12 and 192.168.0.0/16) in that range, and this host is a k8s
-// node whose own networks (10.12.72.0/24, 10.244.0.0/16, 172.17.0.0/16 and
-// 10.96.0.0/12) must never be captured by a bridge route.
+// The routed topologies pin every IPv4 subnet inside 198.18.0.0/15. Docker's
+// default bridge (172.17.0.0/16) and allocation pool (172.16.0.0/12,
+// 192.168.0.0/16) avoid it, and this host's k8s networks (10.12.72.0/24,
+// 10.244.0.0/16, 172.17.0.0/16, 10.96.0.0/12) must never be captured by a bridge
+// route.
 const (
-	// routedSubnetSkip reserves the first eight /24s for the compose files'
-	// defaults, so a manual "docker compose up" never takes a block the
-	// allocator hands out.
+	// routedSubnetSkip reserves the first eight /24s for the compose files' defaults, so a manual "docker compose up" never takes a block the allocator hands out.
 	routedSubnetSkip   = 8
 	routedSubnetStride = 3
-	// routedSubnetCount is the number of /24s in 198.18.0.0/15.
-	routedSubnetCount = 512
-	// routedSubnetLimit stops the routed allocator before the last 32 /24s,
-	// which are reserved for the system container network. Both allocators
-	// stay inside 198.18.0.0/15, so neither can capture traffic for a public
-	// address.
+	routedSubnetCount  = 512
+	// routedSubnetLimit stops the routed allocator before the last 32 /24s, which are reserved for the system container network.
 	routedSubnetLimit = routedSubnetCount - 32
-	// subnetStateDir holds one file per reserved subnet, away from the runtime
-	// roots so the residue scan does not mistake it for a root.
+	// subnetStateDir holds one file per reserved subnet, away from the runtime roots so the residue scan does not mistake it for a root.
 	subnetStateDir = "/tmp/.ape2e-subnets"
 	subnetLockName = ".lock"
 )
 
 const (
-	// subnetPrefixFilePrefix marks a reservation file that names a prefix
-	// rather than a /24 index of 198.18.0.0/15. The two kinds share the
-	// directory and its lock but not an address space, so each allocator
-	// ignores the other's files.
+	// subnetPrefixFilePrefix marks a reservation file that names a prefix rather than a /24 index; the two kinds share the directory and its lock but not an address space.
 	subnetPrefixFilePrefix = "prefix-"
 )
 
@@ -52,16 +42,13 @@ var (
 	defaultSubnetStore = subnetStore{dir: subnetStateDir}
 )
 
-// subnetStore is the reservation directory one allocator family uses. It is a
-// value so a test can point it at a temporary directory.
+// subnetStore is the reservation directory one allocator family uses; it is a value so a test can point it at a temporary directory.
 type subnetStore struct {
 	dir string
 }
 
-// RoutedSubnetPrefixes returns every /24 the routed-topology allocator can
-// hand out. It exists so that another allocator can prove its range never
-// intersects this one: two live docker networks with overlapping subnets make
-// docker refuse the second network.
+// RoutedSubnetPrefixes returns every /24 the routed-topology allocator can hand
+// out.
 func RoutedSubnetPrefixes() []netip.Prefix {
 	out := make([]netip.Prefix, 0, routedSubnetLimit-routedSubnetSkip)
 	for first := routedSubnetSkip; first+2 < routedSubnetLimit; first += routedSubnetStride {
@@ -86,10 +73,10 @@ func allocRoutedSubnets(t *testing.T) [3]string {
 }
 
 // ReserveSubnetIndex reserves one /24 index in [first, last] for the current
-// test process and returns it. The reservation uses the same cross-process lock
-// and owner-marked state files as allocRoutedSubnets, so a second suite running
-// at the same time takes a different index, and a reservation whose owner is
-// gone is reclaimed. The caller's t.Cleanup releases the index.
+// test process and returns it; the caller's t.Cleanup releases it. The
+// reservation is cross-process, and an index whose owner is gone is reclaimed.
+// It returns an error when the range is outside 198.18.0.0/15 or holds no free
+// index.
 func ReserveSubnetIndex(t testing.TB, first, last int) (int, error) {
 	t.Helper()
 	if first < 0 || last >= routedSubnetCount || first > last {
@@ -104,14 +91,11 @@ func ReserveSubnetIndex(t testing.TB, first, last int) (int, error) {
 	return index, nil
 }
 
-// ReserveSubnetPrefix reserves one prefix from pool for the current test
-// process and returns it. The pool is scanned under the same cross-process lock
-// as the routed allocator; a second suite running at the same time takes a
-// different prefix, and a reservation whose owner is gone is reclaimed before
-// the pool is searched. The caller's t.Cleanup releases the prefix.
-//
-// When every prefix is held by a live process the error names the pool range,
-// each holder and how to clear the reservations.
+// ReserveSubnetPrefix reserves one prefix from pool for the current test process
+// and returns it; the caller's t.Cleanup releases it. The scan and the
+// reservation happen under one cross-process lock, and a reservation whose owner
+// is gone is reclaimed. When every prefix is held by a live process the error
+// names the pool range, each holder and how to clear the reservations.
 func ReserveSubnetPrefix(t testing.TB, pool []netip.Prefix) (netip.Prefix, error) {
 	t.Helper()
 	o := currentOwner()
@@ -123,8 +107,6 @@ func ReserveSubnetPrefix(t testing.TB, pool []netip.Prefix) (netip.Prefix, error
 	return prefix, nil
 }
 
-// reserveIndex finds one free index in [first, last] under the state lock and
-// writes this owner's marker to it.
 func (s subnetStore) reserveIndex(o owner, first, last int) (int, error) {
 	subnetMu.Lock()
 	defer subnetMu.Unlock()
@@ -151,8 +133,6 @@ func (s subnetStore) reserveIndex(o owner, first, last int) (int, error) {
 	return 0, fmt.Errorf("no free /24 left in [%d, %d]", first, last)
 }
 
-// reserveBlock finds three consecutive free indices under the state lock and
-// writes this owner's marker to each.
 func (s subnetStore) reserveBlock(o owner) ([3]int, error) {
 	subnetMu.Lock()
 	defer subnetMu.Unlock()
@@ -181,8 +161,6 @@ func (s subnetStore) reserveBlock(o owner) ([3]int, error) {
 	return [3]int{}, fmt.Errorf("no free /24 block left in 198.18.0.0/15")
 }
 
-// reservePrefix finds the first free prefix in pool under the state lock and
-// writes this owner's marker to it.
 func (s subnetStore) reservePrefix(o owner, pool []netip.Prefix) (netip.Prefix, error) {
 	if len(pool) == 0 {
 		return netip.Prefix{}, errors.New("the subnet pool is empty")
@@ -213,16 +191,14 @@ func (s subnetStore) reservePrefix(o owner, pool []netip.Prefix) (netip.Prefix, 
 	return netip.Prefix{}, poolExhaustedError(pool, reserved.prefixes)
 }
 
-// subnetReservations is what one scan found after reclaiming the files of
-// owners that are gone.
 type subnetReservations struct {
 	routed   map[int]bool
 	prefixes map[string]owner
 }
 
-// scan reads the state directory, removes every reservation whose owner is
-// gone, and returns the live ones. Reservation files whose name it does not
-// recognize are left alone: an unknown file may belong to a newer allocator.
+// scan reads the state directory, removes every reservation whose owner is gone,
+// and returns the live ones; a file whose name it does not recognize is left
+// alone, since it may belong to a newer allocator.
 func (s subnetStore) scan() (subnetReservations, error) {
 	reserved := subnetReservations{
 		routed:   map[int]bool{},
@@ -263,8 +239,6 @@ func (s subnetStore) scan() (subnetReservations, error) {
 	return reserved, nil
 }
 
-// poolExhaustedError describes a pool whose every slot is held by a live
-// process: the range, the holders and how to clear the reservations.
 func poolExhaustedError(pool []netip.Prefix, holders map[string]owner) error {
 	first, last := pool[0].Masked(), pool[0].Masked()
 	for _, candidate := range pool[1:] {
@@ -300,7 +274,6 @@ func poolExhaustedError(pool []netip.Prefix, holders map[string]owner) error {
 	return errors.New(b.String())
 }
 
-// summarizePrefixes lists a few of the prefixes an owner holds.
 func summarizePrefixes(prefixes []string) string {
 	const shown = 3
 	if len(prefixes) <= shown {
@@ -309,8 +282,6 @@ func summarizePrefixes(prefixes []string) string {
 	return fmt.Sprintf("%s, ... (%d more)", strings.Join(prefixes[:shown], ", "), len(prefixes)-shown)
 }
 
-// cleanSubnetReservations removes reservation files whose owner is gone and
-// leaves a live suite's blocks reserved.
 func cleanSubnetReservations(logf func(format string, args ...any)) {
 	if _, err := os.Stat(subnetStateDir); err != nil {
 		return
@@ -326,7 +297,6 @@ func cleanSubnetReservations(logf func(format string, args ...any)) {
 	}
 }
 
-// releaseBlock removes the reservations this owner wrote.
 func (s subnetStore) releaseBlock(indices [3]int, o owner) {
 	subnetMu.Lock()
 	defer subnetMu.Unlock()
@@ -340,7 +310,6 @@ func (s subnetStore) releaseBlock(indices [3]int, o owner) {
 	}
 }
 
-// releaseIndex removes this owner's reservation of one index.
 func (s subnetStore) releaseIndex(index int, o owner) {
 	subnetMu.Lock()
 	defer subnetMu.Unlock()
@@ -352,7 +321,6 @@ func (s subnetStore) releaseIndex(index int, o owner) {
 	s.releaseFile(strconv.Itoa(index), o)
 }
 
-// releasePrefix removes this owner's reservation of one prefix.
 func (s subnetStore) releasePrefix(prefix netip.Prefix, o owner) {
 	subnetMu.Lock()
 	defer subnetMu.Unlock()
@@ -376,7 +344,6 @@ func (s subnetStore) releaseFile(name string, o owner) {
 	}
 }
 
-// lock takes the cross-process lock and returns its release.
 func (s subnetStore) lock() (func(), error) {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return nil, err
@@ -395,12 +362,10 @@ func (s subnetStore) lock() (func(), error) {
 	}, nil
 }
 
-// routedSubnet formats the index-th /24 of 198.18.0.0/15 as a CIDR.
 func routedSubnet(index int) string {
 	return routedSubnetPrefix(index).String()
 }
 
-// routedSubnetPrefix returns the index-th /24 of 198.18.0.0/15 as a prefix.
 func routedSubnetPrefix(index int) netip.Prefix {
 	return netip.PrefixFrom(
 		netip.AddrFrom4([4]byte{198, byte(18 + index/256), byte(index % 256), 0}),
@@ -408,23 +373,18 @@ func routedSubnetPrefix(index int) netip.Prefix {
 	)
 }
 
-// routedPath returns the state file of a routed /24 index.
 func (s subnetStore) routedPath(index int) string {
 	return filepath.Join(s.dir, strconv.Itoa(index))
 }
 
-// prefixPath returns the state file of a prefix reservation.
 func (s subnetStore) prefixPath(prefix netip.Prefix) string {
 	return filepath.Join(s.dir, subnetPrefixFileName(prefix))
 }
 
-// subnetPrefixFileName encodes a prefix as a state file name. The slash of the
-// CIDR would separate path elements, so it becomes an underscore.
 func subnetPrefixFileName(prefix netip.Prefix) string {
 	return subnetPrefixFilePrefix + strings.ReplaceAll(prefix.Masked().String(), "/", "_")
 }
 
-// parseSubnetPrefixName decodes a prefix reservation file name.
 func parseSubnetPrefixName(name string) (netip.Prefix, bool) {
 	if !strings.HasPrefix(name, subnetPrefixFilePrefix) {
 		return netip.Prefix{}, false

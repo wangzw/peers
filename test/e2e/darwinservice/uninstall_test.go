@@ -17,12 +17,8 @@ import (
 	"time"
 )
 
-// The user uninstall tests install a copy of the product that the test
-// account owns, because uninstall removes the binary the service started and
-// leaves a binary owned by another account in place.
 const uninstallPromptBound = eventTimeout
 
-// pollBuffer collects a subprocess's output while the test polls it.
 type pollBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -40,29 +36,25 @@ func (b *pollBuffer) String() string {
 	return b.b.String()
 }
 
-// uninstallUserPlist is the user launch agent's path.
 func uninstallUserPlist() string {
 	return filepath.Join(os.Getenv("HOME"), "Library", "LaunchAgents", serviceLabel+".plist")
 }
 
-// uninstallUserDataDir is the account's configuration and data directory.
 func uninstallUserDataDir() string {
 	return filepath.Join(os.Getenv("HOME"), ".peers")
 }
 
-// uninstallUserLogDir is where launchd writes the user Broker's log.
 func uninstallUserLogDir() string {
 	return filepath.Join(os.Getenv("HOME"), "Library", "Logs", "peers")
 }
 
-// uninstallRuntimeDir is the account's runtime directory.
 func uninstallRuntimeDir() string {
 	return fmt.Sprintf("/tmp/peers-%d", os.Getuid())
 }
 
 // copyUninstallBinary copies the installed product to a path the test account
-// owns and returns it. The name is peers because uninstall only removes a
-// binary with that name.
+// owns. The copy is named peers because uninstall removes only a binary with
+// that name.
 func copyUninstallBinary(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(os.Getenv("HOME"), "uninstall-test")
@@ -84,9 +76,9 @@ func copyUninstallBinary(t *testing.T) string {
 }
 
 // runUninstallWithAnswer runs the product in a pseudo-terminal and answers its
-// first question with answer. The program asks on /dev/tty, so a plain pipe
-// would leave it without a terminal. The child's exit status is written to a
-// file, because script does not reliably pass it through.
+// first question with answer. The product asks on /dev/tty and script does not
+// reliably pass the exit status, so this runs it under script and reads the
+// status from a file.
 func runUninstallWithAnswer(t *testing.T, answer, name string, args ...string) result {
 	t.Helper()
 	statusFile := filepath.Join(t.TempDir(), "status")
@@ -130,7 +122,6 @@ func runUninstallWithAnswer(t *testing.T, answer, name string, args ...string) r
 	return result{stdout: output.String(), exitCode: code}
 }
 
-// shellQuote quotes one argument unless every character is safe as it is.
 func shellQuote(arg string) string {
 	if arg != "" && !strings.ContainsAny(arg, " \t\n'\"\\$`;&|<>()*?[]{}!~#") {
 		return arg
@@ -138,7 +129,6 @@ func shellQuote(arg string) string {
 	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 }
 
-// waitUninstallSocket waits for the user Broker's local socket.
 func waitUninstallSocket(t *testing.T) {
 	t.Helper()
 	socket := filepath.Join(uninstallRuntimeDir(), "broker.sock")
@@ -148,7 +138,6 @@ func waitUninstallSocket(t *testing.T) {
 	})
 }
 
-// requireUninstallMissing fails the test when path exists.
 func requireUninstallMissing(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -156,7 +145,6 @@ func requireUninstallMissing(t *testing.T, path string) {
 	}
 }
 
-// requireUninstallPresent fails the test when path does not exist.
 func requireUninstallPresent(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {
@@ -164,8 +152,6 @@ func requireUninstallPresent(t *testing.T, path string) {
 	}
 }
 
-// assertPeerMCPNotRegistered checks that Claude Code no longer knows a peer MCP
-// server. A host without claude cannot answer the question and is skipped.
 func assertPeerMCPNotRegistered(t *testing.T) {
 	t.Helper()
 	claude, err := exec.LookPath("claude")
@@ -178,9 +164,8 @@ func assertPeerMCPNotRegistered(t *testing.T) {
 	}
 }
 
-// TestUninstallREQBrokerConfig051UserLevel installs the user service,
-// uninstalls it keeping the data, installs it again and purges everything. The
-// launchd job must be gone after each uninstall.
+// TestUninstallREQBrokerConfig051UserLevel checks that a user uninstall keeps
+// data by default, removes it with --purge, and leaves no launchd job.
 func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
@@ -198,7 +183,6 @@ func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 		}
 		waitUninstallSocket(t)
 
-		// The sentinel proves the data survived the keep-data run.
 		if err := os.MkdirAll(uninstallUserDataDir(), 0o700); err != nil {
 			t.Fatalf("creating %s: %v", uninstallUserDataDir(), err)
 		}
@@ -227,7 +211,6 @@ func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 		requireUninstallPresent(t, uninstallUserLogDir())
 		assertPeerMCPNotRegistered(t)
 
-		// Purge a fresh installation; nothing may remain.
 		binary = copyUninstallBinary(t)
 		res = run(t, binary, "service", "install")
 		if res.exitCode != 0 {

@@ -17,9 +17,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// TestDegradedRun covers --allow-degraded on a container: the foreground
-// failures that stay fatal, the two degraded levels, the retries that recover
-// without a restart, and the service-independent listen backoff.
+// TestDegradedRun checks --allow-degraded on a container: the fatal foreground
+// failures, the two degraded levels, in-place recovery, and the listen backoff.
 func TestDegradedRun(t *testing.T) {
 	c := harness.Up(t, harness.TopoFlat(2))
 	host := c.Node("hostA")
@@ -43,8 +42,8 @@ func TestDegradedRun(t *testing.T) {
 			t.Fatalf("the degraded Broker exited %d on SIGTERM, want 0", code)
 		}
 	}
-	// drExec bounds every one-off command, so a Broker that unexpectedly stays
-	// in the foreground fails the test instead of hanging it.
+	// drExec bounds every one-off command, so a Broker that stays in the
+	// foreground fails instead of hanging.
 	drExec := func(t *testing.T, argv []string, env map[string]string) harness.ExecResult {
 		t.Helper()
 		return host.ExecTimeout(t, argv, env, 30*time.Second)
@@ -71,8 +70,6 @@ func TestDegradedRun(t *testing.T) {
 	}
 
 	t.Run("REQ-broker-config-056 foreground failures exit", func(t *testing.T) {
-		// An unparsable configuration is a fatal configuration failure, and the
-		// last standard-error line names the reason.
 		host.WriteConfig(t, "broker: [unclosed\n")
 		res := drExec(t, []string{"/usr/local/bin/peers", "service", "run", "--user"}, nil)
 		if res.ExitCode == 0 {
@@ -83,8 +80,6 @@ func TestDegradedRun(t *testing.T) {
 		}
 		drNoSocket(t)
 
-		// --allow-degraded does not cover a configuration that cannot be
-		// parsed: the diagnostics interface must not run on untrusted values.
 		res = drExec(t, []string{"/usr/local/bin/peers", "service", "run", "--user", "--allow-degraded"}, nil)
 		if res.ExitCode == 0 {
 			t.Fatalf("a degraded Broker with an unparsable configuration exited 0: %s", res.Stderr)
@@ -94,7 +89,6 @@ func TestDegradedRun(t *testing.T) {
 		}
 		drNoSocket(t)
 
-		// A taken listen address is the listen exit code and leaves no socket.
 		host.WriteConfig(t, drConfig(":17443"))
 		held := c.HoldPort(t, "hostA", ":17443")
 		res = drExec(t, []string{"/usr/local/bin/peers", "service", "run", "--user"}, nil)
@@ -107,7 +101,6 @@ func TestDegradedRun(t *testing.T) {
 		drNoSocket(t)
 		c.ReleasePort(t, "hostA", held)
 
-		// An unreadable identity fails startup too.
 		start := host.StartBroker(t, harness.BrokerSpec{})
 		if !start.Running {
 			t.Fatalf("the Broker used to create an identity did not start: exit %d: %s", start.ExitCode, start.StderrLast)
@@ -126,20 +119,17 @@ func TestDegradedRun(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-config-060 before-lock failures exit", func(t *testing.T) {
-		// Inside a session's process tree.
 		res := host.Exec(t, []string{"/usr/local/bin/peers", "service", "run", "--user", "--allow-degraded"},
 			map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/tmp/inbox.sock"})
 		if res.ExitCode != 6 {
 			t.Fatalf("a degraded Broker inside a session exited %d, want 6: %s", res.ExitCode, res.Stderr)
 		}
 
-		// The system form without root.
 		res = host.Exec(t, []string{"/usr/local/bin/peers", "service", "run", "--system", "--allow-degraded"}, nil)
 		if res.ExitCode != 7 {
 			t.Fatalf("a non-root system Broker exited %d, want 7: %s", res.ExitCode, res.Stderr)
 		}
 
-		// A second instance loses the account lock.
 		host.WriteConfig(t, drConfig(":17443"))
 		first := host.StartBroker(t, harness.BrokerSpec{})
 		if !first.Running {
@@ -169,14 +159,11 @@ func TestDegradedRun(t *testing.T) {
 			t.Fatalf("reason %q does not name the identity", resp.GetDegraded().GetReason())
 		}
 
-		// Every call except Hello and Status is refused.
 		_, detail := host.Oracle().ListBrokers(t)
 		if detail == nil || detail.GetCode() != localpb.ErrorCode_ERROR_CODE_BROKER_DEGRADED {
 			t.Fatalf("ListBrokers in diagnostics = %+v, want broker_degraded", detail)
 		}
 
-		// Fix the file and touch the configuration; the Broker retries in
-		// place and keeps its process.
 		drChmod(t, host, identity, "600")
 		host.WriteConfig(t, drConfig(":17443"))
 		drWaitStatus(t, "the Broker leaves degraded mode", func(s *localpb.StatusResponse) bool {
@@ -213,8 +200,6 @@ func TestDegradedRun(t *testing.T) {
 			t.Fatalf("fix %q does not name the audit log path", resp.GetDegraded().GetFix())
 		}
 
-		// The session-facing calls fail with the reason and the
-		// broker_degraded code.
 		session := host.StartSession(t, harness.SessionSpec{Name: "diag", StartMCP: true})
 		defer session.End(t)
 		for _, call := range []struct {
@@ -225,8 +210,8 @@ func TestDegradedRun(t *testing.T) {
 			{"send_message", map[string]any{"to": "nobody@hostA.peer", "message": "while degraded"}},
 			{"get_config", nil},
 		} {
-			// Each tool has its own poll bound; deriving the wait from call.tool
-			// keeps send_message's larger bound from being cut off by the wait.
+			// Each tool has its own poll bound, so the wait is derived from
+			// call.tool.
 			harness.EventuallyPoll(t, harness.ToolWaitBound(call.tool), "the session reports "+call.tool+" as degraded", func(deadline time.Time) (bool, string) {
 				r, err := session.PollCall(t, deadline, call.tool, call.args)
 				if err != nil {
@@ -242,9 +227,6 @@ func TestDegradedRun(t *testing.T) {
 			})
 		}
 
-		// The status command prints the diagnostics-only line with the same
-		// reason the Status call reported, names the audit log in its fix, and
-		// exits non-zero without repeating the reason on standard error.
 		status := drExec(t, []string{"/usr/local/bin/peers", "service", "status"}, nil)
 		if status.ExitCode == 0 {
 			t.Fatalf("peers service status exited 0 while diagnostics only: %s", status.Stdout)
@@ -270,8 +252,6 @@ func TestDegradedRun(t *testing.T) {
 			return s.GetDegraded() == nil
 		}, 30*time.Second)
 
-		// The same session reconnects after the degraded service closed its
-		// connections; its next call succeeds.
 		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the same session lists agents after recovery", func(deadline time.Time) (bool, string) {
 			r, err := session.PollCall(t, deadline, "list_agents", nil)
 			if err != nil {
@@ -290,9 +270,6 @@ func TestDegradedRun(t *testing.T) {
 		aConfig := srConfig("broker:\n  listen: \":17443\"")
 		bConfig := srConfig()
 
-		// Pair first while hostA can listen. hostA dials hostB, so the link
-		// survives hostA's restart local only and the topic roster can be
-		// rebuilt.
 		startA := host.StartBroker(t, harness.BrokerSpec{ConfigYAML: aConfig})
 		if !startA.Running {
 			t.Fatalf("hostA's Broker did not start: exit %d: %s", startA.ExitCode, startA.StderrLast)
@@ -305,16 +282,16 @@ func TestDegradedRun(t *testing.T) {
 		defer alpha.End(t)
 		beta := srSession(t, hostB, "beta")
 		defer beta.End(t)
+		// Pair first while hostA can listen: hostA dials hostB, so the link
+		// survives hostA's restart local only and the topic roster can be
+		// rebuilt.
 		key := srCreateKey(t, opB)
-		// This topology connects the nodes directly, so hostB's advertised
-		// address is its address on the shared network.
 		bAddr := net.JoinHostPort(c.Addr("hostB", "net"), "17443")
 		srConnect(t, opA, bAddr, key.Key).MustOK(t)
 		srWaitConnected(t, host, "hostB.peer", srRelinkBound)
 		srWaitConnected(t, hostB, "hostA.peer", srRelinkBound)
 		srWaitSessionVisible(t, alpha, "beta")
 
-		// Restart hostA with its listen address held: local only, no listener.
 		if code := host.StopBroker(t, syscall.SIGTERM); code != 0 {
 			t.Fatalf("hostA's healthy Broker exited %d", code)
 		}
@@ -334,8 +311,6 @@ func TestDegradedRun(t *testing.T) {
 			}
 		}
 
-		// The status command prints the local-only line and the address that
-		// could not be bound.
 		status := drExec(t, []string{"/usr/local/bin/peers", "service", "status"}, nil)
 		if status.ExitCode != 0 {
 			t.Fatalf("peers service status in local-only degradation: exit %d\nstdout: %s\nstderr: %s",
@@ -347,7 +322,6 @@ func TestDegradedRun(t *testing.T) {
 			}
 		}
 
-		// The Broker itself listens nowhere.
 		ss := host.Exec(t, []string{"ss", "-ltnp"}, nil)
 		if ss.ExitCode != 0 {
 			t.Fatalf("ss -ltnp exited %d: %s", ss.ExitCode, strings.TrimSpace(ss.Stderr))
@@ -358,7 +332,6 @@ func TestDegradedRun(t *testing.T) {
 			}
 		}
 
-		// Local sessions still register, join topics and send to each other.
 		alphaOut := slWaitRegistered(t, alpha, "alpha")
 		local := srSession(t, host, "local")
 		defer local.End(t)
@@ -395,11 +368,11 @@ func TestDegradedRun(t *testing.T) {
 			t.Fatalf("the delivered message is %q", body)
 		}
 
-		// hostA is the dialer, so a cut makes the link unreachable while the
-		// missing listener is not the cause. The error must not carry the
-		// local-only reason; the acceptor-side reason is unit-tested, since a
-		// restarted local-only Broker has an empty topic roster.
 		srWaitConnected(t, host, "hostB.peer", srRelinkBound)
+		// hostA is the dialer, so a cut makes the link unreachable while the
+		// missing listener is not the cause; the error must not carry the
+		// local-only reason, and the acceptor-side reason is unit-tested, since
+		// a restarted local-only Broker has an empty topic roster.
 		c.Cut(t, "hostA", "hostB")
 		t.Cleanup(func() { c.Restore(t) })
 		harness.Eventually(t, srRelinkBound, "hostA notices the cut", func() (bool, string) {
@@ -416,7 +389,6 @@ func TestDegradedRun(t *testing.T) {
 		c.Restore(t)
 		srWaitConnected(t, host, "hostB.peer", srRelinkBound)
 
-		// Changing broker.listen to a free port recovers without a restart.
 		host.WriteConfig(t, drConfig(":17445"))
 		drWaitStatus(t, "the Broker leaves degraded mode after a listen change", func(s *localpb.StatusResponse) bool {
 			return s.GetDegraded() == nil
@@ -436,8 +408,6 @@ func TestDegradedRun(t *testing.T) {
 				s.GetDegraded().GetLevel() == localpb.DegradedLevel_DEGRADED_LEVEL_LOCAL_ONLY
 		}, 10*time.Second)
 
-		// A new free port recovers without a restart, and the new address
-		// accepts a connection from another host.
 		host.WriteConfig(t, drConfig(":17447"))
 		drWaitStatus(t, "the Broker leaves degraded mode after a listen change", func(s *localpb.StatusResponse) bool {
 			return s.GetDegraded() == nil

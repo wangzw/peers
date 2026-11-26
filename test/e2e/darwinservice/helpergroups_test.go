@@ -24,46 +24,28 @@ import (
 )
 
 const (
-	// helperRegisterRole registers a simulated session of the many-group
-	// account with the system Broker. It runs as that account through sudo.
-	helperRegisterRole = "helper-register-many-groups"
-	// helperRegisterWatchRole is the same registration, but it writes the
-	// session record only after the stream is open, so completion depends on
-	// the Broker's watch of the account's configuration directory.
+	helperRegisterRole      = "helper-register-many-groups"
 	helperRegisterWatchRole = "helper-register-many-groups-watch"
 
-	// helperGroupUser owns the session in the many-group test. It is a local
-	// account with no login; only its group table matters.
 	helperGroupUser = "aphelper"
 	helperGroupUID  = 6502
 	helperGroupGID  = 6300
-	// helperGroupCount is the number of supplementary groups. The primary
-	// group is added on top, so the account ends up in one more than this.
-	helperGroupCount = 17
-	// helperPrimaryGroup names the group whose id is the account's primary gid.
+	// helperGroupCount is the number of supplementary groups. The primary group
+	// is added on top, so the account ends up in one more than this.
+	helperGroupCount   = 17
 	helperPrimaryGroup = "ahgp"
 
-	// darwinNGroups is Darwin's NGROUPS: the largest group table a single
+	// darwinNGroups is Darwin's NGROUPS, the largest group table a single
 	// setgroups call accepts.
 	darwinNGroups = 16
 
-	// helperRegisterBound bounds one registration probe, from dialing the
-	// system Broker to the registration_complete event.
 	helperRegisterBound = 45 * time.Second
-	// helperIdentityBound bounds the wait for the Broker to start the account's
-	// helper after a registration probe opens its stream.
 	helperIdentityBound = 15 * time.Second
-	// helperWatchQuiet is how long the watch probe waits, with the record
-	// absent, before writing it. Nothing may complete in that window.
-	helperWatchQuiet = 2 * time.Second
+	helperWatchQuiet    = 2 * time.Second
 )
 
-// TestSystemServiceRegistersManyGroups is the end-to-end regression for the
-// account-helper launch on Darwin. The account belongs to more groups than
-// NGROUPS (16), so a helper launched with the full group table in its
-// credential fails with EINVAL and never starts. The system Broker must instead
-// switch the child's identity after it starts: registration succeeds, and the
-// watch of the account's session directory works, which is the same helper.
+// TestSystemServiceRegistersManyGroups checks that the system Broker registers
+// and watches a session of an account in more groups than Darwin's NGROUPS.
 func TestSystemServiceRegistersManyGroups(t *testing.T) {
 	ids := setupHelperGroups(t)
 	t.Logf("account %s uid=%d gid=%d belongs to %d groups: %v",
@@ -94,9 +76,6 @@ func TestSystemServiceRegistersManyGroups(t *testing.T) {
 	})
 
 	t.Run("helper identity", func(t *testing.T) {
-		// The watch probe keeps its registration stream open while the record is
-		// absent, so the helper serving the account is running and can be sampled
-		// before the probe finishes.
 		role := startRoleAsUser(t, helperGroupUser, helperRegisterWatchRole)
 
 		pids := waitForAccountHelper(t, helperGroupUID, role, helperIdentityBound)
@@ -136,9 +115,6 @@ func TestSystemServiceRegistersManyGroups(t *testing.T) {
 	})
 }
 
-// setupHelperGroups creates the account, its primary group and its
-// supplementary groups, adds the account to each group with dseditgroup, and
-// registers their removal. It returns the group ids the account belongs to.
 func setupHelperGroups(t *testing.T) []uint32 {
 	t.Helper()
 	preflightHelperGroupIDs(t)
@@ -178,9 +154,6 @@ func setupHelperGroups(t *testing.T) []uint32 {
 	return ids
 }
 
-// cleanupHelperGroups removes the account, its groups and any cached directory
-// entries. It is idempotent and also runs before setup, so a rerun starts
-// clean.
 func cleanupHelperGroups(t *testing.T) {
 	t.Helper()
 	sudoIgnore("dscl", ".", "-delete", "/Users/"+helperGroupUser)
@@ -191,14 +164,10 @@ func cleanupHelperGroups(t *testing.T) {
 	sudoIgnore("dscacheutil", "-flushcache")
 }
 
-// helperGroupName returns the name of the i-th supplementary group.
 func helperGroupName(i int) string {
 	return fmt.Sprintf("ahg%02d", i)
 }
 
-// preflightHelperGroupIDs refuses to touch a name or id that belongs to another
-// account. A stale probe account with the expected id is fine; cleanup removes
-// it afterwards.
 func preflightHelperGroupIDs(t *testing.T) {
 	t.Helper()
 	users := dsclList(t, "/Users", "UniqueID")
@@ -210,16 +179,10 @@ func preflightHelperGroupIDs(t *testing.T) {
 	}
 }
 
-// runHelperRegisterRole is the role body of helperRegisterRole.
 func runHelperRegisterRole() int { return runHelperRegistration(false) }
 
-// runHelperRegisterWatchRole is the role body of helperRegisterWatchRole.
 func runHelperRegisterWatchRole() int { return runHelperRegistration(true) }
 
-// runHelperRegistration creates a simulated session of the invoking account,
-// opens a registration stream on the system Broker, and waits for the
-// registration_complete event. With watch set, the record is written only after
-// the stream is open, so completion depends on the Broker's directory watch.
 func runHelperRegistration(watch bool) int {
 	tb := node.NewTB("helper-register", "/tmp")
 	defer tb.Close()
@@ -281,8 +244,6 @@ func runHelperRegistration(watch bool) int {
 	}()
 
 	if watch {
-		// The record is absent, so no registration may complete yet. Seeing one
-		// would mean the probe is not testing the watch at all.
 		quiet := time.NewTimer(helperWatchQuiet)
 		defer quiet.Stop()
 	waitQuiet:
@@ -325,8 +286,8 @@ func runHelperRegistration(watch bool) int {
 				if !watch {
 					return helperProbeFailure("%s", problem)
 				}
-				// The watch probe may see a not_registered report that was
-				// already on its way; keep waiting until the bound.
+				// The watch probe may see a not_registered report already in flight,
+				// so it keeps waiting until the bound.
 				lastProblem = problem
 			}
 		case <-ctx.Done():
@@ -335,14 +296,11 @@ func runHelperRegistration(watch bool) int {
 	}
 }
 
-// helperProbeFailure prints a failed probe result and returns the exit code.
 func helperProbeFailure(format string, args ...any) int {
 	fmt.Printf("RESULT registered=false "+format+"\n", args...)
 	return 1
 }
 
-// roleRun is an e2e role started asynchronously. Its captured output becomes
-// readable once done is closed.
 type roleRun struct {
 	cmd    *exec.Cmd
 	stdout strings.Builder
@@ -351,10 +309,6 @@ type roleRun struct {
 	res    result
 }
 
-// startRoleAsUser starts the e2e binary role as user and returns before it
-// exits. Unlike runRoleAsUser it lets the caller sample the helper process
-// while the registration stream is still open. The result is read from the
-// test goroutine through wait.
 func startRoleAsUser(t *testing.T, user, role string) *roleRun {
 	t.Helper()
 	r := &roleRun{done: make(chan struct{})}
@@ -378,8 +332,6 @@ func startRoleAsUser(t *testing.T, user, role string) *roleRun {
 		}
 		close(r.done)
 	}()
-	// A failing assertion may stop the test before the role finishes. Interrupt
-	// sudo, which relays the signal to the role, and give it a moment to exit.
 	t.Cleanup(func() {
 		select {
 		case <-r.done:
@@ -397,19 +349,14 @@ func startRoleAsUser(t *testing.T, user, role string) *roleRun {
 	return r
 }
 
-// wait blocks until the role exits and returns its result.
 func (r *roleRun) wait() result {
 	<-r.done
 	return r.res
 }
 
-// accountHelperPIDs returns the pids ps reports for running account-helper
-// processes. The helper is started as "<exe> internal account-helper"; on
-// Darwin it starts as root and switches to the account before it serves, so
-// only the command line is matched. A helper that never switched stays in the
-// result, and reading its identity reports the failed switch instead of leaving
-// the wait to time out. Showing the full command keeps the subcommand name from
-// being truncated.
+// accountHelperPIDs matches only the command line, because a helper starts as
+// root and switches to the account before it serves, and ps -ww keeps the
+// subcommand name from being truncated.
 func accountHelperPIDs(t *testing.T) []int {
 	t.Helper()
 	out, err := exec.Command("ps", "-ww", "-axo", "pid=,command=").Output()
@@ -431,11 +378,8 @@ func accountHelperPIDs(t *testing.T) []int {
 	return pids
 }
 
-// waitForAccountHelper waits until the Broker has a helper running for uid
-// while role serves its registration. The helper is matched by command line, so
-// a helper that started but stayed root is returned and fails the identity
-// check rather than this wait. When the role exits first, its output is the
-// failure: the helper never started.
+// waitForAccountHelper returns a helper that never switched identity too, so
+// the identity check reports the failed switch instead of this wait timing out.
 func waitForAccountHelper(t *testing.T, uid int, role *roleRun, bound time.Duration) []int {
 	t.Helper()
 	deadline := time.Now().Add(bound)
@@ -457,13 +401,10 @@ func waitForAccountHelper(t *testing.T, uid int, role *roleRun, bound time.Durat
 	}
 }
 
-// helperIdentity is the identity ps reports for one process. uid is the
-// effective user id; rgid is the real group id.
 type helperIdentity struct {
 	uid, ruid, svuid, rgid int
 }
 
-// readHelperIdentity reads the four identity columns of pid through ps.
 func readHelperIdentity(t *testing.T, pid int) helperIdentity {
 	t.Helper()
 	out, err := exec.Command("ps", "-o", "uid,ruid,svuid,rgid", "-p", strconv.Itoa(pid)).Output()

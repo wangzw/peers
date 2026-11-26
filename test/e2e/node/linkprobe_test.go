@@ -19,10 +19,6 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// linkTestServer is an in-process stand-in for a Broker's Link service. It
-// records the SHA-256 of the certificate of every client that opens a stream.
-// In echo mode it sends each received frame back unchanged; otherwise it reads
-// the first Hello, records it, and answers with rejectReason.
 type linkTestServer struct {
 	linkpb.UnimplementedLinkServer
 
@@ -71,7 +67,6 @@ func (s *linkTestServer) Connect(stream grpc.BidiStreamingServer[linkpb.Frame, l
 	return stream.Send(&linkpb.Frame{Kind: linkpb.KindReject, Payload: payload})
 }
 
-// recordPeer appends the SHA-256 of the client certificate presented on ctx.
 func (s *linkTestServer) recordPeer(ctx context.Context) {
 	p, ok := peer.FromContext(ctx)
 	if !ok {
@@ -99,8 +94,6 @@ func (s *linkTestServer) helloCopy() *linkpb.Hello {
 	return s.hello
 }
 
-// startLinkTestServer serves srv over TLS on a loopback port and returns its
-// address.
 func startLinkTestServer(t *testing.T, srv linkpb.LinkServer) string {
 	t.Helper()
 	cert, err := NewSelfSignedCert()
@@ -115,9 +108,8 @@ func startLinkTestServer(t *testing.T, srv linkpb.LinkServer) string {
 		MinVersion:   tls.VersionTLS13,
 		Certificates: []tls.Certificate{cert},
 		ClientAuth:   tls.RequireAnyClientCert,
-		// The relay's upstream client goes through gRPC's own TLS
-		// credentials, which require h2 when the server offers ALPN. The
-		// probe offers none, so its handshake leaves the protocol empty.
+		// The relay's upstream client goes through gRPC's own TLS credentials,
+		// which require h2 when the server offers ALPN; the probe offers none.
 		NextProtos: []string{"h2"},
 	}}))
 	linkpb.RegisterLinkServer(server, srv)
@@ -126,9 +118,8 @@ func startLinkTestServer(t *testing.T, srv linkpb.LinkServer) string {
 	return listener.Addr().String()
 }
 
-// probeServerCreds mirrors the product Link server: it completes the TLS
-// handshake itself and does not require an ALPN protocol. gRPC's own server
-// credentials would reject the probe, which deliberately offers no h2.
+// probeServerCreds completes the TLS handshake itself and requires no ALPN
+// protocol, which gRPC's own server credentials would insist on.
 type probeServerCreds struct{ cfg *tls.Config }
 
 func (c probeServerCreds) ServerHandshake(raw net.Conn) (net.Conn, credentials.AuthInfo, error) {
@@ -155,6 +146,8 @@ func (c probeServerCreds) Clone() credentials.TransportCredentials { return c }
 
 func (probeServerCreds) OverrideServerName(string) error { return nil }
 
+// TestProbeHelloGetsReject checks that ProbeHello returns the Broker's Reject
+// reason after sending a complete Hello.
 func TestProbeHelloGetsReject(t *testing.T) {
 	srv := &linkTestServer{rejectReason: linkpb.RejectReason_REJECT_REASON_NOT_A_PEER}
 	addr := startLinkTestServer(t, srv)
@@ -184,6 +177,8 @@ func TestProbeHelloGetsReject(t *testing.T) {
 	}
 }
 
+// TestProbeHelloUsesFreshCertificate checks that every ProbeHello presents a
+// different client certificate.
 func TestProbeHelloUsesFreshCertificate(t *testing.T) {
 	srv := &linkTestServer{rejectReason: linkpb.RejectReason_REJECT_REASON_NOT_A_PEER}
 	addr := startLinkTestServer(t, srv)

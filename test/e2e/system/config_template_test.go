@@ -20,41 +20,25 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// REQ-broker-config-040: installing a service writes a configuration file that
-// lists every key exactly once, keeps an existing file unchanged, and is picked
-// up without restarting the Broker after a manual edit or a set_config change.
-//
-// The waits follow the project rule: a wait that no product timer governs uses
-// the project-wide EventTimeout fallback; a wait governed by the configuration
-// watcher's debounce is that debounce plus the fallback. A wait that polls a
-// tool uses EventuallyPoll, whose call bound is the larger ToolCallWaitBound,
-// so one poll call gets its own bound.
 const (
 	cteWaitBound = harness.EventTimeout
-	// cteReloadDebounce mirrors internal/config's defaultWatchDebounce
-	// (internal/config/watch.go), the quiet period the configuration watcher
-	// waits before reloading a changed file.
-	cteReloadDebounce = 100 * time.Millisecond
-	cteReloadBound    = cteReloadDebounce + cteWaitBound
-
-	// cteHotReloadAlias is a legal broker.alias value, written by hand over the
-	// commented placeholder in the generated file.
-	cteHotReloadAlias = "e2e-hot-reload"
-	// cteAdvertiseExtraValue is a legal flow sequence for the commented
-	// broker.advertise_extra key, used through set_config.
+	// cteReloadDebounce mirrors the configuration watcher's debounce, the quiet
+	// period it waits before reloading a changed file; cteReloadBound is that
+	// debounce plus the fallback.
+	cteReloadDebounce      = 100 * time.Millisecond
+	cteReloadBound         = cteReloadDebounce + cteWaitBound
+	cteHotReloadAlias      = "e2e-hot-reload"
 	cteAdvertiseExtraValue = "[192.0.2.10:17443]"
 )
 
-// cteKey is one configuration key from the design's key table, with the kind
-// that decides how its file text and its rendered value are compared.
 type cteKey struct {
 	name string
 	kind string
 }
 
-// cteKeys is the complete key set of the configuration design. Keeping it here
-// makes the acceptance check independent of the implementation that generates
-// the template: a new or missing key fails this test.
+// cteKeys is the complete key set, copied here so the acceptance check stays
+// independent of the implementation that generates the template: a new or
+// missing key fails this test.
 var cteKeys = []cteKey{
 	{"broker.alias", "string"},
 	{"broker.public", "bool"},
@@ -90,9 +74,6 @@ var cteKeys = []cteKey{
 	{"update.check_interval", "duration"},
 }
 
-// cteCommentedKeys are the keys the template does not write as an effective
-// value because they have no fixed default. They appear as a commented
-// placeholder instead.
 var cteCommentedKeys = map[string]bool{
 	"broker.alias":              true,
 	"broker.advertise":          true,
@@ -101,8 +82,6 @@ var cteCommentedKeys = map[string]bool{
 	"pairing.static_key":        true,
 }
 
-// cteLevel names one deployment level and the operations that differ between
-// the system and user installations.
 type cteLevel struct {
 	name       string
 	configPath string
@@ -191,7 +170,6 @@ func TestREQBrokerConfig040_UserInstallWritesTemplate(t *testing.T) {
 	})
 }
 
-// cteRunChecks applies the acceptance criteria that hold for both levels.
 func cteRunChecks(t *testing.T, session *syscontainer.Session, lvl cteLevel) {
 	t.Helper()
 
@@ -205,8 +183,6 @@ func cteRunChecks(t *testing.T, session *syscontainer.Session, lvl cteLevel) {
 	cteExerciseReinstall(t, lvl)
 }
 
-// cteAssertTemplate checks that every designed key appears exactly once, as an
-// effective value or as a commented placeholder according to its default.
 func cteAssertTemplate(t *testing.T, content, level string) {
 	t.Helper()
 
@@ -216,9 +192,8 @@ func cteAssertTemplate(t *testing.T, content, level string) {
 		wanted[key.name] = true
 	}
 	failed := false
-	// The per-key loop below only walks the expected list. These checks fail on
-	// a key that the template gained, so a new configuration key cannot slip
-	// through this test unnoticed.
+	// These checks fail on a key that the template gained, so a new
+	// configuration key cannot slip through this test unnoticed.
 	for name := range counts {
 		if !wanted[name] {
 			t.Errorf("%s configuration: the file holds the effective key %s, which cteKeys does not list", level, name)
@@ -266,8 +241,6 @@ func cteDescribeForm(commented bool) string {
 	return "an effective value"
 }
 
-// cteAssertValuesMatchFile checks that every effective value written to the
-// file equals the value get_config reports for the running Broker.
 func cteAssertValuesMatchFile(t *testing.T, session *syscontainer.Session, content, level string) {
 	t.Helper()
 
@@ -278,8 +251,8 @@ func cteAssertValuesMatchFile(t *testing.T, session *syscontainer.Session, conte
 		wanted[key.name] = true
 	}
 	failed := false
-	// get_config must report exactly the designed key set; the loop below only
-	// looks up the expected keys.
+	// get_config must report exactly the key set; the loop below only looks up
+	// the expected keys.
 	for name := range reported {
 		if !wanted[name] {
 			t.Errorf("get_config on the %s Broker returned %s, which cteKeys does not list", level, name)
@@ -319,9 +292,6 @@ func cteAssertValuesMatchFile(t *testing.T, session *syscontainer.Session, conte
 	}
 }
 
-// cteExerciseHotReload uncomments the broker.alias placeholder, writes a legal
-// value by hand, and waits for the running Broker to adopt it without a
-// restart.
 func cteExerciseHotReload(t *testing.T, session *syscontainer.Session, lvl cteLevel) {
 	t.Helper()
 
@@ -364,9 +334,6 @@ func cteExerciseHotReload(t *testing.T, session *syscontainer.Session, lvl cteLe
 	}
 }
 
-// cteExerciseSetConfig changes the commented broker.advertise_extra key through
-// set_config and checks that the file keeps exactly one effective line for it
-// and no other change.
 func cteExerciseSetConfig(t *testing.T, session *syscontainer.Session, lvl cteLevel) {
 	t.Helper()
 
@@ -436,8 +403,6 @@ func cteExerciseSetConfig(t *testing.T, session *syscontainer.Session, lvl cteLe
 	}
 }
 
-// cteExerciseReinstall checks that installing again leaves the existing
-// configuration byte for byte unchanged.
 func cteExerciseReinstall(t *testing.T, lvl cteLevel) {
 	t.Helper()
 
@@ -450,8 +415,6 @@ func cteExerciseReinstall(t *testing.T, lvl cteLevel) {
 	}
 }
 
-// cteParseDocument returns the effective values and their per-key counts. A
-// key that appears only as a comment is absent.
 func cteParseDocument(t *testing.T, content string) (map[string]string, map[string]int) {
 	t.Helper()
 
@@ -488,7 +451,6 @@ func cteParseDocument(t *testing.T, content string) (map[string]string, map[stri
 	return values, counts
 }
 
-// cteNodeText renders a YAML node the way the tools render the value it holds.
 func cteNodeText(node *yaml.Node) string {
 	if node.Kind != yaml.SequenceNode {
 		return node.Value
@@ -502,8 +464,7 @@ func cteNodeText(node *yaml.Node) string {
 
 // cteCommentedKeysInFile returns every key the file holds as a commented
 // placeholder, keyed as section.leaf. Only a leaf made of lowercase letters,
-// digits and underscores counts, so a description comment such as
-// "# Alias this Broker reports: ..." is not read as a key.
+// digits and underscores counts, so a description comment is not read as a key.
 func cteCommentedKeysInFile(content string) map[string]bool {
 	keys := make(map[string]bool)
 	current := ""
@@ -550,7 +511,6 @@ func cteIsKeyLeaf(s string) bool {
 	return true
 }
 
-// cteCountCommentedLines counts the commented placeholder lines for key.
 func cteCountCommentedLines(content, key string) int {
 	section, leaf := cteSplitKey(key)
 	current := ""
@@ -580,8 +540,6 @@ func cteCountCommentedLines(content, key string) int {
 	return count
 }
 
-// cteFindCommentedLine returns the zero-based index and the indentation of the
-// first commented placeholder for key, and fails when there is none.
 func cteFindCommentedLine(t *testing.T, content, key string) (int, string) {
 	t.Helper()
 
@@ -626,8 +584,8 @@ func cteSplitKey(key string) (section, leaf string) {
 }
 
 // cteSameValue compares a value written to the file with the value get_config
-// rendered. Durations and integers are compared by value so that a different
-// but equivalent spelling does not count as a mismatch.
+// rendered. Durations and integers are compared by value so a different but
+// equivalent spelling is not a mismatch.
 func cteSameValue(kind, fileValue, configValue string) bool {
 	switch kind {
 	case "bool":
@@ -645,7 +603,6 @@ func cteSameValue(kind, fileValue, configValue string) bool {
 	}
 }
 
-// cteWriteFile rewrites path, keeping its owner and permissions.
 func cteWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -657,8 +614,6 @@ func cteWriteFile(t *testing.T, path, content string) {
 	}
 }
 
-// cteGetConfigAll returns every value get_config reports for the session's
-// Broker.
 func cteGetConfigAll(t *testing.T, session *syscontainer.Session) map[string]string {
 	t.Helper()
 
@@ -682,7 +637,6 @@ func cteGetConfigAll(t *testing.T, session *syscontainer.Session) map[string]str
 	return values
 }
 
-// cteGetConfigOne returns one value get_config reports.
 func cteGetConfigOne(t *testing.T, session *syscontainer.Session, key string) string {
 	t.Helper()
 
@@ -697,7 +651,6 @@ func cteGetConfigOne(t *testing.T, session *syscontainer.Session, key string) st
 	return value
 }
 
-// cteDecodeOne decodes a get_config answer that holds exactly one entry.
 func cteDecodeOne(t *testing.T, text string) (string, error) {
 	t.Helper()
 
@@ -715,7 +668,6 @@ func cteDecodeOne(t *testing.T, text string) (string, error) {
 	return out.Entries[0].Value, nil
 }
 
-// cteWaitConnected waits until the session's MCP server has reached its Broker.
 func cteWaitConnected(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 
@@ -728,7 +680,6 @@ func cteWaitConnected(t *testing.T, session *syscontainer.Session) {
 	})
 }
 
-// cteSystemMainPID returns the MainPID systemd reports for the system unit.
 func cteSystemMainPID(t *testing.T) int {
 	t.Helper()
 
@@ -739,7 +690,6 @@ func cteSystemMainPID(t *testing.T) int {
 	return cteParsePID(t, res.Stdout)
 }
 
-// cteUserMainPID returns the MainPID systemd reports for the user unit.
 func cteUserMainPID(t *testing.T, userEnv []string) int {
 	t.Helper()
 
@@ -760,8 +710,6 @@ func cteParsePID(t *testing.T, text string) int {
 	return pid
 }
 
-// cteUserConfigPath returns the configuration path of the peer account's
-// user Broker.
 func cteUserConfigPath(t *testing.T) string {
 	t.Helper()
 

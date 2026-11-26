@@ -14,18 +14,14 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// faultDialBound is the fallback for a probe that is expected to succeed and
-// for the state waits built on it. The probe crosses one router, so the
-// success path answers at once; the bound only decides how long a probe that
-// never answers takes to fail.
+// faultDialBound is the long fallback for the dial probes and state waits in
+// this file: the success path answers at once, so it only decides how long a
+// probe that never answers takes to fail.
 const faultDialBound = harness.EventTimeout
 
-// faultFailBound is the measured-time assertion of a probe that is expected to
-// fail: a REJECT answers at once, so one second is generous while keeping a
-// silent DROP visible as a slow failure rather than a fast one. It is the
-// assertion only; the probe dials with faultDialBound, so a fast REJECT is
-// never cut off by this bound and the measured span is what proves the fast
-// failure.
+// faultFailBound is the short bound in this file: one second keeps a REJECT
+// fast and a silent DROP visible as a slow failure, and covers the wait on a
+// cut connection and the post-Restore polls.
 const faultFailBound = time.Second
 
 // TestInfraNAT checks that the NAT topology is one-directional: hostB can
@@ -75,17 +71,16 @@ func TestInfraCutRestore(t *testing.T) {
 
 	c.Cut(t, "hostA", "hostB")
 
-	// ss -K is what makes the established connection go away before the gRPC
-	// keepalive would notice, so its disappearance is the check that it ran.
+	// ss -K is what makes the connection disappear before the gRPC keepalive
+	// notices, so its disappearance is the check that it ran.
 	harness.Eventually(t, faultFailBound, "the established connection to be torn down", func() (bool, string) {
 		got := establishedOn(t, c, "hostA", 17443)
 		return got == 0, fmt.Sprintf("%d established connections remain", got)
 	})
 
-	// The dial runs up to the fallback so a fast REJECT is never cut off. A
-	// REJECT and a silent DROP both return false; this asserts the connection is
-	// gone, without timing the control round trip, which would make the check
-	// depend on the runner's scheduling rather than on the product.
+	// This asserts the connection is gone without timing the control round
+	// trip: a REJECT and a silent DROP both return false, and a timing check
+	// would depend on the runner's scheduling rather than on the product.
 	if c.TCPReachable(t, "hostB", addr, faultDialBound) {
 		t.Fatalf("hostB still reaches hostA at %s after the cut", addr)
 	}
@@ -99,9 +94,8 @@ func TestInfraCutRestore(t *testing.T) {
 	})
 }
 
-// TestInfraCountersAndCapture proves the netfilter counters and the packet
-// capture see real traffic. The plaintext marker is the positive control: a
-// capture that is silently empty would fail this test.
+// TestInfraCountersAndCapture checks that the netfilter counters and the packet
+// capture see real traffic.
 func TestInfraCountersAndCapture(t *testing.T) {
 	t.Parallel()
 	c := harness.Up(t, harness.TopoNAT)
@@ -252,8 +246,6 @@ func TestInfraFlatV6(t *testing.T) {
 	}
 }
 
-// waitEstablished waits until node has at least want established connections
-// on port.
 func waitEstablished(t testing.TB, c *harness.Cluster, node string, port, want int) {
 	t.Helper()
 	harness.Eventually(t, faultDialBound, fmt.Sprintf("%s to have %d established connections on %d", node, want, port), func() (bool, string) {
@@ -262,8 +254,6 @@ func waitEstablished(t testing.TB, c *harness.Cluster, node string, port, want i
 	})
 }
 
-// establishedOn counts the established TCP connections whose local port is
-// port on node.
 func establishedOn(t testing.TB, c *harness.Cluster, node string, port int) int {
 	t.Helper()
 	out := c.Root(t, node, "ss", "-Htan")

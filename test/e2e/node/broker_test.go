@@ -27,9 +27,6 @@ func init() {
 	registerStub("broker-fail", runBrokerFailStub)
 }
 
-// oracleTestServer is the Broker stub: it serves the local interface over a
-// Unix socket. Only the RPCs the tests need are implemented; the rest answer
-// Unimplemented through the embedded server.
 type oracleTestServer struct {
 	localpb.UnimplementedLocalServer
 
@@ -57,8 +54,6 @@ func (s *oracleTestServer) Audit(req *localpb.AuditRequest, stream grpc.ServerSt
 	return nil
 }
 
-// runBrokerOKStub serves the local interface on STUB_SOCKET until it receives
-// SIGINT or SIGTERM.
 func runBrokerOKStub() int {
 	watchStubSignals()
 	socket := os.Getenv("STUB_SOCKET")
@@ -77,17 +72,14 @@ func runBrokerOKStub() int {
 	return 0
 }
 
-// runBrokerFailStub reports a listen failure the way a Broker does and exits
-// with the exit code the command line reserves for an unavailable listen
-// address. The JSON log line is written after the prefixed line so a reader
-// that takes the last line of the log gets the wrong one.
+// The JSON log line comes after the prefixed line, so a reader taking the last
+// line gets the wrong one.
 func runBrokerFailStub() int {
 	fmt.Fprintln(os.Stderr, brokerStderrPrefix+"listen address :1 is not available")
 	fmt.Fprintln(os.Stderr, `{"time":"2026-11-18T00:00:00Z","level":"error","event":"listen_failed"}`)
 	return 4
 }
 
-// brokerTestEnv returns the complete environment of a Broker stub.
 func brokerTestEnv(t *testing.T, more map[string]string) []string {
 	t.Helper()
 	path := os.Getenv("PATH")
@@ -97,6 +89,8 @@ func brokerTestEnv(t *testing.T, more map[string]string) []string {
 	return BaseEnv{Home: t.TempDir(), Path: path}.Build(more)
 }
 
+// TestStartBrokerReady checks that StartBroker reports a ready Broker in its
+// own session and that the handle stops it with SIGTERM.
 func TestStartBrokerReady(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("ListProcs is only implemented on Linux")
@@ -147,9 +141,8 @@ func TestStartBrokerReady(t *testing.T) {
 	}
 }
 
-// TestBrokerProcRefusesSignalAfterReap reproduces the pid-reuse window: after
-// the process has been waited for, its pid may name another process. The handle
-// must refuse the signal and leave its sent count unchanged.
+// TestBrokerProcRefusesSignalAfterReap checks that a signal sent after the
+// process was waited for is refused and leaves the sent count unchanged.
 func TestBrokerProcRefusesSignalAfterReap(t *testing.T) {
 	dir := socktest.Dir(t)
 	socket := filepath.Join(dir, "broker.sock")
@@ -187,14 +180,9 @@ func TestBrokerProcRefusesSignalAfterReap(t *testing.T) {
 	}
 }
 
-// TestBrokerProcSignalsRaceTheReap runs a SIGQUIT loop against the Broker while
-// another signal ends it and the handle reaps it. Under -race it checks the
-// lifecycle ordering: the signal loop must neither deadlock nor outlive the
-// reap, and once the handle is reaped every further signal is refused and not
-// counted. A signal handed to procsig after the reap would be a pid-reuse bug,
-// so the handle records every hand-off with its reaped mark at that moment and
-// the test asserts that none carries a true mark; deadlocking alone would not
-// catch the check being skipped.
+// TestBrokerProcSignalsRaceTheReap races a signal loop against the reap and
+// checks that the loop neither deadlocks nor hands procsig a signal after the
+// reap, and that every later signal is refused and not counted.
 func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 	const iterations = 40
 	for i := 0; i < iterations; i++ {
@@ -248,8 +236,8 @@ func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 			}
 		}()
 
-		// End the Broker while the sender is signalling it. A refusal means the
-		// reap already won the race, which is the safe outcome.
+		// A refusal means the reap already won the race, which is the safe
+		// outcome.
 		stopErr := proc.SendSignal(syscall.SIGTERM)
 		if stopErr != nil && !errors.Is(stopErr, ErrBrokerReaped) {
 			close(stop)
@@ -259,7 +247,6 @@ func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 		_, waitErr := proc.Wait(5 * time.Second)
 		close(stop)
 
-		// A deadlocked sender would keep this wait from returning.
 		waited := make(chan struct{})
 		go func() { sender.Wait(); close(waited) }()
 		select {
@@ -275,8 +262,6 @@ func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 			t.Fatalf("iteration %d: Wait: %v", i, waitErr)
 		}
 
-		// Once reaped, every further signal is refused, not counted, and never
-		// handed to procsig.
 		before := proc.SignalsSent()
 		reapErr := proc.SendSignal(syscall.SIGTERM)
 		assertNoSendAfterReap()
@@ -289,6 +274,8 @@ func TestBrokerProcSignalsRaceTheReap(t *testing.T) {
 	}
 }
 
+// TestStartBrokerFailure checks that a Broker which exits before becoming ready
+// is reported with its exit code and last failure line instead of an error.
 func TestStartBrokerFailure(t *testing.T) {
 	dir := socktest.Dir(t)
 	socket := filepath.Join(dir, "broker.sock")
@@ -315,7 +302,6 @@ func TestStartBrokerFailure(t *testing.T) {
 	}
 }
 
-// startOracleTestServer serves srv on a temporary Unix socket.
 func startOracleTestServer(t *testing.T, srv localpb.LocalServer) string {
 	t.Helper()
 	socket := filepath.Join(socktest.Dir(t), "local.sock")
@@ -330,6 +316,8 @@ func startOracleTestServer(t *testing.T, srv localpb.LocalServer) string {
 	return socket
 }
 
+// TestOracleGetConfigAndAudit checks GetConfig and Audit on the oracle,
+// including the audit stream's order and the limit it sends.
 func TestOracleGetConfigAndAudit(t *testing.T) {
 	srv := &oracleTestServer{}
 	oracle, err := DialOracle(startOracleTestServer(t, srv))
@@ -370,6 +358,8 @@ func TestOracleGetConfigAndAudit(t *testing.T) {
 	}
 }
 
+// TestOracleErrorDetail checks that ErrorDetailOf finds an ErrorDetail in a gRPC
+// status and reports none for other errors.
 func TestOracleErrorDetail(t *testing.T) {
 	oracle, err := DialOracle(startOracleTestServer(t, &oracleTestServer{}))
 	if err != nil {
@@ -405,6 +395,8 @@ func TestOracleErrorDetail(t *testing.T) {
 	}
 }
 
+// TestAncestors checks that the ancestors of a child process include the test
+// process.
 func TestAncestors(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("Ancestors is only implemented on Linux")
@@ -431,10 +423,8 @@ func TestAncestors(t *testing.T) {
 	t.Fatalf("Ancestors(%d) = %v, want it to contain the test process PID %d", child.Process.Pid, ancestors, self)
 }
 
-// TestInterpretWait4 pins how the non-Linux reaper reads a wait4(WNOHANG)
-// poll: a running child is not reaped, an interrupted poll is retried, and a
-// reaped child reports the exit code the status encodes, including -1 when a
-// signal ended it.
+// TestInterpretWait4 checks the reaper's reading of a running child, an
+// interrupted poll and a reaped child, including a signal ending it.
 func TestInterpretWait4(t *testing.T) {
 	const pid = 1234
 	tests := []struct {
@@ -462,10 +452,8 @@ func TestInterpretWait4(t *testing.T) {
 	}
 }
 
-// TestInterpretWait4ReapsRealChild drives the poll the non-Linux reaper uses
-// against a real child: wait4(WNOHANG) is the only waiter, so it must reap the
-// child and report the exit code from the wait status. The handle itself uses
-// waitid on Linux, so this is the closest local check of the darwin path.
+// TestInterpretWait4ReapsRealChild checks that the WNOHANG poll, as the only
+// waiter, reaps a real child and reports its exit code.
 func TestInterpretWait4ReapsRealChild(t *testing.T) {
 	child := exec.Command("sh", "-c", "exit 7")
 	if err := child.Start(); err != nil {

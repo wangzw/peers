@@ -10,9 +10,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// sysPollDecode calls tool from inside a wait on a container session and
-// decodes its JSON text into T. A transport or tool failure is returned as the
-// state string the wait callback reports, so the wait can poll again.
 func sysPollDecode[T any](t *testing.T, deadline time.Time, session *syscontainer.Session, tool string, args map[string]any) (T, string) {
 	t.Helper()
 	var zero T

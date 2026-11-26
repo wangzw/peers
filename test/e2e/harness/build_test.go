@@ -10,9 +10,7 @@ import (
 	"testing"
 )
 
-// TestImageTagCarriesAccountAndOwner fixes the image tag format: it names the
-// peer account's uid and gid and the process that built the image. A cleanup
-// relies on the owner marker to remove only images of runs that are gone.
+// TestImageTagCarriesAccountAndOwner checks that the image tag carries the account ids, the owner marker and the content digest.
 func TestImageTagCarriesAccountAndOwner(t *testing.T) {
 	current := currentOwner()
 	tag := imageReference("0123456789ab", 1234, 5678, current)
@@ -38,6 +36,7 @@ func TestImageTagCarriesAccountAndOwner(t *testing.T) {
 	}
 }
 
+// TestBuildBinaryCachesAndInjectsVersion checks that a build is reused for the same parameters and that the default version is stamped into the binary.
 func TestBuildBinaryCachesAndInjectsVersion(t *testing.T) {
 	pkg := "./test/e2e/harness/testdata/hello"
 
@@ -64,8 +63,7 @@ func TestBuildBinaryCachesAndInjectsVersion(t *testing.T) {
 		t.Fatalf("%s --version printed %q, want %q", bin, got, "peers e2e")
 	}
 
-	// With go removed from PATH the cached results must still be returned.
-	// A second build would fail instead.
+	// With go removed from PATH only the cache can answer; a second build would fail.
 	t.Setenv("PATH", t.TempDir())
 	if again := BuildPackage(t, pkg, runtime.GOOS, runtime.GOARCH); again != first {
 		t.Fatalf("cached BuildPackage returned %q, want %q", again, first)
@@ -75,9 +73,7 @@ func TestBuildBinaryCachesAndInjectsVersion(t *testing.T) {
 	}
 }
 
-// TestBuildBinaryVersionStampsTheNamedVersion checks that a caller can build
-// the same package at several versions in one process: each version lands in
-// its own output and reports itself, while the default stays e2e.
+// TestBuildBinaryVersionStampsTheNamedVersion checks that builds of one package at different versions get their own output and report that version.
 func TestBuildBinaryVersionStampsTheNamedVersion(t *testing.T) {
 	old := BuildBinaryVersion(t, "0.1.0", runtime.GOOS, runtime.GOARCH, "peers_testenv")
 	next := BuildBinaryVersion(t, "0.1.2", runtime.GOOS, runtime.GOARCH, "peers_testenv")
@@ -97,15 +93,12 @@ func TestBuildBinaryVersionStampsTheNamedVersion(t *testing.T) {
 		}
 	}
 
-	// The default build is still a non-release version.
 	if got := DefaultVersion; got != "e2e" {
 		t.Fatalf("DefaultVersion = %q, want %q", got, "e2e")
 	}
 }
 
-// TestBuildSpecCoverageFlags fixes which builds carry the coverage flags: a
-// product build does when coverage is on, and no build does when it is off.
-// Helper and overlay builds never do.
+// TestBuildSpecCoverageFlags checks that a product build is instrumented only when coverage is on while helper and overlay builds never are.
 func TestBuildSpecCoverageFlags(t *testing.T) {
 	const coverDir = "/tmp/e2e-cover"
 	cases := []struct {
@@ -166,8 +159,7 @@ func TestBuildSpecCoverageFlags(t *testing.T) {
 	}
 }
 
-// TestBuildArgsWithoutCoverageAreUnchanged fixes the uninstrumented argv, so a
-// plain e2e run keeps today's go build command lines.
+// TestBuildArgsWithoutCoverageAreUnchanged fixes the uninstrumented go build argv.
 func TestBuildArgsWithoutCoverageAreUnchanged(t *testing.T) {
 	spec := productSpec("./cmd/peers", "e2e", "linux", "amd64", []string{"peers_testenv"})
 	want := []string{
@@ -179,9 +171,7 @@ func TestBuildArgsWithoutCoverageAreUnchanged(t *testing.T) {
 	}
 }
 
-// TestValidateCoverageDir checks the first-build directory check: an empty
-// value means coverage is off, and any other value must be an absolute,
-// existing, writable directory.
+// TestValidateCoverageDir checks that an empty coverage directory is accepted and any other value must be an absolute, existing, writable directory.
 func TestValidateCoverageDir(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
@@ -213,7 +203,6 @@ func TestValidateCoverageDir(t *testing.T) {
 		})
 	}
 
-	// A successful check must not leave its probe file behind.
 	dir := t.TempDir()
 	if err := validateCoverageDir(dir); err != nil {
 		t.Fatalf("validateCoverageDir(%q) = %v", dir, err)
@@ -227,9 +216,7 @@ func TestValidateCoverageDir(t *testing.T) {
 	}
 }
 
-// TestValidateCoverageDirRejectsUnwritable checks that a directory whose mode
-// forbids writes is reported. Root can write regardless of the mode bits, so
-// the case cannot hold there.
+// TestValidateCoverageDirRejectsUnwritable checks that a directory whose mode forbids writes is reported, except for root, which can write regardless.
 func TestValidateCoverageDirRejectsUnwritable(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root can write to a directory whose mode forbids it")

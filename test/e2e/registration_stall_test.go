@@ -18,30 +18,17 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// registrationStallSetupBound is the fallback for the setup of the stall cases
-// that is not a tool call: waiting for the session's Register stream.
 const registrationStallSetupBound = harness.EventTimeout
 
-// TestRegistrationListAgentsAbandonsAStalledCall constrains list_agents' own
-// poll bound: the fake Broker accepts the session's registration and then never
-// answers ListAgents. The handler bounds its Broker RPC at listAgentsRPCTimeout,
-// so the call ends at that bound, well inside ListAgentsPollBound, with the
-// product's retryable "the Broker did not answer" tool error. The gRPC client
-// renders the handler's cancellation as either a deadline or a stream reset
-// (RST_STREAM), so the assertion checks the product's stable text rather than
-// one transport spelling. When the call used the harness's sixty-second call
-// bound instead, one stalled call outlived the wait and failed the test from
-// inside it with a transport error.
+// TestRegistrationListAgentsAbandonsAStalledCall checks that a stalled
+// list_agents call ends at the handler's own bound with the product's retryable
+// error.
 func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	release := make(chan struct{})
 	defer close(release)
 	srv := fakelocal.Start(t, fakelocal.SocketPath(t), fakelocal.Handlers{
-		// The Broker accepts the request and never answers it until the test
-		// releases it. It ignores the call's context on purpose, so the product's
-		// handler bound, not the Broker, ends the call. That does not make the
-		// transport spelling stable: the client can still render the handler's
-		// cancellation as an RST_STREAM reset, observed locally, so the test
-		// asserts the product's text rather than a transport error.
+		// The fake ignores the call's context on purpose, so the product's
+		// handler bound, not the Broker, ends the call.
 		ListAgents: func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
 			<-release
 			return &localpb.ListAgentsResponse{}, nil
@@ -52,11 +39,11 @@ func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	})
 	s, _ := registrationStalledSession(t, srv, "stalled", "agent-under-test", "stalled@test")
 
-	// send_message needs the agent identity, so its success proves the MCP
-	// server applied registration_complete. list_agents would prove it too, but
-	// it is the call under test. The probe is not read-only, so it goes through
-	// CallUntilOK: only the tool's own error is retried, never a transport error
-	// that may already have delivered the message.
+	// The probe is not read-only, so it goes through CallUntilOK, which retries
+	// only the tool's own error, not a transport error that may have delivered
+	// the message. send_message needs the agent identity, so its success
+	// proves the MCP server applied registration_complete; list_agents would
+	// prove it too, but it is the call under test.
 	s.CallUntilOK(t, harness.ToolCallWaitBound, "send_message", map[string]any{"to": "someone@test", "message": "hi"})
 
 	start := time.Now()
@@ -66,9 +53,6 @@ func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	if state == "" {
 		t.Fatal("list_agents succeeded although the Broker never answered")
 	}
-	// The handler's own bound returns the call before the harness poll bound,
-	// which is the accepted cost of deriving that bound from the handler: the
-	// call runs out its own bound and reports the Broker it could not reach.
 	// The transport may say "deadline exceeded" or render the handler's
 	// cancellation as a stream reset, so only the product's stable text is
 	// asserted; any other error, including the harness poll-bound stall, fails.
@@ -77,9 +61,6 @@ func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 		t.Fatalf("the stalled call did not report the handler's abandoned Broker: %s", state)
 	}
 	t.Logf("the stalled call returned after %s: %s", elapsed, state)
-	// The lower bound is the handler's own bound, not scheduling noise: the call
-	// cannot end before listAgentsRPCTimeout, so a fake that answers at once
-	// fails here without depending on the runner's load.
 	if floor := harness.ListAgentsRPCTimeout; elapsed < floor {
 		t.Fatalf("the stalled call returned after %s, want at least the %s list_agents handler bound: %s", elapsed, floor, state)
 	}
@@ -88,17 +69,13 @@ func TestRegistrationListAgentsAbandonsAStalledCall(t *testing.T) {
 	}
 }
 
-// TestWaitRegisteredToleratesASlowUpdateCheck checks the poll bound against the
-// update hint. The hint runs inside the same tools/call after the handler and
-// may spend almost updateStatusTimeout, three seconds, querying the Broker;
-// with a poll bound equal to that timeout every call would be cut off while the
-// hint was answering. The fake Broker here spends 2.9 seconds in UpdateStatus
-// and another second in ListAgents, so the call lasts more than three seconds
-// but stays well inside ListAgentsPollBound. The test passes the project-wide
-// EventTimeout; WaitRegistered lifts it to ListAgentsWaitBound so one slow call
-// still leaves a second poll. WaitRegistered must pass.
+// TestWaitRegisteredToleratesASlowUpdateCheck checks that a call lasting longer
+// than the update hint's timeout still succeeds inside WaitRegistered's poll
+// bound.
 func TestWaitRegisteredToleratesASlowUpdateCheck(t *testing.T) {
 	const (
+		// updateCheckDelay sits just below the product's three-second update hint
+		// timeout; adding handlerDelay's one second pushes the whole call past it.
 		updateCheckDelay = 2900 * time.Millisecond
 		handlerDelay     = time.Second
 	)
@@ -123,11 +100,8 @@ func TestWaitRegisteredToleratesASlowUpdateCheck(t *testing.T) {
 	t.Logf("WaitRegistered passed after %s with a %s update check and the project-wide wait bound", elapsed, updateCheckDelay)
 }
 
-// TestWaitRegisteredRetriesAStalledCall checks that one stalled list_agents call
-// is retried instead of failing the wait. The fake Broker's first ListAgents
-// request blocks until its context is cancelled, which is the poll bound; the
-// next request answers. WaitRegistered must pass, with two Broker calls
-// recorded, which shows the first call was abandoned and made again.
+// TestWaitRegisteredRetriesAStalledCall checks that one stalled list_agents
+// call is retried instead of failing the wait.
 func TestWaitRegisteredRetriesAStalledCall(t *testing.T) {
 	var calls atomic.Int32
 	srv := fakelocal.Start(t, fakelocal.SocketPath(t), fakelocal.Handlers{
@@ -148,12 +122,9 @@ func TestWaitRegisteredRetriesAStalledCall(t *testing.T) {
 	}
 }
 
-// TestRegistrationRejectedRetriesAStalledCall checks the same retry through the
-// unusable-name wait. The rejected session's first list_agents call reaches the
-// Broker and stalls until the poll bound; the fake Broker then reports the name
-// unusable on the open Register stream, and the next poll observes the
-// not_registered result. The observer proves that no agent is listed for the
-// name.
+// TestRegistrationRejectedRetriesAStalledCall checks that the unusable-name wait
+// retries a stalled list_agents call and then observes the not_registered
+// result.
 func TestRegistrationRejectedRetriesAStalledCall(t *testing.T) {
 	const detail = `the session name contains "@"`
 	var (
@@ -199,9 +170,6 @@ func TestRegistrationRejectedRetriesAStalledCall(t *testing.T) {
 	})
 }
 
-// registrationStalledSession starts a session whose MCP server talks to srv,
-// waits for its Register stream and completes the registration as agentID at
-// address. The session ends with the test.
 func registrationStalledSession(t *testing.T, srv *fakelocal.Server, name, agentID, address string) (*harness.Session, *fakelocal.RegisterConn) {
 	t.Helper()
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "stalled-" + name})

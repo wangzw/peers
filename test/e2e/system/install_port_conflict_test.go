@@ -14,16 +14,9 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// TestSystemServiceInstallListenPortConflict covers the field report behind
-// the installation's listen-port preflight. When another process already holds
-// the address in broker.listen, service install --system must stop before it
-// registers anything and say which address, which configuration file and which
-// key are at fault. A reinstall over a running service must still succeed,
-// because the port is then held by the service's own Broker.
-//
-// Both subtests share one systemd container; each resets the service before and
-// after itself, so a failed installation under the old behavior cannot leak
-// into the next one.
+// TestSystemServiceInstallListenPortConflict checks that an occupied listen address
+// fails the install before it registers anything and that reinstalling over the
+// running service still succeeds.
 func TestSystemServiceInstallListenPortConflict(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -56,9 +49,6 @@ func TestSystemServiceInstallListenPortConflict(t *testing.T) {
 		resetSystemServiceState(t)
 		t.Cleanup(func() { resetSystemServiceState(t) })
 
-		// A fixed port outside the kernel's ephemeral range keeps the port free
-		// between choosing it and the service binding it. The container runs this
-		// test alone, and 17447 is unused by the other system tests.
 		addr := "127.0.0.1:" + reinstallListenPort
 		writeSystemListenConfig(t, addr)
 
@@ -72,8 +62,8 @@ func TestSystemServiceInstallListenPortConflict(t *testing.T) {
 			return err == nil
 		})
 
-		// The service's own Broker now holds addr. The preflight must recognize
-		// that occupant instead of reporting the reinstall as a port conflict.
+		// The service's own Broker holds addr, so the preflight must recognize
+		// that occupant.
 		again := syscontainer.RunAs(t, "root", nil, "service", "install", "--system")
 		if again.ExitCode != 0 {
 			t.Fatalf("reinstalling service --system over the running service: exit %d\nstdout: %s\nstderr: %s",
@@ -95,14 +85,10 @@ func TestSystemServiceInstallListenPortConflict(t *testing.T) {
 	})
 }
 
-// reinstallListenPort is the system Broker's listen port in the reinstall
-// subtest. It is outside the kernel's ephemeral range and unused by the other
-// system tests.
+// reinstallListenPort is outside the kernel's ephemeral range and unused by the
+// other system tests.
 const reinstallListenPort = "17447"
 
-// occupiedListenAddr holds a loopback TCP listener for the rest of the test and
-// returns its address. Nothing else can take the address while the listener
-// stays open, so the installation's preflight bind is guaranteed to fail.
 func occupiedListenAddr(t *testing.T) string {
 	t.Helper()
 
@@ -114,8 +100,6 @@ func occupiedListenAddr(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-// writeSystemListenConfig writes the system Broker's configuration file with
-// broker.listen set to addr, so the installation reads that address.
 func writeSystemListenConfig(t *testing.T, addr string) {
 	t.Helper()
 
@@ -134,9 +118,6 @@ func writeSystemListenConfig(t *testing.T, addr string) {
 	}
 }
 
-// resetSystemServiceState removes the unit and stops the Broker. The old
-// behavior left an enabled unit restarting after a failed installation, so the
-// stop and disable are separate from the product's uninstall command.
 func resetSystemServiceState(t *testing.T) {
 	t.Helper()
 
@@ -147,9 +128,6 @@ func resetSystemServiceState(t *testing.T) {
 	_ = os.Remove(systemUnitPath)
 }
 
-// assertSystemServiceNotRegistered checks that systemd knows no enabled or
-// running unit and that no system Broker process survived the failed
-// installation.
 func assertSystemServiceNotRegistered(t *testing.T) {
 	t.Helper()
 
@@ -166,8 +144,8 @@ func assertSystemServiceNotRegistered(t *testing.T) {
 	if procs := syscontainer.Pids("peers", "service", "run", "--system"); len(procs) != 0 {
 		t.Errorf("the system Broker still runs after the failed installation: %v", procs)
 	}
-	// The unit is written only after the listen precheck, so a fresh
-	// installation that cannot use its address leaves no unit file at all.
+	// The unit is written only after the listen precheck, so a failed install
+	// leaves no unit file.
 	if _, err := os.Stat(systemUnitPath); err == nil {
 		t.Errorf("the unit file %s exists after the precheck failed", systemUnitPath)
 	}

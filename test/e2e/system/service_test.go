@@ -18,33 +18,26 @@ import (
 )
 
 const (
-	// systemUnitPath is where service install --system writes the unit.
-	systemUnitPath = "/etc/systemd/system/peers.service"
-	// systemConfigPath is the system Broker's configuration file.
+	systemUnitPath   = "/etc/systemd/system/peers.service"
 	systemConfigPath = "/etc/peers/config.yaml"
-	// systemSocket is the system Broker's local socket.
-	systemSocket = "/run/peers/broker.sock"
-	// releaseBinary is the peers build the base image installs.
-	releaseBinary = "/usr/local/bin/peers"
-	// systemAdminGroup is the default group a system install delegates
-	// administration to.
+	systemSocket     = "/run/peers/broker.sock"
+	releaseBinary    = "/usr/local/bin/peers"
 	systemAdminGroup = "peers"
 )
 
-// TestServiceInstall checks the system installation inside a container
-// whose process 1 is systemd: the unit file and the configuration file it
-// writes, the enablement systemd records, and the path checks that guard the
-// binary. The subtests share one container; install is idempotent, so each one
-// starts from whatever the previous left and installs again when it needs to.
+// TestServiceInstall checks that service install --system writes and enables the
+// unit and configuration and refuses unsuitable binaries.
 func TestServiceInstall(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
 		return
 	}
 
+	// The subtests share one container and pass state from one to the next;
+	// install is idempotent, but the order cannot change because "existing system
+	// configuration is kept" leaves a rewritten file that a later template
+	// subtest would fail on.
 	t.Run("root without a level flag installs the system installation", func(t *testing.T) {
-		// Neither --system nor --user: root selects the system installation, and both
-		// the summary and the written unit must show it.
 		res := runCommandAs(t, "root", releaseBinary, "service", "install")
 		if res.ExitCode != 0 {
 			t.Fatalf("service install as root: exit %d\nstdout: %s\nstderr: %s",
@@ -74,10 +67,8 @@ func TestServiceInstall(t *testing.T) {
 				t.Errorf("unit file does not contain %q:\n%s", want, content)
 			}
 		}
-		// The Broker reaches every served account's home, temporary directory
-		// and runtime directory through helpers; sandboxing would break it. The
-		// unit's own comment names the directives it must not set, so only
-		// settings outside comments count.
+		// Sandboxing directives would isolate the paths the helpers reach, so none may
+		// be set; the unit's own comment names them, so only uncommented lines count.
 		for _, line := range strings.Split(content, "\n") {
 			line = strings.TrimSpace(line)
 			if line == "" || strings.HasPrefix(line, "#") {
@@ -165,8 +156,6 @@ func TestServiceInstall(t *testing.T) {
 	})
 
 	t.Run("user install as root is refused", func(t *testing.T) {
-		// Without a level flag root installs the system installation, so the
-		// refused request is the explicit --user one.
 		res := runCommandAs(t, "root", releaseBinary, "service", "install", "--user")
 		if res.ExitCode == 0 {
 			t.Fatalf("service install --user as root succeeded; stdout: %s, stderr: %s", res.Stdout, res.Stderr)
@@ -239,9 +228,8 @@ func TestServiceInstall(t *testing.T) {
 	})
 }
 
-// TestServiceUnitsVerify installs the user unit through the product's
-// subcommand and checks that systemd records it as enabled and accepts it
-// without a warning.
+// TestServiceUnitsVerify checks that the product's user-unit install leaves
+// systemd recording the unit as enabled and accepting it.
 func TestServiceUnitsVerify(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -255,8 +243,6 @@ func TestServiceUnitsVerify(t *testing.T) {
 		"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/" + uid + "/bus",
 	}
 
-	// enable and verify both ask the account's user manager, so start it the
-	// way a login would and wait for its bus.
 	mustRun(t, "root", nil, "loginctl", "enable-linger", "peer")
 	mustRun(t, "root", nil, "systemctl", "start", "user@"+uid+".service")
 	waitUserManager(t, peerUID)
@@ -271,9 +257,9 @@ func TestServiceUnitsVerify(t *testing.T) {
 	assertUserUnitVerifies(t, userEnv)
 }
 
-// TestSystemServiceUninstall stops the running system Broker, removes the unit
-// file and keeps the configuration. A second run reports that nothing is
-// installed and still succeeds.
+// TestSystemServiceUninstall checks that service remove --system stops the
+// Broker, deletes the unit and keeps the configuration, and that a second
+// removal succeeds.
 func TestSystemServiceUninstall(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -334,9 +320,8 @@ func TestSystemServiceUninstall(t *testing.T) {
 	}
 }
 
-// TestSystemServiceUninstallAfterUnitFileRemoved reproduces the state a
-// deleted unit file leaves behind: systemd still has the unit loaded and
-// running, but the file is gone. Uninstall must stop the Broker anyway.
+// TestSystemServiceUninstallAfterUnitFileRemoved checks that uninstall stops a
+// Broker whose unit file was deleted while systemd still had it running.
 func TestSystemServiceUninstallAfterUnitFileRemoved(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -366,8 +351,6 @@ func TestSystemServiceUninstallAfterUnitFileRemoved(t *testing.T) {
 		strings.TrimSpace(enabledBefore.Stdout), enabledBefore.ExitCode,
 		strings.TrimSpace(activeBefore.Stdout), activeBefore.ExitCode)
 
-	// Remove the unit file without telling systemd. The loaded unit keeps
-	// running and the enable symlink still exists.
 	if err := os.Remove(systemUnitPath); err != nil {
 		t.Fatalf("removing %s: %v", systemUnitPath, err)
 	}
@@ -462,8 +445,6 @@ func TestUserServiceUninstall(t *testing.T) {
 	}
 }
 
-// installSystemService runs service install --system as root and fails the
-// subtest when it does not succeed.
 func installSystemService(t *testing.T) syscontainer.Result {
 	t.Helper()
 	res := syscontainer.RunAs(t, "root", nil, "service", "install", "--system")
@@ -474,8 +455,6 @@ func installSystemService(t *testing.T) syscontainer.Result {
 	return res
 }
 
-// runCommandAs runs name with args as account and returns its output and exit
-// code. A process that cannot be started fails the test.
 func runCommandAs(t *testing.T, account, name string, args ...string) syscontainer.Result {
 	t.Helper()
 	cmd := syscontainer.Command(account, nil, name, args...)
@@ -496,7 +475,6 @@ func runCommandAs(t *testing.T, account, name string, args ...string) syscontain
 	return result
 }
 
-// readFile returns the content of path or fails the test.
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -506,7 +484,6 @@ func readFile(t *testing.T, path string) string {
 	return string(data)
 }
 
-// fileOwnerAndMode returns the owner, group and permission bits of path.
 func fileOwnerAndMode(t *testing.T, path string) (uid, gid uint32, mode os.FileMode) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -520,7 +497,6 @@ func fileOwnerAndMode(t *testing.T, path string) (uid, gid uint32, mode os.FileM
 	return st.Uid, st.Gid, info.Mode().Perm()
 }
 
-// copyBinary copies the image's peers binary to dst with mode 0755.
 func copyBinary(t *testing.T, dst string) {
 	t.Helper()
 	data, err := os.ReadFile(releaseBinary)
@@ -535,9 +511,8 @@ func copyBinary(t *testing.T, dst string) {
 	}
 }
 
-// tempDirOutsideTmp creates a root-owned directory outside the temporary
-// directory, so the temporary-directory check cannot mask the path check under
-// test. The directory is removed when the test ends.
+// tempDirOutsideTmp creates a directory outside the temporary directory so the
+// temporary-directory check cannot mask the path check under test.
 func tempDirOutsideTmp(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/var/lib", "peers-e2e-")

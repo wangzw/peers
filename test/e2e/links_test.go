@@ -20,41 +20,32 @@ import (
 )
 
 const (
-	// lkRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
-	// margin: the timers that govern a link coming back after a cut.
 	lkRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
-	// lkWaitBound is the bound of a wait that no product timer governs.
-	lkWaitBound = harness.EventTimeout
-	// lkNoRedialWindow is five reconnect intervals (5 * 400ms). A Broker that
+	lkWaitBound   = harness.EventTimeout
+
+	// lkNoRedialWindow is five reconnect intervals (5 * 400ms): a Broker that
 	// keeps redialing makes at least four attempts inside it, while a stopped
-	// one makes none; the window is a deliberate observation, not a sleep.
+	// one makes none.
 	lkNoRedialWindow = 2000 * time.Millisecond
-	// lkBrokerIdleWindow is also five reconnect intervals, spanning forty
-	// harness polls. A Broker that exits with its last client is gone before
-	// the first poll after that disconnect, and a broken link would flip the
-	// peer status within one reconnect interval; a healthy idle Broker keeps
-	// both assertions true for the whole window.
+	// lkBrokerIdleWindow is also five reconnect intervals, forty harness polls
+	// at 50ms: a Broker that would exit with its last client is seen still
+	// alive, and B keeps seeing the link connected.
 	lkBrokerIdleWindow = 2000 * time.Millisecond
-	// lkRelinkSlack is added to lkRelinkBound when a reconnect has one more
-	// hop to make, such as finding a second advertised address. No product
-	// timer governs the extra second; it only keeps the bound from turning a
-	// slow first address into a second-address failure.
+	// lkRelinkSlack is the extra second when a link takes one more hop; no
+	// product timer governs it.
 	lkRelinkSlack = time.Second
-	// lkRequirementBound is REQ-broker-pairing-018's 120-second upper bound on a
-	// relink. The waits use the shorter lkRelinkBound as their fallback, and the
-	// measured span is asserted against this requirement value plus a small
-	// observation margin, so the fallback never enters the assertion.
+	// lkRequirementBound is the 120-second upper bound asserted on a relink.
+	// The waits use the shorter lkRelinkBound as their fallback, so the
+	// fallback never enters the assertion.
 	lkRequirementBound = 120 * time.Second
 	lkRequirementSlack = time.Second
 )
 
-// lkTopic is the topic the sessions use.
 const lkTopic = "t"
 
 // TestLinks covers link survival, redial after a cut, the acceptor never
 // dialing, restart recovery, address-list changes, unpairing and the Broker
-// states reported by list_brokers. A is the acceptor behind no NAT and B is the
-// dialer behind the router.
+// states list_brokers reports.
 func TestLinks(t *testing.T) {
 	c := harness.Up(t, harness.TopoNAT)
 	aNode, bNode := c.Node("hostA"), c.Node("hostB")
@@ -62,13 +53,9 @@ func TestLinks(t *testing.T) {
 	lkStartBroker(t, bNode, lkConfig())
 	opA, opB := lkOperator(t, aNode), lkOperator(t, bNode)
 
-	// The counter is installed before pairing so any dial A ever makes is
-	// counted, including one made while the link is being set up. Port 0
-	// watches every destination port: an acceptor that wrongly dials could aim
-	// at a port other than the one under test, and the count must not miss it.
+	// Port 0 counts every destination port, and the counter is installed
+	// before pairing so a dial during setup is counted.
 	outSYN := c.SYNCounter(t, "hostA", harness.Outbound, "", 0)
-	// B is the dialer. Its counter is the positive control: the same rule has
-	// to see B's pairing dial, or a zero on A proves nothing.
 	bSYN := c.SYNCounter(t, "hostB", harness.Outbound, "", 0)
 
 	a1 := lkSession(t, aNode, "a1")
@@ -98,8 +85,6 @@ func TestLinks(t *testing.T) {
 		lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
 		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
 
-		// No connect_broker was called during the outage; the consumed
-		// one-time key must not work a second time.
 		r := lkConnect(t, opB, addrA, key.Key)
 		r.MustCode(t, "pairing_rejected")
 		if !r.HasPrefix("Not connected") {
@@ -112,10 +97,7 @@ func TestLinks(t *testing.T) {
 		c.Restore(t)
 		// Start the clock after Restore returns: deleting the rules is the last
 		// part of the outage, and charging it as rebuild time would blame the
-		// product for the harness's own work. Each wait has lkRelinkBound as its
-		// fallback and fails on its own if its side does not come back; the summed
-		// span is then checked against REQ-broker-pairing-018's 120 seconds, so the
-		// requirement's upper bound is asserted with the fallback kept out of it.
+		// product for the harness's own work.
 		start := time.Now()
 		lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
 		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
@@ -126,19 +108,17 @@ func TestLinks(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-027 acceptor never dials", func(t *testing.T) {
-		// Positive control: B's dial of A has to show up in the same kind of
-		// counter. Without it, a zero on A could mean the rule never matched.
 		if got := bSYN(); got == 0 {
 			t.Fatal("B's outbound SYN counter read zero although B dialed A; the counter is blind")
 		}
 
-		// The two cut/restore cycles above must already show A never dialing.
+		// The cut and restore cycles above must already show A never dialing:
+		// outSYN counts from startup, so this subtest cannot run alone or move
+		// earlier.
 		if got := outSYN(); got != 0 {
 			t.Fatalf("A sent %d outbound SYNs while it was only the acceptor", got)
 		}
 
-		// Block B's path to A's only advertised address; then a cut and restore
-		// leave B unable to redial. A must not dial in the other direction.
 		undo := c.Block(t, "hostB", c.Addr("hostA", "wan"))
 		t.Cleanup(undo)
 		lkCutAndWaitDown(t, c, aNode, bNode)
@@ -183,13 +163,11 @@ func TestLinks(t *testing.T) {
 		opA = lkOperator(t, aNode)
 		opB = lkOperator(t, bNode)
 
-		// The peer table is loaded before the Broker answers.
 		if _, ok := lkFindPeer(lkPeers(t, aNode), "hostB.peer"); !ok {
 			t.Fatal("A does not list B immediately after the restart")
 		}
 		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
 
-		// Restore the sessions the later cases use.
 		a1 = lkSession(t, aNode, "a1")
 		b1 = lkSession(t, bNode, "b1")
 		a1Ended, b1Ended = false, false
@@ -286,11 +264,6 @@ func TestLinks(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-discovery-014 peer flag", func(t *testing.T) {
-		// Both readings come from the live lists, one case after A unpaired B.
-		// B still treats A as a peer and must say so; that is the positive
-		// control proving the flag reflects the pairing table rather than a
-		// constant. A must no longer mark anything as a peer, and if B's card
-		// is still listed it must carry is_peer=false.
 		if peerB, ok := lkFindPeer(lkPeers(t, bNode), "hostA.peer"); !ok || !peerB.GetIsPeer() {
 			t.Fatalf("B lists A as present=%v is_peer=%v after A unpaired B; B never unpaired A", ok, peerB.GetIsPeer())
 		}
@@ -319,8 +292,6 @@ func TestLinks(t *testing.T) {
 			return true, ""
 		})
 
-		// Port 0 watches every destination port: a rejected dialer that starts
-		// dialing again may aim anywhere, and the acceptor counter must see it.
 		inSYN := c.SYNCounter(t, "hostA", harness.Inbound, c.Addr("router", "wan"), 0)
 		before := inSYN()
 		harness.Consistently(t, lkNoRedialWindow, "B stops dialing A", func() (bool, string) {
@@ -329,10 +300,6 @@ func TestLinks(t *testing.T) {
 			}
 			return true, ""
 		})
-		// "No dial for ten minutes" is covered by
-		// internal/link/dial_test.go's
-		// TestREQBrokerPairing035_RejectedStopsRedialing; the shortened window
-		// here observes the same stop in the real process.
 	})
 
 	t.Run("REQ-broker-pairing-022 re-pair after unpair", func(t *testing.T) {
@@ -360,8 +327,6 @@ func TestLinks(t *testing.T) {
 			return true, ""
 		})
 
-		// Block the first address; after the cut and restore B must find the
-		// second one, which shows up as an inbound SYN to A from B.
 		inSYN := c.SYNCounter(t, "hostA", harness.Inbound, c.Addr("hostB", "lanb"), 17443)
 		before := inSYN()
 		undo := c.Block(t, "hostB", c.Addr("hostA", "wan"))
@@ -386,12 +351,10 @@ func TestLinksRestartWithTwoPeers(t *testing.T) {
 	}
 	opX, opY, opZ := lkOperator(t, xNode), lkOperator(t, yNode), lkOperator(t, zNode)
 
-	// X dials Y.
 	keyY := lkCreateKey(t, opY)
 	lkConnect(t, opX, lkShownAddress(t, c, "hostB", opY), keyY.Key).MustOK(t)
 	lkWaitConnected(t, yNode, "hostA.peer", lkRelinkBound)
 
-	// Z dials X.
 	keyX := lkCreateKey(t, opX)
 	lkConnect(t, opZ, lkShownAddress(t, c, "hostA", opX), keyX.Key).MustOK(t)
 	lkWaitConnected(t, xNode, "hostC.peer", lkRelinkBound)
@@ -413,40 +376,29 @@ func TestLinksRestartWithTwoPeers(t *testing.T) {
 	})
 }
 
-// lkUnauthPerSource and lkUnauthGlobal repeat the unauthenticated connection
-// limits internal/link keeps unexported. They must match
-// maxUnauthenticatedPerSource and maxUnauthenticated in internal/link/new.go.
+// lkUnauthPerSource and lkUnauthGlobal must match maxUnauthenticatedPerSource
+// and maxUnauthenticated in internal/link.
 const (
 	lkUnauthPerSource = 8
 	lkUnauthGlobal    = 64
 )
 
-// lkFloodSources is the number of distinct sources the flood uses: two times
-// the global limit divided by the per-source limit, plus one, so the sources
-// together hold 136 connections, more than twice the global limit, while no
-// source exceeds the per-source limit. The first eviction that happens is
-// therefore always a global one.
+// lkFloodSources holds more than twice the global limit across sources that
+// each stay at the per-source limit, so the first eviction is a global one.
 const lkFloodSources = 2*lkUnauthGlobal/lkUnauthPerSource + 1
 
-// lkFloodPerSource is how many connections each source holds. Staying exactly
-// at the per-source limit keeps source_limit evictions out of the test, so a
-// global_limit record proves the global limit closed connections.
+// Staying exactly at the per-source limit keeps source_limit evictions out, so
+// a global_limit record proves the global limit fired.
 const lkFloodPerSource = lkUnauthPerSource
 
-// TestLinksSourceFlood proves REQ-broker-pairing-039 on the real network
-// stack: while B's listener holds more unauthenticated connections than its
-// global limit, A rebuilds its link to B within the same bound
-// REQ-broker-pairing-018 uses, and hostC pairs with B using a one-time key.
-//
-// The flood runs inside hostB, and each of its workers binds to its own
-// loopback address, so B sees every source as a distinct /32. That reaches the
-// global limit from many sources without adding containers or addresses to the
-// topology, and keeps the flooding sources distinct from hostA's and hostC's.
+// TestLinksSourceFlood covers a link rebuild and a one-time-key pairing while
+// the acceptor's listener is over its global unauthenticated connection limit.
 func TestLinksSourceFlood(t *testing.T) {
 	c := harness.Up(t, harness.TopoFlat(3))
 	aNode, bNode, cNode := c.Node("hostA"), c.Node("hostB"), c.Node("hostC")
 	lkStartBroker(t, aNode, lkConfig())
-	// B logs at debug level so the test can read the eviction records.
+	// B logs at debug level so the test can read the eviction records: the
+	// link writes them only at Debug.
 	lkStartBroker(t, bNode, lkConfig("log:\n  level: debug\n"))
 	lkStartBroker(t, cNode, lkConfig())
 	opA, opB, opC := lkOperator(t, aNode), lkOperator(t, bNode), lkOperator(t, cNode)
@@ -456,7 +408,6 @@ func TestLinksSourceFlood(t *testing.T) {
 
 	addrB := lkAddr(c, "hostB", "net")
 
-	// A is the dialer and B the acceptor, so B generates the key A uses.
 	keyA := lkCreateKey(t, opB)
 	lkConnect(t, opA, addrB, keyA.Key).MustOK(t)
 	lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
@@ -474,10 +425,6 @@ func TestLinksSourceFlood(t *testing.T) {
 		})
 		defer c.StopFlood(t, "hostB")
 
-		// The flood must actually overflow the global limit, not merely reach
-		// the per-source one. With every source held at exactly the per-source
-		// limit, a global_limit record is the Broker's own proof that it closed
-		// connections to enforce the global limit.
 		harness.Eventually(t, lkWaitBound, "the flood overflows B's global unauthenticated limit", func() (bool, string) {
 			if strings.Contains(string(bNode.BrokerLog(t)), `"cause":"global_limit"`) {
 				return true, ""
@@ -487,11 +434,10 @@ func TestLinksSourceFlood(t *testing.T) {
 				st.Dialed, st.Open, st.MaxOpen, st.Closed)
 		})
 
-		// A rebuilds its link while the flood keeps the global limit full. Each
-		// side's wait has lkRelinkBound as its fallback; the summed span is then
-		// checked against REQ-broker-pairing-018's bound as in the redial case.
 		lkCutAndWaitDown(t, c, aNode, bNode)
 		c.Restore(t)
+		// Start the clock after Restore returns, as in the redial case: the
+		// rule deletion is the harness's work, not the rebuild under test.
 		start := time.Now()
 		lkWaitConnected(t, bNode, "hostA.peer", lkRelinkBound)
 		lkWaitConnected(t, aNode, "hostB.peer", lkRelinkBound)
@@ -500,26 +446,20 @@ func TestLinksSourceFlood(t *testing.T) {
 				elapsed, lkRequirementBound+lkRequirementSlack, lkRequirementBound, lkRequirementSlack)
 		}
 
-		// A third source pairs during the same flood. It must succeed even
-		// though the flooding sources have the stranger pool churning.
 		lkConnect(t, opC, addrB, keyC.Key).MustOK(t)
 		lkWaitConnected(t, cNode, "hostB.peer", lkWaitBound)
 		lkWaitConnected(t, bNode, "hostC.peer", lkWaitBound)
 	})
 }
 
-// lkConfig merges the shortened timers with the given fragments.
 func lkConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// lkAddr is the address of node's Broker on network.
 func lkAddr(c *harness.Cluster, node, network string) string {
 	return net.JoinHostPort(c.Addr(node, network), "17443")
 }
 
-// lkShownAddress picks the shown address of node on the flat network from a
-// key created by op.
 func lkShownAddress(t *testing.T, c *harness.Cluster, node string, op *harness.Session) string {
 	t.Helper()
 	want := net.JoinHostPort(c.Addr(node, "net"), "17443")
@@ -536,7 +476,6 @@ func lkShownAddress(t *testing.T, c *harness.Cluster, node string, op *harness.S
 	return ""
 }
 
-// lkStartBroker starts a Broker and fails when it does not come up.
 func lkStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -545,10 +484,9 @@ func lkStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// lkRestart stops the Broker and starts it with config after ending every MCP
-// server process passed in stop.
 func lkRestart(t *testing.T, c *harness.Cluster, node string, config string, stop ...*harness.Session) {
 	t.Helper()
+	// End the MCP server processes before stopping the Broker.
 	for _, s := range stop {
 		s.End(t)
 	}
@@ -557,7 +495,6 @@ func lkRestart(t *testing.T, c *harness.Cluster, node string, config string, sto
 	lkStartBroker(t, n, config)
 }
 
-// lkOperator starts an operator session that never registers as an agent.
 func lkOperator(t *testing.T, node *harness.Node) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -565,7 +502,6 @@ func lkOperator(t *testing.T, node *harness.Node) *harness.Session {
 	return s
 }
 
-// lkSession starts a registered session in lkTopic.
 func lkSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true})
@@ -574,7 +510,6 @@ func lkSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 	return s
 }
 
-// lkCreateKey creates one pairing key.
 func lkCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := op.Call(t, "create_pairing_key", map[string]any{})
@@ -586,13 +521,11 @@ func lkCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOu
 	return out
 }
 
-// lkConnect calls connect_broker.
 func lkConnect(t *testing.T, op *harness.Session, address, key string) harness.Result {
 	t.Helper()
 	return op.Call(t, "connect_broker", map[string]any{"address": address, "key": key})
 }
 
-// lkPeers lists node's peers through the local interface probe.
 func lkPeers(t *testing.T, node *harness.Node) []*localpb.BrokerInfo {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -602,7 +535,6 @@ func lkPeers(t *testing.T, node *harness.Node) []*localpb.BrokerInfo {
 	return resp.GetBrokers()
 }
 
-// lkFindPeer returns the peer with alias.
 func lkFindPeer(peers []*localpb.BrokerInfo, alias string) (*localpb.BrokerInfo, bool) {
 	for _, peer := range peers {
 		if peer.GetAlias() == alias {
@@ -612,7 +544,6 @@ func lkFindPeer(peers []*localpb.BrokerInfo, alias string) (*localpb.BrokerInfo,
 	return nil, false
 }
 
-// lkStatus returns the status of alias in node's list, or UNSPECIFIED.
 func lkStatus(t *testing.T, node *harness.Node, alias string) localpb.BrokerStatus {
 	t.Helper()
 	peer, ok := lkFindPeer(lkPeers(t, node), alias)
@@ -622,7 +553,6 @@ func lkStatus(t *testing.T, node *harness.Node, alias string) localpb.BrokerStat
 	return peer.GetStatus()
 }
 
-// lkWaitConnected waits until node lists alias as connected.
 func lkWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the link to "+alias+" is connected", func() (bool, string) {
@@ -630,8 +560,6 @@ func lkWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.
 	})
 }
 
-// lkCutAndWaitDown cuts the network and waits until neither side lists the
-// other as connected.
 func lkCutAndWaitDown(t *testing.T, c *harness.Cluster, aNode, bNode *harness.Node) {
 	t.Helper()
 	c.Cut(t, "hostA", "hostB")
@@ -645,15 +573,11 @@ func lkCutAndWaitDown(t *testing.T, c *harness.Cluster, aNode, bNode *harness.No
 	})
 }
 
-// lkListAgentsPoll calls list_agents from a wait and returns the decoded answer.
-// The call is bounded by the wait's deadline and a transport error is returned
-// as state.
 func lkListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", map[string]any{})
 }
 
-// lkHasAgent reports whether the listing contains an agent named name.
 func lkHasAgent(out mcpserver.ListAgentsOut, name string) bool {
 	for _, agent := range out.Agents {
 		if lkAgentName(agent.Address) == name {
@@ -663,7 +587,6 @@ func lkHasAgent(out mcpserver.ListAgentsOut, name string) bool {
 	return false
 }
 
-// lkAgentName returns the name part of an agent address.
 func lkAgentName(address string) string {
 	before, _, _ := strings.Cut(address, "@")
 	if i := strings.Index(before, " ["); i >= 0 {
@@ -672,9 +595,8 @@ func lkAgentName(address string) string {
 	return strings.TrimSpace(before)
 }
 
-// lkBrokerProcesses counts the Broker processes of node as the node agent sees
-// them. node.ListProcs scans the host's /proc, which is the wrong namespace
-// for a container, so the count goes through the control protocol.
+// Count Broker processes through the control protocol: node.ListProcs reads
+// the host's /proc, the wrong namespace for a container.
 func lkBrokerProcesses(t *testing.T, c *harness.Cluster, node string) int {
 	t.Helper()
 	client := ctl.Dial(filepath.Join(c.CTLDir(t, node), "ctl.sock"))
@@ -688,7 +610,6 @@ func lkBrokerProcesses(t *testing.T, c *harness.Cluster, node string) int {
 	return len(procs)
 }
 
-// lkPeerAliases renders peer aliases for failure messages.
 func lkPeerAliases(peers []*localpb.BrokerInfo) []string {
 	out := make([]string, 0, len(peers))
 	for _, peer := range peers {
@@ -697,7 +618,6 @@ func lkPeerAliases(peers []*localpb.BrokerInfo) []string {
 	return out
 }
 
-// lkAddressStrings renders advertised addresses for failure messages.
 func lkAddressStrings(addrs []*localpb.AdvertisedAddress) []string {
 	out := make([]string, 0, len(addrs))
 	for _, address := range addrs {
@@ -706,7 +626,6 @@ func lkAddressStrings(addrs []*localpb.AdvertisedAddress) []string {
 	return out
 }
 
-// lkLowerHex reports whether s is a non-empty run of lowercase hex digits.
 func lkLowerHex(s string) bool {
 	for _, r := range s {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {

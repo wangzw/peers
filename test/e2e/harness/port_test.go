@@ -12,9 +12,7 @@ import (
 	"time"
 )
 
-// TestFindFreePortSkipsReserved checks the allocator moves past ports whose
-// reservations belong to a live owner: the first two ports of the scan range
-// are marked taken, so the result must lie beyond them.
+// TestFindFreePortSkipsReserved checks that findFreePort skips ports marked taken.
 func TestFindFreePortSkipsReserved(t *testing.T) {
 	taken := map[int]bool{portScanFirst: true, portScanFirst + 1: true}
 	got, err := findFreePort(taken)
@@ -49,9 +47,7 @@ func TestPortScanRanges(t *testing.T) {
 	}
 }
 
-// TestReadPortReservationsReclaimsDeadOwners checks a live owner's file is
-// honored and a dead owner's file is removed. The ports lie below the scan
-// range, so a concurrent suite never allocates them.
+// TestReadPortReservationsReclaimsDeadOwners checks that a live owner's reservation is honored and a dead owner's file removed, using ports below the scan range that a concurrent suite cannot take.
 func TestReadPortReservationsReclaimsDeadOwners(t *testing.T) {
 	const livePort, deadPort = 15001, 15002
 
@@ -96,8 +92,8 @@ func TestReadPortReservationsReclaimsDeadOwners(t *testing.T) {
 	}
 }
 
-// TestReservePortReleases checks two reservations differ and that release
-// removes the files, so a later suite may use the ports.
+// TestReservePortReleases checks that two reservations differ and that release
+// removes their files.
 func TestReservePortReleases(t *testing.T) {
 	o := currentOwner()
 	firstAddr, firstPort, err := reservePort(o)
@@ -121,12 +117,9 @@ func TestReservePortReleases(t *testing.T) {
 	}
 }
 
-// portChildEnv marks the child copy of the test binary that reserves one port.
 const portChildEnv = "APE2E_PORT_CHILD"
 
-// TestReservePortCrossProcess starts two child processes that allocate at the
-// same time and checks they receive different ports. The reservation, not the
-// kernel's port choice, keeps the two apart.
+// TestReservePortCrossProcess checks that two child processes allocating at the same time receive different ports.
 func TestReservePortCrossProcess(t *testing.T) {
 	if os.Getenv(portChildEnv) == "1" {
 		addr, port, err := reservePort(currentOwner())

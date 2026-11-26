@@ -7,6 +7,7 @@ import (
 	"time"
 )
 
+// TestPairRole checks that PairRole and InPair accept only roles A and B.
 func TestPairRole(t *testing.T) {
 	cases := []struct {
 		value string
@@ -29,6 +30,7 @@ func TestPairRole(t *testing.T) {
 	}
 }
 
+// TestPeerRole checks that peerRole maps each role to the other.
 func TestPeerRole(t *testing.T) {
 	if got := peerRole(RoleA); got != RoleB {
 		t.Errorf("peerRole(A) = %q, want %q", got, RoleB)
@@ -38,6 +40,7 @@ func TestPeerRole(t *testing.T) {
 	}
 }
 
+// TestPairFailureName checks that the failure marker names the failing role.
 func TestPairFailureName(t *testing.T) {
 	if got := pairFailureName(RoleA); got != "failed-A" {
 		t.Errorf("pairFailureName(A) = %q, want failed-A", got)
@@ -47,6 +50,8 @@ func TestPairFailureName(t *testing.T) {
 	}
 }
 
+// TestWritePairFile checks that the write lands under the requested name and
+// leaves no temporary file behind.
 func TestWritePairFile(t *testing.T) {
 	dir := t.TempDir()
 	if err := writePairFile(dir, "pairing", []byte("hostA:17443\nkey\n")); err != nil {
@@ -60,8 +65,6 @@ func TestWritePairFile(t *testing.T) {
 		t.Errorf("written file = %q, want %q", got, want)
 	}
 
-	// The temporary file must be gone: rename is the only file the exchange
-	// leaves behind, and a poller that sees a half-written temp would race.
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading the directory: %v", err)
@@ -71,6 +74,8 @@ func TestWritePairFile(t *testing.T) {
 	}
 }
 
+// TestWritePairFileRejectsInvalidNames checks that writePairFile refuses names
+// that leave the directory and an empty directory.
 func TestWritePairFileRejectsInvalidNames(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"", ".", "..", "a/b", "../escape"} {
@@ -83,6 +88,8 @@ func TestWritePairFileRejectsInvalidNames(t *testing.T) {
 	}
 }
 
+// TestPairAwaitReadsTheOtherHostsFile checks that PairAwait returns the
+// contents the other host wrote.
 func TestPairAwaitReadsTheOtherHostsFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(PairRoleEnv, string(RoleA))
@@ -96,6 +103,8 @@ func TestPairAwaitReadsTheOtherHostsFile(t *testing.T) {
 	}
 }
 
+// TestPairGuardArmsAndDisarms checks that PairGuard arms the guard and disarms
+// it when the returned function runs.
 func TestPairGuardArmsAndDisarms(t *testing.T) {
 	t.Setenv(PairRoleEnv, string(RoleA))
 	t.Setenv(pairSharedEnv, t.TempDir())
@@ -112,13 +121,13 @@ func TestPairGuardArmsAndDisarms(t *testing.T) {
 	}
 }
 
+// TestPairGuardRecordsAPanic checks that the guard recovers a panic, writes the
+// failure marker and panics again.
 func TestPairGuardRecordsAPanic(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(PairRoleEnv, string(RoleA))
 	t.Setenv(pairSharedEnv, dir)
 
-	// A panic in the test goroutine leaves t.Failed false while it unwinds, so
-	// the guard must recover it, write the marker and panic again.
 	func() {
 		defer func() {
 			if recovered := recover(); recovered != "boom" {

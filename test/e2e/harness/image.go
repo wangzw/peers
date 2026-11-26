@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-// dockerProbeBound bounds the docker availability check.
 const dockerProbeBound = 20 * time.Second
 
 var (
@@ -26,26 +25,13 @@ var (
 )
 
 // Image builds the container image defined by test/e2e/compose/Dockerfile once
-// per test process and returns its tag. The tag names the image content, the
-// peer account's uid and gid, and the owner of this test process, as
-// peers-e2e:ape2e-<pid>-<start>-u<uid>-g<gid>-<hash>. The owner marker
-// lets a cleanup remove only images of runs that are gone, so two suites on
-// one host never delete each other's image. The image holds a test build of
-// peers, so a container scenario can name a Broker socket through
-// PEERS_TEST_SOCKET, and the e2e-node build. The test build carries hooks,
-// and each one acts only when its variable is set: PEERS_TEST_SOCKET names
-// the Broker socket, PEERS_TEST_UPDATE_API points the updater at a fake
-// API, PEERS_TEST_RUNTIME_ROOT and PEERS_TEST_HOME relocate the runtime
-// directory and the home directory, and PEERS_TEST_INBOUND_LIMIT_INTERVAL
-// lengthens the inbound quota refill interval. With none of them set, the test
-// build behaves like the release build. The system Broker and service
-// installation unit derives its image from it.
+// per test process and returns its tag, which names the image content, the peer
+// account's uid and gid, and this test process as owner.
 func Image(tb testing.TB) string {
 	tb.Helper()
 
-	// Build the two binaries outside the once, so a failing go build ends this
-	// test with its own message instead of caching an empty tag for the rest
-	// of the process.
+	// Build the binaries before the once, so a failing go build fails this test
+	// instead of caching an empty tag for the process.
 	peersBinary := BuildBinary(tb, "linux", runtime.GOARCH, "peers_testenv")
 	e2eNode := BuildPackage(tb, "./test/e2e/cmd/e2e-node", "linux", runtime.GOARCH)
 
@@ -58,9 +44,6 @@ func Image(tb testing.TB) string {
 	return imageTag
 }
 
-// buildImage copies the Dockerfile and the binaries into a fresh build
-// context, derives the tag from their contents, and builds the image when it
-// does not exist yet.
 func buildImage(peersBinary, e2eNode string) (string, error) {
 	if err := checkDocker(); err != nil {
 		return "", fmt.Errorf("docker is required for container scenarios: %w", err)
@@ -121,17 +104,10 @@ func buildImage(peersBinary, e2eNode string) (string, error) {
 	return tag, nil
 }
 
-// imageReference builds the image reference from the content digest, the peer
-// account's uid and gid, and the owner marker of this test process. The tag
-// component starts with "ape2e-" so the same owner parser the project and
-// runtime-root names use reads it back.
 func imageReference(digest string, uid, gid int, o owner) string {
 	return fmt.Sprintf("peers-e2e:ape2e-%s-u%d-g%d-%s", o.String(), uid, gid, digest)
 }
 
-// imageTagOwnerGone reports whether ref carries an owner marker whose process
-// is gone. A reference without the marker, including one built before the
-// marker existed, has an unknown owner and is left alone.
 func imageTagOwnerGone(ref string) bool {
 	if i := strings.LastIndexByte(ref, ':'); i >= 0 {
 		ref = ref[i+1:]
@@ -139,9 +115,6 @@ func imageTagOwnerGone(ref string) bool {
 	return ownerGone(ref)
 }
 
-// checkDocker reports whether the docker command works. A host without docker
-// cannot run container scenarios, and the plan asks those tests to fail with a
-// reason rather than skip.
 func checkDocker() error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return err
@@ -157,17 +130,15 @@ func checkDocker() error {
 	return nil
 }
 
-// imageExists reports whether the tag is already in the local image store.
 func imageExists(tag string) bool {
 	cmd := exec.Command("docker", "image", "inspect", tag)
 	cmd.Env = os.Environ()
 	return cmd.Run() == nil
 }
 
-// imageUIDGID returns the uid and gid of the peer account inside the image.
-// They match the host test process, so files the account writes under the
-// bind-mounted /ctl directory belong to the host user. A root test process
-// maps to 1000.
+// imageUIDGID returns the uid and gid of the peer account inside the image: those
+// of the host test process, with root mapped to 1000, so files under the
+// bind-mounted /ctl directory belong to the host user.
 func imageUIDGID() (int, int) {
 	uid, gid := os.Getuid(), os.Getgid()
 	if uid == 0 {
@@ -179,7 +150,6 @@ func imageUIDGID() (int, int) {
 	return uid, gid
 }
 
-// composeSourcePath returns the path of a file under test/e2e/compose.
 func composeSourcePath(name string) (string, error) {
 	root, err := moduleRoot()
 	if err != nil {

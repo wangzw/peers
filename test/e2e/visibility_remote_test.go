@@ -22,58 +22,39 @@ import (
 )
 
 const (
-	// vrTopic is the topic the main sessions share.
 	vrTopic = "t"
 
-	// vrWaitBound bounds a wait that no product timer governs.
 	vrWaitBound = harness.EventTimeout
 
-	// vrRelinkBound is reconnect_max + dial_timeout plus the shared fallback:
-	// the timers that govern a link coming back under FastTimers.
 	vrRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
-	// vrRestoreBound is the wait bound for the link and roster to come back
-	// after the network is restored: the relink timers plus one shared
-	// fallback. It is a wait bound only. The measured span is asserted against
-	// vrRestoreAssertBound, so the fallback never enters an assertion.
+	// vrRestoreBound is a wait bound only: the measured span is asserted
+	// against vrRestoreAssertBound, so the fallback never enters an assertion.
 	vrRestoreBound = vrRelinkBound
 
-	// vrObserveMargin is the test-side observation overhead a measured span can
-	// include, not a second product allowance. Eventually re-checks every
-	// harness.PollInterval, and each check answers with list_agents calls over
-	// the MCP stdio transport (the removal and restore checks each make two,
-	// one per host), so the measured span can exceed the product's own deadline
-	// by the polling granularity plus those round trips. Four intervals cover
-	// one interval of granularity, two round trips and one interval of
-	// scheduler slack. 200ms is 4% of the 5s removal requirement, so it cannot
-	// hide a real violation.
+	// vrObserveMargin is test-side polling and round-trip overhead, not a
+	// product allowance: four intervals cover one interval of granularity, two
+	// round trips and one interval of scheduler slack, and 200ms is 4% of the
+	// five-second removal requirement.
 	vrObserveMargin = 4 * harness.PollInterval
 
-	// vrRemovalRequirement is REQ-agent-messaging-012's five seconds for an
-	// ended session to leave both lists.
+	// vrRemovalRequirement is the copied five-second requirement value the
+	// removal span is asserted against.
 	vrRemovalRequirement = 5 * time.Second
 
-	// vrRemovalAssertBound is the removal requirement plus the observation
-	// overhead. The wait that precedes the assertion uses vrWaitBound, the
-	// shared fallback; the fallback never enters this bound.
 	vrRemovalAssertBound = vrRemovalRequirement + vrObserveMargin
 
-	// vrRestoreAssertBound is the product timers that govern a link coming back
-	// under FastTimers, reconnect_max plus dial_timeout, plus the observation
-	// overhead. The wait that precedes it uses vrRestoreBound, those timers
-	// plus one shared fallback.
 	vrRestoreAssertBound = harness.FastReconnectMax + harness.FastDialTimeout + vrObserveMargin
 
-	// vrQuietWindow is the observation window for a negative visibility check.
-	// The directory is already synchronised and the sessions are not changing,
-	// so three seconds without the entry is the intended result.
+	// vrQuietWindow is a deliberate negative observation: three seconds is long
+	// enough for a wrong delivery to surface on the remote path, while a
+	// shorter window can only miss a violation.
 	vrQuietWindow = 3 * time.Second
 )
 
 // TestRemoteVisibility covers what two paired hosts show each other: addresses
-// with disambiguation refs, signatures from the receiver's point of view,
-// replies by signature, cleaned and long names, session removal, and the topic
-// intersection that decides visibility. A is the acceptor and B the dialer.
+// with refs, receiver-side signatures, replies by signature, cleaned and long
+// names, session removal and the topic intersection that decides visibility.
 func TestRemoteVisibility(t *testing.T) {
 	c := harness.Up(t, harness.TopoNAT)
 	aNode, bNode := c.Node("hostA"), c.Node("hostB")
@@ -126,8 +107,6 @@ func TestRemoteVisibility(t *testing.T) {
 			return true, ""
 		})
 
-		// Positive control: the helper every negative check below relies on
-		// must find the entries this listing already shows.
 		if !vrSees(t, a1, "b1") || !vrSees(t, b1, "a1") {
 			t.Fatal("vrSees does not find the pair that list_agents shows")
 		}
@@ -161,7 +140,6 @@ func TestRemoteVisibility(t *testing.T) {
 			return vrSees(t, a2, "b2") && vrSees(t, b2, "a2"), "the pair is not visible"
 		})
 
-		// Leaving the only shared topic removes them from both sides.
 		b2.Call(t, "leave_topic", map[string]any{"name": topic}).MustOK(t)
 		harness.Eventually(t, vrWaitBound, "leaving the topic hides b2 from a2", func() (bool, string) {
 			if vrSees(t, a2, "b2") {
@@ -178,7 +156,6 @@ func TestRemoteVisibility(t *testing.T) {
 			return vrSees(t, a2, "b2") && vrSees(t, b2, "a2"), "the pair is not visible"
 		})
 
-		// A cut link hides every remote agent even while the topics still match.
 		c.Cut(t, "hostA", "hostB")
 		harness.Eventually(t, vrWaitBound, "the cut hides both remote sides", func() (bool, string) {
 			if vrSees(t, a2, "b2") {
@@ -190,13 +167,9 @@ func TestRemoteVisibility(t *testing.T) {
 			return true, ""
 		})
 
-		// The restore wait uses the relink timers plus one shared fallback so a
-		// roster that never comes back fails instead of hanging. The measured
-		// span is asserted separately against the relink timers, so the
-		// fallback never enters the assertion. Restore is synchronous and
-		// returns once the network rules are gone, which is when the product
-		// can start reconnecting, so the span starts just after it.
 		c.Restore(t)
+		// Restore is synchronous and returns once the network rules are gone,
+		// so the span starts just after it.
 		restoreStart := time.Now()
 		harness.Eventually(t, vrRestoreBound, "the restored link makes the pair visible again", func() (bool, string) {
 			return vrSees(t, a2, "b2") && vrSees(t, b2, "a2"), "the pair is not visible"
@@ -210,14 +183,8 @@ func TestRemoteVisibility(t *testing.T) {
 	})
 
 	t.Run("REQ-topics-006 no topic invisible", func(t *testing.T) {
-		// A session that joined no topic is invisible to both of A's sessions,
-		// and sees neither of them. The directory is already synchronised, so a
-		// full window without the entry is the intended observation.
 		lonely := vrStartSession(t, bNode, "lonely")
 		defer lonely.End(t)
-		// A stalled sample logs lonely's Broker stack so a later REQ-topics-006
-		// failure leaves evidence. The failure only states that the call stayed
-		// inside the product's poll bound; it does not claim a root cause.
 		harness.ConsistentlyPoll(t, vrQuietWindow, harness.ListAgentsPollBound, "the topicless session stays invisible", lonely.LogBrokerStack, func(deadline time.Time) harness.Observation {
 			for _, check := range []struct {
 				session *harness.Session
@@ -234,10 +201,8 @@ func TestRemoteVisibility(t *testing.T) {
 			return harness.Observed(true, "")
 		})
 
-		// A target that shares no topic with the caller is rejected with
-		// not_visible, not silently resolved or reported as missing. The keeper
-		// keeps topic t present on A, so B's roster still lists b1; only a1 has
-		// no common topic with it.
+		// The keeper keeps topic t present on A so B's roster still lists b1;
+		// only a1 shares no topic with it.
 		keeper := vrStartSession(t, aNode, "a-keep", vrTopic)
 		defer keeper.End(t)
 		a1.Call(t, "leave_topic", map[string]any{"name": vrTopic}).MustOK(t)
@@ -287,9 +252,6 @@ func TestRemoteVisibility(t *testing.T) {
 			return true, ""
 		})
 
-		// A bare name shared by two remote sessions is ambiguous, and the refused
-		// request reaches neither of them: the same code the local path returns
-		// (REQ-agent-messaging-028).
 		ambiguousMark := vrMark("ambiguous-")
 		r := a1.Call(t, "send_message", map[string]any{"to": "api-worker@hostB.peer", "message": ambiguousMark})
 		r.MustCode(t, "ambiguous")
@@ -302,7 +264,6 @@ func TestRemoteVisibility(t *testing.T) {
 			}
 		}
 
-		// Each ref-addressed message reaches only the session it names.
 		markOne := vrMark("to-first-")
 		a1.Call(t, "send_message", map[string]any{"to": addr1, "message": markOne}).MustOK(t)
 		frame := w1.WaitFrame(t, vrWaitBound)
@@ -332,8 +293,6 @@ func TestRemoteVisibility(t *testing.T) {
 			t.Fatalf("the message is signed %q, want a1@hostA.peer", frame.FromName)
 		}
 
-		// The second subproject pairs B to A with a local alias, so B shows A
-		// under that alias instead of the default hostA.peer.
 		c2 := harness.Up(t, harness.TopoNAT)
 		aNode2, bNode2 := c2.Node("hostA"), c2.Node("hostB")
 		vrStartBroker(t, aNode2, vrConfig())
@@ -346,8 +305,6 @@ func TestRemoteVisibility(t *testing.T) {
 
 		key2 := vrCreateKey(t, opA2)
 		vrConnect(t, opB2, vrShownAddress(t, c2, "hostA", key2.Addresses), key2.Key, "alpha").MustOK(t)
-		// B knows A under the local alias it chose; A still knows B by its
-		// advertised default alias.
 		vrWaitConnected(t, bNode2, "alpha", vrRelinkBound)
 		vrWaitConnected(t, aNode2, "hostB.peer", vrRelinkBound)
 		harness.Eventually(t, vrWaitBound, "a1 sees b1 in the second subproject", func() (bool, string) {
@@ -362,8 +319,6 @@ func TestRemoteVisibility(t *testing.T) {
 	})
 
 	t.Run("REQ-agent-messaging-025 reply by signature", func(t *testing.T) {
-		// A second local session named b1 makes the name ambiguous on A; the
-		// reply must still reach a1 by its address, not the duplicate.
 		duplicate := vrStartSession(t, aNode, "b1", vrTopic)
 		defer duplicate.End(t)
 
@@ -448,8 +403,6 @@ func TestRemoteVisibility(t *testing.T) {
 		long := vrStartSession(t, aNode, longName, vrTopic)
 		defer long.End(t)
 
-		// The registered name, read from the Broker's own record, is exactly the
-		// normalized name cut to the limit.
 		harness.Eventually(t, vrWaitBound, "the Broker registers the long name cut to the limit", func() (bool, string) {
 			got := vrBrokerRegisteredName(t, aNode, "qq")
 			if got == "" {
@@ -461,9 +414,6 @@ func TestRemoteVisibility(t *testing.T) {
 			return true, ""
 		})
 
-		// The listing on the registering host shows a prefix of that name. An
-		// address is formatted to at most 64 runes, so a 128-byte name is cut
-		// again for display; the displayed prefix must stay valid UTF-8.
 		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "a1 lists the long name truncated", func(deadline time.Time) (bool, string) {
 			out, state := vrListAgentsPoll(t, deadline, a1)
 			if state != "" {
@@ -479,7 +429,6 @@ func TestRemoteVisibility(t *testing.T) {
 			return true, ""
 		})
 
-		// The paired host sees the same truncated name in its roster.
 		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the peer lists the long name truncated", func(deadline time.Time) (bool, string) {
 			out, state := vrListAgentsPoll(t, deadline, b1)
 			if state != "" {
@@ -508,10 +457,7 @@ func TestRemoteVisibility(t *testing.T) {
 
 		// The requirement's clock starts when the session ends, so the span is
 		// measured from just before End; End's own signal escalation runs
-		// inside it, which can only lengthen the measured span. The wait uses
-		// the shared fallback so a removal that never happens fails instead of
-		// hanging; the five seconds are enforced by the assertion below, not by
-		// the wait's bound.
+		// inside it.
 		start := time.Now()
 		gone.End(t)
 		harness.Eventually(t, vrWaitBound, "the ended session leaves both lists", func() (bool, string) {
@@ -530,8 +476,6 @@ func TestRemoteVisibility(t *testing.T) {
 	})
 
 	t.Run("REQ-topics-008 and 019 negative", func(t *testing.T) {
-		// An automatically joined topic exists on A; it must stay out of the
-		// public list, and so must the explicit topic t.
 		const defaultTopic = "github.com/org/e2e-default"
 		ws := aNode.Workspace(t, "git", "https://github.com/org/e2e-default", "")
 		auto := aNode.StartSession(t, harness.SessionSpec{Name: "auto", StartMCP: true, Workdir: ws})
@@ -560,12 +504,10 @@ func TestRemoteVisibility(t *testing.T) {
 	})
 }
 
-// vrConfig merges the shortened timers with the given fragments.
 func vrConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// vrStartBroker starts a Broker and fails when it does not come up.
 func vrStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -574,7 +516,6 @@ func vrStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// vrOperator starts a session that never registers as an Agent.
 func vrOperator(t *testing.T, node *harness.Node) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -582,7 +523,6 @@ func vrOperator(t *testing.T, node *harness.Node) *harness.Session {
 	return s
 }
 
-// vrStartSession starts a registered session and joins every topic in topics.
 func vrStartSession(t *testing.T, node *harness.Node, name string, topics ...string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true})
@@ -593,8 +533,6 @@ func vrStartSession(t *testing.T, node *harness.Node, name string, topics ...str
 	return s
 }
 
-// vrWaitListable waits until the session is registered: list_agents fails with
-// not_registered until the Broker has registered the session.
 func vrWaitListable(t *testing.T, s *harness.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session is registered", func(deadline time.Time) (bool, string) {
@@ -603,9 +541,9 @@ func vrWaitListable(t *testing.T, s *harness.Session) {
 	})
 }
 
-// vrJoin joins a topic, retrying while the session is still registering.
-// join_topic's handler may spend topicRPCTimeout before the update hint runs,
-// so the poll uses harness.TopicCallPollBound.
+// vrJoin retries while the session is still registering. The poll needs
+// harness.TopicCallPollBound because join_topic's handler may spend
+// topicRPCTimeout before the update hint runs.
 func vrJoin(t *testing.T, s *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+topic, func(deadline time.Time) (bool, string) {
@@ -620,7 +558,6 @@ func vrJoin(t *testing.T, s *harness.Session, topic string) {
 	})
 }
 
-// vrCreateKey creates one pairing key.
 func vrCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := op.Call(t, "create_pairing_key", map[string]any{})
@@ -632,7 +569,6 @@ func vrCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOu
 	return out
 }
 
-// vrConnect calls connect_broker, using localAlias when it is not empty.
 func vrConnect(t *testing.T, op *harness.Session, address, key, localAlias string) harness.Result {
 	t.Helper()
 	args := map[string]any{"address": address, "key": key}
@@ -642,7 +578,6 @@ func vrConnect(t *testing.T, op *harness.Session, address, key, localAlias strin
 	return op.Call(t, "connect_broker", args)
 }
 
-// vrShownAddress picks the shown address of node on the wan network.
 func vrShownAddress(t *testing.T, c *harness.Cluster, node string, shown []string) string {
 	t.Helper()
 	want := net.JoinHostPort(c.Addr(node, "wan"), "17443")
@@ -658,7 +593,6 @@ func vrShownAddress(t *testing.T, c *harness.Cluster, node string, shown []strin
 	return ""
 }
 
-// vrWaitConnected waits until node lists alias as connected.
 func vrWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the link to "+alias+" is connected", func() (bool, string) {
@@ -676,8 +610,6 @@ func vrWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.
 	})
 }
 
-// vrListAgents calls list_agents and returns the decoded answer, with a tool
-// error reported as a state string.
 func vrListAgents(t *testing.T, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	r := s.Call(t, "list_agents", nil)
@@ -691,15 +623,11 @@ func vrListAgents(t *testing.T, s *harness.Session) (mcpserver.ListAgentsOut, st
 	return out, ""
 }
 
-// vrListAgentsPoll is vrListAgents for a wait callback: the call is bounded by
-// the wait's deadline and a transport error is returned as state.
 func vrListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", nil)
 }
 
-// vrListTopics calls list_topics and returns the decoded answer, with a tool
-// error reported as a state string.
 func vrListTopics(t *testing.T, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	r := s.Call(t, "list_topics", nil)
@@ -713,16 +641,13 @@ func vrListTopics(t *testing.T, s *harness.Session) (mcpserver.ListTopicsOut, st
 	return out, ""
 }
 
-// vrListTopicsPoll is vrListTopics for a wait callback: the call is bounded by
-// the wait's deadline and a transport error is returned as state.
 func vrListTopicsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListTopicsOut](t, deadline, s, "list_topics", nil)
 }
 
-// vrSees reports whether the session's listing contains name. A failed
-// list_agents call fails the test: treating an error as "not visible" would
-// let a broken or unreachable Broker satisfy every negative assertion.
+// vrSees fails the test on a list_agents error: treating it as not visible
+// would let a broken Broker satisfy every negative assertion.
 func vrSees(t *testing.T, s *harness.Session, name string) bool {
 	t.Helper()
 	out, state := vrListAgents(t, s)
@@ -733,8 +658,6 @@ func vrSees(t *testing.T, s *harness.Session, name string) bool {
 	return ok
 }
 
-// vrFindNamePrefix returns the first entry whose displayed name part is a
-// non-empty prefix of want.
 func vrFindNamePrefix(out mcpserver.ListAgentsOut, want string) (name, ref, alias string, ok bool) {
 	for _, agent := range out.Agents {
 		n, r, a := vrSplitAddress(agent.Address)
@@ -745,9 +668,6 @@ func vrFindNamePrefix(out mcpserver.ListAgentsOut, want string) (name, ref, alia
 	return "", "", "", false
 }
 
-// vrBrokerRegisteredName returns the name field of the Broker's
-// agent_registered record whose name starts with prefix, or "" when the log
-// has no such record yet.
 func vrBrokerRegisteredName(t *testing.T, node *harness.Node, prefix string) string {
 	t.Helper()
 	for _, line := range strings.Split(string(node.BrokerLog(t)), "\n") {
@@ -768,7 +688,6 @@ func vrBrokerRegisteredName(t *testing.T, node *harness.Node, prefix string) str
 	return ""
 }
 
-// vrFindAgent returns the entry whose name part is name.
 func vrFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if got, _, _ := vrSplitAddress(agent.Address); got == name {
@@ -778,8 +697,6 @@ func vrFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, 
 	return mcpserver.AgentOut{}, false
 }
 
-// vrWaitSelfRef waits until the session's own address carries a ref and
-// returns it. A duplicate name is what forces the ref into the address.
 func vrWaitSelfRef(t *testing.T, s *harness.Session, name string) string {
 	t.Helper()
 	var ref string
@@ -798,8 +715,6 @@ func vrWaitSelfRef(t *testing.T, s *harness.Session, name string) string {
 	return ref
 }
 
-// vrSplitAddress splits "name [ref]@alias" into its three parts. ref is empty
-// when the address carries none.
 func vrSplitAddress(address string) (name, ref, alias string) {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 {
@@ -813,8 +728,6 @@ func vrSplitAddress(address string) (name, ref, alias string) {
 	return strings.TrimSpace(name), strings.TrimSpace(ref), alias
 }
 
-// vrEnvelopeBody returns the message body from the attribution envelope the
-// transport wraps it in.
 func vrEnvelopeBody(t *testing.T, content string) string {
 	t.Helper()
 	openEnd := strings.Index(content, ">\n")
@@ -829,7 +742,6 @@ func vrEnvelopeBody(t *testing.T, content string) string {
 	return strings.TrimSuffix(body, closing)
 }
 
-// vrCountMark counts the frames whose content carries marker.
 func vrCountMark(frames []fakesession.Frame, marker string) int {
 	n := 0
 	for _, frame := range frames {
@@ -840,7 +752,6 @@ func vrCountMark(frames []fakesession.Frame, marker string) int {
 	return n
 }
 
-// vrSameSet reports whether got and want hold the same strings.
 func vrSameSet(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -857,7 +768,6 @@ func vrSameSet(got, want []string) bool {
 	return true
 }
 
-// vrContains reports whether values holds want.
 func vrContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -867,7 +777,6 @@ func vrContains(values []string, want string) bool {
 	return false
 }
 
-// vrKeys returns the addresses of a set in sorted order for failure messages.
 func vrKeys(seen map[string]bool) []string {
 	out := make([]string, 0, len(seen))
 	for key := range seen {
@@ -877,7 +786,6 @@ func vrKeys(seen map[string]bool) []string {
 	return out
 }
 
-// vrMark returns a unique ASCII marker that cannot collide with envelope text.
 func vrMark(prefix string) string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -886,7 +794,6 @@ func vrMark(prefix string) string {
 	return prefix + hex.EncodeToString(b[:])
 }
 
-// vrRandom returns eight random hex digits for a topic name.
 func vrRandom() string {
 	var b [4]byte
 	if _, err := rand.Read(b[:]); err != nil {

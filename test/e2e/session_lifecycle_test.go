@@ -17,21 +17,18 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// lifecycleRestoreBound is the product timer for restoring topics after the
-// local Broker restarts. The process retries a lost Broker with a backoff that
-// starts at 250ms and caps at five seconds (mcpserver's loopConnBackoff); a
-// capped retry and the restore that follows need more than five seconds, so the
-// value doubles the cap. lifecycleRestoreWait adds harness.EventTimeout as the
-// fallback, and each wait also covers the tool it polls.
 const (
+	// lifecycleRestoreBound is twice the MCP server's connection backoff cap
+	// (5s, starting at 250ms): a capped retry and the restore that follows need
+	// more than five seconds, so a change to the backoff moves this value too.
+	// lifecycleRestoreWait adds harness.EventTimeout as the fallback.
 	lifecycleRestoreBound = 10 * time.Second
 	lifecycleRestoreWait  = lifecycleRestoreBound + harness.EventTimeout
 )
 
-// TestLocalSessionChanges covers what happens to a registered agent when its
-// session changes: a rename, a status change, a conversation clear, the MCP
-// server process stopping and starting, the session ending, and a Broker
-// restart. The Broker and the MCP server processes are real processes.
+// TestLocalSessionChanges checks how a registered agent appears after a rename,
+// status change, conversation clear, MCP restart, session end and Broker
+// restart.
 func TestLocalSessionChanges(t *testing.T) {
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "lifecycle"})
 	listen := host.FreeAddr(t)
@@ -137,8 +134,6 @@ func TestLocalSessionChanges(t *testing.T) {
 			t.Fatalf("Broker status is %v, want IDLE", got)
 		}
 
-		// An unknown status reaches the tool list as an empty field and the
-		// local interface as UNSPECIFIED.
 		worker.Fake().SetStatus("frobbing")
 		lifecycleWaitStatus(t, observer, "worker", "")
 		if got := lifecycleOracleStatus(t, host, "worker"); got != localpb.AgentStatus_AGENT_STATUS_UNSPECIFIED {
@@ -154,8 +149,7 @@ func TestLocalSessionChanges(t *testing.T) {
 		lifecycleWaitRegistered(t, observer, "observer")
 		lifecycleWaitAgent(t, observer, "clearer")
 		// Shared topics are the intersection of both sides' memberships, so the
-		// observer must hold t1 as well. Confirm the membership from the
-		// observer's own listing before asserting the intersection.
+		// observer joins the topic too.
 		lifecycleJoin(t, observer, "t1")
 		lifecycleWaitTopic(t, observer, "t1")
 		lifecycleJoin(t, clearer, "t1")
@@ -175,11 +169,8 @@ func TestLocalSessionChanges(t *testing.T) {
 			return lifecycleSameSet(entry.SharedTopics, want), fmt.Sprintf("shared topics are %v, want %v", entry.SharedTopics, want)
 		})
 
-		// Clearing the conversation changes the session identifier, which must
-		// not change the address or the memberships. A status change made after
-		// the identifier change is a barrier: seeing it proves the Broker has
-		// reread the record with the new identifier, so the window below
-		// observes a record it has already processed.
+		// A status change after the identifier change proves the Broker has
+		// reread the record before the window below.
 		clearer.Fake().SetSessionID("after-clear")
 		clearer.Fake().SetBusy(true)
 		lifecycleWaitStatus(t, observer, "clearer", "busy")
@@ -216,9 +207,6 @@ func TestLocalSessionChanges(t *testing.T) {
 		defer observer.End(t)
 		lifecycleWaitRegistered(t, observer, "observer")
 		lifecycleWaitAgent(t, observer, "worker")
-		// Shared topics are the intersection of both sides' memberships, so the
-		// observer must hold manual as well. Confirm the membership from the
-		// observer's own listing before asserting the intersection.
 		lifecycleJoin(t, observer, "manual")
 		lifecycleWaitTopic(t, observer, "manual")
 		lifecycleJoin(t, worker, "manual")
@@ -286,11 +274,9 @@ func TestLocalSessionChanges(t *testing.T) {
 		socketPath := first.Fake().SocketPath()
 		first.End(t)
 
-		// Topic membership is keyed by the AgentID derived from the inbox
-		// socket path. Start the replacement on the same path so a membership
-		// the Broker failed to clear would show up in its listing, and wait
-		// until the ended session is out of the agent table first so the new
-		// connection cannot attach to the old agent instead.
+		// Topic membership is keyed by the agent ID derived from the inbox socket
+		// path, so the replacement reuses it after the old agent leaves the
+		// table.
 		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the ended session leaves the local list", func(deadline time.Time) (bool, string) {
 			out, state := lifecycleListAgentsPoll(t, deadline, observer, nil)
 			if state != "" {
@@ -319,9 +305,6 @@ func TestLocalSessionChanges(t *testing.T) {
 		y := lifecycleSession(t, host, "y", workspace)
 		defer y.End(t)
 		lifecycleWaitAgent(t, observer, "y")
-		// Shared topics are the intersection of both sides' memberships, so the
-		// observer must hold t1 as well. Confirm the membership from the
-		// observer's own listing before asserting the intersection.
 		lifecycleJoin(t, observer, "t1")
 		lifecycleWaitTopic(t, observer, "t1")
 		lifecycleJoin(t, y, "t1")
@@ -362,15 +345,11 @@ func TestLocalSessionChanges(t *testing.T) {
 	})
 }
 
-// lifecycleSession starts one simulated session with a real MCP server process
-// working in workdir.
 func lifecycleSession(t *testing.T, host *harness.Node, name, workdir string) *harness.Session {
 	t.Helper()
 	return host.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, Workdir: workdir})
 }
 
-// lifecycleStartBroker starts the node's Broker and fails when it does not come
-// up. It returns the address the Broker actually uses in place of requested.
 func lifecycleStartBroker(t *testing.T, host *harness.Node, config, requested string) string {
 	t.Helper()
 	start := host.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -380,18 +359,12 @@ func lifecycleStartBroker(t *testing.T, host *harness.Node, config, requested st
 	return start.Address(requested)
 }
 
-// lifecycleRestartBroker stops the Broker and starts it again, returning the
-// address the Broker actually uses in place of requested. The MCP server
-// processes never start a Broker, so the restart is the only process that can
-// answer.
 func lifecycleRestartBroker(t *testing.T, host *harness.Node, config, requested string) string {
 	t.Helper()
 	host.StopBroker(t, syscall.SIGTERM)
 	return lifecycleStartBroker(t, host, config, requested)
 }
 
-// lifecycleGitEnv is the environment of the git commands that create test
-// workspaces. It never reads the host's git configuration.
 func lifecycleGitEnv(t *testing.T) []string {
 	t.Helper()
 	return []string{
@@ -402,8 +375,6 @@ func lifecycleGitEnv(t *testing.T) []string {
 	}
 }
 
-// lifecycleWorkspace creates the shared git workspace whose origin names the
-// default topic github.com/org/repo.
 func lifecycleWorkspace(t *testing.T) string {
 	t.Helper()
 	ws, err := node.GitWorkspace(filepath.Join(t.TempDir(), "repo"), "https://github.com/org/repo", lifecycleGitEnv(t))
@@ -413,8 +384,6 @@ func lifecycleWorkspace(t *testing.T) string {
 	return ws
 }
 
-// lifecycleWaitRegistered waits until the session is registered and lists
-// itself, and returns that listing.
 func lifecycleWaitRegistered(t *testing.T, s *harness.Session, name string) mcpserver.ListAgentsOut {
 	t.Helper()
 	var out mcpserver.ListAgentsOut
@@ -432,25 +401,19 @@ func lifecycleWaitRegistered(t *testing.T, s *harness.Session, name string) mcps
 	return out
 }
 
-// lifecycleListAgentsPoll calls list_agents from a wait and returns the
-// decoded listing: the call is bounded by the wait's deadline and a transport
-// error is returned as state.
 func lifecycleListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session, args map[string]any) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", args)
 }
 
-// lifecycleListTopicsPoll calls list_topics from a wait and returns the decoded
-// listing. The call is bounded by the wait's deadline and a transport error is
-// returned as state.
 func lifecycleListTopicsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListTopicsOut](t, deadline, s, "list_topics", nil)
 }
 
-// lifecycleJoin joins name, retrying while the session is still registering.
-// join_topic's handler may spend topicRPCTimeout before the update hint runs,
-// so the poll uses harness.TopicCallPollBound.
+// lifecycleJoin retries while the session is still registering. The poll uses
+// harness.TopicCallPollBound because join_topic's handler may spend
+// topicRPCTimeout before the update hint runs.
 func lifecycleJoin(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+name+" succeeds", func(deadline time.Time) (bool, string) {
@@ -465,7 +428,6 @@ func lifecycleJoin(t *testing.T, s *harness.Session, name string) {
 	})
 }
 
-// lifecycleWaitTopic waits until the session's own listing reports the topic.
 func lifecycleWaitTopic(t *testing.T, s *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.EventTimeout, "list_topics contains "+topic, func(deadline time.Time) (bool, string) {
@@ -482,8 +444,6 @@ func lifecycleWaitTopic(t *testing.T, s *harness.Session, topic string) {
 	})
 }
 
-// lifecycleWaitAgent waits until observer lists an agent whose name part is
-// name.
 func lifecycleWaitAgent(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the agent "+name+" is listed", func(deadline time.Time) (bool, string) {
@@ -498,7 +458,6 @@ func lifecycleWaitAgent(t *testing.T, observer *harness.Session, name string) {
 	})
 }
 
-// lifecycleWaitNoAgent waits until observer no longer lists a name.
 func lifecycleWaitNoAgent(t *testing.T, observer *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the agent "+name+" is gone from the list", func(deadline time.Time) (bool, string) {
@@ -513,8 +472,6 @@ func lifecycleWaitNoAgent(t *testing.T, observer *harness.Session, name string) 
 	})
 }
 
-// lifecycleWaitStatus waits until observer lists name with the given status
-// word; an empty want means the field is omitted.
 func lifecycleWaitStatus(t *testing.T, observer *harness.Session, name, want string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the agent "+name+" has status "+want, func(deadline time.Time) (bool, string) {
@@ -530,7 +487,6 @@ func lifecycleWaitStatus(t *testing.T, observer *harness.Session, name, want str
 	})
 }
 
-// lifecycleOracleStatus returns the status the Broker reports for name.
 func lifecycleOracleStatus(t *testing.T, host *harness.Node, name string) localpb.AgentStatus {
 	t.Helper()
 	resp, detail := host.Oracle().Status(t)
@@ -546,7 +502,6 @@ func lifecycleOracleStatus(t *testing.T, host *harness.Node, name string) localp
 	return localpb.AgentStatus_AGENT_STATUS_UNSPECIFIED
 }
 
-// lifecycleAlias returns the Broker alias from an agent address.
 func lifecycleAlias(t *testing.T, addr string) string {
 	t.Helper()
 	at := strings.LastIndexByte(addr, '@')
@@ -556,7 +511,6 @@ func lifecycleAlias(t *testing.T, addr string) string {
 	return addr[at+1:]
 }
 
-// lifecycleSplitAddress splits "name [ref]@alias" into name and ref.
 func lifecycleSplitAddress(addr string) (name, ref string) {
 	at := strings.LastIndexByte(addr, '@')
 	if at < 0 {
@@ -569,13 +523,11 @@ func lifecycleSplitAddress(addr string) (name, ref string) {
 	return head, ""
 }
 
-// lifecycleAddressName returns the name part of an address, without a ref.
 func lifecycleAddressName(addr string) string {
 	name, _ := lifecycleSplitAddress(addr)
 	return name
 }
 
-// lifecycleFindAgent returns the entry whose name part is name.
 func lifecycleFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if lifecycleAddressName(agent.Address) == name {
@@ -585,7 +537,6 @@ func lifecycleFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.Age
 	return mcpserver.AgentOut{}, false
 }
 
-// lifecycleSameSet reports whether got and want contain the same strings.
 func lifecycleSameSet(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

@@ -21,25 +21,26 @@ import (
 )
 
 const (
-	// peersBinary is the peers build in the base image.
-	peersBinary = "/usr/local/bin/peers"
-	// systemConfigPath is the system Broker's configuration file.
+	peersBinary      = "/usr/local/bin/peers"
 	systemConfigPath = "/etc/peers/config.yaml"
-	// systemSocketPath is the system Broker's local socket.
 	systemSocketPath = "/run/peers/broker.sock"
-	// accountPath is the environment of every account process.
+	// accountPath is the fixed PATH of every account process.
 	accountPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 	// procStopBound is how long a Broker process gets to exit after SIGTERM,
-	// and again after SIGKILL. A Broker stops its listeners and links in well
-	// under a second; the bound leaves room for a loaded container's scheduler.
+	// and again after SIGKILL; a Broker stops in well under a second, and the
+	// bound leaves room for a loaded container's scheduler.
 	procStopBound = 5 * time.Second
 )
 
 // Proc is one Broker process started by a test.
 type Proc struct {
-	Cmd    *exec.Cmd
-	PID    int
+	// Cmd is the running process.
+	Cmd *exec.Cmd
+	// PID is the process's pid.
+	PID int
+	// Stdout collects the process's standard output.
 	Stdout *bytes.Buffer
+	// Stderr collects the process's standard error.
 	Stderr *bytes.Buffer
 
 	exited  chan struct{}
@@ -48,16 +49,22 @@ type Proc struct {
 
 // Result is the outcome of one process run to completion.
 type Result struct {
-	Stdout   string
-	Stderr   string
+	// Stdout is the process's standard output.
+	Stdout string
+	// Stderr is the process's standard error.
+	Stderr string
+	// ExitCode is the process's exit status.
 	ExitCode int
 }
 
 // ProcInfo is one process found by Pids.
 type ProcInfo struct {
-	PID  int
+	// PID is the process id.
+	PID int
+	// PPID is the parent process id.
 	PPID int
-	UID  uint32
+	// UID is the process's owner uid.
+	UID uint32
 	// Args is the process's argv, as /proc/<pid>/cmdline reports it.
 	Args []string
 }
@@ -96,8 +103,7 @@ func StartUserBroker(t *testing.T, account string, args ...string) *Proc {
 }
 
 // StartUserBrokerPath is StartUserBroker with an explicit executable and
-// environment. It is the entry point for a test that runs a binary built at
-// another version, such as the update scenario.
+// environment.
 func StartUserBrokerPath(t *testing.T, exe, account string, env []string, args ...string) *Proc {
 	t.Helper()
 	if !InContainer() {
@@ -116,8 +122,6 @@ func UserSocketPath(t *testing.T, account string) string {
 	return filepath.Join(fmt.Sprintf("/tmp/peers-%d", uid), "broker.sock")
 }
 
-// startAndWait starts cmd and waits for socket to appear. A process that exits
-// before the socket exists fails the test with its standard error.
 func startAndWait(t *testing.T, cmd *exec.Cmd, socket, what string) *Proc {
 	t.Helper()
 	stdout := new(bytes.Buffer)
@@ -157,8 +161,6 @@ func startAndWait(t *testing.T, cmd *exec.Cmd, socket, what string) *Proc {
 	return p
 }
 
-// stop terminates the process with SIGTERM and escalates to SIGKILL after five
-// seconds.
 func (p *Proc) stop(t *testing.T) {
 	t.Helper()
 	select {
@@ -195,8 +197,6 @@ func AccountUID(t *testing.T, account string) uint32 {
 	return uid
 }
 
-// accountIDs looks account up in the account database and returns the entry
-// with its primary uid and gid.
 func accountIDs(t *testing.T, account string) (*user.User, uint32, uint32) {
 	t.Helper()
 	u, uid, gid, err := systemAccount(account)
@@ -206,9 +206,9 @@ func accountIDs(t *testing.T, account string) (*user.User, uint32, uint32) {
 	return u, uid, gid
 }
 
-// systemAccount looks account up in the account database. The test binary is
-// built without cgo as well, so os/user sees only /etc/passwd; when it misses,
-// getent reaches the other NSS sources the image configures.
+// systemAccount looks account up in the account database; the test binary is
+// built without cgo, so os/user sees only /etc/passwd and getent reaches the
+// other NSS sources the image configures.
 func systemAccount(account string) (*user.User, uint32, uint32, error) {
 	u, err := user.Lookup(account)
 	if err != nil {
@@ -228,7 +228,6 @@ func systemAccount(account string) (*user.User, uint32, uint32, error) {
 	return u, uint32(uid), uint32(gid), nil
 }
 
-// getentUser reads one passwd entry through getent.
 func getentUser(account string) (*user.User, error) {
 	out, err := exec.Command("getent", "passwd", account).Output()
 	if err != nil {
@@ -280,12 +279,13 @@ func runCommand(t *testing.T, account string, env []string, name string, args ..
 	return result
 }
 
-// Command builds a command that runs as account. The environment is built from
-// an empty one: HOME, USER, LOGNAME, PATH, then env. Under coverage the
-// coverage directory is added as GOCOVERDIR, unless env already names one. The
-// working directory is the account's home. The credential is set from the
-// account database, and it is left alone when the target account is the
-// current one, because changing the group list then fails.
+// Command builds a command that runs as account with the account's home as
+// working directory. The environment starts empty: HOME, USER and LOGNAME come
+// from the account, PATH is the fixed accountPath, and env entries follow and
+// override those defaults; under coverage the coverage directory is added as
+// GOCOVERDIR unless env already names one. The credential is set from the
+// account database and left alone when the target account is the current one,
+// because changing the group list then fails.
 func Command(account string, env []string, name string, args ...string) *exec.Cmd {
 	u, uid, gid := lookupAccount(account)
 	cmd := exec.Command(name, args...)
@@ -311,7 +311,6 @@ func Command(account string, env []string, name string, args ...string) *exec.Cm
 	return cmd
 }
 
-// hasEnv reports whether env names the variable.
 func hasEnv(env []string, name string) bool {
 	prefix := name + "="
 	for _, entry := range env {
@@ -322,8 +321,8 @@ func hasEnv(env []string, name string) bool {
 	return false
 }
 
-// lookupAccount is Command's account lookup. Command has no *testing.T, so a
-// missing account panics; every account it is used with comes from the image.
+// lookupAccount is Command's account lookup; Command has no *testing.T, so a
+// missing account panics.
 func lookupAccount(account string) (*user.User, uint32, uint32) {
 	u, uid, gid, err := systemAccount(account)
 	if err != nil {
@@ -332,7 +331,6 @@ func lookupAccount(account string) (*user.User, uint32, uint32) {
 	return u, uid, gid
 }
 
-// accountGroups returns the supplementary groups of u.
 func accountGroups(u *user.User) []uint32 {
 	ids, err := u.GroupIds()
 	if err != nil {
@@ -349,8 +347,6 @@ func accountGroups(u *user.User) []uint32 {
 	return groups
 }
 
-// getentGroupIDs reads an account's group list through getent, for a test
-// binary whose os/user cannot see the extrausers source.
 func getentGroupIDs(name string) []string {
 	out, err := exec.Command("getent", "initgroups", name).Output()
 	if err != nil {
@@ -363,8 +359,6 @@ func getentGroupIDs(name string) []string {
 	return fields[1:]
 }
 
-// writeSystemConfig writes configYAML to the system configuration file, owned
-// by root with mode 0600.
 func writeSystemConfig(t *testing.T, configYAML string) {
 	t.Helper()
 	dir := filepath.Dir(systemConfigPath)

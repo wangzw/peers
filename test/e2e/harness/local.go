@@ -21,7 +21,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// localNode runs a node's processes directly on the test host.
 type localNode struct {
 	t    *testing.T
 	name string
@@ -53,9 +52,9 @@ func NewLocalHost(t *testing.T, opts LocalOptions) *Node {
 
 	bin := BuildBinary(t, runtime.GOOS, runtime.GOARCH, "peers_testenv")
 
-	// A short path keeps the Broker's Unix socket under the length limit. The
-	// name carries the owner marker, including its PID namespace, so a cleanup
-	// can leave a live suite's root alone and remove one whose owner is gone.
+	// A short path keeps the Broker's Unix socket under the length limit; the name
+	// carries the owner marker, so a cleanup can leave a live suite's root alone
+	// and remove one whose owner is gone.
 	root, err := os.MkdirTemp("/tmp", "ape2e-"+currentOwner().String()+"-")
 	if err != nil {
 		t.Fatalf("harness: creating runtime root: %v", err)
@@ -81,9 +80,6 @@ func NewLocalHost(t *testing.T, opts LocalOptions) *Node {
 	return &Node{impl: l}
 }
 
-// localEnvExtra returns the extra environment of a host-local node. Under
-// coverage every child of the node inherits GOCOVERDIR, so the counter files
-// land in the host directory the e2e run named.
 func localEnvExtra(root, acct string) map[string]string {
 	extra := map[string]string{
 		"PEERS_TEST_RUNTIME_ROOT": root,
@@ -95,12 +91,10 @@ func localEnvExtra(root, acct string) map[string]string {
 	return extra
 }
 
-// brokerSocket is the local socket of the node's Broker.
 func (l *localNode) brokerSocket() string {
 	return filepath.Join(l.root, strconv.Itoa(os.Geteuid()), "broker.sock")
 }
 
-// configPath is the account's configuration file.
 func (l *localNode) configPath() string {
 	return filepath.Join(l.acct, ".peers", "config.yaml")
 }
@@ -172,7 +166,6 @@ func (l *localNode) readConfig(t testing.TB) []byte {
 	return data
 }
 
-// readConfigMaybe returns the configuration file without failing the test.
 func (l *localNode) readConfigMaybe() ([]byte, bool) {
 	data, err := os.ReadFile(l.configPath())
 	if err != nil {
@@ -191,8 +184,6 @@ func (l *localNode) readFile(t testing.TB, path string) []byte {
 	return data
 }
 
-// workspace creates a workspace directly on the test host, using the same
-// helpers the container's node agent uses.
 func (l *localNode) workspace(t testing.TB, kind, origin, projectYAML string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -289,10 +280,6 @@ func (l *localNode) startSession(tb testing.TB, spec SessionSpec) *Session {
 	return s
 }
 
-// tryStartSession starts a session without failing the test. Everything
-// fakesession would report through the test goes into a deferredTB instead:
-// a test that drove the start from another goroutine reports those errors
-// after it has joined the goroutine.
 func (l *localNode) tryStartSession(spec SessionSpec) (*Session, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sessionStartBound)
 	defer cancel()
@@ -324,10 +311,6 @@ func (l *localNode) tryStartSession(spec SessionSpec) (*Session, error) {
 	return s, nil
 }
 
-// deferredTB records the failures fakesession reports, so a session started
-// from another goroutine can hand them to the test goroutine instead of
-// failing the test from that goroutine. Temporary directories, cleanups and
-// the test name still come from the real testing.TB.
 type deferredTB struct {
 	testing.TB
 
@@ -361,14 +344,10 @@ func (d *deferredTB) TakeErrors() []string {
 	return errs
 }
 
-// localSession adapts node.Session to the harness session interface, turning
-// errors into test failures.
 type localSession struct {
 	name    string
 	session *node.Session
-	// node is the local node that owns the session's Broker. It is what
-	// logBrokerStack signals.
-	node *localNode
+	node    *localNode
 	// deferred carries the failures fakesession reports when the session was
 	// started through TryStartSession. A session started on the test goroutine
 	// reports them through the real testing.T immediately.
@@ -391,8 +370,6 @@ func (s *localSession) callErrWithin(bound time.Duration, tool string, args map[
 
 func (s *localSession) mcpLogTail(lines int) (string, bool) { return s.session.MCPLogTail(lines) }
 
-// logBrokerStack sends SIGQUIT to the node's Broker and returns the stack the
-// Go runtime writes to the Broker log.
 func (s *localSession) logBrokerStack(t testing.TB) string {
 	t.Helper()
 	if s.node == nil {
@@ -459,8 +436,6 @@ func (s *localSession) takeFakeErrors(t testing.TB) []error {
 }
 
 func (s *localSession) end() error {
-	// A background failure never reaches the test on its own, so the end of
-	// the session is where it is reported.
 	fakeErrs := s.session.Fake().TakeErrors()
 	err := s.session.End()
 	if s.deferred != nil {
@@ -478,7 +453,6 @@ func (s *localSession) end() error {
 	return err
 }
 
-// stringErrors turns recorded messages back into errors.
 func stringErrors(messages []string) []error {
 	errs := make([]error, 0, len(messages))
 	for _, message := range messages {
@@ -487,7 +461,6 @@ func stringErrors(messages []string) []error {
 	return errs
 }
 
-// joinErrors joins error messages with a semicolon.
 func joinErrors(errs []error) string {
 	parts := make([]string, 0, len(errs))
 	for _, err := range errs {
@@ -496,9 +469,6 @@ func joinErrors(errs []error) string {
 	return strings.Join(parts, "; ")
 }
 
-// cleanup ends the node's sessions, stops its Broker, kills every process that
-// still carries this node's runtime root and removes the root. It is
-// idempotent.
 func (l *localNode) cleanup() {
 	l.cleanupOnce.Do(func() {
 		l.mu.Lock()
@@ -542,8 +512,6 @@ func (l *localNode) cleanup() {
 	})
 }
 
-// terminateBroker asks the Broker to exit with SIGTERM and kills it when it has
-// not exited within two seconds.
 func terminateBroker(b *node.BrokerProc) {
 	_ = b.Signal(syscall.SIGTERM)
 	if _, err := b.Wait(2 * time.Second); err == nil {
@@ -554,23 +522,17 @@ func terminateBroker(b *node.BrokerProc) {
 }
 
 // coverKillBound is how long a detached process gets to exit after SIGTERM
-// before it is killed, when coverage collection is on. It is generous because
-// the process must flush its counters while it shuts down.
+// before it is killed under coverage; it is generous because the process must
+// flush its counters while it shuts down.
 const coverKillBound = 10 * time.Second
 
-// coverKillPoll is the interval between two liveness checks during that wait.
 const coverKillPoll = 100 * time.Millisecond
 
-// killProcesses ends every process whose environment carries this node's
-// runtime root, including a Broker that detached from the process that started
-// it. The scan is the node library's; no second implementation lives here.
 func (l *localNode) killProcesses() {
 	procs, err := node.ListProcs(func(p node.Proc) bool {
 		return p.Env["PEERS_TEST_RUNTIME_ROOT"] == l.root
 	})
 	if err != nil {
-		// Other platforms cannot scan processes; the processes the node
-		// started itself have already been stopped above.
 		if !errors.Is(err, errors.ErrUnsupported) {
 			l.t.Errorf("harness: node %s: listing processes: %v", l.name, err)
 		}
@@ -587,18 +549,11 @@ func (l *localNode) killProcesses() {
 	killPids(pids, procsig.SendSignal, procsig.Alive, processStartTime, coverKillBound, coverKillPoll)
 }
 
-// killPids ends every process in pids. With coverage off it sends SIGKILL at
-// once. With coverage on it sends SIGTERM first, waits up to bound for the
-// processes to exit, and SIGKILLs the survivors, so an instrumented process
-// flushes its counters on the way out. Both paths signal through send, which
-// the cleanup wires to procsig.SendSignal.
-//
-// The wait is long enough for the kernel to reuse a pid, so the cleanup tracks
-// each process by the start time startTime reports for it, captured before
-// SIGTERM. A pid observed dead is dropped for good: the number may later name
-// an unrelated process. A survivor is killed only when its start time still
-// matches the one recorded here; a changed identity means the number now names
-// a different process, which is left alone.
+// killPids ends every process in pids: without coverage it sends SIGKILL at
+// once, and under coverage it sends SIGTERM, waits up to bound and SIGKILLs the
+// survivors. The wait is long enough for the kernel to reuse a pid, so a survivor
+// is killed only when its start time still matches the one recorded before
+// SIGTERM, and a pid observed dead is dropped for good.
 func killPids(pids []int, send func(int, syscall.Signal) error, alive func(int) bool, startTime func(int) (uint64, error), bound, poll time.Duration) {
 	if !CoverageEnabled() {
 		for _, pid := range pids {
@@ -647,8 +602,6 @@ func killPids(pids []int, send func(int, syscall.Signal) error, alive func(int) 
 	}
 }
 
-// logHasAddressInUse reports whether the Broker log contains the failure that
-// the one retry accepts as a port race.
 func logHasAddressInUse(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -720,8 +673,6 @@ func (l *localNode) startBroker(tb testing.TB, spec BrokerSpec) BrokerStart {
 		l.writeConfig(tb, spec.ConfigYAML)
 	}
 
-	// replaced records the address changes the one retry made, so the caller
-	// learns the address the Broker actually used.
 	var replaced map[string]string
 
 	for attempt := 0; ; attempt++ {
@@ -781,8 +732,6 @@ func (l *localNode) stopBroker(tb testing.TB, sig syscall.Signal) int {
 		return -1
 	}
 
-	// A signal to a process that already exited reports an error; the exit
-	// code below still tells the caller what happened.
 	_ = broker.Signal(sig)
 	// The Broker exits as soon as its context is cancelled and has no drain
 	// timer; the same bound the container path uses applies here.

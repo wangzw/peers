@@ -17,12 +17,8 @@ import (
 // system subnet and holds it while the parent reads the other child's answer.
 const subnetChildEnv = "PEERS_E2E_SUBNET_CHILD"
 
-// TestAllocSystemSubnetCrossProcess starts two copies of this test binary, has
-// each reserve a system subnet, and requires the two answers to differ. The
-// in-process allocator alone lets both copies take the first free /24, and
-// docker then refuses the second network with "Pool overlaps with other one on
-// this address space". The reservation must therefore be cross-process, like
-// the harness routed allocator's.
+// TestAllocSystemSubnetCrossProcess has two copies of the test binary reserve a
+// subnet each and requires the two answers to differ.
 func TestAllocSystemSubnetCrossProcess(t *testing.T) {
 	if os.Getenv(subnetChildEnv) == "1" {
 		subnet := allocSystemSubnet(t)

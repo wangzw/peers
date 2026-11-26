@@ -22,28 +22,20 @@ import (
 )
 
 const (
-	// sgBinary is the peers build the system image provides.
-	sgBinary = "/usr/local/bin/peers"
-	// sgConfigPath is the system Broker's configuration file.
+	sgBinary     = "/usr/local/bin/peers"
 	sgConfigPath = "/etc/peers/config.yaml"
-	// sgSocketPath is the system Broker's local socket.
 	sgSocketPath = "/run/peers/broker.sock"
-	// sgUsersGID is the gid of peers-users in the system image.
-	sgUsersGID = 2001
-	// sgOtherUID is the uid of other in the system image.
-	sgOtherUID = 2000
+	sgUsersGID   = 2001
+	sgOtherUID   = 2000
 	// sgRegisterBudget is the reconnect deadline after the user starts a Broker:
-	// mcpserver.ConnBackoffCap is the longest wait, and harness.EventTimeout is
-	// the fallback for the dial, Hello and registration. The wait that uses it
-	// also covers ListAgentsWaitBound because it polls list_agents.
+	// mcpserver.ConnBackoffCap plus harness.EventTimeout.
 	sgRegisterBudget = mcpserver.ConnBackoffCap + harness.EventTimeout
 )
 
-// TestREQBrokerConfig027_GroupRestrictsUse checks that the group and mode of
-// the system Broker's local socket decide which accounts may use it. peer is
-// in peers-users and other is not, so other's session reports that no
-// Broker is available until the user starts other's own user Broker; it
-// never registers with the system Broker.
+// TestREQBrokerConfig027_GroupRestrictsUse checks that the system socket's group
+// and mode let a peers-users member use it, while a non-member's session first
+// reports that no Broker is available and then registers on the user's own
+// Broker once the user starts it, never on the system Broker.
 func TestREQBrokerConfig027_GroupRestrictsUse(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)
@@ -57,9 +49,6 @@ func TestREQBrokerConfig027_GroupRestrictsUse(t *testing.T) {
 		return mode == 0o660 && gid == sgUsersGID
 	})
 
-	// other may not use the system socket and starts no Broker of its own, so
-	// its session first reports that no Broker is available. The user then
-	// starts other's user Broker on the port its configuration names.
 	sgWriteOtherConfig(t)
 
 	a := syscontainer.NewSession(t, "peer", "alpha")
@@ -86,6 +75,9 @@ func TestREQBrokerConfig027_GroupRestrictsUse(t *testing.T) {
 		return true, ""
 	})
 	syscontainer.StartUserBroker(t, "other")
+	// The wait takes the larger of sgRegisterBudget and ListAgentsWaitBound
+	// because it polls list_agents, and one stalled poll can run for
+	// ListAgentsPollBound.
 	harness.EventuallyPoll(t, max(sgRegisterBudget, harness.ListAgentsWaitBound), "charlie registers on the Broker the user started", func(deadline time.Time) (bool, string) {
 		_, isError, err := c.PollCall(t, deadline, "list_agents", map[string]any{})
 		if err != nil {
@@ -105,9 +97,8 @@ func TestREQBrokerConfig027_GroupRestrictsUse(t *testing.T) {
 		return res.ExitCode == 0 && strings.Contains(res.Stdout, "alpha@")
 	})
 
-	// other registered with its own user Broker, so the system Broker
-	// must never list its agent. Registration has just completed, so one
-	// second is ample for a leaked registration to appear.
+	// Registration has just completed, so one second is ample for a leaked
+	// registration to appear.
 	harness.Consistently(t, time.Second, "the system Broker never lists other's agent", func() (bool, string) {
 		res := syscontainer.RunAs(t, "root", nil, "service", "status")
 		if res.ExitCode != 0 {
@@ -223,8 +214,7 @@ func TestSystemSocketGroupUnknownRejected(t *testing.T) {
 		t.Errorf("broker.local_socket_group after the refused set = %q, want peers-users", text)
 	}
 
-	// The refused change must leave the socket's group and mode untouched. The
-	// refused set is already complete, so a one-second observation is enough.
+	// The refused set is already complete, so a one-second observation is enough.
 	harness.Consistently(t, time.Second, "the socket group stays peers-users", func() (bool, string) {
 		mode, gid := sgSocketModeGID(t, sgSocketPath)
 		return mode == 0o660 && gid == sgUsersGID,
@@ -232,10 +222,8 @@ func TestSystemSocketGroupUnknownRejected(t *testing.T) {
 	})
 }
 
-// sgAssertNotPermitted checks that a status call through the system socket as
-// account fails and that the error names the missing permission. A failure
-// alone would not prove the group check produced it rather than some other
-// problem.
+// sgAssertNotPermitted requires the error to name the missing permission; a
+// failure alone would not prove the group check produced it.
 func sgAssertNotPermitted(t *testing.T, account, path string) {
 	t.Helper()
 	res := syscontainer.RunAs(t, account, []string{"PEERS_TEST_SOCKET=" + path}, "service", "status")
@@ -248,7 +236,6 @@ func sgAssertNotPermitted(t *testing.T, account, path string) {
 	}
 }
 
-// sgSocketModeGID returns the permission bits and group of path.
 func sgSocketModeGID(t *testing.T, path string) (os.FileMode, uint32) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -262,8 +249,6 @@ func sgSocketModeGID(t *testing.T, path string) (os.FileMode, uint32) {
 	return info.Mode().Perm(), uint32(stat.Gid)
 }
 
-// sgWriteSystemConfig writes yaml to the system configuration file as root
-// with mode 0600, creating the directory when needed.
 func sgWriteSystemConfig(t *testing.T, yaml string) {
 	t.Helper()
 	if err := os.MkdirAll("/etc/peers", 0o755); err != nil {
@@ -280,8 +265,6 @@ func sgWriteSystemConfig(t *testing.T, yaml string) {
 	}
 }
 
-// sgWriteOtherConfig gives other a configuration file that makes its
-// user Broker listen on 17444.
 func sgWriteOtherConfig(t *testing.T) {
 	t.Helper()
 	dir := "/home/other/.peers"
@@ -305,8 +288,6 @@ func sgWriteOtherConfig(t *testing.T) {
 	}
 }
 
-// sgWaitRegistered waits until the session's MCP server has registered it.
-// sgMCPPIDs returns the account's MCP server pids, sorted.
 func sgMCPPIDs(t *testing.T, account string) []int {
 	t.Helper()
 	uid := syscontainer.AccountUID(t, account)
@@ -320,9 +301,6 @@ func sgMCPPIDs(t *testing.T, account string) []int {
 	return out
 }
 
-// sgWaitRegistered waits until the session's MCP server has registered it.
-// EventuallyPoll lifts the three-second allowance to ToolCallWaitBound so one
-// poll call gets its own bound.
 func sgWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
@@ -334,9 +312,6 @@ func sgWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	})
 }
 
-// sgWaitConnected waits until the session's MCP server has reached a Broker.
-// EventuallyPoll lifts the three-second allowance for the same reason as
-// sgWaitRegistered.
 func sgWaitConnected(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.EventTimeout, "the MCP server of "+session.Account+" to reach its Broker",
@@ -349,7 +324,6 @@ func sgWaitConnected(t *testing.T, session *syscontainer.Session) {
 		})
 }
 
-// sgHasUserBroker reports whether a non-system Broker runs as uid.
 func sgHasUserBroker(uid uint32) bool {
 	for _, proc := range syscontainer.Pids("peers", "service", "run") {
 		if proc.UID == uid {
@@ -359,8 +333,6 @@ func sgHasUserBroker(uid uint32) bool {
 	return false
 }
 
-// sgRun runs cmd and returns its result. A command that has not exited within
-// timeout is killed and fails the test.
 func sgRun(t *testing.T, timeout time.Duration, cmd *exec.Cmd) syscontainer.Result {
 	t.Helper()
 	var stdout, stderr bytes.Buffer

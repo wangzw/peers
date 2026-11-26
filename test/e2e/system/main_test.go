@@ -9,13 +9,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// TestMain forwards every test to a container through syscontainer.RunPair. A
-// test that runs on a pair of hosts reaches the role container through the same
-// entry point. The register-client role instead opens a Register stream
-// directly, so that a test can observe the Broker's answer for another
-// account's session. The status-client role reads one agent ID from the Broker
-// as the account, which the account's session registry permits and root does
-// not.
+// TestMain forwards every test to a container through syscontainer.RunPair, or
+// runs the body of the role the environment selects.
 func TestMain(m *testing.M) {
 	switch os.Getenv(registerClientRoleEnv) {
 	case registerClientRole:

@@ -25,10 +25,7 @@ func TestProjectName(t *testing.T) {
 	}
 }
 
-// TestComposeServices checks that every service of flat.yaml is reported,
-// including the profiled hosts a TopoFlat with fewer hosts does not start.
-// Compose substitutes the variables of every declared service, so Up must fill
-// the control directory of each one.
+// TestComposeServices checks that every service of flat.yaml is reported, including the profiled hosts a smaller TopoFlat does not start.
 func TestComposeServices(t *testing.T) {
 	path, err := composeSourcePath("flat.yaml")
 	if err != nil {
@@ -91,8 +88,7 @@ func TestCoverOverride(t *testing.T) {
 	}
 }
 
-// TestComposeCommandCarriesEveryFile checks that a cluster passes each compose
-// file it was built with, so the coverage override reaches every command.
+// TestComposeCommandCarriesEveryFile checks that a cluster passes each compose file it was built with.
 func TestComposeCommandCarriesEveryFile(t *testing.T) {
 	c := &Cluster{
 		project:      "proj",
@@ -116,8 +112,7 @@ func TestComposeCommandCarriesEveryFile(t *testing.T) {
 	}
 }
 
-// TestDownTimeout fixes the teardown timeout: coverage gives the instrumented
-// processes time to flush their counters, and an ordinary run keeps one second.
+// TestDownTimeout checks that teardown uses one second without coverage and twenty seconds with it.
 func TestDownTimeout(t *testing.T) {
 	cases := []struct {
 		name     string

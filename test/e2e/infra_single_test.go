@@ -30,7 +30,7 @@ func TestInfraSingleNode(t *testing.T) {
 	}
 
 	// The peer account carries the host uid, so files it writes under the
-	// bind-mounted control directory are owned by the test user.
+	// bind-mounted control directory belong to the test user.
 	wantUID := os.Getuid()
 	if wantUID == 0 {
 		wantUID = 1000
@@ -57,7 +57,6 @@ func TestInfraSingleNode(t *testing.T) {
 		t.Fatalf("%s is owned by uid %d, want the host uid %d", logPath, stat.Uid, wantUID)
 	}
 
-	// Root commands need NET_ADMIN.
 	c.Root(t, "hostA", "iptables", "-L")
 
 	if got := strings.TrimSpace(c.Root(t, "hostA", "ip", "route", "show", "default")); got != "" {

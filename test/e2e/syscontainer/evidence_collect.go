@@ -11,25 +11,22 @@ import (
 	"time"
 )
 
-// systemdEvidenceBound bounds the whole evidence collection. It is a separate
-// budget that starts after systemdReadyBound is given up, so it does not extend
-// the readiness bound; a hung diagnostic command loses its own text and the
-// rest of the evidence is still collected.
+// systemdEvidenceBound bounds the whole evidence collection; it starts after
+// systemdReadyBound is given up and does not extend it. Every diagnostic command
+// shares this one bound, so a hung command exhausts it and the commands after it
+// leave only their timeout error text.
 const systemdEvidenceBound = 10 * time.Second
 
-// logBootEvidence writes the state of the systemd container to the test log. It
-// runs while the container still exists, before the deferred teardown removes
-// it.
+// logBootEvidence writes the state of the systemd container to the test log
+// before the deferred teardown removes it.
 func (c *container) logBootEvidence(service string) {
 	c.t.Helper()
 	c.t.Logf("syscontainer: %s", c.bootEvidence(service))
 }
 
 // bootEvidence collects the state that explains why systemd did not become
-// ready. The whole collection shares systemdEvidenceBound, which starts after
-// the readiness bound is given up and does not extend it. Every command's error
-// text becomes part of the evidence, so a container that is already gone still
-// leaves a record.
+// ready; every command's error text becomes part of the evidence, so a
+// container that is already gone still leaves a record.
 func (c *container) bootEvidence(service string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), systemdEvidenceBound)
 	defer cancel()
@@ -37,8 +34,9 @@ func (c *container) bootEvidence(service string) string {
 	return collectBootEvidence(c.project, c.composeFile, service, run, readHostMemory, readHostPids)
 }
 
-// docker runs one docker command under ctx and returns its combined output. The
-// error text is part of the result: a command that failed is evidence too.
+// docker runs one docker command under ctx and returns its combined output; the
+// error text is part of the result, because a command that failed is evidence
+// too.
 func (c *container) docker(ctx context.Context, args ...string) string {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = c.env
@@ -53,8 +51,6 @@ func (c *container) docker(ctx context.Context, args ...string) string {
 	return fmt.Sprintf("%v\n%s", err, text)
 }
 
-// readHostMemory returns the first /proc/meminfo lines: MemTotal, MemFree and
-// MemAvailable.
 func readHostMemory() string {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {
@@ -63,10 +59,9 @@ func readHostMemory() string {
 	return headLines(strings.TrimSpace(string(data)), 3)
 }
 
-// readHostPids reports the host pids accounting that a container kill for a
-// process limit would show against. The root cgroup has no pids files of its
-// own on a systemd host, so the system slice and the kernel limit are read as
-// well.
+// readHostPids reports the host pids accounting a process-limit kill would show
+// against; the root cgroup has no pids files on a systemd host, so the system
+// slice and the kernel limit are read too.
 func readHostPids() string {
 	var b strings.Builder
 	for _, path := range []string{

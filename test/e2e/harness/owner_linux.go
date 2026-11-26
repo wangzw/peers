@@ -17,9 +17,9 @@ func processStartTime(pid int) (uint64, error) {
 		return 0, err
 	}
 	text := string(data)
-	// The command name is parenthesised and may itself contain spaces and
-	// parentheses, so only the fields after the last ')' can be split. They
-	// start at state, which is field 3; starttime is field 22.
+	// The command name is parenthesised and may contain spaces and parentheses, so
+	// only the fields after the last ')' are split; they start at state (field 3)
+	// and starttime is field 22.
 	close := strings.LastIndexByte(text, ')')
 	if close < 0 || close+1 >= len(text) {
 		return 0, fmt.Errorf("harness: malformed stat for process %d", pid)
@@ -31,9 +31,6 @@ func processStartTime(pid int) (uint64, error) {
 	return strconv.ParseUint(fields[19], 10, 64)
 }
 
-// processNamespace returns the inode of the PID namespace of pid, as reported
-// by /proc/<pid>/ns/pid. Two PIDs are comparable only when their namespaces
-// have the same inode.
 func processNamespace(pid int) (uint64, error) {
 	link, err := os.Readlink(fmt.Sprintf("/proc/%d/ns/pid", pid))
 	if err != nil {

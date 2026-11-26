@@ -4,12 +4,12 @@ package node
 
 import "errors"
 
-// ListProcs is only implemented on Linux.
+// ListProcs returns errors.ErrUnsupported; it is only implemented on Linux.
 func ListProcs(func(Proc) bool) ([]Proc, error) {
 	return nil, errors.ErrUnsupported
 }
 
-// Ancestors is only implemented on Linux.
+// Ancestors returns errors.ErrUnsupported; it is only implemented on Linux.
 func Ancestors(pid int) ([]int, error) {
 	return nil, errors.ErrUnsupported
 }

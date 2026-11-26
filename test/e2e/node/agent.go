@@ -24,132 +24,182 @@ import (
 )
 
 const (
-	// agentCallTimeout bounds one MCP tool call when the request sets none.
 	agentCallTimeout = 30 * time.Second
-	// agentRPCBound bounds one call of the local interface probe.
-	agentRPCBound = 10 * time.Second
-	// agentFrameBound bounds a session frame wait when the request sets none.
-	// It waits for an event the test cannot force, so it uses the package
-	// fallback rather than a few seconds.
-	agentFrameBound = eventTimeout
-	// agentExecBound bounds one one-off command when the request sets none.
-	agentExecBound = 30 * time.Second
-	// agentBrokerStopBound is how long Close waits for the Broker to honour
-	// SIGTERM before killing it.
+	agentRPCBound    = 10 * time.Second
+	// A frame wait is for an event the test cannot force, so it falls back to
+	// the package event timeout.
+	agentFrameBound      = eventTimeout
+	agentExecBound       = 30 * time.Second
 	agentBrokerStopBound = 2 * time.Second
-	// agentDialBound bounds the TCP probes when the request sets none. This is
-	// not a wait for an event: a probe reports the address unreachable when its
-	// dial times out, so the bound is the probe's own conclusion and stays
-	// short. A caller that probes a blackhole passes its own timeout.
-	agentDialBound = 3 * time.Second
-	// agentConnAliveRead is the read deadline of the connection liveness probe.
+	// A dial timeout is the probe's own verdict, so a probe of a blackhole
+	// passes its own timeout.
+	agentDialBound     = 3 * time.Second
 	agentConnAliveRead = 200 * time.Millisecond
 )
 
 // AgentSessionSpec describes a session to start through the node agent. It is
 // the operational form of a control-protocol session request.
 type AgentSessionSpec struct {
-	Name            string
-	Status          string
-	ConfigDir       string
+	// Name is the session name written to the record.
+	Name string
+	// Status is the session status written to the record; empty models a
+	// session that has not reported one.
+	Status string
+	// ConfigDir is the Claude configuration directory; empty means
+	// $HOME/.claude.
+	ConfigDir string
+	// ExportConfigDir exports CLAUDE_CONFIG_DIR to the MCP server process.
 	ExportConfigDir bool
-	Workdir         string
-	Mode            string
-	BusyDelay       time.Duration
-	NoBind          bool
-	SocketPath      string
-	NoSocketEnv     bool
-	Env             map[string]string
-	StartMCP        bool
+	// Workdir is the working directory of the MCP server process; empty means
+	// $HOME.
+	Workdir string
+	// Mode selects how the fake handles accepted connections.
+	Mode string
+	// BusyDelay delays reading each accepted connection, simulating a busy
+	// session; zero reads immediately.
+	BusyDelay time.Duration
+	// NoBind writes only the session record and binds no socket.
+	NoBind bool
+	// SocketPath is the inbox socket path; empty means a generated one.
+	SocketPath string
+	// NoSocketEnv suppresses CLAUDE_CODE_MESSAGING_SOCKET in the MCP server
+	// environment.
+	NoSocketEnv bool
+	// Env adds variables to the MCP server environment, on top of the BaseEnv.
+	Env map[string]string
+	// StartMCP starts a real MCP server process with the session.
+	StartMCP bool
 }
 
 // AgentSessionInfo is what the node agent reports after starting a session.
 type AgentSessionInfo struct {
-	ID         string
+	// ID is the agent's identifier for the session.
+	ID string
+	// SocketPath is the inbox socket path.
 	SocketPath string
-	ConfigDir  string
+	// ConfigDir is the Claude configuration directory.
+	ConfigDir string
+	// RecordPath is the registry record path.
 	RecordPath string
-	FakePID    int
-	MCPPID     int
+	// FakePID is the simulated session's process ID.
+	FakePID int
+	// MCPPID is the MCP server process ID, or 0 when none runs.
+	MCPPID int
 }
 
 // AgentCallResult is one tool call as reported by the node agent.
 type AgentCallResult struct {
-	IsError    bool
-	Text       string
+	// IsError reports whether the tool returned an error result.
+	IsError bool
+	// Text is every text content block joined with "\n".
+	Text string
+	// Structured is the JSON encoding of the structured content, or nil.
 	Structured []byte
-	Elapsed    time.Duration
+	// Elapsed is how long the call took.
+	Elapsed time.Duration
 }
 
 // AgentFrame is one frame recorded by a simulated session. The fields mirror
 // fakesession.Frame so the host-side proxy can reconstruct it.
 type AgentFrame struct {
-	Raw       string
-	Auth      bool
-	AuthRaw   string
-	MsgID     string
-	Type      string
-	FromName  string
-	From      string
+	// Raw is the frame as received.
+	Raw string
+	// Auth reports whether the frame carried an auth line.
+	Auth bool
+	// AuthRaw is the auth line as received.
+	AuthRaw string
+	// MsgID is the message identifier the frame carries.
+	MsgID string
+	// Type is the frame type.
+	Type string
+	// FromName is the sender's name.
+	FromName string
+	// From is the sender's address.
+	From string
+	// SessionID is the sender's session identifier.
 	SessionID string
-	Priority  string
-	Content   string
-	Fields    map[string]any
+	// Priority is the message priority.
+	Priority string
+	// Content is the message content.
+	Content string
+	// Fields is the parsed frame fields.
+	Fields map[string]any
 }
 
-// AgentFrames is the answer of a frame wait: what was recorded and whether the
-// requested frame had arrived.
+// AgentFrames is the answer of a frame wait.
 type AgentFrames struct {
+	// Frames are the frames recorded so far.
 	Frames []AgentFrame
-	OK     bool
+	// OK reports whether the requested frame had arrived.
+	OK bool
 }
 
 // AgentMCPResult reports the outcome of an MCP server process operation.
 type AgentMCPResult struct {
+	// ExitCode is the exit code of a stopped process, or 0 otherwise.
 	ExitCode int
-	PID      int
+	// PID is the process ID involved in the operation.
+	PID int
 }
 
 // AgentBrokerSpec describes a Broker process to start through the node agent.
 type AgentBrokerSpec struct {
-	Args       []string
+	// Args follow "service run --user" on the command line.
+	Args []string
+	// ConfigYAML, when not empty, replaces the account Broker configuration.
 	ConfigYAML string
-	Env        map[string]string
-	Bound      time.Duration
+	// Env adds variables to the Broker environment, on top of the BaseEnv.
+	Env map[string]string
+	// Bound is how long to wait for the Broker to become ready; 0 uses
+	// defaultBrokerBound.
+	Bound time.Duration
 }
 
 // AgentLocalRequest is one call of the local interface probe.
 type AgentLocalRequest struct {
-	RPC   string
-	Key   string
+	// RPC is the local interface method: hello, list_brokers, status,
+	// get_config or audit.
+	RPC string
+	// Key is the configuration key for get_config.
+	Key string
+	// Since is the RFC 3339 lower bound for audit.
 	Since string
+	// Limit is the maximum number of audit events.
 	Limit uint32
 }
 
-// AgentLocalResult carries a local interface answer. Response and ErrorDetail
-// hold protojson; Events holds one protojson object per audit event.
+// AgentLocalResult carries a local interface answer in protojson.
 type AgentLocalResult struct {
-	Response    []byte
+	// Response is the protojson answer.
+	Response []byte
+	// ErrorDetail is the protojson ErrorDetail of a product error.
 	ErrorDetail []byte
-	Events      [][]byte
+	// Events is one protojson object per audit event.
+	Events [][]byte
 }
 
 // AgentWorkspace describes a workspace to create.
 type AgentWorkspace struct {
-	Kind        string
-	Origin      string
+	// Kind is git, project or plain.
+	Kind string
+	// Origin is the git remote. The git kind always initialises a repository and
+	// adds origin only when it is not empty; the project kind initialises one
+	// only when origin is not empty; the plain kind ignores it.
+	Origin string
+	// ProjectYAML is written as .peers.yaml for the project kind.
 	ProjectYAML string
 }
 
 // AgentExecResult is the outcome of one one-off command.
 type AgentExecResult struct {
+	// ExitCode is the process exit code.
 	ExitCode int
-	Stdout   string
-	Stderr   string
+	// Stdout is the captured standard output.
+	Stdout string
+	// Stderr is the captured standard error.
+	Stderr string
 }
 
-// agentSession is one session started through the node agent plus the extra
-// MCP server processes a subagent definition declares.
 type agentSession struct {
 	session *Session
 
@@ -278,7 +328,6 @@ func (a *Agent) StartSession(spec AgentSessionSpec) (AgentSessionInfo, error) {
 	return info, nil
 }
 
-// startSession implements StartSession inside Guard.
 func (a *Agent) startSession(spec AgentSessionSpec) AgentSessionInfo {
 	mode, err := ParseMode(spec.Mode)
 	if err != nil {
@@ -330,7 +379,6 @@ func (a *Agent) Call(sessionID, tool string, args map[string]any, timeout time.D
 	return result, nil
 }
 
-// call implements Call inside Guard.
 func (a *Agent) call(sessionID, tool string, args map[string]any, timeout time.Duration, extra int) AgentCallResult {
 	s := a.session(sessionID)
 	if timeout <= 0 {
@@ -371,7 +419,6 @@ func (a *Agent) Tools(sessionID string) ([]ToolInfo, error) {
 	return tools, nil
 }
 
-// tools implements Tools inside Guard.
 func (a *Agent) tools(sessionID string) []ToolInfo {
 	s := a.session(sessionID)
 	ctx, cancel := context.WithTimeout(context.Background(), agentCallTimeout)
@@ -394,7 +441,6 @@ func (a *Agent) Frames(sessionID string, waitN int, timeout time.Duration) (Agen
 	return result, nil
 }
 
-// frames implements Frames inside Guard.
 func (a *Agent) frames(sessionID string, waitN int, timeout time.Duration) AgentFrames {
 	s := a.session(sessionID)
 	ok := true
@@ -429,7 +475,6 @@ func (a *Agent) Fake(sessionID, op string, arg any) error {
 	return Guard(func() { a.fake(sessionID, op, arg) })
 }
 
-// fake implements Fake inside Guard.
 func (a *Agent) fake(sessionID, op string, arg any) {
 	fake := a.session(sessionID).session.Fake()
 	switch op {
@@ -489,7 +534,6 @@ func (a *Agent) MCP(sessionID, op string, sig syscall.Signal) (AgentMCPResult, e
 	return result, nil
 }
 
-// mcp implements MCP inside Guard.
 func (a *Agent) mcp(sessionID, op string, sig syscall.Signal) AgentMCPResult {
 	s := a.session(sessionID)
 	switch op {
@@ -552,10 +596,7 @@ func (a *Agent) EndSession(sessionID string) error {
 }
 
 // WaitNoConnections waits until a session's simulated session tracks no inbox
-// connection, up to timeout. It wakes when the fake accepts or drops a
-// connection, so it returns as soon as the last handler leaves its
-// connection. It exists for the end-to-end test harness only; the node agent
-// exposes it on the test control socket, not in product behaviour.
+// connection, up to timeout, waking when the fake accepts or drops one.
 func (a *Agent) WaitNoConnections(sessionID string, timeout time.Duration) (bool, error) {
 	var ok bool
 	err := Guard(func() {
@@ -596,7 +637,6 @@ func (a *Agent) StartBroker(spec AgentBrokerSpec) (StartResult, error) {
 	return result, nil
 }
 
-// startBroker implements StartBroker inside Guard.
 func (a *Agent) startBroker(spec AgentBrokerSpec) StartResult {
 	if spec.ConfigYAML != "" {
 		a.writeAccountConfig(spec.ConfigYAML)
@@ -627,12 +667,11 @@ func (a *Agent) startBroker(spec AgentBrokerSpec) StartResult {
 	return result
 }
 
-// SignalBroker sends sig to the current Broker through its process handle. The
-// handle holds its own lifecycle lock across the reaped check and the send, so
-// a Broker this agent already waited for is never signalled through a pid that
-// may name another process. The agent runs in the same container as the
-// Broker, so the handle's pid is reachable; a test process on the host cannot
-// signal a pid that does not name a process above its own pid namespace.
+// SignalBroker sends sig to the current Broker through its process handle, which
+// holds its lifecycle lock across the reaped check and the send, so a Broker
+// already waited for is never signalled through a reused pid. The agent runs in
+// the same container as the Broker; a test process on the host cannot signal a
+// pid outside its own pid namespace.
 func (a *Agent) SignalBroker(sig syscall.Signal) error {
 	return Guard(func() {
 		a.mu.Lock()
@@ -681,7 +720,6 @@ func (a *Agent) BrokerLog(all bool) ([]byte, error) {
 	return data, nil
 }
 
-// brokerLogData implements BrokerLog inside Guard.
 func (a *Agent) brokerLogData(all bool) []byte {
 	a.mu.Lock()
 	paths := append([]string(nil), a.brokerLogs...)
@@ -717,7 +755,6 @@ func (a *Agent) Local(req AgentLocalRequest) (AgentLocalResult, error) {
 	return result, nil
 }
 
-// local implements Local inside Guard.
 func (a *Agent) local(req AgentLocalRequest) AgentLocalResult {
 	oracle, err := DialOracle(a.brokerSock)
 	if err != nil {
@@ -769,8 +806,6 @@ func (a *Agent) local(req AgentLocalRequest) AgentLocalResult {
 	return result
 }
 
-// encodeAnswer stores a protojson response, or the ErrorDetail of a product
-// error, in result.
 func (a *Agent) encodeAnswer(result *AgentLocalResult, message proto.Message, err error) {
 	if err != nil {
 		detail := ErrorDetailOf(err)
@@ -802,7 +837,6 @@ func (a *Agent) Procs(kind string) ([]Proc, error) {
 	return procs, nil
 }
 
-// procs implements Procs inside Guard.
 func (a *Agent) procs(kind string) []Proc {
 	if kind != "broker" && kind != "mcp" && kind != "all" {
 		a.tb.Fatalf("node: unknown process kind %q", kind)
@@ -827,13 +861,10 @@ func (a *Agent) procs(kind string) []Proc {
 	return procs
 }
 
-// hasSubcommand reports whether args carry subcommand as the first argument
-// after the program name.
 func hasSubcommand(args []string, subcommand string) bool {
 	return len(args) >= 2 && args[1] == subcommand
 }
 
-// hasServiceRun reports whether args run the Broker through "service run".
 func hasServiceRun(args []string) bool {
 	return len(args) >= 3 && args[1] == "service" && args[2] == "run"
 }
@@ -849,7 +880,6 @@ func (a *Agent) Workspace(req AgentWorkspace) (string, error) {
 	return path, nil
 }
 
-// workspace implements Workspace inside Guard.
 func (a *Agent) workspace(req AgentWorkspace) string {
 	dir := a.tb.TempDir()
 	env := a.env.Build(map[string]string{"GIT_CONFIG_NOSYSTEM": "1"})
@@ -888,7 +918,6 @@ func (a *Agent) ReadFile(path string) ([]byte, bool, error) {
 	return data, missing, nil
 }
 
-// readFile implements ReadFile inside Guard.
 func (a *Agent) readFile(path string) ([]byte, bool) {
 	a.checkPath(path)
 	data, err := os.ReadFile(path)
@@ -907,7 +936,6 @@ func (a *Agent) WriteFile(path string, data []byte, mode os.FileMode) error {
 	return Guard(func() { a.writeFile(path, data, mode) })
 }
 
-// writeFile implements WriteFile inside Guard.
 func (a *Agent) writeFile(path string, data []byte, mode os.FileMode) {
 	a.checkPath(path)
 	if mode == 0 {
@@ -953,7 +981,6 @@ func (a *Agent) ListFiles(path string) ([]string, error) {
 	return names, nil
 }
 
-// listFiles implements ListFiles inside Guard.
 func (a *Agent) listFiles(path string) []string {
 	a.checkPath(path)
 	entries, err := os.ReadDir(path)
@@ -968,7 +995,6 @@ func (a *Agent) listFiles(path string) []string {
 	return names
 }
 
-// checkPath fails unless path is under the account home or /tmp.
 func (a *Agent) checkPath(path string) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -982,7 +1008,6 @@ func (a *Agent) checkPath(path string) {
 	a.tb.Fatalf("node: path %s is outside the account home and /tmp", path)
 }
 
-// pathRoots returns the directories the agent is allowed to touch.
 func (a *Agent) pathRoots() []string {
 	roots := []string{"/tmp"}
 	if a.env.Home != "" {
@@ -1000,7 +1025,6 @@ func (a *Agent) pathRoots() []string {
 	return abs
 }
 
-// pathWithin reports whether path is root or lies below it.
 func pathWithin(path, root string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
@@ -1022,7 +1046,6 @@ func (a *Agent) HoldPort(addr string) (string, string, error) {
 	return id, bound, nil
 }
 
-// holdPort implements HoldPort inside Guard.
 func (a *Agent) holdPort(addr string) (string, string) {
 	listener, err := HoldPort(addr)
 	if err != nil {
@@ -1070,7 +1093,6 @@ func (a *Agent) OpenConn(addr string, timeout time.Duration) (string, error) {
 	return id, nil
 }
 
-// openConn implements OpenConn inside Guard.
 func (a *Agent) openConn(addr string, timeout time.Duration) string {
 	if timeout <= 0 {
 		timeout = agentDialBound
@@ -1097,7 +1119,6 @@ func (a *Agent) ConnAlive(id string) (bool, error) {
 	return alive, nil
 }
 
-// connAlive implements ConnAlive inside Guard.
 func (a *Agent) connAlive(id string) bool {
 	a.mu.Lock()
 	conn, ok := a.conns[id]
@@ -1129,7 +1150,6 @@ func (a *Agent) ProbeHello(addr string, timeout time.Duration) (string, error) {
 	return reason, nil
 }
 
-// probeHello implements ProbeHello inside Guard.
 func (a *Agent) probeHello(addr string, timeout time.Duration) string {
 	if timeout <= 0 {
 		timeout = agentDialBound
@@ -1186,7 +1206,6 @@ func (a *Agent) Exec(argv []string, env map[string]string, timeout time.Duration
 	return result, nil
 }
 
-// exec implements Exec inside Guard.
 func (a *Agent) exec(argv []string, env map[string]string, timeout time.Duration) AgentExecResult {
 	if len(argv) == 0 {
 		a.tb.Fatalf("node: exec needs a command")
@@ -1222,7 +1241,6 @@ func (a *Agent) exec(argv []string, env map[string]string, timeout time.Duration
 	return result
 }
 
-// session returns a started session or fails.
 func (a *Agent) session(id string) *agentSession {
 	a.mu.Lock()
 	s, ok := a.sessions[id]
@@ -1233,7 +1251,6 @@ func (a *Agent) session(id string) *agentSession {
 	return s
 }
 
-// extra returns the extra MCP server process numbered n, counting from one.
 func (s *agentSession) extra(n int) *MCPProc {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1243,7 +1260,6 @@ func (s *agentSession) extra(n int) *MCPProc {
 	return s.extras[n-1]
 }
 
-// accountHome returns the account home the Broker configuration lives in.
 func (a *Agent) accountHome() string {
 	if home := a.env.Extra["PEERS_TEST_HOME"]; home != "" {
 		return home
@@ -1251,7 +1267,6 @@ func (a *Agent) accountHome() string {
 	return a.env.Home
 }
 
-// writeAccountConfig replaces the account Broker configuration with yaml.
 func (a *Agent) writeAccountConfig(yaml string) {
 	dir := filepath.Join(a.accountHome(), ".peers")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -1297,7 +1312,6 @@ func ParseMode(name string) (fakesession.Mode, error) {
 	}
 }
 
-// stringArg returns arg as a string or fails.
 func stringArg(arg any) string {
 	value, ok := arg.(string)
 	if !ok {
@@ -1306,7 +1320,6 @@ func stringArg(arg any) string {
 	return value
 }
 
-// boolArg returns arg as a bool or fails.
 func boolArg(arg any) bool {
 	value, ok := arg.(bool)
 	if !ok {
@@ -1315,7 +1328,6 @@ func boolArg(arg any) bool {
 	return value
 }
 
-// intArg returns arg as an integer or fails.
 func intArg(arg any) int {
 	switch value := arg.(type) {
 	case float64:

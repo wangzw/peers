@@ -11,20 +11,12 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// pollCallWithin makes one tool call from inside a wait. The call is bounded by
-// pollBound and runs that bound in full; it is not shortened when the wait has
-// less time left, because a call cut short by the window would report a healthy
-// Broker as unobservable on a loaded runner. A stalled call can therefore
-// outlast its wait by up to one poll bound. A deadline that has already passed
-// makes no call and returns an error instead.
-//
-// A call that reaches pollBound is marked as a stall, so a wait or consistency
-// window can tell a Broker that stopped answering from a retryable failure.
-// The call and the log are parameters so the bound logic is testable without a
-// live MCP session: Session.PollCall passes the session's CallTool and t.Logf.
-// A transport or protocol failure is returned as an error and logged with the
-// session, the tool, the elapsed time and the error instead of failing the
-// test, so the wait can poll again.
+// pollCallWithin makes one tool call from inside a wait, bounded by pollBound
+// and run in full even when the wait has little time left, so a loaded runner
+// cannot report a healthy Broker as unobservable. A deadline that has passed
+// makes no call; a call that reaches pollBound carries the stall marker, and a
+// transport failure is returned and logged so the wait can poll again. The call
+// and log are parameters so the bound logic is testable without a live session.
 func pollCallWithin(session, tool string, deadline time.Time, pollBound time.Duration, call func(context.Context) (*mcp.CallToolResult, error), logf func(format string, args ...any)) (text string, isError bool, err error) {
 	if !time.Now().Before(deadline) {
 		err := fmt.Errorf("syscontainer: calling %s as %s: no time left in the wait", tool, session)

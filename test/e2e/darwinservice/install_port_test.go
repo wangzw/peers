@@ -11,10 +11,9 @@ import (
 	"testing"
 )
 
-// TestUserServiceInstallRefusesAnOccupiedListenPort covers the field report on
-// macOS: when another process already holds the address in broker.listen, a
-// user service install must stop before launchd loads anything and say
-// which address, which configuration file and which key are at fault.
+// TestUserServiceInstallRefusesAnOccupiedListenPort checks that a user service
+// install refuses a broker.listen address another process holds and names the
+// address, the configuration file and the key at fault.
 func TestUserServiceInstallRefusesAnOccupiedListenPort(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
@@ -45,9 +44,6 @@ func TestUserServiceInstallRefusesAnOccupiedListenPort(t *testing.T) {
 		}
 	}
 
-	// A failed installation must leave launchd without the service, so a
-	// following login does not start a Broker that cannot bind. The precheck
-	// runs before the plist is written, so the file must be absent as well.
 	domain := userDomain(t)
 	if out, loaded := launchctlPrint(domain); loaded {
 		t.Errorf("launchd still has %s/%s loaded after the failed installation:\n%s",
@@ -59,9 +55,6 @@ func TestUserServiceInstallRefusesAnOccupiedListenPort(t *testing.T) {
 	}
 }
 
-// occupiedListenAddr holds a loopback TCP listener for the rest of the test and
-// returns its address. Nothing else can take the address while the listener
-// stays open, so the installation's preflight bind is guaranteed to fail.
 func occupiedListenAddr(t *testing.T) string {
 	t.Helper()
 
@@ -73,9 +66,6 @@ func occupiedListenAddr(t *testing.T) string {
 	return listener.Addr().String()
 }
 
-// preserveUserConfig returns the user configuration path and restores the file
-// when the test ends. The test overwrites it with a listen address; a developer
-// machine that opted into these tests keeps the configuration it had.
 func preserveUserConfig(t *testing.T) string {
 	t.Helper()
 

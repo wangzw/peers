@@ -12,13 +12,10 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// stubHandlers holds the stand-in programs the tests run by re-executing this
-// test binary. TestMain runs one of them when E2E_NODE_STUB names it. Later
-// work items add their own modes by calling registerStub from their test file,
-// so this file stays the only TestMain in the package.
+// stubHandlers re-executes this test binary as a stand-in program, which
+// TestMain runs when E2E_NODE_STUB names it.
 var stubHandlers = map[string]func() int{}
 
-// registerStub adds a stand-in program under name.
 func registerStub(name string, fn func() int) {
 	stubHandlers[name] = fn
 }
@@ -41,16 +38,11 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// stubEchoOut is the structured result of the echo_env tool.
 type stubEchoOut struct {
 	Env map[string]string `json:"env"`
 	Cwd string            `json:"cwd"`
 }
 
-// runMCPStub serves an MCP server on standard input and output. It exposes
-// echo_env, which reports the process environment and working directory, and
-// fail, which returns an error result. It records the signals it receives in
-// STUB_SIGNAL_LOG and keeps running on SIGINT when STUB_IGNORE_INT=1.
 func runMCPStub() int {
 	watchStubSignals()
 
@@ -89,8 +81,6 @@ func runMCPStub() int {
 	return 0
 }
 
-// watchStubSignals logs SIGINT and SIGTERM and exits on them, unless
-// STUB_IGNORE_INT keeps an interrupt from terminating the process.
 func watchStubSignals() {
 	signals := make(chan os.Signal, 4)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)

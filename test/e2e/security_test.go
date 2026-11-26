@@ -25,38 +25,22 @@ import (
 )
 
 const (
-	// secWaitBound bounds a wait that no product timer governs.
-	secWaitBound = harness.EventTimeout
-	// secRelinkBound is reconnect_max + dial_timeout plus the shared fallback:
-	// the timers that govern a link coming back under FastTimers.
+	secWaitBound   = harness.EventTimeout
 	secRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
-	// secBrokerPort is the default Broker port these scenarios use.
-	secBrokerPort = "17443"
+	secBrokerPort  = "17443"
 	// secLeakWindow is a deliberate observation window for the negative
 	// assertions: more than two address-check intervals (500ms each), so an
 	// implementation that broadcasts private topic names on a periodic sync
-	// has several chances to do so. The checks inside it make no product call
-	// that expects a change.
-	secLeakWindow = 1500 * time.Millisecond
-	// secRelayStartBound bounds starting the relay through the node control
-	// protocol. The request only binds a listener and dials on demand, so no
-	// product timer governs it and the shared fallback applies.
-	secRelayStartBound = harness.EventTimeout
-	// secCaptureWriteBound bounds the wait for tcpdump to write the bytes the
-	// test has already sent. tcpdump flushes on packet activity and no product
-	// timer governs it, so it uses the shared fallback.
+	// has several chances to do so.
+	secLeakWindow        = 1500 * time.Millisecond
+	secRelayStartBound   = harness.EventTimeout
 	secCaptureWriteBound = harness.EventTimeout
 )
 
-// secFingerprintPattern matches a stored peer fingerprint of the form the peer
-// table writes. A failed pairing must leave no such value behind.
 var secFingerprintPattern = regexp.MustCompile(`[0-9a-f]{64}`)
 
-// TestMITM places a relay on the router between hostB and hostA. The relay
-// terminates TLS with its own certificate and dials hostA with a second one;
-// it therefore sees every frame while holding none of the pairing key. A
-// pairing that succeeded through it would mean the authentication code does
-// not bind both sides' certificate fingerprints.
+// TestMITM places a TLS-terminating relay between two hosts and checks that a
+// pairing through it is rejected.
 func TestMITM(t *testing.T) {
 	t.Parallel()
 
@@ -67,8 +51,6 @@ func TestMITM(t *testing.T) {
 
 	aWan := net.JoinHostPort(c.Addr("hostA", "wan"), secBrokerPort)
 
-	// The node agent in the router runs the relay; it listens on the port the
-	// REDIRECT rule sends hostB's connection to and dials hostA upstream.
 	router := secStartRelayAgent(t, c)
 	ctx, cancel := context.WithTimeout(context.Background(), secRelayStartBound)
 	defer cancel()
@@ -84,16 +66,12 @@ func TestMITM(t *testing.T) {
 	t.Run("REQ-broker-pairing-012 man in the middle", func(t *testing.T) {
 		key := secCreateKey(t, opA)
 		address := secShownAddress(t, key.Addresses, aWan)
-		// hostB dials the displayed address verbatim. The REDIRECT rule sends
-		// that connection to the relay, whose certificate is not hostA's.
 		r := secConnect(t, opB, address, key.Key)
 		r.MustCode(t, "pairing_rejected")
 		if !r.HasPrefix("Not connected") {
 			t.Fatalf("the MITM pairing error %q does not start with Not connected", r.Text)
 		}
 
-		// The traffic really crossed the relay. A relay that never accepted a
-		// stream would make the rejection above prove nothing about a MITM.
 		harness.Eventually(t, secWaitBound, "the relay carried the pairing attempt in both directions", func() (bool, string) {
 			stats, err := router.RelayStats(context.Background())
 			if err != nil {
@@ -108,8 +86,6 @@ func TestMITM(t *testing.T) {
 			return true, ""
 		})
 
-		// Neither side recorded anything: not the other Broker, not the relay
-		// that actually presented a certificate.
 		for name, node := range map[string]*harness.Node{"hostA": aNode, "hostB": bNode} {
 			resp, detail := node.Oracle().ListBrokers(t)
 			if detail != nil {
@@ -138,17 +114,16 @@ func TestMITM(t *testing.T) {
 	})
 }
 
-// TestLinkEncrypted captures the wire traffic between two paired Brokers and
-// checks that it is TLS and that neither a session name, a topic name nor a
-// message body appears in it in any common encoding.
+// TestLinkEncrypted checks that traffic between two paired Brokers is TLS and
+// carries no session name, topic name or message body in a common encoding.
 func TestLinkEncrypted(t *testing.T) {
 	t.Parallel()
 
 	c := harness.Up(t, harness.TopoNAT)
 	aNode, bNode := c.Node("hostA"), c.Node("hostB")
 
-	// Capture returns only after tcpdump has attached, so the first frame is
-	// never sent into a capture that is not running yet.
+	// Capture returns only after tcpdump has attached, so no frame is sent into
+	// a capture that is not running yet.
 	stop := c.Capture(t, "hostA", 17443)
 	stopped := false
 	defer func() {
@@ -189,8 +164,6 @@ func TestLinkEncrypted(t *testing.T) {
 		secJoin(t, a1, topic)
 		secJoin(t, b1, topic)
 
-		// Both sessions must be visible to each other before a message can be
-		// addressed; this also proves the name travelled over the link.
 		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the two sessions see each other", func(deadline time.Time) (bool, string) {
 			out, state := secListAgentsPoll(t, deadline, a1)
 			if state != "" {
@@ -209,16 +182,14 @@ func TestLinkEncrypted(t *testing.T) {
 			t.Fatalf("hostB received body %q, want %q", content, body)
 		}
 
-		// The reply keeps application data flowing in the other direction too.
 		b1.Call(t, "send_message", map[string]any{"to": frame.FromName, "message": body}).MustOK(t)
 		reply := a1.WaitFrame(t, secWaitBound)
 		if content := secEnvelopeBody(t, reply.Content); content != body {
 			t.Fatalf("hostA received reply body %q, want %q", content, body)
 		}
 
-		// tcpdump services its ring on a timer and loses queued packets when
-		// it is interrupted, so wait until it has actually written the
-		// capture instead of stopping right after the last frame.
+		// tcpdump loses queued packets when interrupted, so wait until it has
+		// written the capture before stopping it.
 		secWaitCaptureBytes(t, c, "hostA", 17443, 2048)
 		stopped = true
 		pcap := stop()
@@ -238,18 +209,16 @@ func TestLinkEncrypted(t *testing.T) {
 	})
 }
 
-// TestPrivateTopicNamesStayHome checks that a topic without a member on the
-// peer's side does not reach that peer at all: neither its name nor the list
-// of its members appears in any tool result, the status output, the run log or
-// the audit file. Once the peer joins the same topic, the member appears.
+// TestPrivateTopicNamesStayHome checks that a topic with no member on the
+// peer's side does not reach it in tool results, the status output, the run log
+// or the audit file.
 func TestPrivateTopicNamesStayHome(t *testing.T) {
 	t.Parallel()
 
 	c := harness.Up(t, harness.TopoNAT)
 	aNode, bNode := c.Node("hostA"), c.Node("hostB")
 	secStartBroker(t, aNode, secConfig())
-	// B runs at debug level so a roster frame the topic Registry ignores or
-	// drops leaves a record. A leaked roster would otherwise be invisible here.
+	// B runs at debug level so a dropped roster frame leaves a record.
 	secStartBroker(t, bNode, secConfig("log:\n  level: debug\n"))
 
 	opA := secOperator(t, aNode)
@@ -278,9 +247,6 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 	secWaitRegistered(t, observer, observerName)
 	secJoin(t, observer, openTopic)
 
-	// B has no member of secretTopic. Its Operator and its registered session
-	// together exercise every read-only tool; an implementation that broadcasts
-	// topic names or member lists to every peer fails here.
 	assertQuiet := func(t *testing.T) {
 		t.Helper()
 		for name, session := range map[string]*harness.Session{"operator": opB, "session": observer} {
@@ -299,17 +265,13 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 	}
 
 	t.Run("REQ-topics-009 private topic name", func(t *testing.T) {
-		// The window opens with the join that creates the private topic, so a
-		// roster frame produced by that join is inside it. The log offset taken
-		// here turns every record appended afterwards into evidence.
 		aFingerprint := alIdentityFingerprint(t, aNode)
+		// The window opens with the join that creates the private topic, so a
+		// roster frame produced by that join is inside it; the offset taken
+		// here turns every record appended afterwards into evidence.
 		logStart := len(bNode.BrokerLog(t))
 		secJoin(t, worker, secretTopic)
 
-		// Negative observations run over a window rather than a single sample:
-		// a periodic sync can leak on any later round. The reads are poll
-		// calls: a transport failure is an inconclusive sample and is retried,
-		// and only an answer can show a leak.
 		harness.ConsistentlyPoll(t, secLeakWindow, harness.ListAgentsPollBound, "hostB never learns the private topic name or member", nil, func(deadline time.Time) harness.Observation {
 			for name, session := range map[string]*harness.Session{"operator": opB, "session": observer} {
 				for _, tool := range secReadOnlyTools(name) {
@@ -330,15 +292,9 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 			return harness.Observed(true, "")
 		})
 
-		// A roster or roster_delta frame from A that B had to ignore or drop is
-		// the wire-level form of the leak: the topic was not in the
-		// intersection, so its name had no business leaving A.
 		brokerLog := bNode.BrokerLog(t)
 		secAssertNoRosterFrames(t, brokerLog[logStart:], aFingerprint)
 
-		// Positive control for the log checks below: the same log records B's
-		// own session name, so a log that is empty or unreadable fails here
-		// instead of passing the absence checks because it was never read.
 		if !strings.Contains(string(brokerLog), observerName) {
 			t.Fatalf("hostB's Broker log does not record its own session %q; the absence checks are blind", observerName)
 		}
@@ -353,7 +309,6 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 	})
 
 	t.Run("REQ-topics-014 member list", func(t *testing.T) {
-		// The member is still hidden while B has no membership in the topic.
 		assertQuiet(t)
 
 		secJoin(t, observer, secretTopic)
@@ -375,13 +330,9 @@ func TestPrivateTopicNamesStayHome(t *testing.T) {
 	})
 }
 
-// TestEchoedTopicDigestsRevealNothing proves REQ-topics-014 against a real
-// Broker: a peer that echoes a Broker's own TopicDigests, then forges a Roster
-// under an echoed digest, learns and injects nothing. A digest binds the
-// sender's fingerprint (ADR-salted-topic-digest), so one direction's digest
-// never matches the other and the echoed set intersects nothing. A fresh local
-// topic then provides a fence: its Roster can only come from the peer's own
-// digest set, so every Roster received before it must be the shared-t one.
+// TestEchoedTopicDigestsRevealNothing checks that a peer that echoes a Broker's
+// own TopicDigests and forges a Roster under an echoed digest learns and injects
+// nothing.
 func TestEchoedTopicDigestsRevealNothing(t *testing.T) {
 	t.Parallel()
 
@@ -411,34 +362,28 @@ func TestEchoedTopicDigestsRevealNothing(t *testing.T) {
 	f.WaitLinked(t, secWaitBound)
 
 	t.Run("REQ-topics-014 echoed digests", func(t *testing.T) {
-		// On link up A sends one digest per local topic. Only the worker holds
-		// any, and it holds exactly the two private topics.
 		digests := f.TopicDigests(t)
 		if len(digests.Digests) != 2 {
 			t.Fatalf("A sent %d topic digests, want 2 (secret-x and shared-t)", len(digests.Digests))
 		}
 
 		// Echo A's set verbatim, then forge a Roster under one of the echoed
-		// digests while that set is still A's latest. A knows the digest, so the
-		// frame reaches the direction check instead of the branch that drops a
-		// digest outside the latest set.
+		// digests while that set is still A's latest: A knows the digest, so
+		// the frame reaches the direction check instead of the branch that
+		// drops a digest outside the latest set.
 		f.EchoDigests(t)
 		f.SendRoster(t, digests.Digests[0], fakePeerWireMember{Name: forgedName, Ref: "abcdef"})
 
-		// The peer then sends its own direction for shared-t. A answers with a
-		// Roster under the digest it sends for shared-t, which differs from
-		// every echoed digest.
 		sent := f.SendTopicDigests(t, sharedTopic)
 		if len(sent.Want) != 1 {
 			t.Fatalf("digests_sent carried %d expected digests, want 1", len(sent.Want))
 		}
 		sharedDigest := sent.Want[0]
 
-		// Joining a fresh topic adds a digest the echo never carried. When the
-		// peer claims that topic, A's Roster under its digest is a fence the
-		// echo cannot produce, so every Roster received before it has already
-		// been recorded. The fence requires each of them to be the shared-t
-		// Roster; anything else is the echoed set matching secret-x.
+		// Joining a fresh topic adds a digest the echo never carried: A's
+		// Roster under it is a fence the echo cannot produce, and frames are
+		// ordered, so every Roster before the fence has arrived and must all
+		// be shared-t's.
 		secJoin(t, worker, freshTopic)
 		f.TopicDigests(t)
 		fresh := f.SendTopicDigests(t, freshTopic)
@@ -455,25 +400,15 @@ func TestEchoedTopicDigestsRevealNothing(t *testing.T) {
 			t.Fatalf("A lists the peer's forged member %q at %q", forgedName, entry.Address)
 		}
 
-		// A never writes a private topic's name or a member name from a dropped
-		// frame to its own log or audit.
 		secAssertAbsent(t, "hostA Broker log", string(a.BrokerLog(t)[logStart:]), secretTopic, forgedName)
 		audit := secReadIfExists(t, a.Node, filepath.Join(a.AccountHome(), ".peers", "audit.log"))
 		secAssertAbsent(t, "hostA audit log", string(audit), secretTopic, forgedName)
 	})
 }
 
-// secStartRelayAgent starts a second node-agent process on the router and
-// returns a client for it.
-//
-// The relay's gRPC server uses credentials.NewTLS, and grpc-go v1.85 enforces
-// ALPN on such a server by default, while the product's Link client completes
-// TLS without advertising h2. A relay served by grpc's TLS credentials
-// therefore closes the connection after the handshake and never creates a
-// stream. The relay is test infrastructure and must accept the product client
-// as it is, so this helper starts the agent with ALPN enforcement disabled.
-// The alternative, changing the relay's credentials, is a harness change and
-// belongs to that work item; nothing outside this test file is modified.
+// secStartRelayAgent disables ALPN because grpc-go v1.85 enforces it on a
+// server built from credentials.NewTLS, while the product's Link client
+// completes TLS without advertising h2.
 func secStartRelayAgent(t *testing.T, c *harness.Cluster) *ctl.Client {
 	t.Helper()
 	ctlDir := c.CTLDir(t, "router")
@@ -497,9 +432,6 @@ func secStartRelayAgent(t *testing.T, c *harness.Cluster) *ctl.Client {
 	return client
 }
 
-// secReadOnlyTools returns the read-only tools a session may call. An
-// Operator never registers as an Agent, so the tools that require an Agent
-// identity are unavailable to it; list_brokers is the one it can use.
 func secReadOnlyTools(sessionName string) []string {
 	if sessionName == "operator" {
 		return []string{"list_brokers"}
@@ -507,9 +439,6 @@ func secReadOnlyTools(sessionName string) []string {
 	return []string{"list_agents", "list_topics", "list_brokers"}
 }
 
-// secWaitCaptureBytes waits until tcpdump has written more than want bytes to
-// the capture file. A tcpdump that has received packets may still hold them in
-// its ring; this wait makes the stop deterministic.
 func secWaitCaptureBytes(t *testing.T, c *harness.Cluster, node string, port, want int) []byte {
 	t.Helper()
 	path := fmt.Sprintf("/tmp/e2e-capture-%d.pcap", port)
@@ -524,8 +453,6 @@ func secWaitCaptureBytes(t *testing.T, c *harness.Cluster, node string, port, wa
 	return data
 }
 
-// secStartBroker starts a Broker with config and fails when it does not come
-// up.
 func secStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -534,13 +461,10 @@ func secStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// secConfig merges the shortened timers with the given fragments.
 func secConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// secOperator starts an MCP server process without an inbox socket, which
-// never registers as an Agent but can call the management tools.
 func secOperator(t *testing.T, node *harness.Node) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -548,7 +472,6 @@ func secOperator(t *testing.T, node *harness.Node) *harness.Session {
 	return s
 }
 
-// secWaitRegistered waits until the session is registered and lists itself.
 func secWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
@@ -563,7 +486,6 @@ func secWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	})
 }
 
-// secCreateKey calls create_pairing_key and decodes the result.
 func secCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := session.Call(t, "create_pairing_key", nil)
@@ -575,13 +497,11 @@ func secCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairin
 	return out
 }
 
-// secConnect calls connect_broker.
 func secConnect(t *testing.T, session *harness.Session, address, key string) harness.Result {
 	t.Helper()
 	return session.Call(t, "connect_broker", map[string]any{"address": address, "key": key})
 }
 
-// secWaitConnected waits until the local interface reports alias connected.
 func secWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the local interface reports "+alias+" connected", func() (bool, string) {
@@ -601,9 +521,9 @@ func secWaitConnected(t *testing.T, node *harness.Node, alias string, bound time
 	})
 }
 
-// secJoin joins a topic, retrying while the session is still registering.
-// join_topic's handler may spend topicRPCTimeout before the update hint runs,
-// so the poll uses harness.TopicCallPollBound.
+// secJoin retries while the session is still registering. The poll needs
+// harness.TopicCallPollBound because join_topic's handler may spend
+// topicRPCTimeout before the update hint runs.
 func secJoin(t *testing.T, session *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+topic, func(deadline time.Time) (bool, string) {
@@ -618,7 +538,6 @@ func secJoin(t *testing.T, session *harness.Session, topic string) {
 	})
 }
 
-// secListAgents calls list_agents and returns the decoded answer.
 func secListAgents(t *testing.T, session *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	r := session.Call(t, "list_agents", nil)
@@ -632,14 +551,11 @@ func secListAgents(t *testing.T, session *harness.Session) (mcpserver.ListAgents
 	return out, ""
 }
 
-// secListAgentsPoll is secListAgents for a wait callback: the call is bounded
-// by the wait's deadline and a transport error is returned as state.
 func secListAgentsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", nil)
 }
 
-// secListBrokers calls list_brokers and returns the decoded answer.
 func secListBrokers(t *testing.T, session *harness.Session) (mcpserver.ListBrokersOut, string) {
 	t.Helper()
 	r := session.Call(t, "list_brokers", nil)
@@ -653,7 +569,6 @@ func secListBrokers(t *testing.T, session *harness.Session) (mcpserver.ListBroke
 	return out, ""
 }
 
-// secFindAgent returns the listed entry named name.
 func secFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if secAgentName(agent.Address) == name {
@@ -663,7 +578,6 @@ func secFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut,
 	return mcpserver.AgentOut{}, false
 }
 
-// secAgentAddress returns the full address of the listed agent named name.
 func secAgentAddress(t *testing.T, session *harness.Session, name string) string {
 	t.Helper()
 	out, state := secListAgents(t, session)
@@ -677,7 +591,6 @@ func secAgentAddress(t *testing.T, session *harness.Session, name string) string
 	return agent.Address
 }
 
-// secAgentName returns the name part of an address, before "@".
 func secAgentName(address string) string {
 	if at := strings.LastIndexByte(address, '@'); at >= 0 {
 		return address[:at]
@@ -685,9 +598,6 @@ func secAgentName(address string) string {
 	return address
 }
 
-// secShownAddress returns the shown address that carries wantAddr. The shown
-// form wraps the address in parentheses after the hostname, for example
-// "hostA(10.0.0.2:17443)".
 func secShownAddress(t *testing.T, shown []string, wantAddr string) string {
 	t.Helper()
 	for _, address := range shown {
@@ -699,8 +609,6 @@ func secShownAddress(t *testing.T, shown []string, wantAddr string) string {
 	return ""
 }
 
-// secEnvelopeBody returns the message body from the attribution envelope the
-// transport wraps it in.
 func secEnvelopeBody(t *testing.T, content string) string {
 	t.Helper()
 	openEnd := strings.Index(content, ">\n")
@@ -715,13 +623,11 @@ func secEnvelopeBody(t *testing.T, content string) string {
 	return strings.TrimSuffix(body, closing)
 }
 
-// secPeersJSON returns the peer table's bytes, or nil when it does not exist.
 func secPeersJSON(t *testing.T, node *harness.Node) []byte {
 	t.Helper()
 	return secReadIfExists(t, node, filepath.Join(node.AccountHome(), ".peers", "peers.json"))
 }
 
-// secReadIfExists reads path on node and returns nil when it is absent.
 func secReadIfExists(t *testing.T, node *harness.Node, path string) []byte {
 	t.Helper()
 	res := node.Exec(t, []string{"sh", "-c", "if [ -f " + shellQuote(path) + " ]; then cat " + shellQuote(path) + "; fi"}, nil)
@@ -731,7 +637,6 @@ func secReadIfExists(t *testing.T, node *harness.Node, path string) []byte {
 	return []byte(res.Stdout)
 }
 
-// secAssertAbsent fails when any marker appears in what.
 func secAssertAbsent(t *testing.T, what, haystack string, markers ...string) {
 	t.Helper()
 	for _, marker := range markers {
@@ -741,11 +646,8 @@ func secAssertAbsent(t *testing.T, what, haystack string, markers ...string) {
 	}
 }
 
-// secAssertNoRosterFrames fails when the Broker log holds a record of a roster
-// or roster_delta frame from peer that the topic Registry ignored or dropped.
-// The kinds are the Registry's wire kinds: 201 is Roster and 202 RosterDelta.
-// Records from other peers, other kinds, and non-JSON lines are skipped, so a
-// truncated tail cannot fail the test on its own.
+// secAssertNoRosterFrames checks frames from peer; the Registry's wire kinds
+// are 201 for Roster and 202 for RosterDelta.
 func secAssertNoRosterFrames(t *testing.T, log []byte, peer string) {
 	t.Helper()
 	for _, line := range bytes.Split(log, []byte("\n")) {
@@ -769,11 +671,9 @@ func secAssertNoRosterFrames(t *testing.T, log []byte, peer string) {
 	}
 }
 
-// TestREQBrokerConfig069_RejectedConnectionsMergeBySource reproduces the
-// certificate-rotation bypass end to end. A client that is not a paired peer
-// dials with a fresh certificate every time; the audit log must gain one
-// connection_rejected record that counts every attempt and names the network
-// source, not one record per certificate.
+// TestREQBrokerConfig069_RejectedConnectionsMergeBySource checks that unpaired
+// dials with fresh certificates merge into one connection_rejected audit record
+// keyed by network source.
 func TestREQBrokerConfig069_RejectedConnectionsMergeBySource(t *testing.T) {
 	c := harness.Up(t, harness.TopoSingle)
 	host := c.Node("hostA")
@@ -821,8 +721,6 @@ func TestREQBrokerConfig069_RejectedConnectionsMergeBySource(t *testing.T) {
 	}
 }
 
-// secForbiddenForms returns the encodings of s that a capture must not
-// contain: UTF-8, standard and raw base64, and UTF-16 in both byte orders.
 func secForbiddenForms(s string) [][]byte {
 	forms := [][]byte{
 		[]byte(s),
@@ -841,8 +739,6 @@ func secForbiddenForms(s string) [][]byte {
 	return append(forms, le, be)
 }
 
-// secToken returns a short random lowercase hex token that makes a marker
-// unique to one run.
 func secToken(t *testing.T) string {
 	t.Helper()
 	var b [6]byte

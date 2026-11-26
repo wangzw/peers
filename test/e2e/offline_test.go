@@ -15,18 +15,13 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// offlineWaitBound is the fallback for a wait on a state change or a roster
-// update; no product timer governs those events.
 const offlineWaitBound = harness.EventTimeout
 
 // TestBrokerOffline covers the offline switch end to end: a peer's delivery is
 // refused, links and topic exchange continue, local and outgoing sends still
 // work, the state survives a restart and a configuration-file edit, the
 // terminal commands and the tool set it, and status shows it.
-// REQ-agent-messaging-039 to 041, REQ-broker-config-065 to 068.
 func TestBrokerOffline(t *testing.T) {
-	// Both hosts are directly reachable on a flat network, so the pairing test
-	// can dial the offline Broker from the other host.
 	c := harness.Up(t, harness.TopoFlat(2))
 	aNode, bNode := c.Node("hostA"), c.Node("hostB")
 	lkStartBroker(t, aNode, lkConfig())
@@ -40,13 +35,11 @@ func TestBrokerOffline(t *testing.T) {
 	a1 := lkSession(t, aNode, "a1")
 	t.Cleanup(func() { a1.End(t) })
 	b1 := lkSession(t, bNode, "b1")
-	// Registered as a cleanup rather than a defer: cleanups run in reverse
-	// registration order, so the switch cleanup below still has a live session
-	// to call.
+	// Registered as a cleanup, not a defer: cleanups run in reverse order, so
+	// the online cleanup below still has a live session.
 	t.Cleanup(func() { b1.End(t) })
 
-	// Arrange the paired link last, so both sessions are registered before the
-	// rosters exchange.
+	// Pair last, so both sessions are registered before the rosters exchange.
 	addrA := lkAddr(c, "hostA", "net")
 	addrB := lkAddr(c, "hostB", "net")
 	key := lkCreateKey(t, opA)
@@ -60,8 +53,6 @@ func TestBrokerOffline(t *testing.T) {
 		t.Helper()
 		offSetOnline(t, b1, true)
 	}
-	// Every subtest leaves B online so the next one starts from the same
-	// state, even when it fails partway.
 	t.Cleanup(func() { offSetOnline(t, b1, true) })
 
 	t.Run("REQ-agent-messaging-039 peer delivery is refused", func(t *testing.T) {
@@ -81,9 +72,6 @@ func TestBrokerOffline(t *testing.T) {
 		if !strings.Contains(r.Text, "is offline and refuses messages from other hosts") {
 			t.Errorf("error = %q, want the Broker's explanation", r.Text)
 		}
-		// The refusal must name B itself, not merely carry the "reported by
-		// Broker" suffix. A lists B as its peer, so that entry's fingerprint
-		// is the one the error has to report.
 		bPeer, ok := lkFindPeer(lkPeers(t, aNode), "hostB.peer")
 		if !ok {
 			t.Fatal("A lists no BrokerInfo for hostB.peer")
@@ -113,7 +101,6 @@ func TestBrokerOffline(t *testing.T) {
 	t.Run("REQ-agent-messaging-040 links and topics continue", func(t *testing.T) {
 		offSetOnline(t, b1, false)
 
-		// The link stays established while the Broker is offline.
 		harness.Consistently(t, 2*time.Second, "both sides keep the link while B is offline", func() (bool, string) {
 			a := lkStatus(t, aNode, "hostB.peer")
 			b := lkStatus(t, bNode, "hostA.peer")
@@ -123,13 +110,11 @@ func TestBrokerOffline(t *testing.T) {
 			return true, ""
 		})
 
-		// A network cut and restore rebuilds the link while B stays offline.
 		lkCutAndWaitDown(t, c, aNode, bNode)
 		c.Restore(t)
 		lkWaitConnected(t, bNode, "hostA.peer", offlineWaitBound)
 		lkWaitConnected(t, aNode, "hostB.peer", offlineWaitBound)
 
-		// A new Agent on B joining the shared topic reaches A's roster.
 		b2 := lkSession(t, bNode, "b2")
 		defer b2.End(t)
 		harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "A sees the new agent on the offline B", func(deadline time.Time) (bool, string) {
@@ -143,7 +128,6 @@ func TestBrokerOffline(t *testing.T) {
 			return true, ""
 		})
 
-		// The rebuilt link still refuses deliveries.
 		r := offSend(t, a1, "b2@hostB.peer", "after relink")
 		if !r.IsError || !strings.Contains(r.Text, "(code: broker_offline;") {
 			t.Fatalf("delivery after relink = %q, want broker_offline", r.Text)
@@ -158,21 +142,18 @@ func TestBrokerOffline(t *testing.T) {
 		defer b2.End(t)
 		selfB2 := offSelf(t, b2)
 
-		// Local sends are unaffected.
 		offSend(t, b1, selfB2, "local while offline").MustOK(t)
 		frame, ok := b2.Fake().WaitFrame(offlineWaitBound)
 		if !ok || !strings.Contains(frame.Content, "local while offline") {
 			t.Fatalf("the local target received %q, want the local message", frame.Content)
 		}
 
-		// Sending to a remote Agent succeeds even though this Broker is offline.
 		offSend(t, b1, "a1@hostA.peer", "outgoing while offline").MustOK(t)
 		frame, ok = a1.Fake().WaitFrame(offlineWaitBound)
 		if !ok || !strings.Contains(frame.Content, "outgoing while offline") {
 			t.Fatalf("the remote target received %q, want the outgoing message", frame.Content)
 		}
 
-		// The reply into the offline Broker is refused.
 		r := offSend(t, a1, "b1@hostB.peer", "reply into the offline Broker")
 		if !r.IsError || !strings.Contains(r.Text, "(code: broker_offline;") {
 			t.Fatalf("the reply = %q, want broker_offline", r.Text)
@@ -183,18 +164,14 @@ func TestBrokerOffline(t *testing.T) {
 	t.Run("REQ-broker-config-065 state survives restart and a file edit", func(t *testing.T) {
 		offSetOnline(t, b1, false)
 
-		// Restart without touching the configuration file: the persisted value
-		// keeps B offline.
 		bNode.StopBroker(t, syscall.SIGTERM)
 		start := bNode.StartBroker(t, harness.BrokerSpec{})
 		if !start.Running {
 			t.Fatalf("the Broker did not restart: exit code %d: %s", start.ExitCode, strings.TrimSpace(start.StderrLast))
 		}
-		// The session registers with the restarted Broker again; the send
-		// below would otherwise race the re-registration and report not_found.
+		// Wait for re-registration and relink: a send before them would race and report
+		// not_found or peer_unreachable.
 		registrationWaitRegistered(t, b1, "b1")
-		// The restarted Broker rebuilds the link before the send below, which
-		// otherwise could race the relink and report peer_unreachable.
 		lkWaitConnected(t, aNode, "hostB.peer", offlineWaitBound)
 		lkWaitConnected(t, bNode, "hostA.peer", offlineWaitBound)
 		if status, detail := bNode.Oracle().Status(t); detail != nil || !status.GetOffline() {
@@ -205,16 +182,13 @@ func TestBrokerOffline(t *testing.T) {
 			t.Fatalf("delivery after restart = %q, want broker_offline", r.Text)
 		}
 
-		// Clear the value in the file: the running Broker applies it without a
-		// restart and records the change.
 		since := time.Now()
 		bNode.WriteConfig(t, lkConfig("broker:\n  offline: false\n"))
 		harness.Eventually(t, offlineWaitBound, "broker.offline reads false after the file edit", func() (bool, string) {
 			return ctGetConfig(t, bNode, "broker.offline") == "false", "value is " + ctGetConfig(t, bNode, "broker.offline")
 		})
-		// send_message's handler may spend sendMessageRPCTimeout before its
-		// update hint runs, so the wait and the poll use its own bound rather
-		// than the package fallback.
+		// send_message may spend sendMessageRPCTimeout before its update hint
+		// runs, so wait and poll with its own bound.
 		harness.EventuallyPoll(t, harness.ToolWaitBound("send_message"), "the reply succeeds after the file edit", func(deadline time.Time) (bool, string) {
 			r, err := a1.PollCallWithin(t, deadline, harness.SendMessagePollBound, "send_message",
 				map[string]any{"to": "b1@hostB.peer", "message": "after the file edit"})
@@ -262,7 +236,6 @@ func TestBrokerOffline(t *testing.T) {
 			t.Fatalf("Status after peers service online = %v (detail %v), want online", status, detail)
 		}
 
-		// Each change is audited with the executing account.
 		var changes []*localpb.AuditEvent
 		for _, ev := range ctAudit(t, bNode, before, 0) {
 			if ev.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_CONFIG_SET && ev.GetKey() == "broker.offline" {
@@ -300,7 +273,6 @@ func TestBrokerOffline(t *testing.T) {
 	t.Run("REQ-broker-config-068 status shows the state", func(t *testing.T) {
 		offSetOnline(t, b1, false)
 
-		// The API carries the state for the session's list_brokers.
 		resp, detail := bNode.Oracle().ListBrokers(t)
 		if detail != nil {
 			t.Fatalf("ListBrokers: %s", detail.GetMessage())
@@ -336,14 +308,10 @@ func TestBrokerOffline(t *testing.T) {
 	})
 
 	t.Run("pairing works while offline", func(t *testing.T) {
-		// A Broker that is offline still creates a pairing key and completes a
-		// new pairing; only deliveries are refused. Unpair first, because the
-		// same two Brokers cannot pair twice. A's disconnect is local, so B
-		// still holds A's record and the re-pairing takes the replacement
-		// branch of the peer table, not the insertion branch for a new peer.
+		// Unpair first, because the same two Brokers cannot pair twice: A's
+		// disconnect is local, so B still holds A's record and the re-pairing
+		// takes the replacement branch of the peer table.
 		opA.Call(t, "disconnect_broker", map[string]any{"broker": "hostB.peer"}).MustOK(t)
-		// The disconnect is local to A; B keeps A's pairing record and only
-		// loses the link, as REQ-broker-pairing-021 describes.
 		harness.Eventually(t, offlineWaitBound, "B no longer sees A as connected", func() (bool, string) {
 			status := lkStatus(t, bNode, "hostA.peer")
 			return status != localpb.BrokerStatus_BROKER_STATUS_CONNECTED, "status is " + status.String()
@@ -354,8 +322,6 @@ func TestBrokerOffline(t *testing.T) {
 		if key.Key == "" {
 			t.Fatal("create_pairing_key returned no key")
 		}
-		// A dials the offline B, so the pairing completes while B refuses
-		// deliveries.
 		lkConnect(t, opA, addrB, key.Key).MustOK(t)
 		lkWaitConnected(t, bNode, "hostA.peer", offlineWaitBound)
 		lkWaitConnected(t, aNode, "hostB.peer", offlineWaitBound)
@@ -366,10 +332,9 @@ func TestBrokerOffline(t *testing.T) {
 	})
 }
 
-// TestBrokerOfflineDirectory covers the directory while a public Broker is
-// offline: a third Broker learns its card and a public topic declared after
-// the switch through their shared peer, while the offline Broker keeps its
-// link. REQ-agent-messaging-040.
+// TestBrokerOfflineDirectory covers a third Broker learning an offline public
+// Broker's card and a topic it declared after the switch, through their shared
+// peer, while the offline Broker keeps its link.
 func TestBrokerOfflineDirectory(t *testing.T) {
 	c := harness.Up(t, harness.TopoFlat(3))
 	aNode, bNode, cNode := c.Node("hostA"), c.Node("hostB"), c.Node("hostC")
@@ -385,7 +350,7 @@ func TestBrokerOfflineDirectory(t *testing.T) {
 	opC := lkOperator(t, cNode)
 	defer opC.End(t)
 
-	// A pairs with the public B first, so B's BrokerInfo names its identity.
+	// A pairs with the public B first so its BrokerInfo carries B's identity.
 	keyB := lkCreateKey(t, opB)
 	lkConnect(t, opA, lkAddr(c, "hostB", "net"), keyB.Key).MustOK(t)
 	lkWaitConnected(t, bNode, "hostA.peer", offlineWaitBound)
@@ -397,20 +362,18 @@ func TestBrokerOfflineDirectory(t *testing.T) {
 	bFingerprint := hex.EncodeToString(bPeer.GetFingerprint())
 	bAddr := lkAddr(c, "hostB", "net")
 
-	// B refuses deliveries but stays public and keeps its link.
 	offSetOnline(t, opB, false)
 	if status, detail := bNode.Oracle().Status(t); detail != nil || !status.GetOffline() {
 		t.Fatalf("Status after set_broker_online(false) = %v (detail %v), want offline", status, detail)
 	}
 
-	// A pairs with C only after B went offline. C has no link to B, so the
-	// only source of B's card is the A-C link.
+	// A pairs with C only after B went offline, so the A-C link is the only source of B's card.
 	keyC := lkCreateKey(t, opC)
 	lkConnect(t, opA, lkAddr(c, "hostC", "net"), keyC.Key).MustOK(t)
 	lkWaitConnected(t, cNode, "hostA.peer", offlineWaitBound)
 	lkWaitConnected(t, aNode, "hostC.peer", offlineWaitBound)
-	// list_topics needs an Agent identity; list_brokers does not, so the card
-	// can be checked through the operator but the topic through this session.
+	// list_topics needs an agent identity while list_brokers does not, so the
+	// topic is checked through this session.
 	c1 := lkSession(t, cNode, "c1")
 	defer c1.End(t)
 
@@ -438,8 +401,6 @@ func TestBrokerOfflineDirectory(t *testing.T) {
 		return true, ""
 	})
 
-	// Reconciliation keeps running: a public topic B declares after going
-	// offline reaches C as well.
 	b1 := lkSession(t, bNode, "b1")
 	defer b1.End(t)
 	b1.Call(t, "join_topic", map[string]any{
@@ -458,13 +419,11 @@ func TestBrokerOfflineDirectory(t *testing.T) {
 		return false, fmt.Sprintf("public topics are %v", out.Public)
 	})
 
-	// The exchange leaves the switch alone.
 	if status, detail := bNode.Oracle().Status(t); detail != nil || !status.GetOffline() {
 		t.Fatalf("Status after the directory exchange = %v (detail %v), want still offline", status, detail)
 	}
 }
 
-// offSetOnline calls set_broker_online and decodes its result.
 func offSetOnline(t *testing.T, s *harness.Session, online bool) mcpserver.SetBrokerOnlineOut {
 	t.Helper()
 	r := s.Call(t, "set_broker_online", map[string]any{"online": online})
@@ -476,13 +435,11 @@ func offSetOnline(t *testing.T, s *harness.Session, online bool) mcpserver.SetBr
 	return out
 }
 
-// offSend calls send_message and returns the raw result.
 func offSend(t *testing.T, s *harness.Session, to, text string) harness.Result {
 	t.Helper()
 	return s.Call(t, "send_message", map[string]any{"to": to, "message": text})
 }
 
-// offSelf returns the session's own address.
 func offSelf(t *testing.T, s *harness.Session) string {
 	t.Helper()
 	r := s.Call(t, "list_agents", nil)
@@ -494,7 +451,6 @@ func offSelf(t *testing.T, s *harness.Session) string {
 	return out.Self
 }
 
-// offFindAgent returns the entry whose name part is name.
 func offFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if n, _, _ := strings.Cut(agent.Address, "@"); n == name {
@@ -504,7 +460,6 @@ func offFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut,
 	return mcpserver.AgentOut{}, false
 }
 
-// offWaitAgent waits until the session lists an agent called name.
 func offWaitAgent(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session lists "+name, func(deadline time.Time) (bool, string) {

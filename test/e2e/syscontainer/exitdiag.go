@@ -1,6 +1,6 @@
-// This file carries no e2e build tag so that the exit-status diagnostic below
-// and its host-side test compile and run without one; the docker call that
-// feeds it lives in syscontainer.go.
+// This file carries no e2e build tag so that the exit-status diagnostic and its
+// host-side test compile without one.
+
 package syscontainer
 
 import (
@@ -11,17 +11,14 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// killedExitCode is the exit status of a process killed by SIGKILL. A
-// container returns it when the kernel or docker kills the process, most
-// commonly because the kernel's OOM killer chose it. The container's own logs
-// usually end before the kill, so the daemon's event stream is what explains
-// it.
+// killedExitCode is the exit status of a process killed by SIGKILL; the
+// container's own logs usually end before the kill, so the daemon's event
+// stream is what explains it.
 const killedExitCode = 137
 
-// exitDiagnosticCommand returns the docker events query that lists the events
-// of the project's owner label from started until now. The end is pinned with
-// --until because docker events without it waits for new events and would hang
-// the failure report; the events of the failed run are already recorded.
+// exitDiagnosticCommand returns the docker events query for the project's owner
+// label from started until now; --until is required because docker events
+// without it waits for new events and would hang the failure report.
 func exitDiagnosticCommand(owner string, started, now time.Time) []string {
 	return []string{
 		"events",
@@ -32,8 +29,7 @@ func exitDiagnosticCommand(owner string, started, now time.Time) []string {
 }
 
 // formatExitDiagnostic renders the events of a run that exited with
-// killedExitCode. It returns "" for any other exit status, so a caller can
-// append the result to every failure without checking the status twice.
+// killedExitCode and returns "" for any other exit status.
 func formatExitDiagnostic(code int, events string) string {
 	if code != killedExitCode {
 		return ""
@@ -46,8 +42,6 @@ func formatExitDiagnostic(code int, events string) string {
 		code, events)
 }
 
-// collectExitDiagnostic runs the events query and formats its output. run is a
-// parameter so a test can inject the daemon's answer instead of reaching it.
 func collectExitDiagnostic(code int, run func(args ...string) string, owner string, started, now time.Time) string {
 	if code != killedExitCode {
 		return ""

@@ -16,23 +16,20 @@ import (
 )
 
 const (
-	// postUpdateOldVersion is the candidate build this scenario installs as the
-	// running release.
 	postUpdateOldVersion = "0.4.0"
-	// postUpdateNewVersion is the next release. The test builds it itself from
-	// the tree with an overlaid unit template.
+	// postUpdateNewVersion is the next release, built from the tree with an
+	// overlaid unit template.
 	postUpdateNewVersion = "0.4.1"
 
 	postUpdateOldArtifact          = "update-post-old-" + postUpdateOldVersion
 	postUpdateNewReleaseArtifact   = "update-post-release-" + postUpdateNewVersion + ".tar.gz"
 	postUpdateNewChecksumsArtifact = "update-post-checksums-" + postUpdateNewVersion + ".txt"
 
-	// postUpdateNoStepVersion is a next release whose binary has dropped the
-	// post-update command. It answers the hidden command with the reserved exit
-	// code 2, which the previous binary reads as "no post-update step".
+	// postUpdateNoStepVersion is a next release whose binary dropped the post-update
+	// command and answers it with the reserved exit code 2, which means "no step".
 	postUpdateNoStepVersion = "0.4.2"
-	// postUpdateFailVersion is a next release whose post-update step rewrites
-	// the service definition and then fails.
+	// postUpdateFailVersion is a next release whose post-update step rewrites the
+	// service definition and then fails.
 	postUpdateFailVersion = "0.4.3"
 
 	postUpdateNoStepReleaseArtifact   = "update-post-nostep-" + postUpdateNoStepVersion + ".tar.gz"
@@ -40,28 +37,19 @@ const (
 	postUpdateFailReleaseArtifact     = "update-post-fail-" + postUpdateFailVersion + ".tar.gz"
 	postUpdateFailChecksumsArtifact   = "update-post-fail-checksums-" + postUpdateFailVersion + ".txt"
 
-	// postUpdateUnitPath is the system unit the install script writes.
 	postUpdateUnitPath = "/etc/systemd/system/peers.service"
-	// postUpdateDropInPath is the drop-in selfUpdateSetSystemUnitEnv writes. The
+	// postUpdateDropInPath is the drop-in selfUpdateSetSystemUnitEnv writes; the
 	// update must leave it alone.
 	postUpdateDropInPath = "/etc/systemd/system/peers.service.d/e2e-update-api.conf"
-	// postUpdateNextUnitMarker is the name of an environment assignment only the
-	// next-version unit template carries. `systemctl show -p Environment` reads
-	// it from the unit systemd has loaded, so finding it there proves both that
-	// the new binary rewrote the unit and that daemon-reload ran.
+	// postUpdateNextUnitMarker is an environment assignment only the next-version
+	// unit carries, so systemctl show proves both the rewrite and the daemon-reload.
 	postUpdateNextUnitMarker = "PEERS_E2E_POST_UPDATE"
-	// postUpdateNextUnitEnv is the assignment itself, as systemctl prints it.
-	postUpdateNextUnitEnv = postUpdateNextUnitMarker + "=next-format"
+	postUpdateNextUnitEnv    = postUpdateNextUnitMarker + "=next-format"
 )
 
-// TestREQUpdate009_UpdateRewritesServiceUnitInNewFormat covers the core of
-// REQ-update-009: the running candidate release replaces its binary with a
-// next release whose systemd unit template differs, and the next binary
-// rewrites the installed unit in its own format before the service manager
-// restarts it. The next template sets an environment variable the old template
-// does not, and `systemctl show -p Environment` must report it as loaded, so
-// the test fails when the rewrite or the daemon-reload did not take effect.
-// The drop-in survives unchanged and the Broker runs the new version.
+// TestREQUpdate009_UpdateRewritesServiceUnitInNewFormat checks that a candidate
+// release replacing itself with one whose unit template differs has the new
+// binary rewrite and reload the unit, leaving the drop-in alone.
 func TestREQUpdate009_UpdateRewritesServiceUnitInNewFormat(t *testing.T) {
 	if !syscontainer.InContainer() {
 		postUpdateStageHostAssets(t)
@@ -127,10 +115,8 @@ func TestREQUpdate009_UpdateRewritesServiceUnitInNewFormat(t *testing.T) {
 	selfUpdateWaitAuditEventFor(t, installAccount, postUpdateOldVersion, postUpdateNewVersion)
 }
 
-// postUpdateNoStepInternalCmd is the registration block the next release of
-// TestREQUpdate010 drops from cmd/peers/internal_cmd.go. Without it the binary
-// answers "peers internal post-update" with the unknown-command exit code 2,
-// the value the update contract reserves for "no post-update step".
+// postUpdateNoStepInternalCmd is the registration block the next release drops;
+// without it the binary answers the hidden command with exit code 2.
 const postUpdateNoStepInternalCmd = "\t\t&cobra.Command{\n" +
 	"\t\t\tUse:                \"post-update\",\n" +
 	"\t\t\tShort:              \"Rewrite the service definition after an update\",\n" +
@@ -141,19 +127,17 @@ const postUpdateNoStepInternalCmd = "\t\t&cobra.Command{\n" +
 	"\t\t\t},\n" +
 	"\t\t},\n"
 
-// postUpdateFailSystemUnit is the system unit header the next release of
-// TestREQUpdate011 rewrites. The added environment assignment makes the new
-// definition observably different from the installed one.
+// postUpdateFailSystemUnit is the system unit header the next release rewrites,
+// adding an environment assignment that makes the new definition observable.
 const postUpdateFailSystemUnit = "[Service]\nType=simple\nExecStart=%s service run --system --allow-degraded"
 
 // postUpdateFailUnitMarker is the environment assignment only the failing next
-// release's unit carries. After the rollback it must be gone.
+// release's unit carries; after the rollback it must be gone.
 const postUpdateFailUnitMarker = "PEERS_E2E_POST_UPDATE_FAIL=next-format"
 
-// The next release of TestREQUpdate011 keeps the rewrite and the daemon-reload
-// but returns postUpdateFailRewriteError instead of success, so it dies without
-// running its own restore. postUpdateFailAfterRewrite is the tail of the Linux
-// branch of service.PostUpdate that the overlay replaces.
+// The next release keeps the rewrite and the daemon-reload but returns
+// postUpdateFailRewriteError instead of success; postUpdateFailAfterRewrite and
+// its edited form are the tail of service.PostUpdate the overlay replaces.
 const (
 	postUpdateFailAfterRewrite = "\t\tif err := runSystemctlCommand(opts, &res, \"daemon-reload\"); err != nil {\n" +
 		"\t\t\treturn restoreAfterFailure(opts, path, saved, err)\n" +
@@ -166,11 +150,9 @@ const (
 		"\t\treturn fmt.Errorf(\"" + postUpdateFailRewriteError + "\")"
 )
 
-// TestREQUpdate010_UpdateWithoutPostUpdateStep covers REQ-update-010: a next
-// release whose binary no longer has "internal post-update" answers the hidden
-// command with the reserved exit code 2, and the previous binary continues the
-// update as if no step were needed. The update succeeds, the unit is left as
-// installed, and the Broker runs the new version.
+// TestREQUpdate010_UpdateWithoutPostUpdateStep checks that a next release
+// without the post-update command is taken as needing no step, leaving the unit
+// as installed and the Broker on the new version.
 func TestREQUpdate010_UpdateWithoutPostUpdateStep(t *testing.T) {
 	if !syscontainer.InContainer() {
 		postUpdateStageOld(t)
@@ -226,13 +208,9 @@ func TestREQUpdate010_UpdateWithoutPostUpdateStep(t *testing.T) {
 	}
 }
 
-// TestREQUpdate011_FailedPostUpdateRollsBack covers the non-zero half of
-// REQ-update-011: the next release's post-update step rewrites the service
-// definition and then fails with exit code 1. The update fails, the previous
-// binary and the service definition come back byte for byte, the Broker keeps
-// running with its old pid, and the command output carries the step's reason.
-// The timeout half is covered by TestInstallPostUpdateTimeoutRollsBack in
-// internal/broker/update.
+// TestREQUpdate011_FailedPostUpdateRollsBack checks that a post-update step that
+// rewrites the unit and then fails rolls back the binary and unit and keeps the
+// Broker running with its old pid.
 func TestREQUpdate011_FailedPostUpdateRollsBack(t *testing.T) {
 	if !syscontainer.InContainer() {
 		postUpdateStageOld(t)
@@ -305,8 +283,6 @@ func TestREQUpdate011_FailedPostUpdateRollsBack(t *testing.T) {
 	}
 }
 
-// postUpdateStageHostAssets builds the old release and the next release of
-// TestREQUpdate009 and stages them next to the test binary. It runs on the host.
 func postUpdateStageHostAssets(t *testing.T) {
 	t.Helper()
 
@@ -315,8 +291,6 @@ func postUpdateStageHostAssets(t *testing.T) {
 		postUpdateNewChecksumsArtifact, postUpdateBuildNextVersion(t))
 }
 
-// postUpdateStageOld stages the install script and the running release. It runs
-// on the host.
 func postUpdateStageOld(t *testing.T) {
 	t.Helper()
 
@@ -328,8 +302,6 @@ func postUpdateStageOld(t *testing.T) {
 	syscontainer.StageReleaseArtifact(t, postUpdateOldArtifact, updateReadFile(t, old), 0o755)
 }
 
-// postUpdateStageNext stages binary as version's release archive and checksum
-// line. It runs on the host.
 func postUpdateStageNext(t *testing.T, version, releaseArtifact, checksumsArtifact, binary string) {
 	t.Helper()
 
@@ -339,9 +311,9 @@ func postUpdateStageNext(t *testing.T, version, releaseArtifact, checksumsArtifa
 	syscontainer.StageReleaseArtifact(t, checksumsArtifact, harness.ChecksumLine(assetName, archive), 0o644)
 }
 
-// postUpdateBuildNextVersion builds the next release with a Go build overlay
-// that changes the systemd system unit template. Nothing in the tree changes;
-// the next-version unit format exists only in this test.
+// postUpdateBuildNextVersion builds the next release with a Go build overlay that
+// changes the system unit template, so the next-version format exists only in
+// this test.
 func postUpdateBuildNextVersion(t *testing.T) string {
 	t.Helper()
 
@@ -378,18 +350,15 @@ func postUpdateBuildNextVersion(t *testing.T) string {
 	return harness.BuildBinaryVersionOverlay(t, postUpdateNewVersion, "linux", runtime.GOARCH, overlayPath)
 }
 
-// postUpdateSourceEdit replaces one occurrence of original in a source file
-// with replacement for the next-version build.
 type postUpdateSourceEdit struct {
 	path        string
 	original    string
 	replacement string
 }
 
-// postUpdateBuildOverlayVersion builds version with an overlay that substitutes
-// edited copies of the named source files. Each edit must match exactly one
-// occurrence, so a tree change that renames the text fails the test instead of
-// silently building an unmodified next release.
+// postUpdateBuildOverlayVersion builds version with an overlay substituting
+// edited source copies; each edit must match exactly once so a tree change fails
+// instead of building an unmodified release.
 func postUpdateBuildOverlayVersion(t *testing.T, version string, edits ...postUpdateSourceEdit) string {
 	t.Helper()
 
@@ -426,7 +395,6 @@ func postUpdateBuildOverlayVersion(t *testing.T, version string, edits ...postUp
 	return harness.BuildBinaryVersionOverlay(t, version, "linux", runtime.GOARCH, overlayPath)
 }
 
-// postUpdateReadFile reads a file inside the container.
 func postUpdateReadFile(t *testing.T, path string) string {
 	t.Helper()
 

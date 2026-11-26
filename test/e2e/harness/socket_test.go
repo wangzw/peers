@@ -21,10 +21,9 @@ func socketPathFits(path string) bool {
 }
 
 // chooseSocketDir creates a temporary directory holding socketName whose full
-// path fits in sun_path. It tries bases in order; an empty base means the
-// process temporary directory. macOS puts temporary directories under
-// /var/folders, often too long for a socket, so callers pass "/tmp" as the
-// fallback.
+// path fits in sun_path, trying bases in order; an empty base means the process
+// temporary directory, and callers pass "/tmp" because macOS puts temporary
+// directories under /var/folders, often too long for a socket.
 func chooseSocketDir(socketName string, bases ...string) (string, error) {
 	var errs []error
 	for _, base := range bases {
@@ -44,8 +43,6 @@ func chooseSocketDir(socketName string, bases ...string) (string, error) {
 	return "", fmt.Errorf("no temporary directory short enough for the %s socket", socketName)
 }
 
-// newSocketTempDir returns a temporary directory, removed when the test ends,
-// in which socketName can be bound on every supported platform.
 func newSocketTempDir(t *testing.T, socketName string) string {
 	t.Helper()
 	dir, err := chooseSocketDir(socketName, "", "/tmp")
@@ -56,6 +53,7 @@ func newSocketTempDir(t *testing.T, socketName string) string {
 	return dir
 }
 
+// TestSocketPathFits checks socketPathFits against the limit, one byte over it, and a macOS temporary-directory path.
 func TestSocketPathFits(t *testing.T) {
 	tests := []struct {
 		name string
@@ -80,6 +78,7 @@ func TestSocketPathFits(t *testing.T) {
 	}
 }
 
+// TestChooseSocketDirUsesFirstFittingBase checks that chooseSocketDir uses the first base whose temporary directory is short enough.
 func TestChooseSocketDirUsesFirstFittingBase(t *testing.T) {
 	base, err := os.MkdirTemp("/tmp", "ape2e-base-")
 	if err != nil {
@@ -100,6 +99,7 @@ func TestChooseSocketDirUsesFirstFittingBase(t *testing.T) {
 	}
 }
 
+// TestChooseSocketDirFallsBackToShortBase checks that chooseSocketDir falls back to a short base when the first one is too long.
 func TestChooseSocketDirFallsBackToShortBase(t *testing.T) {
 	longBase := t.TempDir()
 	for socketPathFits(filepath.Join(longBase, "broker.sock")) {

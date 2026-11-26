@@ -9,8 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TestOwnerLabelValue fixes the label value to the owner marker form, which
-// harness.CleanResidue parses to tell a live suite from residue.
+// TestOwnerLabelValue checks that the label value matches the owner marker form.
 func TestOwnerLabelValue(t *testing.T) {
 	pattern := regexp.MustCompile(`^ape2e-[0-9]+-[0-9]+-pidns[0-9]+$`)
 	if value := ownerLabelValue(); !pattern.MatchString(value) {
@@ -19,9 +18,7 @@ func TestOwnerLabelValue(t *testing.T) {
 }
 
 // TestSystemComposeCarriesOwnerLabel checks that the compose file puts the
-// owner label on every resource the cleanup removes: each service, the pair
-// volume and the system network. Without the label a project that keeps its
-// readable name would look like an unknown owner and never be cleaned.
+// owner label on every service, volume and network the cleanup removes.
 func TestSystemComposeCarriesOwnerLabel(t *testing.T) {
 	data, err := os.ReadFile("../compose/system/compose.yaml")
 	if err != nil {

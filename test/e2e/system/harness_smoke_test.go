@@ -19,21 +19,16 @@ import (
 )
 
 const (
-	// externalProbeIP is in the TEST-NET-2 documentation range. It can never be
-	// a real service, so a successful connection would mean the container
-	// found a way out.
+	// externalProbeIP is in the TEST-NET-2 documentation range, so a successful
+	// connection means the container found a way out.
 	externalProbeIP      = "198.51.100.1"
 	externalProbeAddress = externalProbeIP + ":443"
-	// systemSubnetEnv carries the internal network's subnet into the container.
-	// syscontainer.Run sets it from the subnet it reserved for the project.
-	systemSubnetEnv = "PEERS_E2E_SYSTEM_SUBNET"
-	// egressProbeBound bounds one probe of the internal network's gateway.
-	egressProbeBound = 2 * time.Second
+	systemSubnetEnv      = "PEERS_E2E_SYSTEM_SUBNET"
+	egressProbeBound     = 2 * time.Second
 )
 
-// gatewayProbePorts are services this host runs on every address. A container
-// on the internal network must not reach them through the docker bridge
-// gateway, which is the host end of that network.
+// gatewayProbePorts are services this host runs on every address; a container
+// must not reach them through the docker bridge gateway.
 var gatewayProbePorts = []string{"22", "6443", "10250"}
 
 // TestHarnessAccountsAndBinary checks that the container provides the release
@@ -72,10 +67,8 @@ func TestHarnessAccountsAndBinary(t *testing.T) {
 	}
 }
 
-// TestHarnessNoEgress checks that the network declared in
-// compose/system/compose.yaml gives the container no way out: there is no
-// default route, or an external address has no route, and neither an external
-// address nor the internal network's host-side IPAM gateway is reachable.
+// TestHarnessNoEgress checks that the container has no route out and cannot
+// reach the internal network's host-side gateway.
 func TestHarnessNoEgress(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)
@@ -102,9 +95,9 @@ func TestHarnessNoEgress(t *testing.T) {
 	}
 	assertDialFails(t, externalProbeAddress)
 
-	// The host end of the internal network is its IPAM gateway. Probing it is
-	// discriminating: the container has a connected route to it, so a
-	// successful connection or a refusal both mean the packet reached the host.
+	// Probing the IPAM gateway is discriminating: the container has a connected
+	// route to it, so a successful connection or a refusal both mean the packet
+	// reached the host.
 	gateway := internalGateway(t)
 	reached := false
 	for _, port := range gatewayProbePorts {
@@ -115,8 +108,8 @@ func TestHarnessNoEgress(t *testing.T) {
 		}
 	}
 	if reached {
-		// The gateway is the host's bridge address. Block it inside this
-		// container only; the host's own iptables and routes are never touched.
+		// Block the gateway inside this container only; the host's own iptables
+		// and routes are never touched.
 		cmd := syscontainer.Command("root", nil, "iptables", "-A", "OUTPUT", "-d", gateway, "-j", "DROP")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("blocking the internal network gateway %s in the container: %v\n%s",
@@ -132,8 +125,6 @@ func TestHarnessNoEgress(t *testing.T) {
 	}
 }
 
-// internalGateway returns the first host address of the internal network's
-// subnet, which is the address docker assigns to the bridge on the host side.
 func internalGateway(t *testing.T) string {
 	t.Helper()
 	cidr := os.Getenv(systemSubnetEnv)
@@ -152,8 +143,7 @@ func internalGateway(t *testing.T) string {
 }
 
 // dialGateway reports whether a TCP connection to addr succeeded or was
-// refused. Both outcomes mean the packet reached the host; a timeout or an
-// unreachable route means it did not.
+// refused; both outcomes mean the packet reached the host.
 func dialGateway(addr string) (string, bool) {
 	conn, err := net.DialTimeout("tcp", addr, egressProbeBound)
 	if err == nil {
@@ -166,8 +156,6 @@ func dialGateway(addr string) (string, bool) {
 	return "", false
 }
 
-// parseDefaultRoute reports whether routes has a default route and returns the
-// gateway it names.
 func parseDefaultRoute(routes string) (bool, string) {
 	for _, line := range strings.Split(routes, "\n") {
 		fields := strings.Fields(line)
@@ -184,7 +172,6 @@ func parseDefaultRoute(routes string) (bool, string) {
 	return false, ""
 }
 
-// assertDialFails checks that a TCP connection to addr cannot be opened.
 func assertDialFails(t *testing.T, addr string) {
 	t.Helper()
 
@@ -195,9 +182,8 @@ func assertDialFails(t *testing.T, addr string) {
 	}
 }
 
-// TestHarnessSystemBrokerAndSessions starts the system Broker and reaches it
-// from two accounts' sessions. It checks the process and socket the design
-// places under /run/peers.
+// TestHarnessSystemBrokerAndSessions checks that two accounts' sessions reach
+// the system Broker through the socket and process under /run/peers.
 func TestHarnessSystemBrokerAndSessions(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Plain)
@@ -231,10 +217,8 @@ func TestHarnessSystemBrokerAndSessions(t *testing.T) {
 	}
 }
 
-// TestHarnessSystemService installs the system service through systemd and
-// starts it, so the tests downstream that exercise a managed system Broker can
-// rely on StartSystemService. It checks the unit is active and that the Broker
-// created its socket under /run/peers.
+// TestHarnessSystemService checks that the installed system service starts and
+// creates its socket under /run/peers.
 func TestHarnessSystemService(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -253,8 +237,6 @@ func TestHarnessSystemService(t *testing.T) {
 	}
 }
 
-// waitRegistered waits until the MCP server has registered the session with the
-// Broker. Registration happens in the background after the MCP handshake.
 func waitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+session.Account+" to register", func(deadline time.Time) (bool, string) {
@@ -266,7 +248,6 @@ func waitRegistered(t *testing.T, session *syscontainer.Session) {
 	})
 }
 
-// runID runs id as account and returns its trimmed standard output.
 func runID(t *testing.T, account string, args ...string) string {
 	t.Helper()
 	out, err := syscontainer.Command(account, nil, "id", args...).Output()
@@ -276,7 +257,6 @@ func runID(t *testing.T, account string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// hasGroup reports whether the space-separated group list contains gid.
 func hasGroup(groups, gid string) bool {
 	for _, field := range strings.Fields(groups) {
 		if field == gid {

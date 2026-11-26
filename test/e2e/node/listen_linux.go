@@ -36,8 +36,6 @@ func ListeningAddrs(pid int) ([]string, error) {
 	return list, nil
 }
 
-// processSocketInodes returns the socket inodes of the file descriptors pid
-// has open. A descriptor that disappears during the scan is skipped.
 func processSocketInodes(pid int) (map[uint64]struct{}, error) {
 	dir := fmt.Sprintf("/proc/%d/fd", pid)
 	entries, err := os.ReadDir(dir)
@@ -57,7 +55,6 @@ func processSocketInodes(pid int) (map[uint64]struct{}, error) {
 	return inodes, nil
 }
 
-// socketInode parses the target of a socket descriptor, "socket:[<inode>]".
 func socketInode(target string) (uint64, bool) {
 	const prefix, suffix = "socket:[", "]"
 	if !strings.HasPrefix(target, prefix) || !strings.HasSuffix(target, suffix) {
@@ -70,8 +67,6 @@ func socketInode(target string) (uint64, bool) {
 	return inode, true
 }
 
-// collectListening adds the local addresses of the listening rows in path
-// whose inode belongs to inodes.
 func collectListening(path string, inodes map[uint64]struct{}, addrs map[string]struct{}) error {
 	file, err := os.Open(path)
 	if err != nil {

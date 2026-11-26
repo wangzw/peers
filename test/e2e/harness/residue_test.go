@@ -5,10 +5,7 @@ import (
 	"testing"
 )
 
-// TestOwnerMarkerIsANameMarker checks that the label value uses the same
-// "ape2e-<pid>-<start>-pidns<inode>" form as a project name, so the cleanup
-// parses it with the same reader and never mistakes this live process for a
-// dead one.
+// TestOwnerMarkerIsANameMarker checks that the label value uses the same "ape2e-<pid>-<start>-pidns<inode>" form as a project name.
 func TestOwnerMarkerIsANameMarker(t *testing.T) {
 	marker := OwnerMarker()
 	got, ok := parseOwner(marker)
@@ -23,17 +20,12 @@ func TestOwnerMarkerIsANameMarker(t *testing.T) {
 	}
 }
 
-// TestDeadDockerIDsKeepsLiveOwners checks that the cleanup removes only a
-// resource whose owner is gone, whichever field carries the marker. A compose
-// project started from a compose file keeps a name with no marker, so its owner
-// label decides; a live label also protects a resource whose project name would
-// parse as dead.
+// TestDeadDockerIDsKeepsLiveOwners checks that the cleanup removes only resources whose owner is gone, with the owner label deciding when the project name carries no marker.
 func TestDeadDockerIDsKeepsLiveOwners(t *testing.T) {
 	live := OwnerMarker()
 	dead := "ape2e-" + (owner{pid: 999999999, start: 1, ns: currentOwner().ns}).String()
 	resources := []dockerResource{
-		// Projects from test/e2e/compose/system/compose.yaml: the name has no
-		// marker and the label names the owner.
+		// A project from a compose file: the name has no marker and the label names the owner.
 		{id: "compose-live", name: "compose-live_plain_1", project: "ape2e-t0001-abcdef", owner: live},
 		{id: "compose-dead", name: "compose-dead_plain_1", project: "ape2e-t0001-abcdef", owner: dead},
 		// Harness projects: the name carries the marker and there is no label.

@@ -18,78 +18,48 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// The size-limit case is defined against the product's own computation. A
-// signature change breaks this test at compile time, which is the intent of the
-// plan's assertion.
+// The size-limit case is defined against the product's own computation; this
+// assertion is deliberate, so a signature change breaks the test at compile
+// time instead of at runtime.
 var _ func(name, ref, text string) int = broker.MaxSendFrameSize
 
 const (
-	// srTopic is the topic the two sessions share.
 	srTopic = "t"
 
-	// srShortRequestTimeout is the short send.request_timeout the timeout
-	// cases configure themselves. The delivery-unknown and unreachable results
-	// are asserted on the sender's own budget, not on the FastTimers success
-	// value (harness.FastRequestTimeout, 30s), so those cases set this value
-	// and their wait derives from it. 2s is clearly below the 20s default, so
-	// the configured value is distinguishable from production.
 	srShortRequestTimeout = 2 * time.Second
 
-	// srSendBudget is the hang fallback for a wait or call whose result the
-	// short product timer governs: srShortRequestTimeout plus the shared
-	// fallback. It only decides how long a send that never returns takes to
-	// fail; the requirement is asserted against srSendAssertBound, so the
-	// fallback never enters an assertion.
 	srSendBudget = srShortRequestTimeout + harness.EventTimeout
 
-	// srSendMargin is the measurement overhead allowed on top of the send time
-	// limit, not a second product allowance. The measured span starts before
-	// the MCP call is framed and ends after its response is decoded, so it
-	// includes the MCP stdio round trip between the test and the MCP server
-	// process and the scheduling between that process and the Broker, none of
-	// which the product's request_timeout counts. 500ms is the plan's per-send
-	// allowance and 25% of the 2s configured limit; a real violation adds
-	// seconds, not hundreds of milliseconds.
+	// srSendMargin is measurement overhead on top of the send time limit, not a
+	// second product allowance.
 	srSendMargin = 500 * time.Millisecond
 
-	// srSendAssertBound is REQ-agent-messaging-017/018's promise: one send
-	// returns within its configured request_timeout plus the measurement
-	// margin.
 	srSendAssertBound = srShortRequestTimeout + srSendMargin
 
-	// srReplyTimeout is the send budget of the reply-loss case, not the
-	// shortened FastTimers value: the fault injection that loses the reply
-	// (Cut, Release, Restore) runs inside this budget, and each of its steps
-	// is a docker compose exec with no product timer behind it. The injection
-	// itself measured 1.4-1.5s, so ten seconds leaves about six times that
-	// measurement, enough to absorb a loaded host. Do not raise it to trade
-	// stability for a longer timeout, and do not grow it further.
+	// srReplyTimeout is the send budget of the reply-loss case; the fault
+	// injection measured 1.4-1.5s and runs inside it, so do not raise it to
+	// trade stability for a longer timeout or grow it further.
 	srReplyTimeout = 10 * time.Second
 
-	// srReplyBudget is srReplyTimeout plus the 500ms allowance the plan puts
-	// on one send.
+	// srReplyBudget is srReplyTimeout plus srSendMargin; the 500ms here is a
+	// literal copy of srSendMargin, so the two must change together.
 	srReplyBudget = srReplyTimeout + 500*time.Millisecond
 
-	// srRelinkBound is reconnect_max + dial_timeout plus the
-	// harness.EventTimeout margin.
 	srRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
-	// srWaitBound bounds a wait that no product timer governs.
 	srWaitBound = harness.EventTimeout
 
-	// srQuietWindow is send.request_timeout: after the link is back, a message
-	// that was not delivered must not surface within the sender's own budget.
-	// It is a deliberate observation, as the plan requires for negative checks.
+	// srQuietWindow must equal the sender's short send.request_timeout: after
+	// the link is back, a message that was not delivered must not surface
+	// within the sender's own budget.
 	srQuietWindow = 2 * time.Second
 
-	// srFrameLimit is the encoded-frame limit of one inbox message.
 	srFrameLimit = 1_000_000
 )
 
-// TestRemoteSendFaults covers cross-host sending under a NAT: both directions
-// behind the router, an unreachable peer, the guarantee that a failed send is
-// not delivered later, an unknown result after the reply is lost, the reply-loss
-// duplicate, and the size limit. A is the acceptor and B the dialer.
+// TestRemoteSendFaults covers cross-host sending under a NAT: both directions,
+// an unreachable peer, no later delivery after a failed send, an unknown result
+// after a lost reply, the reply-loss duplicate and the size limit.
 func TestRemoteSendFaults(t *testing.T) {
 	c := harness.Up(t, harness.TopoNAT)
 	aNode, bNode := c.Node("hostA"), c.Node("hostB")
@@ -126,20 +96,14 @@ func TestRemoteSendFaults(t *testing.T) {
 		}
 	})
 
-	// The two bodies below must never surface after the cut is restored; the
-	// next two cases check both that they do not arrive before the sentinel and
-	// that they do not arrive in the sender's whole budget afterwards.
+	// failedFromA and failedFromB cross subtests: the unreachable case below
+	// fills them and the never-delivered case reads them after its own restore.
 	var failedFromA, failedFromB string
 
 	t.Run("REQ-agent-messaging-017 unreachable within budget", func(t *testing.T) {
-		// This case asserts the result arrives inside the sender's own budget,
-		// so both Brokers use the short product timer rather than the
-		// FastTimers success value.
 		srUseShortRequestTimeout(t, opA, opB)
 		srCutAndWaitDown(t, c, aNode, bNode)
 
-		// The dialer side stops after its retries are spent; the acceptor side
-		// waits out the rest of the budget. Both must answer inside the budget.
 		failedFromB = srMark("unreachable-b-")
 		r, elapsed := srSendWithin(t, b1, "a1@hostA.peer", failedFromB)
 		r.MustCode(t, "peer_unreachable")
@@ -167,7 +131,6 @@ func TestRemoteSendFaults(t *testing.T) {
 		c.Restore(t)
 		srWaitConnected(t, bNode, "hostA.peer", srRelinkBound)
 		srWaitConnected(t, aNode, "hostB.peer", srRelinkBound)
-		// The restored roster is what makes each sentinel's target resolvable.
 		srWaitRoster(t, a1, "a1", b1, "b1")
 
 		// Sentinels prove the direction works again before the old bodies are
@@ -203,22 +166,16 @@ func TestRemoteSendFaults(t *testing.T) {
 	})
 
 	t.Run("REQ-agent-messaging-027 delivery unknown", func(t *testing.T) {
-		// The delivery-unknown result is asserted on the sender's budget, so
-		// both Brokers use the short product timer.
 		srUseShortRequestTimeout(t, opA, opB)
-		// HoldOpen makes the receiver's Broker block while writing, so the frame
-		// being recorded proves the request is in flight. Cutting the link then
-		// loses the reply while the write itself succeeds.
+		// HoldOpen blocks the receiver's Broker while writing, so a recorded
+		// frame proves the request is in flight; cutting the link then loses
+		// the reply while the write itself succeeds.
 		a1.Fake().SetMode(fakesession.HoldOpen)
 		t.Cleanup(func() { a1.Fake().SetMode(fakesession.CloseAfterRead) })
 		marker := srMark("unknown-")
 		ch := srSendAsync(t, b1, "a1@hostA.peer", marker)
-		// The frame proves the delivery request reached the receiver's inbox
-		// before the link is cut. The sender's short send.request_timeout is the
-		// product timer that governs it: a frame recorded after that budget
-		// belongs to a request the sender had already given up on, and the cut
-		// could no longer prove a lost reply. srSendBudget is that timer plus
-		// the shared fallback.
+		// Wait for the frame before cutting: one recorded after the sender's
+		// budget belongs to a request it had already given up on.
 		frame := a1.WaitFrame(t, srSendBudget)
 		if !strings.Contains(frame.Content, marker) {
 			t.Fatalf("the in-flight frame carries %q, want the marker %q", frame.Content, marker)
@@ -239,17 +196,13 @@ func TestRemoteSendFaults(t *testing.T) {
 		}
 		srWaitConnected(t, bNode, "hostA.peer", srRelinkBound)
 		srWaitConnected(t, aNode, "hostB.peer", srRelinkBound)
-		// The next case sends before it cuts anything, so it needs the
-		// restored roster too.
 		srWaitRoster(t, a1, "a1", b1, "b1")
 	})
 
 	t.Run("REQ-agent-messaging-020 reply lost, one copy", func(t *testing.T) {
 		// The receiver bounds its inbox write by the smaller of the sender's
-		// remaining budget and its own send.request_timeout (design-broker.md),
-		// so both Brokers get the case's ten-second value. The fault injection
-		// below runs inside that deadline; the FastTimers success value is 30s
-		// and would otherwise be the write's own bound.
+		// remaining budget and its own send.request_timeout, so both Brokers
+		// get the case's ten-second value.
 		oldA := srSetSendTimeout(t, opA, srReplyTimeout.String())
 		oldB := srSetSendTimeout(t, opB, srReplyTimeout.String())
 		t.Cleanup(func() {
@@ -257,9 +210,8 @@ func TestRemoteSendFaults(t *testing.T) {
 			srSetSendTimeout(t, opB, oldB)
 		})
 
-		// A failed send must not leave the hold in place. The later subtests
-		// share a1, and a held connection would turn their writes into an
-		// uncertain result as well.
+		// A failed send must not leave the hold in place: the later subtests
+		// share a1, and a held connection would make their writes uncertain.
 		t.Cleanup(func() { a1.Fake().SetMode(fakesession.CloseAfterRead) })
 
 		a1.Fake().SetMode(fakesession.HoldOpen)
@@ -277,13 +229,8 @@ func TestRemoteSendFaults(t *testing.T) {
 		r := srAwait(t, ch, srReplyBudget, "the reply-loss send")
 		r.MustOK(t)
 
-		// The sentinel below re-resolves its target, which needs the roster
-		// the restore dropped.
 		srWaitRoster(t, a1, "a1", b1, "b1")
 
-		// A second message proves the link is usable again. The first message must
-		// still exist exactly once: the resend reuses its identifier and the
-		// receiver's dedupe table must not write it again.
 		a1.Fake().SetMode(fakesession.CloseAfterRead)
 		sentinel := srMark("reply-lost-sentinel-")
 		r = b1.Call(t, "send_message", map[string]any{"to": "a1@hostA.peer", "message": sentinel})
@@ -296,11 +243,7 @@ func TestRemoteSendFaults(t *testing.T) {
 	})
 
 	t.Run("REQ-agent-messaging-018 inbox unwritable across hosts", func(t *testing.T) {
-		// The case asserts the send time limit, so both Brokers use the short
-		// product timer rather than the FastTimers success value.
 		srUseShortRequestTimeout(t, opA, opB)
-		// The receiving Broker still holds the Agent's record; only its inbox
-		// socket is gone, so the failure has to come from over the link.
 		gone := srSession(t, bNode, "gone")
 		defer gone.End(t)
 		srWaitSessionVisible(t, a1, "gone")
@@ -318,10 +261,9 @@ func TestRemoteSendFaults(t *testing.T) {
 	})
 
 	t.Run("REQ-agent-messaging-026 size limit", func(t *testing.T) {
-		// A second session named b1 makes b1's own address carry its ref, which
-		// is the value the sender uses when it computes the frame size. The
-		// duplicate stays alive for the whole case so the ref does not change
-		// back under the sends.
+		// A second session named b1 gives b1 a disambiguation ref, which the
+		// sender includes in the frame size; the duplicate stays alive so the
+		// ref does not change under the sends.
 		duplicate := srSession(t, bNode, "b1")
 		defer duplicate.End(t)
 
@@ -339,9 +281,8 @@ func TestRemoteSendFaults(t *testing.T) {
 			return true, ""
 		})
 
-		// The body is ASCII, so FrameSize grows by exactly one per byte. Probe
-		// the empty body to get the base, then assert both sides of the boundary
-		// with the product's function.
+		// The body is ASCII, so the frame grows by one byte per character; probe
+		// the empty body for the base, then assert both sides of the boundary.
 		base := broker.MaxSendFrameSize("b1", ref, "")
 		atLimit := srFrameLimit - base
 		overLimit := atLimit + 1
@@ -380,8 +321,6 @@ func TestRemoteSendFaults(t *testing.T) {
 		if body := srEnvelopeBody(t, frame.Content); body != atBoundary {
 			t.Fatalf("the boundary message arrived with %d bytes, want %d", len(body), len(atBoundary))
 		}
-		// The body crossed the link: prove the counter sees its traffic, so the
-		// small growth asserted for the rejected send above means something.
 		if grew := bytesIn() - boundaryBefore; grew < int64(atLimit) {
 			t.Fatalf("the boundary message put %d bytes on the link, want at least the %d-byte body", grew, atLimit)
 		}
@@ -389,16 +328,13 @@ func TestRemoteSendFaults(t *testing.T) {
 
 	t.Run("REQ-agent-messaging-046 inbound quota per peer", func(t *testing.T) {
 		// A dedicated target and a local sender keep this case's quota bucket
-		// apart from a1, which the cases above share: the bucket is keyed by
-		// (source peer, target Agent), and q1 has its own from the start.
+		// apart from a1's: the bucket is keyed by both source peer and target
+		// agent, so tokens are shared only when both match.
 		q1 := srSession(t, aNode, "q1")
 		defer q1.End(t)
 		local := srSession(t, aNode, "a2")
 		defer local.End(t)
 
-		// b1 must see q1 before it can address it, and a2 must see q1 before it
-		// can send locally. The local address is the one q1 lists for itself:
-		// every address carries an alias.
 		srWaitSessionVisible(t, b1, "q1")
 		srWaitSessionVisible(t, local, "q1")
 		q1Out, state := srListAgents(t, q1)
@@ -406,9 +342,9 @@ func TestRemoteSendFaults(t *testing.T) {
 			t.Fatalf("listing q1: %s", state)
 		}
 
-		// The burst is exactly the bucket's capacity, so the next message has no
-		// token and must be refused. The sends are sequential and finish well
-		// inside the ten seconds one refilled token takes.
+		// The burst equals the bucket's capacity, so the next message has no
+		// token and must be refused; the sequential sends finish well inside
+		// the ten seconds one refilled token takes.
 		const burst = 10
 		for i := 0; i < burst; i++ {
 			r := b1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": srMark("quota-")})
@@ -423,8 +359,6 @@ func TestRemoteSendFaults(t *testing.T) {
 			t.Fatalf("q1 received %d frames, want %d after the eleventh was refused", got, burst)
 		}
 
-		// The target still takes a message from another source: a2 sends to q1
-		// on the same host, the local path that does not pass the inbound quota.
 		fromLocal := srMark("quota-local-")
 		r = local.Call(t, "send_message", map[string]any{"to": q1Out.Self, "message": fromLocal})
 		r.MustOK(t)
@@ -437,9 +371,9 @@ func TestRemoteSendFaults(t *testing.T) {
 	})
 }
 
-// TestRemoteSendInboundQuota proves that the inbound quota is per source peer:
-// one peer spending its whole burst on a session must not stop a third host,
-// paired with the same target, from reaching that session. REQ-agent-messaging-046.
+// TestRemoteSendInboundQuota checks that one peer spending its whole burst on a
+// session does not stop another host paired with the same target from reaching
+// it.
 func TestRemoteSendInboundQuota(t *testing.T) {
 	c := harness.Up(t, harness.TopoFlat(3))
 	aNode, bNode, cNode := c.Node("hostA"), c.Node("hostB"), c.Node("hostC")
@@ -452,7 +386,6 @@ func TestRemoteSendInboundQuota(t *testing.T) {
 	defer opB.End(t)
 	defer opC.End(t)
 
-	// Both other hosts pair with the target's host, each through its own key.
 	aAddr := net.JoinHostPort(c.Addr("hostA", "net"), "17443")
 	for _, pair := range []struct {
 		op    *harness.Session
@@ -479,7 +412,6 @@ func TestRemoteSendInboundQuota(t *testing.T) {
 		srWaitSessionVisible(t, b1, "q1")
 		srWaitSessionVisible(t, c1, "q1")
 
-		// b1 spends the whole burst on q1; its next message has no token.
 		const burst = 10
 		for i := 0; i < burst; i++ {
 			b1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": srMark("cross-a-")}).MustOK(t)
@@ -490,8 +422,6 @@ func TestRemoteSendInboundQuota(t *testing.T) {
 			t.Fatalf("q1 received %d frames, want %d after the eleventh was refused", got, burst)
 		}
 
-		// c1 is a different source peer, so its own bucket is full and the
-		// delivery must reach the same session while b1 is still limited.
 		fromOther := srMark("cross-b-")
 		c1.Call(t, "send_message", map[string]any{"to": "q1@hostA.peer", "message": fromOther}).MustOK(t)
 		harness.Eventually(t, srWaitBound, "the other peer reaches q1", func() (bool, string) {
@@ -503,14 +433,10 @@ func TestRemoteSendInboundQuota(t *testing.T) {
 	})
 }
 
-// srConfig merges the shortened timers with the given fragments.
 func srConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// srSetSendTimeout sets send.request_timeout on the running Broker through
-// set_config, which applies to the next send without a restart, and returns the
-// value it replaced so the caller can restore it.
 func srSetSendTimeout(t *testing.T, op *harness.Session, value string) string {
 	t.Helper()
 	r := op.Call(t, "set_config", map[string]any{"key": "send.request_timeout", "value": value})
@@ -522,10 +448,6 @@ func srSetSendTimeout(t *testing.T, op *harness.Session, value string) string {
 	return out.Old
 }
 
-// srUseShortRequestTimeout configures the short send.request_timeout on the
-// given Brokers for the calling subtest and restores the previous values when
-// the subtest ends. Only the cases that assert a delivery-unknown or
-// unreachable result use it; the FastTimers success value stays long.
 func srUseShortRequestTimeout(t *testing.T, brokers ...*harness.Session) {
 	t.Helper()
 	old := make([]string, len(brokers))
@@ -539,7 +461,6 @@ func srUseShortRequestTimeout(t *testing.T, brokers ...*harness.Session) {
 	})
 }
 
-// srStartBroker starts a Broker and fails when it does not come up.
 func srStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -548,7 +469,6 @@ func srStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// srOperator starts a session that never registers as an Agent.
 func srOperator(t *testing.T, node *harness.Node) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -556,7 +476,6 @@ func srOperator(t *testing.T, node *harness.Node) *harness.Session {
 	return s
 }
 
-// srSession starts a registered session in srTopic.
 func srSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true})
@@ -565,7 +484,6 @@ func srSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 	return s
 }
 
-// srWaitRegistered waits until the session lists itself under name.
 func srWaitRegistered(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
@@ -580,7 +498,6 @@ func srWaitRegistered(t *testing.T, s *harness.Session, name string) {
 	})
 }
 
-// srWaitSessionVisible waits until the session's listing contains name.
 func srWaitSessionVisible(t *testing.T, s *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, srRelinkBound+srWaitBound, "the session "+name+" is visible again", func(deadline time.Time) (bool, string) {
@@ -595,20 +512,18 @@ func srWaitSessionVisible(t *testing.T, s *harness.Session, name string) {
 	})
 }
 
-// srWaitRoster waits until each session's listing contains the other. A link
-// reports itself established before topic exchanges the peer's roster, and a
-// send in that window resolves against an empty roster and returns not_found
-// (design-broker.md). Call it after a link comes up, before a send that needs
-// the peer resolved.
+// srWaitRoster waits until each session's listing contains the other: a link
+// reports itself established before the peer's roster arrives, and a send in
+// that window returns not_found.
 func srWaitRoster(t *testing.T, a *harness.Session, aName string, b *harness.Session, bName string) {
 	t.Helper()
 	srWaitSessionVisible(t, a, bName)
 	srWaitSessionVisible(t, b, aName)
 }
 
-// srJoin joins name, retrying while the session is still registering.
-// join_topic's handler may spend topicRPCTimeout before the update hint runs,
-// so the poll uses harness.TopicCallPollBound.
+// srJoin retries while the session is still registering. The poll needs
+// harness.TopicCallPollBound because join_topic's handler may spend
+// topicRPCTimeout before the update hint runs.
 func srJoin(t *testing.T, s *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+topic, func(deadline time.Time) (bool, string) {
@@ -623,7 +538,6 @@ func srJoin(t *testing.T, s *harness.Session, topic string) {
 	})
 }
 
-// srCreateKey creates one pairing key.
 func srCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := op.Call(t, "create_pairing_key", map[string]any{})
@@ -635,13 +549,11 @@ func srCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOu
 	return out
 }
 
-// srConnect calls connect_broker.
 func srConnect(t *testing.T, op *harness.Session, address, key string) harness.Result {
 	t.Helper()
 	return op.Call(t, "connect_broker", map[string]any{"address": address, "key": key})
 }
 
-// srShownAddress picks the shown address of node on the wan network.
 func srShownAddress(t *testing.T, c *harness.Cluster, node string, shown []string) string {
 	t.Helper()
 	want := net.JoinHostPort(c.Addr(node, "wan"), "17443")
@@ -657,7 +569,6 @@ func srShownAddress(t *testing.T, c *harness.Cluster, node string, shown []strin
 	return ""
 }
 
-// srWaitConnected waits until node lists alias as connected.
 func srWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the link to "+alias+" is connected", func() (bool, string) {
@@ -674,8 +585,6 @@ func srWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.
 	})
 }
 
-// srCutAndWaitDown cuts the network and waits until neither side reports the
-// link as connected.
 func srCutAndWaitDown(t *testing.T, c *harness.Cluster, aNode, bNode *harness.Node) {
 	t.Helper()
 	c.Cut(t, "hostA", "hostB")
@@ -687,7 +596,6 @@ func srCutAndWaitDown(t *testing.T, c *harness.Cluster, aNode, bNode *harness.No
 	})
 }
 
-// srPeerConnected reports whether node lists alias as connected.
 func srPeerConnected(t *testing.T, node *harness.Node, alias string) bool {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -702,8 +610,6 @@ func srPeerConnected(t *testing.T, node *harness.Node, alias string) bool {
 	return false
 }
 
-// srListAgents calls list_agents and returns the decoded answer, with a tool
-// error reported as a state string.
 func srListAgents(t *testing.T, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	r := s.Call(t, "list_agents", nil)
@@ -717,14 +623,11 @@ func srListAgents(t *testing.T, s *harness.Session) (mcpserver.ListAgentsOut, st
 	return out, ""
 }
 
-// srListAgentsPoll is srListAgents for a wait callback: the call is bounded by
-// the wait's deadline and a transport error is returned as state.
 func srListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", nil)
 }
 
-// srFindAgent returns the entry whose name part is name.
 func srFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, bool) {
 	for _, agent := range out.Agents {
 		if got, _, _ := srSplitAddress(agent.Address); got == name {
@@ -734,8 +637,6 @@ func srFindAgent(out mcpserver.ListAgentsOut, name string) (mcpserver.AgentOut, 
 	return mcpserver.AgentOut{}, false
 }
 
-// srSplitAddress splits "name [ref]@alias" into its three parts. ref is empty
-// when the address carries none.
 func srSplitAddress(address string) (name, ref, alias string) {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 {
@@ -749,8 +650,6 @@ func srSplitAddress(address string) (name, ref, alias string) {
 	return strings.TrimSpace(name), strings.TrimSpace(ref), alias
 }
 
-// srEnvelopeBody returns the message body from the attribution envelope the
-// transport wraps it in.
 func srEnvelopeBody(t *testing.T, content string) string {
 	t.Helper()
 	openEnd := strings.Index(content, ">\n")
@@ -765,7 +664,6 @@ func srEnvelopeBody(t *testing.T, content string) string {
 	return strings.TrimSuffix(body, closing)
 }
 
-// srCountMark counts the frames whose content carries marker.
 func srCountMark(frames []fakesession.Frame, marker string) int {
 	n := 0
 	for _, frame := range frames {
@@ -776,10 +674,6 @@ func srCountMark(frames []fakesession.Frame, marker string) int {
 	return n
 }
 
-// srSendWithin sends one message with the whole call bounded by srSendBudget,
-// the hang fallback, and reports how long the call took. The bound keeps a
-// reply that never comes from hanging the test; the requirement is asserted
-// separately against srSendAssertBound, so the fallback never enters it.
 func srSendWithin(t *testing.T, s *harness.Session, to, message string) (harness.Result, time.Duration) {
 	t.Helper()
 	start := time.Now()
@@ -791,15 +685,13 @@ func srSendWithin(t *testing.T, s *harness.Session, to, message string) (harness
 	return r, elapsed
 }
 
-// srAsyncResult carries one asynchronous tool result.
 type srAsyncResult struct {
 	res harness.Result
 	ok  bool
 }
 
-// srSendAsync sends one message in the background. The result channel is
-// buffered and closed after the call returns; a closed channel with no value
-// means the goroutine ended inside the harness failure path.
+// srSendAsync's channel is closed after the call; a closed channel with no
+// value means the harness failure path ended the goroutine.
 func srSendAsync(t *testing.T, s *harness.Session, to, message string) <-chan srAsyncResult {
 	t.Helper()
 	ch := make(chan srAsyncResult, 1)
@@ -811,8 +703,6 @@ func srSendAsync(t *testing.T, s *harness.Session, to, message string) <-chan sr
 	return ch
 }
 
-// srAwait waits for an asynchronous result and fails the test when it does not
-// arrive in bound.
 func srAwait(t *testing.T, ch <-chan srAsyncResult, bound time.Duration, what string) harness.Result {
 	t.Helper()
 	select {
@@ -827,7 +717,6 @@ func srAwait(t *testing.T, ch <-chan srAsyncResult, bound time.Duration, what st
 	}
 }
 
-// srMark returns a unique ASCII marker that cannot collide with envelope text.
 func srMark(prefix string) string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {

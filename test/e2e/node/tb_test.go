@@ -13,12 +13,12 @@ import (
 	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
+// The adapter must stay a testing.TB; fakesession depends on it.
 var _ testing.TB = (*TB)(nil)
 
 // TestTBDrivesEveryFakeMethod calls every method of fakesession.Fake through
-// the adapter. A method that falls through to the nil embedded testing.TB
-// panics with a nil pointer dereference instead of a FatalError, which Guard
-// re-raises, so the test fails.
+// the adapter, checks for no errors and checks that Close removes the record and
+// the socket.
 func TestTBDrivesEveryFakeMethod(t *testing.T) {
 	tb := NewTB("x", t.TempDir())
 

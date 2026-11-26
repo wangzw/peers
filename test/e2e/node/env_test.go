@@ -5,9 +5,8 @@ import (
 	"testing"
 )
 
-// TestBaseEnvSetsInboundLimitInterval proves every Broker the end-to-end suite
-// starts gets the long inbound quota refill interval, so a burst sent back to
-// back cannot see a refilled token.
+// TestBaseEnvSetsInboundLimitInterval checks that the environment sets the long
+// inbound quota refill interval.
 func TestBaseEnvSetsInboundLimitInterval(t *testing.T) {
 	env := BaseEnv{Home: "/home/peer", Path: "/usr/bin"}.Build(nil)
 	want := testInboundLimitIntervalEnv + "=" + testInboundLimitInterval

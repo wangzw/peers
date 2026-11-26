@@ -15,19 +15,14 @@ import (
 )
 
 const (
-	// controlUserPort is the user Broker's listen port in these tests. It is
-	// outside the kernel's ephemeral range and unused by the other service
-	// tests.
 	controlUserPort = "17448"
-	// controlObservationWindow is the acceptance window of
-	// REQ-broker-config-063. The job's RestartSec equivalent is launchd's
-	// 10-second ThrottleInterval, so 30 seconds covers three restart attempts.
+	// controlObservationWindow is three times launchd's 10-second
+	// ThrottleInterval, so it covers three restart attempts.
 	controlObservationWindow = 30 * time.Second
 )
 
-// TestUserServiceControl stops, starts and restarts the user service and
-// checks launchd's view after each step. Stop unloads the job but keeps the
-// plist, so the service still starts at the next login.
+// TestUserServiceControl checks that stopping, starting and restarting the user
+// service each leave launchd's view as expected.
 func TestUserServiceControl(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
@@ -47,9 +42,6 @@ func TestUserServiceControl(t *testing.T) {
 	if want := "The user Broker service has stopped.\n"; res.stdout != want {
 		t.Errorf("stdout = %q, want %q", res.stdout, want)
 	}
-	// Stop waits for launchd to unload the job, so the service must already be
-	// gone from launchd's view when the command returns. Polling here instead
-	// would mask a missing wait.
 	assertUnloaded(t, domain)
 	waitFor(t, serviceStopBound, "the stopped Broker process to exit", func() (bool, string) {
 		return !processAlive(first), fmt.Sprintf("pid %d is still running", first)
@@ -79,9 +71,9 @@ func TestUserServiceControl(t *testing.T) {
 	t.Logf("service restart replaced pid %d with pid %d", second, third)
 }
 
-// assertUnloaded checks that launchd no longer knows the service in domain. The
-// service commands wait for the unload before returning, so this runs once
-// instead of polling, which would hide a missing wait.
+// assertUnloaded checks that launchd no longer knows the service in domain,
+// once rather than by polling: the service commands return only after the
+// unload, so polling here would hide a missing wait.
 func assertUnloaded(t *testing.T, domain string) {
 	t.Helper()
 	if out, loaded := launchctlPrint(domain); loaded {
@@ -90,9 +82,7 @@ func assertUnloaded(t *testing.T, domain string) {
 }
 
 // TestUserServiceRestartWithoutPlist checks that restart refuses to unload a
-// running service whose plist was deleted. Installed accepts the loaded job,
-// but a restart that booted it out first could not bootstrap the missing file
-// and would stop the service for good.
+// running service whose plist was deleted.
 func TestUserServiceRestartWithoutPlist(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })
@@ -126,9 +116,8 @@ func TestUserServiceRestartWithoutPlist(t *testing.T) {
 	}
 }
 
-// TestSystemServiceControl is the system counterpart: stop unloads the
-// daemon from launchd but keeps the plist, and start and restart bring it back
-// with a new pid.
+// TestSystemServiceControl checks that stopping, starting and restarting the
+// system service each leave launchd's view as expected.
 func TestSystemServiceControl(t *testing.T) {
 	resetSystemService(t)
 	t.Cleanup(func() { resetSystemService(t) })
@@ -145,8 +134,6 @@ func TestSystemServiceControl(t *testing.T) {
 	if want := "The system Broker service has stopped.\n"; res.stdout != want {
 		t.Errorf("stdout = %q, want %q", res.stdout, want)
 	}
-	// Stop waits for launchd to unload the job, so the service must already be
-	// gone from launchd's view when the command returns.
 	assertUnloaded(t, "system")
 	waitFor(t, serviceStopBound, "the stopped system Broker process to exit", func() (bool, string) {
 		return !processAlive(first), fmt.Sprintf("pid %d is still running", first)
@@ -217,9 +204,8 @@ func TestServiceControlNotInstalled(t *testing.T) {
 	}
 }
 
-// TestUserServiceControlDegraded covers the service-start half of
-// REQ-broker-config-063: with the listen address taken, start leaves the
-// service running degraded, reports it, and launchd keeps the same pid.
+// TestUserServiceControlDegraded checks that a start with the listen address
+// taken leaves the service running degraded, reports it, and keeps its pid.
 func TestUserServiceControlDegraded(t *testing.T) {
 	resetUserService(t)
 	t.Cleanup(func() { resetUserService(t) })

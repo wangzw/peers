@@ -17,25 +17,16 @@ import (
 )
 
 const (
-	// runtimeFallbackPeersBinary is the peers build the system image provides.
 	runtimeFallbackPeersBinary = "/usr/local/bin/peers"
-	// runtimeFallbackListen is a port no other system test binds.
-	runtimeFallbackListen = ":17446"
-	// runtimeFallbackStartBound bounds the start of a user Broker after another
-	// account has taken its preferred runtime directory.
-	runtimeFallbackStartBound = 20 * time.Second
+	runtimeFallbackListen      = ":17446"
+	runtimeFallbackStartBound  = 20 * time.Second
 )
 
-// TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath covers the
-// real shape of the runtime-directory fallback: another account has created
-// /tmp/peers-<uid> before the account's user Broker starts. The Broker must use
-// the per-account fallback directory, a session started as the account must
-// register through it, and nothing may be served from the taken directory.
+// TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath checks that
+// a user Broker whose preferred runtime directory belongs to another account
+// uses the per-account fallback and still serves a session.
 func TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath(t *testing.T) {
 	if !syscontainer.InContainer() {
-		// The container and the runtime directories inside it go away with the
-		// project. Anything the run leaves behind on the host is collected by the
-		// same cleanup the rest of the suite uses.
 		t.Cleanup(func() { harness.CleanResidue(t.Logf) })
 		syscontainer.Run(t, syscontainer.Systemd)
 		return
@@ -50,9 +41,8 @@ func TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath(t *test
 	fallbackDir := filepath.Join(fallbackBase, "peers")
 	socket := filepath.Join(fallbackDir, "broker.sock")
 
-	// The fallback base exists only when the account has a logind session. The
-	// rule accepts it only when this account owns it with no group or other
-	// access, so create it with those properties.
+	// The fallback base exists only with a logind session and is accepted only when
+	// this account owns it with no group or other access.
 	if err := os.MkdirAll(fallbackBase, 0o700); err != nil {
 		t.Fatalf("creating %s: %v", fallbackBase, err)
 	}
@@ -64,8 +54,8 @@ func TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath(t *test
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(fallbackDir) })
 
-	// other takes the preferred path before peer's Broker starts. The directory
-	// is a plain directory, so only the owner comparison can tell it is taken.
+	// other takes the preferred path before peer's Broker starts; a plain directory
+	// is detected as taken only by its owner.
 	if err := os.RemoveAll(preferred); err != nil {
 		t.Fatalf("removing %s: %v", preferred, err)
 	}
@@ -83,8 +73,6 @@ func TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath(t *test
 	stderr := &lockedBuffer{}
 	startRuntimeFallbackBroker(t, stderr, socket)
 
-	// The taken directory must stay untouched: no socket and no lock of peer's
-	// Broker may appear there.
 	for _, name := range []string{"broker.sock", "broker.lock"} {
 		if _, err := os.Lstat(filepath.Join(preferred, name)); err == nil {
 			t.Errorf("the taken directory %s contains %s, want nothing of peer's Broker", preferred, name)
@@ -98,20 +86,16 @@ func TestRuntimeDirectoryFallbackWhenAnotherAccountTakesThePreferredPath(t *test
 		t.Errorf("%s is no longer owned by other", preferred)
 	}
 
-	// The Broker reports where it went, so an operator can find it.
 	if logs := stderr.String(); !strings.Contains(logs, "runtime_dir_fallback") {
 		t.Errorf("the Broker log does not record runtime_dir_fallback:\n%s", logs)
 	} else if !strings.Contains(logs, preferred) {
 		t.Errorf("the Broker log does not name the taken path %s:\n%s", preferred, logs)
 	}
 
-	// A session started as the account must find the Broker through the
-	// fallback socket and register.
 	session := syscontainer.NewSession(t, "peer", "fallback")
 	waitRegistered(t, session)
 }
 
-// accountIDs returns the uid and gid of account.
 func accountIDs(t *testing.T, account string) (int, int) {
 	t.Helper()
 	u, err := user.Lookup(account)
@@ -129,9 +113,6 @@ func accountIDs(t *testing.T, account string) (int, int) {
 	return uid, gid
 }
 
-// startRuntimeFallbackBroker runs "peers service run --user" as peer and waits
-// for socket. The process is stopped when the test ends. A process that exits
-// before the socket exists fails the test with its output.
 func startRuntimeFallbackBroker(t *testing.T, stderr *lockedBuffer, socket string) {
 	t.Helper()
 	cmd := syscontainer.Command("peer", nil, runtimeFallbackPeersBinary,

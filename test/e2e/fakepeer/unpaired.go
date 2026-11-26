@@ -13,13 +13,8 @@ import (
 	"github.com/wangzw/peers/internal/link/linkpb"
 )
 
-// dialUnpaired opens one link stream without pairing and pushes the whole
-// record set over it. It announces a Hello first so the peer treats the stream
-// as a link connection and gets to decide whether the source is a peer; a peer
-// that does not know this identity rejects it.
-//
-// The return value is the name of the reject reason when the stream carried a
-// Reject, and the last stream error otherwise. It is never empty.
+// dialUnpaired sends a Hello first so the peer treats the stream as a link
+// connection, then pushes the whole record set.
 func dialUnpaired(ctx context.Context, open func(context.Context) (linkpb.Link_ConnectClient, error), set *recordSet) string {
 	stream, err := open(ctx)
 	if err != nil {

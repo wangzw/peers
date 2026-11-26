@@ -23,13 +23,10 @@ import (
 // so a record is rejected only for the reason a case tests.
 const hostileRecordTTL = 168 * time.Hour
 
-// replaceIntervalEnv names the variable the peers_testenv build reads for the
-// replacement interval. The harness sets it to one second for every Broker so
-// the other discovery cases can watch a withdrawal or a re-signed card move; a
-// case that needs the release window overrides it per Broker.
+// replaceIntervalEnv is the variable the peers_testenv build reads for the
+// replacement interval, set to one second unless a case overrides it.
 const replaceIntervalEnv = "PEERS_TEST_DIRECTORY_REPLACE_INTERVAL"
 
-// hostilePairKey creates a one-time pairing key through an operator session.
 func hostilePairKey(t *testing.T, d *discNode) string {
 	t.Helper()
 	op := discOperator(t, d)
@@ -42,8 +39,6 @@ func hostilePairKey(t *testing.T, d *discNode) string {
 	return key.Key
 }
 
-// hostileBuild builds a directory record with the fields a case does not set
-// filled in.
 func hostileBuild(t *testing.T, spec fakerec.Spec) *directorypb.Record {
 	t.Helper()
 	if spec.Version == 0 {
@@ -59,7 +54,6 @@ func hostileBuild(t *testing.T, spec fakerec.Spec) *directorypb.Record {
 	return record
 }
 
-// hostileCard builds a card record.
 func hostileCard(t *testing.T, seed, alias, address, tamper string) *directorypb.Record {
 	t.Helper()
 	return hostileBuild(t, fakerec.Spec{
@@ -71,12 +65,10 @@ func hostileCard(t *testing.T, seed, alias, address, tamper string) *directorypb
 	})
 }
 
-// hostileHexFingerprint renders a publisher fingerprint as lowercase hex.
 func hostileHexFingerprint(fp pairing.Fingerprint) string {
 	return hex.EncodeToString(fp[:])
 }
 
-// hostileNonPeers returns the entries that are not paired peers.
 func hostileNonPeers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
 	out := make([]*localpb.BrokerInfo, 0, len(brokers))
 	for _, broker := range brokers {
@@ -87,8 +79,6 @@ func hostileNonPeers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
 	return out
 }
 
-// hostileAbsent observes for the whole window that d lists none of the
-// fingerprints.
 func hostileAbsent(t *testing.T, d *discNode, window time.Duration, what string, fingerprints ...string) {
 	t.Helper()
 	harness.Consistently(t, window, what, func() (bool, string) {
@@ -109,9 +99,8 @@ func hostileAbsent(t *testing.T, d *discNode, window time.Duration, what string,
 }
 
 // TestDirectoryRejectsTamperedCards checks that a tampered card and an
-// impersonated card are dropped while a valid card from the same unpaired
-// (but paired) source propagates: the signature covers the payload and the
-// publisher must match the presented public key.
+// impersonated card are dropped while a valid card from the same source
+// propagates.
 func TestDirectoryRejectsTamperedCards(t *testing.T) {
 	t.Parallel()
 
@@ -157,8 +146,8 @@ func TestDirectoryRejectsTamperedCards(t *testing.T) {
 }
 
 // TestDirectoryRejectsUnpairedSource checks that records pushed over a stream
-// that never completed pairing are dropped, while the same records are
-// accepted once the source is paired.
+// that never completed pairing are dropped and accepted once the source is
+// paired.
 func TestDirectoryRejectsUnpairedSource(t *testing.T) {
 	t.Parallel()
 
@@ -189,9 +178,9 @@ func TestDirectoryRejectsUnpairedSource(t *testing.T) {
 	})
 }
 
-// TestDirectoryPerLinkLimit checks that one link cannot fill the directory:
-// a link stops at directory.max_records_per_link while a second link still
-// adds its record under the total limit.
+// TestDirectoryPerLinkLimit checks that one link stops at
+// directory.max_records_per_link while a second link still adds its record
+// under the total limit.
 func TestDirectoryPerLinkLimit(t *testing.T) {
 	t.Parallel()
 
@@ -245,8 +234,6 @@ func TestDirectoryPerLinkLimit(t *testing.T) {
 	}
 }
 
-// hostileAgentID returns the Broker-assigned id of the agent whose address
-// starts with name@. ListTopics needs it to resolve the caller.
 func hostileAgentID(t *testing.T, d *discNode, name string) string {
 	t.Helper()
 	st, detail := d.Oracle().Status(t)
@@ -262,11 +249,10 @@ func hostileAgentID(t *testing.T, d *discNode, name string) string {
 	return ""
 }
 
-// TestDirectoryPublicTopicReceiveLimits covers the receive-side rules for
-// public topic declarations: a declaration whose name or description breaks
-// the format rules is left out of the local listing while the record still
-// reaches the next Broker, and a description declared by a paired peer cannot
-// be replaced by a remote publisher that claims the largest version.
+// TestDirectoryPublicTopicReceiveLimits checks the receive-side rules for
+// public topic declarations: malformed ones are left out of the local listing
+// while the record still propagates, and a paired peer's description cannot
+// be replaced by a remote publisher.
 func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 	t.Parallel()
 
@@ -281,8 +267,6 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 		f.Pair(t, b.addr, hostilePairKey(t, b))
 		f.WaitLinked(t, harness.EventTimeout)
 
-		// G observes the far Broker, so a record that reaches C through B is
-		// visible even though C's listing leaves it out too.
 		g := startFakePeer(t)
 		g.Pair(t, c.addr, hostilePairKey(t, c))
 		g.WaitLinked(t, harness.EventTimeout)
@@ -396,19 +380,13 @@ func TestDirectoryPublicTopicReceiveLimits(t *testing.T) {
 	})
 }
 
-// TestDirectoryHoldsRapidRecordReplacement checks that a newer version of a
-// record accepted from a link is not taken within the replacement interval, so
-// the next Broker sees only the first version while the local listing keeps the
-// first version's alias.
+// TestDirectoryHoldsRapidRecordReplacement checks that a newer version
+// accepted from a link is not taken within the replacement interval.
 func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
 	t.Parallel()
 
-	// The suite shortens the interval to one second so the other discovery
-	// cases can watch a withdrawal or a re-signed card propagate. This case
-	// asserts a five-second window in which the held version must not change,
-	// so both Brokers that accept the record from a link get the release
-	// window instead: B holds the second version from its link, and C would
-	// hold it from B even if B forwarded it.
+	// Both Brokers that accept the record from a link get a one-hour release
+	// window so neither takes the second version before the check ends.
 	releaseInterval := map[string]string{replaceIntervalEnv: "1h"}
 	b := discNewNodeEnv(t, "rep-b", "", false, releaseInterval)
 	c := discNewNodeEnv(t, "rep-c", "", false, releaseInterval)
@@ -453,7 +431,6 @@ func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
 		return ""
 	})
 
-	// The second version arrives well inside the replacement interval.
 	f.Records(t, buildCard(2, "replace-two", "198.51.100.62:17443"))
 
 	harness.Consistently(t, discQuietBound(2), "C receives only the first version", func() (bool, string) {
@@ -481,8 +458,8 @@ func TestDirectoryHoldsRapidRecordReplacement(t *testing.T) {
 }
 
 // TestDirectoryMalformedDirectAddress checks that a card with a well-formed
-// direct address and one containing an ESC byte is accepted, propagated and
-// listed with only the well-formed entry (REQ-broker-discovery-018).
+// direct address and one containing an ESC byte propagates and lists only the
+// well-formed entry.
 func TestDirectoryMalformedDirectAddress(t *testing.T) {
 	t.Parallel()
 

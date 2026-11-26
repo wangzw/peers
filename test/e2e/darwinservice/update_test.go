@@ -23,44 +23,29 @@ import (
 )
 
 const (
-	// updateOldVersion is the release the LaunchDaemon runs before the update.
 	updateOldVersion = "0.1.0"
-	// updateNewVersion is the release the fake GitHub API offers.
 	updateNewVersion = "0.1.2"
-	// updateAPIEnv is the test-build hook that points the Broker at the fake
-	// GitHub API instead of api.github.com.
-	updateAPIEnv = "PEERS_TEST_UPDATE_API"
+	updateAPIEnv     = "PEERS_TEST_UPDATE_API"
 
-	// updateRestartBound bounds the wait for launchd to start the restarted
-	// Broker and for the test to read the new version. launchd applies its
-	// default ThrottleInterval of 10 seconds before it relaunches a process
-	// that exited too quickly, and the Broker's own startup and readiness take
-	// a few seconds; the bound matches restartBound and leaves margin for a
-	// loaded runner.
+	// updateRestartBound follows launchd's default 10-second ThrottleInterval
+	// plus the Broker's startup and readiness, matching restartBound.
 	updateRestartBound = 30 * time.Second
 
-	// updateCommandBound bounds the update command. The command waits up to 60
-	// seconds itself (updateRestartWait in cmd/peers) for the restarted
-	// Broker to report the new version; this bound adds the restart margin so a
-	// stuck relaunch fails with output instead of hanging the job.
+	// updateCommandBound is the update command's own 60-second wait
+	// (updateRestartWait in cmd/peers) plus the restart margin, so a stuck
+	// relaunch fails with output.
 	updateCommandBound = 90 * time.Second
 
-	// daemonNextEnvName is an EnvironmentVariables entry only the next-version
-	// plist template carries. launchctl print shows the loaded job's
-	// environment, so reading it back proves the rewritten plist is the one
-	// launchd loaded.
+	// daemonNextEnvName is an environment entry only the next-version plist
+	// template carries; with the old and new ProgramArguments identical,
+	// reading it back is the only proof that launchd loaded the rewritten plist.
 	daemonNextEnvName  = "PEERS_E2E_POST_UPDATE"
 	daemonNextEnvValue = "next-format"
 )
 
-// TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate covers REQ-update-007 on
-// macOS: a system LaunchDaemon replaces its own binary through
-// ApplyUpdate, launchd starts the new binary under KeepAlive, the binary keeps
-// its root ownership and permissions, and the restarted Broker still serves.
-//
-// The old release is built with the peers_testenv tag and installed over
-// the shared test binary, so the Broker reads the fake API base from its plist.
-// The test restores the shared binary from a backup in t.Cleanup.
+// TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate checks that a system
+// LaunchDaemon replaces its own binary through ApplyUpdate and keeps its root
+// ownership while the restarted Broker still serves.
 func TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate(t *testing.T) {
 	resetSystemService(t)
 	preserveInstalledBinary(t)
@@ -96,9 +81,6 @@ func TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate(t *testing.T) {
 		t.Fatalf("%s is owned by uid %d before the update, want root", installedBinary, beforeUID)
 	}
 
-	// launchd hands the job's EnvironmentVariables to the process it starts.
-	// The plist was written by service install, so the fake API base is added
-	// to it and the job is bootstrapped again to start a Broker that sees it.
 	addDaemonEnvironment(t, updateAPIEnv, fake.URL())
 	bootout("system")
 	waitForGone(t, "system", serviceStopBound)
@@ -109,16 +91,12 @@ func TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate(t *testing.T) {
 	t.Logf("launchd restarted the old release with the test environment, pid %d", restarted)
 	waitForBrokerVersion(t, updateOldVersion)
 
-	// The command reports success only after the restarted Broker answers with
-	// the version it was updated to.
 	res = runWithin(t, updateCommandBound, "sudo", "-n", installedBinary, "update", "--yes")
 	combined := res.stdout + res.stderr
 	if res.exitCode != 0 {
 		t.Fatalf("peers update --yes: exit %d\nstdout:\n%s\nstderr:\n%s",
 			res.exitCode, res.stdout, res.stderr)
 	}
-	// The command does not print the old version with --yes; the check before
-	// the update already proved the old release was running.
 	for _, want := range []string{
 		"The Broker is restarting with version " + updateNewVersion,
 		"The Broker is running peers " + updateNewVersion,
@@ -143,19 +121,9 @@ func TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate(t *testing.T) {
 			beforeUID, beforeGID, beforeMode, afterUID, afterGID, afterMode)
 	}
 
-	// The restarted Broker reports the new version and still answers the local
-	// interface, which is what "running the new release and serving" means.
 	waitForBrokerVersion(t, updateNewVersion)
 
-	// ApplyUpdate's post-update step rewrites the plist and detaches a helper
-	// that boots the label out and bootstraps the new definition after the old
-	// Broker exits. The loaded job must therefore hold the ProgramArguments this
-	// binary writes, which is how launchd proves it read the rewritten plist.
 	waitForLaunchdArguments(t, "system", []string{installedBinary, "service", "run", "--system", "--allow-degraded"})
-	// The next version's template adds an environment entry of its own, and the
-	// variable the test put in the old plist must survive the rewrite. The old
-	// ProgramArguments are identical to the new ones, so only the environment
-	// proves which plist launchd loaded.
 	waitForLaunchdEnvironment(t, "system", daemonNextEnvName, daemonNextEnvValue)
 	waitForLaunchdEnvironment(t, "system", updateAPIEnv, fake.URL())
 	if status := run(t, "sudo", "-n", installedBinary, "service", "status"); status.exitCode != 0 {
@@ -178,10 +146,6 @@ func TestREQUpdate007_LaunchDaemonReplacedByApplyUpdate(t *testing.T) {
 	}
 }
 
-// preserveInstalledBinary copies the shared test binary aside and restores it,
-// with its root ownership and mode, when the test ends. The update test
-// replaces that path with two release builds while the rest of the package
-// expects the binary TestMain installed.
 func preserveInstalledBinary(t *testing.T) {
 	t.Helper()
 	data, err := os.ReadFile(installedBinary)
@@ -209,8 +173,6 @@ func preserveInstalledBinary(t *testing.T) {
 	})
 }
 
-// installRootBinary installs src at dst as a root-owned, world-executable
-// binary, the ownership a system installation requires.
 func installRootBinary(t *testing.T, src, dst string) {
 	t.Helper()
 	if err := sudo("install", "-o", "root", "-g", "wheel", "-m", "0755", src, dst); err != nil {
@@ -218,7 +180,6 @@ func installRootBinary(t *testing.T, src, dst string) {
 	}
 }
 
-// binaryOwner returns the owner and permission bits of path.
 func binaryOwner(path string) (uid, gid uint32, mode os.FileMode, err error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -231,7 +192,6 @@ func binaryOwner(path string) (uid, gid uint32, mode os.FileMode, err error) {
 	return st.Uid, st.Gid, info.Mode().Perm(), nil
 }
 
-// binaryVersion runs path --version and returns its trimmed output.
 func binaryVersion(t *testing.T, path string) string {
 	t.Helper()
 	res := run(t, path, "--version")
@@ -241,9 +201,6 @@ func binaryVersion(t *testing.T, path string) string {
 	return strings.TrimSpace(res.stdout)
 }
 
-// addDaemonEnvironment adds one EnvironmentVariables entry to the daemon
-// plist. PlistBuddy writes the change in place; launchd reads the entry when
-// the job is bootstrapped again.
 func addDaemonEnvironment(t *testing.T, key, value string) {
 	t.Helper()
 	const plistBuddy = "/usr/libexec/PlistBuddy"
@@ -255,7 +212,6 @@ func addDaemonEnvironment(t *testing.T, key, value string) {
 	}
 }
 
-// waitForBrokerVersion waits until the system Broker reports want.
 func waitForBrokerVersion(t *testing.T, want string) {
 	t.Helper()
 	waitFor(t, updateRestartBound, "the system Broker to report version "+want, func() (bool, string) {
@@ -267,8 +223,6 @@ func waitForBrokerVersion(t *testing.T, want string) {
 	})
 }
 
-// systemBrokerVersion reads the version the system Broker runs by executing the
-// test binary's status role as root, where the system socket admits the caller.
 func systemBrokerVersion() (string, error) {
 	binary, err := os.Executable()
 	if err != nil {
@@ -286,9 +240,6 @@ func systemBrokerVersion() (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// runWithin runs name with args under a bound and returns its output and exit
-// code. A process that does not finish within the bound fails the test with the
-// output it produced.
 func runWithin(t *testing.T, bound time.Duration, name string, args ...string) result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), bound)
@@ -315,11 +266,6 @@ func runWithin(t *testing.T, bound time.Duration, name string, args ...string) r
 	return res
 }
 
-// buildBinaryWithDaemonEnvironment builds version with a Go build overlay that
-// adds a test-only EnvironmentVariables entry to the system daemon's plist
-// template. Nothing in the tree changes; the entry exists only in this build,
-// so it cannot be present in the plist the old release installed unless the
-// next binary rewrote it.
 func buildBinaryWithDaemonEnvironment(t *testing.T, version string) string {
 	t.Helper()
 
@@ -362,7 +308,6 @@ func buildBinaryWithDaemonEnvironment(t *testing.T, version string) string {
 	return harness.BuildBinaryVersionOverlay(t, version, "darwin", runtime.GOARCH, overlayPath)
 }
 
-// launchdArgumentsPattern captures the arguments block of launchctl print.
 var launchdArgumentsPattern = regexp.MustCompile(`(?ms)^\s*arguments = \{\n(.*?)^\s*\}`)
 
 // launchdEnvironmentPattern captures the environment block of launchctl print.
@@ -370,10 +315,8 @@ var launchdArgumentsPattern = regexp.MustCompile(`(?ms)^\s*arguments = \{\n(.*?)
 // "default environment" blocks above it do not match.
 var launchdEnvironmentPattern = regexp.MustCompile(`(?ms)^\s*environment = \{\n(.*?)^\s*\}`)
 
-// waitForLaunchdArguments waits until launchctl print reports want as the
-// loaded job's ProgramArguments. The reload is asynchronous: the detached
-// helper runs after the old Broker exits, so the check polls within the restart
-// bound.
+// waitForLaunchdArguments polls within the restart bound because the reload is
+// asynchronous: the detached helper runs after the old Broker exits.
 func waitForLaunchdArguments(t *testing.T, domain string, want []string) {
 	t.Helper()
 	waitFor(t, updateRestartBound, "launchd to load the rewritten ProgramArguments", func() (bool, string) {
@@ -386,8 +329,6 @@ func waitForLaunchdArguments(t *testing.T, domain string, want []string) {
 	})
 }
 
-// launchdArguments extracts the arguments list from launchctl print. An output
-// without the block returns nil, so the wait retries.
 func launchdArguments(out string) []string {
 	match := launchdArgumentsPattern.FindStringSubmatch(out)
 	if match == nil {
@@ -402,8 +343,6 @@ func launchdArguments(out string) []string {
 	return args
 }
 
-// launchdEnvironment extracts the environment launchctl print shows for the
-// loaded job.
 func launchdEnvironment(out string) map[string]string {
 	match := launchdEnvironmentPattern.FindStringSubmatch(out)
 	if match == nil {
@@ -419,9 +358,8 @@ func launchdEnvironment(out string) map[string]string {
 	return env
 }
 
-// waitForLaunchdEnvironment waits until launchctl print shows name=want in the
-// loaded job's environment. The reload is asynchronous, so the check polls
-// within the restart bound.
+// waitForLaunchdEnvironment polls within the restart bound because the reload
+// is asynchronous.
 func waitForLaunchdEnvironment(t *testing.T, domain, name, want string) {
 	t.Helper()
 	waitFor(t, updateRestartBound, "launchd to load "+name+"="+want, func() (bool, string) {

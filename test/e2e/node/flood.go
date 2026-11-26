@@ -11,17 +11,13 @@ import (
 	"time"
 )
 
-// floodDialBound bounds one dial of the connection flood.
 const floodDialBound = 2 * time.Second
 
-// floodDialGap is how long a worker waits after a failed dial before trying
-// again.
 const floodDialGap = 20 * time.Millisecond
 
 // floodRedialGap is how long a worker waits after the listener closes its
-// connection before dialing again. Without it an evicted connection redials at
-// once and the flood busy-spins against the listener. The first dial is not
-// delayed, so the sources still fill the global limit and force evictions.
+// connection before dialing again; without it an evicted connection redials at
+// once and the flood busy-spins. The first dial is not delayed.
 const floodRedialGap = 10 * time.Millisecond
 
 // FloodSpec describes a flood of bare TCP connections a node holds against a
@@ -51,8 +47,8 @@ type FloodStats struct {
 }
 
 // floodRun holds bare connections and redials them when the listener closes
-// one. Binding each worker to a loopback address makes every source a distinct
-// /32, so a test can fill the per-source and global limits from one node.
+// one; binding each worker to its own loopback address makes every source a
+// distinct /32, so one node can fill the per-source and global limits.
 type floodRun struct {
 	spec   FloodSpec
 	cancel context.CancelFunc
@@ -75,8 +71,8 @@ func (a *Agent) FloodStart(spec FloodSpec) error {
 	return err
 }
 
-// floodStart implements FloodStart. It checks the request before starting any
-// goroutine, so a bad request leaves the agent unchanged.
+// floodStart validates the request before starting any goroutine, so a bad
+// request leaves the agent unchanged.
 func (a *Agent) floodStart(spec FloodSpec) error {
 	if spec.Addr == "" {
 		return errors.New("flood needs an address")
@@ -100,7 +96,6 @@ func (a *Agent) floodStart(spec FloodSpec) error {
 	return nil
 }
 
-// start launches PerSource workers for each source address.
 func (f *floodRun) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	f.cancel = cancel
@@ -114,8 +109,6 @@ func (f *floodRun) start() {
 	}
 }
 
-// worker holds one connection slot: it dials, waits for the listener or the
-// stop to close the connection, then dials again.
 func (f *floodRun) worker(ctx context.Context, local netip.AddrPort) {
 	defer f.wg.Done()
 	dialer := net.Dialer{Timeout: floodDialBound, LocalAddr: net.TCPAddrFromAddrPort(local)}
@@ -135,10 +128,10 @@ func (f *floodRun) worker(ctx context.Context, local netip.AddrPort) {
 		f.dialed.Add(1)
 		f.raiseMax(f.open.Add(1))
 
-		// Register under the lock, but only if the flood is still running.
-		// stop closes every connection in the map, so a connection that
-		// completes its dial after stop began would otherwise sit open until
-		// the listener's first-frame deadline, and stop would wait for it.
+		// Register under the lock, but only if the flood is still running: stop
+		// closes every connection in the map, so a dial that completes after
+		// stop began would otherwise stay open until the listener's first-frame
+		// deadline and stop would wait for it.
 		f.mu.Lock()
 		if ctx.Err() != nil {
 			f.mu.Unlock()
@@ -149,9 +142,8 @@ func (f *floodRun) worker(ctx context.Context, local netip.AddrPort) {
 		f.conns[conn] = struct{}{}
 		f.mu.Unlock()
 
-		// Read only: the listener closes the connection when it evicts it or
-		// the first-frame deadline passes, and a write would start a TLS
-		// handshake the flood does not want.
+		// Read only: the listener closes the connection when it evicts it or the
+		// first-frame deadline passes; a write would start a TLS handshake.
 		buffer := make([]byte, 1)
 		_, readErr := conn.Read(buffer)
 
@@ -166,8 +158,6 @@ func (f *floodRun) worker(ctx context.Context, local netip.AddrPort) {
 			f.closed.Add(1)
 		}
 
-		// Pause before the next dial so an evicted connection does not redial
-		// in a tight loop.
 		select {
 		case <-time.After(floodRedialGap):
 		case <-ctx.Done():
@@ -176,7 +166,6 @@ func (f *floodRun) worker(ctx context.Context, local netip.AddrPort) {
 	}
 }
 
-// raiseMax records v as the high-water mark of open connections.
 func (f *floodRun) raiseMax(v int64) {
 	for {
 		cur := f.maxOpen.Load()
@@ -186,7 +175,6 @@ func (f *floodRun) raiseMax(v int64) {
 	}
 }
 
-// Stats returns one reading of the flood.
 func (f *floodRun) stats() FloodStats {
 	return FloodStats{
 		Dialed:  f.dialed.Load(),
@@ -196,8 +184,6 @@ func (f *floodRun) stats() FloodStats {
 	}
 }
 
-// stop cancels the workers and closes every connection they hold, then waits
-// for them to exit.
 func (f *floodRun) stop() {
 	f.cancel()
 	f.mu.Lock()
@@ -232,7 +218,6 @@ func (a *Agent) FloodStop() error {
 	return err
 }
 
-// floodStop implements FloodStop.
 func (a *Agent) floodStop() error {
 	a.mu.Lock()
 	run := a.flood

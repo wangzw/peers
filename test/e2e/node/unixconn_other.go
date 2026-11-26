@@ -4,8 +4,8 @@ package node
 
 import "errors"
 
-// InboxConnections is only implemented on Linux, where /proc/net/unix is
-// available.
+// InboxConnections returns errors.ErrUnsupported; it is only implemented on
+// Linux.
 func (s *Session) InboxConnections() (int, error) {
 	return 0, errors.ErrUnsupported
 }

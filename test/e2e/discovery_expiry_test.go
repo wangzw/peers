@@ -23,42 +23,28 @@ import (
 )
 
 const (
-	// dxReconcileInterval is the directory reconciliation interval every node
-	// in these tests runs with; one propagation hop costs at most one interval.
+	// dxReconcileInterval must match the reconciliation interval every node
+	// runs with: one propagation hop costs at most one interval.
 	dxReconcileInterval = time.Second
 
-	// dxPropagationBound bounds a wait for a card crossing two hops: twice the
-	// reconciliation interval plus the tree's EventTimeout margin. A negative
-	// observation uses dxPropagationQuietWindow instead, because a negative
-	// check pays its whole window on every step.
 	dxPropagationBound = 2*dxReconcileInterval + harness.EventTimeout
 
-	// dxPropagationQuietWindow is the observation window of a negative check
-	// that watches a card across two hops. It must span more than one
-	// reconciliation interval so a maintenance pass at the new clock offset
-	// runs inside the window; it keeps the three-second margin instead of
-	// EventTimeout because the window is paid on every step of the check.
+	// dxPropagationQuietWindow must span more than one reconciliation
+	// interval and keeps a short margin because a negative check pays its
+	// whole window.
 	dxPropagationQuietWindow = 2*dxReconcileInterval + 3*time.Second
 
-	// dxExpiryBound bounds one Broker noticing an expired record: one
-	// reconciliation interval plus the tree's EventTimeout margin.
 	dxExpiryBound = dxReconcileInterval + harness.EventTimeout
 
-	// dxQuietWindow is the observation window of a negative check. One
-	// reconciliation interval has already passed and nothing else changes, so
-	// the entry must stay absent for the whole window.
 	dxQuietWindow = dxReconcileInterval + 3*time.Second
 
-	// dxPublicTopic is the topic the expiry case declares publicly.
 	dxPublicTopic = "infra-help"
 
-	// dxClockEnv names the wall-clock offset file the peers_testenv hook
-	// reads.
+	// dxClockEnv is the wall-clock offset file the peers_testenv hook reads.
 	dxClockEnv = "PEERS_TEST_CLOCK_FILE"
 
-	// The total-limit case keeps the original cards short-lived so that the
-	// renewals, not the originals, must keep the entries alive past their
-	// first expiry.
+	// The total-limit case keeps the originals short-lived so the renewals,
+	// not the originals, keep the entries alive past their first expiry.
 	dxLimitMaxRecords  = 3
 	dxLimitOriginalTTL = 48 * time.Hour
 	dxLimitRenewalAt   = 24 * time.Hour
@@ -66,11 +52,8 @@ const (
 	dxLimitCheckpoint  = 144 * time.Hour
 )
 
-// TestCardExpiresAfterSevenDays covers REQ-broker-discovery-007: a card issued
-// by a public Broker stays visible for six days and disappears after seven.
-// A is public and paired with B; C is paired with B and receives A's card
-// through B. A stops serving before the clock moves, so only the expiry can
-// remove the card.
+// TestCardExpiresAfterSevenDays checks that a card issued by a public Broker
+// stays visible for six days and disappears after seven.
 func TestCardExpiresAfterSevenDays(t *testing.T) {
 	aHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "expiry-a"})
 	bHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "expiry-b"})
@@ -107,7 +90,6 @@ func TestCardExpiresAfterSevenDays(t *testing.T) {
 		t.Fatalf("A's Broker exited with %d on SIGTERM, want 0", code)
 	}
 
-	// Six days after issuance the card is still live for every reader.
 	dxSetClock(t, clockB, 144*time.Hour)
 	dxSetClock(t, clockC, 144*time.Hour)
 	harness.Consistently(t, dxQuietWindow, "C still lists A six days after issuance",
@@ -119,8 +101,6 @@ func TestCardExpiresAfterSevenDays(t *testing.T) {
 			return true, ""
 		})
 
-	// Eight days after issuance the record has expired. Nothing is left to
-	// renew it because A is stopped, so every reader drops it.
 	dxSetClock(t, clockB, 192*time.Hour)
 	dxSetClock(t, clockC, 192*time.Hour)
 	harness.Eventually(t, dxExpiryBound, "C drops A eight days after issuance",
@@ -133,10 +113,8 @@ func TestCardExpiresAfterSevenDays(t *testing.T) {
 		})
 }
 
-// TestCardRenewedDaily covers REQ-broker-discovery-008: while a public Broker
-// runs, its card is renewed every day and never expires. A, B and C advance
-// together, because a record issued on a clock far ahead of B's is rejected as
-// too far in the future.
+// TestCardRenewedDaily checks that a running public Broker's card is renewed
+// every day and never expires.
 func TestCardRenewedDaily(t *testing.T) {
 	aHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "renew-a"})
 	bHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "renew-b"})
@@ -147,6 +125,8 @@ func TestCardRenewedDaily(t *testing.T) {
 	listenC := cHost.FreeAddr(t)
 
 	clock := dxClockFile(t)
+	// A, B and C advance together, because a record issued on a clock far
+	// ahead of B's is rejected as too far in the future.
 	clockEnv := map[string]string{dxClockEnv: clock}
 
 	listenA = dxStartBroker(t, aHost, dxConfig(listenA, "renew-a", true), listenA, clockEnv)
@@ -164,14 +144,11 @@ func TestCardRenewedDaily(t *testing.T) {
 	dxPair(t, opB, opC, listenB)
 	dxWaitCard(t, cHost, fpA, []string{listenA}, dxPropagationBound)
 
-	// Eleven steps of 23 hours reach 253 hours. A renewal is due after 24
+	// Eleven steps of 23 hours reach 253 hours: a renewal is due after 24
 	// hours, so the card expires at step eight (184h) unless it is renewed.
-	//
-	// The check after each step spans the propagation window instead of
-	// returning on the first look: a maintenance pass has to run at the new
-	// offset for a due renewal to be issued, and only a window of more than
-	// one reconciliation interval guarantees that. A card that is never
-	// renewed vanishes at step eight even though it was seen after step seven.
+	// Each step uses a Consistently window instead of returning on the first
+	// hit, because a maintenance pass has to run at the new offset for a due
+	// renewal to be issued.
 	for step := 1; step <= 11; step++ {
 		offset := time.Duration(step) * 23 * time.Hour
 		dxSetClock(t, clock, offset)
@@ -191,11 +168,9 @@ func TestCardRenewedDaily(t *testing.T) {
 	}
 }
 
-// TestDirectoryTotalLimitKeepsRenewals covers REQ-broker-discovery-011: the
-// total record limit rejects cards from publishers the directory does not know,
-// while a renewal of an entry already held replaces it even though the limit is
-// full. The originals expire after two days; only the renewals accepted at the
-// full limit keep the three entries listed beyond that.
+// TestDirectoryTotalLimitKeepsRenewals checks that the total record limit
+// rejects cards from new publishers while a renewal of a held entry replaces
+// it even at the limit.
 func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 	t.Parallel()
 
@@ -215,7 +190,6 @@ func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 	f.Pair(t, b.addr, hostilePairKey(t, b))
 	f.WaitLinked(t, harness.EventTimeout)
 
-	// Five valid cards from five publishers: three fit under the total limit.
 	originals := make([]*directorypb.Record, 0, 5)
 	addresses := make(map[string]string, 5)
 	known := make(map[string]string, 5)
@@ -255,10 +229,6 @@ func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 			return true, ""
 		})
 
-	// At 24h the originals are still live, so every renewal replaces a held
-	// entry while the directory is at its total limit. The observation window
-	// gives the reconcile pass that delivers them time to run before the clock
-	// moves past the originals' expiry.
 	dxSetClock(t, clock, dxLimitRenewalAt)
 	renewed := make([]*directorypb.Record, 0, len(accepted))
 	for _, seed := range accepted {
@@ -271,15 +241,12 @@ func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 			return dxLimitCardsPresent(t, b, accepted)
 		})
 
-	// The originals expired two days after issuance. Only the renewals taken
-	// at the full limit can keep the three entries in the result.
 	dxSetClock(t, clock, dxLimitCheckpoint)
 	harness.Consistently(t, dxQuietWindow, "the three renewed cards remain after 144h",
 		func() (bool, string) {
 			return dxLimitCardsPresent(t, b, accepted)
 		})
 
-	// The renewals expire on their own schedule as well.
 	dxSetClock(t, clock, dxLimitRenewalAt+dxLimitRenewalTTL)
 	harness.Eventually(t, dxExpiryBound, "the renewed cards expire with their own expiry",
 		func() (bool, string) {
@@ -299,7 +266,6 @@ func TestDirectoryTotalLimitKeepsRenewals(t *testing.T) {
 		})
 }
 
-// dxLimitCard builds one card record for the total-limit case.
 func dxLimitCard(t *testing.T, seed string, version uint64, issued time.Time, ttl time.Duration, addr string) *directorypb.Record {
 	t.Helper()
 	record, err := fakerec.Build(fakerec.Spec{
@@ -316,8 +282,6 @@ func dxLimitCard(t *testing.T, seed string, version uint64, issued time.Time, tt
 	return record
 }
 
-// dxLimitCardsPresent reports that the directory lists exactly the cards whose
-// fingerprints the map holds.
 func dxLimitCardsPresent(t *testing.T, d *discNode, want map[string]string) (bool, string) {
 	t.Helper()
 	brokers, state := discList(t, d)
@@ -341,25 +305,19 @@ func dxLimitCardsPresent(t *testing.T, d *discNode, want map[string]string) (boo
 	return true, ""
 }
 
-// dxDirectoryRecord is one record in a Broker's directory.json.
 type dxDirectoryRecord struct {
 	Raw []byte `json:"raw"`
 }
 
-// dxDirectoryFile is the part of directory.json these tests read.
 type dxDirectoryFile struct {
 	Records []dxDirectoryRecord `json:"records"`
 }
 
-// dxDirectoryKey identifies a stored record by publisher and kind, because one
-// publisher can hold a card and topic announcements in the same directory.
 type dxDirectoryKey struct {
 	Publisher string
 	Kind      directorypb.RecordKind
 }
 
-// dxDirectoryRecords reads the records persisted by node's Broker, keyed by
-// publisher fingerprint in lowercase hexadecimal and record kind.
 func dxDirectoryRecords(t *testing.T, node *harness.Node) map[dxDirectoryKey]*directorypb.RecordBody {
 	t.Helper()
 	path := filepath.Join(node.AccountHome(), ".peers", "directory.json")
@@ -383,11 +341,8 @@ func dxDirectoryRecords(t *testing.T, node *harness.Node) map[dxDirectoryKey]*di
 	return out
 }
 
-// TestPublicTopicExpiresWithDeclarer covers REQ-topics-012: a public topic
-// declaration lives as long as its declarer's card. A declares the topic while
-// public and is killed, so no session-end withdrawal removes the declaration
-// first; B keeps it for six days and drops it once its clock passes the
-// declaration's expiry.
+// TestPublicTopicExpiresWithDeclarer checks that a public topic declaration
+// lives as long as its declarer's card.
 func TestPublicTopicExpiresWithDeclarer(t *testing.T) {
 	aHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "topic-expiry-a"})
 	bHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "topic-expiry-b"})
@@ -445,8 +400,6 @@ func TestPublicTopicExpiresWithDeclarer(t *testing.T) {
 	// public member and the declaration would be gone before the clock moves.
 	aHost.StopBroker(t, syscall.SIGKILL)
 
-	// Six days after issuance the declaration is still within its seven-day
-	// life and must stay visible.
 	dxSetClock(t, clockB, 144*time.Hour)
 	harness.ConsistentlyPoll(t, dxQuietWindow, harness.TopicCallPollBound, "B still lists "+dxPublicTopic+" after 144h", b1.LogBrokerStack,
 		func(deadline time.Time) harness.Observation {
@@ -460,8 +413,6 @@ func TestPublicTopicExpiresWithDeclarer(t *testing.T) {
 			return harness.Observed(true, "")
 		})
 
-	// Eight days after issuance the declaration has expired. A is dead, so
-	// only the expiry can remove it.
 	dxSetClock(t, clockB, 192*time.Hour)
 	harness.EventuallyPoll(t, dxExpiryBound, "B drops "+dxPublicTopic+" with its declarer's card",
 		func(deadline time.Time) (bool, string) {
@@ -475,9 +426,8 @@ func TestPublicTopicExpiresWithDeclarer(t *testing.T) {
 			return true, ""
 		})
 
-	// The listing hides an expired record even before a maintenance pass runs.
-	// The stored record itself must be purged too, so a later restart cannot
-	// bring it back.
+	// The stored record must be purged, not merely hidden, so a restart
+	// cannot bring it back.
 	harness.Eventually(t, dxExpiryBound, "B's directory file drops "+dxPublicTopic,
 		func() (bool, string) {
 			for key, body := range dxDirectoryRecords(t, bHost) {
@@ -489,8 +439,8 @@ func TestPublicTopicExpiresWithDeclarer(t *testing.T) {
 		})
 }
 
-// dxClockFile creates a clock offset file that starts at zero and returns its
-// path. The Broker holding it must run a build with the peers_testenv tag.
+// dxClockFile returns a new clock offset file that starts at zero; the Broker
+// holding it must run a build with the peers_testenv tag.
 func dxClockFile(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "clock")
@@ -498,8 +448,8 @@ func dxClockFile(t *testing.T) string {
 	return path
 }
 
-// dxSetClock replaces the offset file atomically: the hook rereads the file
-// when its modification time or size changes and never sees a partial value.
+// dxSetClock replaces the offset file atomically, so the hook, which rereads
+// it on a modification-time or size change, never sees a partial value.
 func dxSetClock(t *testing.T, path string, offset time.Duration) {
 	t.Helper()
 	tmp := path + ".tmp"
@@ -511,10 +461,6 @@ func dxSetClock(t *testing.T, path string, offset time.Duration) {
 	}
 }
 
-// dxConfig builds one node's configuration: the shortened timers, the one
-// second reconciliation interval, one loopback address used both to listen and
-// to advertise, and an explicit alias that keeps the Brokers sharing this host
-// distinct.
 func dxConfig(listen, alias string, public bool) string {
 	parts := []string{
 		harness.FastTimers,
@@ -527,9 +473,6 @@ func dxConfig(listen, alias string, public bool) string {
 	return harness.ConfigYAML(parts...)
 }
 
-// dxStartBroker starts a Broker with the given environment and fails the test
-// when it does not come up. It returns the address the Broker actually uses in
-// place of requested.
 func dxStartBroker(t *testing.T, node *harness.Node, config, requested string, env map[string]string) string {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config, Env: env})
@@ -540,8 +483,6 @@ func dxStartBroker(t *testing.T, node *harness.Node, config, requested string, e
 	return start.Address(requested)
 }
 
-// dxPair makes the dialer connect to the acceptor's listen address and returns
-// the acceptor's fingerprint, which the dialer learns from the pairing result.
 func dxPair(t *testing.T, acceptor, dialer *harness.Session, listen string) string {
 	t.Helper()
 	key := adCreateKey(t, acceptor)
@@ -557,7 +498,6 @@ func dxPair(t *testing.T, acceptor, dialer *harness.Session, listen string) stri
 	return out.Fingerprint
 }
 
-// dxListBrokers returns the Brokers known to node.
 func dxListBrokers(t *testing.T, node *harness.Node) *localpb.ListBrokersResponse {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -567,8 +507,6 @@ func dxListBrokers(t *testing.T, node *harness.Node) *localpb.ListBrokersRespons
 	return resp
 }
 
-// dxFindBroker returns the entry whose fingerprint is fp, written as lowercase
-// hexadecimal.
 func dxFindBroker(resp *localpb.ListBrokersResponse, fp string) (*localpb.BrokerInfo, bool) {
 	for _, broker := range resp.GetBrokers() {
 		if hex.EncodeToString(broker.GetFingerprint()) == fp {
@@ -578,8 +516,6 @@ func dxFindBroker(resp *localpb.ListBrokersResponse, fp string) (*localpb.Broker
 	return nil, false
 }
 
-// dxWaitCard waits until node lists fp as a connectable non-peer whose
-// advertised addresses are exactly want, in order.
 func dxWaitCard(t *testing.T, node *harness.Node, fp string, want []string, bound time.Duration, notes ...string) {
 	t.Helper()
 	what := "the card of " + fp + " shows " + strings.Join(want, ", ")
@@ -605,15 +541,11 @@ func dxWaitCard(t *testing.T, node *harness.Node, fp string, want []string, boun
 	})
 }
 
-// dxListTopicsPoll calls list_topics from a wait and returns the decoded
-// result: the call is bounded by the wait's deadline and a transport error is
-// returned as state.
 func dxListTopicsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListTopicsOut](t, deadline, session, "list_topics", map[string]any{})
 }
 
-// dxHasPublicTopic reports whether name is among the public topics.
 func dxHasPublicTopic(out mcpserver.ListTopicsOut, name string) bool {
 	for _, topic := range out.Public {
 		if topic.Name == name {

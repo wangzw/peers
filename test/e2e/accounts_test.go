@@ -17,11 +17,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// TestOtherAccountRejected covers REQ-broker-config-019: the user Broker
-// of one account serves no other account, neither through the filesystem nor
-// through the account check, and the other account's session never appears on
-// the Broker. The container has two accounts, peer (the Broker's account) and
-// other (uid 2000).
+// TestOtherAccountRejected checks that a user Broker serves no other account,
+// neither through the filesystem nor through the account check.
 func TestOtherAccountRejected(t *testing.T) {
 	c := harness.Up(t, harness.TopoSingle)
 	host := c.Node("hostA")
@@ -54,8 +51,6 @@ func TestOtherAccountRejected(t *testing.T) {
 		if !strings.Contains(status.Stderr, "cannot reach the Broker") {
 			t.Fatalf("peers service status as other did not report the Broker unreachable: %s", status.Stderr)
 		}
-		// The default 0700 runtime directory denies the connection before
-		// anything reaches the Broker.
 		if !strings.Contains(status.Stderr, "may not connect to it") {
 			t.Fatalf("peers service status as other did not report the filesystem denial: %s", status.Stderr)
 		}
@@ -70,9 +65,6 @@ func TestOtherAccountRejected(t *testing.T) {
 			t.Fatalf("peers service audit as other did not report the Broker unreachable: %s", audit.Stderr)
 		}
 
-		// Without the explicit socket the other account looks only under its
-		// own runtime directory, /tmp/peers-2000, so it does not discover
-		// the peer Broker.
 		own := accountsRunAsOther(t, c, "hostA", "fs-own", nil, "peers", "service", "status")
 		if own.ExitCode != 1 {
 			t.Fatalf("peers service status as other without a socket entered %d, want 1\nstdout: %s\nstderr: %s",
@@ -84,17 +76,12 @@ func TestOtherAccountRejected(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-config-019 credential layer", func(t *testing.T) {
-		// Record the filesystem denial first, so the same test also shows that
-		// the second failure is not that denial.
 		before := accountsRunAsOther(t, c, "hostA", "cred-before",
 			map[string]string{"PEERS_TEST_SOCKET": socket}, "peers", "service", "status")
 		if !strings.Contains(before.Stderr, "may not connect to it") {
 			t.Fatalf("the filesystem layer did not deny the connection first: %s", before.Stderr)
 		}
 
-		// Let the other account through the filesystem: the runtime directory
-		// becomes traversable and the socket world-writable. Only the account
-		// check can reject the connection now.
 		runtimeDir := fmt.Sprintf("/tmp/peers-%d", peerUID)
 		c.Root(t, "hostA", "chmod", "0711", runtimeDir)
 		c.Root(t, "hostA", "chmod", "0666", socket)
@@ -119,26 +106,16 @@ func TestOtherAccountRejected(t *testing.T) {
 			t.Fatalf("peers service status did not reject the other account's credentials: %s", after.Stderr)
 		}
 
-		// The same rejection keeps the other account's session off the Broker:
-		// oneshot-session starts a real MCP server process as other and calls
-		// list_agents once. The call fails, and the command still exits 0
-		// because a tool error is a result, not an infrastructure failure.
 		intruder := accountsOneshotRejected(t, c, "hostA", socket, "intruder")
 		if !strings.Contains(intruder.Text, "not this account (2000)") {
 			t.Fatalf("the other account's list_agents did not report the credential rejection: %s", intruder.Text)
 		}
 
-		// The Broker sees the other account's connection attempt and rejects
-		// it, recording the account id. Both facts have to be in one record:
-		// an event elsewhere in the log and a uid elsewhere prove nothing about
-		// this rejection.
 		if log := host.BrokerLog(t); !accountsLogRecord(log, "local_connection_rejected", 2000) {
 			t.Fatalf("the Broker log has no local_connection_rejected record carrying uid 2000:\n%s", log)
 		}
 
-		// The intruder ended with the command; it never registered, so it must
-		// not appear on the Broker during the observation window either. The
-		// window is one second, twenty polls, which leaves room for a
+		// The window is one second, twenty polls, which leaves room for a
 		// registration that was still in flight after the command stopped the
 		// MCP server process.
 		harness.ConsistentlyPoll(t, 1*time.Second, harness.ListAgentsPollBound, "the intruder stays off the peer Broker", nil, func(deadline time.Time) harness.Observation {
@@ -165,10 +142,6 @@ func TestOtherAccountRejected(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-config-019 account paths", func(t *testing.T) {
-		// Home directories belong to their accounts, and the peer's home and
-		// runtime directory hold no file of the other account. The other
-		// account's session left its MCP log in /home/other, which is where a
-		// per-account Claude configuration directory belongs.
 		if got := strings.TrimSpace(c.Root(t, "hostA", "stat", "-c", "%u", "/home/peer")); got != strconv.Itoa(peerUID) {
 			t.Fatalf("/home/peer is owned by uid %s, want the peer uid %d", got, peerUID)
 		}
@@ -188,8 +161,6 @@ func TestOtherAccountRejected(t *testing.T) {
 		if got := strings.TrimSpace(c.Root(t, "hostA", "find", runtimeDir, "-user", "2000")); got != "" {
 			t.Fatalf("files of uid 2000 are under the peer runtime directory: %s", got)
 		}
-		// The other account's own runtime path is /tmp/peers-2000; it
-		// either does not exist (no Broker of that account) or belongs to it.
 		if out, err := c.RootOK(t, "hostA", "stat", "-c", "%u", "/tmp/peers-2000"); err == nil {
 			if got := strings.TrimSpace(out); got != "2000" {
 				t.Fatalf("/tmp/peers-2000 is owned by uid %s, want 2000", got)
@@ -198,18 +169,14 @@ func TestOtherAccountRejected(t *testing.T) {
 	})
 }
 
-// accountsCommand is one command run as the container's other account.
 type accountsCommand struct {
 	ExitCode       int
 	Stdout, Stderr string
 }
 
-// accountsRunAsOther runs argv as uid 2000 inside nodeName and returns its exit
-// code and streams. The harness can run commands as root or as the node
-// account, but not as the other account, so the command starts as root and
-// drops the account with setpriv. Its streams are written to files under the
-// bind-mounted control directory because the root exec returns only one
-// combined stream.
+// accountsRunAsOther runs argv as uid 2000 inside nodeName. The root exec
+// returns one combined stream, so the streams are written to files under the
+// control directory.
 func accountsRunAsOther(t *testing.T, c *harness.Cluster, nodeName, tag string, env map[string]string, argv ...string) accountsCommand {
 	t.Helper()
 	outDir := filepath.Join(c.CTLDir(t, nodeName), "other")
@@ -253,10 +220,6 @@ func accountsRunAsOther(t *testing.T, c *harness.Cluster, nodeName, tag string, 
 	return accountsCommand{ExitCode: exitCode, Stdout: read(".out"), Stderr: read(".err")}
 }
 
-// accountsOneshotRejected runs e2e-node oneshot-session as the other account
-// against socket and returns the decoded ToolResult. It retries while the MCP
-// server's connection loop has not yet classified the rejection, so the
-// returned text names the actual reason instead of "still being set up".
 func accountsOneshotRejected(t *testing.T, c *harness.Cluster, nodeName, socket, name string) node.ToolResult {
 	t.Helper()
 	var result node.ToolResult
@@ -283,8 +246,6 @@ func accountsOneshotRejected(t *testing.T, c *harness.Cluster, nodeName, socket,
 	return result
 }
 
-// accountsLogRecord reports whether data holds one JSON log record whose event
-// is event and whose uid field is uid.
 func accountsLogRecord(data []byte, event string, uid int) bool {
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
@@ -305,8 +266,6 @@ func accountsLogRecord(data []byte, event string, uid int) bool {
 	return false
 }
 
-// accountsUID runs argv through the node account and parses its standard
-// output as an account id.
 func accountsUID(t *testing.T, host *harness.Node, argv ...string) int {
 	t.Helper()
 	res := host.Exec(t, argv, nil)
@@ -320,14 +279,11 @@ func accountsUID(t *testing.T, host *harness.Node, argv ...string) int {
 	return uid
 }
 
-// accountsListAgentsPoll calls list_agents from a wait callback: the call is
-// bounded by the wait's deadline and a transport error is returned as state.
 func accountsListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", nil)
 }
 
-// accountsAddressName returns the name part of an agent address.
 func accountsAddressName(address string) string {
 	name, _, _ := strings.Cut(address, "@")
 	return name

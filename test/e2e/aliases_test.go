@@ -20,32 +20,23 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// alWaitBound is the bound of a wait that no product timer governs. When the
-// wait polls a tool through EventuallyPoll, the harness lifts it to
-// ToolCallWaitBound (fourteen seconds) so one poll call gets its own bound.
 const alWaitBound = harness.EventTimeout
 
-// alRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
-// margin: the timers that govern a link coming back after a cut.
 const alRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
-// alTopic is the topic the sessions use to observe each other's addresses.
 const alTopic = "t"
 
 // TestAliases covers fingerprint stability, the default and configured alias,
 // initiator and acceptor alias conflicts, and peer renames on a flat network.
 func TestAliases(t *testing.T) {
-	// The compose file reads HOSTA_NAME for hostA's hostname, and the harness
-	// passes the test process's environment through. The default alias takes
-	// the first dot-separated label, so the domain must be part of the injected
-	// hostname for the assertion to prove it.
+	// The default alias takes the first dot-separated label, so the injected
+	// hostname carries a domain.
 	t.Setenv("HOSTA_NAME", "hostA.example.com")
 
 	c := harness.Up(t, harness.TopoFlat(3))
 
-	// REQ-broker-pairing-002 names the account alice. The image's account is
-	// peer, so rename its entry in the account database before any Broker
-	// starts; the host test process keeps its uid and home directory.
+	// Rename the image's peer account to alice before any Broker starts; the
+	// host test process keeps its uid and home directory.
 	c.Root(t, "hostA", "sed", "-i", "s/^peer:/alice:/", "/etc/passwd")
 	if got := strings.TrimSpace(c.Root(t, "hostA", "getent", "passwd", "alice")); got == "" {
 		t.Fatalf("hostA's account database has no alice entry after the rename")
@@ -80,27 +71,20 @@ func TestAliases(t *testing.T) {
 	alWaitConnected(t, yNode, "hostA.alice", alRelinkBound)
 
 	t.Run("REQ-broker-pairing-002 default alias", func(t *testing.T) {
-		// The system form (the hostname label alone) is covered in
-		// test/e2e/system, which can run a system Broker as root. This
-		// user Broker takes the hostname label and the account: alice is
-		// the account running it, and the domain is dropped.
 		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 
-		// broker.advertise changes what is shown to peers, never the alias.
 		alRestart(t, c, "hostA", alConfig("broker:\n  advertise: a.example:443\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
 		alWaitConnected(t, yNode, "hostA.alice", alRelinkBound)
 		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 
-		// The listen port does not enter the alias.
 		alRestart(t, c, "hostA", alConfig("broker:\n  listen: \":17444\"\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
 		alWaitConnected(t, yNode, "hostA.alice", alRelinkBound)
 		alWaitAgentSuffix(t, y1, "x1", "@hostA.alice", harness.ListAgentsWaitBound)
 
-		// Without a listener the alias is unchanged too.
 		alRestart(t, c, "hostA", alConfig("broker:\n  listen: \"\"\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
@@ -127,7 +111,6 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("Y sees X's fingerprint as %q, want %q", got, own)
 		}
 
-		// A plain restart must not change the identity.
 		alRestart(t, c, "hostA", alConfig("broker:\n  alias: build-box\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
@@ -136,7 +119,6 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("the fingerprint changed after a restart: %q, want %q", got, own)
 		}
 
-		// A changed alias must not change the identity either.
 		alRestart(t, c, "hostA", alConfig("broker:\n  alias: x2\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
@@ -145,7 +127,6 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("the fingerprint changed after an alias change: %q, want %q", got, own)
 		}
 
-		// A changed listen address must not change it.
 		alRestart(t, c, "hostA", alConfig("broker:\n  alias: x2\n  listen: \":17444\"\n"), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
@@ -156,13 +137,10 @@ func TestAliases(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-004 initiator conflict", func(t *testing.T) {
-		// Start from the default alias so the observations below are exact.
 		alRestart(t, c, "hostA", alConfig(), opX, x1)
 		opX = alOperator(t, xNode)
 		x1 = alSession(t, xNode, "x1")
 
-		// Both Y and Z report the alias macbook. X pairs with Y first and then
-		// needs a local alias for Z.
 		alRestart(t, c, "hostB", alConfig("broker:\n  alias: macbook\n"), opY, y1)
 		opY = alOperator(t, yNode)
 		y1 = alSession(t, yNode, "y1")
@@ -191,7 +169,6 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("Z's session is %q, want it to end with @macbook-2", zAddr)
 		}
 
-		// Each address reaches only its own Broker.
 		x1.Call(t, "send_message", map[string]any{"to": yAddr, "message": "to-y"}).MustOK(t)
 		frame := y1.WaitFrame(t, alWaitBound)
 		if !strings.Contains(frame.Content, "to-y") {
@@ -212,8 +189,6 @@ func TestAliases(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-024 acceptor conflict", func(t *testing.T) {
-		// A fresh three hosts: A already has the peer Y with the alias
-		// macbook, and Z, reporting the same alias, pairs with A.
 		conflict := harness.Up(t, harness.TopoFlat(3))
 		aNode, yNode, zNode := conflict.Node("hostA"), conflict.Node("hostB"), conflict.Node("hostC")
 		alStartBroker(t, aNode, alConfig())
@@ -245,9 +220,6 @@ func TestAliases(t *testing.T) {
 			byFingerprint[hex.EncodeToString(peer.GetFingerprint())] = peer.GetAlias()
 		}
 
-		// The alias belongs to the identity, not to whichever entry the table
-		// happens to list last: Y keeps its self-reported alias and the second
-		// reporter, Z, gets the fingerprint suffix.
 		yAlias, yOK := byFingerprint[alIdentityFingerprint(t, yNode)]
 		zAlias, zOK := byFingerprint[alIdentityFingerprint(t, zNode)]
 		if !yOK || !zOK {
@@ -262,8 +234,6 @@ func TestAliases(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-026 peer renames into conflict", func(t *testing.T) {
-		// A fresh three hosts: B (hostB) and C (hostC) both dial A. B then
-		// renames itself to hostC, the alias C already uses on A.
 		conflict := harness.Up(t, harness.TopoFlat(3))
 		aNode, bNode, cNode := conflict.Node("hostA"), conflict.Node("hostB"), conflict.Node("hostC")
 		alStartBroker(t, aNode, alConfig())
@@ -289,8 +259,7 @@ func TestAliases(t *testing.T) {
 			alWaitConnected(t, aNode, pair.node, alRelinkBound)
 		}
 
-		// Rename B to hostC. B is the dialer, so it reconnects to A on its
-		// own after the restart.
+		// B is the dialer, so it reconnects to A on its own after the restart.
 		alRestart(t, conflict, "hostB", alConfig("broker:\n  alias: hostC\n"), bOp, b1)
 		b1 = alSession(t, bNode, "b1")
 
@@ -336,8 +305,6 @@ func TestAliases(t *testing.T) {
 			return true, ""
 		})
 
-		// A message from B reaches A signed from A's view, which is the
-		// assigned local alias, not hostC.
 		selfA := alSelfAddress(t, a1, "a1")
 		b1.Call(t, "send_message", map[string]any{"to": selfA, "message": "renamed"}).MustOK(t)
 		frame := a1.WaitFrame(t, alWaitBound)
@@ -347,9 +314,6 @@ func TestAliases(t *testing.T) {
 	})
 
 	t.Run("REQ-broker-pairing-040 released alias stays with its peer", func(t *testing.T) {
-		// A fresh three hosts: B (hostB) and C (hostC) both dial A. B gives up
-		// hostB, and C then tries to take it. The address A already handed out
-		// for B must not start naming C.
 		tomb := harness.Up(t, harness.TopoFlat(3))
 		aNode, bNode, cNode := tomb.Node("hostA"), tomb.Node("hostB"), tomb.Node("hostC")
 		alStartBroker(t, aNode, alConfig())
@@ -377,13 +341,9 @@ func TestAliases(t *testing.T) {
 		bFP := alIdentityFingerprint(t, bNode)
 		cFP := alIdentityFingerprint(t, cNode)
 
-		// B stops answering to hostB. Once A has seen the new alias, hostB is
-		// one of B's retired aliases and no longer names B.
 		alSetConfig(t, bOp, "broker.alias", "hostB2")
 		alWaitPeerAlias(t, aNode, bFP, "hostB2", alRelinkBound)
 
-		// C takes hostB. A already handed out an address under that name for B,
-		// so it must give C a local alias instead of letting C adopt it.
 		alSetConfig(t, cOp, "broker.alias", "hostB")
 		var cAlias string
 		harness.Eventually(t, alRelinkBound, "A gives C a local alias instead of hostB", func() (bool, string) {
@@ -407,16 +367,12 @@ func TestAliases(t *testing.T) {
 			t.Fatalf("C's alias is hostB, want a local alias")
 		}
 
-		// hostB names nobody now: a send to it is refused instead of reaching
-		// C's agent.
 		r := a1.Call(t, "send_message", map[string]any{"to": "c1@hostB", "message": "was-for-b"})
 		r.MustCode(t, "not_found")
 		if frames := c1.Fake().Frames(); len(frames) != 0 {
 			t.Fatalf("C received %d frames addressed to hostB, want none", len(frames))
 		}
 
-		// A message from C is signed from A's view, which is C's local alias, so
-		// it never carries the alias B gave up.
 		selfA := alSelfAddress(t, a1, "a1")
 		c1.Call(t, "send_message", map[string]any{"to": selfA, "message": "from-c"}).MustOK(t)
 		frame := a1.WaitFrame(t, alWaitBound)
@@ -429,14 +385,9 @@ func TestAliases(t *testing.T) {
 	})
 }
 
-// TestLongHostnameAlias covers REQ-broker-pairing-037: the default alias of a
-// long hostname shortens the hostname part first and, only if it is still too
-// long, the account part, so the alias stays at most 24 characters. The
-// account here is peer (4 characters) and the hostname 26, so the hostname
-// keeps 24-1-4 = 19 characters.
+// TestLongHostnameAlias checks that a long hostname is shortened before the
+// account so the default alias stays at most 24 characters.
 func TestLongHostnameAlias(t *testing.T) {
-	// The compose file reads HOSTA_NAME for hostA's hostname; the harness
-	// passes the test process's environment through to docker compose.
 	t.Setenv("HOSTA_NAME", "abcdefghijklmnopqrstuvwxyz0123")
 
 	c := harness.Up(t, harness.TopoFlat(2))
@@ -462,12 +413,10 @@ func TestLongHostnameAlias(t *testing.T) {
 	}
 }
 
-// alConfig merges the shortened timers with the given fragments.
 func alConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// alStartBroker starts a Broker and fails when it does not come up.
 func alStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -476,8 +425,6 @@ func alStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// alRestart stops the Broker and starts it with config after ending every MCP
-// server process passed in stop.
 func alRestart(t *testing.T, c *harness.Cluster, node string, config string, stop ...*harness.Session) {
 	t.Helper()
 	for _, s := range stop {
@@ -488,8 +435,6 @@ func alRestart(t *testing.T, c *harness.Cluster, node string, config string, sto
 	alStartBroker(t, n, config)
 }
 
-// alOperator starts an operator session: an MCP server process without
-// CLAUDE_CODE_MESSAGING_SOCKET, which never registers as an agent.
 func alOperator(t *testing.T, node *harness.Node) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -497,7 +442,6 @@ func alOperator(t *testing.T, node *harness.Node) *harness.Session {
 	return s
 }
 
-// alSession starts a registered session in alTopic.
 func alSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true})
@@ -506,7 +450,6 @@ func alSession(t *testing.T, node *harness.Node, name string) *harness.Session {
 	return s
 }
 
-// alCreateKey creates one pairing key.
 func alCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := op.Call(t, "create_pairing_key", map[string]any{})
@@ -518,7 +461,6 @@ func alCreateKey(t *testing.T, op *harness.Session) mcpserver.CreatePairingKeyOu
 	return out
 }
 
-// alConnect calls connect_broker.
 func alConnect(t *testing.T, op *harness.Session, address, key string, localAlias ...string) harness.Result {
 	t.Helper()
 	args := map[string]any{"address": address, "key": key}
@@ -528,7 +470,6 @@ func alConnect(t *testing.T, op *harness.Session, address, key string, localAlia
 	return op.Call(t, "connect_broker", args)
 }
 
-// alDecodeConnect decodes a successful connect_broker result.
 func alDecodeConnect(t *testing.T, r harness.Result) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	out, err := harness.Decode[mcpserver.ConnectBrokerOut](string(r.Structured))
@@ -538,14 +479,11 @@ func alDecodeConnect(t *testing.T, r harness.Result) mcpserver.ConnectBrokerOut 
 	return out
 }
 
-// alSetConfig changes one configuration key through set_config and fails unless
-// the Broker accepts it.
 func alSetConfig(t *testing.T, s *harness.Session, key, value string) {
 	t.Helper()
 	s.Call(t, "set_config", map[string]any{"key": key, "value": value}).MustOK(t)
 }
 
-// alShownAddress picks the shown address of node on the flat network.
 func alShownAddress(t *testing.T, c *harness.Cluster, node string, shown []string) string {
 	t.Helper()
 	want := net.JoinHostPort(c.Addr(node, "net"), "17443")
@@ -561,7 +499,6 @@ func alShownAddress(t *testing.T, c *harness.Cluster, node string, shown []strin
 	return ""
 }
 
-// alPeers lists node's peers through the local interface probe.
 func alPeers(t *testing.T, node *harness.Node) []*localpb.BrokerInfo {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -571,7 +508,6 @@ func alPeers(t *testing.T, node *harness.Node) []*localpb.BrokerInfo {
 	return resp.GetBrokers()
 }
 
-// alPeerAliases renders peer aliases for failure messages.
 func alPeerAliases(peers []*localpb.BrokerInfo) []string {
 	out := make([]string, 0, len(peers))
 	for _, peer := range peers {
@@ -580,7 +516,6 @@ func alPeerAliases(peers []*localpb.BrokerInfo) []string {
 	return out
 }
 
-// alWaitConnected waits until node lists alias as connected.
 func alWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the link to "+alias+" is connected", func() (bool, string) {
@@ -601,8 +536,6 @@ func alWaitConnected(t *testing.T, node *harness.Node, alias string, bound time.
 	})
 }
 
-// alWaitPeerAlias waits until node lists the peer with the given fingerprint
-// under alias.
 func alWaitPeerAlias(t *testing.T, node *harness.Node, fingerprint, alias string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the peer "+fingerprint+" is listed as "+alias, func() (bool, string) {
@@ -619,7 +552,6 @@ func alWaitPeerAlias(t *testing.T, node *harness.Node, fingerprint, alias string
 	})
 }
 
-// alOnlyPeerFingerprint returns the hex fingerprint of node's only peer.
 func alOnlyPeerFingerprint(t *testing.T, node *harness.Node) string {
 	t.Helper()
 	peers := alPeers(t, node)
@@ -629,7 +561,6 @@ func alOnlyPeerFingerprint(t *testing.T, node *harness.Node) string {
 	return hex.EncodeToString(peers[0].GetFingerprint())
 }
 
-// alIdentityFingerprint derives a node's fingerprint from its certificate.
 func alIdentityFingerprint(t *testing.T, node *harness.Node) string {
 	t.Helper()
 	path := filepath.Join(node.AccountHome(), ".peers", "identity.crt")
@@ -646,15 +577,11 @@ func alIdentityFingerprint(t *testing.T, node *harness.Node) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// alListAgentsPoll calls list_agents from a wait and returns the decoded answer.
-// The call is bounded by the wait's deadline and a transport error is returned
-// as state.
 func alListAgentsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, s, "list_agents", map[string]any{})
 }
 
-// alWaitAgentSuffix waits until s lists name with an address ending in suffix.
 func alWaitAgentSuffix(t *testing.T, s *harness.Session, name, suffix string, bound time.Duration) {
 	t.Helper()
 	harness.EventuallyPoll(t, bound, "the address of "+name+" ends with "+suffix, func(deadline time.Time) (bool, string) {
@@ -682,15 +609,11 @@ func alWaitAgentSuffix(t *testing.T, s *harness.Session, name, suffix string, bo
 	})
 }
 
-// alSelfAddress returns the session's own address, after waiting for it to be
-// registered under name.
 func alSelfAddress(t *testing.T, s *harness.Session, name string) string {
 	t.Helper()
 	return registrationWaitRegistered(t, s, name).Self
 }
 
-// alWaitRemoteAgents waits until s lists both names and returns their
-// addresses.
 func alWaitRemoteAgents(t *testing.T, s *harness.Session, firstName, secondName string) (string, string) {
 	t.Helper()
 	var first, second string
@@ -723,8 +646,8 @@ func alWaitRemoteAgents(t *testing.T, s *harness.Session, firstName, secondName 
 	return first, second
 }
 
-// alAgentName returns the name part of an agent address. The address is
-// "<name> [ref]@<alias>"; the ref exists only while two agents share a name.
+// An address is "<name> [ref]@<alias>"; the ref exists only while two agents
+// share a name.
 func alAgentName(address string) string {
 	before, _, _ := strings.Cut(address, "@")
 	if i := strings.Index(before, " ["); i >= 0 {
@@ -733,7 +656,6 @@ func alAgentName(address string) string {
 	return strings.TrimSpace(before)
 }
 
-// alHexSuffix reports whether s is a non-empty run of lowercase hex digits.
 func alHexSuffix(s string) bool {
 	if s == "" {
 		return false

@@ -30,8 +30,6 @@ func ListProcs(match func(Proc) bool) ([]Proc, error) {
 		}
 		proc, err := readProc(pid)
 		if err != nil {
-			// The process exited or is not readable; it is not part of the
-			// answer either way.
 			continue
 		}
 		if match == nil || match(proc) {
@@ -42,7 +40,6 @@ func ListProcs(match func(Proc) bool) ([]Proc, error) {
 	return procs, nil
 }
 
-// readProc reads one process from /proc.
 func readProc(pid int) (Proc, error) {
 	ppid, sid, err := readProcStat(pid)
 	if err != nil {
@@ -55,7 +52,6 @@ func readProc(pid int) (Proc, error) {
 	return proc, nil
 }
 
-// readProcStat returns the parent PID and session ID from /proc/<pid>/stat.
 func readProcStat(pid int) (ppid, sid int, err error) {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
 	if err != nil {
@@ -85,8 +81,6 @@ func readProcStat(pid int) (ppid, sid int, err error) {
 	return ppid, sid, nil
 }
 
-// readProcUID returns the real UID from /proc/<pid>/status, or -1 when it
-// cannot be read.
 func readProcUID(pid int) int {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
@@ -110,8 +104,6 @@ func readProcUID(pid int) int {
 	return -1
 }
 
-// readProcArgs returns the argv of /proc/<pid>/cmdline, or nil when it cannot
-// be read.
 func readProcArgs(pid int) []string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
 	if err != nil || len(data) == 0 {
@@ -120,8 +112,6 @@ func readProcArgs(pid int) []string {
 	return splitNUL(data)
 }
 
-// readProcEnv returns the environment of /proc/<pid>/environ as a map, or nil
-// when it cannot be read.
 func readProcEnv(pid int) map[string]string {
 	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
@@ -138,7 +128,6 @@ func readProcEnv(pid int) map[string]string {
 	return env
 }
 
-// splitNUL splits NUL-separated strings and drops the trailing empty entry.
 func splitNUL(data []byte) []string {
 	parts := strings.Split(string(data), "\x00")
 	if n := len(parts); n > 0 && parts[n-1] == "" {

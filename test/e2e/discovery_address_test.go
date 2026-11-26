@@ -19,44 +19,36 @@ const (
 	// dadPortNum is the default Broker port as a number, for the SYN counter.
 	dadPortNum = 17443
 
-	// dadReconcileInterval matches directory.reconcile_interval in dadConfig:
-	// one propagation hop costs at most one interval.
+	// dadReconcileInterval must match the reconciliation interval dadConfig
+	// sets, so one propagation hop costs at most one interval.
 	dadReconcileInterval = time.Second
 
-	// dadPropagationBound bounds a wait for a card crossing two hops: twice the
-	// reconciliation interval plus the tree's EventTimeout margin.
 	dadPropagationBound = 2*dadReconcileInterval + harness.EventTimeout
 
-	// dadPropagationQuietWindow is the observation window of a negative check
-	// that watches a card across two hops. It must span more than one
-	// reconciliation interval so a maintenance pass would show a change it
-	// watches for; it keeps the three-second margin instead of EventTimeout
-	// because a negative check pays its whole window.
+	// dadPropagationQuietWindow must span more than one reconciliation
+	// interval and keeps a short margin because a negative check pays its
+	// whole window.
 	dadPropagationQuietWindow = 2*dadReconcileInterval + 3*time.Second
 
-	// dadReconnectMax is link.reconnect_max under harness.FastTimers.
+	// dadReconnectMax is link.reconnect_max under harness.FastTimers, copied
+	// here as a literal (harness.FastReconnectMax holds the same value), so the
+	// two must be kept in step.
 	dadReconnectMax = 400 * time.Millisecond
 
-	// dadKeepaliveInterval and dadKeepaliveTimeout are link.keepalive_interval
-	// and link.keepalive_timeout in dadConfig. Deleting the interface address
-	// leaves the established TCP connection in place, so the dialer notices the
-	// dead link only when its keepalive ping times out. gRPC raises client
-	// probe intervals below ten seconds to its own minimum, so ten seconds is
-	// the shortest useful interval; the timeout is shortened instead.
+	// gRPC raises client probe intervals below ten seconds to its own
+	// minimum, so ten seconds is the shortest useful interval and the
+	// timeout is shortened instead.
 	dadKeepaliveInterval = 10 * time.Second
 	dadKeepaliveTimeout  = time.Second
 
-	// dadAddressChangeBound is the bound for a changed interface address: one
-	// address check, the dialer's keepalive probe and timeout, one reconnect,
-	// two propagation hops and the tree's EventTimeout margin.
 	dadAddressChangeBound = dadReconcileInterval + dadKeepaliveInterval +
 		dadKeepaliveTimeout + dadReconnectMax + 2*dadReconcileInterval +
 		harness.EventTimeout
 )
 
-// TestCardFollowsAddressChange covers REQ-broker-discovery-016: when a public
-// Broker's interface address changes without a restart, it re-signs its card
-// and peers two hops away see the new address instead of the old one.
+// TestCardFollowsAddressChange checks that a public Broker whose interface
+// address changes without a restart re-signs its card and peers two hops away
+// see the new address.
 func TestCardFollowsAddressChange(t *testing.T) {
 	c, _, _, _ := dadCluster(t)
 	cNode := c.Node("hostC")
@@ -64,13 +56,8 @@ func TestCardFollowsAddressChange(t *testing.T) {
 	oldAddr := adAddr(c, "hostA", "net", adPort)
 	fpA := dadWaitCardAt(t, cNode, oldAddr, dadPropagationBound)
 
-	// Move hostA to the last usable address of its own subnet and stop
-	// carrying the old one. The default route stays on the same interface, so
-	// the derived advertised list follows the change.
-	//
-	// The old address goes first: adding the new one as a secondary of the
-	// same prefix and then deleting the primary removes both on this kernel,
-	// which would leave the interface with no IPv4 address at all.
+	// Delete the old address before adding the new one: adding the new one as
+	// a secondary and then deleting the primary removes both on this kernel.
 	dev, oldCIDR := dadInterfaceOf(t, c, "hostA", c.Addr("hostA", "net"))
 	newCIDR, newHost := dadReplaceLastOctet(t, oldCIDR, 200)
 	c.Root(t, "hostA", "ip", "addr", "del", oldCIDR, "dev", dev)
@@ -78,20 +65,15 @@ func TestCardFollowsAddressChange(t *testing.T) {
 	c.Root(t, "hostA", "ip", "route", "replace", "default", "dev", dev)
 	newAddr := net.JoinHostPort(newHost, adPort)
 
-	// hostA keeps running: nothing but the address check, the keepalive
-	// timeout on the now-dead link and the reissued card may move the peer's
-	// view.
 	dadWaitCardAddresses(t, cNode, fpA, []string{newAddr}, dadAddressChangeBound)
 	if _, ok := dadFindByAddress(dadListBrokers(t, cNode), oldAddr); ok {
 		t.Fatalf("hostC still lists the old address %s", oldAddr)
 	}
 }
 
-// TestCardShowsConfiguredAddresses covers REQ-broker-config-031 and 033: the
-// configured advertised list, including the extras and their order, reaches the
-// Broker that dialed hostA and a Broker two hops away that holds its card,
-// whenever the list changes. The extras are asserted before hostA is public, as
-// REQ-broker-config-033 requires, and after it.
+// TestCardShowsConfiguredAddresses checks that a configured advertised list,
+// including extras and their order, reaches the dialer and a Broker two hops
+// away whenever it changes.
 func TestCardShowsConfiguredAddresses(t *testing.T) {
 	c := harness.Up(t, harness.TopoFlat(4))
 	aNode, bNode, cNode, dNode := c.Node("hostA"), c.Node("hostB"), c.Node("hostC"), c.Node("hostD")
@@ -114,8 +96,6 @@ func TestCardShowsConfiguredAddresses(t *testing.T) {
 	aAddr := adAddr(c, "hostA", "net", adPort)
 	bAddr := adAddr(c, "hostB", "net", adPort)
 
-	// hostB dials hostA and hostC dials hostB, so a card published by hostA
-	// reaches hostC two hops away once hostA is public.
 	key := adCreateKey(t, opA)
 	adConnect(t, opB, adShownAddress(t, key.Addresses, aAddr), key.Key).MustOK(t)
 	adWaitConnected(t, aNode, "hostB.peer", adRelinkBound)
@@ -124,7 +104,6 @@ func TestCardShowsConfiguredAddresses(t *testing.T) {
 	adConnect(t, opC, adShownAddress(t, key.Addresses, bAddr), key.Key).MustOK(t)
 	adWaitConnected(t, bNode, "hostC.peer", adRelinkBound)
 
-	// hostD dials hostA. Its result is the dialer's view the requirements name.
 	key = adCreateKey(t, opA)
 	r := adConnect(t, opD, adShownAddress(t, key.Addresses, aAddr), key.Key)
 	r.MustOK(t)
@@ -142,47 +121,36 @@ func TestCardShowsConfiguredAddresses(t *testing.T) {
 		t.Helper()
 		opA.Call(t, "set_config", map[string]any{"key": key, "value": value}).MustOK(t)
 	}
-	// wait checks the dialer's view of hostA and the card view on hostC.
 	wait := func(want []string) {
 		t.Helper()
 		dadWaitPeerAddresses(t, dNode, fpA, want, dadPropagationBound)
 		dadWaitCardAddresses(t, cNode, fpA, want, dadPropagationBound)
 	}
 
-	// REQ-broker-config-033: with hostA still private, its dialer sees the
-	// default-route address followed by the extras in their configured order.
 	extras := []string{aAddr, "b.vpn.example:" + adPort, "198.51.100.7:8443"}
 	set("broker.advertise_extra", "[b.vpn.example, 198.51.100.7:8443]")
 	dadWaitPeerAddresses(t, dNode, fpA, extras, dadPropagationBound)
 
-	// Once hostA is public, the Broker holding its card sees the same list.
 	set("broker.public", "true")
 	dadWaitCardAddresses(t, cNode, fpA, extras, dadPropagationBound)
 
-	// REQ-broker-config-031: a configured host address leads the list and the
-	// default-route address is gone. The extras from the previous step are
-	// cleared so only the configured primary remains.
 	set("broker.advertise_extra", "[]")
 	set("broker.advertise", "b.example:443")
 	wait([]string{"b.example:443"})
 
-	// A host without a port takes the listen port.
 	set("broker.advertise", "b.example")
 	wait([]string{"b.example:" + adPort})
 
-	// An extra name follows the primary one.
 	set("broker.advertise_extra", "[b.vpn.example]")
 	wait([]string{"b.example:" + adPort, "b.vpn.example:" + adPort})
 
-	// Back to the default primary: the interface address comes first, then the
-	// extras in the configured order, each keeping its own port.
 	set("broker.advertise", "")
 	set("broker.advertise_extra", "[b.vpn.example, 198.51.100.7:8443]")
 	wait(extras)
 }
 
-// TestNoDialToCardAddress covers REQ-broker-pairing-014: holding another
-// Broker's card never makes a Broker dial its advertised address.
+// TestNoDialToCardAddress checks that holding another Broker's card never
+// makes a Broker dial its advertised address.
 func TestNoDialToCardAddress(t *testing.T) {
 	c, _, _, _ := dadCluster(t)
 	cNode := c.Node("hostC")
@@ -200,9 +168,6 @@ func TestNoDialToCardAddress(t *testing.T) {
 		})
 }
 
-// dadCluster starts the three-node flat topology the address cases share: A is
-// public, and A and C both pair to B, so C learns A's card through B. It
-// returns the operators of the three nodes; the sessions end with the test.
 func dadCluster(t *testing.T) (*harness.Cluster, *harness.Session, *harness.Session, *harness.Session) {
 	t.Helper()
 	c := harness.Up(t, harness.TopoFlat(3))
@@ -231,8 +196,6 @@ func dadCluster(t *testing.T) (*harness.Cluster, *harness.Session, *harness.Sess
 	return c, opA, opB, opC
 }
 
-// dadConfig builds one node's configuration with the shortened timers and the
-// plan's one-second address check and reconciliation intervals.
 func dadConfig(public bool) string {
 	parts := []string{
 		harness.FastTimers,
@@ -245,7 +208,6 @@ func dadConfig(public bool) string {
 	return harness.ConfigYAML(parts...)
 }
 
-// dadListBrokers returns the Brokers known to node.
 func dadListBrokers(t *testing.T, node *harness.Node) *localpb.ListBrokersResponse {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -255,8 +217,6 @@ func dadListBrokers(t *testing.T, node *harness.Node) *localpb.ListBrokersRespon
 	return resp
 }
 
-// dadFindByAddress returns a non-peer entry whose advertised addresses include
-// addr.
 func dadFindByAddress(resp *localpb.ListBrokersResponse, addr string) (*localpb.BrokerInfo, bool) {
 	for _, broker := range resp.GetBrokers() {
 		if broker.GetIsPeer() {
@@ -271,8 +231,6 @@ func dadFindByAddress(resp *localpb.ListBrokersResponse, addr string) (*localpb.
 	return nil, false
 }
 
-// dadWaitCardAt waits until node lists a non-peer whose advertised addresses
-// include addr and returns that Broker's fingerprint as lowercase hex.
 func dadWaitCardAt(t *testing.T, node *harness.Node, addr string, bound time.Duration) string {
 	t.Helper()
 	var fp string
@@ -289,8 +247,6 @@ func dadWaitCardAt(t *testing.T, node *harness.Node, addr string, bound time.Dur
 	return fp
 }
 
-// dadWaitCardAddresses waits until node lists fp as a connectable non-peer
-// whose advertised addresses are exactly want, in order.
 func dadWaitCardAddresses(t *testing.T, node *harness.Node, fp string, want []string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the card of "+fp+" shows "+strings.Join(want, ", "),
@@ -315,8 +271,6 @@ func dadWaitCardAddresses(t *testing.T, node *harness.Node, fp string, want []st
 		})
 }
 
-// dadWaitPeerAddresses waits until node lists fp as a peer whose advertised
-// addresses are exactly want, in order.
 func dadWaitPeerAddresses(t *testing.T, node *harness.Node, fp string, want []string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the peer view of "+fp+" shows "+strings.Join(want, ", "),
@@ -338,7 +292,6 @@ func dadWaitPeerAddresses(t *testing.T, node *harness.Node, fp string, want []st
 		})
 }
 
-// dadInterfaceOf returns the interface and IPv4 CIDR that carry addr on node.
 func dadInterfaceOf(t *testing.T, c *harness.Cluster, node, addr string) (string, string) {
 	t.Helper()
 	out := c.Root(t, node, "ip", "-o", "-4", "addr", "show", "to", addr)
@@ -356,8 +309,6 @@ func dadInterfaceOf(t *testing.T, c *harness.Cluster, node, addr string) (string
 	return "", ""
 }
 
-// dadReplaceLastOctet returns cidr with its last octet replaced by last, and
-// the resulting host without the prefix.
 func dadReplaceLastOctet(t *testing.T, cidr string, last byte) (string, string) {
 	t.Helper()
 	ip, network, err := net.ParseCIDR(cidr)

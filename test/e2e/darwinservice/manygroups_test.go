@@ -25,11 +25,8 @@ import (
 )
 
 const (
-	// accessCheckRole runs the access-check helper in-process. It is dispatched
-	// from TestMain before the test binary tries to build and install anything.
 	accessCheckRole = "access-check-many-groups"
-	// getConfigRole calls GetConfig on the system Broker's local socket.
-	getConfigRole = "get-config"
+	getConfigRole   = "get-config"
 
 	manyGroupUser  = "approbe"
 	manyGroupUID   = 6501
@@ -39,24 +36,16 @@ const (
 	negativeGID    = 6199
 	manyGroupDir   = "/tmp/peers-manygroups"
 
-	// systemConfigPath is the file the system Broker checks for every
-	// permission-gated call.
 	systemConfigPath = "/etc/peers/config.yaml"
 
-	// manyGroupsWaitBound bounds the wait for the directory service to report a
-	// freshly created account's group memberships on a loaded CI runner.
 	manyGroupsWaitBound = 30 * time.Second
-	// getConfigTimeout bounds one get_config call to the local Broker.
-	getConfigTimeout = 15 * time.Second
+	getConfigTimeout    = 15 * time.Second
 
-	// accessCheckUIDEnv and friends are the helper's identity environment,
-	// written by the Broker when it derives the check process.
 	accessCheckUIDEnv    = "PEERS_ACCESS_CHECK_UID"
 	accessCheckGIDEnv    = "PEERS_ACCESS_CHECK_GID"
 	accessCheckGroupsEnv = "PEERS_ACCESS_CHECK_GROUPS"
 )
 
-// manyGroupFixture is the account and the two permission fixtures.
 type manyGroupFixture struct {
 	uid     int
 	gid     int
@@ -66,10 +55,9 @@ type manyGroupFixture struct {
 	deny    string
 }
 
-// TestAccessCheckManyGroups reproduces the Darwin failure before the fix: the
-// account is in more groups than NGROUPS, and the read permission comes from
-// the eighteenth group. The helper must switch to the account and allow the
-// check; the negative fixture must stay denied.
+// TestAccessCheckManyGroups checks that the access check allows a path granted
+// through the eighteenth group to an account in more groups than NGROUPS, and
+// denies one granted to a foreign group.
 func TestAccessCheckManyGroups(t *testing.T) {
 	f := setupManyGroups(t)
 	env := []string{
@@ -106,10 +94,9 @@ func TestAccessCheckManyGroups(t *testing.T) {
 	}
 }
 
-// TestSystemServiceManyGroups is the end-to-end acceptance: the installed
-// system Broker serves get_config to an account in more than NGROUPS when the
-// config file grants one of its groups read access, and returns
-// permission_denied once that grant is removed.
+// TestSystemServiceManyGroups checks that the installed system Broker serves
+// get_config to an account in more than NGROUPS when a group's grant gives read
+// access, and returns permission_denied once it is removed.
 func TestSystemServiceManyGroups(t *testing.T) {
 	f := setupManyGroups(t)
 	resetSystemService(t)
@@ -137,8 +124,6 @@ func TestSystemServiceManyGroups(t *testing.T) {
 		t.Errorf("get_config as the %d-group account: %s, want a successful response", len(f.groups), out.stdout)
 	}
 
-	// Revoke the group's read permission. The access check itself must still
-	// succeed, so the answer is permission_denied, not internal.
 	mustSudo(t, "chmod", "0600", systemConfigPath)
 	out = runRoleAsUser(t, manyGroupUser, getConfigRole)
 	if out.exitCode == 0 {
@@ -149,8 +134,6 @@ func TestSystemServiceManyGroups(t *testing.T) {
 	}
 }
 
-// runAccessCheckRole is the role body: it builds one AccessCheckRequest, runs
-// the real helper and prints the result. It runs as root through sudo.
 func runAccessCheckRole() int {
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "access-check-many-groups: missing path")
@@ -180,8 +163,6 @@ func runAccessCheckRole() int {
 	return 0
 }
 
-// runGetConfigRole is the role body: it calls GetConfig as the invoking
-// account and prints the answer or the gRPC status code.
 func runGetConfigRole() int {
 	oracle, err := node.DialOracle(systemSocketPath)
 	if err != nil {
@@ -201,8 +182,6 @@ func runGetConfigRole() int {
 	return 0
 }
 
-// setupManyGroups creates the account, its groups and the two fixtures, and
-// registers their removal.
 func setupManyGroups(t *testing.T) *manyGroupFixture {
 	t.Helper()
 	preflightManyGroupIDs(t)
@@ -253,8 +232,6 @@ func setupManyGroups(t *testing.T) *manyGroupFixture {
 	return f
 }
 
-// writeFiles creates the allowed fixture under the eighteenth group and the
-// denied fixture under a group the account is not in.
 func (f *manyGroupFixture) writeFiles(t *testing.T) {
 	t.Helper()
 	mustSudo(t, "install", "-d", "-o", "root", "-g", "wheel", "-m", "0755", manyGroupDir)
@@ -279,9 +256,6 @@ func writeFixtureFile(t *testing.T, content, dest, group string) {
 	mustSudo(t, "install", "-o", "root", "-g", group, "-m", "0640", tmp.Name(), dest)
 }
 
-// cleanupManyGroups removes the account, the groups and the fixtures. It is
-// idempotent and also runs before setup, so a rerun in the same job starts
-// clean.
 func cleanupManyGroups(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{"allow.txt", "deny.txt"} {
@@ -296,9 +270,6 @@ func cleanupManyGroups(t *testing.T) {
 	sudoIgnore("dscacheutil", "-flushcache")
 }
 
-// preflightManyGroupIDs refuses to touch a name or id that belongs to another
-// account. A stale probe account with the expected id is fine; cleanup removes
-// it afterwards.
 func preflightManyGroupIDs(t *testing.T) {
 	t.Helper()
 	users := dsclList(t, "/Users", "UniqueID")
@@ -310,7 +281,6 @@ func preflightManyGroupIDs(t *testing.T) {
 	checkNameID(t, groups, negativeGroup, negativeGID, "group", "gid")
 }
 
-// dsclList reads name-to-id pairs from one local directory record type.
 func dsclList(t *testing.T, record, attr string) map[string]uint32 {
 	t.Helper()
 	out, err := exec.Command("sudo", "-n", "dscl", ".", "-list", record, attr).Output()
@@ -332,8 +302,6 @@ func dsclList(t *testing.T, record, attr string) map[string]uint32 {
 	return ids
 }
 
-// checkNameID fails when name already has a different id or when id belongs to
-// a different name.
 func checkNameID(t *testing.T, ids map[string]uint32, name string, want int, kind, attr string) {
 	t.Helper()
 	for other, id := range ids {
@@ -346,8 +314,6 @@ func checkNameID(t *testing.T, ids map[string]uint32, name string, want int, kin
 	}
 }
 
-// waitForGroups waits for the directory service to report at least want groups
-// for user.
 func waitForGroups(t *testing.T, user string, want int) []uint32 {
 	t.Helper()
 	deadline := time.Now().Add(manyGroupsWaitBound)
@@ -379,7 +345,6 @@ func parseGroupIDs(s string) ([]uint32, error) {
 	return ids, nil
 }
 
-// groupNameForGID resolves a group id through the local directory node.
 func groupNameForGID(t *testing.T, gid uint32) string {
 	t.Helper()
 	out, err := exec.Command("sudo", "-n", "dscl", ".", "-list", "/Groups", "PrimaryGroupID").Output()
@@ -400,14 +365,12 @@ func groupNameForGID(t *testing.T, gid uint32) string {
 	return ""
 }
 
-// grantSystemConfigRead gives group read access to the system configuration.
 func grantSystemConfigRead(t *testing.T, group string) {
 	t.Helper()
 	mustSudo(t, "chgrp", group, systemConfigPath)
 	mustSudo(t, "chmod", "0640", systemConfigPath)
 }
 
-// restoreSystemConfig returns the system configuration to its installed mode.
 func restoreSystemConfig(t *testing.T) {
 	t.Helper()
 	if err := sudo("chown", "root:wheel", systemConfigPath); err != nil {
@@ -418,7 +381,6 @@ func restoreSystemConfig(t *testing.T) {
 	}
 }
 
-// runRoleAsRoot runs the e2e binary role through sudo.
 func runRoleAsRoot(t *testing.T, role string, env []string, args ...string) result {
 	t.Helper()
 	cmdArgs := []string{"-n", "env", roleEnv + "=" + role}
@@ -428,7 +390,6 @@ func runRoleAsRoot(t *testing.T, role string, env []string, args ...string) resu
 	return run(t, "sudo", cmdArgs...)
 }
 
-// runRoleAsUser runs the e2e binary role as user through sudo.
 func runRoleAsUser(t *testing.T, user, role string, args ...string) result {
 	t.Helper()
 	cmdArgs := []string{"-n", "-u", user, "env", roleEnv + "=" + role, e2eBinary}
@@ -436,7 +397,6 @@ func runRoleAsUser(t *testing.T, user, role string, args ...string) result {
 	return run(t, "sudo", cmdArgs...)
 }
 
-// joinGroupIDs renders a group id list for the helper environment.
 func joinGroupIDs(ids []uint32) string {
 	parts := make([]string, len(ids))
 	for i, id := range ids {
@@ -445,7 +405,6 @@ func joinGroupIDs(ids []uint32) string {
 	return strings.Join(parts, ",")
 }
 
-// mustSudo runs one command through sudo and fails the test on error.
 func mustSudo(t *testing.T, args ...string) {
 	t.Helper()
 	if err := sudo(args...); err != nil {
@@ -453,8 +412,6 @@ func mustSudo(t *testing.T, args ...string) {
 	}
 }
 
-// sudoIgnore runs one command through sudo and discards its result. It is for
-// idempotent setup and cleanup steps.
 func sudoIgnore(args ...string) {
 	_ = sudo(args...)
 }

@@ -15,10 +15,8 @@ import (
 )
 
 const (
-	// adAccount, adGroup, adShareGroup and their ids exist only in the
-	// extrausers source the system image configures, never in /etc/passwd or
-	// /etc/group. adShareGroup is a supplementary group of adAccount, not its
-	// primary group.
+	// adAccount, adGroup and adShareGroup exist only in the extrausers source;
+	// adShareGroup is a supplementary group of adAccount, not its primary group.
 	adAccount    = "diruser"
 	adUID        = 2100
 	adGroup      = "dirgroup"
@@ -31,17 +29,13 @@ const (
 
 // TestSystemAccountsFromExtrausers checks that the system Broker resolves
 // accounts and groups through the NSS account database rather than by reading
-// /etc/passwd and /etc/group. It covers the three places the Broker looks an
-// account up: broker.local_socket_group, the account-helper derivation and the
-// configuration file permission check.
+// /etc/passwd and /etc/group.
 func TestSystemAccountsFromExtrausers(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
 		return
 	}
 
-	// The premise: the accounts are absent from the files os/user reads and
-	// present in the source only NSS follows.
 	for _, file := range []string{"/etc/passwd", "/etc/group"} {
 		data, err := os.ReadFile(file)
 		if err != nil {
@@ -76,15 +70,11 @@ func TestSystemAccountsFromExtrausers(t *testing.T) {
 	syscontainer.StartSystemBroker(t,
 		"broker:\n  alias: sys\n  local_socket_group: dirgroup\n  local_socket_mode: \"0660\"\n")
 
-	// 1. broker.local_socket_group: the configured group is resolved from the
-	// extrausers source.
 	syscontainer.WaitFor(t, "the system socket to be 0660 dirgroup", func() bool {
 		mode, gid := adSocketModeGID(t, adSocketPath)
 		return mode == 0o660 && gid == adGID
 	})
 
-	// 2. Account-helper derivation: the session registers with the system
-	// Broker, which needs the account entry to start its helper.
 	session := syscontainer.NewSession(t, adAccount, "dsuser")
 	adWaitRegistered(t, session)
 	syscontainer.WaitFor(t, "the account helper of "+adAccount, func() bool {
@@ -96,10 +86,6 @@ func TestSystemAccountsFromExtrausers(t *testing.T) {
 		return false
 	})
 
-	// 3. Permission check: with the configuration file owned by root at 0600
-	// the account is refused, and granting its supplementary group read access
-	// lets the same running session read it. The socket group is the primary
-	// group, so only the initgroups result can authorize this read.
 	text, isError := session.Call(t, "get_config", map[string]any{})
 	if !isError {
 		t.Fatalf("get_config as %s without permission succeeded: %s", adAccount, text)
@@ -120,7 +106,6 @@ func TestSystemAccountsFromExtrausers(t *testing.T) {
 	}
 }
 
-// adSocketModeGID returns the permission bits and group of path.
 func adSocketModeGID(t *testing.T, path string) (os.FileMode, uint32) {
 	t.Helper()
 	info, err := os.Stat(path)
@@ -134,7 +119,6 @@ func adSocketModeGID(t *testing.T, path string) (os.FileMode, uint32) {
 	return info.Mode().Perm(), stat.Gid
 }
 
-// adWaitRegistered waits until the session has registered with its Broker.
 func adWaitRegistered(t *testing.T, session *syscontainer.Session) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "the session "+session.Account+" to register",
@@ -147,14 +131,11 @@ func adWaitRegistered(t *testing.T, session *syscontainer.Session) {
 		})
 }
 
-// adRunRoot runs a command as root and fails the test when it does not
-// succeed.
 func adRunRoot(t *testing.T, argv ...string) {
 	t.Helper()
 	_ = adRunRootOut(t, argv...)
 }
 
-// adRunRootOut runs a command as root and returns its standard output.
 func adRunRootOut(t *testing.T, argv ...string) string {
 	t.Helper()
 	cmd := syscontainer.Command("root", nil, argv[0], argv[1:]...)

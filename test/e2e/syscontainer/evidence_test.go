@@ -7,8 +7,7 @@ import (
 )
 
 // TestFormatBootEvidence checks that the failure text carries the inspect State
-// fields and the last lines of the captured streams, which is what turns a
-// future boot failure into a diagnosis.
+// fields and the last lines of each captured stream.
 func TestFormatBootEvidence(t *testing.T) {
 	var logs strings.Builder
 	for i := 0; i < 100; i++ {
@@ -56,8 +55,6 @@ func TestFormatBootEvidence(t *testing.T) {
 		}
 	}
 
-	// The dump is bounded: the earliest lines of a long stream must not be
-	// carried into the log.
 	for _, unwanted := range []string{
 		"docker log line 0\n",
 		fmt.Sprintf("docker log line %d\n", 100-evidenceTailLines-1),
@@ -70,9 +67,7 @@ func TestFormatBootEvidence(t *testing.T) {
 }
 
 // TestCollectBootEvidence checks that the collection runs the diagnostic
-// commands and folds every result into the failure text. The docker runner is a
-// fake, so the test names the command lines it expects instead of relying on a
-// live daemon.
+// commands and folds every result into the failure text.
 func TestCollectBootEvidence(t *testing.T) {
 	const inspect = `{"Status":"exited","Running":false,"OOMKilled":false,"ExitCode":255,"Error":"","StartedAt":"2026-11-19T01:00:00Z","FinishedAt":"2026-11-19T01:00:01Z"}`
 	var commands []string

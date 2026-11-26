@@ -11,14 +11,11 @@ import (
 	"github.com/wangzw/peers/test/e2e/syscontainer"
 )
 
-// systemAuditPath is where the system Broker writes its audit log.
 const systemAuditPath = "/var/log/peers/audit.log"
 
-// TestREQBrokerConfig050_SystemServiceInstallPrintsSummary covers the summary
-// a system installation prints: the level, the binary, the configuration
-// file and the log locations, the commands that control the service and the
-// uninstall command. The paths it prints must exist on the host. A second
-// installation over the kept configuration says (kept) instead of (generated).
+// TestREQBrokerConfig050_SystemServiceInstallPrintsSummary checks the summary a
+// system installation prints and that the paths and commands it names work,
+// including (kept) on a second installation.
 func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -26,8 +23,8 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 	}
 
 	resetSystemServiceState(t)
-	// The printed uninstall removes the binary, so a later reset would have no
-	// executable to run. The uninstall itself already removed the unit.
+	// The printed uninstall removes the binary, so reset only when it still
+	// exists.
 	t.Cleanup(func() {
 		if _, err := os.Stat(releaseBinary); err == nil {
 			resetSystemServiceState(t)
@@ -60,7 +57,6 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 		}
 	}
 
-	// A second installation keeps the configuration file and says so.
 	again := syscontainer.RunAs(t, "root", nil, "service", "install", "--system")
 	if again.ExitCode != 0 {
 		t.Fatalf("reinstalling service --system: exit %d\nstdout: %s\nstderr: %s",
@@ -70,16 +66,11 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 		"config:": systemConfigPath + " (kept)",
 	})
 
-	// The commands the summary printed must run as printed, in order. The test
-	// account is root, so the printed sudo prefix is dropped and the uninstall
-	// runs as root directly. The path where a non-root account answers the
-	// system-uninstall question and the command re-executes itself through sudo
-	// is covered by the uninstall command tests (TestUninstallAccountOnlySystem*).
 	t.Run("the printed commands run as printed", func(t *testing.T) {
 		for _, label := range []string{"start:", "stop:", "restart:", "uninstall:"} {
 			args := printedCommandArgs(t, summaryValue(t, again.Stdout, label))
-			// The summary prints "peers uninstall" for a person at a terminal.
-			// The test runs without one, so it passes --yes to skip the question.
+			// The summary prints "peers uninstall" for a person at a terminal;
+			// the test passes --yes to skip the question.
 			if label == "uninstall:" {
 				args = append(args, "--yes")
 			}
@@ -92,9 +83,9 @@ func TestREQBrokerConfig050_SystemServiceInstallPrintsSummary(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig050_UserServiceInstallPrintsSummary covers the same
-// summary for a user installation: no sudo prefix, starts at login, the
-// user's configuration file and log commands.
+// TestREQBrokerConfig050_UserServiceInstallPrintsSummary checks the same summary
+// for a user installation: no sudo prefix, starts at login, the user's
+// configuration file and log commands.
 func TestREQBrokerConfig050_UserServiceInstallPrintsSummary(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -153,14 +144,11 @@ func TestREQBrokerConfig050_UserServiceInstallPrintsSummary(t *testing.T) {
 		"config:": configPath + " (kept)",
 	})
 
-	// The commands the summary printed must run as printed, in order. The test
-	// runs them as the account that installed the service, which is what the
-	// summary addresses; the printed form has no sudo prefix at this level.
 	t.Run("the printed commands run as printed", func(t *testing.T) {
 		for _, label := range []string{"start:", "stop:", "restart:", "uninstall:"} {
 			args := printedCommandArgs(t, summaryValue(t, again.Stdout, label))
-			// The summary prints "peers uninstall" for a person at a terminal.
-			// The test runs without one, so it passes --yes to skip the question.
+			// The summary prints "peers uninstall" for a person at a terminal;
+			// the test passes --yes to skip the question.
 			if label == "uninstall:" {
 				args = append(args, "--yes")
 			}
@@ -173,13 +161,9 @@ func TestREQBrokerConfig050_UserServiceInstallPrintsSummary(t *testing.T) {
 	})
 }
 
-// TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog covers the first
-// half of REQ-broker-config-064 on a container: after a successful system
-// installation, making the audit log unusable and reinstalling must keep the
-// installed, running service, name the fault and the repair command, exit 3,
-// print the summary, and leave a Broker that peers service status reports as
-// degraded. The second half, a listen port that is occupied before the
-// installation, is covered by TestSystemServiceInstallListenPortConflict.
+// TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog checks that an unusable
+// audit log leaves the running system service installed, names the fault and the
+// repair command, exits 3, prints the summary, and reports the Broker as degraded.
 func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -199,8 +183,7 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 	})
 
 	// A directory at the audit log path cannot be opened for appending even by
-	// root, so the Broker's audit step fails the same way a directory the
-	// service may not write to would.
+	// root, so the Broker's audit step fails.
 	if err := os.Remove(systemAuditPath); err != nil {
 		t.Fatalf("removing %s: %v", systemAuditPath, err)
 	}
@@ -214,7 +197,6 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 			res.ExitCode, strings.TrimSpace(res.Stdout), strings.TrimSpace(res.Stderr))
 	}
 
-	// The summary is printed as usual, and the service is still installed.
 	assertInstallSummary(t, res.Stdout, "system service", "boot", true, map[string]string{
 		"binary:":    releaseBinary,
 		"config:":    systemConfigPath + " (kept)",
@@ -227,7 +209,6 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 		t.Errorf("the binary %s is missing after the degraded reinstall: %v", releaseBinary, err)
 	}
 
-	// The two degraded lines name the level, the reason and the repair command.
 	degradedLine := summaryValue(t, res.Stderr, "Broker:")
 	if !strings.Contains(degradedLine, "degraded (diagnostics only)") {
 		t.Errorf("degraded line = %q, want the diagnostics-only level", degradedLine)
@@ -243,7 +224,6 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 		t.Errorf("fix line = %q, want the service restart command", fixLine)
 	}
 
-	// The service is still running, and status reports it as degraded.
 	active := runCommandAs(t, "root", "systemctl", "is-active", "peers.service")
 	if state := strings.TrimSpace(active.Stdout); state != "active" {
 		t.Errorf("systemctl is-active peers.service = %q after the degraded reinstall, want %q\nstderr: %s",
@@ -259,11 +239,9 @@ func TestREQBrokerConfig064_ReinstallReportsDegradedAuditLog(t *testing.T) {
 	}
 }
 
-// assertInstallSummary checks the install summary and every value the caller
-// names. level and start are the words the summary uses for the install level
-// and when the service starts. requireFirst makes the summary the first line:
-// a direct service install prints it first, while the install script prints its
-// notices before it and only requires the line to be present.
+// assertInstallSummary checks the install summary and every value the caller names;
+// requireFirst makes the summary the first line, which a direct service install
+// prints but the install script does not.
 func assertInstallSummary(t *testing.T, stdout, level, start string, requireFirst bool, wants map[string]string) {
 	t.Helper()
 
@@ -305,9 +283,8 @@ func assertInstallSummary(t *testing.T, stdout, level, start string, requireFirs
 	}
 }
 
-// printedCommandArgs splits a command from the install summary into the
-// arguments that follow its binary name. It drops the sudo prefix a system
-// summary prints, because the caller runs the command as root directly.
+// printedCommandArgs splits a summary command into the arguments after its binary,
+// dropping the sudo prefix because callers run the command as root.
 func printedCommandArgs(t *testing.T, command string) []string {
 	t.Helper()
 
@@ -321,8 +298,6 @@ func printedCommandArgs(t *testing.T, command string) []string {
 	return words[1:]
 }
 
-// summaryValue returns the value of the summary line that starts with label, or
-// fails the test when the line is absent.
 func summaryValue(t *testing.T, output, label string) string {
 	t.Helper()
 

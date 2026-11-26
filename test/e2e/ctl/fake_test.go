@@ -11,7 +11,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/ctl"
 )
 
-// inboxFrame is one frame the test writes into a session's inbox socket.
 const inboxFrame = `{"msg_id":"m1","type":"message","message":{"content":"held"}}` + "\n"
 
 // TestCtlFakeUnsupportedOperation checks that an operation the node agent
@@ -35,7 +34,6 @@ func TestCtlFakeUnsupportedOperation(t *testing.T) {
 		t.Fatalf("error = %q, want it to say the operation is unsupported", err)
 	}
 
-	// The failed request must not take the node agent down.
 	if _, err := client.Frames(ctx, ctl.SessionFramesRequest{ID: info.ID}); err != nil {
 		t.Fatalf("reading frames after the failed operation: %v", err)
 	}
@@ -113,14 +111,12 @@ func TestCtlFakeRelease(t *testing.T) {
 		t.Fatalf("releasing the held connection: %v", err)
 	}
 
-	// Release lets the handler return, so the connection ends once the sender
-	// closes its side.
+	// Release lets the handler return; the connection still ends only once the sender closes its side, so the test closes it here.
 	if err := conn.Close(); err != nil {
 		t.Fatalf("closing the inbox connection: %v", err)
 	}
-	// node.InboxConnections reads /proc/net/unix, so the count is only
-	// observable on Linux. The release and frame checks above have already
-	// run here; only the connection count is skipped.
+	// InboxConnections reads /proc/net/unix, so the count is observable on Linux only.
+	// The release and frame checks above have already run; only the count is skipped.
 	if runtime.GOOS != "linux" {
 		t.Skip("InboxConnections reads /proc/net/unix")
 	}

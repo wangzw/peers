@@ -6,9 +6,7 @@ import (
 	"path/filepath"
 )
 
-// Resolve expands every symbolic link in path so that two spellings of the
-// same location compare equal. macOS reports a directory created under /var
-// back as its target under /private/var once the kernel resolves the link.
+// Resolve returns path with every symbolic link resolved to its target.
 func Resolve(path string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {

@@ -19,12 +19,10 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// fakePeerCommandBound bounds one pairing or dial command the fake peer runs.
-// The fake peer's own command timeout is 10 seconds, so this bound is strictly
-// larger by the project-wide three seconds.
+// fakePeerCommandBound is strictly larger than the fake peer's own 10-second
+// command timeout.
 const fakePeerCommandBound = 13 * time.Second
 
-// fakePeerWire is one JSON line the fake peer writes to stdout.
 type fakePeerWire struct {
 	Event       string               `json:"event"`
 	Fingerprint string               `json:"fingerprint"`
@@ -41,7 +39,6 @@ type fakePeerWire struct {
 	Records     []fakePeerWireRecord `json:"records"`
 }
 
-// fakePeerWireRecord is one identifier and version a RecordList carried.
 type fakePeerWireRecord struct {
 	Publisher string `json:"publisher"`
 	Kind      string `json:"kind"`
@@ -49,22 +46,17 @@ type fakePeerWireRecord struct {
 	Version   uint64 `json:"version"`
 }
 
-// fakePeerWireMember is one member entry in a Roster the fake peer sends or
-// receives.
 type fakePeerWireMember struct {
 	Name   string `json:"name"`
 	Ref    string `json:"ref"`
 	Status string `json:"status"`
 }
 
-// fakePeerEvent is one stdout line with the bookkeeping of which waiter has
-// already consumed it.
 type fakePeerEvent struct {
 	fakePeerWire
 	consumed bool
 }
 
-// fakePeer drives one fakepeer process over its stdin/stdout protocol.
 type fakePeer struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -74,8 +66,6 @@ type fakePeer struct {
 	events []*fakePeerEvent
 }
 
-// lockedBuffer collects the fake peer's standard error without racing the
-// reader that copies it.
 type lockedBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -93,15 +83,12 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// startFakePeer builds the fake peer, starts it with only the test home, the
-// runtime root and PATH in its environment, and waits for its ready event.
 func startFakePeer(t *testing.T) *fakePeer {
 	t.Helper()
 
 	bin := harness.BuildPackage(t, "./test/e2e/fakepeer", runtime.GOOS, runtime.GOARCH, "e2e", "peers_testenv")
 	home := t.TempDir()
-	// The runtime root must stay short; the fake peer itself binds no socket
-	// but the product code derives paths from it.
+	// The runtime root must stay short: the product code derives paths from it.
 	root, err := os.MkdirTemp("/tmp", "apfp")
 	if err != nil {
 		t.Fatalf("creating the fake peer's runtime root: %v", err)
@@ -137,7 +124,6 @@ func startFakePeer(t *testing.T) *fakePeer {
 	return f
 }
 
-// read copies the fake peer's stdout events into the event log.
 func (f *fakePeer) read(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
@@ -151,8 +137,6 @@ func (f *fakePeer) read(r io.Reader) {
 	}
 }
 
-// waitEvent waits for the first unconsumed event of kind. An error event fails
-// the test at once.
 func (f *fakePeer) waitEvent(t *testing.T, kind string, bound time.Duration) *fakePeerEvent {
 	t.Helper()
 	deadline := time.Now().Add(bound)
@@ -191,7 +175,6 @@ func (f *fakePeer) waitEvent(t *testing.T, kind string, bound time.Duration) *fa
 	}
 }
 
-// send writes one command line.
 func (f *fakePeer) send(t *testing.T, command any) {
 	t.Helper()
 	data, err := json.Marshal(command)
@@ -203,8 +186,6 @@ func (f *fakePeer) send(t *testing.T, command any) {
 	}
 }
 
-// Pair dials a Broker with the one-time key it created and returns the paired
-// fingerprint.
 func (f *fakePeer) Pair(t *testing.T, address, key string) string {
 	t.Helper()
 	f.send(t, map[string]any{"cmd": "pair", "address": address, "key": key})
@@ -215,7 +196,6 @@ func (f *fakePeer) Pair(t *testing.T, address, key string) string {
 	return event.Fingerprint
 }
 
-// WaitLinked waits for the first link the fake peer establishes.
 func (f *fakePeer) WaitLinked(t *testing.T, bound time.Duration) string {
 	t.Helper()
 	event := f.waitEvent(t, "linked", bound)
@@ -225,8 +205,6 @@ func (f *fakePeer) WaitLinked(t *testing.T, bound time.Duration) string {
 	return event.Peer
 }
 
-// Records replaces the record set the fake peer serves and pushes the new list
-// to every linked peer.
 func (f *fakePeer) Records(t *testing.T, records ...*directorypb.Record) {
 	t.Helper()
 	wire := make([]map[string]string, 0, len(records))
@@ -243,48 +221,37 @@ func (f *fakePeer) Records(t *testing.T, records ...*directorypb.Record) {
 	}
 }
 
-// DialUnpaired opens a link stream without pairing, offers the current record
-// set, and returns the stream's closing reason.
 func (f *fakePeer) DialUnpaired(t *testing.T, address string) string {
 	t.Helper()
 	f.send(t, map[string]any{"cmd": "dial_unpaired", "address": address})
 	return f.waitEvent(t, "closed", fakePeerCommandBound).Reason
 }
 
-// TopicDigests waits for a TopicDigests the fake peer received.
 func (f *fakePeer) TopicDigests(t *testing.T) *fakePeerEvent {
 	t.Helper()
 	return f.waitEvent(t, "topic_digests", fakePeerCommandBound)
 }
 
-// EchoDigests resends the most recent TopicDigests verbatim.
 func (f *fakePeer) EchoDigests(t *testing.T) *fakePeerEvent {
 	t.Helper()
 	f.send(t, map[string]any{"cmd": "echo_digests"})
 	return f.waitEvent(t, "echoed", fakePeerCommandBound)
 }
 
-// SendTopicDigests sends the fake peer's own digests for names. The returned
-// event lists in Want the digests the Broker uses when it sends a Roster for
-// the same names.
 func (f *fakePeer) SendTopicDigests(t *testing.T, names ...string) *fakePeerEvent {
 	t.Helper()
 	f.send(t, map[string]any{"cmd": "digests", "topics": names})
 	return f.waitEvent(t, "digests_sent", fakePeerCommandBound)
 }
 
-// SendRoster sends a Roster under digest (lowercase hex) carrying members.
 func (f *fakePeer) SendRoster(t *testing.T, digest string, members ...fakePeerWireMember) *fakePeerEvent {
 	t.Helper()
 	f.send(t, map[string]any{"cmd": "roster", "digest": digest, "members": members})
 	return f.waitEvent(t, "roster_sent", fakePeerCommandBound)
 }
 
-// SendRosterDeltaBatch sends one RosterDelta under the digest the fake peer
-// itself uses for topic. It carries count generated added members whose name
-// is namePrefix followed by the member's six-hex Ref, the first Ref being
-// refBase, then extra members. SendTopicDigests must have named topic first, or
-// the Broker ignores the frame as outside the peer's latest digest set.
+// SendTopicDigests must have named topic first, or the Broker ignores the frame
+// as outside the peer's latest digest set.
 func (f *fakePeer) SendRosterDeltaBatch(t *testing.T, topic string, count, refBase int, namePrefix string, extra ...fakePeerWireMember) *fakePeerEvent {
 	t.Helper()
 	f.send(t, map[string]any{
@@ -298,15 +265,12 @@ func (f *fakePeer) SendRosterDeltaBatch(t *testing.T, topic string, count, refBa
 	return f.waitEvent(t, "roster_delta_sent", fakePeerCommandBound)
 }
 
-// WaitTopicRosterFence waits until a Roster under fence arrives and requires
-// every Roster received before it to be under allowed. The fence digest is one
-// the echoed set never carried, so the fence Roster can only come from the
-// peer's own digest set; frames are ordered, so every Roster the echo could
-// have produced has arrived by then. A Roster under any other digest before
-// the fence is the echoed set matching a topic A alone holds, which is exactly
-// the leak REQ-topics-014 forbids. Checking only the first Roster would pass
-// whenever a leaked Roster happens to sort after the allowed one, so the whole
-// run before the fence is checked.
+// WaitTopicRosterFence waits for a Roster under fence. Every Roster received
+// before the fence must be under allowed, and any other digest fails. Frames
+// are ordered, so every Roster the echo could have produced has arrived by the
+// time the fence does, and checking only the first Roster would pass whenever a
+// leaked one happens to sort after the allowed one, so the whole run before the
+// fence is checked.
 func (f *fakePeer) WaitTopicRosterFence(t *testing.T, fence, allowed string, bound time.Duration) *fakePeerWire {
 	t.Helper()
 	deadline := time.Now().Add(bound)
@@ -350,10 +314,6 @@ func (f *fakePeer) WaitTopicRosterFence(t *testing.T, fence, allowed string, bou
 	}
 }
 
-// recordListVersions returns every version of the identifier seen in the
-// RecordList frames the fake peer received. kind is the protobuf enum name,
-// such as RECORD_KIND_BROKER_CARD. An error the fake peer reported fails the
-// test, so a silent failure cannot pass the negative checks.
 func (f *fakePeer) recordListVersions(t *testing.T, publisher, kind, object string) []uint64 {
 	t.Helper()
 	f.mu.Lock()
@@ -375,8 +335,6 @@ func (f *fakePeer) recordListVersions(t *testing.T, publisher, kind, object stri
 	return out
 }
 
-// close shuts the fake peer down by closing its stdin and waits for it to
-// exit.
 func (f *fakePeer) close() {
 	_ = f.stdin.Close()
 	done := make(chan struct{})

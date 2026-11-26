@@ -1,13 +1,8 @@
 # Container image for the end-to-end tests.
 #
-# Contract for downstream units: the system Broker and service installation
-# unit derives its systemd image from this one and keeps these names.
-#   accounts: peer (uid/gid given as build arguments, matching the user that
-#     runs the host tests) and other (uid 2000)
-#   binaries: /usr/local/bin/peers and /usr/local/bin/e2e-node
-#   account home: /home/peer
-#   control socket: the host mounts a directory at /ctl, and the node agent
-#     listens on /ctl/ctl.sock
+# The system Broker and service installation unit derives its image from this
+# one and keeps these names: the peer and other accounts, /usr/local/bin/peers
+# and e2e-node, home /home/peer, and the control socket at /ctl/ctl.sock.
 FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
 ARG UID=1000
@@ -27,10 +22,8 @@ RUN apt-get update \
         tcpdump \
  && rm -rf /var/lib/apt/lists/*
 
-# The peer account takes the uid and gid of the host test process so files it
-# writes under the /ctl bind mount belong to the host user and t.TempDir can
-# remove them. A group or user with that number may already exist in the base
-# image; reuse it rather than failing the build.
+# The peer account takes the host test process's uid and gid so files it writes
+# under /ctl belong to the host user; reuse an existing matching account.
 RUN if ! getent group "${GID}" >/dev/null; then groupadd --gid "${GID}" peer; fi \
  && if ! getent passwd "${UID}" >/dev/null; then \
         useradd --create-home --uid "${UID}" --gid "${GID}" peer; \

@@ -16,18 +16,13 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// vlRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
-// margin: the timers that govern a link coming back after the version guard
-// clears.
 const vlRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 // vlVersionDetail is the status_detail an acceptor one link protocol version
-// ahead of the dialer reports. It is derived from the constant so a future
-// version bump needs no test change.
+// ahead reports, derived from the constant so a version bump needs no test
+// change.
 var vlVersionDetail = fmt.Sprintf("link protocol version incompatible with this peer; upgrade the older Broker: peer speaks link protocol version %d", linkpb.ProtocolVersion)
 
-// vlStartBroker starts the node's Broker from config and fails when it does not
-// come up.
 func vlStartBroker(t *testing.T, n *harness.Node, spec harness.BrokerSpec) harness.BrokerStart {
 	t.Helper()
 	st := n.StartBroker(t, spec)
@@ -37,8 +32,6 @@ func vlStartBroker(t *testing.T, n *harness.Node, spec harness.BrokerSpec) harne
 	return st
 }
 
-// vlOperator starts an operator session that never registers as an agent and
-// waits until it reaches its Broker.
 func vlOperator(t *testing.T, n *harness.Node, name string) *harness.Session {
 	t.Helper()
 	s := n.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, NoSocketEnv: true})
@@ -46,8 +39,6 @@ func vlOperator(t *testing.T, n *harness.Node, name string) *harness.Session {
 	return s
 }
 
-// vlPeer returns the node's only peer from Status, or a state string naming
-// why it is not exactly one.
 func vlPeer(t *testing.T, n *harness.Node) (*localpb.BrokerInfo, string) {
 	t.Helper()
 	resp, detail := n.Oracle().Status(t)
@@ -61,11 +52,10 @@ func vlPeer(t *testing.T, n *harness.Node) (*localpb.BrokerInfo, string) {
 	return peers[0], ""
 }
 
-// TestLinkVersionMismatchAndRecovery checks the link side of the version
-// handshake between two real Brokers: a dialer at the default link protocol
-// version is rejected by an acceptor one version ahead, both sides report why,
-// both keep the pair listed, and the link recovers when the acceptor returns at
-// the default version.
+// TestLinkVersionMismatchAndRecovery checks that a dialer at the default link
+// protocol version is rejected by an acceptor one version ahead, both sides
+// report why and keep the pair, and the link recovers when the acceptor
+// returns at the default version.
 func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 	a := harness.NewLocalHost(t, harness.LocalOptions{Name: "a"})
 	b := harness.NewLocalHost(t, harness.LocalOptions{Name: "b"})
@@ -75,7 +65,6 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 	vlStartBroker(t, a, harness.BrokerSpec{})
 	addrB = vlStartBroker(t, b, harness.BrokerSpec{}).Address(addrB)
 
-	// Pair A, the dialer, with B, the acceptor.
 	sb := vlOperator(t, b, "operator-b")
 	sa := vlOperator(t, a, "operator-a")
 	r := sb.Call(t, "create_pairing_key", nil)
@@ -94,13 +83,11 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 			fmt.Sprintf("status is %s", peer.GetStatus())
 	})
 
-	// The sessions are not needed after pairing, and ending them keeps their
-	// MCP server processes from racing the Broker restarts below.
+	// End the sessions before restarting: their MCP server processes would
+	// race the Broker restarts.
 	sb.End(t)
 	sa.End(t)
 
-	// Restart B one link protocol version ahead; its data directory and the
-	// pair survive.
 	if code := b.StopBroker(t, syscall.SIGTERM); code != 0 {
 		t.Fatalf("B's Broker exited %d on SIGTERM, want 0", code)
 	}
@@ -130,8 +117,6 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 			fmt.Sprintf("status_detail is %q", peer.GetStatusDetail())
 	})
 
-	// A version mismatch is not an unpairing: both sides still list the other
-	// as a peer.
 	for _, n := range []*harness.Node{a, b} {
 		resp, detail := n.Oracle().ListBrokers(t)
 		if detail != nil {
@@ -145,8 +130,6 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 		}
 	}
 
-	// Restart B at the default version; A's dialer redials and the link comes
-	// back without another connect_broker.
 	if code := b.StopBroker(t, syscall.SIGTERM); code != 0 {
 		t.Fatalf("B's Broker exited %d on SIGTERM, want 0", code)
 	}
@@ -167,12 +150,9 @@ func TestLinkVersionMismatchAndRecovery(t *testing.T) {
 	})
 }
 
-// TestPairingVersionMismatch checks the pairing side of the version check: a
-// Broker at the default link protocol version dials an acceptor that reports
-// the previous one. The acceptor compares the version in PairRequest before it
-// looks up the key, so connect_broker fails with the version-incompatible
-// detail and never reports a paired Broker. Without the check the pairing would
-// succeed and the link would then fail its own version handshake.
+// TestPairingVersionMismatch checks that connect_broker to an acceptor one
+// link protocol version behind fails as version incompatible and never reports
+// a paired Broker.
 func TestPairingVersionMismatch(t *testing.T) {
 	if linkpb.ProtocolVersion < 2 {
 		t.Skipf("link protocol version %d has no earlier version to inject", linkpb.ProtocolVersion)
@@ -196,9 +176,8 @@ func TestPairingVersionMismatch(t *testing.T) {
 		t.Fatalf("decoding create_pairing_key: %v", err)
 	}
 
-	// Take the audit watermark before connecting: on a slow machine the
-	// rejection record can be written before the calls below return, and a
-	// watermark taken afterwards would miss it.
+	// Take the audit watermark before connecting: the rejection record can be
+	// written before the call returns.
 	auditSince := time.Now().Add(-time.Second)
 	res := sa.Call(t, "connect_broker", map[string]any{"address": addrB, "key": key.Key})
 	if !res.IsError {
@@ -210,7 +189,6 @@ func TestPairingVersionMismatch(t *testing.T) {
 		t.Fatalf("connect_broker error is %q, want it to name %q", res.Text, wantDetail)
 	}
 
-	// Neither side recorded a peer: the pairing never reached PairDone.
 	for _, n := range []*harness.Node{a, b} {
 		resp, detail := n.Oracle().ListBrokers(t)
 		if detail != nil {
@@ -221,8 +199,6 @@ func TestPairingVersionMismatch(t *testing.T) {
 		}
 	}
 
-	// The acceptor audits the rejection as version incompatible, without the
-	// peer's version, because it never looked up a key.
 	harness.Eventually(t, harness.EventTimeout, "B audits the version-incompatible pairing failure", func() (bool, string) {
 		for _, event := range ctAudit(t, b, auditSince, 0) {
 			if event.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_PAIRING_FAILED &&

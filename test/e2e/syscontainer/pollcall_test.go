@@ -12,8 +12,6 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// logRecorder captures what pollCallWithin logs, so a test can check that a
-// failed call is reported instead of failing the test silently.
 type logRecorder struct {
 	lines []string
 }
@@ -23,10 +21,8 @@ func (r *logRecorder) logf(format string, args ...any) {
 }
 
 // TestPollCallWithinDeadlinePassedMakesNoCall checks that a wait whose deadline
-// has already passed returns an error without making a tool call, and logs the
-// skipped call so a wait that keeps polling an expired deadline stays visible.
-// The call function counts invocations, so a regression that calls anyway fails
-// here.
+// has passed returns an error without making a tool call and logs the skipped
+// call.
 func TestPollCallWithinDeadlinePassedMakesNoCall(t *testing.T) {
 	calls := 0
 	var logs logRecorder
@@ -58,12 +54,9 @@ func TestPollCallWithinDeadlinePassedMakesNoCall(t *testing.T) {
 	}
 }
 
-// TestPollCallWithinRunsItsFullBoundLateInTheWait reproduces the truncation a
-// call suffered when it was clamped to the time the wait had left: a healthy
-// call that starts near the end of a short wait was cut off below its own poll
-// bound and reported as a failure. The call here answers inside the poll bound
-// but after the wait's remaining time, so it must run to completion and
-// succeed. The old clamping cut it at the wait and returned the context error.
+// TestPollCallWithinRunsItsFullBoundLateInTheWait checks that a call answering
+// after the wait's remaining time but inside its poll bound completes and
+// succeeds.
 func TestPollCallWithinRunsItsFullBoundLateInTheWait(t *testing.T) {
 	const (
 		waitLeft  = 100 * time.Millisecond
@@ -100,11 +93,8 @@ func TestPollCallWithinRunsItsFullBoundLateInTheWait(t *testing.T) {
 }
 
 // TestPollCallWithinMarksItsOwnTimeoutAsAStall checks that a call cut by its
-// poll bound runs that bound in full even when the wait has less time left,
-// returns a stall-marked error that still wraps context.DeadlineExceeded, and
-// logs the failure with the session, the tool, the elapsed time and the error.
-// The stall marker is what lets a wait or consistency window tell a Broker that
-// stopped answering from a retryable failure.
+// poll bound returns a stall-marked error that wraps context.DeadlineExceeded
+// and logs the failure.
 func TestPollCallWithinMarksItsOwnTimeoutAsAStall(t *testing.T) {
 	const (
 		waitLeft  = 40 * time.Millisecond

@@ -8,8 +8,6 @@ import (
 	"testing"
 )
 
-// testSubnetPrefixes returns blocks /24s of /28 slots, all inside
-// 198.18.0.0/15 so the values look like the real pools.
 func testSubnetPrefixes(blocks int) []netip.Prefix {
 	out := make([]netip.Prefix, 0, blocks*16)
 	for block := 0; block < blocks; block++ {
@@ -23,9 +21,8 @@ func testSubnetPrefixes(blocks int) []netip.Prefix {
 	return out
 }
 
-// TestReserveSubnetPrefixExhaustion fills a pool and requires the next request
-// to fail with an error that names the pool range, the holder and how to clear
-// the reservations.
+// TestReserveSubnetPrefixExhaustion checks that a full pool hands out no subnet
+// and reports the exhaustion with the pool range and holders.
 func TestReserveSubnetPrefixExhaustion(t *testing.T) {
 	store := subnetStore{dir: t.TempDir()}
 	pool := testSubnetPrefixes(1)

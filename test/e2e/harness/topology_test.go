@@ -13,9 +13,7 @@ import (
 // avoids both Docker's default pools and this host's k8s networks.
 var routedRange = netip.MustParsePrefix("198.18.0.0/15")
 
-// TestRoutedSubnetBlocks checks that consecutive allocations are disjoint /24s
-// inside 198.18.0.0/15. Two blocks are taken before either cleanup runs, so
-// the test covers the case of two topologies up at the same time.
+// TestRoutedSubnetBlocks checks that consecutive allocations are disjoint /24s inside 198.18.0.0/15, with two blocks taken before either cleanup runs.
 func TestRoutedSubnetBlocks(t *testing.T) {
 	seen := map[string]bool{}
 	for _, block := range [][3]string{allocRoutedSubnets(t), allocRoutedSubnets(t)} {
@@ -38,11 +36,7 @@ func TestRoutedSubnetBlocks(t *testing.T) {
 	}
 }
 
-// TestRoutedComposeSubnets checks the defaults in the three routed compose
-// files: every subnet is written down, lies inside 198.18.0.0/15, and no two
-// defaults share a subnet. The harness overrides them per project, but the
-// defaults are what a manual compose invocation uses, and they document the
-// range.
+// TestRoutedComposeSubnets checks the defaults in the three routed compose files: every subnet lies inside 198.18.0.0/15 and no two defaults share a subnet.
 func TestRoutedComposeSubnets(t *testing.T) {
 	var all []string
 	for _, file := range []string{"nat.yaml", "portfwd.yaml", "mitm.yaml"} {

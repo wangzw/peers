@@ -7,7 +7,7 @@ import (
 )
 
 // TestProjectNameCarriesOwner checks that a project name parses back to this
-// process, so a cleanup can tell a live suite from stale residue.
+// process.
 func TestProjectNameCarriesOwner(t *testing.T) {
 	current := currentOwner()
 	if current.pid != os.Getpid() {
@@ -23,8 +23,8 @@ func TestProjectNameCarriesOwner(t *testing.T) {
 	}
 }
 
-// TestOwnerGone checks the cases a cleanup distinguishes: a live owner, a dead
-// owner, and a name without the marker.
+// TestOwnerGone checks that a live owner, a dead owner and a name without the
+// marker are told apart.
 func TestOwnerGone(t *testing.T) {
 	current := currentOwner()
 	live := "ape2e-" + current.String() + "-test-abcdef"
@@ -91,8 +91,7 @@ func TestOwnerAliveMissingPIDInSameNamespace(t *testing.T) {
 }
 
 // TestOwnerAliveUnreadableStat checks that a read error other than a missing
-// process keeps the resource: the owner may still be running in a namespace
-// this process cannot inspect.
+// process keeps the resource alive.
 func TestOwnerAliveUnreadableStat(t *testing.T) {
 	const selfNS = 4026531836
 	unreadable := owner{pid: 4242, start: 7, ns: selfNS}
@@ -105,8 +104,8 @@ func TestOwnerAliveUnreadableStat(t *testing.T) {
 	}
 }
 
-// TestOwnerAliveConfirmedESRCH checks that the kernel's ESRCH is treated like a
-// missing /proc entry: the process is gone.
+// TestOwnerAliveConfirmedESRCH checks that the kernel's ESRCH marks the process
+// gone.
 func TestOwnerAliveConfirmedESRCH(t *testing.T) {
 	const selfNS = 4026531836
 	gone := owner{pid: 4242, start: 7, ns: selfNS}
@@ -115,8 +114,8 @@ func TestOwnerAliveConfirmedESRCH(t *testing.T) {
 	}
 }
 
-// TestParseOwnerValue checks the standalone marker written into a subnet
-// reservation.
+// TestParseOwnerValue checks that a standalone marker round-trips through
+// parseOwnerValue and that garbage is rejected.
 func TestParseOwnerValue(t *testing.T) {
 	current := currentOwner()
 	got, ok := parseOwnerValue(current.String())

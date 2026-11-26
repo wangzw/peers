@@ -14,22 +14,17 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// pairBrokerPort is the port a Broker listens on with the default
-// configuration, and the port the topologies forward.
 const pairBrokerPort = "17443"
 
-// pairReconnectBound waits for both Brokers to relink after a cut on the
-// default timers. The cut is noticed within three seconds; the dialer's
-// backoff has then grown to at most four seconds, one dial and the accept
-// side's catch-up follow, and the project-wide three-second margin brings the
-// bound to ten seconds.
+// pairReconnectBound is ten seconds on the default timers: the cut is noticed
+// within three seconds, the dialer's backoff has grown to at most four
+// seconds, one dial and the accept side's catch-up follow, and the
+// project-wide three-second margin brings the bound to ten.
 const pairReconnectBound = 10 * time.Second
 
-// TestJourneyPairBrokers walks the "two hosts pair for the first time" journey
-// on real containers: two Brokers with the default configuration, two real MCP
-// server processes, and a NAT that lets only hostB open a connection to hostA.
-// It also covers the alias-conflict, unreachable-display-address and network
-// outage alternatives.
+// TestJourneyPairBrokers covers two hosts pairing for the first time and the
+// alias-conflict, unreachable-display-address and network-outage
+// alternatives.
 func TestJourneyPairBrokers(t *testing.T) {
 	t.Parallel()
 
@@ -39,8 +34,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 	pairStartBroker(t, hostA, "")
 	pairStartBroker(t, hostB, "")
 
-	// The M2 completion condition: hostB listens, yet hostA cannot connect to
-	// it, while hostB can reach hostA.
 	aWan := net.JoinHostPort(c.Addr("hostA", "wan"), pairBrokerPort)
 	bLanb := net.JoinHostPort(c.Addr("hostB", "lanb"), pairBrokerPort)
 	if c.TCPReachable(t, "hostA", bLanb, time.Second) {
@@ -49,10 +42,9 @@ func TestJourneyPairBrokers(t *testing.T) {
 	if !c.TCPReachable(t, "hostB", aWan, harness.EventTimeout) {
 		t.Fatalf("hostB cannot reach hostA at %s; the displayed address would not work either", aWan)
 	}
-	// hostA and hostB are on different Docker networks, so the hostname shown
-	// with the pairing key does not resolve on the dialing side. An
-	// implementation that dials it instead of the address in the parentheses
-	// fails the connect below.
+	// The displayed hostname does not resolve on the dialing side, so an
+	// implementation that dials it instead of the parenthesized address fails
+	// the connect below.
 	if result := hostB.Exec(t, []string{"getent", "hosts", "hostA"}, nil); result.ExitCode == 0 {
 		t.Fatalf("hostB resolves hostA (%q); the displayed hostname check would not prove anything", strings.TrimSpace(result.Stdout))
 	}
@@ -66,7 +58,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 	pairWaitRegistered(t, alice, "alice")
 	pairWaitRegistered(t, bob, "bob")
 
-	// Both sides know no Broker before the pairing.
 	for name, session := range map[string]*harness.Session{"alice": alice, "bob": bob} {
 		out, state := pairListBrokers(t, session)
 		if state != "" {
@@ -77,9 +68,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 		}
 	}
 
-	// Step 1 and 2: alice creates a one-time key. The shown address is hostA
-	// and the address of its default-route interface; neither is part of the
-	// key.
 	key := pairCreateKey(t, alice)
 	expires, err := time.Parse(time.RFC3339, key.ExpiresAt)
 	if err != nil {
@@ -96,8 +84,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 		t.Fatalf("the key %q embeds the shown hostname or address", key.Key)
 	}
 
-	// Steps 3 and 4: bob dials with the displayed address verbatim and the
-	// key. The parenthesis content is what gets dialed.
 	r := bob.Call(t, "connect_broker", map[string]any{"address": key.Addresses[0], "key": key.Key})
 	r.MustOK(t)
 	connected, err := harness.Decode[mcpserver.ConnectBrokerOut](string(r.Structured))
@@ -113,15 +99,13 @@ func TestJourneyPairBrokers(t *testing.T) {
 	if !pairIsFingerprint(connected.Fingerprint) {
 		t.Fatalf("connect_broker fingerprint = %q, want 64 lowercase hex digits", connected.Fingerprint)
 	}
-	// A's identity, derived from its certificate, is what both sides must
-	// report; comparing the two reported values alone would only prove that
-	// they agree with each other.
+	// Comparing the two reported fingerprints alone would only prove they
+	// agree; check against A's certificate-derived identity instead.
 	aIdentity := pkIdentityFingerprint(t, hostA)
 	if connected.Fingerprint != aIdentity {
 		t.Fatalf("connect_broker fingerprint = %q, want A's identity %q", connected.Fingerprint, aIdentity)
 	}
 
-	// Step 5 and 6: both sides list the other as a peer and report the link.
 	var bobView mcpserver.BrokerOut
 	harness.EventuallyPoll(t, harness.EventTimeout, "both Brokers report the established link", func(deadline time.Time) (bool, string) {
 		bobOut, state := pairListBrokersPoll(t, deadline, bob)
@@ -169,8 +153,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 		return true, ""
 	})
 
-	// The acceptor's fingerprint is A's own identity, not merely the value the
-	// dialer reported back.
 	if bobView.Fingerprint != aIdentity {
 		t.Fatalf("bob lists hostA with fingerprint %q, want A's identity %q", bobView.Fingerprint, aIdentity)
 	}
@@ -178,9 +160,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 	pairCheckOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER)
 
 	t.Run("alias conflict needs local alias", func(t *testing.T) {
-		// hostB and hostC both call themselves macbook. Once hostA has paired
-		// with hostB, initiating a pairing to hostC must ask for a local alias
-		// before it records anything.
 		flat := harness.Up(t, harness.TopoFlat(3))
 		hostA := flat.Node("hostA")
 		hostB := flat.Node("hostB")
@@ -209,7 +188,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 		if !r.HasPrefix("Not connected") {
 			t.Fatalf("the alias-conflict error %q does not start with Not connected", r.Text)
 		}
-		// Neither side recorded the other on the failed attempt.
 		if got := pairOracleBrokerCount(t, hostA); got != 1 {
 			t.Fatalf("hostA knows %d Brokers after the failed attempt, want only hostB", got)
 		}
@@ -220,8 +198,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 		pairConnectWithAlias(t, opA, keyC.Addresses[0], keyC.Key, "macbook-2", "macbook-2")
 		pairWaitOraclePeer(t, hostA, "macbook-2", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 
-		// Both peers' sessions are visible to a session on hostA, and each
-		// address carries the alias hostA uses for that peer.
 		sa := pairSession(t, hostA, "a1", wsA)
 		defer sa.End(t)
 		sb := pairSession(t, hostB, "b1", wsB)
@@ -253,8 +229,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 	})
 
 	t.Run("displayed address unreachable", func(t *testing.T) {
-		// hostA sits behind a port forward. Its displayed address is the
-		// private one, which hostB cannot dial; the forwarded address works.
 		c := harness.Up(t, harness.TopoPortForward)
 		hostA := c.Node("hostA")
 		hostB := c.Node("hostB")
@@ -280,17 +254,12 @@ func TestJourneyPairBrokers(t *testing.T) {
 			t.Fatalf("the unreachable-address error %q does not start with Not connected", r.Text)
 		}
 
-		// The user hands over the address that works. The failed dial never
-		// reached hostA, so the key is still usable.
 		forwarded := net.JoinHostPort(c.Addr("router", "wan"), pairBrokerPort)
 		pairConnect(t, opB, forwarded, key.Key)
 		pairWaitOraclePeer(t, hostB, "hostA.peer", localpb.PeerRole_PEER_ROLE_DIALER, harness.EventTimeout)
 	})
 
 	t.Run("network outage", func(t *testing.T) {
-		// The dialer reconnects on its own after the network comes back; no
-		// tool or management call happens in between, only local-interface
-		// probes.
 		c := harness.Up(t, harness.TopoNAT)
 		hostA := c.Node("hostA")
 		hostB := c.Node("hostB")
@@ -342,8 +311,6 @@ func TestJourneyPairBrokers(t *testing.T) {
 	})
 }
 
-// pairStartBroker starts a Broker on node with the given configuration and
-// fails when it does not come up.
 func pairStartBroker(t *testing.T, node *harness.Node, config string) {
 	t.Helper()
 	start := node.StartBroker(t, harness.BrokerSpec{ConfigYAML: config})
@@ -352,15 +319,11 @@ func pairStartBroker(t *testing.T, node *harness.Node, config string) {
 	}
 }
 
-// pairSession starts one simulated session with a real MCP server process.
 func pairSession(t *testing.T, node *harness.Node, name, workdir string) *harness.Session {
 	t.Helper()
 	return node.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, Workdir: workdir})
 }
 
-// pairOperator starts a session that never registers as an Agent: it carries
-// no inbox socket, yet its MCP server process can call the management tools.
-// It waits for the Broker connection before the caller's first tool call.
 func pairOperator(t *testing.T, node *harness.Node, workdir string) *harness.Session {
 	t.Helper()
 	s := node.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true, Workdir: workdir})
@@ -368,7 +331,6 @@ func pairOperator(t *testing.T, node *harness.Node, workdir string) *harness.Ses
 	return s
 }
 
-// pairWaitRegistered waits until the session is registered and lists itself.
 func pairWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.ListAgentsWaitBound, "session "+name+" is registered", func(deadline time.Time) (bool, string) {
@@ -383,7 +345,6 @@ func pairWaitRegistered(t *testing.T, session *harness.Session, name string) {
 	})
 }
 
-// pairCreateKey calls create_pairing_key and decodes the result.
 func pairCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairingKeyOut {
 	t.Helper()
 	r := session.Call(t, "create_pairing_key", nil)
@@ -395,14 +356,11 @@ func pairCreateKey(t *testing.T, session *harness.Session) mcpserver.CreatePairi
 	return out
 }
 
-// pairConnect calls connect_broker, requires success, and checks the alias.
 func pairConnect(t *testing.T, session *harness.Session, address, key string) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	return pairConnectWithAlias(t, session, address, key, "", "")
 }
 
-// pairConnectWithAlias calls connect_broker with an optional local alias and
-// checks the alias the Broker reports.
 func pairConnectWithAlias(t *testing.T, session *harness.Session, address, key, localAlias, wantAlias string) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	args := map[string]any{"address": address, "key": key}
@@ -421,7 +379,6 @@ func pairConnectWithAlias(t *testing.T, session *harness.Session, address, key, 
 	return out
 }
 
-// pairListBrokers calls list_brokers and returns the decoded answer.
 func pairListBrokers(t *testing.T, session *harness.Session) (mcpserver.ListBrokersOut, string) {
 	t.Helper()
 	r := session.Call(t, "list_brokers", nil)
@@ -435,24 +392,16 @@ func pairListBrokers(t *testing.T, session *harness.Session) (mcpserver.ListBrok
 	return out, ""
 }
 
-// pairListBrokersPoll is pairListBrokers for a wait callback: the call is
-// bounded by the wait's deadline and a transport error is returned as state.
 func pairListBrokersPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListBrokersOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListBrokersOut](t, deadline, session, "list_brokers", nil)
 }
 
-// pairListAgentsPoll calls list_agents from a wait and returns the decoded
-// answer. The call is bounded by the wait's deadline and a transport error is
-// returned as state.
 func pairListAgentsPoll(t *testing.T, deadline time.Time, session *harness.Session) (mcpserver.ListAgentsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListAgentsOut](t, deadline, session, "list_agents", nil)
 }
 
-// pairJoin joins a topic, retrying while the session is still registering.
-// join_topic's handler may spend topicRPCTimeout before the update hint runs,
-// so the poll uses harness.TopicCallPollBound.
 func pairJoin(t *testing.T, session *harness.Session, topic string) {
 	t.Helper()
 	harness.EventuallyPoll(t, harness.TopicCallWaitBound, "join_topic "+topic, func(deadline time.Time) (bool, string) {
@@ -467,7 +416,6 @@ func pairJoin(t *testing.T, session *harness.Session, topic string) {
 	})
 }
 
-// pairBrokerByAlias returns the Broker entry with the given alias.
 func pairBrokerByAlias(out mcpserver.ListBrokersOut, alias string) (mcpserver.BrokerOut, bool) {
 	for _, broker := range out.Brokers {
 		if broker.Alias == alias {
@@ -477,7 +425,6 @@ func pairBrokerByAlias(out mcpserver.ListBrokersOut, alias string) (mcpserver.Br
 	return mcpserver.BrokerOut{}, false
 }
 
-// pairSplitAddress splits "name@alias" into its two parts.
 func pairSplitAddress(address string) (name, alias string) {
 	at := strings.LastIndexByte(address, '@')
 	if at < 0 {
@@ -486,7 +433,6 @@ func pairSplitAddress(address string) (name, alias string) {
 	return address[:at], address[at+1:]
 }
 
-// pairIsFingerprint reports whether s is 64 lowercase hexadecimal characters.
 func pairIsFingerprint(s string) bool {
 	if len(s) != 64 {
 		return false
@@ -500,8 +446,6 @@ func pairIsFingerprint(s string) bool {
 	return true
 }
 
-// pairCheckOraclePeer checks one peer through the node's local interface, the
-// read-only cross-check used alongside the tool results.
 func pairCheckOraclePeer(t *testing.T, node *harness.Node, alias string, role localpb.PeerRole) {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -526,7 +470,6 @@ func pairCheckOraclePeer(t *testing.T, node *harness.Node, alias string, role lo
 	t.Fatalf("the local interface does not list %s", alias)
 }
 
-// pairOracleBrokerCount counts the Brokers the local interface knows.
 func pairOracleBrokerCount(t *testing.T, node *harness.Node) int {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -536,9 +479,6 @@ func pairOracleBrokerCount(t *testing.T, node *harness.Node) int {
 	return len(resp.GetBrokers())
 }
 
-// pairOracleStatus returns the status the local interface reports for alias.
-// The second value is empty on success, "missing" when no such entry exists,
-// and an error text otherwise.
 func pairOracleStatus(t *testing.T, node *harness.Node, alias string) (localpb.BrokerStatus, string) {
 	t.Helper()
 	resp, detail := node.Oracle().ListBrokers(t)
@@ -553,8 +493,6 @@ func pairOracleStatus(t *testing.T, node *harness.Node, alias string) (localpb.B
 	return localpb.BrokerStatus_BROKER_STATUS_UNSPECIFIED, "missing"
 }
 
-// pairWaitOraclePeer waits until the local interface lists alias with the link
-// connected and this Broker's role as given.
 func pairWaitOraclePeer(t *testing.T, node *harness.Node, alias string, role localpb.PeerRole, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the local interface reports "+alias+" connected", func() (bool, string) {

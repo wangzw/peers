@@ -18,37 +18,25 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// discReconcile is the directory.reconcile_interval every discovery case sets.
-// The waits below are derived from it: one hop is one reconcile pass.
+// discReconcile is the directory.reconcile_interval every discovery case sets:
+// one hop is one reconcile pass.
 const discReconcile = time.Second
 
-// discSlack is the margin added to every derived wait, after the related
-// product timers: harness.EventTimeout is the tree's fallback for a wait no
-// product timer governs. The longest discovery chain, the revoke case's
-// discBound(3), discBound(2), one relink and two discQuietBound windows, stays
-// under the requirement's sixty seconds with this margin.
 const discSlack = harness.EventTimeout
 
-// discQuietSlack is the margin added to a negative observation window. The
-// window must span more than one reconciliation pass so a pass inside it would
-// show a change the check watches for; it keeps a short margin because a
-// negative check pays its whole window, unlike a wait that returns when the
-// event arrives.
+// discQuietSlack must span more than one reconciliation pass so a pass inside
+// the window would show the change; it stays short because a negative check
+// pays its whole window.
 const discQuietSlack = 3 * time.Second
 
-// discBound returns the wait for hops reconcile passes plus the shared slack.
-// A negative observation uses discQuietBound instead.
 func discBound(hops int) time.Duration {
 	return time.Duration(hops)*discReconcile + discSlack
 }
 
-// discQuietBound returns the observation window of a negative check spanning
-// hops reconcile passes plus the quiet margin.
 func discQuietBound(hops int) time.Duration {
 	return time.Duration(hops)*discReconcile + discQuietSlack
 }
 
-// discNode is one local host running a Broker for the discovery cases.
 type discNode struct {
 	*harness.Node
 
@@ -59,15 +47,11 @@ type discNode struct {
 	env    map[string]string
 }
 
-// discNewNode starts one local node with an explicit listen and advertise
-// address and a stable alias. extra is merged into the configuration.
 func discNewNode(t *testing.T, name, extra string, public bool) *discNode {
 	t.Helper()
 	return discNewNodeEnv(t, name, extra, public, nil)
 }
 
-// discNewNodeEnv is discNewNode with variables that override the node's base
-// environment when its Broker starts. A nil map changes nothing.
 func discNewNodeEnv(t *testing.T, name, extra string, public bool, env map[string]string) *discNode {
 	t.Helper()
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "disc-" + name})
@@ -83,7 +67,6 @@ func discNewNodeEnv(t *testing.T, name, extra string, public bool, env map[strin
 	return d
 }
 
-// discCluster starts the named local nodes, all private.
 func discCluster(t *testing.T, names ...string) map[string]*discNode {
 	t.Helper()
 	out := make(map[string]*discNode, len(names))
@@ -93,7 +76,6 @@ func discCluster(t *testing.T, names ...string) map[string]*discNode {
 	return out
 }
 
-// discConfig builds the Broker configuration for a local discovery node.
 func discConfig(addr, alias string, public bool, extra string) string {
 	broker := "broker:\n  listen: " + discYAMLString(addr) + "\n  alias: " + alias
 	if addr != "" {
@@ -113,8 +95,6 @@ func discConfig(addr, alias string, public bool, extra string) string {
 	return harness.ConfigYAML(parts...)
 }
 
-// discYAMLString renders an empty address as a quoted scalar and every other
-// address as the plain scalar the configuration parser expects.
 func discYAMLString(addr string) string {
 	if addr == "" {
 		return `""`
@@ -122,10 +102,8 @@ func discYAMLString(addr string) string {
 	return addr
 }
 
-// start starts the node's Broker with its configuration and fails when it does
-// not come up. When the one retry moves the listen address because the port
-// race was lost, addr and config follow it to the address the Broker actually
-// uses, so later comparisons and dials do not go to a stale port.
+// start starts the Broker; when the one retry moves the listen address because
+// the port race was lost, addr and config follow the address it actually uses.
 func (d *discNode) start(t *testing.T) {
 	t.Helper()
 	start := d.StartBroker(t, harness.BrokerSpec{ConfigYAML: d.config, Env: d.env})
@@ -138,9 +116,6 @@ func (d *discNode) start(t *testing.T) {
 	}
 }
 
-// discOperator starts a session that can call the pairing and configuration
-// tools but never registers as an Agent. It waits for the Broker connection
-// before the caller's first tool call.
 func discOperator(t *testing.T, d *discNode) *harness.Session {
 	t.Helper()
 	s := d.StartSession(t, harness.SessionSpec{
@@ -153,20 +128,14 @@ func discOperator(t *testing.T, d *discNode) *harness.Session {
 	return s
 }
 
-// discAgent starts a registered Agent session on d.
 func discAgent(t *testing.T, d *discNode, name, workdir string) *harness.Session {
 	t.Helper()
 	return d.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true, Workdir: workdir})
 }
 
-// discCallOK retries a tool that must succeed until it does or the bound
-// expires. The MCP server may still be wiring itself to the Broker right after
-// it starts, which it reports as an internal error asking for a retry. A
-// read-only or idempotent tool polls with Session.PollCallWithin, so a
-// transport error is retried; any other tool is a side effect and goes through
-// Session.CallUntilOK, which fails on a transport error instead of repeating a
-// call the server may already have applied. Each tool polls with its own
-// harness.ToolPollBound, and the wait uses at least harness.ToolWaitBound(tool).
+// discCallOK polls a read-only or idempotent tool and retries a transport
+// error; any other tool goes through CallUntilOK, which fails on a transport
+// error instead of repeating a call the server may already have applied.
 func discCallOK(t *testing.T, s *harness.Session, tool string, args map[string]any, bound time.Duration) harness.Result {
 	t.Helper()
 	if !pollableTool(tool) {
@@ -191,8 +160,6 @@ func discCallOK(t *testing.T, s *harness.Session, tool string, args map[string]a
 	return result
 }
 
-// discPair has acceptor create a pairing key and dialer use it. It returns the
-// connect_broker result as dialer saw it, which names acceptor's fingerprint.
 func discPair(t *testing.T, acceptor, dialer *discNode) mcpserver.ConnectBrokerOut {
 	t.Helper()
 	creator := discOperator(t, acceptor)
@@ -227,7 +194,6 @@ func discPair(t *testing.T, acceptor, dialer *discNode) mcpserver.ConnectBrokerO
 	return out
 }
 
-// discWaitConnected waits until d lists the peer alias as connected with role.
 func discWaitConnected(t *testing.T, d *discNode, alias string, role localpb.PeerRole, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, fmt.Sprintf("%s reports %s connected", d.name, alias), func() (bool, string) {
@@ -251,7 +217,6 @@ func discWaitConnected(t *testing.T, d *discNode, alias string, role localpb.Pee
 	})
 }
 
-// discList returns the Brokers d knows, or the product error text.
 func discList(t *testing.T, d *discNode) ([]*localpb.BrokerInfo, string) {
 	t.Helper()
 	resp, detail := d.Oracle().ListBrokers(t)
@@ -261,7 +226,6 @@ func discList(t *testing.T, d *discNode) ([]*localpb.BrokerInfo, string) {
 	return resp.GetBrokers(), ""
 }
 
-// discFindFingerprint returns the entry whose fingerprint matches fpHex.
 func discFindFingerprint(brokers []*localpb.BrokerInfo, fpHex string) (*localpb.BrokerInfo, bool) {
 	for _, b := range brokers {
 		if hex.EncodeToString(b.GetFingerprint()) == fpHex {
@@ -271,7 +235,6 @@ func discFindFingerprint(brokers []*localpb.BrokerInfo, fpHex string) (*localpb.
 	return nil, false
 }
 
-// discHasAddress reports whether b advertises addr.
 func discHasAddress(b *localpb.BrokerInfo, addr string) bool {
 	for _, a := range b.GetAdvertisedAddresses() {
 		if a.GetAddr() == addr {
@@ -281,8 +244,6 @@ func discHasAddress(b *localpb.BrokerInfo, addr string) bool {
 	return false
 }
 
-// discWaitBroker waits until d lists the fingerprint and check accepts the
-// entry. A nil check accepts any entry.
 func discWaitBroker(t *testing.T, d *discNode, fpHex string, bound time.Duration, check func(*localpb.BrokerInfo) string) *localpb.BrokerInfo {
 	t.Helper()
 	if check == nil {
@@ -307,12 +268,8 @@ func discWaitBroker(t *testing.T, d *discNode, fpHex string, bound time.Duration
 	return found
 }
 
-// discAbsentConsistently asserts over the whole window that d lists none of
-// the fingerprints, the alias and the address. The Oracle read is a poll call:
-// a transport error is an inconclusive sample and is retried, and a call that
-// reaches its own bound without answering is reported as a stall, which ends
-// the window. The window is only a few seconds long, so the call bound is the
-// short poll bound rather than the thirty-second fallback.
+// discAbsentConsistently polls with the short poll bound because the window is
+// only a few seconds; a transport error is an inconclusive sample, not a pass.
 func discAbsentConsistently(t *testing.T, d *discNode, window time.Duration, what string, fingerprints []string, alias, addr string) {
 	t.Helper()
 	harness.ConsistentlyPoll(t, window, harness.ToolCallPollBound, what, nil, func(deadline time.Time) harness.Observation {
@@ -343,7 +300,6 @@ func discAbsentConsistently(t *testing.T, d *discNode, window time.Duration, wha
 	})
 }
 
-// discSetPublic changes broker.public through set_config and checks the answer.
 func discSetPublic(t *testing.T, d *discNode, public bool) {
 	t.Helper()
 	value := "false"
@@ -362,7 +318,6 @@ func discSetPublic(t *testing.T, d *discNode, public bool) {
 	}
 }
 
-// discPublicConfig reads broker.public through get_config.
 func discPublicConfig(t *testing.T, d *discNode) string {
 	t.Helper()
 	op := discOperator(t, d)
@@ -381,8 +336,6 @@ func discPublicConfig(t *testing.T, d *discNode) string {
 	return ""
 }
 
-// discListTopics calls list_topics and returns the decoded answer or its error
-// text.
 func discListTopics(t *testing.T, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	r := s.Call(t, "list_topics", nil)
@@ -396,14 +349,11 @@ func discListTopics(t *testing.T, s *harness.Session) (mcpserver.ListTopicsOut, 
 	return out, ""
 }
 
-// discListTopicsPoll is discListTopics for a wait callback: the call is bounded
-// by the wait's deadline and a transport error is returned as state.
 func discListTopicsPoll(t *testing.T, deadline time.Time, s *harness.Session) (mcpserver.ListTopicsOut, string) {
 	t.Helper()
 	return pollDecode[mcpserver.ListTopicsOut](t, deadline, s, "list_topics", nil)
 }
 
-// discJoinTopic joins name, declaring it public when public is set.
 func discJoinTopic(t *testing.T, s *harness.Session, name string, public bool, description string) harness.Result {
 	t.Helper()
 	args := map[string]any{"name": name}
@@ -416,8 +366,6 @@ func discJoinTopic(t *testing.T, s *harness.Session, name string, public bool, d
 	return s.Call(t, "join_topic", args)
 }
 
-// discJoinOK joins a topic that must be accepted, retrying while the session
-// finishes connecting.
 func discJoinOK(t *testing.T, s *harness.Session, name string, public bool, description string) harness.Result {
 	t.Helper()
 	args := map[string]any{"name": name}
@@ -430,7 +378,6 @@ func discJoinOK(t *testing.T, s *harness.Session, name string, public bool, desc
 	return discCallOK(t, s, "join_topic", args, harness.EventTimeout)
 }
 
-// discPublicTopic returns the public topic entry named name.
 func discPublicTopic(out mcpserver.ListTopicsOut, name string) (mcpserver.PublicTopicOut, bool) {
 	for _, topic := range out.Public {
 		if topic.Name == name {
@@ -440,7 +387,6 @@ func discPublicTopic(out mcpserver.ListTopicsOut, name string) (mcpserver.Public
 	return mcpserver.PublicTopicOut{}, false
 }
 
-// discHasJoined reports whether out lists topic in its joined set.
 func discHasJoined(out mcpserver.ListTopicsOut, topic string) bool {
 	for _, name := range out.Joined {
 		if name == topic {
@@ -451,10 +397,8 @@ func discHasJoined(out mcpserver.ListTopicsOut, topic string) bool {
 }
 
 // TestDiscoveryPrivateByDefault checks that a Broker that is not public leaks
-// neither its card nor its private topics through a paired neighbor, and that
-// a public Broker keeps a topic private unless a member declares it public. A
-// public control topic on the same Broker must reach C, so the negative checks
-// have a positive counterpart.
+// neither its card nor its private topics through a paired neighbor, while a
+// declared public topic on a public Broker reaches the far end of the chain.
 func TestDiscoveryPrivateByDefault(t *testing.T) {
 	t.Parallel()
 
@@ -463,8 +407,6 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 	fpA := discPair(t, a, b).Fingerprint
 	discPair(t, b, c)
 
-	// A's Agent joins a private topic and, through its git workspace, the
-	// automatic repository topic. Neither may leave A.
 	ws := a.Workspace(t, "git", "https://github.com/org/repo", "")
 	agent := discAgent(t, a, "worker", ws)
 	defer agent.End(t)
@@ -503,9 +445,6 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 		return harness.Observed(true, "")
 	})
 
-	// The text surfaces a client sees must not carry A's fingerprint, alias or
-	// address either: the serialized local interface answers, the session tool
-	// results and the Broker log.
 	brokers, detail := c.Oracle().ListBrokers(t)
 	if detail != nil {
 		t.Fatalf("C's ListBrokers failed: %s", detail.GetMessage())
@@ -540,17 +479,10 @@ func TestDiscoveryPrivateByDefault(t *testing.T) {
 		}
 	}
 
-	// With A public, a declared public topic must reach C; that is the
-	// positive control for the negative checks below. The topic t1 and the
-	// automatic repository topic were joined without a public declaration, so
-	// they must stay out of C's public list even though A now publishes cards
-	// and public declarations.
 	discSetPublic(t, a, true)
 	const control = "public-control"
 	discJoinOK(t, agent, control, true, "control topic")
 
-	// A non-public join after A went public must stay out of C's public list:
-	// the declaration, not the Broker's visibility, decides.
 	discJoinOK(t, agent, "t2", false, "")
 	privateTopics = append(privateTopics, "t2")
 
@@ -599,8 +531,6 @@ func TestDiscoveryCardReachesWholeNetwork(t *testing.T) {
 		t.Fatalf("get_config on A reports broker.public=%q after set_config, want true", got)
 	}
 
-	// Every hop sees the same fingerprint, alias and address; the direct peer
-	// is connected, the card holders are connectable.
 	checkCard := func(broker *localpb.BrokerInfo, peer bool, status localpb.BrokerStatus) string {
 		if broker.GetAlias() != a.alias {
 			return fmt.Sprintf("alias is %q, want %q", broker.GetAlias(), a.alias)
@@ -626,10 +556,6 @@ func TestDiscoveryCardReachesWholeNetwork(t *testing.T) {
 		})
 	}
 
-	// REQ-broker-config-001: the alias and listen address read back agree with
-	// the Broker's behavior. The card just checked carries the configured
-	// alias, and hostB dialed the configured listen address and reports A
-	// connected.
 	if got := discConfigValue(t, a, "broker.alias"); got != a.alias {
 		t.Fatalf("get_config on A reports broker.alias=%q, want %q", got, a.alias)
 	}
@@ -637,7 +563,6 @@ func TestDiscoveryCardReachesWholeNetwork(t *testing.T) {
 		t.Fatalf("get_config on A reports broker.listen=%q, want %q", got, a.addr)
 	}
 
-	// The automatic topic join is the behavior that topics.auto_join controls.
 	if got := discConfigValue(t, a, "topics.auto_join"); got != "true" {
 		t.Fatalf("get_config on A reports topics.auto_join=%q, want true", got)
 	}
@@ -657,7 +582,6 @@ func TestDiscoveryCardReachesWholeNetwork(t *testing.T) {
 	})
 }
 
-// discConfigValue reads one configuration value through get_config.
 func discConfigValue(t *testing.T, d *discNode, key string) string {
 	t.Helper()
 	op := discOperator(t, d)
@@ -716,8 +640,6 @@ func TestDiscoveryNoDialToCardHolder(t *testing.T) {
 		return true, ""
 	})
 
-	// Positive control: a real pairing from D writes the event the negative
-	// check above looks for.
 	discPair(t, a, d)
 	harness.Eventually(t, discBound(1), "A's audit records the link from D", func() (bool, string) {
 		events, detail := a.Oracle().Audit(t, time.Time{}, 0)
@@ -731,8 +653,6 @@ func TestDiscoveryNoDialToCardHolder(t *testing.T) {
 	})
 }
 
-// auditHasPeer reports whether an audit event names the peer with fingerprint
-// fpHex.
 func auditHasPeer(events []*localpb.AuditEvent, fpHex string) bool {
 	for _, event := range events {
 		if hex.EncodeToString(event.GetPeer().GetFingerprint()) == fpHex {
@@ -742,8 +662,6 @@ func auditHasPeer(events []*localpb.AuditEvent, fpHex string) bool {
 	return false
 }
 
-// auditHasLinkUp reports whether a LINK_UP audit event names the peer with
-// fingerprint fpHex.
 func auditHasLinkUp(events []*localpb.AuditEvent, fpHex string) bool {
 	for _, event := range events {
 		if event.GetEvent() == localpb.AuditEventKind_AUDIT_EVENT_KIND_LINK_UP &&
@@ -763,8 +681,6 @@ func TestDiscoveryPublicWithoutListen(t *testing.T) {
 	nodes := discCluster(t, "a", "b", "c")
 	a, b, c := nodes["a"], nodes["b"], nodes["c"]
 
-	// A has no listener but dials B; C dials B as well. The card reaches C
-	// through B.
 	a.StopBroker(t, syscall.SIGTERM)
 	a.addr = ""
 	a.config = discConfig("", a.alias, true, "")
@@ -824,8 +740,7 @@ func TestDiscoveryPrivateBrokerLearnsCards(t *testing.T) {
 }
 
 // TestDiscoveryRevokeWithin60s checks that going private withdraws the card
-// hop by hop within the plan's bound (stricter than the requirement's 60
-// seconds) and that a restarted Broker holding the old card does not
+// hop by hop and that a restarted Broker holding the old card does not
 // resurrect it.
 func TestDiscoveryRevokeWithin60s(t *testing.T) {
 	t.Parallel()
@@ -940,11 +855,8 @@ func TestPublicTopicRejectedOnPrivateBroker(t *testing.T) {
 
 	agent := discAgent(t, a, "worker", t.TempDir())
 	defer agent.End(t)
-	// Wait for registration to complete before provoking the error the test
-	// asserts on; the rejection itself must not be retried. get_config does not
-	// need the Agent identity and can succeed while the Broker is still
-	// registering, which would let the call below see not_registered instead of
-	// the rejection under test.
+	// Wait for registration first: a call made while the Broker is still
+	// registering can see not_registered instead of the rejection under test.
 	harness.WaitRegistered(t, agent, harness.EventTimeout)
 	r := discJoinTopic(t, agent, "infra-help", true, "ask infra")
 	if !r.IsError {
@@ -985,7 +897,7 @@ func TestPublicTopicRejectedOnPrivateBroker(t *testing.T) {
 }
 
 // TestPublicTopicGoneWhenBrokerPrivate checks that turning the Broker private
-// withdraws its public declarations while its Agents stay in their topics, and
+// withdraws its public declarations while its agents stay in their topics, and
 // that turning it public again restores them.
 func TestPublicTopicGoneWhenBrokerPrivate(t *testing.T) {
 	t.Parallel()
@@ -1047,7 +959,6 @@ func TestPublicTopicFollowsLastMember(t *testing.T) {
 	discWaitPublicTopicGone(t, watcher, "infra-help", discBound(1))
 }
 
-// discWaitPublicTopic waits until the session's public list contains name.
 func discWaitPublicTopic(t *testing.T, s *harness.Session, name string, bound time.Duration) {
 	t.Helper()
 	harness.EventuallyPoll(t, bound, "public topics contain "+name, func(deadline time.Time) (bool, string) {
@@ -1062,8 +973,6 @@ func discWaitPublicTopic(t *testing.T, s *harness.Session, name string, bound ti
 	})
 }
 
-// discWaitPublicTopicGone waits until the session's public list no longer
-// contains name.
 func discWaitPublicTopicGone(t *testing.T, s *harness.Session, name string, bound time.Duration) {
 	t.Helper()
 	harness.EventuallyPoll(t, bound, "public topics no longer contain "+name, func(deadline time.Time) (bool, string) {

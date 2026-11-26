@@ -11,6 +11,7 @@ import (
 
 // Result is the outcome of one MCP tool call on a harness Session.
 type Result struct {
+	// ToolResult carries the tool call's text, error flag and structured content.
 	node.ToolResult
 }
 
@@ -28,9 +29,9 @@ func Decode[T any](text string) (T, error) {
 	return value, nil
 }
 
-// toolCodeMarker and toolOriginMarker frame the suffix mcpserver appends to
-// an error result's text: " (code: <name>; reported by Broker <fingerprint>)",
-// where the origin part is present only for an error from another Broker.
+// toolCodeMarker and toolOriginMarker frame the suffix mcpserver appends to an
+// error result's text; the origin part is present only for an error from another
+// Broker.
 const (
 	toolCodeMarker   = " (code: "
 	toolOriginMarker = "; reported by Broker "
@@ -64,8 +65,6 @@ func ToolError(text string) (code, originFingerprint string, ok bool) {
 	return code, originFingerprint, true
 }
 
-// validToolCode reports whether code is a non-empty run of lowercase letters,
-// digits and underscores.
 func validToolCode(code string) bool {
 	if code == "" {
 		return false
@@ -80,7 +79,6 @@ func validToolCode(code string) bool {
 	return true
 }
 
-// isFingerprint reports whether s is 64 lowercase hexadecimal characters.
 func isFingerprint(s string) bool {
 	if len(s) != 64 {
 		return false

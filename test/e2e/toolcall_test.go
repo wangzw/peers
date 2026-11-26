@@ -9,17 +9,8 @@ import (
 	"github.com/wangzw/peers/test/e2e/harness"
 )
 
-// pollDecode calls tool from inside a wait and decodes its structured result
-// into T. A transport or tool failure is returned as the state string the wait
-// callback reports, so the wait can poll again. The call is bounded by
-// harness.ToolPollBound(tool): each tool's handler bound plus the update hint
-// and a margin, so a topic tool, list_agents and a management tool each get
-// their own bound instead of one unified value.
-//
-// A topic tool that returns the product's topic RPC timeout error did not
-// answer: its call stayed inside topicRPCTimeout and never reached the poll
-// bound. The state is marked as a stall so ConsistentlyPoll ends the window on
-// evidence instead of retrying a Broker that stopped answering.
+// pollDecode calls tool inside a wait and reports a topic tool's RPC timeout
+// as a stall state rather than retrying it.
 func pollDecode[T any](t *testing.T, deadline time.Time, s *harness.Session, tool string, args map[string]any) (T, string) {
 	t.Helper()
 	var zero T

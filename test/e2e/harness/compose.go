@@ -20,31 +20,19 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// agentSocketBound is the fallback for the wait for a node agent's control
-// socket after compose up returns. Compose starts the entrypoint as soon as the
-// container runs; binding a Unix socket is the first thing the node agent does,
-// so the success path answers at once. No product timer governs a test-only
-// process; the bound only decides how long a socket that never appears takes to
-// fail.
+// agentSocketBound is the fallback for the wait for a node agent's control socket after compose up returns; no product timer governs a test-only process, so it reuses EventTimeout.
 const agentSocketBound = EventTimeout
 
 // CoverMountPath is where the coverage directory named by CoverageDirEnv is
 // mounted inside a container.
 const CoverMountPath = "/e2e-cover"
 
-// coverOverrideName is the file name of the compose override written next to
-// the copied compose file when coverage collection is on.
 const coverOverrideName = "compose.cover.yaml"
 
-// CoverOverride returns a compose override file that, for every service in
-// services, bind-mounts hostDir at CoverMountPath and sets both CoverageDirEnv
-// and GOCOVERDIR to that path. The container environment reaches every process
-// started through docker compose exec. sudo drops GOCOVERDIR unless a sudoers
-// env_keep rule holds it, and systemd units do not inherit the container
-// environment at all; the system topology installs the sudoers drop-in and the
-// DefaultEnvironment drop-in that cover both. extraVolumes adds further volume
-// entries (host:container[:mode]) to the named services; it carries the systemd
-// coverage drop-in for the system topology.
+// CoverOverride returns a compose override that bind-mounts hostDir at
+// CoverMountPath in every service named in services and sets CoverageDirEnv and
+// GOCOVERDIR to that path there. extraVolumes adds further host:container[:mode]
+// volume entries to the named services.
 func CoverOverride(hostDir string, services []string, extraVolumes map[string][]string) ([]byte, error) {
 	type serviceOverride struct {
 		Environment map[string]string `yaml:"environment"`
@@ -67,24 +55,16 @@ func CoverOverride(hostDir string, services []string, extraVolumes map[string][]
 	return yaml.Marshal(doc)
 }
 
-// Topology describes one compose project: which file to start, which services
-// it has, which network each service is addressed on, and what to do once the
-// containers are running. The fault work item adds its topologies with the
-// same fields.
+// Topology describes one compose project: which file to start, which services it has, which network each service is addressed on, and what to do once the containers are running.
 type Topology struct {
-	// file is the file name under compose/ that describes the project.
 	file string
 	// nodes are the compose service names, in start order.
-	nodes []string
-	// networks names the network each node is addressed on.
+	nodes    []string
 	networks map[string]string
-	// env adds compose variables on top of E2E_IMAGE and CTL_<NODE>.
-	env map[string]string
-	// envFunc adds compose variables computed for this project. It runs on
-	// every Up, so a topology whose values must differ per project, such as
-	// the IPv4 subnets of the routed topologies or the randomly chosen IPv6
-	// subnets, does not share them between two concurrent projects in one
-	// test process.
+	env      map[string]string
+	// envFunc adds compose variables computed for this project; it runs on every
+	// Up, so values that must differ per project are not shared between two
+	// concurrent projects in one test process.
 	envFunc func(t *testing.T) map[string]string
 	// init runs once every node agent answers, before Up returns.
 	init func(t *testing.T, c *Cluster)
@@ -144,8 +124,6 @@ func Up(t *testing.T, topo Topology) *Cluster {
 	if err := os.WriteFile(composePath, composeData, 0o644); err != nil {
 		t.Fatalf("harness: writing %s: %v", composePath, err)
 	}
-	// Under coverage every service gets the mounted coverage directory and the
-	// two environment variables, and every compose command passes both files.
 	overridePath := ""
 	if coverDir := CoverageDir(); coverDir != "" {
 		override, err := CoverOverride(coverDir, services, nil)
@@ -170,10 +148,8 @@ func Up(t *testing.T, topo Topology) *Cluster {
 		containerIDs: map[string]string{},
 	}
 
-	// Each node gets a host directory mounted at /ctl. It is a t.TempDir, so
-	// the host user owns it and the container's peer account, which carries
-	// the same uid, can write there. The directories are created once, not per
-	// up attempt, so the mount paths stay stable across a retry.
+	// Each node gets a t.TempDir mounted at /ctl; it is created once, not per up
+	// attempt, so the mount path stays stable across a retry.
 	for _, node := range topo.nodes {
 		c.ctlDirs[node] = t.TempDir()
 	}
@@ -191,10 +167,10 @@ func Up(t *testing.T, topo Topology) *Cluster {
 	// their cleanup removes the mounted directories.
 	t.Cleanup(c.cleanup)
 
-	// A block reserved for this project can still overlap a network an older
-	// run left behind. Each attempt asks envFunc for a fresh block; the failed
-	// block stays reserved until the test ends, so the next attempt cannot
-	// pick it again.
+	// A block reserved for this project can still overlap a network an older run
+	// left behind; each attempt asks envFunc for a fresh block, and a failed
+	// block stays reserved until the test ends so the next attempt cannot pick it
+	// again.
 	const upAttempts = 8
 	var out []byte
 	for attempt := 1; ; attempt++ {
@@ -233,9 +209,6 @@ func Up(t *testing.T, topo Topology) *Cluster {
 	return c
 }
 
-// buildEnv builds the compose environment for one up attempt. The topology's
-// envFunc runs on every call, so a routed topology gets a fresh subnet block
-// after an overlap.
 func (c *Cluster) buildEnv(t *testing.T, topo Topology) []string {
 	env := []string{"E2E_IMAGE=" + c.image}
 	names := make([]string, 0, len(c.ctlDirs))
@@ -257,15 +230,10 @@ func (c *Cluster) buildEnv(t *testing.T, topo Topology) []string {
 	return append(os.Environ(), env...)
 }
 
-// subnetOverlap reports whether a failed compose up was refused because its
-// subnet pool overlaps another live project's.
 func subnetOverlap(out []byte) bool {
 	return strings.Contains(strings.ToLower(string(out)), "overlap")
 }
 
-// composeServices returns the service names a compose file declares, sorted.
-// Compose parses and substitutes every declared service even when a profile
-// keeps it stopped, so Up needs the full list and not only the started nodes.
 func composeServices(data []byte) ([]string, error) {
 	var doc struct {
 		Services map[string]any `yaml:"services"`
@@ -336,10 +304,8 @@ func (c *Cluster) Gateway(node, network string) string {
 	return c.address(node, network, "Gateway")
 }
 
-// Networks returns the compose networks node is attached to, without the
-// project prefix and sorted by name. The compose file declares the attachments,
-// but a node such as the router is attached to several, so a caller that must
-// cover every one reads them back from the running container.
+// Networks returns the compose networks node is attached to, without the project
+// prefix, sorted by name.
 func (c *Cluster) Networks(node string) []string {
 	format := `{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}`
 	cmd := exec.Command("docker", "inspect", "--format", format, c.containerID(node))
@@ -358,7 +324,6 @@ func (c *Cluster) Networks(node string) []string {
 	return names
 }
 
-// address reads one address field from docker inspect.
 func (c *Cluster) address(node, network, field string) string {
 	format := fmt.Sprintf("{{with index .NetworkSettings.Networks %q}}{{.%s}}{{end}}", c.project+"_"+network, field)
 	cmd := exec.Command("docker", "inspect", "--format", format, c.containerID(node))
@@ -415,9 +380,8 @@ func (c *Cluster) Down() {
 	})
 }
 
-// composeCommand builds one docker compose invocation for this project. It
-// names every compose file, so a command that mutates the project sees the same
-// coverage override the start used.
+// composeCommand builds one docker compose invocation for this project with every
+// compose file named.
 func (c *Cluster) composeCommand(args ...string) *exec.Cmd {
 	argv := []string{"compose", "-p", c.project}
 	for _, file := range c.composeFiles {
@@ -429,8 +393,6 @@ func (c *Cluster) composeCommand(args ...string) *exec.Cmd {
 	return cmd
 }
 
-// overrideFileIfAny returns path as a one-element slice, or nothing when the
-// override is absent.
 func overrideFileIfAny(path string) []string {
 	if path == "" {
 		return nil
@@ -438,7 +400,6 @@ func overrideFileIfAny(path string) []string {
 	return []string{path}
 }
 
-// containerID returns the docker container id of node.
 func (c *Cluster) containerID(node string) string {
 	c.mu.Lock()
 	id, ok := c.containerIDs[node]
@@ -467,8 +428,6 @@ func (c *Cluster) containerID(node string) string {
 	return id
 }
 
-// cleanup closes the control clients, collects artifacts when the test failed,
-// and tears the project down.
 func (c *Cluster) cleanup() {
 	if c.t.Failed() {
 		c.collectArtifacts()
@@ -483,8 +442,6 @@ func (c *Cluster) cleanup() {
 	c.Down()
 }
 
-// collectArtifacts writes the failing project's state to E2E_ARTIFACTS, or logs
-// the tail of each log when that variable is unset.
 func (c *Cluster) collectArtifacts() {
 	dest := os.Getenv("E2E_ARTIFACTS")
 	if dest == "" {
@@ -528,7 +485,6 @@ func (c *Cluster) collectArtifacts() {
 	writeArtifact(c.t, dir, "compose.log", out)
 }
 
-// nodeLogNames lists the files a node agent and its Brokers write under /ctl.
 func (c *Cluster) nodeLogNames(node string) []string {
 	entries, err := os.ReadDir(c.ctlDirs[node])
 	if err != nil {
@@ -544,7 +500,6 @@ func (c *Cluster) nodeLogNames(node string) []string {
 	return names
 }
 
-// tail returns the last n lines of text.
 func tail(text string, n int) string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
 	if len(lines) > n {
@@ -560,12 +515,9 @@ var (
 )
 
 // projectName derives a compose project name from a test name:
-// ape2e-<owner pid>-<owner start time>-pidns<owner namespace>-<slug, at most 32
-// characters>-<six hex digits>. The owner marker lets a cleanup tell a live
-// suite's project from one a killed suite left behind, and the start time keeps
-// a reused PID from protecting stale residue. The namespace keeps a cleanup
-// from mistaking another PID namespace's PID for one of its own. Two calls never
-// return the same name.
+// ape2e-<owner marker>-<slug, at most 32 characters>-<six hex digits>. The owner
+// marker lets a cleanup tell a live suite's project from one a killed suite left
+// behind, and two consecutive calls do not return the same name.
 func projectName(testName string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(testName) {
@@ -595,9 +547,6 @@ func projectName(testName string) string {
 	}
 }
 
-// randomHex6 returns six random hexadecimal digits. The fallback keeps two
-// consecutive names different even if the system random source fails, which
-// the test asserts.
 func randomHex6() string {
 	var b [3]byte
 	if _, err := rand.Read(b[:]); err == nil {

@@ -1,6 +1,6 @@
-// Package syscontainer runs the system end-to-end tests inside
-// containers. This file carries no e2e build tag so that the allocator's range
-// and its host-side test compile and run without one.
+// This file carries no e2e build tag so that the allocator's range and its
+// host-side test compile without one.
+
 package syscontainer
 
 import (
@@ -12,19 +12,15 @@ import (
 
 const (
 	// systemSubnetFirst and systemSubnetLast bound the /24s the container
-	// network may use, as indices into 198.18.0.0/15. The harness routed
-	// allocator stops at 479 and reserves this high-end block, so the two
-	// allocators never hand out the same subnet.
+	// network may use, as indices into 198.18.0.0/15; the harness routed
+	// allocator stops at 479 and reserves this block, so the two allocators
+	// never hand out the same subnet.
 	systemSubnetFirst = 480
 	systemSubnetLast  = 511
-	// systemSubnetBits is the size of one pool slot. Each reserved /24 is
-	// divided into sixteen /28s, so the pool holds 512 slots: one suite starts
-	// about thirty containers, and two suites running on one host at the same
-	// time exceed the 32 /24s the pool held when it handed out whole /24s.
-	// A /28 has sixteen addresses: one goes to the network, one to broadcast
-	// and one to the gateway, which leaves thirteen container addresses. That
-	// covers the one or two services a project starts today and leaves room
-	// for a future two-container topology.
+	// systemSubnetBits is the size of one pool slot; each reserved /24 is
+	// divided into sixteen /28s, which gives 512 slots for two suites of about
+	// thirty containers each. A /28 leaves thirteen container addresses, enough
+	// for the one or two services a project starts.
 	systemSubnetBits = 28
 )
 
@@ -50,13 +46,10 @@ func systemSubnetPrefix(index, offset int) netip.Prefix {
 	)
 }
 
-// allocSystemSubnet reserves one subnet for one compose project and returns it
-// as a CIDR. Docker refuses two live networks with overlapping subnets, and
-// every system test starts its own project, so a subnet fixed in compose.yaml
-// would make parallel tests fail. The reservation goes through the harness
-// allocator, which locks the shared state directory and records the owner: a
-// second suite running at the same time takes another slot instead of the same
-// one. The range is disjoint from the harness routed allocator's.
+// allocSystemSubnet reserves one subnet for one compose project through the
+// harness allocator, which locks the shared state directory and records the
+// owner, and returns it as a CIDR. The range is disjoint from the routed
+// allocator's, so parallel projects and suites never overlap.
 func allocSystemSubnet(t *testing.T) string {
 	t.Helper()
 

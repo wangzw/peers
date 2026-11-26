@@ -22,15 +22,11 @@ import (
 	"github.com/wangzw/peers/test/e2e/node"
 )
 
-// The bounds below follow the project rule: a wait that no product timer
-// governs is the three-second test allowance; a wait that a timer governs is
-// that timer plus the allowance.
 const (
-	// ctWaitBound bounds a wait that no product timer governs.
 	ctWaitBound = harness.EventTimeout
 
-	// ctRelinkBound is reconnect_max + dial_timeout plus the harness.EventTimeout
-	// margin.
+	// ctRelinkBound is the reconnect timer plus the dial timeout and the
+	// EventTimeout margin.
 	ctRelinkBound = harness.FastReconnectMax + harness.FastDialTimeout + harness.EventTimeout
 
 	// ctReloadBound is the configuration file watcher's debounce (100ms) plus
@@ -38,7 +34,7 @@ const (
 	ctReloadBound = 100*time.Millisecond + harness.EventTimeout
 )
 
-// ctStaticKey names two legal static keys. The shortest legal length is 16
+// ctStaticKey names legal static keys; the shortest legal length is 16
 // characters.
 const (
 	ctStaticKeyOne = "static-key-00001"
@@ -46,11 +42,8 @@ const (
 	ctStaticKeyThr = "static-key-00003"
 )
 
-// TestConfigToolAnnotations covers REQ-broker-config-004. A real peers
-// MCP session lists its tools and the read-only hint must be set on exactly the
-// tools with no side effects. A tool that sends a message, changes Broker
-// state, or writes the configuration file must not carry the hint. A missing
-// annotations block, or a readOnlyHint of false, both count as not read-only.
+// TestConfigToolAnnotations checks that readOnlyHint is set on exactly the MCP
+// tools with no side effects.
 func TestConfigToolAnnotations(t *testing.T) {
 	host := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-annotations"})
 	s := host.StartSession(t, harness.SessionSpec{Name: "annotations", StartMCP: true})
@@ -78,8 +71,6 @@ func TestConfigToolAnnotations(t *testing.T) {
 	}
 	seen := make(map[string]bool, len(tools))
 	for _, tool := range tools {
-		// A tool without an annotations block is not read-only; the log records
-		// which shape the real session returned.
 		shape := "no annotations block"
 		if tool.Annotations != nil {
 			shape = fmt.Sprintf("readOnlyHint = %v", tool.Annotations.ReadOnlyHint)
@@ -103,7 +94,6 @@ func TestConfigToolAnnotations(t *testing.T) {
 	}
 }
 
-// toolNames returns the names of tools in listing order.
 func toolNames(tools []node.ToolInfo) []string {
 	names := make([]string, len(tools))
 	for i, tool := range tools {
@@ -112,10 +102,9 @@ func toolNames(tools []node.ToolInfo) []string {
 	return names
 }
 
-// TestConfigTools covers the single-host configuration requirements: reading
-// the running configuration, changing it through the tools, the audit records
-// a change produces, hot reload of the configuration file, and the values that
-// the command line or the startup checks refuse.
+// TestConfigTools checks the single-host configuration tools: reading,
+// changing, auditing, hot reload, and the values the command line or the
+// startup checks refuse.
 func TestConfigTools(t *testing.T) {
 	t.Run("ReadReflectsBehavior", func(t *testing.T) {
 		host := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-read"})
@@ -228,7 +217,6 @@ func TestConfigTools(t *testing.T) {
 			t.Fatalf("the audit record's account is %q, want %q", got, want)
 		}
 
-		// The peer sees the new alias on the running agent.
 		alWaitAgentSuffix(t, a1, "b1", "@build-box", harness.ListAgentsWaitBound)
 	})
 
@@ -271,8 +259,6 @@ func TestConfigTools(t *testing.T) {
 		op := ctOperator(t, host)
 		defer op.End(t)
 
-		// Two different event kinds, so the record-for-record comparison below
-		// distinguishes the events instead of matching one name twice.
 		alCreateKey(t, op)
 		ctDecodeSetConfig(t, ctSetConfig(t, op, "broker.alias", "audit-box"))
 
@@ -359,8 +345,6 @@ func TestConfigTools(t *testing.T) {
 				changed[0].GetActor(), changed[0].GetAccount())
 		}
 
-		// The same edit under --listen leaves the listener alone: the file's
-		// listen value is ignored and only the alias is audited.
 		listenHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-reload-listen"})
 		p1 := listenHost.FreeAddr(t)
 		p2 := listenHost.FreeAddr(t)
@@ -392,8 +376,6 @@ func TestConfigTools(t *testing.T) {
 		}
 	})
 
-	// REQ-broker-config-032: the configuration file path refuses the
-	// listen/advertise combination the tools refuse, and keeps both values.
 	t.Run("FileEditRejectsCombination", func(t *testing.T) {
 		host := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-file-combination"})
 		listen := host.FreeAddr(t)
@@ -424,8 +406,6 @@ func TestConfigTools(t *testing.T) {
 		}
 	})
 
-	// REQ-broker-config-032: with no listen address, an advertise address or
-	// an extra address is refused through both the tools and the file.
 	t.Run("EmptyListenRejectsAddresses", func(t *testing.T) {
 		host := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-no-listen"})
 		ctStartBroker(t, host, harness.BrokerSpec{
@@ -475,8 +455,6 @@ func TestConfigTools(t *testing.T) {
 		}
 	})
 
-	// REQ-broker-config-036: the configuration file path refuses an eighth
-	// extra address and keeps the seven that were running.
 	t.Run("FileEditRejectsAddressOverflow", func(t *testing.T) {
 		host := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-file-overflow"})
 		listen := host.FreeAddr(t)
@@ -520,8 +498,8 @@ func TestConfigTools(t *testing.T) {
 			ConfigYAML: ctConfig("broker:\n  listen: " + p1 + "\n"),
 		})
 		p1 = start.Address(p1)
-		// A later start reads the configuration as written, so write the
-		// address the Broker actually used back into it.
+		// A later start reads the configuration as written, so write back the
+		// address the Broker actually used.
 		config := ctConfig("broker:\n  listen: " + p1 + "\n")
 		op := ctOperator(t, host)
 		defer op.End(t)
@@ -540,7 +518,6 @@ func TestConfigTools(t *testing.T) {
 		}
 		ctMustDial(t, p1, "the listener given by --listen")
 
-		// Without the flag the same change succeeds and the Broker rebinds.
 		op.End(t)
 		if code := host.StopBroker(t, syscall.SIGTERM); code != 0 {
 			t.Fatalf("the Broker exited %d on SIGTERM, want 0", code)
@@ -569,9 +546,8 @@ func TestConfigTools(t *testing.T) {
 		start := ctStartBroker(t, host, harness.BrokerSpec{
 			ConfigYAML: ctConfig("broker:\n  listen: " + p1 + "\n"),
 		})
-		// The retry may rewrite the FreeAddr address in the configuration
-		// file. p2 is held by this test and never appears there, so the retry
-		// never moves it.
+		// p2 is held by this test and never appears in the file, so the FreeAddr
+		// retry never moves it.
 		p1 = start.Address(p1)
 		op := ctOperator(t, host)
 		defer op.End(t)
@@ -586,7 +562,6 @@ func TestConfigTools(t *testing.T) {
 		}
 		ctMustDial(t, p1, "the original listener after the refused tool change")
 
-		// The configuration file path rejects the same address.
 		since := time.Now()
 		host.WriteConfig(t, ctConfig("broker:\n  listen: "+p2+"\n  alias: moved\n"))
 		ctWaitConfigValue(t, host, "broker.alias", "moved", ctReloadBound)
@@ -619,16 +594,12 @@ func TestConfigTools(t *testing.T) {
 		op := ctOperator(t, host)
 		defer op.End(t)
 
-		// A specific listener with a port-only advertise is an invalid
-		// combination; the running Broker refuses it and keeps its value.
 		advertiseBefore := ctGetConfig(t, host, "broker.advertise")
 		ctSetConfig(t, op, "broker.advertise", ":18443").MustCode(t, "invalid_argument")
 		if got := ctGetConfig(t, host, "broker.advertise"); got != advertiseBefore {
 			t.Fatalf("the rejected advertise changed the value to %q, want %q", got, advertiseBefore)
 		}
 
-		// Seven extra addresses plus the listener fill the eight-address list;
-		// an eighth extra address overflows it.
 		extraHost := harness.NewLocalHost(t, harness.LocalOptions{Name: "config-address-limit"})
 		extraListen := extraHost.FreeAddr(t)
 		seven := []string{
@@ -664,7 +635,6 @@ func TestConfigTools(t *testing.T) {
 		op := ctOperator(t, host)
 		defer op.End(t)
 
-		// Reading the configuration through the tool only says the key is set.
 		read := op.Call(t, "get_config", map[string]any{"key": "pairing.static_key"})
 		read.MustOK(t)
 		readOut, err := harness.Decode[mcpserver.GetConfigOut](string(read.Structured))
@@ -683,8 +653,6 @@ func TestConfigTools(t *testing.T) {
 			t.Fatalf("get_config returned the static key value in the full listing: %s", all.Structured)
 		}
 
-		// Setting, changing and deleting the key are all refused before the
-		// file is touched.
 		before := ctConfigHash(t, host)
 		for _, value := range []string{ctStaticKeyTwo, ctStaticKeyThr, ""} {
 			r := ctSetConfig(t, op, "pairing.static_key", value)
@@ -705,19 +673,15 @@ func TestConfigTools(t *testing.T) {
 	})
 }
 
-// ctConfig merges the shortened timers with the given fragments.
 func ctConfig(parts ...string) string {
 	return harness.ConfigYAML(append([]string{harness.FastTimers}, parts...)...)
 }
 
-// ctBinary builds the tagged product binary once per test process.
 func ctBinary(t *testing.T) string {
 	t.Helper()
 	return harness.BuildBinary(t, runtime.GOOS, runtime.GOARCH, "peers_testenv")
 }
 
-// ctStartBroker starts a Broker and fails when it does not come up. It returns
-// the start result so callers can read the address the Broker actually used.
 func ctStartBroker(t *testing.T, n *harness.Node, spec harness.BrokerSpec) harness.BrokerStart {
 	t.Helper()
 	start := n.StartBroker(t, spec)
@@ -727,10 +691,6 @@ func ctStartBroker(t *testing.T, n *harness.Node, spec harness.BrokerSpec) harne
 	return start
 }
 
-// ctOccupyAddr binds an address from n.FreeAddr and returns the listener that
-// holds it. The port can be taken between the FreeAddr probe and this bind, so
-// the helper retries with a fresh address. The returned listener, not the
-// harness retry, owns the port.
 func ctOccupyAddr(t *testing.T, n *harness.Node) (net.Listener, string) {
 	t.Helper()
 	for attempt := 0; attempt < 10; attempt++ {
@@ -744,8 +704,6 @@ func ctOccupyAddr(t *testing.T, n *harness.Node) (net.Listener, string) {
 	return nil, ""
 }
 
-// ctOperator starts an MCP server process without an inbox socket. It never
-// registers as an agent but can call the configuration tools.
 func ctOperator(t *testing.T, n *harness.Node) *harness.Session {
 	t.Helper()
 	s := n.StartSession(t, harness.SessionSpec{Name: "operator", StartMCP: true, NoSocketEnv: true})
@@ -753,7 +711,6 @@ func ctOperator(t *testing.T, n *harness.Node) *harness.Session {
 	return s
 }
 
-// ctSession starts one registered session.
 func ctSession(t *testing.T, n *harness.Node, name string) *harness.Session {
 	t.Helper()
 	s := n.StartSession(t, harness.SessionSpec{Name: name, StartMCP: true})
@@ -761,13 +718,11 @@ func ctSession(t *testing.T, n *harness.Node, name string) *harness.Session {
 	return s
 }
 
-// ctSetConfig calls set_config and returns the raw result.
 func ctSetConfig(t *testing.T, s *harness.Session, key, value string) harness.Result {
 	t.Helper()
 	return s.Call(t, "set_config", map[string]any{"key": key, "value": value})
 }
 
-// ctDecodeSetConfig asserts the change succeeded and decodes its result.
 func ctDecodeSetConfig(t *testing.T, r harness.Result) mcpserver.SetConfigOut {
 	t.Helper()
 	r.MustOK(t)
@@ -778,7 +733,6 @@ func ctDecodeSetConfig(t *testing.T, r harness.Result) mcpserver.SetConfigOut {
 	return out
 }
 
-// ctGetConfig returns the rendered text of one configuration key.
 func ctGetConfig(t *testing.T, n *harness.Node, key string) string {
 	t.Helper()
 	resp, detail := n.Oracle().GetConfig(t, key)
@@ -792,7 +746,6 @@ func ctGetConfig(t *testing.T, n *harness.Node, key string) string {
 	return ctRenderValue(entries[0].GetValue())
 }
 
-// ctWaitConfigValue waits until one configuration key renders as want.
 func ctWaitConfigValue(t *testing.T, n *harness.Node, key, want string, bound time.Duration) {
 	t.Helper()
 	harness.Eventually(t, bound, "the value of "+key+" is "+want, func() (bool, string) {
@@ -811,7 +764,6 @@ func ctWaitConfigValue(t *testing.T, n *harness.Node, key, want string, bound ti
 	})
 }
 
-// ctRenderValue renders a configuration value the way the tools write it.
 func ctRenderValue(v *localpb.ConfigValue) string {
 	if v == nil {
 		return ""
@@ -846,7 +798,6 @@ func ctRenderValue(v *localpb.ConfigValue) string {
 	}
 }
 
-// ctAudit reads the audit stream to its end.
 func ctAudit(t *testing.T, n *harness.Node, since time.Time, limit uint32) []*localpb.AuditEvent {
 	t.Helper()
 	events, detail := n.Oracle().Audit(t, since, limit)
@@ -856,7 +807,6 @@ func ctAudit(t *testing.T, n *harness.Node, since time.Time, limit uint32) []*lo
 	return events
 }
 
-// ctAuditKindName renders an audit event kind the way the terminal does.
 func ctAuditKindName(k localpb.AuditEventKind) string {
 	if name, ok := localpb.AuditEventKind_name[int32(k)]; ok {
 		return strings.ToLower(strings.TrimPrefix(name, "AUDIT_EVENT_KIND_"))
@@ -864,14 +814,12 @@ func ctAuditKindName(k localpb.AuditEventKind) string {
 	return strconv.Itoa(int(k))
 }
 
-// ctConfigHash returns the SHA-256 of the account's configuration file.
 func ctConfigHash(t *testing.T, n *harness.Node) string {
 	t.Helper()
 	sum := sha256.Sum256(n.ReadConfig(t))
 	return hex.EncodeToString(sum[:])
 }
 
-// ctDial reports whether addr accepts a TCP connection within the wait bound.
 func ctDial(addr string) bool {
 	conn, err := net.DialTimeout("tcp", addr, ctWaitBound)
 	if err != nil {
@@ -881,7 +829,6 @@ func ctDial(addr string) bool {
 	return true
 }
 
-// ctMustDial fails when addr does not accept a TCP connection.
 func ctMustDial(t *testing.T, addr, what string) {
 	t.Helper()
 	if !ctDial(addr) {
@@ -889,8 +836,6 @@ func ctMustDial(t *testing.T, addr, what string) {
 	}
 }
 
-// ctAccountName returns the account name the Broker records for this process's
-// user, matching broker.usernameFor.
 func ctAccountName() string {
 	id := strconv.FormatUint(uint64(os.Geteuid()), 10)
 	if u, err := user.LookupId(id); err == nil && u.Username != "" {
@@ -899,7 +844,6 @@ func ctAccountName() string {
 	return id
 }
 
-// ctNonEmptyLines splits s into its non-blank lines.
 func ctNonEmptyLines(s string) []string {
 	var out []string
 	for _, line := range strings.Split(s, "\n") {

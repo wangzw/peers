@@ -22,13 +22,9 @@ import (
 )
 
 const (
-	// uninstallSystemCopy is a root-owned copy of the product binary the
-	// system tests install. Uninstall removes the binary it installed, so
-	// the image's copy at /usr/local/bin/peers is left for later commands.
-	// It is named peers because uninstall only deletes a binary with that
-	// name.
+	// uninstallSystemCopy is named peers because uninstall only removes a binary
+	// with that name.
 	uninstallSystemCopy = "/usr/local/libexec/peers"
-	// uninstallPeerBinary is a peer-owned copy the user tests install.
 	uninstallPeerBinary = "/home/peer/bin/peers"
 
 	uninstallSystemUnit      = "/etc/systemd/system/peers.service"
@@ -43,26 +39,18 @@ const (
 	uninstallUserDropIn  = uninstallPeerHome + "/.config/systemd/user/peers.service.d"
 	uninstallUserDataDir = uninstallPeerHome + "/.peers"
 
-	// uninstallFakeClaudePath is the fake Claude Code CLI the tests put on PATH.
-	// It reports the peer registration from a marker file and removes the
-	// marker on "claude mcp remove -s user peer".
 	uninstallFakeClaudePath = "/usr/local/bin/claude"
 	// uninstallFakeClaudeState is world-writable because the registration is
 	// read and removed by both root and the ordinary account.
 	uninstallFakeClaudeState = "/var/lib/peers-uninstall-state"
-	// uninstallSudoersPath grants passwordless sudo to the peer account, which
-	// the non-root system scenario needs.
-	uninstallSudoersPath = "/etc/sudoers.d/peers-uninstall"
+	uninstallSudoersPath     = "/etc/sudoers.d/peers-uninstall"
 	// uninstallPath includes /usr/local/bin, where the fake claude lives.
-	uninstallPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-	// uninstallPromptBound is the fallback for the wait for the question to
-	// reach the terminal before the test types its answer.
+	uninstallPath        = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 	uninstallPromptBound = harness.EventTimeout
 )
 
-// uninstallFakeClaudeScript is the stand-in for Claude Code's CLI. Its
-// "mcp get" output has the shape the real command prints: the command path on
-// its own line, without the arguments.
+// uninstallFakeClaudeScript prints mcp get output in the real command's shape:
+// the command path on its own line, without the arguments.
 const uninstallFakeClaudeScript = `#!/bin/sh
 state=/var/lib/peers-uninstall-state
 registered="$state/registered-peer"
@@ -85,7 +73,6 @@ fi
 exit 0
 `
 
-// lockedBuffer collects a subprocess's output while the test polls it.
 type lockedBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer
@@ -103,9 +90,8 @@ func (l *lockedBuffer) String() string {
 	return l.b.String()
 }
 
-// runWithAnswer runs name as account in a pseudo-terminal and answers its
-// first question with answer. The program asks on /dev/tty, so a plain pipe
-// would leave it without a terminal.
+// runWithAnswer runs name in a pseudo-terminal because the program asks on /dev/tty,
+// and writes answer once the question appears.
 func runWithAnswer(t *testing.T, account string, env []string, answer, name string, args ...string) syscontainer.Result {
 	t.Helper()
 
@@ -122,8 +108,8 @@ func runWithAnswer(t *testing.T, account string, env []string, answer, name stri
 		t.Fatalf("starting %s as %s: %v", name, account, err)
 	}
 
-	// Write the answer once the question has reached the terminal. A program
-	// that fails before asking is waited for instead of blocking the test.
+	// A program that fails before asking is waited for instead of blocking the
+	// test.
 	deadline := time.Now().Add(uninstallPromptBound)
 	for !strings.Contains(output.String(), "[y/N]") && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -146,7 +132,6 @@ func runWithAnswer(t *testing.T, account string, env []string, answer, name stri
 	return res
 }
 
-// shellCommand renders argv for "sh -c".
 func shellCommand(args ...string) string {
 	quoted := make([]string, len(args))
 	for i, arg := range args {
@@ -155,7 +140,6 @@ func shellCommand(args ...string) string {
 	return strings.Join(quoted, " ")
 }
 
-// shellQuote quotes one argument unless every character is safe as it is.
 func shellQuote(arg string) string {
 	if arg != "" && !strings.ContainsAny(arg, " \t\n'\"\\$`;&|<>()*?[]{}!~#") {
 		return arg
@@ -163,7 +147,6 @@ func shellQuote(arg string) string {
 	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 }
 
-// uninstallAccountIDs returns the uid and gid of account.
 func uninstallAccountIDs(t *testing.T, account string) (uint32, uint32) {
 	t.Helper()
 	u, err := user.Lookup(account)
@@ -181,7 +164,6 @@ func uninstallAccountIDs(t *testing.T, account string) (uint32, uint32) {
 	return uint32(uid), uint32(gid)
 }
 
-// installUninstallBinary copies src to dst and makes it owned by uid:gid.
 func installUninstallBinary(t *testing.T, src, dst string, uid, gid uint32) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
@@ -208,9 +190,6 @@ func installUninstallBinary(t *testing.T, src, dst string, uid, gid uint32) {
 	}
 }
 
-// installUninstallFakeClaude writes the fake claude and records that the peer
-// MCP server is registered to binary, or clears the registration when binary
-// is empty.
 func installUninstallFakeClaude(t *testing.T, binary string) {
 	t.Helper()
 	if err := os.RemoveAll(uninstallFakeClaudeState); err != nil {
@@ -233,7 +212,6 @@ func installUninstallFakeClaude(t *testing.T, binary string) {
 	}
 }
 
-// setUninstallMCPRegistration records binary as the peer MCP registration.
 func setUninstallMCPRegistration(t *testing.T, binary string) {
 	t.Helper()
 	path := filepath.Join(uninstallFakeClaudeState, "registered-peer")
@@ -245,8 +223,6 @@ func setUninstallMCPRegistration(t *testing.T, binary string) {
 	}
 }
 
-// uninstallMCPRegistered reports whether the fake claude still has a peer
-// registration.
 func uninstallMCPRegistered(t *testing.T) bool {
 	t.Helper()
 	_, err := os.Stat(filepath.Join(uninstallFakeClaudeState, "registered-peer"))
@@ -260,8 +236,6 @@ func uninstallMCPRegistered(t *testing.T) bool {
 	return false
 }
 
-// uninstallUserEnv is the environment a user Broker's service and its
-// commands need.
 func uninstallUserEnv(uid uint32) []string {
 	id := strconv.FormatUint(uint64(uid), 10)
 	return []string{
@@ -271,7 +245,6 @@ func uninstallUserEnv(uid uint32) []string {
 	}
 }
 
-// startUninstallUserManager starts peer's user manager the way a login would.
 func startUninstallUserManager(t *testing.T, peerUID uint32) {
 	t.Helper()
 	mustRun(t, "root", nil, "loginctl", "enable-linger", "peer")
@@ -279,8 +252,6 @@ func startUninstallUserManager(t *testing.T, peerUID uint32) {
 	waitUserManager(t, peerUID)
 }
 
-// installUninstallUserService installs the user service with binary and
-// waits for its socket.
 func installUninstallUserService(t *testing.T, env []string, binary string) {
 	t.Helper()
 	res := runWithEnv(t, "peer", env, binary, "service", "install")
@@ -294,8 +265,6 @@ func installUninstallUserService(t *testing.T, env []string, binary string) {
 	})
 }
 
-// installUninstallSystemService installs the system service with binary
-// and waits for its socket.
 func installUninstallSystemService(t *testing.T, binary string) {
 	t.Helper()
 	res := runWithEnv(t, "root", nil, binary, "service", "install", "--system")
@@ -309,7 +278,6 @@ func installUninstallSystemService(t *testing.T, binary string) {
 	})
 }
 
-// requireMissing fails the test when path exists.
 func requireMissing(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -317,7 +285,6 @@ func requireMissing(t *testing.T, path string) {
 	}
 }
 
-// requirePresent fails the test when path does not exist.
 func requirePresent(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); err != nil {
@@ -325,7 +292,6 @@ func requirePresent(t *testing.T, path string) {
 	}
 }
 
-// uninstallIdentity returns the Broker certificate kept in dataDir.
 func uninstallIdentity(t *testing.T, dataDir string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(dataDir, "identity.crt"))
@@ -335,14 +301,12 @@ func uninstallIdentity(t *testing.T, dataDir string) []byte {
 	return data
 }
 
-// uninstallGroupExists reports whether the admin group still exists.
 func uninstallGroupExists(t *testing.T) bool {
 	t.Helper()
 	res := runWithEnv(t, "root", nil, "getent", "group", systemAdminGroup)
 	return res.ExitCode == 0
 }
 
-// configureUninstallSudo grants the peer account passwordless sudo.
 func configureUninstallSudo(t *testing.T) {
 	t.Helper()
 	entry := "peer ALL=(ALL) NOPASSWD: ALL\nDefaults:peer !requiretty\n"
@@ -354,9 +318,9 @@ func configureUninstallSudo(t *testing.T) {
 	}
 }
 
-// TestUninstallREQBrokerConfig051UserLevel covers a user installation:
-// the default uninstall keeps the data, a reinstall keeps the identity, and
-// --purge removes everything without asking.
+// TestUninstallREQBrokerConfig051UserLevel checks that a user uninstall keeps the
+// data by default, that a reinstall keeps the identity, and that --purge removes
+// everything without asking.
 func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -404,7 +368,6 @@ func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 			t.Errorf("peer Broker still runs after uninstall: %v", procs)
 		}
 
-		// A reinstall keeps the configuration and the identity.
 		installUninstallBinary(t, releaseBinary, uninstallPeerBinary, peerUID, peerGID)
 		installUninstallUserService(t, env, uninstallPeerBinary)
 		if got := uninstallIdentity(t, uninstallUserDataDir); !bytes.Equal(got, identity) {
@@ -428,7 +391,6 @@ func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 			requireMissing(t, gone)
 		}
 
-		// The installation is gone, so a second run reports that and succeeds.
 		again := runWithEnv(t, "peer", env, releaseBinary, "uninstall")
 		if again.ExitCode != 0 {
 			t.Fatalf("second uninstall: exit %d\nstdout: %s\nstderr: %s",
@@ -440,8 +402,8 @@ func TestUninstallREQBrokerConfig051UserLevel(t *testing.T) {
 	})
 }
 
-// TestUninstallREQBrokerConfig051SystemLevel covers a system installation
-// the same way.
+// TestUninstallREQBrokerConfig051SystemLevel checks the same uninstall behavior for
+// a system installation.
 func TestUninstallREQBrokerConfig051SystemLevel(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -483,7 +445,6 @@ func TestUninstallREQBrokerConfig051SystemLevel(t *testing.T) {
 			t.Error("the admin group was removed although the data was kept")
 		}
 
-		// A reinstall keeps the identity.
 		installUninstallBinary(t, releaseBinary, uninstallSystemCopy, 0, 0)
 		installUninstallSystemService(t, uninstallSystemCopy)
 		if got := uninstallIdentity(t, uninstallSystemDataDir); !bytes.Equal(got, identity) {
@@ -523,10 +484,9 @@ func TestUninstallREQBrokerConfig051SystemLevel(t *testing.T) {
 	})
 }
 
-// TestUninstallREQBrokerConfig051UnrecordedGroup simulates an installation
-// whose data directory has no record of the admin group. Nothing proves this
-// project created the group, so a --purge must keep it, say why, and print the
-// manual removal command.
+// TestUninstallREQBrokerConfig051UnrecordedGroup checks that --purge keeps an admin
+// group the installation did not record creating, says why, and prints the manual
+// removal command.
 func TestUninstallREQBrokerConfig051UnrecordedGroup(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -569,8 +529,8 @@ func TestUninstallREQBrokerConfig051UnrecordedGroup(t *testing.T) {
 	})
 }
 
-// TestUninstallREQBrokerConfig051NoService covers an installation that used
-// --no-service: only the MCP registration and the binary exist.
+// TestUninstallREQBrokerConfig051NoService checks uninstall for an installation made
+// with --no-service, where only the MCP registration and the binary exist.
 func TestUninstallREQBrokerConfig051NoService(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -581,8 +541,8 @@ func TestUninstallREQBrokerConfig051NoService(t *testing.T) {
 		peerUID := syscontainer.AccountUID(t, "peer")
 		_, peerGID := uninstallAccountIDs(t, "peer")
 		env := uninstallUserEnv(peerUID)
-		// Without a unit, uninstall only treats the running executable as the
-		// installation when it sits at the default prefix and the MCP
+		// Without a unit, uninstall treats the running executable as the
+		// installation only when it sits at the default prefix and the MCP
 		// registration points to it.
 		noServiceBinary := "/home/peer/.local/bin/peers"
 		installUninstallBinary(t, releaseBinary, noServiceBinary, peerUID, peerGID)
@@ -622,9 +582,9 @@ func TestUninstallREQBrokerConfig051NoService(t *testing.T) {
 	})
 }
 
-// TestUninstallREQBrokerConfig052NonRootSystemOnly covers a non-root account
-// whose host has only the system installation: the command must fail and
-// name the complete sudo command, and that command must then remove the level.
+// TestUninstallREQBrokerConfig052NonRootSystemOnly checks that a non-root account
+// whose host has only the system installation is refused with the complete sudo
+// command, and that the command then removes it.
 func TestUninstallREQBrokerConfig052NonRootSystemOnly(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -632,8 +592,8 @@ func TestUninstallREQBrokerConfig052NonRootSystemOnly(t *testing.T) {
 	}
 
 	t.Run("REQ-broker-config-052: a non-root account is refused and the printed sudo command succeeds", func(t *testing.T) {
-		// The service is installed from the binary the peer will run, so the
-		// uninstall can prove it starts the same file before removing it.
+		// The service is installed from the binary the peer will run, so uninstall
+		// can prove it starts the same file before removing it.
 		installUninstallFakeClaude(t, releaseBinary)
 		configureUninstallSudo(t)
 		installUninstallSystemService(t, releaseBinary)
@@ -658,8 +618,6 @@ func TestUninstallREQBrokerConfig052NonRootSystemOnly(t *testing.T) {
 			t.Error("a refused uninstall removed the MCP registration")
 		}
 
-		// The complete command from the error message, as an administrator
-		// would paste it.
 		accepted := runInstallScriptAs(t, "peer", nil, "/", "sudo", "-n", releaseBinary, "uninstall", "--purge", "--yes")
 		if accepted.ExitCode != 0 {
 			t.Fatalf("sudo uninstall: exit %d\nstdout:\n%s\nstderr:\n%s",
@@ -677,8 +635,8 @@ func TestUninstallREQBrokerConfig052NonRootSystemOnly(t *testing.T) {
 	})
 }
 
-// TestUninstallREQBrokerConfig052TwoLevels checks that a non-root uninstall
-// removes only the user installation and names the system command.
+// TestUninstallREQBrokerConfig052TwoLevels checks that a non-root uninstall removes
+// only the user installation and names the system command.
 func TestUninstallREQBrokerConfig052TwoLevels(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)
@@ -694,7 +652,7 @@ func TestUninstallREQBrokerConfig052TwoLevels(t *testing.T) {
 		installUninstallSystemService(t, uninstallSystemCopy)
 		startUninstallUserManager(t, peerUID)
 		// The system Broker already listens on the default port, so the user
-		// Broker gets its own.
+		// Broker needs its own.
 		writeAccountFile(t, "peer", filepath.Join(uninstallUserDataDir, "config.yaml"), "broker:\n  listen: \":17445\"\n")
 		installUninstallFakeClaude(t, "")
 		installUninstallBinary(t, releaseBinary, uninstallPeerBinary, peerUID, peerGID)
@@ -715,9 +673,8 @@ func TestUninstallREQBrokerConfig052TwoLevels(t *testing.T) {
 	})
 }
 
-// TestUninstallREQBrokerConfig054OtherAccountBroker checks that a system
-// uninstall names another account's user Broker before it removes the
-// shared binary.
+// TestUninstallREQBrokerConfig054OtherAccountBroker checks that a system uninstall
+// names another account's user Broker before it removes the shared binary.
 func TestUninstallREQBrokerConfig054OtherAccountBroker(t *testing.T) {
 	if !syscontainer.InContainer() {
 		syscontainer.Run(t, syscontainer.Systemd)

@@ -1,7 +1,5 @@
-# TopoNAT: hostA on two WAN networks, hostB behind the router on lanb.
-# The router masquerades lanb traffic and forwards it; hostB can reach hostA,
-# hostA cannot reach hostB. Routes and firewall rules are installed by the
-# harness after up, not here.
+# The router masquerades lanb traffic and forwards it; routes and firewall rules
+# are installed by the harness after up, not here.
 services:
   hostA:
     image: ${E2E_IMAGE}
@@ -30,18 +28,11 @@ services:
     volumes: ["${CTL_HOSTB}:/ctl"]
     networks: [lanb]
 
-# The networks cannot be internal: Docker 29 drops routed traffic that enters
-# from an internal bridge and leaves its subnet, before the router container
-# ever sees it. Routed gateway mode keeps Docker's per-container direct-access
-# drop out of the way while the router still has no default route, so the
-# containers reach no network beyond these three.
-#
-# Every subnet is pinned inside 198.18.0.0/15 instead of letting Docker pick
-# from its default pool, because this host is a k8s node whose pod and service
-# networks (10.12.72.0/24, 10.244.0.0/16, 172.17.0.0/16, 10.96.0.0/12) must not
-# be captured by a bridge route. The harness overrides the variables below with
-# a per-project block of that range, because Docker refuses two live networks
-# with the same subnet and several tests run this topology at once.
+# Routed gateway mode lets the router forward between networks on Docker 29.
+# The networks cannot be internal: Docker 29 drops routed traffic that crosses
+# an internal bridge before the router sees it. Every subnet is pinned inside
+# 198.18.0.0/15 so a bridge route never captures this k8s node's own networks,
+# and the harness overrides them per project.
 networks:
   wan:
     driver_opts:
