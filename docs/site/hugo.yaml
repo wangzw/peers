@@ -10,6 +10,12 @@ disableKinds:
   - taxonomy
   - term
 
+# A page's last modification date is the date of the last commit that touched
+# its source file. The sitemap's lastmod and the Open Graph modified time come
+# from it, so the build needs the full history: the site workflow checks out
+# every commit for that reason.
+enableGitInfo: true
+
 # Every crawler, AI ones included, may read the whole site. The template in
 # layouts/robots.txt allows them all and points to the sitemap derived from
 # baseURL; Hugo writes it once, for the default content language.

@@ -357,8 +357,9 @@ site:
 	hugo server --source $(SITE_DIR)
 
 # Check that the English and Chinese pages match, build the website strictly,
-# check that every generated index.html has an index.md next to it, and check
-# the internal links of the generated pages. The link check uses the
+# check that every generated index.html has an index.md next to it, check the
+# description and sharing metadata of every page and the lastmod of every
+# sitemap entry, and check the internal links of the generated pages. The link check uses the
 # generated tree as its root, so a root-relative link resolves inside the
 # site; page relative links resolve against the file that contains them. The
 # build cleans the destination first, so a page that was deleted or renamed
@@ -387,6 +388,7 @@ site-check:
 		echo "$$missing" >&2; \
 		exit 1; \
 	fi
+	go run -p $(JOBS) ./scripts/site-meta -public $(SITE_DIR)/public
 	lychee --offline --no-progress --max-concurrency $(JOBS) --root-dir "$(CURDIR)/$(SITE_DIR)/public" '$(SITE_DIR)/public/**/*.html'
 
 # Run every gate in a fixed order. Each gate is a separate recursive make so

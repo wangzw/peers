@@ -1,5 +1,6 @@
 ---
 title: "peers：在不同主机上的 Claude Code 会话之间互发消息"
+description: "peers 让运行在不同主机上的 Claude Code 会话互相发现，并交换文本消息。"
 weight: 1
 layout: hextra-home
 ---

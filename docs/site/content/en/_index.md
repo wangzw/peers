@@ -1,5 +1,6 @@
 ---
 title: "peers: Cross-host messaging for Claude Code sessions"
+description: "peers lets Claude Code sessions running on different hosts discover each other and exchange text messages."
 weight: 1
 layout: hextra-home
 ---
