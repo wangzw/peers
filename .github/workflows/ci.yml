@@ -376,13 +376,14 @@ jobs:
           retention-days: 7
 
   coverage:
-    name: coverage report
+    name: coverage meets the thresholds
     runs-on: ubuntu-24.04
     needs: [test, e2e]
-    # The job only merges what the producers published: the merge over the
-    # unit and testenv rounds took 2.1 s measured locally, and the e2e counters
-    # join the same one-pass merge. A cold module cache plus one stalled action
-    # download (282 s) stays well inside 10 minutes.
+    # The job merges what the producers published and applies the coverage
+    # floors: the merge over the unit and testenv rounds took 2.1 s measured
+    # locally, and the e2e counters join the same one-pass merge. A cold module
+    # cache plus one stalled action download (282 s) stays well inside 10
+    # minutes.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -406,11 +407,15 @@ jobs:
           pattern: coverage-@(test|e2e-*)
           path: ${{ runner.temp }}/cover
           skip-decompress: true
-      # A fail-closed error in coverreport fails this step; thresholds are not
-      # enforced here. Every downloaded artifact directory must carry counters,
-      # so an upload that produced none fails the step instead of being merged
-      # partly.
-      - name: Publish the coverage report
+      # cover-check enforces the COVER_TOTAL and COVER_PACKAGE floors, so a
+      # shortfall fails this step and the workflow, and a fail-closed error in
+      # coverreport fails it too. Every downloaded artifact directory must
+      # carry counters, so an upload that produced none fails the step instead
+      # of being merged partly. The table must still reach the step summary
+      # when the check fails: shell: bash supplies pipefail, so the pipeline
+      # keeps make's exit status, and tee -a appends the table either way.
+      - name: Enforce the coverage thresholds
+        shell: bash
         run: |
           cover="${{ runner.temp }}/cover"
           # skip-decompress left one raw archive inside the directory named after
@@ -465,17 +470,23 @@ jobs:
           while IFS= read -r dir; do
             inputs="${inputs:+$inputs }${dir#"$cover"/}"
           done <<< "$dirs"
-          make cover-report \
+          make cover-check \
             COVER_DIR="$cover" \
             COVER_FORMAT=markdown \
             COVER_INPUTS="$inputs" \
-            >> "$GITHUB_STEP_SUMMARY"
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # The profile is what diagnoses a failed gate, so it is uploaded after a
+      # failing enforce step too; success() || failure() skips only a cancelled
+      # run. A run that failed before coverreport wrote the file has nothing to
+      # upload, hence ignore here while the enforce step already carries the
+      # verdict.
       - name: Upload the coverage profile
+        if: success() || failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: coverage-profile
           path: ${{ runner.temp }}/cover/coverage.txt
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
 
   third-party-licenses:

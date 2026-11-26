@@ -11,17 +11,31 @@ JOBS ?= 4
 # there, which cover-report merges. An empty value runs exactly the plain
 # commands, so a developer's make test neither pays for instrumentation nor
 # needs a coverage directory.
+#
+# make check collects into CHECK_COVER_DIR: $(CURDIR)/.cover unless the caller
+# set COVER_DIR at all. $(origin ...) is read here, before the default below
+# assigns COVER_DIR, so an explicit COVER_DIR= passes through as empty and
+# makes check fail at its guard instead of running without data.
+CHECK_COVER_DIR := $(if $(filter undefined,$(origin COVER_DIR)),$(CURDIR)/.cover,$(COVER_DIR))
 COVER_DIR ?=
 COVER_PKGS := github.com/wangzw/peers/internal/...,github.com/wangzw/peers/cmd/...
 
 # Settings for cover-report and cover-check. COVER_INPUTS names the producer
 # directories under COVER_DIR to merge; COVER_TOTAL and COVER_PACKAGE are the
 # floors cover-check enforces, and COVER_FORMAT selects the plain table (text)
-# or the Markdown table CI appends to the step summary.
+# or the Markdown table CI appends to the step summary. COVER_FORMAT and
+# COVER_DIR are free: a caller may still choose them however it likes.
 COVER_INPUTS ?= unit testenv e2e
 COVER_TOTAL ?= 90
 COVER_PACKAGE ?= 80
 COVER_FORMAT ?= text
+
+# The gate's own floors and input set. make check passes these to cover-check
+# explicitly, and each honours only a command-line value: an exported
+# COVER_TOTAL=0 or COVER_INPUTS= in the environment cannot loosen the gate.
+CHECK_COVER_TOTAL := $(if $(filter command line,$(origin COVER_TOTAL)),$(COVER_TOTAL),90)
+CHECK_COVER_PACKAGE := $(if $(filter command line,$(origin COVER_PACKAGE)),$(COVER_PACKAGE),80)
+CHECK_COVER_INPUTS := $(if $(filter command line,$(origin COVER_INPUTS)),$(COVER_INPUTS),unit testenv e2e)
 
 # Guard and prepare one coverage round: refuse a relative directory, then
 # recreate the round's own subdirectory empty so no stale data survives. The
@@ -282,19 +296,28 @@ SYSTEMD_REBUILD_LEDGER ?= /tmp/ape2e-systemd-rebuilds.log
 # world-writable and carries a default ACL for the invoking uid, because the
 # instrumented processes run in containers and write under UMask=0077; their
 # counter files then stay readable without sudo. That needs setfacl from the
-# acl package. COVER_DIR= turns coverage off, and E2E_COVER_DIR is cleared so a
-# value inherited from the environment cannot turn it back on.
+# acl package. A standalone make e2e with COVER_DIR= collects no coverage,
+# and E2E_COVER_DIR is cleared so a value inherited from the environment cannot
+# turn it back on; make check rejects COVER_DIR= at its own guard instead.
+# The directory starts at 0700 and is widened to 0777 only after setfacl
+# succeeds, and a failed preparation removes it, so a failure leaves no
+# world-writable directory behind. When the round ends, success or failure, the
+# directory loses group and other write before cover-check reads it, and the
+# exit trap does the same if the run is interrupted.
 e2e:
-	@tmp="$$(mktemp -d)"; trap 'rm -rf "$$tmp"' EXIT HUP INT TERM; \
+	@tmp="$$(mktemp -d)"; \
 	status=0; \
+	coverdir='$(COVER_DIR)'; \
+	cleanup() { rm -rf "$$tmp"; case "$$coverdir" in /*) if [ -d "$$coverdir/e2e" ]; then chmod go-w "$$coverdir/e2e" 2>/dev/null || true; fi ;; esac; }; \
+	trap cleanup EXIT HUP INT TERM; \
 	if [ -n '$(COVER_DIR)' ]; then \
 		case '$(COVER_DIR)' in /*) ;; *) echo "e2e: COVER_DIR must name an absolute path (got '$(COVER_DIR)')" >&2; exit 2 ;; esac; \
 		if ! command -v setfacl >/dev/null 2>&1; then \
-			echo "e2e: COVER_DIR is set but setfacl is missing; install the acl package (for example sudo apt-get install -y acl), or run with COVER_DIR= to collect no coverage" >&2; \
+			echo "e2e: COVER_DIR is set but setfacl is missing; install the acl package (for example sudo apt-get install -y acl). make check collects coverage and needs setfacl; to run the e2e suite alone without coverage, run make e2e with COVER_DIR unset." >&2; \
 			exit 1; \
 		fi; \
-		rm -rf '$(COVER_DIR)/e2e' && mkdir -p '$(COVER_DIR)/e2e' && chmod 0777 '$(COVER_DIR)/e2e' && setfacl -d -m u:$$(id -u):rwX '$(COVER_DIR)/e2e' \
-			|| { echo "e2e: preparing '$(COVER_DIR)/e2e' failed" >&2; exit 1; }; \
+		rm -rf '$(COVER_DIR)/e2e' && mkdir -p '$(COVER_DIR)/e2e' && chmod 0700 '$(COVER_DIR)/e2e' && setfacl -d -m u:$$(id -u):rwX '$(COVER_DIR)/e2e' && chmod 0777 '$(COVER_DIR)/e2e' \
+			|| { rm -rf '$(COVER_DIR)/e2e'; echo "e2e: preparing '$(COVER_DIR)/e2e' failed" >&2; exit 1; }; \
 		export E2E_COVER_DIR='$(COVER_DIR)/e2e'; \
 	else \
 		unset E2E_COVER_DIR; \
@@ -312,15 +335,18 @@ e2e:
 		: > $(SYSTEMD_REBUILD_LEDGER); \
 	fi; \
 	go test -tags e2e -count=1 -run '^$$' ./test/e2e/ >/dev/null 2>&1 || true; \
+	if [ -n '$(COVER_DIR)' ] && [ -d '$(COVER_DIR)/e2e' ]; then \
+		chmod go-w '$(COVER_DIR)/e2e' || { echo "e2e: removing write access from group and other on '$(COVER_DIR)/e2e' failed" >&2; if [ $$status -eq 0 ]; then status=1; fi; }; \
+	fi; \
 	exit $$status
 
 # Merge the producer directories COVER_INPUTS names under COVER_DIR and print
 # the coverage table. cover-check is the same report with the COVER_TOTAL and
-# COVER_PACKAGE floors enforced, so a shortfall exits non-zero. Only the report
-# reaches stdout, which lets CI append it to the step summary. Neither target
-# belongs to make check; both need data the producers wrote first, and an empty
-# COVER_DIR fails before coverreport runs. Both remove the previous profile
-# first, so a run that fails leaves no stale coverage.txt behind.
+# COVER_PACKAGE floors enforced, so a shortfall exits non-zero; it is the gate
+# make check runs after e2e. Only the report reaches stdout, which lets CI
+# append it to the step summary. Both need data the producers wrote first, and
+# an empty COVER_DIR fails before coverreport runs. Both remove the previous
+# profile first, so a run that fails leaves no stale coverage.txt behind.
 cover-report:
 	@if [ -z '$(COVER_DIR)' ]; then echo "cover-report: COVER_DIR is empty; set it to the absolute directory the producers wrote, for example COVER_DIR=\$$PWD/.cover" >&2; exit 2; fi; \
 	rm -f '$(COVER_DIR)/coverage.txt'; \
@@ -392,11 +418,20 @@ site-check:
 	lychee --offline --no-progress --max-concurrency $(JOBS) --root-dir "$(CURDIR)/$(SITE_DIR)/public" '$(SITE_DIR)/public/**/*.html'
 
 # Run every gate in a fixed order. Each gate is a separate recursive make so
-# the order also holds when the caller passes -j.
+# the order also holds when the caller passes -j. The guard runs before any
+# gate: an empty CHECK_COVER_DIR means the caller passed COVER_DIR=, and a
+# relative one would otherwise fail in the test round only after lint,
+# proto-lint and gen-check; both are rejected here. The test and e2e runs
+# collect coverage into CHECK_COVER_DIR, which cover-check then enforces with
+# the locked defaults; that collection makes them need setfacl from the acl
+# package. The guard line carries '+' so make -n executes it too.
 check:
+	+@if [ -z '$(CHECK_COVER_DIR)' ]; then echo "check: COVER_DIR is empty; make check collects coverage and needs a directory, so pass an absolute COVER_DIR or leave COVER_DIR unset to use $(CURDIR)/.cover" >&2; exit 2; fi; \
+	case '$(CHECK_COVER_DIR)' in /*) ;; *) echo "check: COVER_DIR must name an absolute path (got '$(CHECK_COVER_DIR)')" >&2; exit 2 ;; esac
 	$(MAKE) --no-print-directory lint
 	$(MAKE) --no-print-directory proto-lint
 	$(MAKE) --no-print-directory gen-check
-	$(MAKE) --no-print-directory test
-	$(MAKE) --no-print-directory e2e
+	$(MAKE) --no-print-directory test COVER_DIR='$(CHECK_COVER_DIR)'
+	$(MAKE) --no-print-directory e2e COVER_DIR='$(CHECK_COVER_DIR)'
+	$(MAKE) --no-print-directory cover-check COVER_DIR='$(CHECK_COVER_DIR)' COVER_TOTAL='$(CHECK_COVER_TOTAL)' COVER_PACKAGE='$(CHECK_COVER_PACKAGE)' COVER_INPUTS='$(CHECK_COVER_INPUTS)'
 	$(MAKE) --no-print-directory docs-check

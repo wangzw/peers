@@ -22,9 +22,9 @@ A cross-host communication system for agents. A host runs a Broker either as a s
 
 ## Checks
 
-`make check` runs every gate in order: `lint`, `proto-lint`, `gen-check`, `test`, `e2e` and `docs-check`. Each is also a target of its own. Run the gates that cover what a change touches before committing it, and leave them passing with no warning ignored.
+`make check` runs every gate in order: `lint`, `proto-lint`, `gen-check`, `test`, `e2e`, `cover-check` and `docs-check`. Each is also a target of its own. Run the gates that cover what a change touches before committing it, and leave them passing with no warning ignored. `make check` collects coverage into `.cover` in the repository root ($(CURDIR)/.cover) unless the caller sets `COVER_DIR` to an absolute directory, so it needs `setfacl` from the `acl` package. An empty or relative `COVER_DIR` makes `make check` fail before any gate runs. `test` and `e2e` run alone collect coverage only when `COVER_DIR` names an absolute directory.
 
-`make cover-report` and `make cover-check` merge the coverage data `make test` and `make e2e` write under `COVER_DIR` and print a per-package table, with `cover-check` also enforcing the `COVER_TOTAL` and `COVER_PACKAGE` floors; they need that data and are not part of `make check`.
+`cover-check` enforces the coverage thresholds over the data `make test` writes as `unit` and `testenv` and `make e2e` writes as `e2e`: total statement coverage of at least `COVER_TOTAL` (90) and at least `COVER_PACKAGE` (80) for every package. Inside `make check` both floors are read only from the command line, so an exported value cannot loosen the gate; a standalone `make cover-check` honours them from the environment too. The denominator is every package under `internal/` and `cmd/peers`, excluding generated code (files with the `// Code generated ... DO NOT EDIT.` header), `internal/testkit`, `test/`, `scripts/` and `third_party/`; the data `make test-root` writes is not counted. `make cover-report` prints the same table without enforcing the floors, and `COVER_FORMAT=markdown` prints the Markdown table CI appends to the step summary.
 
 `make site-check` builds the website under `docs/site/` strictly and checks its internal links. It is not part of `make check`; run it when a change touches the website.
 
