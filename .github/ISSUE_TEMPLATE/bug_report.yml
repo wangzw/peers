@@ -41,7 +41,7 @@ body:
     attributes:
       label: peers version
       description: Output of `peers --version`. If the problem involves two hosts, give the version on both.
-      placeholder: peers 0.6.0
+      placeholder: peers 0.6.1
     validations:
       required: true
   - type: dropdown

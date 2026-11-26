@@ -2,6 +2,14 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-11-26
+
+### Fixed
+
+- The Broker now closes both ends of an account helper's standard-input pipe when it cannot create the helper's standard-output pipe, and every end of both pipes when the helper fails to start. Such a failed start used to leave the input pipe open until the garbage collector ran, holding two descriptors on exactly the path that file-descriptor exhaustion makes fail, so the shortage outlasted the failure.
+- A session registry or configuration directory whose watch cannot be installed no longer leaves a session unaware of changes there. A directory that failed to watch at startup was skipped by every later reconciliation, so the watcher stayed on the configuration directory and a session that appeared or changed in the registry went unreported until an unrelated event scanned it; every event now retries that directory. A reconciliation that meets several unwatchable directories in a row now falls back level by level to the deepest directory it can watch within one pass instead of alternating between them, which at startup could fail with `there is no directory to watch`. The callback with process id 0 is sent once per distinct set of failing directories and their errors rather than once per event, is sent again when that set changes, and a fallback found while starting up now reaches the callbacks in the initial notification.
+- On macOS, a session could stop seeing registry changes after the watch moved to the registry directory: re-registering a kqueue watch for a directory used the flags read earlier, and a concurrent watch of the same path could replace `NOTE_WRITE` with a smaller set, so changes inside the directory produced no further events. A re-registration now keeps the flags already recorded and adds its own, a user watch and an internal watch of the same path are serialized so the kernel filter and the recorded flags agree, and a user `Add` that loses every retry to a concurrent `Remove` returns an error naming the path instead of reporting success for a path that receives no events.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added

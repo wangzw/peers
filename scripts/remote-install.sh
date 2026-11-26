@@ -25,7 +25,7 @@
 #
 # Options:
 #   --version <version>
-#                  install a published version number, for example 0.6.0,
+#                  install a published version number, for example 0.6.1,
 #                  instead of the latest release. It must come before every
 #                  other argument, and its value is always validated. A version
 #                  with no installable release package fails with
@@ -57,7 +57,7 @@ fail() {
 validate_version() {
 	case $1 in
 		''|*[!0-9.]*)
-			fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.0"
+			fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.1"
 			;;
 	esac
 	_rest=$1
@@ -65,24 +65,24 @@ validate_version() {
 	case $_rest in
 		*.*) _rest=${_rest#*.} ;;
 		*)
-			fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.0"
+			fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.1"
 			;;
 	esac
 	_minor=${_rest%%.*}
 	case $_rest in
 		*.*) _patch=${_rest#*.} ;;
 		*)
-			fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.0"
+			fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.1"
 			;;
 	esac
 	case $_major in
-		''|*[!0-9]*) fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.0" ;;
+		''|*[!0-9]*) fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.1" ;;
 	esac
 	case $_minor in
-		''|*[!0-9]*) fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.0" ;;
+		''|*[!0-9]*) fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.1" ;;
 	esac
 	case $_patch in
-		''|*[!0-9]*) fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.0" ;;
+		''|*[!0-9]*) fail "invalid version '$1': expected MAJOR.MINOR.PATCH, for example 0.6.1" ;;
 	esac
 }
 
@@ -161,7 +161,7 @@ main() {
 			--version)
 				version_requested=1
 				if [ "$#" -lt 2 ]; then
-					fail "--version needs a published version number, for example 0.6.0"
+					fail "--version needs a published version number, for example 0.6.1"
 				fi
 				version=$2
 				shift 2
