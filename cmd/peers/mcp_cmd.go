@@ -12,10 +12,8 @@ import (
 
 const mcpUsage = "usage: peers mcp"
 
-// addMCPCommand hangs the MCP server off the root command as a hidden command.
-// Claude Code starts it with `peers mcp`, so the name cannot change and the
-// command must not appear in the help listing. Flag parsing is left to mcpCmd
-// so its diagnostics stay exactly as they were.
+// The name cannot change and the command must not appear in the help listing,
+// because Claude Code starts the MCP server with "peers mcp".
 func (a *app) addMCPCommand(root *cobra.Command) {
 	root.AddCommand(&cobra.Command{
 		Use:                "mcp",
@@ -28,9 +26,8 @@ func (a *app) addMCPCommand(root *cobra.Command) {
 	})
 }
 
-// mcpCmd runs the MCP server over the process's own stdin and stdout. It must
-// never write anything else to stdout, because that stream carries the MCP
-// protocol.
+// mcpCmd runs the MCP server over the process's own stdin and stdout; nothing
+// else may be written to stdout, because that stream carries the MCP protocol.
 func (a *app) mcpCmd(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)

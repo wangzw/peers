@@ -15,9 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/update"
 )
 
-// countingTransport fails a test if the command reaches the network. The
-// update command's GitHub calls are stubbed, so the transport must stay
-// untouched, and counting it makes the no-download assertions direct.
 type countingTransport struct {
 	t     *testing.T
 	calls int
@@ -29,9 +26,6 @@ func (c *countingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("unexpected network request")
 }
 
-// updateTestEnv installs the operating-system seams around a temporary target
-// binary and restores them when the test ends. The defaults describe an
-// ordinary account: non-root, with a writable user installation.
 type updateTestEnv struct {
 	target    string
 	transport *countingTransport
@@ -87,17 +81,18 @@ func assertBinaryUnchanged(t *testing.T, path string) {
 	}
 }
 
-// userLevelRefusal is the answer a user Broker gives when it cannot
-// apply an update itself.
 var userLevelRefusal = errUserLevelUpdateUnsupported
 
-// designSessionHint is the delegated-update hint as design-broker writes it.
-// The tests spell it out so a change to the constant cannot pass unnoticed.
+// designSessionHint spells out the hint independently, so a change to the
+// constant fails here.
 const designSessionHint = "Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically."
 
-// designLocalHint is the local-replacement hint as design-broker writes it.
+// designLocalHint spells out the hint independently, so a change to the
+// constant fails here.
 const designLocalHint = "The new binary takes effect the next time the Broker starts."
 
+// TestUpdateRejectsNonReleaseBuilds checks that a version that is not a release
+// refuses to update.
 func TestUpdateRejectsNonReleaseBuilds(t *testing.T) {
 	for _, version := range []string{"dev", "e2e", "0.1.2-SNAPSHOT-abc123", "", "0.1", "0.1.0+build.5"} {
 		t.Run(version, func(t *testing.T) {
@@ -119,6 +114,8 @@ func TestUpdateRejectsNonReleaseBuilds(t *testing.T) {
 	}
 }
 
+// TestUpdateRefusesNonTerminalInputWithoutYes checks that without a terminal
+// and without --yes the command fails before asking or downloading.
 func TestUpdateRefusesNonTerminalInputWithoutYes(t *testing.T) {
 	env := newUpdateTestEnv(t)
 
@@ -140,6 +137,7 @@ func TestUpdateRefusesNonTerminalInputWithoutYes(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateUserDeclines checks that answering no changes nothing.
 func TestUpdateUserDeclines(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	a, stdout, stderr, stub := newDispatchApp("0.1.1")
@@ -161,6 +159,8 @@ func TestUpdateUserDeclines(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateReportsUpToDate checks that an up-to-date Broker reports the
+// current version and changes nothing.
 func TestUpdateReportsUpToDate(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -181,6 +181,8 @@ func TestUpdateReportsUpToDate(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateFailsBeforeAnyDownloadWithoutWritePermission checks that an
+// unwritable target directory fails the update before any download request.
 func TestUpdateFailsBeforeAnyDownloadWithoutWritePermission(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses directory permissions, so this case cannot be reproduced as root")
@@ -235,6 +237,8 @@ func TestUpdateFailsBeforeAnyDownloadWithoutWritePermission(t *testing.T) {
 	assertBinaryUnchanged(t, target)
 }
 
+// TestUpdateAnswersYesFromTheTerminal checks that answering y at the prompt asks
+// the Broker to update.
 func TestUpdateAnswersYesFromTheTerminal(t *testing.T) {
 	newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -258,6 +262,8 @@ func TestUpdateAnswersYesFromTheTerminal(t *testing.T) {
 	}
 }
 
+// TestUpdateFallsBackToLocalForAUserBroker checks that a declining user Broker
+// makes the command replace the binary locally.
 func TestUpdateFallsBackToLocalForAUserBroker(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -299,6 +305,7 @@ func TestUpdateFallsBackToLocalForAUserBroker(t *testing.T) {
 	}
 }
 
+// TestUpdateYesSkipsTheQuestion checks that --yes updates without asking.
 func TestUpdateYesSkipsTheQuestion(t *testing.T) {
 	newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -321,6 +328,8 @@ func TestUpdateYesSkipsTheQuestion(t *testing.T) {
 	}
 }
 
+// TestUpdateRootUsesApplyUpdate checks that a Broker-applied update replaces no
+// local binary.
 func TestUpdateRootUsesApplyUpdate(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -344,6 +353,8 @@ func TestUpdateRootUsesApplyUpdate(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateBrokerAppliesTheUpdate checks the output of an update the Broker
+// applied without restarting.
 func TestUpdateBrokerAppliesTheUpdate(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -371,6 +382,8 @@ func TestUpdateBrokerAppliesTheUpdate(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateAsksBeforeTheBrokerCall checks that the confirmation comes before
+// the Broker call.
 func TestUpdateAsksBeforeTheBrokerCall(t *testing.T) {
 	t.Run("declined", func(t *testing.T) {
 		env := newUpdateTestEnv(t)
@@ -411,6 +424,8 @@ func TestUpdateAsksBeforeTheBrokerCall(t *testing.T) {
 	})
 }
 
+// TestUpdateWaitsForTheRestartedBroker checks that the command polls until the
+// restarted Broker reports the new version.
 func TestUpdateWaitsForTheRestartedBroker(t *testing.T) {
 	newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -441,6 +456,8 @@ func TestUpdateWaitsForTheRestartedBroker(t *testing.T) {
 	}
 }
 
+// TestUpdateRestartTimeoutNamesTheLog checks that a restart timeout names the
+// system service log.
 func TestUpdateRestartTimeoutNamesTheLog(t *testing.T) {
 	newUpdateTestEnv(t)
 	updateRestartWait = 0
@@ -466,8 +483,8 @@ func TestUpdateRestartTimeoutNamesTheLog(t *testing.T) {
 	}
 }
 
-// TestHumanDuration pins the wait formatting: the timeout line shows seconds as
-// a reader counts them, not the time.Duration String form.
+// TestHumanDuration checks the human-readable seconds used in the timeout
+// message.
 func TestHumanDuration(t *testing.T) {
 	for _, tc := range []struct {
 		d    time.Duration
@@ -484,6 +501,8 @@ func TestHumanDuration(t *testing.T) {
 	}
 }
 
+// TestUpdateRestartTimeoutNamesTheUserLevelLog checks that a restart timeout
+// names the user service log.
 func TestUpdateRestartTimeoutNamesTheUserLevelLog(t *testing.T) {
 	newUpdateTestEnv(t)
 	updateRestartWait = 0
@@ -503,9 +522,8 @@ func TestUpdateRestartTimeoutNamesTheUserLevelLog(t *testing.T) {
 	}
 }
 
-// TestUpdateLogHintPerPlatform pins the log location each platform's service
-// manager writes to. A timeout on macOS must name the launchd log of the level
-// that answered ApplyUpdate, as it does for systemd on Linux.
+// TestUpdateLogHintPerPlatform checks the log location named for each platform
+// and level.
 func TestUpdateLogHintPerPlatform(t *testing.T) {
 	previous := updateGOOS
 	t.Cleanup(func() { updateGOOS = previous })
@@ -530,6 +548,8 @@ func TestUpdateLogHintPerPlatform(t *testing.T) {
 	}
 }
 
+// TestUpdateBrokerPermissionDeniedMakesNoDownload checks that a Broker
+// permission failure makes no download and changes no binary.
 func TestUpdateBrokerPermissionDeniedMakesNoDownload(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -556,6 +576,8 @@ func TestUpdateBrokerPermissionDeniedMakesNoDownload(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateBrokerUpToDate checks that an up-to-date Broker reports it and polls
+// no status.
 func TestUpdateBrokerUpToDate(t *testing.T) {
 	newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -575,6 +597,8 @@ func TestUpdateBrokerUpToDate(t *testing.T) {
 	}
 }
 
+// TestUpdateWithoutARunningBrokerReplacesLocally checks that with no running
+// Broker the command replaces the binary locally and starts no service.
 func TestUpdateWithoutARunningBrokerReplacesLocally(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -607,6 +631,8 @@ func TestUpdateWithoutARunningBrokerReplacesLocally(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateApplyFailureLeavesTheBinary checks that a failed apply leaves the
+// binary unchanged.
 func TestUpdateApplyFailureLeavesTheBinary(t *testing.T) {
 	env := newUpdateTestEnv(t)
 	stub := &stubDeps{
@@ -627,6 +653,8 @@ func TestUpdateApplyFailureLeavesTheBinary(t *testing.T) {
 	assertBinaryUnchanged(t, env.target)
 }
 
+// TestUpdateQueriesTheLatestReleaseEndpoint checks that the local path queries
+// the latest release endpoint and applies that version.
 func TestUpdateQueriesTheLatestReleaseEndpoint(t *testing.T) {
 	env := newUpdateTestEnv(t)
 
@@ -638,8 +666,6 @@ func TestUpdateQueriesTheLatestReleaseEndpoint(t *testing.T) {
 	t.Cleanup(srv.Close)
 	updateNewClient = func() *http.Client { return srv.Client() }
 
-	// The release lookup runs against the fake API; Apply stays a test double,
-	// so the command never downloads anything in this test.
 	stub := &stubDeps{
 		brokerUpdateErr: userLevelRefusal,
 		updateAPIBase:   func() string { return srv.URL },
@@ -666,6 +692,8 @@ func TestUpdateQueriesTheLatestReleaseEndpoint(t *testing.T) {
 	}
 }
 
+// TestUpdateUsageErrors checks that usage errors print the command path and the
+// help hint.
 func TestUpdateUsageErrors(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -700,6 +728,7 @@ func TestUpdateUsageErrors(t *testing.T) {
 	}
 }
 
+// TestUpdateHelpPrintsUsage checks that --help prints the update usage.
 func TestUpdateHelpPrintsUsage(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("0.1.1")
 	if got := a.run(context.Background(), []string{"update", "--help"}); got != exitOK {

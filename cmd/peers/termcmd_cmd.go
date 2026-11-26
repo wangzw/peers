@@ -11,9 +11,8 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/termcmd"
 )
 
-// parseAuditLimit parses the --limit value in base 10 and bounds it to the
-// uint32 the local interface accepts. pflag's Uint64 would read a leading zero
-// as an octal prefix, so the value stays text until here.
+// parseAuditLimit parses in base 10 because pflag's Uint64 would read a leading
+// zero as an octal prefix.
 func parseAuditLimit(value string) (uint64, error) {
 	parsed, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
@@ -25,8 +24,6 @@ func parseAuditLimit(value string) (uint64, error) {
 	return parsed, nil
 }
 
-// serviceStatusCommand builds "service status". It connects to a running
-// Broker without launching one and writes the status to standard output.
 func (a *app) serviceStatusCommand() *cobra.Command {
 	var level *levelFlags
 	cmd := &cobra.Command{
@@ -39,9 +36,8 @@ func (a *app) serviceStatusCommand() *cobra.Command {
 				return err
 			}
 			if err := a.deps.runStatus(cmd.Context(), system, level.explicit(), a.stdout); err != nil {
-				// The status already names the cause and the repair; a degraded
-				// Broker that serves diagnostics only makes the command fail
-				// without repeating them on standard error.
+				// The status already names the cause and the repair, so a
+				// diagnostics-only Broker fails without repeating them.
 				if errors.Is(err, termcmd.ErrDiagnosticsOnly) {
 					return commandResult(exitFailure)
 				}
@@ -54,8 +50,6 @@ func (a *app) serviceStatusCommand() *cobra.Command {
 	return cmd
 }
 
-// serviceAuditCommand builds "service audit". It reads the audit log from a
-// running Broker, without launching one, and writes one line per event.
 func (a *app) serviceAuditCommand() *cobra.Command {
 	var (
 		limitText string
@@ -70,8 +64,6 @@ func (a *app) serviceAuditCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Parse in base 10: a leading zero must not select an octal
-			// prefix, so "--limit 010" means ten.
 			limit, err := parseAuditLimit(limitText)
 			if err != nil {
 				return usageError(err)

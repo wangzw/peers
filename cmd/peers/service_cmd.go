@@ -11,9 +11,8 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/termcmd"
 )
 
-// The test seams replace the installation steps so the command tests can check
-// the option mapping and the exit-code mapping without touching the system. The
-// executing account comes from deps.euid.
+// These are test seams replacing the installation steps; the executing account
+// comes from deps.euid.
 var (
 	defaultOptionsFn = service.DefaultOptions
 	installFn        = service.Install
@@ -24,9 +23,6 @@ var (
 	installedFn      = service.Installed
 )
 
-// serviceCommand builds the "service" group: everything that acts on the local
-// Broker. The group itself has no body; the tree-wide fallback prints its usage
-// and rejects an unknown verb.
 func (a *app) serviceCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "service",
@@ -49,9 +45,6 @@ func (a *app) serviceCommand() *cobra.Command {
 	return cmd
 }
 
-// serviceInstallCommand builds "service install". install enables the service
-// and starts it immediately. The level comes from --system/--user or the
-// executing account; --admin-group is accepted only with --system.
 func (a *app) serviceInstallCommand() *cobra.Command {
 	var (
 		adminGroup string
@@ -77,8 +70,8 @@ func (a *app) serviceInstallCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// Only an explicit --admin-group reaches the installation, so it can
-			// tell a group the administrator accepted from the default one.
+			// Only an explicit --admin-group reaches the installation, so a group
+			// the administrator accepted can be told from the default.
 			if cmd.Flags().Changed("admin-group") {
 				opts.AdminGroup = adminGroup
 			}
@@ -86,9 +79,6 @@ func (a *app) serviceInstallCommand() *cobra.Command {
 			if err != nil {
 				var degraded *service.DegradedError
 				if errors.As(err, &degraded) {
-					// The service is installed and running. The summary still
-					// applies; the degraded lines explain what is wrong and the
-					// exit code tells the installer to keep going.
 					a.printInstalled(result, system)
 					a.printServiceDegraded(degraded.State)
 					return commandResult(exitServiceDegraded)
@@ -104,8 +94,6 @@ func (a *app) serviceInstallCommand() *cobra.Command {
 	return cmd
 }
 
-// serviceRemoveCommand builds "service remove", which stops the service and
-// removes its definition but keeps the binary and the data.
 func (a *app) serviceRemoveCommand() *cobra.Command {
 	var level *levelFlags
 	cmd := &cobra.Command{
@@ -133,9 +121,6 @@ func (a *app) serviceRemoveCommand() *cobra.Command {
 	return cmd
 }
 
-// serviceControlCommand builds "service start", "service stop" or
-// "service restart" for the level selected by --system/--user or the executing
-// account.
 func (a *app) serviceControlCommand(name, short string) *cobra.Command {
 	var level *levelFlags
 	cmd := &cobra.Command{
@@ -183,9 +168,6 @@ func (a *app) serviceControlCommand(name, short string) *cobra.Command {
 	return cmd
 }
 
-// serviceNotInstalledError explains that the command's level has no service. A
-// non-root account that only has the system install is pointed at the
-// sudo form of the same command instead of installing anything.
 func (a *app) serviceNotInstalledError(command string, system bool) error {
 	if !system && a.deps.euid() != 0 {
 		systemOpts, err := defaultOptionsFn(true)
@@ -203,7 +185,6 @@ func (a *app) serviceNotInstalledError(command string, system bool) error {
 	return fmt.Errorf("no %s service is installed; install it with `%s`", level, install)
 }
 
-// printServiceAction reports the one-line result of a successful command.
 func (a *app) printServiceAction(command string, system bool) {
 	past := map[string]string{"start": "started", "stop": "stopped", "restart": "restarted"}[command]
 	level := "user"
@@ -213,10 +194,6 @@ func (a *app) printServiceAction(command string, system bool) {
 	_, _ = fmt.Fprintf(a.stdout, "The %s Broker service has %s.\n", level, past)
 }
 
-// printInstalled reports a successful installation: the level, the files it
-// uses, the commands that control it and how to remove it. system selects the
-// level's wording and the sudo prefix. A kept system configuration adds
-// the command that hands it to the administration group.
 func (a *app) printInstalled(result service.Result, system bool) {
 	level, start, sudo := "user service", "login", ""
 	if system {
@@ -244,9 +221,6 @@ func (a *app) printInstalled(result service.Result, system bool) {
 	}
 }
 
-// adminGroupState describes how the installation got the administration group:
-// created by this run, reused with the members it lists, reused with none, or
-// reused without reading the members because the decision was already settled.
 func adminGroupState(result service.Result) string {
 	switch {
 	case result.AdminGroupCreated:
@@ -260,13 +234,10 @@ func adminGroupState(result service.Result) string {
 	}
 }
 
-// printServiceDegraded prints the two status lines the service commands share
-// with the terminal's degraded display.
 func (a *app) printServiceDegraded(state service.DegradedState) {
 	_ = termcmd.WriteDegraded(a.stderr, state.Level, state.Reason, state.Fix)
 }
 
-// printUninstalled reports what remove deleted, or that nothing was installed.
 func (a *app) printUninstalled(result service.Result) {
 	if !result.Removed {
 		_, _ = fmt.Fprintln(a.stdout, "The peers service is not installed.")

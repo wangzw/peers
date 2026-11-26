@@ -12,8 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// startApplyUpdateBroker serves one ApplyUpdate answer at a fresh socket and
-// selects it through findBroker. The answer configures the fake's handlers.
 func startApplyUpdateBroker(t *testing.T, answer func(*fakelocal.Handlers)) (string, *fakelocal.Server) {
 	t.Helper()
 	path := fakelocal.SocketPath(t)
@@ -34,16 +32,14 @@ func withUserSocketPath(t *testing.T, path string) {
 	t.Cleanup(func() { updateUserSocketPath = previous })
 }
 
-// fixedEUID returns an euid function for the tests, replacing the account the
-// test process runs as.
 func fixedEUID(euid int) func() int {
 	return func() int { return euid }
 }
 
-// An ordinary account with no user Broker has the system Broker
-// selected, and the update is applied through it.
+// TestApplyUpdateThroughBrokerUsesSystemBrokerWithoutUserBroker checks that an
+// account with no user Broker applies the update through the system Broker.
 func TestApplyUpdateThroughBrokerUsesSystemBrokerWithoutUserBroker(t *testing.T) {
-	newUpdateTestEnv(t) // euid 1000
+	newUpdateTestEnv(t)
 	path, srv := startApplyUpdateBroker(t, func(h *fakelocal.Handlers) {
 		h.ApplyUpdate = fakelocal.ApplyUpdateAnswer("0.1.1", "0.1.2", true)
 	})
@@ -64,10 +60,10 @@ func TestApplyUpdateThroughBrokerUsesSystemBrokerWithoutUserBroker(t *testing.T)
 	}
 }
 
-// The user Broker that applies the update is this account's own, so the
-// command marks the result as a user update and a timeout names the user's log.
+// TestApplyUpdateThroughBrokerMarksTheUserLevel checks that this account's own
+// user Broker marks the result as a user update.
 func TestApplyUpdateThroughBrokerMarksTheUserLevel(t *testing.T) {
-	newUpdateTestEnv(t) // euid 1000
+	newUpdateTestEnv(t)
 	path, _ := startApplyUpdateBroker(t, func(h *fakelocal.Handlers) {
 		h.ApplyUpdate = fakelocal.ApplyUpdateAnswer("0.1.1", "0.1.2", true)
 	})
@@ -82,10 +78,10 @@ func TestApplyUpdateThroughBrokerMarksTheUserLevel(t *testing.T) {
 	}
 }
 
-// An ordinary account with its own user Broker selected falls back to a
-// local replacement when that Broker declines the update.
+// TestApplyUpdateThroughBrokerFallsBackForUserBroker checks that a declining
+// user Broker falls back to a local replacement.
 func TestApplyUpdateThroughBrokerFallsBackForUserBroker(t *testing.T) {
-	newUpdateTestEnv(t) // euid 1000
+	newUpdateTestEnv(t)
 	path, _ := startApplyUpdateBroker(t, func(h *fakelocal.Handlers) {
 		h.ApplyUpdate = fakelocal.ApplyUpdateFailure(codes.FailedPrecondition, "this Broker cannot replace and restart its binary")
 	})
@@ -97,8 +93,8 @@ func TestApplyUpdateThroughBrokerFallsBackForUserBroker(t *testing.T) {
 	}
 }
 
-// Root has one socket for both levels, and an update there belongs to the
-// system Broker: a refusal is an error, never a local replacement.
+// TestApplyUpdateThroughBrokerRootUsesSystemBroker checks that root's refusal
+// from the system Broker stays an error, not a local replacement.
 func TestApplyUpdateThroughBrokerRootUsesSystemBroker(t *testing.T) {
 	newUpdateTestEnv(t)
 	path, _ := startApplyUpdateBroker(t, func(h *fakelocal.Handlers) {
@@ -118,8 +114,8 @@ func TestApplyUpdateThroughBrokerRootUsesSystemBroker(t *testing.T) {
 	}
 }
 
-// A failure other than failed_precondition is reported, not turned into a
-// local replacement.
+// TestApplyUpdateThroughBrokerReportsOtherErrors checks that a failure other
+// than failed_precondition is reported, not turned into a local replacement.
 func TestApplyUpdateThroughBrokerReportsOtherErrors(t *testing.T) {
 	newUpdateTestEnv(t)
 	path, _ := startApplyUpdateBroker(t, func(h *fakelocal.Handlers) {
@@ -139,8 +135,8 @@ func TestApplyUpdateThroughBrokerReportsOtherErrors(t *testing.T) {
 	}
 }
 
-// Without a running Broker there is nothing to ask, so the command replaces
-// the binary locally.
+// TestApplyUpdateThroughBrokerWithoutRunningBroker checks that with no running
+// Broker the command falls back to a local replacement.
 func TestApplyUpdateThroughBrokerWithoutRunningBroker(t *testing.T) {
 	newUpdateTestEnv(t)
 	previous := findBroker

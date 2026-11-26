@@ -8,16 +8,13 @@ import (
 )
 
 // parseProtocolOverrides reads the protocol versions an end-to-end test asks
-// for. An absent value, a malformed value or one outside uint32 yields 0,
-// which the Broker and the MCP server replace with the version of the
-// generated packages.
+// for; an absent, malformed or out-of-range value yields 0, meaning the
+// generated packages' version.
 func parseProtocolOverrides(getenv func(string) string) (local, link uint32) {
 	return parseProtocolVersion(getenv("PEERS_TEST_LOCAL_PROTOCOL_VERSION")),
 		parseProtocolVersion(getenv("PEERS_TEST_LINK_PROTOCOL_VERSION"))
 }
 
-// parseProtocolVersion parses one override value. ParseUint rejects a sign, so
-// a negative number is an error and becomes 0 like any other malformed value.
 func parseProtocolVersion(v string) uint32 {
 	if v == "" {
 		return 0
@@ -29,9 +26,8 @@ func parseProtocolVersion(v string) uint32 {
 	return uint32(n)
 }
 
-// init replaces the test seam of the command line. The replacement reads the
-// environment on every call rather than caching it at init time, so a test can
-// change the value before it launches a process.
+// init replaces the test seam; the replacement reads the environment on every
+// call, so a test can change a value before launching a process.
 func init() {
 	protocolOverrides = func() (local, link uint32) {
 		return parseProtocolOverrides(os.Getenv)

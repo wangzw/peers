@@ -9,14 +9,12 @@ import (
 	"github.com/wangzw/peers/internal/broker/update"
 )
 
-// stubStatusCall records one call to runStatus.
 type stubStatusCall struct {
 	system   bool
 	explicit bool
 	stdout   io.Writer
 }
 
-// stubAuditCall records one call to runAudit.
 type stubAuditCall struct {
 	system   bool
 	explicit bool
@@ -24,14 +22,7 @@ type stubAuditCall struct {
 	limit    uint32
 }
 
-// stubDeps is the in-package test double for deps. A test configures results
-// either with the override function fields (used when a test needs to observe
-// the context or block) or with the plain result fields. Every call is
-// recorded before the override runs, so a test can assert both that a
-// subcommand reached its dependency and with which arguments.
 type stubDeps struct {
-	// Overrides. When nil, the stub records the call and returns the matching
-	// configured result below.
 	euid              func() int
 	runBroker         func(ctx context.Context, o brokerOptions) error
 	classifyBrokerErr func(err error) startFailure
@@ -39,8 +30,6 @@ type stubDeps struct {
 	runStatus         func(ctx context.Context, system, explicit bool, stdout io.Writer) error
 	runAudit          func(ctx context.Context, system, explicit bool, stdout io.Writer, limit uint32) error
 
-	// Update command overrides. When nil, the stub records the call and uses
-	// the configured results below.
 	updateAPIBase        func() string
 	updateLatest         func(ctx context.Context, client *http.Client, api string) (update.Release, error)
 	updateNewer          func(current, candidate string) bool
@@ -49,7 +38,6 @@ type stubDeps struct {
 	brokerUpdateStatus   func(ctx context.Context) (brokerUpdateStatus, error)
 	restartService       func(ctx context.Context) error
 
-	// Configured results used when the corresponding override is nil.
 	brokerErr      error
 	classifyResult startFailure
 	mcpErr         error
@@ -65,24 +53,20 @@ type stubDeps struct {
 	brokerStatus    brokerUpdateStatus
 	brokerStatusErr error
 
-	// Recorded calls.
-	brokerCalls       []brokerOptions
-	mcpCalls          int
-	statusCalls       []stubStatusCall
-	auditCalls        []stubAuditCall
-	latestCalls       int
-	latestAPI         string
-	latestClient      *http.Client
-	newerCalls        [][2]string
-	applyCalls        []update.ApplyOptions
-	brokerApplyCalls  int
-	brokerStatusCalls int
-	// restartServiceCalls counts service operations reached through the seam.
+	brokerCalls         []brokerOptions
+	mcpCalls            int
+	statusCalls         []stubStatusCall
+	auditCalls          []stubAuditCall
+	latestCalls         int
+	latestAPI           string
+	latestClient        *http.Client
+	newerCalls          [][2]string
+	applyCalls          []update.ApplyOptions
+	brokerApplyCalls    int
+	brokerStatusCalls   int
 	restartServiceCalls int
 }
 
-// deps returns a deps whose function fields record into s and then delegate to
-// the configured override or result.
 func (s *stubDeps) deps() deps {
 	return deps{
 		euid: func() int {
@@ -90,7 +74,7 @@ func (s *stubDeps) deps() deps {
 				return s.euid()
 			}
 			// A non-root account keeps the default-level tests independent of
-			// the account that runs them.
+			// the account running them.
 			return 1000
 		},
 		runBroker: func(ctx context.Context, o brokerOptions) error {
@@ -181,6 +165,8 @@ func (s *stubDeps) deps() deps {
 	}
 }
 
+// TestExitCodeForIsDistinctPerStartupFailure checks that each startup failure
+// maps to a dedicated exit code.
 func TestExitCodeForIsDistinctPerStartupFailure(t *testing.T) {
 	failures := []startFailure{
 		failAlreadyRunning,
@@ -203,6 +189,8 @@ func TestExitCodeForIsDistinctPerStartupFailure(t *testing.T) {
 	}
 }
 
+// TestExitCodeForTable checks exitCodeFor's mapping for every failure,
+// including an unclassified value.
 func TestExitCodeForTable(t *testing.T) {
 	tests := []struct {
 		failure startFailure
@@ -225,9 +213,8 @@ func TestExitCodeForTable(t *testing.T) {
 	}
 }
 
-// TestExitServiceDegraded pins the code the service commands return for a
-// degraded Broker. It is distinct from the generic failure and usage codes so
-// the install script can tell "installed but degraded" from both.
+// TestExitServiceDegraded checks that exitServiceDegraded is 3, shared only
+// with exitAlreadyRunning, and distinct from the generic and usage codes.
 func TestExitServiceDegraded(t *testing.T) {
 	if exitServiceDegraded != 3 {
 		t.Fatalf("exitServiceDegraded = %d, want 3", exitServiceDegraded)
@@ -246,8 +233,6 @@ func TestExitServiceDegraded(t *testing.T) {
 	if exitServiceDegraded != exitAlreadyRunning {
 		t.Errorf("exitServiceDegraded = %d, want the documented shared value %d of exitAlreadyRunning", exitServiceDegraded, exitAlreadyRunning)
 	}
-	// Only failAlreadyRunning reaches the shared value; no other broker start
-	// failure may report a degraded service command's code.
 	for f := failOther; f <= failInvalidListen; f++ {
 		if got := exitCodeFor(f); got == exitServiceDegraded && f != failAlreadyRunning {
 			t.Errorf("exitCodeFor(%d) = %d, want only failAlreadyRunning to share %d", f, got, exitServiceDegraded)

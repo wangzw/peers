@@ -18,12 +18,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// lineWriter is a concurrency-safe io.Writer for a child's standard error that
-// delivers each complete line on lines. os/exec copies the child's output from
-// its own goroutine while the test reads, so both the buffer and the line
-// splitting are guarded. Using cmd.Stderr rather than cmd.StderrPipe leaves the
-// pipe owned by os/exec, so Wait may run concurrently with the test's reads
-// without racing a pipe close.
+// lineWriter is a concurrency-safe child stderr sink delivering complete lines.
+// cmd.Stderr leaves the pipe owned by os/exec, so Wait may run while the test
+// reads without racing a pipe close.
 type lineWriter struct {
 	mu    sync.Mutex
 	buf   bytes.Buffer
@@ -52,16 +49,12 @@ func (w *lineWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// cliResult is one finished terminal command.
 type cliResult struct {
 	stdout string
 	stderr string
 	code   int
 }
 
-// runCLI runs the test binary with the sandbox environment and collects its
-// streams and exit code. A command that does not exit within timeout is
-// killed and fails the test.
 func runCLI(t *testing.T, sb *sandbox, timeout time.Duration, args ...string) cliResult {
 	t.Helper()
 
@@ -92,14 +85,11 @@ func runCLI(t *testing.T, sb *sandbox, timeout time.Duration, args ...string) cl
 	return cliResult{stdout: stdout.String(), stderr: stderr.String(), code: cmd.ProcessState.ExitCode()}
 }
 
-// lineResult is one line read from the MCP server's standard output, or the
-// read error that ended the stream.
 type lineResult struct {
 	line string
 	err  error
 }
 
-// mcpProc is a "peers mcp" child with connected standard streams.
 type mcpProc struct {
 	t      *testing.T
 	cmd    *exec.Cmd
@@ -110,9 +100,6 @@ type mcpProc struct {
 	exited chan struct{}
 }
 
-// startMCP starts "peers mcp" with the sandbox environment. Standard
-// output is read line by line in the background, because the MCP protocol is
-// newline-delimited JSON on that stream.
 func startMCP(t *testing.T, sb *sandbox) *mcpProc {
 	t.Helper()
 
@@ -143,8 +130,8 @@ func startMCP(t *testing.T, sb *sandbox) *mcpProc {
 		_ = outW.Close()
 		t.Fatalf("start peers mcp: %v", err)
 	}
-	// The child holds the other ends. Close the parent's copies so the reader
-	// sees EOF when the child exits and the writer sees a broken pipe.
+	// The child holds the other ends; close the parent's copies so the reader
+	// sees EOF and the writer a broken pipe.
 	_ = inR.Close()
 	_ = outW.Close()
 
@@ -182,7 +169,6 @@ func startMCP(t *testing.T, sb *sandbox) *mcpProc {
 	return p
 }
 
-// writeLine sends one line to the MCP server's standard input.
 func (p *mcpProc) writeLine(line string) {
 	p.t.Helper()
 
@@ -191,7 +177,6 @@ func (p *mcpProc) writeLine(line string) {
 	}
 }
 
-// nextLine waits for one line of the MCP server's standard output.
 func (p *mcpProc) nextLine(timeout time.Duration) string {
 	p.t.Helper()
 
@@ -210,9 +195,6 @@ func (p *mcpProc) nextLine(timeout time.Duration) string {
 	}
 }
 
-// initialize performs the MCP handshake and checks the result frame. The
-// handshake must complete before signals are tested, so a failure to answer is
-// not confused with a failure to exit.
 func (p *mcpProc) initialize() {
 	p.t.Helper()
 
@@ -230,7 +212,6 @@ func (p *mcpProc) initialize() {
 	}
 }
 
-// signal sends sig to the MCP server.
 func (p *mcpProc) signal(sig os.Signal) {
 	p.t.Helper()
 
@@ -239,7 +220,6 @@ func (p *mcpProc) signal(sig os.Signal) {
 	}
 }
 
-// wait waits for the MCP server to exit and returns its exit code.
 func (p *mcpProc) wait(timeout time.Duration) int {
 	p.t.Helper()
 
@@ -261,8 +241,6 @@ func (p *mcpProc) killIfRunning() {
 	<-p.exited
 }
 
-// assertNoBrokerFiles fails when root (searched recursively) contains a lock
-// or socket, which proves a Broker was launched.
 func assertNoBrokerFiles(t *testing.T, root string) {
 	t.Helper()
 
@@ -291,6 +269,8 @@ func countCalls(calls []fakelocal.Call, method string) int {
 	return n
 }
 
+// TestBinaryVersionFromLdflags checks that the built binary reports the version
+// injected with -ldflags.
 func TestBinaryVersionFromLdflags(t *testing.T) {
 	t.Parallel()
 
@@ -306,6 +286,8 @@ func TestBinaryVersionFromLdflags(t *testing.T) {
 	}
 }
 
+// TestBinaryUnknownCommandExitCode checks the exit code for an unknown command
+// and for a bad flag.
 func TestBinaryUnknownCommandExitCode(t *testing.T) {
 	t.Parallel()
 
@@ -327,8 +309,8 @@ func TestBinaryUnknownCommandExitCode(t *testing.T) {
 	}
 }
 
-// TestStatusThroughExplicitSocket covers REQ-broker-config-010: status reads
-// the agents, topics and peers from the selected Broker.
+// TestStatusThroughExplicitSocket checks that status reads the selected Broker
+// given by an explicit socket.
 func TestStatusThroughExplicitSocket(t *testing.T) {
 	t.Parallel()
 
@@ -349,6 +331,8 @@ func TestStatusThroughExplicitSocket(t *testing.T) {
 	}
 }
 
+// TestStatusExplicitSocketUnavailable checks that an unusable explicit socket
+// fails without falling back to the user Broker.
 func TestStatusExplicitSocketUnavailable(t *testing.T) {
 	t.Parallel()
 
@@ -379,6 +363,8 @@ func TestStatusExplicitSocketUnavailable(t *testing.T) {
 	}
 }
 
+// TestStatusPrefersUserBroker checks that status uses this account's user
+// Broker when no socket is given.
 func TestStatusPrefersUserBroker(t *testing.T) {
 	t.Parallel()
 
@@ -401,6 +387,8 @@ func TestStatusPrefersUserBroker(t *testing.T) {
 	}
 }
 
+// TestStatusDoesNotLaunchBroker checks that status reports the two ways to
+// start a Broker instead of launching one.
 func TestStatusDoesNotLaunchBroker(t *testing.T) {
 	t.Parallel()
 
@@ -418,8 +406,8 @@ func TestStatusDoesNotLaunchBroker(t *testing.T) {
 	assertNoBrokerFiles(t, sb.root)
 }
 
-// TestAuditThroughExplicitSocket covers REQ-broker-config-009: audit streams
-// the log from the selected Broker.
+// TestAuditThroughExplicitSocket checks that audit streams the log from the
+// selected Broker and passes the limit.
 func TestAuditThroughExplicitSocket(t *testing.T) {
 	t.Parallel()
 
@@ -441,8 +429,8 @@ func TestAuditThroughExplicitSocket(t *testing.T) {
 	}
 }
 
-// TestAuditPermissionDenied covers REQ-broker-config-009: a caller without
-// read permission gets a permission error.
+// TestAuditPermissionDenied checks that a caller without read permission gets a
+// permission error.
 func TestAuditPermissionDenied(t *testing.T) {
 	t.Parallel()
 
@@ -464,12 +452,12 @@ func TestAuditPermissionDenied(t *testing.T) {
 	}
 }
 
+// TestMCPHandshakeAndSignal checks that the MCP server answers the handshake
+// and exits 0 on SIGTERM.
 func TestMCPHandshakeAndSignal(t *testing.T) {
 	t.Parallel()
 
 	sb := newSandbox(t)
-	// An explicit socket that does not exist makes the selection fail without
-	// launching a Broker.
 	sb.extraEnv = append(sb.extraEnv, "PEERS_TEST_SOCKET="+filepath.Join(sb.root, "none.sock"))
 
 	p := startMCP(t, sb)
@@ -482,8 +470,8 @@ func TestMCPHandshakeAndSignal(t *testing.T) {
 	assertNoBrokerFiles(t, sb.root)
 }
 
-// TestMCPSignalClosesRegistration covers REQ-agent-messaging-034: a signal
-// closes the registration stream, so the agent is unregistered.
+// TestMCPSignalClosesRegistration checks that SIGTERM and SIGINT close the
+// registration stream and exit 0.
 func TestMCPSignalClosesRegistration(t *testing.T) {
 	t.Parallel()
 
@@ -535,9 +523,8 @@ func TestMCPSignalClosesRegistration(t *testing.T) {
 	}
 }
 
-// TestSecondSignalTerminates checks the process-level signal contract: the
-// first SIGTERM cancels the running command, and a second SIGTERM terminates
-// the process even while the command is still shutting down.
+// TestSecondSignalTerminates checks that the first SIGTERM cancels the command
+// and the second terminates the process.
 func TestSecondSignalTerminates(t *testing.T) {
 	t.Parallel()
 
@@ -571,9 +558,8 @@ func TestSecondSignalTerminates(t *testing.T) {
 		}
 	})
 
-	// Read the lines the child hands to cmd.Stderr's writer while Wait runs in
-	// its own goroutine; os/exec's copy goroutine drains the pipe into the
-	// writer before Wait returns.
+	// Read lines while Wait runs in its own goroutine; os/exec's copy goroutine
+	// drains the pipe into the writer before Wait returns.
 	nextLine := func(want string) {
 		t.Helper()
 		select {
@@ -587,7 +573,7 @@ func TestSecondSignalTerminates(t *testing.T) {
 	}
 
 	// Wait for the handler before signalling, so the first SIGTERM cannot race
-	// the installation of the process signal handler.
+	// its installation.
 	nextLine("ready")
 
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {

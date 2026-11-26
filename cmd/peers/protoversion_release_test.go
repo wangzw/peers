@@ -9,16 +9,12 @@ import (
 	"testing"
 )
 
-// releaseOverrideChildEnv marks the re-executed test binary. The environment
-// variables that ask for protocol overrides are set before the child starts, so
-// its release seam sees them from process start rather than through t.Setenv in
-// the test process.
+// releaseOverrideChildEnv marks the re-executed test binary of
+// TestProtocolOverridesIgnoredInReleaseBuild.
 const releaseOverrideChildEnv = "PEERS_TEST_PROTOCOL_OVERRIDE_CHILD"
 
-// TestProtocolOverridesIgnoredInReleaseBuild checks that a build without the
-// peers_testenv tag keeps the production seam. The check runs in a child
-// process of the same test binary so the environment is fixed before the
-// process starts and the test process keeps its own environment.
+// TestProtocolOverridesIgnoredInReleaseBuild checks that a build without
+// peers_testenv ignores the protocol override variables.
 func TestProtocolOverridesIgnoredInReleaseBuild(t *testing.T) {
 	if os.Getenv(releaseOverrideChildEnv) == "1" {
 		local, link := protocolOverrides()
@@ -35,9 +31,6 @@ func TestProtocolOverridesIgnoredInReleaseBuild(t *testing.T) {
 	}
 }
 
-// releaseChildEnv is the parent environment with the override variables set to
-// 7 and the child marker added. The test process's own values are dropped so a
-// caller that already exported them cannot decide what the child sees.
 func releaseChildEnv() []string {
 	dropped := []string{
 		releaseOverrideChildEnv + "=",

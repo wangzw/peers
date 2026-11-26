@@ -13,8 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// uninstallSeams holds the replacements for one test. A nil field keeps the
-// production value.
 type uninstallSeams struct {
 	options         func(bool) (service.Options, error)
 	installed       func(service.Options) (bool, error)
@@ -123,14 +121,12 @@ func withUninstallSeams(t *testing.T, s uninstallSeams) {
 	}
 }
 
-// uninstallRecorder records the steps a test observed.
 type uninstallRecorder struct {
 	steps     []string
 	mcpFor    string
 	mcpBinary string
 }
 
-// uninstallOptions returns test options for either level.
 func uninstallOptions(root string, system bool, euid int) service.Options {
 	return service.Options{
 		System: system,
@@ -143,6 +139,8 @@ func uninstallOptions(root string, system bool, euid int) service.Options {
 	}
 }
 
+// TestUninstallUsageErrors checks that an unknown flag or a positional argument
+// is a usage error.
 func TestUninstallUsageErrors(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -171,6 +169,7 @@ func TestUninstallUsageErrors(t *testing.T) {
 	}
 }
 
+// TestUninstallHelp checks that help lists the command's flags.
 func TestUninstallHelp(t *testing.T) {
 	a, stdout, _, _ := newDispatchApp("dev")
 	if got := a.run(context.Background(), []string{"uninstall", "-h"}); got != exitOK {
@@ -184,7 +183,8 @@ func TestUninstallHelp(t *testing.T) {
 	}
 }
 
-// Recorded root uninstall: the system steps run and the data is purged.
+// TestUninstallRootSystemLevel checks that a root uninstall removes the system
+// level with the data purged.
 func TestUninstallRootSystemLevel(t *testing.T) {
 	root := t.TempDir()
 	binary := "/usr/local/libexec/peers"
@@ -268,6 +268,8 @@ func TestUninstallRootSystemLevel(t *testing.T) {
 	}
 }
 
+// TestUninstallRootPurgeSkipsDataQuestion checks that --purge purges the data
+// without asking.
 func TestUninstallRootPurgeSkipsDataQuestion(t *testing.T) {
 	root := t.TempDir()
 	purged := false
@@ -312,6 +314,8 @@ func TestUninstallRootPurgeSkipsDataQuestion(t *testing.T) {
 	}
 }
 
+// TestUninstallRootPurgeWithTerminalSkipsDataQuestion checks that --purge does
+// not become the data question when a terminal is present.
 func TestUninstallRootPurgeWithTerminalSkipsDataQuestion(t *testing.T) {
 	root := t.TempDir()
 	purged := false
@@ -345,8 +349,6 @@ func TestUninstallRootPurgeWithTerminalSkipsDataQuestion(t *testing.T) {
 
 	a, _, stderr, _ := newDispatchApp("dev")
 	a.deps.euid = func() int { return 0 }
-	// --purge deletes the data without asking, so a terminal must not turn it
-	// into the data question. Answering n would keep the data if it did.
 	withTerminalAnswer(t, a, "n\n")
 	if got := a.run(context.Background(), []string{"uninstall", "--purge"}); got != exitOK {
 		t.Fatalf("run(uninstall --purge) = %d, want %d (stderr %s)", got, exitOK, stderr)
@@ -359,6 +361,8 @@ func TestUninstallRootPurgeWithTerminalSkipsDataQuestion(t *testing.T) {
 	}
 }
 
+// TestUninstallRootNotInstalled checks that a root uninstall with nothing
+// installed reports it and changes nothing.
 func TestUninstallRootNotInstalled(t *testing.T) {
 	rec := &uninstallRecorder{}
 	withUninstallSeams(t, uninstallSeams{
@@ -388,6 +392,8 @@ func TestUninstallRootNotInstalled(t *testing.T) {
 	}
 }
 
+// TestUninstallRootNoServiceInstallation checks that a --no-service installation
+// is found through the MCP registration and removed.
 func TestUninstallRootNoServiceInstallation(t *testing.T) {
 	root := t.TempDir()
 	resolved := "/usr/local/bin/peers"
@@ -452,6 +458,8 @@ func TestUninstallRootNoServiceInstallation(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountNoServiceAtDefaultPrefix checks that a user installation
+// without a service at the default prefix is removed.
 func TestUninstallAccountNoServiceAtDefaultPrefix(t *testing.T) {
 	root := t.TempDir()
 	exe := "/home/alice/.local/bin/peers"
@@ -514,6 +522,8 @@ func TestUninstallAccountNoServiceAtDefaultPrefix(t *testing.T) {
 	}
 }
 
+// TestUninstallNoServiceOutsideTheDefaultPrefix checks that a downloaded copy
+// outside the installation prefix is left alone.
 func TestUninstallNoServiceOutsideTheDefaultPrefix(t *testing.T) {
 	root := t.TempDir()
 	exe := "/home/alice/downloads/peers"
@@ -557,6 +567,8 @@ func TestUninstallNoServiceOutsideTheDefaultPrefix(t *testing.T) {
 	}
 }
 
+// TestUninstallKeepsADownloadedCopyWhenNoUnitFileExists checks that the running
+// executable is kept when it is not the installation binary.
 func TestUninstallKeepsADownloadedCopyWhenNoUnitFileExists(t *testing.T) {
 	root := t.TempDir()
 	exe := "/home/alice/downloads/peers"
@@ -621,6 +633,8 @@ func TestUninstallKeepsADownloadedCopyWhenNoUnitFileExists(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountUserLevelKeepsData checks that a user uninstall without
+// --purge keeps the data.
 func TestUninstallAccountUserLevelKeepsData(t *testing.T) {
 	root := t.TempDir()
 	binary := "/home/alice/bin/peers"
@@ -687,6 +701,8 @@ func TestUninstallAccountUserLevelKeepsData(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountHintsAtSystemLevel checks that a user uninstall reports
+// the remaining system installation.
 func TestUninstallAccountHintsAtSystemLevel(t *testing.T) {
 	root := t.TempDir()
 	withUninstallSeams(t, uninstallSeams{
@@ -725,6 +741,8 @@ func TestUninstallAccountHintsAtSystemLevel(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountOnlySystemRefused checks that an account with only a
+// system installation gets the rerunnable sudo command and exit failure.
 func TestUninstallAccountOnlySystemRefused(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -775,9 +793,9 @@ func TestUninstallAccountOnlySystemRefused(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountOnlySystemDoesNotRunSudo checks that the refused command
+// reports the sudo command without running any step.
 func TestUninstallAccountOnlySystemDoesNotRunSudo(t *testing.T) {
-	// The command reports the sudo command instead of running it, so it exits
-	// before any service step and leaves stdio alone.
 	rec := &uninstallRecorder{}
 	withUninstallSeams(t, uninstallSeams{
 		options: func(system bool) (service.Options, error) {
@@ -809,8 +827,6 @@ func TestUninstallAccountOnlySystemDoesNotRunSudo(t *testing.T) {
 	}
 }
 
-// onlySystemSudoSeams installs the seams for an account whose only
-// installation is a system installation. sudo records the call it receives.
 func onlySystemSudoSeams(t *testing.T, exe string, sudo func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error) {
 	t.Helper()
 	withUninstallSeams(t, uninstallSeams{
@@ -824,6 +840,8 @@ func onlySystemSudoSeams(t *testing.T, exe string, sudo func(context.Context, st
 	})
 }
 
+// TestUninstallAccountOnlySystemYesRunsSudo checks that --yes reruns the command
+// through sudo with --yes.
 func TestUninstallAccountOnlySystemYesRunsSudo(t *testing.T) {
 	var (
 		gotExe  string
@@ -859,6 +877,8 @@ func TestUninstallAccountOnlySystemYesRunsSudo(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountOnlySystemTerminalAnswersYesRunsSudo checks that a
+// terminal answer of y reruns through sudo without adding --yes.
 func TestUninstallAccountOnlySystemTerminalAnswersYesRunsSudo(t *testing.T) {
 	cases := []struct {
 		name string
@@ -866,9 +886,6 @@ func TestUninstallAccountOnlySystemTerminalAnswersYesRunsSudo(t *testing.T) {
 		want []string
 	}{
 		{
-			// The terminal answer approves only the sudo rerun. The child
-			// inherits the terminal and asks the data question itself, so
-			// --yes must not be added (REQ-053).
 			name: "leaves the data question to the child",
 			args: []string{"uninstall"},
 			want: []string{"uninstall"},
@@ -907,6 +924,8 @@ func TestUninstallAccountOnlySystemTerminalAnswersYesRunsSudo(t *testing.T) {
 	}
 }
 
+// TestUninstallAccountOnlySystemTerminalDeclines checks that a declined question
+// prints the rerunnable command and runs nothing.
 func TestUninstallAccountOnlySystemTerminalDeclines(t *testing.T) {
 	onlySystemSudoSeams(t, "/usr/local/bin/peers",
 		func(context.Context, string, []string, io.Reader, io.Writer, io.Writer) error {
@@ -928,6 +947,8 @@ func TestUninstallAccountOnlySystemTerminalDeclines(t *testing.T) {
 	}
 }
 
+// TestUninstallStopsAfterAFailedStep checks that a failed step names itself and
+// stops the later steps.
 func TestUninstallStopsAfterAFailedStep(t *testing.T) {
 	rec := &uninstallRecorder{}
 	withUninstallSeams(t, uninstallSeams{
@@ -965,6 +986,8 @@ func TestUninstallStopsAfterAFailedStep(t *testing.T) {
 	}
 }
 
+// TestUninstallKeepsABinaryOfAnotherAccount checks that a user uninstall keeps a
+// binary owned by another account.
 func TestUninstallKeepsABinaryOfAnotherAccount(t *testing.T) {
 	root := t.TempDir()
 	binary := "/usr/local/bin/peers"
@@ -1013,6 +1036,8 @@ func TestUninstallKeepsABinaryOfAnotherAccount(t *testing.T) {
 	}
 }
 
+// TestUninstallReportsPathsRemovedBeforeAPurgeFailure checks that a mid-purge
+// failure reports the removed paths before the error.
 func TestUninstallReportsPathsRemovedBeforeAPurgeFailure(t *testing.T) {
 	root := t.TempDir()
 	withUninstallSeams(t, uninstallSeams{
@@ -1062,6 +1087,8 @@ func TestUninstallReportsPathsRemovedBeforeAPurgeFailure(t *testing.T) {
 	}
 }
 
+// TestUninstallRejectsRelativeHomeBeforeAnyStep checks that a relative home
+// directory fails before any step runs.
 func TestUninstallRejectsRelativeHomeBeforeAnyStep(t *testing.T) {
 	rec := &uninstallRecorder{}
 	withUninstallSeams(t, uninstallSeams{
@@ -1113,6 +1140,7 @@ func TestUninstallRejectsRelativeHomeBeforeAnyStep(t *testing.T) {
 	}
 }
 
+// TestYesAnswer checks which answers count as yes.
 func TestYesAnswer(t *testing.T) {
 	for _, answer := range []string{"y", "Y", "yes", "YES"} {
 		if !isYes(answer) {
@@ -1124,7 +1152,6 @@ func TestYesAnswer(t *testing.T) {
 			t.Errorf("isYes(%q) = true, want false", answer)
 		}
 	}
-	// readAnswer trims the line before confirm consults isYes.
 	line, err := readAnswer(strings.NewReader(" yes \n"))
 	if err != nil {
 		t.Fatalf("readAnswer: %v", err)
@@ -1134,9 +1161,6 @@ func TestYesAnswer(t *testing.T) {
 	}
 }
 
-// runBinaryDeletion runs a system uninstall whose service definition
-// names binary and whose executable seam returns exe. It reports whether the
-// binary was removed and the command's output.
 func runBinaryDeletion(t *testing.T, binary, exe string) (removed bool, output string) {
 	t.Helper()
 	root := t.TempDir()
@@ -1181,6 +1205,8 @@ func runBinaryDeletion(t *testing.T, binary, exe string) (removed bool, output s
 	return removed, stdout.String()
 }
 
+// TestUninstallKeepsABinaryThatIsNotPeers checks that a binary that is not this
+// peers binary is kept and reported.
 func TestUninstallKeepsABinaryThatIsNotPeers(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -1226,9 +1252,6 @@ func TestUninstallKeepsABinaryThatIsNotPeers(t *testing.T) {
 	}
 }
 
-// runBinaryDeletionWithScript is runBinaryDeletion with the service binary
-// written as an executable script. It returns the path the script would create
-// if it ran.
 func runBinaryDeletionWithScript(t *testing.T, binary, exe, script string) (removed bool, output, marker string) {
 	t.Helper()
 	root := t.TempDir()
@@ -1276,6 +1299,8 @@ func runBinaryDeletionWithScript(t *testing.T, binary, exe, script string) (remo
 	return removed, stdout.String(), marker
 }
 
+// TestUninstallRemovesTheServiceBinary checks that the service binary is
+// removed.
 func TestUninstallRemovesTheServiceBinary(t *testing.T) {
 	root := t.TempDir()
 	binary := "/usr/local/bin/peers"
@@ -1326,13 +1351,11 @@ func TestUninstallRemovesTheServiceBinary(t *testing.T) {
 	}
 }
 
-// writeUnderRoot creates a file at path beneath root.
 func writeUnderRoot(t *testing.T, root, path string) {
 	t.Helper()
 	writeUnderRootWith(t, root, path, "content\n")
 }
 
-// writeUnderRootWith creates a file at path beneath root with content.
 func writeUnderRootWith(t *testing.T, root, path, content string) {
 	t.Helper()
 	full := filepath.Join(root, path)
@@ -1344,7 +1367,6 @@ func writeUnderRootWith(t *testing.T, root, path, content string) {
 	}
 }
 
-// completionMarker returns content carrying the marker cobra writes for path.
 func completionMarker(path string) string {
 	switch {
 	case strings.HasSuffix(path, "_peers"):
@@ -1356,6 +1378,8 @@ func completionMarker(path string) string {
 	}
 }
 
+// TestUninstallWithoutTerminalNeedsYes checks that a data-removing uninstall
+// without a terminal fails and names --yes.
 func TestUninstallWithoutTerminalNeedsYes(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -1399,7 +1423,6 @@ func TestUninstallWithoutTerminalNeedsYes(t *testing.T) {
 
 			a, stdout, stderr, _ := newDispatchApp("dev")
 			a.deps.euid = func() int { return tc.euid }
-			// The default stdin is a strings.Reader, not a terminal.
 			if got := a.run(context.Background(), tc.args); got != exitFailure {
 				t.Fatalf("run(%q) = %d, want %d (stdout %q, stderr %q)", tc.args, got, exitFailure, stdout, stderr)
 			}
@@ -1413,9 +1436,8 @@ func TestUninstallWithoutTerminalNeedsYes(t *testing.T) {
 	}
 }
 
-// TestUninstallPurgeWithoutTerminalNeedsYes checks that --purge is not a
-// substitute for --yes when there is no terminal: the command fails before
-// removing anything.
+// TestUninstallPurgeWithoutTerminalNeedsYes checks that --purge still needs
+// --yes when there is no terminal.
 func TestUninstallPurgeWithoutTerminalNeedsYes(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -1458,7 +1480,6 @@ func TestUninstallPurgeWithoutTerminalNeedsYes(t *testing.T) {
 
 			a, stdout, stderr, _ := newDispatchApp("dev")
 			a.deps.euid = func() int { return tc.euid }
-			// The default stdin is a strings.Reader, not a terminal.
 			if got := a.run(context.Background(), []string{"uninstall", "--purge"}); got != exitFailure {
 				t.Fatalf("run(uninstall --purge) = %d, want %d (stdout %q, stderr %q)", got, exitFailure, stdout, stderr)
 			}
@@ -1472,8 +1493,8 @@ func TestUninstallPurgeWithoutTerminalNeedsYes(t *testing.T) {
 	}
 }
 
-// TestUninstallAnswersYesToTheDataQuestion checks the terminal branch: the
-// question is asked on standard error, and an answer of y deletes the data.
+// TestUninstallAnswersYesToTheDataQuestion checks that the question goes to
+// standard error and an answer of y deletes the data.
 func TestUninstallAnswersYesToTheDataQuestion(t *testing.T) {
 	root := t.TempDir()
 	purged := false
@@ -1518,6 +1539,8 @@ func TestUninstallAnswersYesToTheDataQuestion(t *testing.T) {
 	}
 }
 
+// TestUninstallRemovesCompletionsAndManPages checks that the installation's
+// completion files and man pages are removed and foreign ones kept.
 func TestUninstallRemovesCompletionsAndManPages(t *testing.T) {
 	t.Run("system installation", func(t *testing.T) {
 		root := t.TempDir()
@@ -1535,8 +1558,6 @@ func TestUninstallRemovesCompletionsAndManPages(t *testing.T) {
 			}
 			writeUnderRoot(t, root, path)
 		}
-		// Neither starts with "peers" followed by a dot or a hyphen, so the
-		// narrow man-page patterns must leave both alone.
 		unrelated := []string{
 			"/usr/local/share/man/man1/other.1",
 			"/usr/local/share/man/man1/peerstat.1",
@@ -1591,8 +1612,6 @@ func TestUninstallRemovesCompletionsAndManPages(t *testing.T) {
 		for _, path := range installed {
 			writeUnderRootWith(t, root, path, completionMarker(path))
 		}
-		// The install script never writes the user zsh completion, so
-		// uninstall must leave a file at that path alone.
 		untouched := "/home/alice/.local/share/zsh/site-functions/_peers"
 		writeUnderRoot(t, root, untouched)
 
@@ -1632,8 +1651,7 @@ func TestUninstallRemovesCompletionsAndManPages(t *testing.T) {
 }
 
 // TestUninstallKeepsForeignFilesAtInstallationPaths checks that a file without
-// cobra's marker and a directory with an installation file's name are kept and
-// reported instead of deleted.
+// cobra's marker and a directory at an installation path are kept and reported.
 func TestUninstallKeepsForeignFilesAtInstallationPaths(t *testing.T) {
 	root := t.TempDir()
 	foreign := "/usr/local/share/bash-completion/completions/peers"

@@ -12,20 +12,17 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/termcmd"
 )
 
-// configGetCall records one runConfigGet call.
 type configGetCall struct {
 	key string
 	out io.Writer
 }
 
-// configSetCall records one runConfigSet call.
 type configSetCall struct {
 	key   string
 	value string
 	out   io.Writer
 }
 
-// peerConnectCall records one runPeerConnect call.
 type peerConnectCall struct {
 	address string
 	key     string
@@ -34,7 +31,6 @@ type peerConnectCall struct {
 	warn    io.Writer
 }
 
-// termcmdStub records the calls the terminal commands make into deps.
 type termcmdStub struct {
 	statusCalls    int
 	statusSystem   bool
@@ -135,11 +131,12 @@ func newTermcmdApp(s *termcmdStub) (*app, *bytes.Buffer, *bytes.Buffer) {
 	return &app{stdout: stdout, stderr: stderr, deps: s.deps()}, stdout, stderr
 }
 
-// runService runs "peers service" with args through the command tree.
 func runService(a *app, args ...string) int {
 	return a.run(context.Background(), append([]string{"service"}, args...))
 }
 
+// TestStatusCallsRunner checks that service status reaches the runner with the
+// standard output writer.
 func TestStatusCallsRunner(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -161,6 +158,8 @@ func TestStatusCallsRunner(t *testing.T) {
 	}
 }
 
+// TestStatusErrorExitsOne checks that a status error writes one line and exits
+// 1.
 func TestStatusErrorExitsOne(t *testing.T) {
 	stub := &termcmdStub{statusErr: errors.New("permission_denied: x")}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -176,8 +175,8 @@ func TestStatusErrorExitsOne(t *testing.T) {
 	}
 }
 
-// TestStatusDiagnosticsOnlyExitsOne checks that the status command fails
-// without adding a line: the status output already names the cause and repair.
+// TestStatusDiagnosticsOnlyExitsOne checks that a diagnostics-only status fails
+// without adding a line to either stream.
 func TestStatusDiagnosticsOnlyExitsOne(t *testing.T) {
 	stub := &termcmdStub{statusErr: termcmd.ErrDiagnosticsOnly}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -193,8 +192,8 @@ func TestStatusDiagnosticsOnlyExitsOne(t *testing.T) {
 	}
 }
 
-// TestStatusRejectsUnknownFlag checks the usage-error contract on the command
-// line: a bad flag exits with the usage code before the runner is reached.
+// TestStatusRejectsUnknownFlag checks that an unknown status flag is a usage
+// error before the runner is reached.
 func TestStatusRejectsUnknownFlag(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -213,6 +212,8 @@ func TestStatusRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
+// TestStatusRejectsArguments checks that service status rejects a positional
+// argument.
 func TestStatusRejectsArguments(t *testing.T) {
 	stub := &termcmdStub{}
 	a, _, stderr := newTermcmdApp(stub)
@@ -228,6 +229,8 @@ func TestStatusRejectsArguments(t *testing.T) {
 	}
 }
 
+// TestAuditRejectsArguments checks that service audit rejects a positional
+// argument.
 func TestAuditRejectsArguments(t *testing.T) {
 	stub := &termcmdStub{}
 	a, _, stderr := newTermcmdApp(stub)
@@ -243,6 +246,8 @@ func TestAuditRejectsArguments(t *testing.T) {
 	}
 }
 
+// TestAuditLimit checks that --limit is read as a decimal count, with a leading
+// zero meaning decimal.
 func TestAuditLimit(t *testing.T) {
 	cases := []struct {
 		name string
@@ -272,6 +277,8 @@ func TestAuditLimit(t *testing.T) {
 	}
 }
 
+// TestAuditLimitRange checks that an out-of-range, negative or non-numeric
+// --limit is a usage error.
 func TestAuditLimitRange(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -281,8 +288,6 @@ func TestAuditLimitRange(t *testing.T) {
 		{"above uint32", []string{"--limit", "4294967296"}, "peers service audit: "},
 		{"negative", []string{"--limit", "-1"}, "peers service audit: "},
 		{"not a number", []string{"--limit", "x"}, "peers service audit: "},
-		// Long flags use two dashes; a single dash is not accepted, and the
-		// flag parser rejects it before the command body runs.
 		{"single dash", []string{"-limit", "7"}, ""},
 	}
 	for _, tc := range cases {
@@ -306,6 +311,7 @@ func TestAuditLimitRange(t *testing.T) {
 	}
 }
 
+// TestAuditErrorExitsOne checks that an audit error writes one line and exits 1.
 func TestAuditErrorExitsOne(t *testing.T) {
 	stub := &termcmdStub{auditErr: errors.New("permission_denied: x")}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -321,9 +327,8 @@ func TestAuditErrorExitsOne(t *testing.T) {
 	}
 }
 
-// TestLevelCommandsPassTheExplicitLevel checks that the level-aware commands
-// report whether a level option named the level. The selector uses it to choose
-// the error text when no Broker answers.
+// TestLevelCommandsPassTheExplicitLevel checks that each level-aware command
+// reports the selected level and whether a flag named it.
 func TestLevelCommandsPassTheExplicitLevel(t *testing.T) {
 	cases := []struct {
 		args         []string
@@ -366,9 +371,8 @@ func TestLevelCommandsPassTheExplicitLevel(t *testing.T) {
 	}
 }
 
-// TestServiceLevelFlagsAreMutuallyExclusive checks the shared level rule on the
-// commands that act on the Broker: status and audit still reject the conflict
-// before reaching the runner.
+// TestServiceLevelFlagsAreMutuallyExclusive checks that --system and --user
+// together are a usage error on every level-aware command.
 func TestServiceLevelFlagsAreMutuallyExclusive(t *testing.T) {
 	for _, name := range []string{"status", "audit", "online", "offline"} {
 		t.Run(name, func(t *testing.T) {

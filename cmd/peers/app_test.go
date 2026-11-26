@@ -14,14 +14,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The release contract: the version variable keeps its package path, name and
-// type so -ldflags "-X main.version=<version>" keeps working.
+// The release contract: version keeps its package path, name and type so
+// -ldflags "-X main.version=<version>" keeps working.
 var _ string = version
 
-// TestRunGuardedTurnsAPanicIntoExitFailure keeps a crash out of exit code 2:
-// the update contract reads 2 as "this binary has no post-update command" and
-// would continue an update whose step crashed. The Go runtime's own panic exit
-// status is 2, so the entry point must recover first.
+// TestRunGuardedTurnsAPanicIntoExitFailure checks that a panic becomes
+// exitFailure rather than the Go runtime's status 2.
 func TestRunGuardedTurnsAPanicIntoExitFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	code := runGuarded(&stderr, func() int { panic("boom") })
@@ -47,6 +45,8 @@ func newDispatchApp(ver string) (*app, *bytes.Buffer, *bytes.Buffer, *stubDeps) 
 	return a, stdout, stderr, stub
 }
 
+// TestVersionPrintsInjectedVersion checks that --version writes the injected
+// version to stdout and exits 0.
 func TestVersionPrintsInjectedVersion(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("v1.2.3")
 
@@ -61,6 +61,8 @@ func TestVersionPrintsInjectedVersion(t *testing.T) {
 	}
 }
 
+// TestMainVersionContract checks that the default version is dev and --version
+// reports it.
 func TestMainVersionContract(t *testing.T) {
 	if version != "dev" {
 		t.Fatalf("version = %q, want the default %q", version, "dev")
@@ -78,6 +80,8 @@ func TestMainVersionContract(t *testing.T) {
 	}
 }
 
+// TestVersionRejectsExtraArguments checks that --version with an argument is a
+// usage error.
 func TestVersionRejectsExtraArguments(t *testing.T) {
 	a, _, _, _ := newDispatchApp("v1.2.3")
 
@@ -86,6 +90,8 @@ func TestVersionRejectsExtraArguments(t *testing.T) {
 	}
 }
 
+// TestNoArgumentsPrintsUsageToStderr checks that a bare invocation prints the
+// usage to standard error and exits with the usage code.
 func TestNoArgumentsPrintsUsageToStderr(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
 
@@ -103,6 +109,8 @@ func TestNoArgumentsPrintsUsageToStderr(t *testing.T) {
 	}
 }
 
+// TestHelpPrintsUsageToStdout checks that -h, --help and help print the usage
+// to stdout without revealing hidden commands.
 func TestHelpPrintsUsageToStdout(t *testing.T) {
 	for _, arg := range []string{"-h", "--help", "help"} {
 		t.Run(arg, func(t *testing.T) {
@@ -128,6 +136,8 @@ func TestHelpPrintsUsageToStdout(t *testing.T) {
 	}
 }
 
+// TestHelpListsTheThreeCommandGroups checks that help lists the three groups
+// and the completion command.
 func TestHelpListsTheThreeCommandGroups(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
 
@@ -145,10 +155,8 @@ func TestHelpListsTheThreeCommandGroups(t *testing.T) {
 	}
 }
 
-// TestCommandShortDescriptionsStartWithCapitalLetter keeps the help listing
-// consistent. Every command in the tree, hidden ones included, says what it
-// does in one line that starts with a capital letter; a command without a
-// Short is caught by the same walk.
+// TestCommandShortDescriptionsStartWithCapitalLetter checks that every command,
+// hidden ones included, has a Short starting with a capital letter.
 func TestCommandShortDescriptionsStartWithCapitalLetter(t *testing.T) {
 	a, _, _, _ := newDispatchApp("dev")
 
@@ -166,6 +174,8 @@ func TestCommandShortDescriptionsStartWithCapitalLetter(t *testing.T) {
 	walk(a.newRootCommand())
 }
 
+// TestCompletionBashWritesAScript checks that completion bash writes a bash
+// completion script and exits 0.
 func TestCompletionBashWritesAScript(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
 
@@ -180,6 +190,8 @@ func TestCompletionBashWritesAScript(t *testing.T) {
 	}
 }
 
+// TestUnknownOptionIsUsageError checks that an unknown flag is a usage error
+// naming the flag.
 func TestUnknownOptionIsUsageError(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
 
@@ -194,6 +206,8 @@ func TestUnknownOptionIsUsageError(t *testing.T) {
 	}
 }
 
+// TestUsageNamesBrokerFlags checks that service run --help lists its Broker
+// flags.
 func TestUsageNamesBrokerFlags(t *testing.T) {
 	a, stdout, _, _ := newDispatchApp("dev")
 
@@ -207,6 +221,8 @@ func TestUsageNamesBrokerFlags(t *testing.T) {
 	}
 }
 
+// TestUsageNamesServiceInstallFlags checks that service install --help lists
+// its installation flags.
 func TestUsageNamesServiceInstallFlags(t *testing.T) {
 	a, stdout, _, _ := newDispatchApp("dev")
 
@@ -220,6 +236,8 @@ func TestUsageNamesServiceInstallFlags(t *testing.T) {
 	}
 }
 
+// TestUnknownCommand checks that an unknown command is a usage error with the
+// help hint.
 func TestUnknownCommand(t *testing.T) {
 	a, _, stderr, _ := newDispatchApp("dev")
 
@@ -234,15 +252,11 @@ func TestUnknownCommand(t *testing.T) {
 	}
 }
 
-// TestParentCommandsExitWithUsage covers the fallback for a command that takes
-// subcommands but has no body: the completion group and a missing help topic
-// are usage errors, and completion rejects an unknown shell and an extra
-// argument.
+// TestParentCommandsExitWithUsage checks that a command taking subcommands but
+// having no body treats a bare call or a bad argument as a usage error.
 func TestParentCommandsExitWithUsage(t *testing.T) {
 	cases := []struct {
-		args []string
-		// wantStderr, when set, is the exact diagnostic. Empty means only that
-		// some usage or reason must be written.
+		args       []string
 		wantStderr string
 	}{
 		{args: []string{"completion"}},
@@ -298,6 +312,8 @@ func TestCompletionDoesNotOfferHelp(t *testing.T) {
 	}
 }
 
+// TestUnknownInternalCommandIsHidden checks that the internal command reports
+// an unknown subcommand as a usage error.
 func TestUnknownInternalCommandIsHidden(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -329,6 +345,8 @@ func TestUnknownInternalCommandIsHidden(t *testing.T) {
 	}
 }
 
+// TestSignalContextCancelsOnSIGTERM checks that SIGTERM cancels the signal
+// context.
 func TestSignalContextCancelsOnSIGTERM(t *testing.T) {
 	ctx, stop := newSignalContext(context.Background())
 	defer stop()

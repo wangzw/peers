@@ -12,34 +12,27 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/termcmd"
 )
 
-// protocolOverrides returns the local and link protocol versions sent in the
-// version handshake. Zero means the version of the generated localpb and
-// linkpb packages, which is the only value a release build uses. The version
-// compatibility unit replaces this function in peers_testenv builds.
+// protocolOverrides returns the local and link protocol versions for the
+// handshake; zero means the generated packages' version. Only the peers_testenv
+// build replaces it.
 var protocolOverrides = func() (local, link uint32) { return 0, 0 }
 
-// brokerRun is the process entry point behind the broker subcommand. It is a
-// variable so a test can record the RunOptions the command line builds without
-// starting a real Broker.
+// brokerRun is the process entry point behind the broker subcommand, a variable
+// so a test can record the RunOptions without starting a real Broker.
 var brokerRun = broker.Run
 
-// mcpserver.FindBrokerWithDial has the signature the terminal commands select
-// with; the returned dialer checks the peer of the Broker socket.
 var _ termcmd.Selector = mcpserver.FindBrokerWithDial
 
-// findBroker is the account-based selector the terminal commands use. It is a
-// variable so a test can point the real dep closures at a fake Broker while
-// exercising the production wiring.
+// findBroker is the account-based selector the terminal commands use; it is a
+// variable so a test can point the real dep closures at a fake Broker.
 var findBroker termcmd.Selector = mcpserver.FindBrokerWithDial
 
-// findBrokerForLevel is the selector the commands that take --system or --user
-// use. It is a variable for the same reason as findBroker.
+// findBrokerForLevel is the selector for commands that take --system or --user;
+// it is a variable for the same reason as findBroker.
 var findBrokerForLevel = mcpserver.FindBrokerWithDialForLevel
 
 var _ func(context.Context, bool, bool) (string, termcmd.Dialer, error) = findBrokerForLevel
 
-// selectorForLevel turns the level-aware selector into the termcmd.Selector the
-// shared runners take. explicit says whether a level option named the level.
 func selectorForLevel(system, explicit bool) termcmd.Selector {
 	return func(ctx context.Context) (string, termcmd.Dialer, error) {
 		return findBrokerForLevel(ctx, system, explicit)
@@ -47,7 +40,7 @@ func selectorForLevel(system, explicit bool) termcmd.Selector {
 }
 
 // realDeps connects the command line to the real Broker and MCP server entry
-// points. It is called once by main before any subcommand runs.
+// points; main calls it once before any subcommand runs.
 func realDeps(version string) deps {
 	d := deps{
 		euid: os.Geteuid,
@@ -115,10 +108,8 @@ func realDeps(version string) deps {
 	return d
 }
 
-// classifyBrokerErr maps a Broker startup error to the exit-code family it
-// belongs to. Run wraps every sentinel with its concrete cause, so the check
-// must use errors.Is rather than ==. ErrLockLost and errors the Broker does not
-// classify share the generic failure code.
+// classifyBrokerErr maps a Broker startup error to its exit-code family. Run
+// wraps every sentinel with its cause, so the checks must use errors.Is.
 func classifyBrokerErr(err error) startFailure {
 	switch {
 	case errors.Is(err, broker.ErrAlreadyRunning):

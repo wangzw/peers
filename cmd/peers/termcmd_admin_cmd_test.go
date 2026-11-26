@@ -4,8 +4,8 @@ import (
 	"testing"
 )
 
-// TestAdminCommandsRegistered checks that the pairing nouns are direct
-// children of the root command. Each group's own tests cover the verbs.
+// TestAdminCommandsRegistered checks that the broker and key nouns are direct
+// children of the root command.
 func TestAdminCommandsRegistered(t *testing.T) {
 	a, _, _ := newTermcmdApp(&termcmdStub{})
 	root := a.newRootCommand()

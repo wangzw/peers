@@ -10,7 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// setAccountHelper installs fn as the account-helper seam for one test.
 func setAccountHelper(t *testing.T, fn func(context.Context, io.Reader, io.Writer) error) {
 	t.Helper()
 	previous := runAccountHelperFn
@@ -18,7 +17,6 @@ func setAccountHelper(t *testing.T, fn func(context.Context, io.Reader, io.Write
 	t.Cleanup(func() { runAccountHelperFn = previous })
 }
 
-// setAccessCheck installs fn as the access-check seam for one test.
 func setAccessCheck(t *testing.T, fn func(io.Reader, io.Writer) error) {
 	t.Helper()
 	previous := runAccessCheckFn
@@ -28,6 +26,8 @@ func setAccessCheck(t *testing.T, fn func(io.Reader, io.Writer) error) {
 
 type helperContextKey struct{}
 
+// TestAccountHelperRoutesStreamsAndContext checks that account-helper receives
+// the caller's context and the app's streams.
 func TestAccountHelperRoutesStreamsAndContext(t *testing.T) {
 	var (
 		gotContext context.Context
@@ -64,6 +64,8 @@ func TestAccountHelperRoutesStreamsAndContext(t *testing.T) {
 	}
 }
 
+// TestAccessCheckRoutesStreams checks that access-check receives the app's
+// standard input and output.
 func TestAccessCheckRoutesStreams(t *testing.T) {
 	var (
 		gotStdin  io.Reader
@@ -94,6 +96,8 @@ func TestAccessCheckRoutesStreams(t *testing.T) {
 	}
 }
 
+// TestInternalHelpersReportErrors checks that a helper failure writes one
+// prefixed line and exits 1.
 func TestInternalHelpersReportErrors(t *testing.T) {
 	cases := []struct {
 		args    []string
@@ -137,6 +141,8 @@ func TestInternalHelpersReportErrors(t *testing.T) {
 	}
 }
 
+// TestInternalHelpersRejectArguments checks that an extra argument is a usage
+// error that prints no usage line.
 func TestInternalHelpersRejectArguments(t *testing.T) {
 	cases := []struct {
 		args    []string
@@ -189,7 +195,6 @@ func TestInternalHelpersRejectArguments(t *testing.T) {
 	}
 }
 
-// setLaunchdReload installs fn as the launchd-reload seam for one test.
 func setLaunchdReload(t *testing.T, fn func(service.Options, string, string, int, service.ExecutableID, string) error) {
 	t.Helper()
 	previous := launchdReloadFn
@@ -197,9 +202,8 @@ func setLaunchdReload(t *testing.T, fn func(service.Options, string, string, int
 	t.Cleanup(func() { launchdReloadFn = previous })
 }
 
-// TestLaunchdReloadPassesItsArguments checks the hidden helper command: the
-// level, domain, plist, caller pid and audit path reach the service function
-// unchanged, and a success writes nothing to either stream.
+// TestLaunchdReloadPassesItsArguments checks that every launchd-reload argument
+// reaches the service function unchanged on success.
 func TestLaunchdReloadPassesItsArguments(t *testing.T) {
 	var (
 		gotOpts   service.Options
@@ -251,9 +255,8 @@ func TestLaunchdReloadPassesItsArguments(t *testing.T) {
 	}
 }
 
-// TestLaunchdReloadReportsFailure checks that a failed reload is the process's
-// non-zero exit and is written to standard error, which the detached helper
-// redirects to the post-update log.
+// TestLaunchdReloadReportsFailure checks that a failed reload writes to standard
+// error and exits 1.
 func TestLaunchdReloadReportsFailure(t *testing.T) {
 	setLaunchdReload(t, func(service.Options, string, string, int, service.ExecutableID, string) error {
 		return errors.New("bootstrap failed")
@@ -280,8 +283,8 @@ func TestLaunchdReloadReportsFailure(t *testing.T) {
 	}
 }
 
-// TestLaunchdReloadRejectsBadArguments keeps malformed helper invocations from
-// reaching launchctl; the post-update step builds every argument itself.
+// TestLaunchdReloadRejectsBadArguments checks that a malformed launchd-reload
+// invocation is a usage error before the service function runs.
 func TestLaunchdReloadRejectsBadArguments(t *testing.T) {
 	cases := [][]string{
 		{"internal", "launchd-reload"},

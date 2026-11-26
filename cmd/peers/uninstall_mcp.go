@@ -9,11 +9,10 @@ import (
 	"strings"
 )
 
-// mcpRunner runs a command and returns its combined output.
 type mcpRunner func(name string, args ...string) ([]byte, error)
 
-// mcpRegistration is what Claude Code reports for the peer MCP server. When
-// command is empty, outcome says why it is unknown.
+// mcpRegistration is what Claude Code reports for the peer MCP server; when
+// command is empty, outcome says why.
 type mcpRegistration struct {
 	command string
 	outcome string
@@ -21,9 +20,9 @@ type mcpRegistration struct {
 }
 
 // removeMCPRegistration removes account's "peer" registration in Claude Code
-// when its command is binary. An empty account means the running account.
-// outcome is one line for the output; claude not found or a registration
-// pointing elsewhere is an outcome, not an error.
+// when its command is binary; an empty account means the running account. A
+// missing claude or a registration pointing elsewhere is reported as an
+// outcome, not an error.
 func removeMCPRegistration(run func(name string, args ...string) ([]byte, error), account, binary string) (outcome string, err error) {
 	reg := lookupPeerMCP(run, account)
 	if reg.command == "" {
@@ -41,7 +40,7 @@ func removeMCPRegistration(run func(name string, args ...string) ([]byte, error)
 	return "removed the peer MCP registration for " + account, nil
 }
 
-// lookupPeerMCP reads the peer registration. Every failure is an outcome: an
+// lookupPeerMCP reads the peer registration; every failure is an outcome, so an
 // unreadable registration must not stop the rest of an uninstall.
 func lookupPeerMCP(run mcpRunner, account string) mcpRegistration {
 	prefix, manual, found := claudeInvocation(run, account)
@@ -62,10 +61,6 @@ func lookupPeerMCP(run mcpRunner, account string) mcpRegistration {
 	return mcpRegistration{command: command, prefix: prefix}
 }
 
-// claudeInvocation returns how to run claude for account, the command to show
-// when claude cannot be found, and whether it was found. An empty account runs
-// the claude on this process's PATH; another account is reached through sudo
-// and its own login shell, the way the install script registers it.
 func claudeInvocation(run mcpRunner, account string) (prefix []string, manual string, found bool) {
 	if account == "" {
 		return []string{"claude"}, "claude mcp remove -s user peer", true
@@ -81,11 +76,10 @@ func claudeInvocation(run mcpRunner, account string) (prefix []string, manual st
 		"sudo -u " + account + " -H " + path + " mcp remove -s user peer", true
 }
 
-// mcpHostGOOS is the platform whose account database loginShell queries. Tests
-// set it to check both lookups on one host; production keeps runtime.GOOS.
+// Tests set mcpHostGOOS so the login-shell lookup runs for both platforms on
+// one host.
 var mcpHostGOOS = runtime.GOOS
 
-// loginShell returns account's login shell from the account database.
 func loginShell(run mcpRunner, account string) string {
 	switch mcpHostGOOS {
 	case "darwin":
@@ -109,8 +103,6 @@ func loginShell(run mcpRunner, account string) string {
 	return "/bin/sh"
 }
 
-// parseMCPCommand returns the command line claude mcp get prints. Only the
-// exact "Command:" line counts, as in the install script.
 func parseMCPCommand(out []byte) string {
 	for _, line := range strings.Split(string(out), "\n") {
 		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "Command:"); ok {
@@ -120,17 +112,15 @@ func parseMCPCommand(out []byte) string {
 	return ""
 }
 
-// claudeNotFoundOutcome is the message shown when claude is unavailable.
 func claudeNotFoundOutcome(manual string) string {
 	return "claude was not found; remove the registration manually with: " + manual
 }
 
-// invocation appends args to prefix without sharing prefix's backing array.
+// invocation appends args without sharing prefix's backing array.
 func invocation(prefix []string, args ...string) []string {
 	return slices.Concat(prefix, args)
 }
 
-// runArgv runs argv, whose first element names the command.
 func runArgv(run mcpRunner, argv []string) ([]byte, error) {
 	return run(argv[0], argv[1:]...)
 }

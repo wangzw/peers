@@ -17,6 +17,8 @@ func newMCPApp(s *stubDeps) (*app, *bytes.Buffer, *bytes.Buffer) {
 	return &app{stdout: stdout, stderr: stderr, version: "test", deps: s.deps()}, stdout, stderr
 }
 
+// TestMCPWritesNothingToStdout checks that the mcp command runs the server and
+// writes nothing to either stream.
 func TestMCPWritesNothingToStdout(t *testing.T) {
 	stub := &stubDeps{}
 	a, stdout, stderr := newMCPApp(stub)
@@ -35,6 +37,8 @@ func TestMCPWritesNothingToStdout(t *testing.T) {
 	}
 }
 
+// TestMCPContextCancelledBySignalContext checks that a SIGTERM cancels the mcp
+// command's context and the command returns.
 func TestMCPContextCancelledBySignalContext(t *testing.T) {
 	ctx, stop := newSignalContext(context.Background())
 	defer stop()
@@ -74,6 +78,8 @@ func TestMCPContextCancelledBySignalContext(t *testing.T) {
 	}
 }
 
+// TestMCPRejectsArguments checks that an argument or unknown flag is a usage
+// error with the usage line first.
 func TestMCPRejectsArguments(t *testing.T) {
 	cases := []struct {
 		args     []string
@@ -101,6 +107,7 @@ func TestMCPRejectsArguments(t *testing.T) {
 	}
 }
 
+// TestMCPErrorExitsOne checks that a server error writes one line and exits 1.
 func TestMCPErrorExitsOne(t *testing.T) {
 	stub := &stubDeps{mcpErr: errors.New("boom")}
 	a, stdout, stderr := newMCPApp(stub)
@@ -116,6 +123,7 @@ func TestMCPErrorExitsOne(t *testing.T) {
 	}
 }
 
+// TestMCPHelp checks that -h and --help print the usage and exit 0.
 func TestMCPHelp(t *testing.T) {
 	for _, flagName := range []string{"-h", "--help"} {
 		stub := &stubDeps{}

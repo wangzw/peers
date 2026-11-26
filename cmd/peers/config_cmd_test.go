@@ -12,14 +12,12 @@ import (
 	"github.com/wangzw/peers/internal/broker"
 )
 
-// configCalls counts every configuration dependency call a stub recorded.
 func configCalls(s *termcmdStub) int {
 	return len(s.configGetCalls) + len(s.configSetCalls)
 }
 
-// TestConfigKeyCompletion covers the key completion shared by config get and
-// config set: the candidates are the configuration keys, filtered by the word
-// already typed, and only the first positional argument is a key.
+// TestConfigKeyCompletion checks that key completion offers the configuration
+// keys, filtered by the typed word, only for the first positional argument.
 func TestConfigKeyCompletion(t *testing.T) {
 	all := broker.ConfigKeys()
 	if len(all) == 0 {
@@ -61,9 +59,8 @@ func TestConfigKeyCompletion(t *testing.T) {
 	}
 }
 
-// TestConfigCompletionEndToEnd runs the hidden __complete command the shell
-// scripts call, so the wiring from the root command through config get to the
-// key table is covered as a whole.
+// TestConfigCompletionEndToEnd checks that the hidden __complete command offers
+// log.level for config get.
 func TestConfigCompletionEndToEnd(t *testing.T) {
 	a, stdout, _ := newTermcmdApp(&termcmdStub{})
 
@@ -75,9 +72,8 @@ func TestConfigCompletionEndToEnd(t *testing.T) {
 	}
 }
 
-// TestConfigCommandsAreWired builds the tree from the root command and checks
-// that config is registered under the Local Broker heading with its three verbs
-// and the key completion on the two key-taking verbs.
+// TestConfigCommandsAreWired checks that config is under the local group with
+// its three verbs and key completion on the two key-taking verbs.
 func TestConfigCommandsAreWired(t *testing.T) {
 	a, _, _ := newTermcmdApp(&termcmdStub{})
 	root := a.newRootCommand()
@@ -108,6 +104,8 @@ func TestConfigCommandsAreWired(t *testing.T) {
 	}
 }
 
+// TestConfigGetCallsRunner checks that config list and config get reach the
+// runner with the expected key.
 func TestConfigGetCallsRunner(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -142,6 +140,8 @@ func TestConfigGetCallsRunner(t *testing.T) {
 	}
 }
 
+// TestConfigSetCallsRunner checks that config set passes the key and value to
+// the runner.
 func TestConfigSetCallsRunner(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -164,9 +164,8 @@ func TestConfigSetCallsRunner(t *testing.T) {
 	}
 }
 
-// TestConfigCommandErrorsExitOne checks the runtime-error contract: the
-// framework writes one line naming the command path and the cause, and the exit
-// code is 1.
+// TestConfigCommandErrorsExitOne checks that a runtime error on a config command
+// writes one line and exits 1.
 func TestConfigCommandErrorsExitOne(t *testing.T) {
 	errDenied := errors.New("permission_denied: not allowed")
 	cases := []struct {
@@ -207,12 +206,12 @@ func TestConfigCommandErrorsExitOne(t *testing.T) {
 	}
 }
 
+// TestConfigUsageErrors checks the usage diagnostic for each malformed config
+// invocation.
 func TestConfigUsageErrors(t *testing.T) {
 	cases := []struct {
-		name string
-		args []string
-		// wantStderr is the exact diagnostic for a leaf command. An empty
-		// wantStderr requires the group's usage text instead.
+		name       string
+		args       []string
 		wantStderr string
 	}{
 		{name: "config without verb", args: []string{"config"}},
@@ -279,6 +278,8 @@ func TestConfigUsageErrors(t *testing.T) {
 	}
 }
 
+// TestConfigHelp checks that each config command prints its usage on -h or
+// --help.
 func TestConfigHelp(t *testing.T) {
 	cases := []struct {
 		name      string

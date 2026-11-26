@@ -17,7 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/broker"
 )
 
-// dialBroker fails the test when the address is not accepting connections.
 func dialBroker(t *testing.T, addr string) {
 	t.Helper()
 
@@ -28,11 +27,9 @@ func dialBroker(t *testing.T, addr string) {
 	_ = conn.Close()
 }
 
-// waitBrokerStarted polls until the child writes its broker_started record.
-// The record is written in Step 10 of Run in run.go, after the account lock
-// and both listeners are in place, so it means the Broker is serving this
-// account. It reports false when the process exits or the deadline passes
-// first.
+// waitBrokerStarted polls until the child writes its broker_started record,
+// which is emitted only after the account lock and both listeners are in
+// place, so the record means the Broker serves this account.
 func waitBrokerStarted(t *testing.T, p *brokerProc) bool {
 	t.Helper()
 
@@ -59,10 +56,6 @@ func waitBrokerStarted(t *testing.T, p *brokerProc) bool {
 	}
 }
 
-// hasBrokerStarted reports whether standard error already holds this process's
-// broker_started record. Every line is a structured log record; the event name
-// comes from internal/broker so the test does not spell it out, and the pid
-// must match the child, so a record from another process cannot satisfy it.
 func hasBrokerStarted(p *brokerProc, pid int) bool {
 	for _, line := range strings.Split(p.stderr.String(), "\n") {
 		var rec struct {
@@ -79,10 +72,6 @@ func hasBrokerStarted(p *brokerProc, pid int) bool {
 	return false
 }
 
-// startBrokerTerminal runs "peers service run" the way a terminal launch does.
-// The returned process has no reader, so readiness is observed in standard
-// error. Unless args names a level, the command acts on the user installation so the
-// test does not depend on the account that runs it.
 func startBrokerTerminal(t *testing.T, sb *sandbox, args ...string) *brokerProc {
 	t.Helper()
 
@@ -109,7 +98,6 @@ func startBrokerTerminal(t *testing.T, sb *sandbox, args ...string) *brokerProc 
 	return p
 }
 
-// namesLevel reports whether args already selects --system or --user.
 func namesLevel(args []string) bool {
 	for _, arg := range args {
 		if arg == "--system" || arg == "--user" ||
@@ -120,11 +108,6 @@ func namesLevel(args []string) bool {
 	return false
 }
 
-// startBrokerTerminalOnFreePort starts a terminal Broker with --listen on a
-// port that freePort released and waits until the child reports that it
-// started. The port can be taken between freePort's close and the Broker's
-// bind, so a Broker that exits because the address is unavailable is retried
-// once on a fresh port.
 func startBrokerTerminalOnFreePort(t *testing.T, sb *sandbox, args ...string) (*brokerProc, int) {
 	t.Helper()
 
@@ -145,15 +128,12 @@ func startBrokerTerminalOnFreePort(t *testing.T, sb *sandbox, args ...string) (*
 		if code != exitListenUnavailable || attempt == attempts {
 			t.Fatalf("broker start on %s: exit code %d (stderr: %s)", addr, code, p.stderr.String())
 		}
-		// Another process took the port between freePort's close and the
-		// Broker's bind. The Broker has exited; retry on a fresh port.
 		p.stop()
 	}
 }
 
-// TestBrokerListenFlagOverridesConfig covers REQ-broker-config-025 and
-// REQ-broker-config-029: --listen replaces the configured address for this
-// run, and the configuration file is left untouched.
+// TestBrokerListenFlagOverridesConfig checks that --listen overrides the
+// configured address and leaves the configuration file untouched.
 func TestBrokerListenFlagOverridesConfig(t *testing.T) {
 	t.Parallel()
 
@@ -183,8 +163,6 @@ func TestBrokerListenFlagOverridesConfig(t *testing.T) {
 		t.Fatalf("exit code after SIGTERM = %d, want %d (stderr: %s)", code, exitOK, p.stderr.String())
 	}
 
-	// The Broker also owns the configuration file during shutdown; compare once
-	// more after it has exited, not only after it became ready.
 	afterExit, err := os.ReadFile(sb.configPath())
 	if err != nil {
 		t.Fatalf("read config after exit: %v", err)
@@ -194,25 +172,18 @@ func TestBrokerListenFlagOverridesConfig(t *testing.T) {
 	}
 }
 
-// TestBrokerSecondInstanceFailsWithAnotherListenAddress covers
-// REQ-broker-config-013: a second instance fails whatever address it asks for,
-// and the first one keeps serving.
+// TestBrokerSecondInstanceFailsWithAnotherListenAddress checks that a second
+// instance fails on the account lock whatever address it asks for, and the
+// first keeps serving.
 func TestBrokerSecondInstanceFailsWithAnotherListenAddress(t *testing.T) {
 	t.Parallel()
 
 	sb := newSandbox(t)
 	first, firstPort := startBrokerTerminalOnFreePort(t, sb)
 
-	// Ask for a different address and hold it for the rest of the test, so it
-	// is provably not the first Broker's and not bindable by anyone else. The
-	// first Broker is ready only after its broker_started record, which it
-	// writes once the account lock is held, so the second instance must fail on
-	// the lock before it binds. The held address makes that observable: a
-	// Broker that bound before taking the lock would exit with
-	// exitListenUnavailable, while this one exits with exitAlreadyRunning.
-	//
-	// A freePort released here would instead be free for another parallel test
-	// to take before the assertion, which is what made this test flaky.
+	// Keep the address held with occupiedPort rather than freePort, so a second
+	// instance that bound before taking the lock exits with exitListenUnavailable
+	// instead of exitAlreadyRunning.
 	secondPort, _ := occupiedPort(t)
 
 	second := startBrokerTerminal(t, sb, "--listen", listenAddr(secondPort))
@@ -236,13 +207,11 @@ func TestBrokerSecondInstanceFailsWithAnotherListenAddress(t *testing.T) {
 		t.Fatalf("first exit code after SIGTERM = %d, want %d (stderr: %s)", code, exitOK, first.stderr.String())
 	}
 
-	// The lock is free again, so a Broker can start. The helper retries on a
-	// fresh port if this one was taken after freePort released it.
 	startBrokerTerminalOnFreePort(t, sb)
 }
 
-// TestBrokerListenAddressUnavailable covers REQ-broker-config-024: an
-// unavailable address fails the start instead of falling back to another one.
+// TestBrokerListenAddressUnavailable checks that an unavailable address fails
+// the start instead of falling back to another one.
 func TestBrokerListenAddressUnavailable(t *testing.T) {
 	t.Parallel()
 
@@ -260,6 +229,8 @@ func TestBrokerListenAddressUnavailable(t *testing.T) {
 	}
 }
 
+// TestBrokerInvalidConfig checks that a malformed or unreadable configuration
+// file fails the start with exitInvalidConfig.
 func TestBrokerInvalidConfig(t *testing.T) {
 	t.Parallel()
 
@@ -283,7 +254,6 @@ func TestBrokerInvalidConfig(t *testing.T) {
 		t.Parallel()
 
 		sb := newSandbox(t)
-		// A directory in place of the file makes the read fail with its path.
 		if err := os.MkdirAll(sb.configPath(), 0o700); err != nil {
 			t.Fatalf("create config path as a directory: %v", err)
 		}
@@ -299,6 +269,8 @@ func TestBrokerInvalidConfig(t *testing.T) {
 	})
 }
 
+// TestBrokerInsideSession checks that a Broker started inside a Claude Code
+// session exits with exitInSession.
 func TestBrokerInsideSession(t *testing.T) {
 	t.Parallel()
 
@@ -314,6 +286,8 @@ func TestBrokerInsideSession(t *testing.T) {
 	}
 }
 
+// TestBrokerUsesTestHome checks that the brokers write their identity into the
+// test home and leave the developer's real data directory untouched.
 func TestBrokerUsesTestHome(t *testing.T) {
 	t.Parallel()
 
@@ -358,6 +332,8 @@ func TestBrokerUsesTestHome(t *testing.T) {
 	}
 }
 
+// TestBrokerRuntimeDirBadPermissions checks that a world-writable runtime
+// directory fails the start with exitRuntimeDir.
 func TestBrokerRuntimeDirBadPermissions(t *testing.T) {
 	t.Parallel()
 
@@ -381,6 +357,8 @@ func TestBrokerRuntimeDirBadPermissions(t *testing.T) {
 	}
 }
 
+// TestBrokerInvalidListenValue checks that a malformed --listen value is a
+// usage error.
 func TestBrokerInvalidListenValue(t *testing.T) {
 	t.Parallel()
 
@@ -397,9 +375,8 @@ func TestBrokerInvalidListenValue(t *testing.T) {
 	}
 }
 
-// TestBrokerSystemRequiresRoot checks that --system without root ends with the
-// dedicated exit code and names the reason. As root the command is supposed to
-// proceed and serve the system Broker, so the case is skipped instead.
+// TestBrokerSystemRequiresRoot checks that --system without root exits with
+// exitNotRoot and names the reason.
 func TestBrokerSystemRequiresRoot(t *testing.T) {
 	t.Parallel()
 
@@ -420,8 +397,8 @@ func TestBrokerSystemRequiresRoot(t *testing.T) {
 	}
 }
 
-// TestBrokerShutsDownOnSIGINT checks the shutdown path of a Broker started
-// from a terminal.
+// TestBrokerShutsDownOnSIGINT checks that a terminal Broker exits cleanly on
+// SIGINT.
 func TestBrokerShutsDownOnSIGINT(t *testing.T) {
 	t.Parallel()
 

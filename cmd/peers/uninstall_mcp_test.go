@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// mcpFakeRun records commands and answers from fixed maps.
 type mcpFakeRun struct {
 	output map[string]string
 	errs   map[string]error
@@ -27,6 +26,8 @@ func (f *mcpFakeRun) run(name string, args ...string) ([]byte, error) {
 	return nil, errors.New("unexpected command " + key)
 }
 
+// TestRemoveMCPRegistrationRemovesMatchingCommand checks that a registration
+// running the same binary is removed.
 func TestRemoveMCPRegistrationRemovesMatchingCommand(t *testing.T) {
 	fake := &mcpFakeRun{output: map[string]string{
 		"claude mcp get peer":            "peer:\n  Scope: user\n  Command: /usr/local/bin/peers\n  Args: mcp\n",
@@ -45,6 +46,8 @@ func TestRemoveMCPRegistrationRemovesMatchingCommand(t *testing.T) {
 	}
 }
 
+// TestRemoveMCPRegistrationLeavesAnotherCommand checks that a registration
+// pointing at another binary is left unchanged.
 func TestRemoveMCPRegistrationLeavesAnotherCommand(t *testing.T) {
 	fake := &mcpFakeRun{output: map[string]string{
 		"claude mcp get peer": "peer:\n  Command: /opt/other/peers\n",
@@ -63,6 +66,8 @@ func TestRemoveMCPRegistrationLeavesAnotherCommand(t *testing.T) {
 	}
 }
 
+// TestRemoveMCPRegistrationWithoutClaude checks that a missing claude is
+// reported with the manual command.
 func TestRemoveMCPRegistrationWithoutClaude(t *testing.T) {
 	fake := &mcpFakeRun{errs: map[string]error{
 		"claude mcp get peer": exec.ErrNotFound,
@@ -76,6 +81,8 @@ func TestRemoveMCPRegistrationWithoutClaude(t *testing.T) {
 	}
 }
 
+// TestRemoveMCPRegistrationWithoutCommandLine checks that a registration with
+// no command line is left unchanged.
 func TestRemoveMCPRegistrationWithoutCommandLine(t *testing.T) {
 	fake := &mcpFakeRun{output: map[string]string{
 		"claude mcp get peer": "peer:\n  Scope: user\n",
@@ -89,8 +96,6 @@ func TestRemoveMCPRegistrationWithoutCommandLine(t *testing.T) {
 	}
 }
 
-// fakeLoginShell adds the answer claudeInvocation's lookup expects on goos for
-// account and returns the map.
 func fakeLoginShell(goos, account, shell string) map[string]string {
 	if goos == "darwin" {
 		return map[string]string{
@@ -102,7 +107,6 @@ func fakeLoginShell(goos, account, shell string) map[string]string {
 	}
 }
 
-// useHostGOOS makes the login-shell lookup use goos for one test.
 func useHostGOOS(t *testing.T, goos string) {
 	t.Helper()
 	previous := mcpHostGOOS
@@ -110,6 +114,8 @@ func useHostGOOS(t *testing.T, goos string) {
 	t.Cleanup(func() { mcpHostGOOS = previous })
 }
 
+// TestRemoveMCPRegistrationForAnotherAccount checks that another account's
+// registration is reached through sudo.
 func TestRemoveMCPRegistrationForAnotherAccount(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
@@ -137,6 +143,8 @@ func TestRemoveMCPRegistrationForAnotherAccount(t *testing.T) {
 	}
 }
 
+// TestRemoveMCPRegistrationForAnotherAccountWithoutClaude checks that another
+// account with no claude gets the manual command.
 func TestRemoveMCPRegistrationForAnotherAccountWithoutClaude(t *testing.T) {
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
@@ -158,6 +166,8 @@ func TestRemoveMCPRegistrationForAnotherAccountWithoutClaude(t *testing.T) {
 	}
 }
 
+// TestRemoveMCPRegistrationReportsUnreadableRegistration checks that an
+// unreadable registration is reported and left unchanged.
 func TestRemoveMCPRegistrationReportsUnreadableRegistration(t *testing.T) {
 	fake := &mcpFakeRun{errs: map[string]error{
 		"claude mcp get peer": errors.New("exit status 1"),
@@ -171,6 +181,8 @@ func TestRemoveMCPRegistrationReportsUnreadableRegistration(t *testing.T) {
 	}
 }
 
+// TestRemoveMCPRegistrationReportsRemoveFailure checks that a failed removal is
+// returned as an error.
 func TestRemoveMCPRegistrationReportsRemoveFailure(t *testing.T) {
 	fake := &mcpFakeRun{
 		output: map[string]string{

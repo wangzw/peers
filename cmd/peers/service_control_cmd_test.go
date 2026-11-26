@@ -10,9 +10,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// controlSeams replaces the start, stop and restart operations and the
-// installed check for one test. A nil field leaves that seam unchanged. The
-// executing account is set on the test double's deps.euid, not here.
 type controlSeams struct {
 	options   func(bool) (service.Options, error)
 	start     func(service.Options) (service.Result, error)
@@ -46,6 +43,8 @@ func setControlSeams(t *testing.T, s controlSeams) {
 	})
 }
 
+// TestServiceControlMapsVerbAndLevel checks that each control verb calls its
+// operation at the selected level.
 func TestServiceControlMapsVerbAndLevel(t *testing.T) {
 	cases := []struct {
 		command  string
@@ -120,6 +119,8 @@ func TestServiceControlMapsVerbAndLevel(t *testing.T) {
 	}
 }
 
+// TestServiceControlRejectsArguments checks that conflicting level flags and
+// positional arguments are usage errors.
 func TestServiceControlRejectsArguments(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -164,6 +165,7 @@ func TestServiceControlRejectsArguments(t *testing.T) {
 	}
 }
 
+// TestServiceControlHelp checks that --help prints each control command's usage.
 func TestServiceControlHelp(t *testing.T) {
 	for _, command := range []string{"start", "stop", "restart"} {
 		t.Run(command, func(t *testing.T) {
@@ -187,6 +189,8 @@ func TestServiceControlHelp(t *testing.T) {
 	}
 }
 
+// TestServiceControlNotInstalled checks how an uninstalled service is reported
+// for each account and level.
 func TestServiceControlNotInstalled(t *testing.T) {
 	notInstalled := fmt.Errorf("%w (user service)", service.ErrNotInstalled)
 
@@ -272,6 +276,8 @@ func TestServiceControlNotInstalled(t *testing.T) {
 	})
 }
 
+// TestServiceControlDegraded checks the output and exit code of a control
+// command that ends in a degraded run.
 func TestServiceControlDegraded(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -311,6 +317,8 @@ func TestServiceControlDegraded(t *testing.T) {
 	}
 }
 
+// TestServiceControlFailure checks that a failed operation reaches standard
+// error with the failure exit code.
 func TestServiceControlFailure(t *testing.T) {
 	setControlSeams(t, controlSeams{
 		options: func(bool) (service.Options, error) { return service.Options{}, nil },
@@ -331,6 +339,8 @@ func TestServiceControlFailure(t *testing.T) {
 	}
 }
 
+// TestServiceControlDefaultOptionsError checks that a failure to build the
+// options stops the command before the operation runs.
 func TestServiceControlDefaultOptionsError(t *testing.T) {
 	var calls int
 	setControlSeams(t, controlSeams{

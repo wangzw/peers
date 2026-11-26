@@ -153,9 +153,8 @@ func TestReadAnswerPropagatesReadErrors(t *testing.T) {
 	}
 }
 
-// TestUpdateDefaultClientUsesTheDefaultTransport checks the production client
-// the command builds when a test has not replaced it: downloads must go through
-// http.DefaultTransport so the proxy and TLS settings of the host apply.
+// TestUpdateDefaultClientUsesTheDefaultTransport checks that the default update
+// client uses http.DefaultTransport.
 func TestUpdateDefaultClientUsesTheDefaultTransport(t *testing.T) {
 	client := updateNewClient()
 	if client.Transport != http.DefaultTransport {

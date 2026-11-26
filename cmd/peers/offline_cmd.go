@@ -4,20 +4,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// serviceOnlineCommand builds "service online": it makes the running Broker
-// accept messages from other hosts again.
 func (a *app) serviceOnlineCommand() *cobra.Command {
 	return a.serviceSetOnlineCommand("online", true, "Make the selected Broker accept messages from other hosts")
 }
 
-// serviceOfflineCommand builds "service offline": it makes the running Broker
-// refuse messages from other hosts while keeping its links.
 func (a *app) serviceOfflineCommand() *cobra.Command {
 	return a.serviceSetOnlineCommand("offline", false, "Make the selected Broker refuse messages from other hosts")
 }
 
-// serviceSetOnlineCommand is the shared body of online and offline. Both take
-// no arguments and report a usage error for anything after the command name.
 func (a *app) serviceSetOnlineCommand(name string, online bool, short string) *cobra.Command {
 	var level *levelFlags
 	cmd := &cobra.Command{

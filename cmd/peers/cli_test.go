@@ -10,9 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// withTerminalAnswer makes isTerminal report a terminal for one test, so
-// confirm reads the answer from stdin without a pseudo-terminal. answer is
-// written to a.stdin.
 func withTerminalAnswer(t *testing.T, a *app, answer string) {
 	t.Helper()
 	previous := isTerminal
@@ -21,6 +18,8 @@ func withTerminalAnswer(t *testing.T, a *app, answer string) {
 	a.stdin = strings.NewReader(answer)
 }
 
+// TestExitErrorCarriesTheCodeAndCause checks that exitError reports its cause
+// and unwraps to it.
 func TestExitErrorCarriesTheCodeAndCause(t *testing.T) {
 	cause := errors.New("boom")
 	err := &exitError{code: exitUsage, err: cause}
@@ -36,6 +35,8 @@ func TestExitErrorCarriesTheCodeAndCause(t *testing.T) {
 	}
 }
 
+// TestCommandResult checks that commandResult maps the success code to nil and
+// other codes to an exitError.
 func TestCommandResult(t *testing.T) {
 	if err := commandResult(exitOK); err != nil {
 		t.Fatalf("commandResult(exitOK) = %v, want nil", err)
@@ -50,8 +51,6 @@ func TestCommandResult(t *testing.T) {
 	}
 }
 
-// levelTestCommand returns a command carrying the level flags and executes it
-// with args. The returned levelFlags holds the parsed values.
 func levelTestCommand(t *testing.T, args ...string) (*levelFlags, error) {
 	t.Helper()
 	cmd := &cobra.Command{
@@ -63,6 +62,8 @@ func levelTestCommand(t *testing.T, args ...string) (*levelFlags, error) {
 	return flags, cmd.Execute()
 }
 
+// TestLevelFlagsSystem checks the level each flag combination selects for root
+// and a non-root account.
 func TestLevelFlagsSystem(t *testing.T) {
 	cases := []struct {
 		name string
@@ -92,6 +93,8 @@ func TestLevelFlagsSystem(t *testing.T) {
 	}
 }
 
+// TestLevelFlagsAreMutuallyExclusive checks that giving both level flags is a
+// usage error.
 func TestLevelFlagsAreMutuallyExclusive(t *testing.T) {
 	flags, err := levelTestCommand(t, "--system", "--user")
 	if err != nil {
@@ -110,6 +113,7 @@ func TestLevelFlagsAreMutuallyExclusive(t *testing.T) {
 	}
 }
 
+// TestAddYesFlag checks that -y and --yes set the yes flag.
 func TestAddYesFlag(t *testing.T) {
 	for _, arg := range []string{"-y", "--yes"} {
 		t.Run(arg, func(t *testing.T) {
@@ -125,6 +129,8 @@ func TestAddYesFlag(t *testing.T) {
 	}
 }
 
+// TestConfirmSkipsTheQuestionWithYes checks that yes returns true without
+// writing a prompt.
 func TestConfirmSkipsTheQuestionWithYes(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
 
@@ -143,9 +149,10 @@ func TestConfirmSkipsTheQuestionWithYes(t *testing.T) {
 	}
 }
 
+// TestConfirmWritesTheQuestionToStderr checks that the question goes to stderr
+// and an empty answer declines.
 func TestConfirmWritesTheQuestionToStderr(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
-	// An empty answer declines the question.
 	withTerminalAnswer(t, a, "\n")
 
 	confirmed, err := a.confirm("Continue? [y/N] ", false)
@@ -163,6 +170,7 @@ func TestConfirmWritesTheQuestionToStderr(t *testing.T) {
 	}
 }
 
+// TestConfirmAnswersYesFromTheTerminal checks that an answer of y confirms.
 func TestConfirmAnswersYesFromTheTerminal(t *testing.T) {
 	a, stdout, stderr, _ := newDispatchApp("dev")
 	withTerminalAnswer(t, a, "y\n")
@@ -182,8 +190,6 @@ func TestConfirmAnswersYesFromTheTerminal(t *testing.T) {
 	}
 }
 
-// devNullStdin opens /dev/null, which a character-device check mistakes for a
-// terminal but a real isatty check does not.
 func devNullStdin(t *testing.T, a *app) {
 	t.Helper()
 	f, err := os.Open(os.DevNull)
@@ -194,6 +200,8 @@ func devNullStdin(t *testing.T, a *app) {
 	a.stdin = f
 }
 
+// TestConfirmTreatsDevNullAsNoTerminal checks that /dev/null is not a terminal
+// and confirm wraps errNeedsYes.
 func TestConfirmTreatsDevNullAsNoTerminal(t *testing.T) {
 	a, _, _, _ := newDispatchApp("dev")
 	devNullStdin(t, a)
@@ -210,6 +218,8 @@ func TestConfirmTreatsDevNullAsNoTerminal(t *testing.T) {
 	}
 }
 
+// TestConfirmWithoutTerminalNamesYes checks that without a terminal the error
+// mentions --yes and wraps errNeedsYes.
 func TestConfirmWithoutTerminalNamesYes(t *testing.T) {
 	a, _, _, _ := newDispatchApp("dev")
 

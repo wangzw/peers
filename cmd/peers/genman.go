@@ -17,15 +17,10 @@ func init() {
 	addGenManCommand = addGenManCommandImpl
 }
 
-// manPageDate is the date written to every generated page's header and HISTORY
-// section. It is fixed rather than taken from the clock so regenerating an
-// unchanged command tree produces byte-identical pages, which is what lets
-// gen-check compare the committed pages with fresh output.
+// manPageDate is fixed rather than taken from the clock, so regenerating an
+// unchanged tree produces byte-identical pages for gen-check to compare.
 var manPageDate = time.Date(2026, time.November, 21, 0, 0, 0, 0, time.UTC)
 
-// addGenManCommandImpl hangs the hidden man-page generator off the root command.
-// The command exists only in the peers_genman build, so the release binary does
-// not carry cobra's doc package.
 func addGenManCommandImpl(root *cobra.Command, _ *app) {
 	root.AddCommand(&cobra.Command{
 		Use:    "gen-man <dir>",
@@ -38,10 +33,8 @@ func addGenManCommandImpl(root *cobra.Command, _ *app) {
 	})
 }
 
-// generateManPages writes one page per visible command into dir. Pages for
-// commands that no longer exist are removed first, so the directory always
-// holds exactly the current command tree. Hidden commands are skipped by
-// cobra/doc itself.
+// The stale-page removal deletes every .1 file in dir, so dir must hold only
+// generated pages.
 func generateManPages(root *cobra.Command, dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating %s: %w", dir, err)

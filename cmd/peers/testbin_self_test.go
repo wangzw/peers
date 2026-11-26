@@ -12,11 +12,8 @@ import (
 	"testing"
 )
 
-// TestSandboxEnvFromEmpty checks that the child environment is built from
-// nothing. If env started from os.Environ, the session variables set here
-// would reach the Broker and make it fail with ErrInSession; if the runtime
-// root were long, "<root>/<euid>/broker.sock" would exceed the Unix socket
-// path limit. t.Setenv forbids t.Parallel, which is why this test is serial.
+// TestSandboxEnvFromEmpty checks that the child environment holds only the
+// fixed variables and does not leak the runner's session variables.
 func TestSandboxEnvFromEmpty(t *testing.T) {
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/x")
 	t.Setenv("PEERS_TEST_SOCKET", "/y")
@@ -77,9 +74,8 @@ func TestSandboxEnvFromEmpty(t *testing.T) {
 	}
 }
 
-// TestOccupiedPortRefusesBind checks both helpers: the occupied port really
-// refuses a second bind, and the free port really accepts one. Without this,
-// a "listen unavailable" test could pass because the port was never taken.
+// TestOccupiedPortRefusesBind checks that an occupied port refuses a second
+// bind and freePort yields a usable one.
 func TestOccupiedPortRefusesBind(t *testing.T) {
 	t.Parallel()
 
@@ -94,10 +90,6 @@ func TestOccupiedPortRefusesBind(t *testing.T) {
 		t.Fatalf("close held listener: %v", err)
 	}
 
-	// freePort binds and releases the port, so the environment can take it
-	// before this test binds it again. Retry on EADDRINUSE: the assertion only
-	// checks that the helper yields a usable port within a short window, not
-	// that the port stays untouched until the bind.
 	var listenErr error
 	for attempt := 1; attempt <= 5; attempt++ {
 		free := freePort(t)
@@ -117,10 +109,8 @@ func TestOccupiedPortRefusesBind(t *testing.T) {
 	}
 }
 
-// TestSandboxShortRootUnderLongTMPDIR checks that a long TMPDIR cannot push the
-// runtime root past the room left for the Unix socket path. macOS sets TMPDIR
-// to a long per-user directory, and a root under it leaves too few bytes for
-// the account directory and broker.sock.
+// TestSandboxShortRootUnderLongTMPDIR checks that a long TMPDIR falls back to a
+// root short enough for the socket paths.
 func TestSandboxShortRootUnderLongTMPDIR(t *testing.T) {
 	base := t.TempDir()
 	long := filepath.Join(base, strings.Repeat("very-long-temp-root-", 4))
@@ -147,9 +137,7 @@ func TestSandboxShortRootUnderLongTMPDIR(t *testing.T) {
 	}
 }
 
-// TestBinaryBuilt checks that TestMain produced a runnable binary. A swallowed
-// build failure would otherwise surface as unrelated errors in every
-// subprocess test.
+// TestBinaryBuilt checks that TestMain produced a runnable binary.
 func TestBinaryBuilt(t *testing.T) {
 	t.Parallel()
 

@@ -13,8 +13,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// app holds the process's standard streams, the version to report, and the
-// upstream operations the subcommands dispatch to.
 type app struct {
 	stdin   io.Reader
 	stdout  io.Writer
@@ -24,14 +22,13 @@ type app struct {
 }
 
 // signalRestoreHook runs after the first signal has cancelled ctx and the
-// default signal handling has been restored. Production builds keep the no-op
-// value; the peers_testenv build points it at a channel so a subprocess
-// test can observe the restore instead of waiting a fixed interval.
+// default handling is restored. Only the peers_testenv build replaces the no-op
+// value, with a channel a subprocess test observes.
 var signalRestoreHook = func() {}
 
-// newSignalContext cancels the returned context on SIGINT or SIGTERM. After the
-// first signal restores the default handling, so a second signal terminates the
-// process immediately.
+// newSignalContext cancels the returned context on the first SIGINT or SIGTERM;
+// after that the default handling is restored, so a second signal terminates
+// the process immediately.
 func newSignalContext(parent context.Context) (context.Context, context.CancelFunc) {
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -44,8 +41,7 @@ func newSignalContext(parent context.Context) (context.Context, context.CancelFu
 
 // run executes one command line and returns the process exit code. A failing
 // command is reported as "peers <command path>: <reason>"; a usage error adds a
-// line naming the command's help, which cobra's own diagnostics do not provide
-// once errors are silenced.
+// line naming the command's help.
 func (a *app) run(ctx context.Context, args []string) int {
 	root := a.newRootCommand()
 	root.SetArgs(args)
@@ -76,13 +72,12 @@ func (a *app) run(ctx context.Context, args []string) int {
 	return exitFailure
 }
 
-// addGenManCommand, when non-nil, adds the hidden man-page generator. Only the
-// peers_genman build sets it, so the release binary does not carry cobra's doc
-// package.
+// addGenManCommand adds the hidden man-page generator; only the peers_genman
+// build sets it, so the release binary does not carry cobra's doc package.
 var addGenManCommand func(root *cobra.Command, a *app)
 
-// newRootCommand builds the cobra command tree. A fresh tree is built for every
-// invocation, so no parsed state carries over between calls.
+// newRootCommand builds a fresh cobra command tree, so no parsed state carries
+// over between invocations.
 func (a *app) newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "peers",
@@ -102,8 +97,6 @@ func (a *app) newRootCommand() *cobra.Command {
 				_, _ = fmt.Fprintf(a.stdout, "peers %s\n", a.version)
 				return nil
 			}
-			// A bare invocation is a usage error. Print the tree's usage to
-			// standard error, as the hand-written dispatch did.
 			_, _ = fmt.Fprint(a.stderr, cmd.UsageString())
 			return &exitError{code: exitUsage}
 		},
@@ -120,11 +113,9 @@ func (a *app) newRootCommand() *cobra.Command {
 		&cobra.Group{ID: groupLocal, Title: "Local Broker:"},
 		&cobra.Group{ID: groupInstall, Title: "Installation:"},
 	)
-	// The help command belongs to no product group. It stays hidden, and the
-	// usage template below drops cobra's exemption for a command named "help",
-	// so it appears under none of the three headings and not under "Additional
-	// Commands". Its GroupID is set only so cobra's group check accepts it; it
-	// is never rendered.
+	// The hidden help command belongs to no product group: the usage template
+	// below drops cobra's exemption for it. Its GroupID only satisfies cobra's
+	// group check and is never rendered.
 	helpCmd := &cobra.Command{
 		Use:     "help [command]",
 		Short:   "Help about any command",
@@ -140,18 +131,14 @@ func (a *app) newRootCommand() *cobra.Command {
 		},
 	}
 	root.SetHelpCommand(helpCmd)
-	// Cobra's default usage template lists a hidden command named "help" as an
-	// available command. Replace that exemption with the availability check
-	// alone so the headings list only real commands.
 	root.SetUsageTemplate(strings.ReplaceAll(
 		root.UsageTemplate(),
 		`(or .IsAvailableCommand (eq .Name "help"))`,
 		`.IsAvailableCommand`,
 	))
-	// Cobra's completion lists the help command regardless of Hidden, because
-	// the candidate filter admits it by identity rather than by availability.
-	// The command is resolved before this hook runs, so removing it here only
-	// drops it from the candidate list.
+	// Cobra's completion lists the hidden help command regardless of Hidden; the
+	// command is resolved before this hook runs, so this only drops it from the
+	// candidates.
 	root.PersistentPreRun = func(cmd *cobra.Command, _ []string) {
 		if cmd.Name() == cobra.ShellCompRequestCmd {
 			root.RemoveCommand(helpCmd)
@@ -169,27 +156,14 @@ func (a *app) newRootCommand() *cobra.Command {
 		addGenManCommand(root, a)
 	}
 
-	// Add the built-in completion command (bash, zsh, fish, powershell).
 	root.InitDefaultCompletionCmd()
 	a.applyExitCodeContract(root)
 	return root
 }
 
-// applyExitCodeContract walks the finished command tree and makes every usage
-// error exit with exitUsage:
-//
-//   - an Args check that fails is wrapped as a usage error, so cobra's own
-//     argument-count and unknown-argument errors are mapped consistently;
-//   - a parent command that takes subcommands and has no body of its own gets
-//     one that names the unknown subcommand, or prints its usage to standard
-//     error when it is invoked bare, and exits with exitUsage.
-//
-// Option parsing errors are handled by the root command's flag error function,
-// which cobra applies to every command below it. The hidden __complete command
-// is added by cobra's ExecuteC, after this walk, so its own Args check is not
-// wrapped: a malformed completion request therefore exits with code 1 rather
-// than the usage code 2. The completion scripts only call it internally, so
-// that exit code is not part of the command-line contract.
+// applyExitCodeContract makes every usage error in the finished tree exit with
+// exitUsage. Cobra adds its hidden __complete command after this walk, so a
+// malformed completion request exits 1, not 2.
 func (a *app) applyExitCodeContract(cmd *cobra.Command) {
 	if cmd.Args != nil {
 		check := cmd.Args

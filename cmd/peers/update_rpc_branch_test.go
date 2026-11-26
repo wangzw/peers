@@ -9,8 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// startUpdateStatusBroker serves the given handlers at a fresh socket and
-// selects it through findBroker.
 func startUpdateStatusBroker(t *testing.T, h fakelocal.Handlers) *fakelocal.Server {
 	t.Helper()
 	path := fakelocal.SocketPath(t)
@@ -39,9 +37,8 @@ func TestFetchBrokerUpdateStatusReadsTheRunningVersion(t *testing.T) {
 	}
 }
 
-// TestFetchBrokerUpdateStatusReportsTheCallError keeps a Broker that is still
-// starting from being reported as the wanted version: the poll's error is
-// returned with the Broker's own text.
+// TestFetchBrokerUpdateStatusReportsTheCallError checks that a failed status
+// call returns an error carrying the Broker's message.
 func TestFetchBrokerUpdateStatusReportsTheCallError(t *testing.T) {
 	startUpdateStatusBroker(t, fakelocal.Handlers{UpdateStatus: fakelocal.UpdateStatusFailure(codes.Unavailable, "the Broker is starting")})
 

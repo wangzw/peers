@@ -9,7 +9,6 @@ import (
 	"testing"
 )
 
-// newBrokerCmdApp builds an app whose "service run" subcommand talks to stub.
 func newBrokerCmdApp(stub *stubDeps) (*app, *bytes.Buffer, *bytes.Buffer) {
 	stdout := new(bytes.Buffer)
 	stderr := new(bytes.Buffer)
@@ -21,19 +20,17 @@ func newBrokerCmdApp(stub *stubDeps) (*app, *bytes.Buffer, *bytes.Buffer) {
 	}, stdout, stderr
 }
 
-// runServiceRun runs "peers service run" with args.
 func runServiceRun(a *app, args ...string) int {
 	return a.run(context.Background(), append([]string{"service", "run"}, args...))
 }
 
-// brokerLastLine returns the last non-empty line of s.
 func brokerLastLine(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	return lines[len(lines)-1]
 }
 
-// TestBrokerPassesListenOverride covers REQ-broker-config-025: --listen
-// replaces the configured address for this run.
+// TestBrokerPassesListenOverride checks that --listen replaces the configured
+// address for this run.
 func TestBrokerPassesListenOverride(t *testing.T) {
 	stub := &stubDeps{}
 	a, _, _ := newBrokerCmdApp(stub)
@@ -54,6 +51,8 @@ func TestBrokerPassesListenOverride(t *testing.T) {
 	}
 }
 
+// TestBrokerWithoutListenLeavesConfigInCharge checks that without --listen the
+// configuration supplies the address.
 func TestBrokerWithoutListenLeavesConfigInCharge(t *testing.T) {
 	stub := &stubDeps{}
 	a, _, _ := newBrokerCmdApp(stub)
@@ -69,6 +68,7 @@ func TestBrokerWithoutListenLeavesConfigInCharge(t *testing.T) {
 	}
 }
 
+// TestBrokerRejectsEmptyListen checks that an empty --listen is a usage error.
 func TestBrokerRejectsEmptyListen(t *testing.T) {
 	for _, args := range [][]string{{"--listen", ""}, {"--listen="}} {
 		stub := &stubDeps{}
@@ -86,9 +86,8 @@ func TestBrokerRejectsEmptyListen(t *testing.T) {
 	}
 }
 
-// TestBrokerStartupFailureExitCodes covers REQ-broker-config-013 and
-// REQ-broker-config-024: each startup failure keeps its own exit code and the
-// original reason text reaches standard error.
+// TestBrokerStartupFailureExitCodes checks that each startup failure keeps its
+// own exit code and its reason.
 func TestBrokerStartupFailureExitCodes(t *testing.T) {
 	cases := []struct {
 		failure startFailure
@@ -116,7 +115,6 @@ func TestBrokerStartupFailureExitCodes(t *testing.T) {
 			}
 			const want = "peers service run: startup failed"
 			if tc.code == exitUsage {
-				// A usage error adds the help hint on the following line.
 				if !strings.Contains(stderr.String(), want+"\n") {
 					t.Errorf("stderr = %q, want the diagnostic %q", stderr.String(), want)
 				}
@@ -130,6 +128,7 @@ func TestBrokerStartupFailureExitCodes(t *testing.T) {
 	}
 }
 
+// TestBrokerPassesSystemFlag checks that --system reaches the Broker.
 func TestBrokerPassesSystemFlag(t *testing.T) {
 	stub := &stubDeps{
 		brokerErr:      errors.New("startup failed"),
@@ -148,8 +147,8 @@ func TestBrokerPassesSystemFlag(t *testing.T) {
 	}
 }
 
-// TestBrokerPassesUserFlag checks that --user selects the user installation even for
-// root, where the default would be the system installation.
+// TestBrokerPassesUserFlag checks that --user selects the user installation
+// even for root.
 func TestBrokerPassesUserFlag(t *testing.T) {
 	stub := &stubDeps{euid: func() int { return 0 }}
 	a, _, _ := newBrokerCmdApp(stub)
@@ -165,6 +164,7 @@ func TestBrokerPassesUserFlag(t *testing.T) {
 	}
 }
 
+// TestBrokerPassesAllowDegraded checks that --allow-degraded reaches the Broker.
 func TestBrokerPassesAllowDegraded(t *testing.T) {
 	stub := &stubDeps{}
 	a, _, _ := newBrokerCmdApp(stub)
@@ -180,6 +180,8 @@ func TestBrokerPassesAllowDegraded(t *testing.T) {
 	}
 }
 
+// TestBrokerHelpMentionsAllowDegraded checks that the usage lists
+// --allow-degraded.
 func TestBrokerHelpMentionsAllowDegraded(t *testing.T) {
 	stub := &stubDeps{}
 	a, stdout, _ := newBrokerCmdApp(stub)
@@ -192,6 +194,8 @@ func TestBrokerHelpMentionsAllowDegraded(t *testing.T) {
 	}
 }
 
+// TestBrokerRejectsPositionalArgument checks that a positional argument is a
+// usage error.
 func TestBrokerRejectsPositionalArgument(t *testing.T) {
 	stub := &stubDeps{}
 	a, _, stderr := newBrokerCmdApp(stub)
@@ -207,6 +211,8 @@ func TestBrokerRejectsPositionalArgument(t *testing.T) {
 	}
 }
 
+// TestBrokerHelpGoesToStdout checks that --help prints the usage to standard
+// output.
 func TestBrokerHelpGoesToStdout(t *testing.T) {
 	stub := &stubDeps{}
 	a, stdout, stderr := newBrokerCmdApp(stub)
@@ -225,8 +231,8 @@ func TestBrokerHelpGoesToStdout(t *testing.T) {
 	}
 }
 
-// TestBrokerRejectsBothLevelFlags checks the shared level-flag rule on the run
-// command.
+// TestBrokerRejectsBothLevelFlags checks that --system with --user is a usage
+// error.
 func TestBrokerRejectsBothLevelFlags(t *testing.T) {
 	stub := &stubDeps{}
 	a, _, stderr := newBrokerCmdApp(stub)

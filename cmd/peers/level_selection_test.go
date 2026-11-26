@@ -12,8 +12,7 @@ import (
 )
 
 // levelHits counts the RPCs each fake Broker received, keyed by level and
-// method. The test run is sequential, but the fake serves on its own goroutine,
-// so the counter needs a lock.
+// method; the fake serves on its own goroutine, so a mutex guards the counters.
 type levelHits struct {
 	mu      sync.Mutex
 	methods map[string]map[string]int
@@ -34,15 +33,10 @@ func (h *levelHits) count(level, method string) int {
 	return h.methods[level][method]
 }
 
-// levelHandlers serves the RPCs of status, audit and online/offline and records
-// each one under level.
 func levelHandlers(hits *levelHits, level string) fakelocal.Handlers {
 	return fakelocal.RecordingHandlers(func(method string) { hits.add(level, method) })
 }
 
-// startLevelSelection starts one fake Broker per level, points the level-aware
-// selector at each, and returns an app wired through realDeps so the command
-// runs the production closures. The returned buffer is standard error.
 func startLevelSelection(t *testing.T) (*levelHits, *app, *bytes.Buffer) {
 	t.Helper()
 
@@ -73,8 +67,6 @@ func startLevelSelection(t *testing.T) (*levelHits, *app, *bytes.Buffer) {
 	return hits, a, stderr
 }
 
-// assertLevelRouting runs args once with --system and once with --user. Each
-// run must reach exactly one fake Broker: the one at the named level.
 func assertLevelRouting(t *testing.T, a *app, hits *levelHits, args []string, method string, stderr *bytes.Buffer) {
 	t.Helper()
 
@@ -99,21 +91,29 @@ func assertLevelRouting(t *testing.T, a *app, hits *levelHits, args []string, me
 	}
 }
 
+// TestStatusSelectsTheLevelSocket checks that service status reaches the Broker
+// of the selected level.
 func TestStatusSelectsTheLevelSocket(t *testing.T) {
 	hits, a, stderr := startLevelSelection(t)
 	assertLevelRouting(t, a, hits, []string{"service", "status"}, "Status", stderr)
 }
 
+// TestAuditSelectsTheLevelSocket checks that service audit reaches the Broker of
+// the selected level.
 func TestAuditSelectsTheLevelSocket(t *testing.T) {
 	hits, a, stderr := startLevelSelection(t)
 	assertLevelRouting(t, a, hits, []string{"service", "audit"}, "Audit", stderr)
 }
 
+// TestOnlineSelectsTheLevelSocket checks that service online reaches the Broker
+// of the selected level.
 func TestOnlineSelectsTheLevelSocket(t *testing.T) {
 	hits, a, stderr := startLevelSelection(t)
 	assertLevelRouting(t, a, hits, []string{"service", "online"}, "SetConfig", stderr)
 }
 
+// TestOfflineSelectsTheLevelSocket checks that service offline reaches the Broker
+// of the selected level.
 func TestOfflineSelectsTheLevelSocket(t *testing.T) {
 	hits, a, stderr := startLevelSelection(t)
 	assertLevelRouting(t, a, hits, []string{"service", "offline"}, "SetConfig", stderr)

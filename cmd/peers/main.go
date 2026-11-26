@@ -26,12 +26,9 @@ func main() {
 	os.Exit(code)
 }
 
-// runGuarded runs one command line and turns a panic into the general failure
-// exit code. Left to the Go runtime, a panic exits with status 2, which the
-// update contract reserves for "this binary has no post-update command": the
-// previous binary would then continue an update whose step crashed and leave
-// the new binary in place. The contract forbids any other meaning of 2, so a
-// panic is reported as a failure.
+// runGuarded runs one command line and turns a panic into exitFailure. Left to
+// the Go runtime, a panic exits with status 2, which the update contract
+// reserves for "this binary has no post-update command".
 func runGuarded(stderr io.Writer, fn func() int) (code int) {
 	defer func() {
 		if r := recover(); r != nil {

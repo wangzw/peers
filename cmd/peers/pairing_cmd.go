@@ -4,14 +4,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// addBrokerAndKeyCommands adds the "broker" and "key" noun commands. Both are
-// direct children of the root command and belong to the Pairing help group.
 func (a *app) addBrokerAndKeyCommands(root *cobra.Command) {
 	root.AddCommand(a.newBrokerCommand(), a.newKeyCommand())
 }
 
-// newBrokerCommand builds "peers broker", which groups the commands that list,
-// pair with and unpair other Brokers.
 func (a *app) newBrokerCommand() *cobra.Command {
 	broker := &cobra.Command{
 		Use:     "broker",
@@ -33,8 +29,7 @@ func (a *app) newBrokerCommand() *cobra.Command {
 	return broker
 }
 
-// newBrokerConnectCommand builds "peers broker connect <address> --key <key>
-// [--alias <alias>]". The address may come before or after the flags.
+// The address may come before or after the flags.
 func (a *app) newBrokerConnectCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "connect <address>",
@@ -54,9 +49,6 @@ func (a *app) newBrokerConnectCommand() *cobra.Command {
 	return cmd
 }
 
-// newBrokerDisconnectCommand builds "peers broker disconnect <broker>". The
-// argument is completed with the aliases and fingerprints of the paired
-// Brokers. A Broker that cannot be reached yields no candidates and no error.
 func (a *app) newBrokerDisconnectCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "disconnect <broker>",
@@ -79,7 +71,6 @@ func (a *app) newBrokerDisconnectCommand() *cobra.Command {
 	return cmd
 }
 
-// newKeyCommand builds "peers key", which groups the pairing key commands.
 func (a *app) newKeyCommand() *cobra.Command {
 	key := &cobra.Command{
 		Use:     "key",
@@ -97,9 +88,8 @@ func (a *app) newKeyCommand() *cobra.Command {
 	return key
 }
 
-// oneArgument requires exactly one positional argument. The second positional
-// is reported by position alone and never echoed: it is usually a pairing key
-// whose --key flag was left out.
+// The extra positional is reported by position alone and never echoed: it is
+// usually a pairing key whose --key flag was left out.
 func oneArgument(what string) cobra.PositionalArgs {
 	return func(_ *cobra.Command, args []string) error {
 		switch {

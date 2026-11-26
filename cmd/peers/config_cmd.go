@@ -8,9 +8,6 @@ import (
 	"github.com/wangzw/peers/internal/broker"
 )
 
-// newConfigCommand builds the config group. Every verb reaches the Broker of
-// this account, so the group belongs to the Local Broker help section. The
-// group itself has no body; the tree-wide fallback prints its usage.
 func (a *app) newConfigCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "config",
@@ -25,7 +22,6 @@ func (a *app) newConfigCommand() *cobra.Command {
 	return cmd
 }
 
-// newConfigListCommand builds "config list", which prints every item.
 func (a *app) newConfigListCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -37,7 +33,6 @@ func (a *app) newConfigListCommand() *cobra.Command {
 	}
 }
 
-// newConfigGetCommand builds "config get <key>", which prints one item.
 func (a *app) newConfigGetCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:               "get <key>",
@@ -50,8 +45,6 @@ func (a *app) newConfigGetCommand() *cobra.Command {
 	}
 }
 
-// newConfigSetCommand builds "config set <key> <value>", which changes one
-// item.
 func (a *app) newConfigSetCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:               "set <key> <value>",
@@ -64,8 +57,6 @@ func (a *app) newConfigSetCommand() *cobra.Command {
 	}
 }
 
-// completeConfigKey completes the key argument of config get and set. The key
-// is the first positional argument; a value or a second key has no candidates.
 func completeConfigKey(_ *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp

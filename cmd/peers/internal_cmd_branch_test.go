@@ -8,9 +8,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// TestPostUpdateCmdHelpExitsCleanly checks that the hidden command treats -h
-// the way flag does: it reports success and writes nothing, because the
-// internal group has no user-facing usage.
+// TestPostUpdateCmdHelpExitsCleanly checks that internal post-update -h exits 0
+// without running the post-update step or writing output.
 func TestPostUpdateCmdHelpExitsCleanly(t *testing.T) {
 	called := false
 	setPostUpdateSeams(t, nil, func(service.Options) error {
@@ -30,9 +29,9 @@ func TestPostUpdateCmdHelpExitsCleanly(t *testing.T) {
 	}
 }
 
-// TestPostUpdateCmdRejectsAMalformedInvocation checks that an option given
-// without its value is refused with the general failure code and the
-// missing-argument message, without reaching the rewrite.
+// TestPostUpdateCmdRejectsAMalformedInvocation checks that an option without its
+// value is refused with the missing-argument message and runs no post-update
+// step.
 func TestPostUpdateCmdRejectsAMalformedInvocation(t *testing.T) {
 	called := false
 	setPostUpdateSeams(t, func(bool) (service.Options, error) {
@@ -57,8 +56,8 @@ func TestPostUpdateCmdRejectsAMalformedInvocation(t *testing.T) {
 	}
 }
 
-// TestPostUpdateCmdRejectsAnInvalidPID checks that a --pid the helper cannot
-// use is refused instead of being forwarded as 0.
+// TestPostUpdateCmdRejectsAnInvalidPID checks that an invalid --pid is a
+// failure and runs no post-update step.
 func TestPostUpdateCmdRejectsAnInvalidPID(t *testing.T) {
 	called := false
 	setPostUpdateSeams(t, func(bool) (service.Options, error) {
@@ -81,7 +80,8 @@ func TestPostUpdateCmdRejectsAnInvalidPID(t *testing.T) {
 	}
 }
 
-// TestLaunchdReloadHelpExitsCleanly checks the hidden helper's own -h handling.
+// TestLaunchdReloadHelpExitsCleanly checks that launchd-reload -h exits 0
+// without running the reload or writing output.
 func TestLaunchdReloadHelpExitsCleanly(t *testing.T) {
 	called := false
 	setLaunchdReload(t, func(service.Options, string, string, int, service.ExecutableID, string) error {
@@ -101,8 +101,8 @@ func TestLaunchdReloadHelpExitsCleanly(t *testing.T) {
 	}
 }
 
-// TestLaunchdReloadRejectsAnUnknownOption checks that a flag the helper does
-// not define is a usage error rather than an attempt to reload with defaults.
+// TestLaunchdReloadRejectsAnUnknownOption checks that an unknown option of
+// launchd-reload is a usage error and runs no reload.
 func TestLaunchdReloadRejectsAnUnknownOption(t *testing.T) {
 	called := false
 	setLaunchdReload(t, func(service.Options, string, string, int, service.ExecutableID, string) error {

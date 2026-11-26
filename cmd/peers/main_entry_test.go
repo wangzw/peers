@@ -11,15 +11,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// mainEntryEnv marks a re-execution of the test binary as the real entry
-// point. TestMain checks it before running the tests, so the child goes
-// through main exactly as the installed binary would.
+// mainEntryEnv marks a re-execution of the test binary as the real entry point;
+// TestMain checks it before running the tests.
 const mainEntryEnv = "PEERS_TEST_MAIN_ENTRY"
 
-// runMainEntryForTest is the child half of
-// TestMainEntryTurnsAPanicIntoExitFailure. It registers a command that panics
-// and runs the real entry point with that command. The trigger lives in the
-// test binary only: no build of the product contains it.
 func runMainEntryForTest() {
 	addTestInternalCommands = func(internal *cobra.Command, _ *app) {
 		internal.AddCommand(&cobra.Command{
@@ -37,12 +32,8 @@ func runMainEntryForTest() {
 	os.Exit(exitFailure)
 }
 
-// TestMainEntryTurnsAPanicIntoExitFailure drives the compiled entry point, not
-// runGuarded on its own: it fails when main wires the command straight to
-// a.run and skips the guard. The Go runtime exits with status 2 on an
-// unrecovered panic, and the update contract reserves 2 for "this binary has
-// no post-update command", so an unwired guard would let the previous binary
-// continue an update whose step crashed.
+// TestMainEntryTurnsAPanicIntoExitFailure checks that the compiled entry point
+// turns a panic into exitFailure rather than status 2.
 func TestMainEntryTurnsAPanicIntoExitFailure(t *testing.T) {
 	cmd := exec.Command(os.Args[0])
 	cmd.Env = append(os.Environ(), mainEntryEnv+"=1")

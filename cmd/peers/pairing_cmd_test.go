@@ -10,20 +10,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// pairingCalls counts every dependency call the broker and key commands can
-// record. A usage error must reach none of them.
 func pairingCalls(s *termcmdStub) int {
 	return len(s.pairingKeyCalls) + len(s.peerListCalls) +
 		len(s.peerConnectCalls) + len(s.peerDisconnectCalls)
 }
 
-// usageDiagnostic is the two-line text the framework writes for a usage error:
-// the command path and reason, then the help hint.
 func usageDiagnostic(path, reason string) string {
 	return path + ": " + reason + "\nRun '" + path + " --help' for usage.\n"
 }
 
-// findCommand returns the command at path in a freshly built root command.
 func findCommand(t *testing.T, a *app, path ...string) *cobra.Command {
 	t.Helper()
 	cmd, _, err := a.newRootCommand().Find(path)
@@ -36,6 +31,8 @@ func findCommand(t *testing.T, a *app, path ...string) *cobra.Command {
 	return cmd
 }
 
+// TestTopLevelUsageListsPairingCommands checks that the top-level help lists the
+// pairing commands.
 func TestTopLevelUsageListsPairingCommands(t *testing.T) {
 	a, stdout, stderr := newTermcmdApp(&termcmdStub{})
 
@@ -52,6 +49,8 @@ func TestTopLevelUsageListsPairingCommands(t *testing.T) {
 	}
 }
 
+// TestPairingKeyCreateCallsRunner checks that key create reaches the runner with
+// the standard output writer.
 func TestPairingKeyCreateCallsRunner(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -70,6 +69,8 @@ func TestPairingKeyCreateCallsRunner(t *testing.T) {
 	}
 }
 
+// TestPeerListCallsRunner checks that broker list reaches the runner with the
+// standard output writer.
 func TestPeerListCallsRunner(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -88,6 +89,8 @@ func TestPeerListCallsRunner(t *testing.T) {
 	}
 }
 
+// TestPeerConnectCallsRunner checks that broker connect passes the address, key
+// and alias to the runner in either flag order.
 func TestPeerConnectCallsRunner(t *testing.T) {
 	cases := []struct {
 		name string
@@ -149,9 +152,8 @@ func TestPeerConnectCallsRunner(t *testing.T) {
 	}
 }
 
-// TestPeerConnectRejectsSingleDashKey pins the option spelling: only the
-// double-dash --key is accepted, so -key is a usage error and the secret is
-// never read as a positional address.
+// TestPeerConnectRejectsSingleDashKey checks that -key is a usage error and the
+// runner is not reached.
 func TestPeerConnectRejectsSingleDashKey(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -170,9 +172,8 @@ func TestPeerConnectRejectsSingleDashKey(t *testing.T) {
 	}
 }
 
-// TestPeerConnectWarningsReachStderr pins the warning contract on the command
-// side: whatever the termcmd call writes to its warn writer lands on standard
-// error with a "warning: " prefix, and a successful connect still exits 0.
+// TestPeerConnectWarningsReachStderr checks that a runner warning reaches
+// standard error with a "warning: " prefix and the command still exits 0.
 func TestPeerConnectWarningsReachStderr(t *testing.T) {
 	stub := &termcmdStub{peerConnectWarnings: []string{"peer is already paired"}}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -188,6 +189,8 @@ func TestPeerConnectWarningsReachStderr(t *testing.T) {
 	}
 }
 
+// TestPeerDisconnectCallsRunner checks that broker disconnect passes the broker
+// name to the runner.
 func TestPeerDisconnectCallsRunner(t *testing.T) {
 	stub := &termcmdStub{}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -229,8 +232,8 @@ func TestBrokerDisconnectCompletionListsPairedBrokers(t *testing.T) {
 	}
 }
 
-// TestBrokerDisconnectCompletionOmitsCandidatesOnError checks that a Broker
-// that cannot be queried yields no candidates and writes no error.
+// TestBrokerDisconnectCompletionOmitsCandidatesOnError checks that a Broker that
+// cannot be queried yields no candidates and writes no error.
 func TestBrokerDisconnectCompletionOmitsCandidatesOnError(t *testing.T) {
 	stub := &termcmdStub{peerNamesErr: errors.New("cannot reach the Broker")}
 	a, _, stderr := newTermcmdApp(stub)
@@ -248,9 +251,8 @@ func TestBrokerDisconnectCompletionOmitsCandidatesOnError(t *testing.T) {
 	}
 }
 
-// TestPairingCommandErrorsExitOne checks the runtime-error contract on the
-// broker and key commands: the framework writes one line naming the command
-// path and the cause, and the exit code is 1.
+// TestPairingCommandErrorsExitOne checks that a runtime error on the broker and
+// key commands writes one line and exits 1.
 func TestPairingCommandErrorsExitOne(t *testing.T) {
 	errDenied := errors.New("permission_denied: not allowed")
 	cases := []struct {
@@ -295,12 +297,12 @@ func TestPairingCommandErrorsExitOne(t *testing.T) {
 	}
 }
 
+// TestPairingUsageErrors checks the usage diagnostic for each malformed broker
+// and key invocation.
 func TestPairingUsageErrors(t *testing.T) {
 	cases := []struct {
-		name string
-		args []string
-		// wantStderr is the exact diagnostic for a leaf command. An empty
-		// wantStderr requires the parent command's usage text instead.
+		name       string
+		args       []string
 		wantStderr string
 		wantUsage  string
 	}{
@@ -407,9 +409,8 @@ func TestPairingUsageErrors(t *testing.T) {
 	}
 }
 
-// TestPeerConnectExtraArgumentIsNotEchoed covers the case where a user leaves
-// out --key and the pairing key becomes the second positional argument. The
-// usage error must not repeat it, because it is a secret.
+// TestPeerConnectExtraArgumentIsNotEchoed checks that a pairing key left out of
+// --key is reported by position and not echoed.
 func TestPeerConnectExtraArgumentIsNotEchoed(t *testing.T) {
 	const key = "ABCD-EFGH-IJKL-MNOP"
 	stub := &termcmdStub{}
@@ -432,6 +433,8 @@ func TestPeerConnectExtraArgumentIsNotEchoed(t *testing.T) {
 	}
 }
 
+// TestPairingHelp checks that each broker and key command prints its usage on
+// -h or --help.
 func TestPairingHelp(t *testing.T) {
 	cases := []struct {
 		name      string

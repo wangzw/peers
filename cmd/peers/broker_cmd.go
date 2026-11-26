@@ -4,10 +4,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// serviceRunCommand builds "service run": the foreground Broker that the
-// service definitions start. The level comes from --system/--user, or from the
-// executing account when neither is given. Startup failures keep the exit
-// codes the service manager relies on.
+// Startup failures keep the exit codes the service manager relies on.
 func (a *app) serviceRunCommand() *cobra.Command {
 	var (
 		listen        string

@@ -15,10 +15,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// The test seams replace the helper entry points so the command tests can check
-// the streams and the exit-code mapping without running the pipe protocol.
-// postUpdateOptionsFn builds the options for the level named by --level, and
-// postUpdateFn is the service rewrite behind "internal post-update".
+// These test seams hold the production entry points; the command tests replace
+// them with stubs.
 var (
 	runAccountHelperFn  = helper.RunAccountHelper
 	runAccessCheckFn    = helper.RunAccessCheck
@@ -29,12 +27,9 @@ var (
 )
 
 // addTestInternalCommands lets the peers_testenv build add a hidden internal
-// subcommand. Production builds leave it nil.
+// subcommand; production builds leave it nil.
 var addTestInternalCommands func(internal *cobra.Command, a *app)
 
-// addInternalCommands hangs the hidden helper commands off the root command.
-// The group is not a user-facing command: it exists for the Broker to launch
-// helpers as the accounts it serves.
 func (a *app) addInternalCommands(root *cobra.Command) {
 	internal := &cobra.Command{
 		Use:    "internal",
@@ -67,9 +62,6 @@ func (a *app) addInternalCommands(root *cobra.Command) {
 	root.AddCommand(internal)
 }
 
-// internalHelperCommand builds one hidden helper subcommand. Flag parsing is
-// left to the command body, whose exit code becomes the error the framework
-// maps back to the same code.
 func (a *app) internalHelperCommand(use, short string, run func(context.Context, []string) int) *cobra.Command {
 	return &cobra.Command{
 		Use:                use,
@@ -82,27 +74,18 @@ func (a *app) internalHelperCommand(use, short string, run func(context.Context,
 	}
 }
 
-// accountHelperCmd is the body of the hidden "internal account-helper"
-// subcommand. The system Broker launches it as an account it serves, and it
-// speaks the helper protocol over the process's own standard streams.
 func (a *app) accountHelperCmd(ctx context.Context, args []string) int {
 	return a.streamHelperCmd("account-helper", args, func() error {
 		return runAccountHelperFn(ctx, a.stdin, a.stdout)
 	})
 }
 
-// accessCheckCmd is the body of the hidden "internal access-check" subcommand.
-// The system Broker launches it as the calling account; it reads one request
-// from standard input, writes one response to standard output and exits.
 func (a *app) accessCheckCmd(_ context.Context, args []string) int {
 	return a.streamHelperCmd("access-check", args, func() error {
 		return runAccessCheckFn(a.stdin, a.stdout)
 	})
 }
 
-// streamHelperCmd is the body shared by the helper subcommands that serve a
-// request over the process's own standard streams. A stray argument is a usage
-// error; a failure of serve is the general failure code.
 func (a *app) streamHelperCmd(name string, args []string, serve func() error) int {
 	if len(args) > 0 {
 		_, _ = fmt.Fprintf(a.stderr, "peers internal %s: unexpected argument %q\n", name, args[0])
@@ -115,10 +98,7 @@ func (a *app) streamHelperCmd(name string, args []string, serve func() error) in
 	return exitOK
 }
 
-// postUpdateCmd is the body of the hidden "internal post-update" subcommand.
-// The freshly installed binary runs it after an update replaced the binary, so
-// the service definition is rewritten in that binary's own format. The join
-// point is a cross-version contract: the command name and --level values must
+// The command name and the --level values are a cross-version contract and must
 // not change, because the previous binary invokes them.
 func (a *app) postUpdateCmd(_ context.Context, args []string) int {
 	fs := flag.NewFlagSet("internal post-update", flag.ContinueOnError)
@@ -158,12 +138,10 @@ func (a *app) postUpdateCmd(_ context.Context, args []string) int {
 	return exitOK
 }
 
-// postUpdateKnownArgs keeps the options this version understands and drops any
-// other option. A later release may add optional parameters to the call, and a
-// binary that does not know one must still run the step instead of failing on
-// it. An option carried as a separate value ("--name value") cannot be told
-// apart from an unexpected positional argument once its name is dropped, so a
-// parameter this version does not know has to use the "--name=value" form.
+// postUpdateKnownArgs drops the options this version does not know, so a later
+// release can add optional parameters. A new parameter must use the
+// "--name=value" form: written separately, its value cannot be told from an
+// unexpected positional argument once the name is dropped.
 func postUpdateKnownArgs(args []string) []string {
 	kept := make([]string, 0, len(args))
 	for _, arg := range args {
@@ -183,12 +161,8 @@ func postUpdateKnownArgs(args []string) []string {
 	return kept
 }
 
-// launchdReloadCmd is the body of the hidden "internal launchd-reload"
-// subcommand. On macOS the post-update step starts it in a detached session;
-// it waits for the Broker that answered the update to exit, then boots the
-// label out and bootstraps the rewritten plist. It is internal implementation,
-// not part of the cross-version contract: the contract is the post-update
-// command that starts it.
+// launchdReloadCmd is internal implementation, not part of the cross-version
+// contract; the contract is the post-update command that starts it.
 func (a *app) launchdReloadCmd(_ context.Context, args []string) int {
 	fs := flag.NewFlagSet("internal launchd-reload", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -239,14 +213,11 @@ func (a *app) launchdReloadCmd(_ context.Context, args []string) int {
 	return exitOK
 }
 
-// launchdReloadUsageError reports a usage problem without printing the
-// top-level usage: the whole internal group stays hidden.
 func (a *app) launchdReloadUsageError(reason string) int {
 	_, _ = fmt.Fprintf(a.stderr, "peers internal launchd-reload: %s\n", reason)
 	return exitUsage
 }
 
-// postUpdateLevel maps the contract's --level value to the service level.
 func postUpdateLevel(name string) (bool, error) {
 	switch name {
 	case "system":
@@ -260,12 +231,9 @@ func postUpdateLevel(name string) (bool, error) {
 	}
 }
 
-// postUpdateError reports a problem with the post-update call and returns the
-// general failure code. Exit code 2 is reserved for "this binary has no such
-// subcommand": the previous binary reads it as "no post-update step" and
-// continues the update. A usage error of this command must not be mistaken for
-// that, so it is a failure. The top-level usage is not printed: the whole
-// internal group stays hidden.
+// A usage error of the post-update command returns the failure code: exit code
+// 2 means "no such subcommand", which the previous binary reads as "no
+// post-update step".
 func (a *app) postUpdateError(reason string) int {
 	_, _ = fmt.Fprintf(a.stderr, "peers internal post-update: %s\n", reason)
 	return exitFailure

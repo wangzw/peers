@@ -9,26 +9,18 @@ import (
 )
 
 // errUserLevelUpdateUnsupported reports that the selected Broker is this
-// account's user Broker and declined to apply the update itself. The
-// command then replaces the user binary in place, which is the route
-// that existed before Brokers could apply updates.
+// account's user Broker and declined to apply the update itself; the command
+// then replaces the user binary in place.
 var errUserLevelUpdateUnsupported = errors.New("the user Broker does not apply updates itself")
 
 // errNoRunningBroker reports that no Broker could be selected or reached, so
-// there is nothing to ask for an update. The command replaces the binary
-// locally instead.
+// the command replaces the binary locally.
 var errNoRunningBroker = errors.New("no running Broker")
 
-// updateUserSocketPath is the socket path of this account's user Broker.
-// It is a variable so a test can decide which selected Broker counts as
-// this account's own without depending on the account running the test.
+// updateUserSocketPath is a variable so a test can decide which selected Broker
+// counts as this account's own.
 var updateUserSocketPath = mcpserver.UserSocketPath
 
-// applyUpdateThroughBroker asks the selected Broker to install the newest
-// release itself. The request carries no version: the Broker decides what is
-// newer and refuses a downgrade. When the selected Broker is this account's
-// user Broker and refuses with failed_precondition, the command falls
-// back to a local replacement.
 func applyUpdateThroughBroker(ctx context.Context, euid func() int) (brokerUpdateResult, error) {
 	var selectedPath string
 	selectBroker := termcmd.Selector(func(ctx context.Context) (string, termcmd.Dialer, error) {
@@ -49,8 +41,6 @@ func applyUpdateThroughBroker(ctx context.Context, euid func() int) (brokerUpdat
 			}
 			return brokerUpdateResult{}, err
 		default:
-			// The failure is in selection, the connection or the version
-			// handshake, so no Broker answered the call.
 			return brokerUpdateResult{}, errNoRunningBroker
 		}
 	}
@@ -62,7 +52,6 @@ func applyUpdateThroughBroker(ctx context.Context, euid func() int) (brokerUpdat
 	}, nil
 }
 
-// fetchBrokerUpdateStatus reads the version the selected Broker runs now.
 func fetchBrokerUpdateStatus(ctx context.Context) (brokerUpdateStatus, error) {
 	current, _, err := termcmd.RunUpdateStatus(ctx, findBroker)
 	if err != nil {

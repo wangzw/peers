@@ -4,10 +4,8 @@ package main
 
 import "testing"
 
-// TestParseProtocolOverrides checks the accepted and rejected spellings of an
-// override value. A malformed or out-of-range value must fall back to 0, which
-// means "use the version of the generated packages"; a parser that keeps a
-// partial value would send a version no peer uses.
+// TestParseProtocolOverrides checks that valid values parse and malformed or
+// out-of-range ones become 0.
 func TestParseProtocolOverrides(t *testing.T) {
 	cases := []struct {
 		local, link string
@@ -33,8 +31,8 @@ func TestParseProtocolOverrides(t *testing.T) {
 	}
 }
 
-// TestProtocolOverridesInstalled checks that the testenv init hook replaced the
-// production seam, so the wire layer reads the environment variables.
+// TestProtocolOverridesInstalled checks that the testenv init hook makes
+// protocolOverrides read the environment.
 func TestProtocolOverridesInstalled(t *testing.T) {
 	t.Setenv("PEERS_TEST_LOCAL_PROTOCOL_VERSION", "5")
 	t.Setenv("PEERS_TEST_LINK_PROTOCOL_VERSION", "6")

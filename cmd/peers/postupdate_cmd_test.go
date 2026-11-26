@@ -9,8 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// setPostUpdateSeams installs the option and operation seams for one test. A
-// nil function leaves that seam unchanged.
 func setPostUpdateSeams(
 	t *testing.T,
 	options func(bool) (service.Options, error),
@@ -30,6 +28,8 @@ func setPostUpdateSeams(
 	})
 }
 
+// TestPostUpdateCmdMapsLevel checks that --level selects the system or user
+// installation.
 func TestPostUpdateCmdMapsLevel(t *testing.T) {
 	cases := []struct {
 		level      string
@@ -77,10 +77,8 @@ func TestPostUpdateCmdMapsLevel(t *testing.T) {
 	}
 }
 
-// TestPostUpdateCmdSystemNeedsNoHome runs the command with HOME unset, as a
-// system service does. The system installation must not read the account home, so the
-// command reaches the rewrite; the rewrite is a stand-in, so the test observes
-// only the options it was given.
+// TestPostUpdateCmdSystemNeedsNoHome checks that the system installation
+// rewrites with no account home.
 func TestPostUpdateCmdSystemNeedsNoHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	var got *service.Options
@@ -110,9 +108,8 @@ func TestPostUpdateCmdSystemNeedsNoHome(t *testing.T) {
 	}
 }
 
-// TestPostUpdateCmdUserNeedsHome keeps the user installation reading the account
-// home: without HOME it reports the failure instead of rewriting a definition
-// for a directory it cannot find.
+// TestPostUpdateCmdUserNeedsHome checks that the user installation without a
+// home reports the failure instead of rewriting.
 func TestPostUpdateCmdUserNeedsHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	var called bool
@@ -136,9 +133,8 @@ func TestPostUpdateCmdUserNeedsHome(t *testing.T) {
 	}
 }
 
-// TestPostUpdateCmdIgnoresUnknownOptions keeps the frozen contract usable from
-// a later caller: a binary that does not know an option must still run the
-// step instead of failing on it.
+// TestPostUpdateCmdIgnoresUnknownOptions checks that an option this version
+// does not know does not stop the step.
 func TestPostUpdateCmdIgnoresUnknownOptions(t *testing.T) {
 	var called bool
 	setPostUpdateSeams(t, nil, func(service.Options) error {
@@ -159,9 +155,8 @@ func TestPostUpdateCmdIgnoresUnknownOptions(t *testing.T) {
 	}
 }
 
-// TestPostUpdateCmdPassesTheBrokerPID checks the optional --pid the caller adds
-// so the macOS helper waits for the right process instead of guessing from the
-// parent pid.
+// TestPostUpdateCmdPassesTheBrokerPID checks that --pid reaches the service
+// rewrite.
 func TestPostUpdateCmdPassesTheBrokerPID(t *testing.T) {
 	var gotPPID func() int
 	setPostUpdateSeams(t, nil, func(opts service.Options) error {
@@ -181,6 +176,8 @@ func TestPostUpdateCmdPassesTheBrokerPID(t *testing.T) {
 	}
 }
 
+// TestPostUpdateCmdRejectsUsage checks that a usage error exits 1 with the
+// reason and prints no usage line.
 func TestPostUpdateCmdRejectsUsage(t *testing.T) {
 	cases := []struct {
 		name string
@@ -231,6 +228,8 @@ func TestPostUpdateCmdRejectsUsage(t *testing.T) {
 	}
 }
 
+// TestPostUpdateCmdReportsFailure checks that a rewrite failure writes one line
+// and exits 1.
 func TestPostUpdateCmdReportsFailure(t *testing.T) {
 	setPostUpdateSeams(t,
 		func(bool) (service.Options, error) { return service.Options{Exe: "/usr/local/bin/peers"}, nil },
@@ -249,6 +248,8 @@ func TestPostUpdateCmdReportsFailure(t *testing.T) {
 	}
 }
 
+// TestPostUpdateCmdReportsOptionFailure checks that failing to build the options
+// exits 1 without running the rewrite.
 func TestPostUpdateCmdReportsOptionFailure(t *testing.T) {
 	var called bool
 	setPostUpdateSeams(t,

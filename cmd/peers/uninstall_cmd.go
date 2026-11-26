@@ -16,12 +16,10 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// uninstallDataPrompt asks whether to delete the configuration, identity and
-// logs. --purge skips it and deletes them; --yes skips it and keeps them.
 const uninstallDataPrompt = "Also remove configuration, identity, audit and service logs? [y/N] "
 
-// uninstallSystemPrompt asks before re-running the command through sudo. It is
-// written to standard error, like every other confirmation question.
+// uninstallSystemPrompt is written to standard error, like every other
+// confirmation question.
 const uninstallSystemPrompt = "Remove the system installation through sudo? [y/N] "
 
 // The test seams replace the installation steps so the command can be checked
@@ -48,7 +46,6 @@ var (
 	uninstallSudoFn = runSudoUninstall
 )
 
-// newUninstallCommand builds "peers uninstall [--purge] [--yes]".
 func newUninstallCommand(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "uninstall",
@@ -64,9 +61,6 @@ func newUninstallCommand(a *app) *cobra.Command {
 	return cmd
 }
 
-// mcpPeerCommand reports whether the peer MCP registration runs the binary at
-// exe. Symlinks are resolved first, because the registration stores the path
-// the install used.
 func mcpPeerCommand(account, exe string) bool {
 	reg := uninstallMCPLookupFn(account)
 	if reg.command == "" {
@@ -80,10 +74,6 @@ func mcpPeerCommand(account, exe string) bool {
 	return command == target || command == exe
 }
 
-// installationBinary returns the running executable when it sits at the default
-// installation prefix and the MCP registration points to it. A copy downloaded
-// elsewhere and run through sudo is not an installation, so uninstall leaves it
-// in place.
 func installationBinary(opts service.Options, account, exe string) (string, bool) {
 	defaultPath := defaultInstallPath(opts)
 	if !samePath(exe, defaultPath) && !samePath(exe, rootedPath(opts, defaultPath)) {
@@ -98,13 +88,10 @@ func installationBinary(opts service.Options, account, exe string) (string, bool
 	return "", false
 }
 
-// samePath reports whether two paths name the same location after cleaning.
 func samePath(a, b string) bool {
 	return filepath.Clean(a) == filepath.Clean(b)
 }
 
-// defaultInstallPath is where an installation places the binary when no prefix
-// is given.
 func defaultInstallPath(opts service.Options) string {
 	if opts.System {
 		return "/usr/local/bin/peers"
@@ -120,14 +107,10 @@ func defaultRemoveMCPRegistration(account, binary string) (string, error) {
 	return removeMCPRegistration(runMCPCommand, account, binary)
 }
 
-// runMCPCommand runs a command for the MCP steps.
 func runMCPCommand(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
 
-// uninstallCmd implements "peers uninstall [--purge] [--yes]". It removes the
-// installation of the account that runs it, or the system installation
-// when run as root, and optionally the configuration, identity and logs.
 func (a *app) uninstallCmd(ctx context.Context, purge, yes bool) error {
 	userOpts, err := uninstallOptionsFn(false)
 	if err != nil {
@@ -148,8 +131,6 @@ func (a *app) uninstallCmd(ctx context.Context, purge, yes bool) error {
 	return a.uninstallAsAccount(ctx, userOpts, systemOpts, purge, yes)
 }
 
-// uninstallAsRoot removes the system installation. Root has no
-// user installation of its own.
 func (a *app) uninstallAsRoot(ctx context.Context, opts service.Options, purge, yes bool) error {
 	noServiceBinary := ""
 	installed, err := uninstallInstalledFn(opts)
@@ -157,9 +138,6 @@ func (a *app) uninstallAsRoot(ctx context.Context, opts service.Options, purge, 
 		return uninstallError("cannot inspect the installation", err)
 	}
 	if !installed {
-		// An installation that used --no-service left only the MCP
-		// registration. Root's own registration and sudo's caller are both
-		// checked, since either may be the account the install belonged to.
 		exe, err := uninstallExecutableFn()
 		if err != nil {
 			return uninstallError("cannot locate the executable", err)
@@ -183,10 +161,6 @@ func (a *app) uninstallAsRoot(ctx context.Context, opts service.Options, purge, 
 	return a.uninstallLevel(ctx, opts, true, purge, yes, noServiceBinary)
 }
 
-// uninstallAsAccount removes this account's installation. When only
-// a system installation exists, --yes re-runs the command through sudo;
-// with a terminal the account is asked first; without either the command
-// reports the complete sudo command and fails.
 func (a *app) uninstallAsAccount(ctx context.Context, userOpts, systemOpts service.Options, purge, yes bool) error {
 	noServiceBinary := ""
 	installed, err := uninstallInstalledFn(userOpts)
@@ -222,10 +196,6 @@ func (a *app) uninstallAsAccount(ctx context.Context, userOpts, systemOpts servi
 		return nil
 	}
 
-	// Only a system installation is present. --yes skips the question
-	// and re-runs the command through sudo. An account with a terminal is
-	// asked first; without a terminal and without --yes the command reports
-	// the complete sudo command and exits with failure.
 	if yes {
 		return a.sudoUninstall(ctx, purge, true)
 	}
@@ -235,9 +205,8 @@ func (a *app) uninstallAsAccount(ctx context.Context, userOpts, systemOpts servi
 			return uninstallError("cannot confirm the system uninstall", err)
 		}
 		if confirmed {
-			// The answer only approves the sudo rerun. It is not a
-			// confirmation for the data question, so the child asks that on
-			// the terminal the caller is using.
+			// The answer approves only the sudo rerun, so the child asks the
+			// data question on the caller's terminal.
 			return a.sudoUninstall(ctx, purge, false)
 		}
 		_, _ = fmt.Fprintf(a.stdout, "Run: %s\n", sudoUninstallCommand(purge))
@@ -246,11 +215,9 @@ func (a *app) uninstallAsAccount(ctx context.Context, userOpts, systemOpts servi
 	return fmt.Errorf("only a system installation is present; run: %s", sudoUninstallCommand(purge))
 }
 
-// sudoUninstall re-runs this command as root. --yes is forwarded only when the
-// caller gave it; a terminal confirmation approves the sudo rerun alone, so the
-// child still asks the data question on the terminal (REQ-053). The executable
-// path is the running binary, not the name on PATH, because sudo's secure_path
-// may not contain it.
+// sudoUninstall forwards --yes only when the caller gave it, and runs the
+// current executable's path rather than the name on PATH, because sudo's
+// secure_path may not contain it.
 func (a *app) sudoUninstall(ctx context.Context, purge, yes bool) error {
 	exe, err := uninstallExecutableFn()
 	if err != nil {
@@ -269,8 +236,6 @@ func (a *app) sudoUninstall(ctx context.Context, purge, yes bool) error {
 	return nil
 }
 
-// runSudoUninstall runs sudo exe args with the caller's streams and returns the
-// child's exit code as an exitError.
 func runSudoUninstall(ctx context.Context, exe string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, "sudo", append([]string{exe}, args...)...)
 	cmd.Stdin = stdin
@@ -287,9 +252,6 @@ func runSudoUninstall(ctx context.Context, exe string, args []string, stdin io.R
 	return err
 }
 
-// sudoUninstallCommand is the complete command that removes the system
-// installation without asking. It is quoted into the error so the caller can
-// rerun it as it is.
 func sudoUninstallCommand(purge bool) string {
 	command := "sudo peers uninstall"
 	if purge {
@@ -298,9 +260,6 @@ func sudoUninstallCommand(purge bool) string {
 	return command + " --yes"
 }
 
-// uninstallLevel performs the steps for one level. binary is set only when the
-// level has no service definition and the executable itself is the
-// installation.
 func (a *app) uninstallLevel(ctx context.Context, opts service.Options, system, purge, yes bool, binary string) error {
 	account := ""
 	if system {
@@ -310,11 +269,9 @@ func (a *app) uninstallLevel(ctx context.Context, opts service.Options, system, 
 		}
 	}
 
-	// Confirmation comes after the level is known but before anything is
-	// read or removed. --purge deletes the data without asking, and --yes
-	// skips the question without deleting it. Without a terminal, a command
-	// that would remove data needs --yes: that covers both --purge and the
-	// data question. It exits with failure before touching anything.
+	// Confirmation comes after the level is known but before anything is read
+	// or removed. Without a terminal, a command that would remove data needs
+	// --yes and fails before touching anything otherwise.
 	purgeData := purge
 	if !yes {
 		if !isTerminal(a.stdin) {
@@ -337,10 +294,6 @@ func (a *app) uninstallLevel(ctx context.Context, opts service.Options, system, 
 		if ok {
 			binary = path
 		} else {
-			// The service manager still knows the unit although its file is
-			// gone. Only the running executable at the default prefix whose
-			// MCP registration points to it counts as the installation; any
-			// other copy is left alone.
 			exe, err := uninstallExecutableFn()
 			if err != nil {
 				return uninstallError("cannot locate the executable", err)
@@ -437,12 +390,11 @@ func (a *app) uninstallLevel(ctx context.Context, opts service.Options, system, 
 	return nil
 }
 
-// removeInstallationFiles deletes the shell completion files the install
-// script created for the level, and the system man pages. A completion
-// file is removed only when its content carries the marker cobra generates for
-// this program; anything else at that path is kept and reported. A directory
-// with an installation file's name is never removed. Files that are already
-// gone are not an error; every removed path is reported.
+// removeInstallationFiles deletes the shell completion files the install script
+// wrote for the level and, for a system installation, this project's man pages.
+// A completion is removed only when its content carries cobra's marker for this
+// program; any other file or a directory at those paths is kept, and every
+// removed and kept path is reported. A path that is already gone is not an error.
 func (a *app) removeInstallationFiles(opts service.Options, system bool) error {
 	for _, path := range completionFiles(opts, system) {
 		if err := a.removeCompletion(path); err != nil {
@@ -450,8 +402,7 @@ func (a *app) removeInstallationFiles(opts service.Options, system bool) error {
 		}
 	}
 	if system {
-		// The narrow patterns keep another program's man page, such as
-		// peerstat.1, even though it starts with "peer".
+		// The narrow patterns keep another program's man page such as peerstat.1.
 		for _, pattern := range []string{"peers.1", "peers-*.1"} {
 			glob := filepath.Join(rootedPath(opts, "/usr/local/share/man/man1"), pattern)
 			pages, err := filepath.Glob(glob)
@@ -468,8 +419,6 @@ func (a *app) removeInstallationFiles(opts service.Options, system bool) error {
 	return nil
 }
 
-// removeCompletion removes one completion file after checking it was generated
-// by this program. A file without the marker is kept, and so is a directory.
 func (a *app) removeCompletion(path string) error {
 	info, err := os.Lstat(path)
 	switch {
@@ -496,8 +445,6 @@ func (a *app) removeCompletion(path string) error {
 	return a.removeInstallationFile(path)
 }
 
-// generatedCompletion reports whether data carries the marker cobra writes at
-// the top of the completion script for this program.
 func generatedCompletion(data []byte) bool {
 	for _, marker := range []string{
 		"# bash completion V2 for peers",
@@ -511,8 +458,6 @@ func generatedCompletion(data []byte) bool {
 	return false
 }
 
-// removeInstallationFile removes a regular file. A missing path is not an
-// error; a directory is kept and reported.
 func (a *app) removeInstallationFile(path string) error {
 	info, err := os.Lstat(path)
 	switch {
@@ -535,9 +480,8 @@ func (a *app) removeInstallationFile(path string) error {
 	return nil
 }
 
-// completionFiles lists the shell completion files the install script writes
-// for one level. The user installation never writes the zsh completion, so neither
-// uninstall case touches it.
+// The user installation never writes the zsh completion, so a user-level
+// uninstall never removes it.
 func completionFiles(opts service.Options, system bool) []string {
 	if system {
 		return []string{
@@ -552,10 +496,6 @@ func completionFiles(opts service.Options, system bool) []string {
 	}
 }
 
-// removeServiceBinary removes the binary the service started. A user
-// uninstall leaves a binary that belongs to another account alone, such as a
-// shared system binary. The path must also prove it is this
-// installation's peers binary.
 func (a *app) removeServiceBinary(opts service.Options, system bool, binary string) error {
 	path := rootedPath(opts, binary)
 	if _, err := os.Lstat(path); err != nil {
@@ -594,10 +534,10 @@ func (a *app) removeServiceBinary(opts service.Options, system bool, binary stri
 	return nil
 }
 
-// serviceBinaryIdentity returns why binary is not this installation's
-// peers binary, or an empty string when it is. A file only qualifies by
-// name and by being the running executable; nothing else is deleted with root's
-// permission, and an unrelated file is never executed to find out.
+// serviceBinaryIdentity returns why binary is not this installation's peers
+// binary, or an empty string when it is. A file qualifies only by the name
+// peers and by being the running executable; nothing else is deleted with
+// root's permission, and an unrelated file is never executed to find out.
 func serviceBinaryIdentity(opts service.Options, binary string) string {
 	manual := "remove it manually with: rm " + binary
 	if !filepath.IsAbs(binary) {
@@ -619,7 +559,6 @@ func serviceBinaryIdentity(opts service.Options, binary string) string {
 	return "it is not this peers binary; " + manual
 }
 
-// keptPaths lists the paths a keep-data uninstall left in place.
 func keptPaths(opts service.Options) []string {
 	var paths []string
 	if opts.System {
@@ -638,7 +577,6 @@ func keptPaths(opts service.Options) []string {
 	return paths
 }
 
-// rootedPath maps a production path under the test root prefix.
 func rootedPath(opts service.Options, path string) string {
 	if opts.Root == "" {
 		return path
@@ -646,8 +584,6 @@ func rootedPath(opts service.Options, path string) string {
 	return filepath.Join(opts.Root, path)
 }
 
-// resolvePath returns path with symlinks resolved, or path itself when it
-// cannot be resolved.
 func resolvePath(path string) string {
 	if resolved, err := uninstallEvalSymlinksFn(path); err == nil {
 		return resolved
@@ -655,7 +591,6 @@ func resolvePath(path string) string {
 	return path
 }
 
-// fileOwner returns the owner of path without following a symbolic link.
 func fileOwner(path string) (uint32, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -668,9 +603,6 @@ func fileOwner(path string) (uint32, error) {
 	return st.Uid, nil
 }
 
-// uninstallError names the step that failed. The step functions name the path
-// and the cause, so the command adds only the step name; the framework prints
-// the command path and exit code.
 func uninstallError(step string, err error) error {
 	return fmt.Errorf("%s: %w", step, err)
 }

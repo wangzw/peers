@@ -20,29 +20,25 @@ import (
 	"github.com/wangzw/peers/internal/broker/update"
 )
 
-// updateLocalTakesEffectHint follows a local replacement. The command does not
-// restart anything, because the service may have been stopped on purpose.
+// updateLocalTakesEffectHint follows a local replacement; its wording is fixed
+// and a change must update the tests.
 const updateLocalTakesEffectHint = "The new binary takes effect the next time the Broker starts."
 
-// updateSessionHint follows a Broker-applied update. It is the wording in
-// design-broker's delegated update section; keep it verbatim.
+// updateSessionHint follows a Broker-applied update; its wording is fixed and a
+// change must update the tests.
 const updateSessionHint = "Sessions that are already open keep the old MCP server until they are reopened; this Broker's connections recover automatically."
 
 // updateRestartWait bounds the wait for a restarted Broker to report the new
-// version. It covers the Broker's exit delay, the service manager's restart
-// interval (systemd RestartSec is 5 seconds; launchd's default
-// ThrottleInterval is 10 seconds) and the Broker's startup and readiness. The
-// design sets the bound to 60 seconds. It is a variable so a test can shorten
-// the wait without sleeping for the production bound.
+// version; 60 seconds covers the service manager's restart interval and the
+// Broker's startup and readiness. It is a variable so a test can shorten it.
 var updateRestartWait = 60 * time.Second
 
-// updateStatusPollDelay separates UpdateStatus polls while the Broker
-// restarts. It is a variable for the same reason as updateRestartWait.
+// updateStatusPollDelay separates UpdateStatus polls while the Broker restarts;
+// it is a variable so a test can shorten it.
 var updateStatusPollDelay = 250 * time.Millisecond
 
-// Test seams for the parts of the update command that reach the operating
-// system. The command's GitHub requests are reached through deps so an
-// ordinary test double covers them as well.
+// These are test seams for the parts of the update command that reach the
+// operating system.
 var (
 	updateExecutable   = os.Executable
 	updateEvalSymlinks = filepath.EvalSymlinks
@@ -51,7 +47,6 @@ var (
 	updateGOARCH       = runtime.GOARCH
 )
 
-// newUpdateCommand builds "peers update [--yes]".
 func newUpdateCommand(a *app) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "update",
@@ -66,10 +61,6 @@ func newUpdateCommand(a *app) *cobra.Command {
 	return cmd
 }
 
-// updateCmd implements "peers update [--yes]". It asks the selected
-// Broker to install the newest release and restart itself. A user Broker
-// that declines (it cannot replace and restart itself) leaves the command to
-// replace that account's binary in place.
 func (a *app) updateCmd(ctx context.Context, yes bool) error {
 	current := strings.TrimPrefix(a.version, "v")
 	if !update.IsReleaseVersion(current) {
@@ -97,10 +88,8 @@ func (a *app) updateCmd(ctx context.Context, yes bool) error {
 	return a.reportBrokerUpdate(ctx, result)
 }
 
-// updateLocal replaces a user binary in place. It starts and stops
-// nothing: a Broker restarting itself does that through its service manager,
-// and an installed service may have been stopped on purpose. The user has
-// already confirmed the update.
+// updateLocal replaces this account's binary in place and starts or stops no
+// service, which may have been stopped on purpose.
 func (a *app) updateLocal(ctx context.Context, current string) error {
 	target, err := updateTarget()
 	if err != nil {
@@ -108,7 +97,7 @@ func (a *app) updateLocal(ctx context.Context, current string) error {
 	}
 	if err := checkTargetDirWritable(filepath.Dir(target)); err != nil {
 		// The framework prefixes the first line with the command path; the
-		// sudo hint is a separate line, as the design writes it.
+		// sudo hint is a separate line.
 		return fmt.Errorf("%w\nrun \"sudo peers update\" to update a system installation", err)
 	}
 
@@ -142,9 +131,6 @@ func (a *app) updateLocal(ctx context.Context, current string) error {
 	return nil
 }
 
-// reportBrokerUpdate handles a successful ApplyUpdate answer. When the Broker
-// restarts, the command waits until the new Broker answers with the new
-// version, because the request is only complete once that process is running.
 func (a *app) reportBrokerUpdate(ctx context.Context, result brokerUpdateResult) error {
 	from := strings.TrimPrefix(result.FromVersion, "v")
 	to := strings.TrimPrefix(result.ToVersion, "v")
@@ -167,11 +153,6 @@ func (a *app) reportBrokerUpdate(ctx context.Context, result brokerUpdateResult)
 	return nil
 }
 
-// waitForBrokerVersion polls UpdateStatus until the restarted Broker reports
-// want. Connection errors are expected while the old process exits and the
-// service manager starts the new one, so they are retried until the bound. A
-// timeout names the log of the level that answered ApplyUpdate, which is where
-// the failure that kept the new Broker from starting will be.
 func (a *app) waitForBrokerVersion(ctx context.Context, want string, userLevel bool) error {
 	want = strings.TrimPrefix(want, "v")
 	deadline := time.Now().Add(updateRestartWait)
@@ -201,8 +182,6 @@ func (a *app) waitForBrokerVersion(ctx context.Context, want string, userLevel b
 	return fmt.Errorf("the Broker did not report version %s within %s; check the service log: %s", want, humanDuration(updateRestartWait), updateLogHint(userLevel))
 }
 
-// humanDuration renders d as a user reads it, such as "60 seconds", rather than
-// as the time.Duration String method writes it.
 func humanDuration(d time.Duration) string {
 	seconds := int64(d / time.Second)
 	if seconds == 1 {
@@ -211,11 +190,6 @@ func humanDuration(d time.Duration) string {
 	return fmt.Sprintf("%d seconds", seconds)
 }
 
-// updateLogHint names where the service manager writes the Broker's standard
-// error, for the level that answered ApplyUpdate. On macOS it also names the
-// post-update log: the detached helper that reloads the service after the
-// Broker exits writes its failure there, and the second phase cannot report it
-// through the caller.
 func updateLogHint(userLevel bool) string {
 	switch {
 	case updateGOOS == "darwin" && userLevel:
@@ -229,8 +203,6 @@ func updateLogHint(userLevel bool) string {
 	}
 }
 
-// updateTarget returns the running executable with symbolic links resolved, so
-// the replacement lands on the file the service and the shell both run.
 func updateTarget() (string, error) {
 	exe, err := updateExecutable()
 	if err != nil {
@@ -262,8 +234,8 @@ func checkTargetDirWritable(dir string) error {
 	return nil
 }
 
-// isTerminal reports whether r is a terminal. The check is a variable so a
-// test can answer a confirmation question without a pseudo-terminal.
+// isTerminal is a variable so a test can answer a confirmation question without
+// a pseudo-terminal.
 var isTerminal = func(r io.Reader) bool {
 	f, ok := r.(*os.File)
 	if !ok {
@@ -272,8 +244,8 @@ var isTerminal = func(r io.Reader) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-// readAnswer reads one line from r. End of input before a newline is not an
-// error: the partial line still counts as the answer.
+// readAnswer reads one line from r; end of input before a newline still counts
+// as the answer, not an error.
 func readAnswer(r io.Reader) (string, error) {
 	line, err := bufio.NewReader(r).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
@@ -282,7 +254,6 @@ func readAnswer(r io.Reader) (string, error) {
 	return strings.TrimSpace(line), nil
 }
 
-// isYes accepts the same answers from a user as the closing line of a prompt.
 func isYes(answer string) bool {
 	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes")
 }

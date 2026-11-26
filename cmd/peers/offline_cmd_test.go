@@ -10,7 +10,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// setOnlineCall is one recorded runSetOnline call.
 type setOnlineCall struct {
 	system   bool
 	explicit bool
@@ -18,7 +17,6 @@ type setOnlineCall struct {
 	out      io.Writer
 }
 
-// serviceSubcommand returns the named child of "peers service".
 func serviceSubcommand(t *testing.T, a *app, name string) *cobra.Command {
 	t.Helper()
 
@@ -33,6 +31,8 @@ func serviceSubcommand(t *testing.T, a *app, name string) *cobra.Command {
 	return child
 }
 
+// TestOfflineOnlineRegistered checks that the service group has the offline and
+// online commands.
 func TestOfflineOnlineRegistered(t *testing.T) {
 	a, _, _ := newTermcmdApp(&termcmdStub{})
 	for _, name := range []string{"offline", "online"} {
@@ -40,6 +40,8 @@ func TestOfflineOnlineRegistered(t *testing.T) {
 	}
 }
 
+// TestTopLevelUsageListsOfflineOnline checks that the top-level help lists the
+// service group and the service help lists offline and online.
 func TestTopLevelUsageListsOfflineOnline(t *testing.T) {
 	a, stdout, stderr := newTermcmdApp(&termcmdStub{})
 
@@ -64,8 +66,8 @@ func TestTopLevelUsageListsOfflineOnline(t *testing.T) {
 	}
 }
 
-// TestOfflineOnlineCallRunner checks both commands pass the right state to the
-// runner and write its output to standard output (REQ-broker-config-066).
+// TestOfflineOnlineCallRunner checks that offline and online pass the right
+// state to the runner and write its output to standard output.
 func TestOfflineOnlineCallRunner(t *testing.T) {
 	cases := []struct {
 		command string
@@ -99,8 +101,8 @@ func TestOfflineOnlineCallRunner(t *testing.T) {
 	}
 }
 
-// TestOfflineErrorExitsOne checks the error path shared with config set: the
-// reason goes to standard error and the exit code is 1.
+// TestOfflineErrorExitsOne checks that an offline runner error writes one line
+// and exits 1.
 func TestOfflineErrorExitsOne(t *testing.T) {
 	stub := &termcmdStub{setOnlineErr: errors.New("permission_denied: write denied")}
 	a, stdout, stderr := newTermcmdApp(stub)
@@ -116,8 +118,8 @@ func TestOfflineErrorExitsOne(t *testing.T) {
 	}
 }
 
-// TestOfflineRejectsArguments checks that both commands accept no arguments
-// and -h prints their usage.
+// TestOfflineRejectsArguments checks that offline and online reject arguments
+// and print their usage on -h.
 func TestOfflineRejectsArguments(t *testing.T) {
 	for _, command := range []string{"offline", "online"} {
 		t.Run(command, func(t *testing.T) {

@@ -9,8 +9,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// setServiceSeams installs the option and operation seams for one test. A nil
-// function leaves that seam unchanged.
 func setServiceSeams(
 	t *testing.T,
 	options func(bool) (service.Options, error),
@@ -28,8 +26,6 @@ func setServiceSeams(
 	if uninstall != nil {
 		uninstallFn = uninstall
 	}
-	// The stub's deps.euid reports a non-root account, so the tests check the
-	// default level independently of who runs them.
 	t.Cleanup(func() {
 		defaultOptionsFn = previousOptions
 		installFn = previousInstall
@@ -37,6 +33,8 @@ func setServiceSeams(
 	})
 }
 
+// TestServiceInstallMapsSystemFlag checks that the install level comes from the
+// flags or the executing account.
 func TestServiceInstallMapsSystemFlag(t *testing.T) {
 	cases := []struct {
 		args       []string
@@ -111,6 +109,8 @@ func TestServiceInstallMapsSystemFlag(t *testing.T) {
 	}
 }
 
+// TestServiceInstallMapsAdminGroup checks that --admin-group reaches the
+// installation only when it is given.
 func TestServiceInstallMapsAdminGroup(t *testing.T) {
 	cases := []struct {
 		args []string
@@ -145,9 +145,7 @@ func TestServiceInstallMapsAdminGroup(t *testing.T) {
 }
 
 // TestServiceInstallPrintsTheSummary checks the summary printed after a
-// successful install: level and start time, then the paths, the commands and
-// the configuration state. The administration-group hint follows a kept
-// system configuration.
+// successful install.
 func TestServiceInstallPrintsTheSummary(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -311,9 +309,8 @@ func TestServiceInstallPrintsTheSummary(t *testing.T) {
 	}
 }
 
-// TestServiceInstallReportsDegraded checks that a service installed and running
-// with a degraded Broker still prints the summary, writes the two degraded
-// lines to standard error, and exits with exitServiceDegraded.
+// TestServiceInstallReportsDegraded checks the output and exit code of an
+// install that ends in a degraded run.
 func TestServiceInstallReportsDegraded(t *testing.T) {
 	result := service.Result{
 		Binary:     "/usr/local/bin/peers",
@@ -382,6 +379,8 @@ func TestServiceInstallReportsDegraded(t *testing.T) {
 	}
 }
 
+// TestServiceUninstall checks the output of service remove for each
+// installation form.
 func TestServiceUninstall(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -454,6 +453,8 @@ func TestServiceUninstall(t *testing.T) {
 	}
 }
 
+// TestServiceReportsErrors checks that a failure from the option or operation
+// seam reaches standard error with the failure exit code.
 func TestServiceReportsErrors(t *testing.T) {
 	t.Run("default options", func(t *testing.T) {
 		var installCalls int
@@ -524,11 +525,11 @@ func TestServiceReportsErrors(t *testing.T) {
 	})
 }
 
+// TestServiceUsageErrors checks that usage errors are rejected before any
+// installation step runs.
 func TestServiceUsageErrors(t *testing.T) {
 	cases := []struct {
-		args []string
-		// want is a substring of stderr unless wantStderr is set, which then
-		// has to match stderr exactly.
+		args       []string
 		want       string
 		wantStderr string
 	}{
@@ -611,6 +612,8 @@ func TestServiceUsageErrors(t *testing.T) {
 	}
 }
 
+// TestServiceHelpPrintsUsage checks that --help prints the command usage
+// without running an installation step.
 func TestServiceHelpPrintsUsage(t *testing.T) {
 	cases := []struct {
 		args []string

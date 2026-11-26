@@ -13,6 +13,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
+// TestRealDepsAllWired checks that realDeps fills the Broker, MCP, config,
+// pairing and update dependencies.
 func TestRealDepsAllWired(t *testing.T) {
 	t.Parallel()
 
@@ -70,6 +72,8 @@ func TestRealDepsAllWired(t *testing.T) {
 	}
 }
 
+// TestClassifyBrokerErr checks that each Broker sentinel maps to its startup
+// failure through wrapping, and an unclassified error to failOther.
 func TestClassifyBrokerErr(t *testing.T) {
 	t.Parallel()
 
@@ -90,8 +94,6 @@ func TestClassifyBrokerErr(t *testing.T) {
 		t.Run(tt.sentinel.Error(), func(t *testing.T) {
 			t.Parallel()
 
-			// Run wraps every sentinel with its cause, so classification has
-			// to survive wrapping.
 			err := fmt.Errorf("%w: reason", tt.sentinel)
 			if got := classifyBrokerErr(err); got != tt.want {
 				t.Fatalf("classifyBrokerErr(%v) = %v, want %v", err, got, tt.want)
@@ -102,8 +104,6 @@ func TestClassifyBrokerErr(t *testing.T) {
 	if got := classifyBrokerErr(errors.New("x")); got != failOther {
 		t.Fatalf("classifyBrokerErr(unclassified) = %v, want failOther", got)
 	}
-	// A privileged-port refusal is a listen failure now; it shares the listen
-	// exit code rather than the configuration one.
 	lowPort := fmt.Errorf("%w: a listen port below 1024 requires root", broker.ErrListenUnavailable)
 	if got := classifyBrokerErr(lowPort); got != failListenUnavailable {
 		t.Fatalf("classifyBrokerErr(low port) = %v, want failListenUnavailable", got)
@@ -116,6 +116,8 @@ func TestClassifyBrokerErr(t *testing.T) {
 	}
 }
 
+// TestRealDepsBrokerOptions checks that runBroker passes the system, listen and
+// allow-degraded options to broker.Run and leaves Ready nil.
 func TestRealDepsBrokerOptions(t *testing.T) {
 	// The brokerRun variable is package state; keep this test serial.
 	original := brokerRun
@@ -162,11 +164,8 @@ func TestRealDepsBrokerOptions(t *testing.T) {
 	}
 }
 
-// TestRealDepsCallTheirTermcmdFunction checks that every dep reaches the
-// termcmd function its name promises. The two commands without arguments,
-// runPeerList and runPairingKeyCreate, share a signature, so a swap between
-// them would compile; the fake Broker's distinct output and method name catch
-// it.
+// TestRealDepsCallTheirTermcmdFunction checks that each configuration and
+// pairing dep reaches its own termcmd function.
 func TestRealDepsCallTheirTermcmdFunction(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.AdminHandlers())
@@ -228,7 +227,6 @@ func TestRealDepsCallTheirTermcmdFunction(t *testing.T) {
 	}
 }
 
-// wireMethodCalls counts the unary calls srv received for method.
 func wireMethodCalls(srv *fakelocal.Server, method string) int {
 	n := 0
 	for _, call := range srv.Calls() {
@@ -239,6 +237,8 @@ func wireMethodCalls(srv *fakelocal.Server, method string) int {
 	return n
 }
 
+// TestProtocolOverridesDefaultZero checks that the release seam returns zero
+// versions.
 func TestProtocolOverridesDefaultZero(t *testing.T) {
 	t.Parallel()
 

@@ -14,15 +14,10 @@ import (
 	"github.com/wangzw/peers/internal/broker/service"
 )
 
-// errorReader makes a read fail, which is how a closed standard input reaches
-// confirm.
 type errorReader struct{ err error }
 
 func (r errorReader) Read([]byte) (int, error) { return 0, r.err }
 
-// safeUninstallSeams returns a complete set of uninstall seams that touch
-// nothing on the system and describe one installed level chosen by installed.
-// A test overrides the field for the step it exercises.
 func safeUninstallSeams(opts service.Options, installed func(service.Options) (bool, error)) uninstallSeams {
 	return uninstallSeams{
 		options: func(system bool) (service.Options, error) {
@@ -52,19 +47,14 @@ func safeUninstallSeams(opts service.Options, installed func(service.Options) (b
 	}
 }
 
-// userLevelSeams describes an account whose user installation is present.
 func userLevelSeams(opts service.Options) uninstallSeams {
 	return safeUninstallSeams(opts, func(o service.Options) (bool, error) { return !o.System, nil })
 }
 
-// systemLevelSeams describes a root or system invocation whose system
-// installation is present.
 func systemLevelSeams(opts service.Options) uninstallSeams {
 	return safeUninstallSeams(opts, func(o service.Options) (bool, error) { return o.System, nil })
 }
 
-// withTerminal reports a terminal without replacing stdin, so a test can leave
-// its own reader or writer in place.
 func withTerminal(t *testing.T) {
 	t.Helper()
 	previous := isTerminal
@@ -259,9 +249,7 @@ func TestUninstallSudoFailure(t *testing.T) {
 	}
 }
 
-// fakeSudo writes a sudo stand-in into its own directory and returns it with a
-// PATH that finds it. The stand-in prints the arguments it received and exits
-// with FAKE_SUDO_EXIT.
+// fakeSudo writes a sudo stand-in that exits with FAKE_SUDO_EXIT.
 func fakeSudo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -791,7 +779,8 @@ func TestRemoveServiceBinaryRejectsAnUninspectableFile(t *testing.T) {
 	}
 }
 
-// TestKeptPaths lists the paths a purge keeps at each level and platform.
+// TestKeptPaths lists the paths an uninstall without a purge keeps at each level
+// and platform.
 func TestKeptPaths(t *testing.T) {
 	cases := []struct {
 		name string
@@ -872,9 +861,9 @@ func TestFileOwner(t *testing.T) {
 	}
 }
 
-// TestUninstallMCPDefaultsRunClaudeFromPath checks the production MCP wiring:
-// the registration is read by running claude on PATH, and the removal runs only
-// when the registration names the binary being removed.
+// TestUninstallMCPDefaultsRunClaudeFromPath checks that the production MCP
+// wiring reads the registration and removes a matching one by running claude on
+// PATH.
 func TestUninstallMCPDefaultsRunClaudeFromPath(t *testing.T) {
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
