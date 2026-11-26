@@ -101,8 +101,8 @@ func TestParseRegistration(t *testing.T) {
 	if len(entries[0].Changed) != 0 || len(entries[0].Deleted) != 0 {
 		t.Errorf("claude-code-socket-transport has registered changes: %+v", entries[0])
 	}
-	if len(entries[1].Changed) != 3 {
-		t.Errorf("fsnotify has %d registered changes, want 3", len(entries[1].Changed))
+	if len(entries[1].Changed) != 4 {
+		t.Errorf("fsnotify has %d registered changes, want 4", len(entries[1].Changed))
 	}
 	// The registered hash must describe the file the repository ships, so a
 	// later edit to a vendored file is caught even before the upstream download.
