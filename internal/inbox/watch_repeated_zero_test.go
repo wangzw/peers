@@ -29,16 +29,11 @@ func TestWatch_UnwatchableTargetNotifiesZeroOnce(t *testing.T) {
 	}
 	t.Cleanup(w.shutdown)
 
-	// No directory the watcher could follow is watchable, so it started on the
-	// nearest existing ancestor and reported the fallback once.
 	aWaitPID(t, pids, 0)
 	aDrain(pids)
 
-	// Each later event retries the configuration directory's Add and fails
-	// again. The events are unrelated to the failing path, so anything else a
-	// callback receives comes from the fallback report. The names sort before
-	// "config" because the kqueue backend's directory scan stops at the first
-	// entry it cannot watch, and the configuration directory is that entry.
+	// The event names must sort before "config" because the kqueue backend's
+	// directory scan stops at the first entry it cannot watch.
 	handled := make(chan string, 16)
 	afterHandle := func(event fsnotify.Event) { handled <- filepath.Clean(event.Name) }
 	testWatchAfterHandleEvent.Store(&afterHandle)
@@ -50,8 +45,8 @@ func TestWatch_UnwatchableTargetNotifiesZeroOnce(t *testing.T) {
 		aWriteFile(t, name, []byte("x"))
 		aWaitHandledEvent(t, handled, name)
 
-		// The callback runs inside handleEvent, and the hook above runs after
-		// it returned, so every report this event caused is already queued.
+		// The callback runs inside handleEvent and the hook runs after it
+		// returns, so every report this event caused is already queued.
 		for draining := true; draining; {
 			select {
 			case pid := <-pids:
@@ -66,8 +61,6 @@ func TestWatch_UnwatchableTargetNotifiesZeroOnce(t *testing.T) {
 	}
 }
 
-// aWaitHandledEvent waits until the watcher has handled the event for want.
-// Events for other names are ignored.
 func aWaitHandledEvent(t *testing.T, handled <-chan string, want string) {
 	t.Helper()
 	timer := time.NewTimer(aWaitTimeout)

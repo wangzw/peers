@@ -13,13 +13,9 @@ import (
 )
 
 // bWireReceiver is a fake inbox socket that records the exact bytes a client
-// writes. Unlike fakesession's CloseAfterRead mode, it keeps reading after the
-// frame line and closes the connection only once the client half-closes. The
-// client then completes its own half-close and its wait for the receiver to
-// close. Closing as soon as the line has been read works on Linux, where the
-// half-close races ahead of the close, but fails on macOS: the vendored client
-// delays its half-close by 150 ms there, by which time the receiver is already
-// gone, and CloseWrite returns ENOTCONN.
+// writes and closes only after the client half-closes. Closing as soon as the
+// frame line is read works on Linux but fails on macOS: the vendored client
+// delays its half-close by 150 ms there, and CloseWrite then returns ENOTCONN.
 type bWireReceiver struct {
 	path   string
 	result chan bWireResult
@@ -30,9 +26,6 @@ type bWireResult struct {
 	err  error
 }
 
-// bStartWireReceiver binds a socket at a short path and starts accepting one
-// connection. The socket is closed and the directory removed when the test
-// ends.
 func bStartWireReceiver(t *testing.T) *bWireReceiver {
 	t.Helper()
 	dir := bShortTempDir(t)
@@ -57,9 +50,6 @@ func bStartWireReceiver(t *testing.T) *bWireReceiver {
 	return receiver
 }
 
-// bSendWireRaw sends m through the transport library itself and returns the
-// exact frame line the client wrote, without the trailing newline. The client
-// is configured without authentication, so the frame is the only line.
 func bSendWireRaw(t *testing.T, receiver *bWireReceiver, m ccsock.Message) []byte {
 	t.Helper()
 	client := &ccsock.Client{NoAuth: true, Timeout: bDeliverTimeout}

@@ -17,21 +17,17 @@ import (
 	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
-// eventTimeout is the package-wide fallback for a wait on an event the fake
-// produces, such as a frame the fake recorded or a connection it dropped. It
-// only decides how long a wait that will never complete takes to fail: the
-// success path selects on the event itself and never spends this time, so a
-// larger value costs nothing. Thirty seconds is far above the worst normal
-// latency under a loaded runner; it is not a claim that an event should take
-// that long.
+// eventTimeout is the fallback for a wait on an event the fake produces; the
+// success path selects on the event and never spends it, so a large value costs
+// nothing.
 const eventTimeout = 30 * time.Second
 
-// waitTimeout is the short window for an absence assertion: the test waits this
-// long for a frame or connection state that must not appear. A positive wait on
-// an event uses eventTimeout instead, because a real event can be delayed by
-// scheduling and verification cost under load.
+// waitTimeout is the short window for an absence assertion; a positive wait on
+// an event uses eventTimeout instead.
 const waitTimeout = 200 * time.Millisecond
 
+// TestRecordFields checks that New writes the standard registry fields plus any
+// Extra fields.
 func TestRecordFields(t *testing.T) {
 	f := New(t, Options{
 		PID:    4242,
@@ -73,6 +69,8 @@ func TestRecordFields(t *testing.T) {
 	}
 }
 
+// TestConfigDirProvided checks that a supplied configuration directory holds
+// the record named by PID.
 func TestConfigDirProvided(t *testing.T) {
 	dir := t.TempDir()
 	f := New(t, Options{ConfigDir: dir, PID: 5000, Name: "named"})
@@ -86,6 +84,8 @@ func TestConfigDirProvided(t *testing.T) {
 	}
 }
 
+// TestAutoPID checks that two fakes without a PID get distinct, automatically
+// assigned ids.
 func TestAutoPID(t *testing.T) {
 	first := New(t, Options{Name: "first"})
 	second := New(t, Options{Name: "second"})
@@ -98,6 +98,8 @@ func TestAutoPID(t *testing.T) {
 	}
 }
 
+// TestSetNameStatusAndSessionID checks that the setters rewrite the
+// corresponding record fields.
 func TestSetNameStatusAndSessionID(t *testing.T) {
 	f := New(t, Options{PID: 6000, Name: "first", Status: "idle"})
 
@@ -126,6 +128,8 @@ func TestSetNameStatusAndSessionID(t *testing.T) {
 	}
 }
 
+// TestRecordModTimeAdvances checks that each record write moves the modification
+// time forward.
 func TestRecordModTimeAdvances(t *testing.T) {
 	f := New(t, Options{PID: 6100, Name: "first"})
 	first := mustModTime(t, f.RecordPath())
@@ -143,6 +147,8 @@ func TestRecordModTimeAdvances(t *testing.T) {
 	}
 }
 
+// TestSetRecordModTime checks that SetRecordModTime sets the time and later
+// writes still advance past it.
 func TestSetRecordModTime(t *testing.T) {
 	f := New(t, Options{PID: 6150})
 	want := time.Unix(1700000000, 0)
@@ -158,6 +164,8 @@ func TestSetRecordModTime(t *testing.T) {
 	}
 }
 
+// TestRemoveAndRestoreRecord checks that RemoveRecord deletes the record, field
+// changes leave it absent, and RestoreRecord rewrites it.
 func TestRemoveAndRestoreRecord(t *testing.T) {
 	f := New(t, Options{PID: 6200, Name: "first"})
 
@@ -166,7 +174,6 @@ func TestRemoveAndRestoreRecord(t *testing.T) {
 		t.Fatalf("record still present after RemoveRecord: %v", err)
 	}
 
-	// Changing fields while the record is removed must not recreate it.
 	f.SetName("kept")
 	if _, err := os.Stat(f.RecordPath()); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("SetName recreated the removed record: %v", err)
@@ -178,6 +185,8 @@ func TestRemoveAndRestoreRecord(t *testing.T) {
 	}
 }
 
+// TestWritePartialRecord checks that the record holds exactly the given prefix
+// and does not parse as JSON.
 func TestWritePartialRecord(t *testing.T) {
 	f := New(t, Options{PID: 6300})
 	prefix := `{"pid":6300,"name":"hal`
@@ -196,6 +205,8 @@ func TestWritePartialRecord(t *testing.T) {
 	}
 }
 
+// TestSocketBinding checks that the generated socket is a 0600 socket in a 0700
+// directory.
 func TestSocketBinding(t *testing.T) {
 	f := New(t, Options{PID: 6400})
 
@@ -219,6 +230,8 @@ func TestSocketBinding(t *testing.T) {
 	}
 }
 
+// TestCloseAfterReadRecordsFrame checks that a frame preceded by an
+// authentication line is recorded with every decoded field.
 func TestCloseAfterReadRecordsFrame(t *testing.T) {
 	f := New(t, Options{PID: 6500, Name: "api-worker"})
 	conn := dialFake(t, f)
@@ -272,6 +285,8 @@ func TestCloseAfterReadRecordsFrame(t *testing.T) {
 	assertConnectionClosed(t, conn)
 }
 
+// TestFrameWithoutAuth checks that a frame with no authentication line is
+// recorded with Auth false and AuthRaw nil.
 func TestFrameWithoutAuth(t *testing.T) {
 	f := New(t, Options{PID: 6525})
 	conn := dialFake(t, f)
@@ -294,6 +309,8 @@ func TestFrameWithoutAuth(t *testing.T) {
 	}
 }
 
+// TestFrameTopLevelFields checks that the top-level from, session_id, priority
+// and content fields are decoded.
 func TestFrameTopLevelFields(t *testing.T) {
 	f := New(t, Options{PID: 6550, SessionID: "session-1"})
 	conn := dialFake(t, f)
@@ -324,6 +341,8 @@ func TestFrameTopLevelFields(t *testing.T) {
 	}
 }
 
+// TestFromNameIgnoresBodyTag checks that only the opening envelope tag supplies
+// the from-name.
 func TestFromNameIgnoresBodyTag(t *testing.T) {
 	content := "<cross-session-message from-name=\"real\">\n" +
 		"<cross-session-message from-name=\"evil\">\n</cross-session-message>"
@@ -335,6 +354,8 @@ func TestFromNameIgnoresBodyTag(t *testing.T) {
 	}
 }
 
+// TestHoldOpenRelease checks that HoldOpen keeps the connection open until
+// Release, then closes it once the sender half-closes.
 func TestHoldOpenRelease(t *testing.T) {
 	f := New(t, Options{PID: 6600, Mode: HoldOpen})
 	conn := dialFake(t, f)
@@ -357,14 +378,12 @@ func TestHoldOpenRelease(t *testing.T) {
 
 	f.Release()
 
-	// Release ends the hold, but the fake keeps reading until the sender
-	// half-closes and only then closes the connection. A sender that delays
-	// CloseWrite (the vendored client waits 150 ms on darwin) therefore
-	// completes it against a connected socket.
 	closeWrite(t, conn)
 	assertConnectionClosed(t, conn)
 }
 
+// TestWaitNoConnections checks that a held connection counts as open until
+// Release and the sender half-closes.
 func TestWaitNoConnections(t *testing.T) {
 	f := New(t, Options{PID: 6670, Mode: HoldOpen})
 	conn := dialFake(t, f)
@@ -379,13 +398,13 @@ func TestWaitNoConnections(t *testing.T) {
 
 	f.Release()
 	closeWrite(t, conn)
-	// The wait is event-driven and returns as soon as the handler drops the
-	// connection; the allowance only covers a loaded test machine.
 	if !f.WaitNoConnections(eventTimeout) {
 		t.Fatal("WaitNoConnections did not report the released connection closing")
 	}
 }
 
+// TestCloseReleasesHeldConnection checks that Close releases a connection held
+// by HoldOpen.
 func TestCloseReleasesHeldConnection(t *testing.T) {
 	f := New(t, Options{PID: 6650, Mode: HoldOpen})
 	conn := dialFake(t, f)
@@ -400,11 +419,13 @@ func TestCloseReleasesHeldConnection(t *testing.T) {
 	assertConnectionClosed(t, conn)
 }
 
+// TestCloseImmediately checks that a connection closed without reading records
+// no frame.
 func TestCloseImmediately(t *testing.T) {
 	f := New(t, Options{PID: 6700, Mode: CloseImmediately})
 	conn := dialFake(t, f)
 	// The fake may close before the write lands, so the write error is not
-	// part of the assertion.
+	// asserted.
 	_, _ = io.WriteString(conn, userFrameLine(t, "msg-5", "api-worker", "hello")+"\n")
 
 	if _, ok := f.WaitFrame(waitTimeout); ok {
@@ -415,6 +436,8 @@ func TestCloseImmediately(t *testing.T) {
 	}
 }
 
+// TestSetMode checks that switching to CloseImmediately applies to later
+// connections.
 func TestSetMode(t *testing.T) {
 	f := New(t, Options{PID: 6750})
 	f.SetMode(CloseImmediately)
@@ -427,6 +450,8 @@ func TestSetMode(t *testing.T) {
 	}
 }
 
+// TestNoBindWithPath checks that NoBind reports the given socket path in the
+// record without binding it.
 func TestNoBindWithPath(t *testing.T) {
 	missing := socktest.Path(t, "missing.sock")
 	f := New(t, Options{PID: 6800, NoBind: true, SocketPath: missing})
@@ -442,6 +467,8 @@ func TestNoBindWithPath(t *testing.T) {
 	}
 }
 
+// TestNoBindEmptyPath checks that NoBind without a path leaves the socket path
+// empty in the record.
 func TestNoBindEmptyPath(t *testing.T) {
 	f := New(t, Options{PID: 6900, NoBind: true})
 
@@ -453,7 +480,8 @@ func TestNoBindEmptyPath(t *testing.T) {
 	}
 }
 
-// Linux refuses a regular file with ECONNREFUSED and macOS with ENOTSOCK, so both are accepted.
+// TestSocketRefusesConnections checks that a record naming a regular file is
+// written but the file refuses connections.
 func TestSocketRefusesConnections(t *testing.T) {
 	path := filepath.Join(socktest.Dir(t), "regular-file")
 	if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
@@ -468,11 +496,14 @@ func TestSocketRefusesConnections(t *testing.T) {
 	if err == nil {
 		t.Fatal("dialing a regular file succeeded")
 	}
+	// Linux refuses with ECONNREFUSED and macOS with ENOTSOCK, so both are accepted.
 	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, syscall.ENOTSOCK) && !strings.Contains(err.Error(), "not a socket") {
 		t.Fatalf("dialing a regular file: %v, want ECONNREFUSED, ENOTSOCK, or a not-a-socket error", err)
 	}
 }
 
+// TestRemoveSocket checks that RemoveSocket removes the socket, leaves the
+// record in place, and is idempotent.
 func TestRemoveSocket(t *testing.T) {
 	f := New(t, Options{PID: 7000})
 	path := f.SocketPath()
@@ -491,6 +522,8 @@ func TestRemoveSocket(t *testing.T) {
 	f.RemoveSocket() // idempotent
 }
 
+// TestBusyDelay checks that BusyDelay postpones the frame until the delay
+// elapses.
 func TestBusyDelay(t *testing.T) {
 	f := New(t, Options{PID: 7100, BusyDelay: 100 * time.Millisecond})
 	f.SetBusyDelay(100 * time.Millisecond)
@@ -506,6 +539,8 @@ func TestBusyDelay(t *testing.T) {
 	}
 }
 
+// TestTwoFakesSameConfigDir checks that two fakes can share a configuration
+// directory with separate records.
 func TestTwoFakesSameConfigDir(t *testing.T) {
 	dir := t.TempDir()
 	first := New(t, Options{ConfigDir: dir, PID: 7201, Name: "first"})
@@ -524,6 +559,8 @@ func TestTwoFakesSameConfigDir(t *testing.T) {
 	}
 }
 
+// TestWaitFrameTimeout checks that WaitFrame reports false when no frame
+// arrives.
 func TestWaitFrameTimeout(t *testing.T) {
 	f := New(t, Options{PID: 7300})
 
@@ -535,6 +572,8 @@ func TestWaitFrameTimeout(t *testing.T) {
 	}
 }
 
+// TestCloseIdempotent checks that calling Close twice removes the socket and
+// the temporary directory.
 func TestCloseIdempotent(t *testing.T) {
 	f := New(t, Options{PID: 7400})
 	path := f.SocketPath()
@@ -554,6 +593,8 @@ func TestCloseIdempotent(t *testing.T) {
 	}
 }
 
+// TestExtraOverridesFields checks that an Extra field replaces the standard
+// record field of the same name.
 func TestExtraOverridesFields(t *testing.T) {
 	f := New(t, Options{
 		PID:   7600,
@@ -570,12 +611,12 @@ func TestExtraOverridesFields(t *testing.T) {
 	}
 }
 
+// TestFrameLineTooLong checks that an oversized frame line is not recorded.
 func TestFrameLineTooLong(t *testing.T) {
 	f := New(t, Options{PID: 7500})
 	conn := dialFake(t, f)
-	// The write deadline only guards against a hang: a load-related stall must not
-	// turn into a short timeout, and a real timeout means the write never
-	// finished, so it fails rather than pass.
+	// The write deadline only guards against a hang; a real timeout fails the
+	// test rather than passing it.
 	if err := conn.SetWriteDeadline(time.Now().Add(eventTimeout)); err != nil {
 		t.Fatalf("setting write deadline: %v", err)
 	}
@@ -591,7 +632,6 @@ func TestFrameLineTooLong(t *testing.T) {
 		// write fail; either outcome must leave no frame.
 		t.Logf("writing oversized line returned %v", err)
 	}
-	// Negative window: an oversized frame that was recorded still shows up here.
 	if _, ok := f.WaitFrame(waitTimeout); ok {
 		t.Fatal("an oversized frame was recorded")
 	}
@@ -600,7 +640,6 @@ func TestFrameLineTooLong(t *testing.T) {
 	}
 }
 
-// readRecord reads and decodes a registry record.
 func readRecord(t *testing.T, path string) map[string]any {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -623,9 +662,6 @@ func mustModTime(t *testing.T, path string) time.Time {
 	return info.ModTime()
 }
 
-// fakeConn is a client connection to a Fake. It records how many connections
-// the fake had closed when it was dialed, so the test can wait for this
-// connection's own close without assuming a latency bound.
 type fakeConn struct {
 	net.Conn
 	fake       *Fake
@@ -634,9 +670,8 @@ type fakeConn struct {
 
 func dialFake(t *testing.T, f *Fake) *fakeConn {
 	t.Helper()
-	// The count is sampled before dialing: this connection cannot close before
-	// it exists, so any later advance belongs to it. The tests using dialFake
-	// keep one connection per fake in flight at a time.
+	// The count is sampled before dialing, so any later advance belongs to this
+	// connection; tests using dialFake keep one connection per fake in flight.
 	prior := f.closedConnCount()
 	raw, err := net.Dial("unix", f.SocketPath())
 	if err != nil {
@@ -668,8 +703,6 @@ func closeWrite(t *testing.T, conn net.Conn) {
 	}
 }
 
-// userFrameLine builds a user frame in the wire format the socket transport
-// library produces.
 func userFrameLine(t *testing.T, msgID, fromName, body string) string {
 	t.Helper()
 	content := body

@@ -15,25 +15,12 @@ import (
 )
 
 const (
-	// kqueueDoubleCloseRounds is the stress-loop bound. An explicit round
-	// count keeps the test finite even when the overall test deadline is
-	// unset.
-	kqueueDoubleCloseRounds = 500
-	// kqueueDoubleCloseFiles is the number of files placed in each round's
-	// watched directory, so kqueue opens one descriptor per file.
-	kqueueDoubleCloseFiles = 8
-	// kqueueDoubleCloseSentinels is the number of unrelated descriptors held
-	// open across each round. A descriptor closed a second time can be
-	// recycled by a later open, and the sentinel check catches that.
+	kqueueDoubleCloseRounds    = 500
+	kqueueDoubleCloseFiles     = 8
 	kqueueDoubleCloseSentinels = 64
-	// kqueueDoubleCloseRoundWait bounds one round's RemoveAll + Close wait. The
-	// success path selects on the goroutines finishing, so this only decides
-	// how long a stalled round takes to fail; it shares the package-wide
-	// fallback rather than a shorter value that load could exhaust.
 	kqueueDoubleCloseRoundWait = aWaitTimeout
 )
 
-// kqueueSentinel is one open file whose descriptor must survive a round.
 type kqueueSentinel struct {
 	file *os.File
 	fd   int
@@ -41,26 +28,12 @@ type kqueueSentinel struct {
 	name string
 }
 
-// TestWatcher_KqueueDoubleCloseLeavesSentinelsIntact reproduces the fsnotify
-// v1.10.1 kqueue double-close defect: Watcher.Close and the readEvents
-// goroutine's removal path can both close the same kqueue watch descriptor.
-// Close snapshots the watches, closes each descriptor, and then signals
-// readEvents; readEvents may already be inside remove for a Remove event and
-// close the same descriptor again. The second close can hit whichever
-// descriptor the kernel reused after the first close, including a file that
-// has nothing to do with the watcher.
-//
-// Each round watches a freshly created directory and races RemoveAll on it
-// against Close. Unrelated sentinel files stay open across the round; after
-// the round every sentinel descriptor must still refer to its original inode.
-// A closed or recycled descriptor fails the test with the round, descriptor
-// number and both inode values.
+// TestWatcher_KqueueDoubleCloseLeavesSentinelsIntact checks that fsnotify
+// v1.10.1's kqueue backend does not close a descriptor a second time when Close
+// races a Remove event.
 func TestWatcher_KqueueDoubleCloseLeavesSentinelsIntact(t *testing.T) {
 	sentinelDir := t.TempDir()
 	watchRoot := t.TempDir()
-	// An explicit overall bound keeps a slow host from turning the stress
-	// loop into an unbounded run; t.Deadline is honored when the caller sets
-	// one.
 	overallDeadline := time.Now().Add(5 * time.Minute)
 
 	for round := 0; round < kqueueDoubleCloseRounds; round++ {
@@ -95,9 +68,6 @@ func TestWatcher_KqueueDoubleCloseLeavesSentinelsIntact(t *testing.T) {
 				t.Fatalf("round %d: adding %s: %v", round, dir, err)
 			}
 
-			// A shared start channel makes RemoveAll and Close overlap as
-			// tightly as possible; the defect needs both paths inside their
-			// close call at the same time.
 			start := make(chan struct{})
 			var actions sync.WaitGroup
 			actions.Add(2)
@@ -141,8 +111,6 @@ func TestWatcher_KqueueDoubleCloseLeavesSentinelsIntact(t *testing.T) {
 	}
 }
 
-// openKqueueSentinels opens the round's sentinel files and records the inode
-// each descriptor refers to.
 func openKqueueSentinels(t *testing.T, dir string, round int) []kqueueSentinel {
 	t.Helper()
 
@@ -176,9 +144,6 @@ func openKqueueSentinels(t *testing.T, dir string, round int) []kqueueSentinel {
 	return sentinels
 }
 
-// closeKqueueSentinels releases the round's sentinel descriptors. It runs even
-// when the round failed, so the failure report is not obscured by later rounds
-// exhausting the descriptor table.
 func closeKqueueSentinels(sentinels []kqueueSentinel) {
 	for _, sentinel := range sentinels {
 		_ = sentinel.file.Close()

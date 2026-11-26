@@ -14,20 +14,17 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// gDeliverTimeout bounds every delivery here. It leaves ample margin above the
-// vendored client's fixed 150 ms half-close delay on darwin: a shorter deadline
-// can expire before CloseWrite and turn a delivery the receiver already took
-// into ErrUncertain.
+// gDeliverTimeout bounds every delivery here, with margin above the vendored
+// client's fixed 150 ms half-close delay on darwin: a shorter deadline can
+// expire before CloseWrite and turn a delivery the receiver took into
+// ErrUncertain.
 const gDeliverTimeout = 2 * time.Second
 
-// gNoFrameWait is long enough for a path that never opens a socket to show a
-// frame if it wrongly did.
 const gNoFrameWait = 20 * time.Millisecond
 
-// gWriteKeyFile publishes an inbox auth key the way a session would: a
-// <pid>.<sha256(socket path)>.key file under <config>/sessions. The file is
-// owned by a live PID with no start token, so the library ranks it above a dead
-// owner and would send its token if NoAuth were not set.
+// gWriteKeyFile publishes an inbox auth key the way a session would. The live
+// pid with no start token outranks a dead owner, so the library would send the
+// token if NoAuth were not set.
 func gWriteKeyFile(t *testing.T, configDir string, pid int, socketPath, token string) {
 	t.Helper()
 	name, err := ccsock.KeyFileName(pid, socketPath)
@@ -47,8 +44,6 @@ func gWriteKeyFile(t *testing.T, configDir string, pid int, socketPath, token st
 	}
 }
 
-// gLibrarySend runs the vendored client directly so the test observes the
-// library's own error text rather than a hand-built string.
 func gLibrarySend(t *testing.T, socketPath string, m ccsock.Message) error {
 	t.Helper()
 	client := &ccsock.Client{NoAuth: true, Timeout: gDeliverTimeout}
@@ -56,8 +51,6 @@ func gLibrarySend(t *testing.T, socketPath string, m ccsock.Message) error {
 	return err
 }
 
-// gWantClass asserts that a real library error carries the expected prefix and
-// maps to exactly the expected sentinel.
 func gWantClass(t *testing.T, libErr error, prefix string, want error) {
 	t.Helper()
 	if libErr == nil {
@@ -71,8 +64,8 @@ func gWantClass(t *testing.T, libErr error, prefix string, want error) {
 	}
 }
 
+// TestREQAgentMessaging024_NoAuthEvenWithKeyFile checks that Deliver sends no authentication line even when a matching key file exists.
 func TestREQAgentMessaging024_NoAuthEvenWithKeyFile(t *testing.T) {
-	// REQ-agent-messaging-024
 	cfg := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "")
@@ -82,8 +75,8 @@ func TestREQAgentMessaging024_NoAuthEvenWithKeyFile(t *testing.T) {
 	const token = "0123456789abcdef0123456789abcdef"
 	gWriteKeyFile(t, cfg, os.Getpid(), fake.SocketPath(), token)
 
-	// The key file must be discoverable; otherwise the test cannot tell a
-	// missing NoAuth from a token the library never found.
+	// The key file must be discoverable, or the test cannot tell a missing
+	// NoAuth from a token the library never found.
 	if got, err := ccsock.LookupToken(fake.SocketPath()); err != nil || got != token {
 		t.Fatalf("LookupToken = %q, %v; want the published token", got, err)
 	}
@@ -109,9 +102,8 @@ func TestREQAgentMessaging024_NoAuthEvenWithKeyFile(t *testing.T) {
 	}
 }
 
+// TestDeliver_SentinelsReturnedUnwrapped checks that each failure returns the sentinel itself rather than a wrapper.
 func TestDeliver_SentinelsReturnedUnwrapped(t *testing.T) {
-	// The design lets callers compare the result directly with the sentinel, so
-	// these assertions deliberately use == rather than errors.Is.
 	ctx := context.Background()
 	if err := Deliver(ctx, Session{}, "sender", "hello", "msg-empty-socket", gDeliverTimeout); err != ErrNotWritten {
 		t.Fatalf("empty socket path: got %v, want the ErrNotWritten sentinel itself", err)
@@ -123,8 +115,6 @@ func TestDeliver_SentinelsReturnedUnwrapped(t *testing.T) {
 		t.Fatalf("Lookup on an empty registry: got %v, want the ErrNoRecord sentinel itself", err)
 	}
 
-	// A real library rejection is classified onto the sentinel itself, not a
-	// wrapper around it.
 	fake := fakesession.New(t, fakesession.Options{Name: "worker"})
 	err := Deliver(ctx, Session{SocketPath: fake.SocketPath()}, "sender", "", "msg-empty-text", gDeliverTimeout)
 	if err != ErrNotWritten {
@@ -135,9 +125,8 @@ func TestDeliver_SentinelsReturnedUnwrapped(t *testing.T) {
 	}
 }
 
+// TestDeliver_ClassificationAnchoredToLibrary checks that Deliver's error classification matches the vendored library's own errors.
 func TestDeliver_ClassificationAnchoredToLibrary(t *testing.T) {
-	// Each case observes the vendored library's own error, asserts its prefix,
-	// and only then checks that Deliver reports the same class.
 	t.Run("dial-failure", func(t *testing.T) {
 		missing := filepath.Join(bShortTempDir(t), "absent.sock")
 		m := ccsock.Message{Text: "hello", Priority: ccsock.PriorityNext, FromName: "sender", MsgID: "msg-dial"}
@@ -194,8 +183,8 @@ func TestDeliver_ClassificationAnchoredToLibrary(t *testing.T) {
 			t.Fatal("the library returned nil while the receiver held the connection open")
 		}
 		// On darwin the client's 150 ms half-close delay can consume the whole
-		// deadline, in which case it reports the sending path instead. Both are
-		// real library errors and both mean the frame may have arrived.
+		// deadline, in which case it reports the sending path instead; both mean
+		// the frame may have arrived.
 		if !strings.HasPrefix(libErr.Error(), "ccsock: waiting for") &&
 			!strings.HasPrefix(libErr.Error(), "ccsock: sending to") {
 			t.Fatalf("library error = %q, want a waiting or sending prefix", libErr)
@@ -211,10 +200,8 @@ func TestDeliver_ClassificationAnchoredToLibrary(t *testing.T) {
 	})
 
 	t.Run("write-after-peer-close", func(t *testing.T) {
-		// CloseImmediately accepts and closes without reading. The text is
-		// larger than the socket send buffer, so the write cannot complete
-		// before the peer closes and the library reports its writing path.
 		fake := fakesession.New(t, fakesession.Options{Name: "worker", Mode: fakesession.CloseImmediately})
+		// The text must exceed the socket send buffer but stay below the frame limit, so the write cannot finish before the peer closes and the library reports its writing path.
 		text := strings.Repeat("a", 900*1024)
 		m := ccsock.Message{Text: text, Priority: ccsock.PriorityNext, FromName: "sender", MsgID: "msg-write"}
 		libErr := gLibrarySend(t, fake.SocketPath(), m)

@@ -10,13 +10,15 @@ import (
 	ccsock "github.com/PeterSR/claude-code-socket-transport"
 )
 
-// Deliver writes one signed message to the session's inbox socket.
-//
-// It returns nil when the frame was written and the receiver closed the
-// connection; ErrNotWritten when nothing was written; ErrUncertain when the
-// frame may have been received; and ErrBadSignature when sig is empty, would be
-// changed by the receiver, or exceeds the byte limit, in which case nothing is
-// written.
+// Deliver writes one signed message to the session's inbox socket. It returns
+// nil when the frame was written and the receiver closed the connection,
+// ErrNotWritten when nothing was written, ErrUncertain when the frame may have
+// been received, and ErrBadSignature when sig is empty, would change in the
+// receiver's cleaning, or exceeds the receiver's byte limit; ErrBadSignature is
+// decided before any write, so nothing is sent. msgID is the caller's message id
+// and should be a canonical UUID. timeout bounds the whole delivery, including
+// the dial, the write and waiting for the receiver to close, and an earlier ctx
+// deadline wins.
 func Deliver(ctx context.Context, s Session, sig, text, msgID string, timeout time.Duration) error {
 	if sig == "" || CleanSignature(sig) != sig || len(sig) > maxFromNameBytes {
 		return ErrBadSignature
@@ -43,14 +45,12 @@ func Deliver(ctx context.Context, s Session, sig, text, msgID string, timeout ti
 	return classifySendError(err)
 }
 
-// classifySendError maps the transport library's errors onto the delivery
-// result sentinels.
-//
-// The library does not export a classification and does not report how many
-// bytes conn.Write wrote, so write-phase failures are conservatively treated as
-// uncertain: retrying could deliver the message twice. The error prefixes are
-// those of the vendored snapshot; the tests in deliver_test.go pin each one and
-// fail first if the library is updated.
+// classifySendError maps the transport library's errors onto the delivery result
+// sentinels. Encoding, argument checks and message-id generation run before the
+// socket is opened, so their failures and the dial's are ErrNotWritten; the
+// library does not report how many bytes it wrote, so any write-phase failure,
+// named below or not, is ErrUncertain. The prefixes below are those of the
+// vendored snapshot and must be updated when the library is upgraded.
 func classifySendError(err error) error {
 	if err == nil {
 		return nil
@@ -63,11 +63,8 @@ func classifySendError(err error) error {
 
 	msg := err.Error()
 	switch {
-	// Connection establishment failed; nothing was written.
 	case strings.HasPrefix(msg, "ccsock: connecting to"):
 		return ErrNotWritten
-	// Encoding and argument checks run before the socket is opened. The
-	// message id is generated there too when the caller left it empty.
 	case strings.HasPrefix(msg, "ccsock: encoding frame"),
 		strings.HasPrefix(msg, "ccsock: frame is"),
 		strings.HasPrefix(msg, "ccsock: message text is empty"),
@@ -75,16 +72,12 @@ func classifySendError(err error) error {
 		strings.HasPrefix(msg, "ccsock: unknown priority"),
 		strings.HasPrefix(msg, "ccsock: generating message id"):
 		return ErrNotWritten
-	// The line was written and the wait for the receiver's close timed out.
 	case strings.HasPrefix(msg, "ccsock: waiting for"),
 		errors.Is(err, context.DeadlineExceeded),
 		errors.Is(err, context.Canceled):
 		return ErrUncertain
-	// The half-close failed after the line was written.
 	case strings.HasPrefix(msg, "ccsock: half-closing"):
 		return ErrUncertain
-	// A write-phase failure, including one this switch does not name, may have
-	// written some or all of the line.
 	case strings.HasPrefix(msg, "ccsock: writing to"):
 		return ErrUncertain
 	}

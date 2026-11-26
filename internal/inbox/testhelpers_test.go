@@ -9,23 +9,14 @@ import (
 	"time"
 )
 
-// aWaitTimeout is the package-wide fallback for a wait on an event that is
-// expected to arrive: a file-system notification, a stat, a Unix socket
-// callback or a Stop returning. It only decides how long a wait that will
-// never complete takes to fail: the success path selects on the event itself
-// and never spends this time, so a larger value costs nothing. Thirty seconds
-// is far above the worst normal latency under load; it is not a claim that an
-// event should take that long.
+// aWaitTimeout bounds a wait that is expected to succeed; it only decides how long a wait that never completes takes to fail.
 const aWaitTimeout = 30 * time.Second
 
 func aSessionsDir(configDir string) string {
 	return filepath.Join(configDir, "sessions")
 }
 
-// bShortTempDir returns a temporary directory rooted at /tmp. t.TempDir() sits
-// under /var/folders on macOS, where a path such as
-// <dir>/sessions/<pid>.json overflows the roughly 104-byte Unix socket path
-// limit. The directory is removed when the test ends.
+// bShortTempDir returns a temporary directory rooted at /tmp, because t.TempDir() sits under /var/folders on macOS and overflows the roughly 104-byte Unix socket path limit.
 func bShortTempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "inbox-test-")
@@ -36,8 +27,6 @@ func bShortTempDir(t *testing.T) string {
 	return dir
 }
 
-// aWriteRecord writes a canonical <pid>.json record with the fields every
-// fixture starts from. Entries in fields override or extend them.
 func aWriteRecord(t *testing.T, configDir string, pid int, fields map[string]any) string {
 	t.Helper()
 	record := map[string]any{
@@ -61,7 +50,6 @@ func aWriteRecord(t *testing.T, configDir string, pid int, fields map[string]any
 	return aWriteRaw(t, configDir, pid, data)
 }
 
-// aWriteRaw writes the exact bytes of a <pid>.json record.
 func aWriteRaw(t *testing.T, configDir string, pid int, data []byte) string {
 	t.Helper()
 	dir := aSessionsDir(configDir)
@@ -87,14 +75,11 @@ func aSetModTime(t *testing.T, path string, modTime time.Time) {
 	}
 }
 
-// aWaitPID waits for one callback reporting want. Reports for other process
-// ids are ignored.
 func aWaitPID(t *testing.T, pids <-chan int, want int) {
 	t.Helper()
 	aWaitPIDs(t, pids, want)
 }
 
-// aWaitPIDs waits until every wanted process id has been reported once.
 func aWaitPIDs(t *testing.T, pids <-chan int, want ...int) {
 	t.Helper()
 	remaining := make(map[int]bool, len(want))
@@ -113,7 +98,6 @@ func aWaitPIDs(t *testing.T, pids <-chan int, want ...int) {
 	}
 }
 
-// aDrain discards callbacks that are already queued.
 func aDrain(pids <-chan int) {
 	for {
 		select {

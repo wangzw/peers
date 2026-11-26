@@ -9,24 +9,22 @@ import (
 )
 
 const (
-	// envelopeTag is the element the transport library wraps an attributed
-	// message body in.
 	envelopeTag = "cross-session-message"
 
 	// maxFromNameBytes is the receiver's and the transport library's byte limit
-	// for a from-name. Deliver rejects a signature longer than this so the
-	// library's own truncation never changes it.
+	// for a from-name; Deliver rejects a longer signature so the library's
+	// truncation never changes it.
 	maxFromNameBytes = 200
 
-	// frameSizeMsgID is a canonical 36-byte UUID placeholder. FrameSize counts a
-	// fixed-width id so its result does not depend on the message id; the caller
-	// passes a canonical UUID to Deliver.
+	// frameSizeMsgID is a canonical 36-byte UUID placeholder, so FrameSize does
+	// not depend on the caller's message id. FrameSize counts that fixed width,
+	// so the msgID passed to Deliver must be a canonical UUID, or empty to let
+	// the library generate one, or the size is underestimated.
 	frameSizeMsgID = "00000000-0000-4000-8000-000000000000"
 )
 
-// userFrame mirrors the transport library's userFrame, including field order.
-// encoding/json emits fields in declaration order, so the byte count matches the
-// library's encoding.
+// userFrame mirrors the transport library's userFrame, field order included, so
+// the JSON byte count matches the library's encoding.
 type userFrame struct {
 	MsgV      int          `json:"msgV"`
 	MsgID     string       `json:"msg_id"`
@@ -45,7 +43,7 @@ type framePayload struct {
 
 // FrameSize returns the number of bytes this message encodes to, using the same
 // JSON encoding the transport library uses. The trailing newline that terminates
-// the socket line is not counted, matching the library's own size check.
+// the socket line is not counted.
 func FrameSize(sig, text string) int {
 	content := text
 	if sig != "" {
@@ -67,8 +65,8 @@ func FrameSize(sig, text string) int {
 }
 
 // wrapEnvelope builds the attribution envelope exactly as the transport library
-// does for a message with no reply address. The receiver re-serializes what it
-// parses and compares it with the original, so the shape has to match.
+// does for a message with no reply address: the receiver re-serializes what it
+// parses and compares it with the original, so the shape must match.
 func wrapEnvelope(name, body string) string {
 	var b strings.Builder
 	b.WriteString("<")
@@ -108,11 +106,10 @@ func sanitizeForEnvelope(name string) string {
 	return name
 }
 
-// escapeBody neutralizes an envelope tag in the body so a message cannot forge
-// either end of its own attribution envelope. Both an opening and a closing tag
-// are matched, ASCII case-insensitively, and the original case is preserved. The
-// backslash goes after the '<', so a closing tag becomes "<\/...". A tag whose
-// '<' is already followed by a backslash is left alone.
+// escapeBody inserts a backslash after the '<' of an envelope tag so a body
+// cannot forge either end of its attribution envelope. Opening and closing tags
+// are matched ASCII case-insensitively and the original case is preserved; a
+// tag already following a backslash is left alone.
 func escapeBody(body string) string {
 	var b strings.Builder
 	b.Grow(len(body))
@@ -128,8 +125,6 @@ func escapeBody(body string) string {
 	return b.String()
 }
 
-// hasEnvelopeTag reports whether s begins with the envelope tag, optionally
-// preceded by '/', comparing ASCII letters without case.
 func hasEnvelopeTag(s string) bool {
 	s = strings.TrimPrefix(s, "/")
 	if len(s) < len(envelopeTag) {

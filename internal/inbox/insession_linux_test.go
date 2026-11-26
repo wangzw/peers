@@ -16,6 +16,7 @@ import (
 	"time"
 )
 
+// TestPlatformParentPID checks that the parent read agrees with os.Getppid for the current process.
 func TestPlatformParentPID(t *testing.T) {
 	got, err := platformParentPID(os.Getpid())
 	if err != nil {
@@ -26,9 +27,8 @@ func TestPlatformParentPID(t *testing.T) {
 	}
 }
 
+// TestParseProcStatParent checks that a command name containing spaces and parentheses does not shift the parent field.
 func TestParseProcStatParent(t *testing.T) {
-	// The command name contains spaces and parentheses, which must not shift the
-	// parent field.
 	data := []byte("1234 (a (weird) name) S 42 1234 1234 0 -1 4194304 0 0\n")
 	got, err := parseProcStatParent(data)
 	if err != nil {
@@ -39,6 +39,7 @@ func TestParseProcStatParent(t *testing.T) {
 	}
 }
 
+// TestParseProcStatParentRejectsMalformed checks that data without a parseable command and parent field is an error.
 func TestParseProcStatParentRejectsMalformed(t *testing.T) {
 	for _, data := range []string{"", "1234 no parenthesised name", "1234 (name) S"} {
 		if _, err := parseProcStatParent([]byte(data)); err == nil {
@@ -47,24 +48,19 @@ func TestParseProcStatParentRejectsMalformed(t *testing.T) {
 	}
 }
 
-// TestParseProcStatParentNonNumericParent checks that a non-numeric parent
-// field is reported with the offending field quoted.
+// TestParseProcStatParentNonNumericParent checks that a non-numeric parent field is reported with the offending field quoted.
 func TestParseProcStatParentNonNumericParent(t *testing.T) {
 	_, err := parseProcStatParent([]byte("1234 (name) S nope 1234\n"))
 	if err == nil || !strings.Contains(err.Error(), `parent field "nope" is not a number`) {
 		t.Fatalf("parseProcStatParent error = %v, want the non-numeric parent field error", err)
 	}
-	// Positive control: the same line with a numeric parent parses.
 	got, err := parseProcStatParent([]byte("1234 (name) S 42 1234\n"))
 	if err != nil || got != 42 {
 		t.Fatalf("parseProcStatParent = (%d, %v), want (42, nil)", got, err)
 	}
 }
 
-// aMissingPID returns a process id with no /proc entry, so a read of its
-// process information fails the way an exited process does. A pid is only
-// chosen after its absence was observed, so the test does not depend on the
-// host's pid range or on which processes happen to run.
+// aMissingPID returns a pid with no /proc entry, chosen only after its absence was observed, so the test does not depend on the host's pid range.
 func aMissingPID(t *testing.T) int {
 	t.Helper()
 	for pid := 1 << 22; pid < (1<<22)+1000; pid++ {
@@ -76,11 +72,8 @@ func aMissingPID(t *testing.T) int {
 	return 0
 }
 
-// TestPlatformParentPIDMissingProcess covers the read failure of
-// platformParentPID: a process that no longer exists is reported as such rather
-// than as an unknown parent.
+// TestPlatformParentPIDMissingProcess checks that reading the parent of a process that no longer exists fails with a not-exist error.
 func TestPlatformParentPIDMissingProcess(t *testing.T) {
-	// Positive control: the reader works for the current process.
 	if got, err := platformParentPID(os.Getpid()); err != nil || got != os.Getppid() {
 		t.Fatalf("platformParentPID(%d) = (%d, %v), want (%d, nil)", os.Getpid(), got, err, os.Getppid())
 	}
@@ -95,14 +88,9 @@ func TestPlatformParentPIDMissingProcess(t *testing.T) {
 	}
 }
 
-// platformEnvironRole selects the helper role of a re-executed test binary. The
-// helper reports readiness and then waits, so the parent can read its
-// /proc/<pid>/environ while it is alive.
 const platformEnvironRole = "PEERS_TEST_PLATFORM_ENVIRON_ROLE"
 
-// TestPlatformEnvironReadsProcessEnvironment checks that the /proc/<pid>/environ
-// read returns exactly the environment a child copy of this test binary was
-// started with.
+// TestPlatformEnvironReadsProcessEnvironment checks that the environ read returns exactly the environment the child was started with.
 func TestPlatformEnvironReadsProcessEnvironment(t *testing.T) {
 	if os.Getenv(platformEnvironRole) == "child" {
 		fmt.Println("ready")
@@ -117,9 +105,6 @@ func TestPlatformEnvironReadsProcessEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("platformEnviron(%d): %v", pid, err)
 	}
-	// The child's environment is exactly the entries this test passed: the
-	// marker and the helper role. A trailing NUL left on an entry would show up
-	// here as a missing value.
 	want := map[string]bool{marker: true, platformEnvironRole + "=child": true}
 	if len(entries) != len(want) {
 		t.Fatalf("platformEnviron(%d) = %q, want exactly %d entries", pid, entries, len(want))
@@ -131,8 +116,7 @@ func TestPlatformEnvironReadsProcessEnvironment(t *testing.T) {
 	}
 }
 
-// TestPlatformEnvironMissingProcess covers the open failure: the environment of
-// a process that no longer exists is reported as not existing.
+// TestPlatformEnvironMissingProcess checks that reading the environment of a process that no longer exists fails with a not-exist error.
 func TestPlatformEnvironMissingProcess(t *testing.T) {
 	pid := aMissingPID(t)
 	_, err := platformEnviron(pid)
@@ -144,10 +128,6 @@ func TestPlatformEnvironMissingProcess(t *testing.T) {
 	}
 }
 
-// aStartEnvironChild starts a helper copy of this test binary with env plus the
-// helper role as its environment. It returns the child's pid and a function that
-// releases and reaps the child; the child is already past exec when this
-// returns, so its /proc/<pid>/environ is the environment passed here.
 func aStartEnvironChild(t *testing.T, env []string) (int, func()) {
 	t.Helper()
 	exe, err := os.Executable()
@@ -169,8 +149,8 @@ func aStartEnvironChild(t *testing.T, env []string) (int, func()) {
 		t.Fatalf("starting the child process: %v", err)
 	}
 
-	// The child prints its readiness only after exec, so the environment the
-	// parent reads next is final.
+	// The child prints its readiness only after exec, so the environment read
+	// next is final.
 	line, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil || strings.TrimSpace(line) != "ready" {
 		_ = cmd.Process.Kill()
@@ -204,8 +184,7 @@ func aStartEnvironChild(t *testing.T, env []string) (int, func()) {
 	return cmd.Process.Pid, finish
 }
 
-// TestProcPath pins the path the platform readers open, with a pid far outside
-// the live range so the test does not depend on any running process.
+// TestProcPath checks the /proc path the platform readers open.
 func TestProcPath(t *testing.T) {
 	if got, want := procPath(12345, "stat"), "/proc/12345/stat"; got != want {
 		t.Fatalf("procPath = %q, want %q", got, want)

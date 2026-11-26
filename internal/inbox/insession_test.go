@@ -11,18 +11,9 @@ import (
 	"testing"
 )
 
-// insessionTestRole selects the role of a re-executed test binary.
 const insessionTestRole = "PEERS_TEST_INSESSION_ROLE"
 
-// TestInSessionAncestorProcess proves that a process whose own environment does
-// not name the inbox socket is still recognised when one of its parents
-// carries it. A session command that clears the variable and starts a Broker
-// leaves exactly this shape behind, and the Broker must still refuse to start.
-//
-// The parent must carry the variable in the environment it had at exec time:
-// /proc and kern.procargs2 expose that copy, and a t.Setenv value may not reach
-// it. The test therefore runs a re-executed copy of itself as the parent, and
-// that copy starts the child with the variable removed.
+// TestInSessionAncestorProcess checks that a process is in a session when a parent carries the variable even though its own environment does not.
 func TestInSessionAncestorProcess(t *testing.T) {
 	switch os.Getenv(insessionTestRole) {
 	case "parent":
@@ -37,6 +28,7 @@ func TestInSessionAncestorProcess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
+	// The parent must carry the variable in the environment it had at exec time: /proc and kern.procargs2 expose that copy, and a t.Setenv value may not reach it, so a re-executed copy of the test is the parent and it starts the child with the variable removed.
 	cmd := exec.Command(exe, "-test.run=^TestInSessionAncestorProcess$")
 	cmd.Env = append(withoutEnv(os.Environ(), sessionEnvVar),
 		insessionTestRole+"=parent",
@@ -52,9 +44,6 @@ func TestInSessionAncestorProcess(t *testing.T) {
 	}
 }
 
-// insessionParentHelper runs inside a process whose environment carries the
-// inbox socket path. It starts a child with the variable removed, so the child
-// can only find the variable by reading its parent's process information.
 func insessionParentHelper(t *testing.T) {
 	exe, err := os.Executable()
 	if err != nil {
@@ -69,7 +58,6 @@ func insessionParentHelper(t *testing.T) {
 	}
 }
 
-// withoutEnv returns env without any entry for key.
 func withoutEnv(env []string, key string) []string {
 	prefix := key + "="
 	out := make([]string, 0, len(env))
@@ -82,10 +70,6 @@ func withoutEnv(env []string, key string) []string {
 	return out
 }
 
-// prepareInSession clears the current process's own session variable, points
-// HOME and the default configuration directory at an empty directory, and
-// returns that directory. Tests that want a registry record write it under the
-// returned directory.
 func prepareInSession(t *testing.T) string {
 	t.Helper()
 	t.Setenv(sessionEnvVar, "")
@@ -95,7 +79,6 @@ func prepareInSession(t *testing.T) string {
 	return home
 }
 
-// stubReaders replaces the process-table readers for one test.
 func stubReaders(t *testing.T, parent func(int) (int, error), env func(int) ([]string, error)) {
 	t.Helper()
 	oldParent, oldEnv := readParentPID, readEnviron
@@ -105,8 +88,7 @@ func stubReaders(t *testing.T, parent func(int) (int, error), env func(int) ([]s
 	})
 }
 
-// fakeTree is a process tree for stubTree. A pid missing from a map is read as
-// a failure, which models an ancestor that has exited.
+// fakeTree seeds the stubbed readers: a pid missing from parents reads as a failed parent read, one missing from envs reads as an empty environment, and a read failure must be registered in parentErr or envErr.
 type fakeTree struct {
 	parents   map[int]int
 	parentErr map[int]bool
@@ -149,6 +131,7 @@ func writeSessionRecord(t *testing.T, dir string, pid int, body string) {
 	}
 }
 
+// TestInSessionOwnEnvironment checks that the process's own environment decides when no ancestor is readable.
 func TestInSessionOwnEnvironment(t *testing.T) {
 	prepareInSession(t)
 	stubReaders(t, missingParent, emptyEnviron)
@@ -162,6 +145,7 @@ func TestInSessionOwnEnvironment(t *testing.T) {
 	}
 }
 
+// TestInSessionAncestorEnvironment checks that an ancestor's environment carrying the variable marks the process as in a session.
 func TestInSessionAncestorEnvironment(t *testing.T) {
 	prepareInSession(t)
 	start := os.Getppid()
@@ -175,6 +159,7 @@ func TestInSessionAncestorEnvironment(t *testing.T) {
 	}
 }
 
+// TestInSessionEmptyAncestorVariable checks that an empty variable in an ancestor does not mark the process as in a session.
 func TestInSessionEmptyAncestorVariable(t *testing.T) {
 	prepareInSession(t)
 	start := os.Getppid()
@@ -188,6 +173,7 @@ func TestInSessionEmptyAncestorVariable(t *testing.T) {
 	}
 }
 
+// TestInSessionAncestorRecord checks that an ancestor's session registry record marks the process as in a session.
 func TestInSessionAncestorRecord(t *testing.T) {
 	home := prepareInSession(t)
 	start := os.Getppid()
@@ -199,6 +185,7 @@ func TestInSessionAncestorRecord(t *testing.T) {
 	}
 }
 
+// TestInSessionRecordMustBeRegularFile checks that a record path that is not a regular file does not mark the process as in a session.
 func TestInSessionRecordMustBeRegularFile(t *testing.T) {
 	home := prepareInSession(t)
 	start := os.Getppid()
@@ -212,6 +199,7 @@ func TestInSessionRecordMustBeRegularFile(t *testing.T) {
 	}
 }
 
+// TestInSessionHonorsClaudeConfigDir checks that the registry record is looked up under CLAUDE_CONFIG_DIR when it is set.
 func TestInSessionHonorsClaudeConfigDir(t *testing.T) {
 	prepareInSession(t)
 	dir := t.TempDir()
@@ -225,6 +213,7 @@ func TestInSessionHonorsClaudeConfigDir(t *testing.T) {
 	}
 }
 
+// TestInSessionSkipsUnreadableAncestor checks that an ancestor whose environment cannot be read is skipped and the walk continues.
 func TestInSessionSkipsUnreadableAncestor(t *testing.T) {
 	prepareInSession(t)
 	start := os.Getppid()
@@ -239,6 +228,7 @@ func TestInSessionSkipsUnreadableAncestor(t *testing.T) {
 	}
 }
 
+// TestInSessionStopsOnCycleAtLimit checks that a cyclic parent chain stops at maxAncestorDepth.
 func TestInSessionStopsOnCycleAtLimit(t *testing.T) {
 	prepareInSession(t)
 	start := os.Getppid()
@@ -262,6 +252,7 @@ func TestInSessionStopsOnCycleAtLimit(t *testing.T) {
 	}
 }
 
+// TestInSessionStopsOnSelfParent checks that a process whose parent is itself stops the walk.
 func TestInSessionStopsOnSelfParent(t *testing.T) {
 	prepareInSession(t)
 	reads := 0
@@ -281,6 +272,7 @@ func TestInSessionStopsOnSelfParent(t *testing.T) {
 	}
 }
 
+// TestInSessionCleanProcessTree checks that a clean process tree reports not in a session.
 func TestInSessionCleanProcessTree(t *testing.T) {
 	prepareInSession(t)
 	start := os.Getppid()
@@ -291,6 +283,7 @@ func TestInSessionCleanProcessTree(t *testing.T) {
 	}
 }
 
+// TestEnvironmentHasSession checks that only a non-empty exact variable name counts.
 func TestEnvironmentHasSession(t *testing.T) {
 	cases := []struct {
 		name string
@@ -311,6 +304,7 @@ func TestEnvironmentHasSession(t *testing.T) {
 	}
 }
 
+// TestParseNulList checks that a NUL-separated block splits into its non-empty entries.
 func TestParseNulList(t *testing.T) {
 	cases := []struct {
 		name string
@@ -337,6 +331,7 @@ func TestParseNulList(t *testing.T) {
 	}
 }
 
+// TestParseProcargs2 checks that the procargs2 buffer yields its argument and environment strings.
 func TestParseProcargs2(t *testing.T) {
 	raw := []byte{2, 0, 0, 0} // argument count
 	raw = append(raw, []byte("peers\x00run\x00")...)

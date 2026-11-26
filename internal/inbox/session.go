@@ -14,12 +14,11 @@ import (
 )
 
 // Lookup finds the session record whose messagingSocketPath equals socketPath
-// under the given configuration directory. An empty socketPath never matches:
-// a session that has not bound its inbox cannot be the intended target.
-//
-// When several records carry the same path, the newest modification time wins;
-// equal times are resolved in favour of the larger process id so that the
-// result is deterministic.
+// under the given configuration directory, and returns ErrNoRecord when none
+// matches. An empty configDir means this account's default, $HOME/.claude. An
+// empty socketPath never matches. When several records carry the same path, the
+// newest modification time wins, and equal times favour the larger process id.
+// A home directory or registry that cannot be read returns that error as is.
 func Lookup(configDir, socketPath string) (Session, error) {
 	dir, err := resolveConfigDir(configDir)
 	if err != nil {
@@ -79,12 +78,12 @@ func Lookup(configDir, socketPath string) (Session, error) {
 	return best, nil
 }
 
-// Reread re-reads the record named by s.PID in s.ConfigDir. It does not rescan
-// the directory, compare the inbox socket path with the previous value, or
-// judge whether the session is still alive. A record whose socket path became
-// empty or changed is returned verbatim; the broker decides what that means. A
-// record that is missing, no longer a regular file, or larger than the size
-// limit is ErrNoRecord; only an unparseable regular file is ErrPartial.
+// Reread re-reads the record named by s.PID in s.ConfigDir, where an empty
+// configDir means this account's default, $HOME/.claude. It does not rescan the
+// directory, compare the socket path with the previous value or judge whether the
+// session is alive. A missing or non-regular record, or one larger than the size
+// limit, is ErrNoRecord; only an unparseable regular file is ErrPartial. A home
+// directory or record that cannot be read returns that error as is.
 func Reread(s Session) (Session, error) {
 	dir, err := resolveConfigDir(s.ConfigDir)
 	if err != nil {
@@ -101,11 +100,9 @@ func Reread(s Session) (Session, error) {
 	return next, nil
 }
 
-// parseRecord reads the four string fields the package depends on, plus
-// peerProtocol, which is carried to the caller but not judged here. Any
-// syntactically valid JSON is accepted; missing fields and fields of the wrong
-// type become empty strings, and an invalid peerProtocol becomes 0 without
-// making the record ErrPartial. Only malformed JSON is ErrPartial.
+// parseRecord accepts a JSON object: missing or mistyped fields become empty, and
+// an invalid peerProtocol becomes 0. A syntactically valid array, string or
+// number is ErrPartial; null parses to an empty record.
 func parseRecord(data []byte, pid int) (Session, error) {
 	var fields map[string]any
 	if err := json.Unmarshal(data, &fields); err != nil {
@@ -128,8 +125,6 @@ func stringField(fields map[string]any, key string) string {
 	return value
 }
 
-// protocolField returns fields[key] as a protocol version: a JSON number that
-// is an integer between 1 and math.MaxInt32. Anything else yields 0.
 func protocolField(fields map[string]any, key string) int {
 	value, ok := fields[key].(float64)
 	if !ok || value != math.Trunc(value) || value < 1 || value > math.MaxInt32 {
@@ -138,7 +133,6 @@ func protocolField(fields map[string]any, key string) int {
 	return int(value)
 }
 
-// readRecord reads and parses <pid>.json without following symlinks.
 func readRecord(path string, pid int) (Session, error) {
 	data, err := readRecordData(path)
 	if err != nil {
@@ -147,16 +141,12 @@ func readRecord(path string, pid int) (Session, error) {
 	return parseRecord(data, pid)
 }
 
-// readRecordData returns the bytes of a regular record file.
-//
-// It inspects the path before opening it: opening a FIFO would block until a
-// writer appears, and a Unix socket file cannot be read at all. A symbolic
-// link, FIFO, socket, directory, device or a file larger than maxRecordSize is
-// ErrNoRecord, the same as a record that has been deleted: such an entry is no
-// longer a record this package can read, and a caller must not keep using the
-// previous value. The read itself uses O_NOFOLLOW and O_NONBLOCK so that
-// replacing the path after the inspection cannot make it follow a link or
-// block on a FIFO.
+// readRecordData returns the bytes of a regular record file. It inspects the
+// path before opening it, because opening a FIFO would block until a writer
+// appears and a Unix socket file cannot be read; a symlink, FIFO, socket,
+// directory, device or oversized file is ErrNoRecord like a deleted record. The
+// open uses O_NOFOLLOW and O_NONBLOCK so a path replaced after the inspection
+// cannot turn into a symlink or a FIFO.
 func readRecordData(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

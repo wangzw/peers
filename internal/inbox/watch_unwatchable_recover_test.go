@@ -33,14 +33,8 @@ func TestWatch_UnwatchableRegistryMovesBackDownAfterEvent(t *testing.T) {
 	}
 	defer stop()
 
-	// A file created in the configuration directory produces an event on that
-	// directory's watch in both backends: inotify raises IN_CREATE for it, and
-	// kqueue rescans the watched directory on NOTE_WRITE and reports the new
-	// entry as a Create event. That event is held inside handleEvent until the
-	// registry directory's permissions are restored, so the reconciliation
-	// handling it finds the registry directory watchable. The name sorts before
-	// "sessions" because the kqueue rescan stops at the first entry it cannot
-	// watch, and the registry directory is still unreadable when the rescan runs.
+	// The trigger name must sort before "sessions" because the kqueue rescan
+	// stops at the first entry it cannot watch.
 	trigger := filepath.Join(dir, "a-watch-trigger")
 	t.Cleanup(func() { _ = os.Remove(trigger) })
 	arrived := make(chan struct{})
@@ -98,8 +92,6 @@ func TestWatch_UnwatchableRegistryMovesBackDownAfterEvent(t *testing.T) {
 		t.Fatalf("watch path after the configuration directory's create event = %q, want %q", watchedPath, sessions)
 	}
 
-	// No configuration-directory event follows this write, so only a watch on
-	// the registry directory reports it.
 	const pid = 7851
 	aWriteRecord(t, dir, pid, map[string]any{
 		"name":                "agent",

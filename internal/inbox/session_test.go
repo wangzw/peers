@@ -12,8 +12,8 @@ import (
 	"time"
 )
 
+// TestREQAgentMessaging001_LookupFindsRecord checks that Lookup returns the record's fields and takes the pid from the file name, not the content.
 func TestREQAgentMessaging001_LookupFindsRecord(t *testing.T) {
-	// REQ-agent-messaging-001
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
 	aWriteRecord(t, dir, 5001, map[string]any{
@@ -38,8 +38,8 @@ func TestREQAgentMessaging001_LookupFindsRecord(t *testing.T) {
 	}
 }
 
+// TestREQAgentMessaging005_RereadPicksUpRename checks that Reread returns a renamed record and leaves other fields intact.
 func TestREQAgentMessaging005_RereadPicksUpRename(t *testing.T) {
-	// REQ-agent-messaging-005
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
 	aWriteRecord(t, dir, 5002, map[string]any{
@@ -67,8 +67,8 @@ func TestREQAgentMessaging005_RereadPicksUpRename(t *testing.T) {
 	}
 }
 
+// TestREQAgentMessaging010_StatusVerbatim checks that Lookup and Reread return the status verbatim, including unrecognized and empty values.
 func TestREQAgentMessaging010_StatusVerbatim(t *testing.T) {
-	// REQ-agent-messaging-010
 	dir := t.TempDir()
 	cases := []struct {
 		name   string
@@ -110,8 +110,8 @@ func TestREQAgentMessaging010_StatusVerbatim(t *testing.T) {
 	}
 }
 
+// TestREQAgentMessaging033_RereadAfterSessionIDChange checks that a session id change leaves the agent identity unchanged.
 func TestREQAgentMessaging033_RereadAfterSessionIDChange(t *testing.T) {
-	// REQ-agent-messaging-033
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
 	aWriteRecord(t, dir, 5201, map[string]any{
@@ -125,9 +125,6 @@ func TestREQAgentMessaging033_RereadAfterSessionIDChange(t *testing.T) {
 		t.Fatalf("Lookup before session id change: %v", err)
 	}
 
-	// The frozen fakesession API has no setter for sessionId, so this test
-	// rewrites the record file directly. The record rewrite is what the
-	// fixture would do; the assertion is what matters here.
 	aWriteRecord(t, dir, 5201, map[string]any{
 		"name":                "api-worker",
 		"status":              "idle",
@@ -150,8 +147,8 @@ func TestREQAgentMessaging033_RereadAfterSessionIDChange(t *testing.T) {
 	}
 }
 
+// TestREQAgentMessaging036_HeadlessRecord checks that headless and IDE records are read regardless of kind and entrypoint.
 func TestREQAgentMessaging036_HeadlessRecord(t *testing.T) {
-	// REQ-agent-messaging-036
 	dir := t.TempDir()
 	cases := []struct {
 		pid        int
@@ -183,6 +180,7 @@ func TestREQAgentMessaging036_HeadlessRecord(t *testing.T) {
 	}
 }
 
+// TestLookup_NewestMtimeWins checks that the newest modification time wins and equal times favour the larger pid.
 func TestLookup_NewestMtimeWins(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "shared.sock")
@@ -205,7 +203,6 @@ func TestLookup_NewestMtimeWins(t *testing.T) {
 		t.Fatalf("newest modification time did not win: %+v", s)
 	}
 
-	// Equal modification times fall back to the larger process id.
 	aSetModTime(t, olderPID, time.Unix(2000, 0))
 	aSetModTime(t, newerPID, time.Unix(2000, 0))
 	s, err = Lookup(dir, socket)
@@ -217,6 +214,7 @@ func TestLookup_NewestMtimeWins(t *testing.T) {
 	}
 }
 
+// TestLookup_SkipsPartialAndBadFiles checks that Lookup skips half-written, empty, non-canonical, symlinked, oversized and directory records.
 func TestLookup_SkipsPartialAndBadFiles(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
@@ -226,8 +224,8 @@ func TestLookup_SkipsPartialAndBadFiles(t *testing.T) {
 	})
 	sessions := aSessionsDir(dir)
 
-	aWriteRaw(t, dir, 5502, []byte(`{"pid":5502,`)) // half written
-	aWriteRaw(t, dir, 5503, []byte{})               // empty
+	aWriteRaw(t, dir, 5502, []byte(`{"pid":5502,`))
+	aWriteRaw(t, dir, 5503, []byte{})
 	aWriteFile(t, filepath.Join(sessions, "notes.txt"), []byte("unrelated"))
 	aWriteFile(t, filepath.Join(sessions, "007.json"), []byte(
 		`{"name":"noncanonical","messagingSocketPath":`+strconv.Quote(socket)+`}`))
@@ -248,8 +246,7 @@ func TestLookup_SkipsPartialAndBadFiles(t *testing.T) {
 	}
 }
 
-// aCreateFIFO creates a FIFO record file. Opening it for reading would block
-// until a writer appears, so Lookup and Reread must not open it at all.
+// aCreateFIFO creates a FIFO record file: opening it would block until a writer appears, so Lookup and Reread must not open it.
 func aCreateFIFO(t *testing.T, path string) {
 	t.Helper()
 	if err := syscall.Mkfifo(path, 0o600); err != nil {
@@ -257,8 +254,6 @@ func aCreateFIFO(t *testing.T, path string) {
 	}
 }
 
-// aCreateSocketFile leaves a Unix socket file at path, as a crashed or
-// still-running session's inbox would.
 func aCreateSocketFile(t *testing.T, path string) {
 	t.Helper()
 	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
@@ -271,9 +266,9 @@ func aCreateSocketFile(t *testing.T, path string) {
 	}
 }
 
+// TestLookup_SkipsFIFOAndSocketFiles checks that Lookup skips FIFO and socket records without blocking.
 func TestLookup_SkipsFIFOAndSocketFiles(t *testing.T) {
-	// The socket record needs a path short enough for macOS's ~104-byte Unix
-	// socket limit, which t.TempDir() under /var/folders does not provide.
+	// The socket record needs a path inside macOS's ~104-byte Unix socket limit.
 	dir := bShortTempDir(t)
 	socket := filepath.Join(dir, "inbox.sock")
 	aWriteRecord(t, dir, 5507, map[string]any{
@@ -306,8 +301,8 @@ func TestLookup_SkipsFIFOAndSocketFiles(t *testing.T) {
 	}
 }
 
+// TestReread_NonRegularAndOversizedRecordsAreNoRecord checks that Reread reports ErrNoRecord for symlink, FIFO, socket, directory and oversized records.
 func TestReread_NonRegularAndOversizedRecordsAreNoRecord(t *testing.T) {
-	// REQ-agent-messaging-005
 	cases := []struct {
 		name  string
 		pid   int
@@ -332,8 +327,8 @@ func TestReread_NonRegularAndOversizedRecordsAreNoRecord(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A Unix socket record must fit macOS's path limit; keep the
-			// config directory under /tmp rather than /var/folders.
+			// Keep the directory under /tmp so a Unix socket record fits macOS's
+			// path limit.
 			dir := bShortTempDir(t)
 			if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
 				t.Fatalf("creating sessions directory: %v", err)
@@ -364,6 +359,7 @@ func TestReread_NonRegularAndOversizedRecordsAreNoRecord(t *testing.T) {
 	}
 }
 
+// TestLookup_LenientFields checks that missing and mistyped fields are read as empty rather than making the record invalid.
 func TestLookup_LenientFields(t *testing.T) {
 	dir := t.TempDir()
 
@@ -389,6 +385,7 @@ func TestLookup_LenientFields(t *testing.T) {
 	}
 }
 
+// TestLookup_SocketPathComparedVerbatim checks that the socket path is compared as a plain string without normalization.
 func TestLookup_SocketPathComparedVerbatim(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
@@ -413,8 +410,6 @@ func TestLookup_SocketPathComparedVerbatim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("making the socket path relative: %v", err)
 	}
-	// Another spelling of the same path is another string: the plan requires
-	// a plain string comparison, without path normalization.
 	for _, spelling := range []string{
 		relative,
 		socket + string(filepath.Separator),
@@ -426,6 +421,7 @@ func TestLookup_SocketPathComparedVerbatim(t *testing.T) {
 	}
 }
 
+// TestReread_NoRecordAndPartial checks the ErrNoRecord and ErrPartial results and recovery when a record is removed, half-written or emptied.
 func TestReread_NoRecordAndPartial(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
@@ -458,8 +454,6 @@ func TestReread_NoRecordAndPartial(t *testing.T) {
 		t.Fatalf("Reread returned a non-zero Session with ErrPartial: %+v", partial)
 	}
 
-	// An empty file is a regular file Claude Code has truncated before writing
-	// the first byte; it is partial, not gone.
 	aWriteRaw(t, dir, 5801, []byte{})
 	empty, err := Reread(s)
 	if !errors.Is(err, ErrPartial) {
@@ -486,9 +480,8 @@ func TestReread_NoRecordAndPartial(t *testing.T) {
 	}
 }
 
+// TestSessionsPathIsRegularFile checks that Lookup and Reread report ErrNoRecord when the sessions path is a regular file.
 func TestSessionsPathIsRegularFile(t *testing.T) {
-	// When sessions is a regular file rather than a directory, Lookup and
-	// Reread agree: no record was found.
 	dir := t.TempDir()
 	if err := os.WriteFile(aSessionsDir(dir), []byte("not a directory"), 0o600); err != nil {
 		t.Fatalf("writing a regular file at the sessions path: %v", err)
@@ -501,6 +494,7 @@ func TestSessionsPathIsRegularFile(t *testing.T) {
 	}
 }
 
+// TestReread_DoesNotCompareSocketPath checks that Reread returns a rewritten record as it stands, including a changed, first-bound or unbound socket path.
 func TestReread_DoesNotCompareSocketPath(t *testing.T) {
 	dir := t.TempDir()
 	aWriteRecord(t, dir, 5901, map[string]any{
@@ -511,10 +505,6 @@ func TestReread_DoesNotCompareSocketPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lookup: %v", err)
 	}
-	// The process exited and its id was reused by a new session, which
-	// rewrote the same record file with its own socket. Reread returns the
-	// record as it stands: ErrNoRecord means the record is gone, not that its
-	// socket path changed.
 	aWriteRecord(t, dir, 5901, map[string]any{
 		"name":                "new-session",
 		"messagingSocketPath": "/tmp/new-inbox.sock",
@@ -527,7 +517,6 @@ func TestReread_DoesNotCompareSocketPath(t *testing.T) {
 		t.Fatalf("Reread did not return the rewritten record verbatim: %+v", reused)
 	}
 
-	// Binding an inbox for the first time and unbinding are returned as-is.
 	aWriteRecord(t, dir, 5902, map[string]any{
 		"name":                "binding",
 		"messagingSocketPath": "",
@@ -566,6 +555,7 @@ func TestReread_DoesNotCompareSocketPath(t *testing.T) {
 	}
 }
 
+// TestParseRecordPeerProtocol checks that only an integer between 1 and MaxInt32 yields a protocol version.
 func TestParseRecordPeerProtocol(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -601,6 +591,7 @@ func TestParseRecordPeerProtocol(t *testing.T) {
 	}
 }
 
+// TestLookup_ReturnsPeerProtocol checks that Lookup and Reread carry peerProtocol to the caller.
 func TestLookup_ReturnsPeerProtocol(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
@@ -625,6 +616,7 @@ func TestLookup_ReturnsPeerProtocol(t *testing.T) {
 	}
 }
 
+// TestParseRecordName checks that only canonical positive-integer <pid>.json names are accepted.
 func TestParseRecordName(t *testing.T) {
 	cases := []struct {
 		name string

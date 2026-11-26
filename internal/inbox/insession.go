@@ -5,41 +5,28 @@ import (
 	"strings"
 )
 
-// sessionEnvVar is the environment variable with which Claude Code marks the
-// commands and MCP servers it starts inside a session.
 const sessionEnvVar = "CLAUDE_CODE_MESSAGING_SOCKET"
 
-// maxAncestorDepth bounds the walk up the parent chain. A real process tree is
-// far shallower; the bound only stops a malformed or cyclic process table from
-// looping forever.
+// maxAncestorDepth bounds the walk up the parent chain, so a malformed or
+// cyclic process table cannot loop forever.
 const maxAncestorDepth = 256
 
-// readParentPID and readEnviron read one process's parent and environment
-// without sending it a signal. Tests replace them to model a process tree
-// without depending on the real one.
+// Tests replace readParentPID and readEnviron to model a process tree without
+// depending on the real one.
 var (
 	readParentPID = platformParentPID
 	readEnviron   = platformEnviron
 )
 
 // InSession reports whether the current process belongs to the process tree of
-// a Claude Code session, which Claude Code marks by exporting the session's
-// inbox socket path.
+// a Claude Code session. The process's own environment is consulted first; then
+// each ancestor counts if its environment carries the session's inbox socket
+// path or its process id has a record in this account's session registry. An
+// ancestor whose environment cannot be read is skipped, and the walk stops as
+// not in a session when an ancestor's parent cannot be read.
 //
-// The current process's own environment is consulted first. If it is clean, the
-// walk continues up the parent chain: an ancestor that carries the variable, or
-// whose process id has a record in this account's session registry, proves the
-// session. An ancestor whose environment cannot be read, for example because of
-// permissions, is skipped and the walk continues. When the parent process id of
-// the current pid cannot be read, the walk stops and the process is treated as
-// not in a session: without a parent there is no further ancestor to check, and
-// guessing would risk refusing to start outside a session. A circular or very
-// long chain stops at maxAncestorDepth.
-//
-// A build carrying the peers_testenv tag may turn off the parent-chain walk, so
-// a test sandbox started from a process that itself lives inside a session can
-// run the Broker. The own-environment check above stays in force, because it is
-// what the refusal is about; a release build never turns the walk off.
+// A peers_testenv build may turn off the ancestor walk; a release build never
+// does.
 func InSession() bool {
 	if os.Getenv(sessionEnvVar) != "" {
 		return true
@@ -66,9 +53,8 @@ func InSession() bool {
 }
 
 // sessionConfigDir returns the configuration directory whose session registry
-// records every session of this account. CLAUDE_CONFIG_DIR wins when it is set,
-// as it does for Claude Code; otherwise the account's default ~/.claude is
-// used, the same directory Lookup reads through its default.
+// belongs to this account. CLAUDE_CONFIG_DIR wins when set, as it does for
+// Claude Code.
 func sessionConfigDir() (string, error) {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return resolveConfigDir(dir)
@@ -76,9 +62,6 @@ func sessionConfigDir() (string, error) {
 	return resolveConfigDir("")
 }
 
-// sessionRecordExists reports whether the registry holds a record for pid. The
-// record data is not read: the presence of a regular file named <pid>.json is
-// what marks the process as a session, the same file Lookup would parse.
 func sessionRecordExists(configDir string, pid int) bool {
 	info, err := os.Lstat(recordFile(configDir, pid))
 	if err != nil {
@@ -87,8 +70,6 @@ func sessionRecordExists(configDir string, pid int) bool {
 	return info.Mode().IsRegular()
 }
 
-// environmentHasSession reports whether env carries a non-empty
-// CLAUDE_CODE_MESSAGING_SOCKET.
 func environmentHasSession(env []string) bool {
 	prefix := sessionEnvVar + "="
 	for _, entry := range env {
@@ -99,18 +80,17 @@ func environmentHasSession(env []string) bool {
 	return false
 }
 
-// parseNulList splits a NUL-separated block into its non-empty entries. Empty
-// entries, such as the padding zeros the kernel places between the argument and
-// environment areas, are dropped.
+// parseNulList splits a NUL-separated block into its non-empty entries, dropping
+// the padding zeros the kernel places between the argument and environment
+// areas.
 func parseNulList(data []byte) []string {
 	return strings.FieldsFunc(string(data), func(r rune) bool { return r == 0 })
 }
 
-// parseProcargs2 returns the strings packed by the macOS kern.procargs2 sysctl.
-// The buffer starts with a 32-bit argument count, then holds the NUL-terminated
-// argument strings and the environment, with zero padding between the two. Only
-// an exact KEY=value match is looked for, so splitting the whole region is
-// enough and the padding is harmless.
+// parseProcargs2 returns the strings packed by the macOS kern.procargs2 sysctl:
+// a 32-bit argument count, then the NUL-terminated argument strings, zero
+// padding, and the environment. Only an exact KEY=value match is looked for, so
+// splitting the whole region is enough.
 func parseProcargs2(raw []byte) []string {
 	if len(raw) < 4 {
 		return nil

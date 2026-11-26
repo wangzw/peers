@@ -17,21 +17,15 @@ import (
 type Mode int
 
 const (
-	// CloseAfterRead reads one message line and then waits for the sender to
-	// half-close before closing the connection. It is the zero value and models
-	// a receiver that takes the frame and returns. Waiting for the half-close
-	// matters on darwin, where the vendored client delays CloseWrite by 150 ms:
-	// a receiver that closed as soon as the line was read makes that call fail
-	// with ENOTCONN. A line that is not a JSON object or a frame addressed to
-	// another session is not recorded, and the connection still closes.
+	// CloseAfterRead reads one message line and closes the connection once the
+	// sender half-closes. A line that is not a frame or that names another
+	// session is not recorded. It is the zero value.
 	CloseAfterRead Mode = iota
 
-	// HoldOpen reads one message line, records it, and keeps the connection
-	// open until Release or Close. A sender that waits for the receiver to
-	// close therefore observes the timeout path. After Release the connection
-	// stays open for reading until the sender half-closes, so a delayed
-	// CloseWrite completes normally. A line that is not a frame is not recorded
-	// and is not held open.
+	// HoldOpen reads and records one message line and keeps the connection open
+	// until Release or Close; after Release it reads until the sender half-closes.
+	// Only a recorded frame holds the connection open; a line that is not a frame
+	// or that names another session is drained and the connection closed.
 	HoldOpen
 
 	// CloseImmediately closes the connection without reading anything.
@@ -40,46 +34,44 @@ const (
 
 // Options configures New.
 type Options struct {
-	// ConfigDir is the Claude configuration directory. Empty means a new
-	// temporary directory. The sessions registry is written under
+	// ConfigDir is the Claude configuration directory; empty means a new
+	// temporary directory, and the registry is written under
 	// <ConfigDir>/sessions.
 	ConfigDir string
 
-	// PID is the session process ID and the registry filename. Zero means an
-	// automatically assigned value that is unique within the process; no real
-	// process with that ID is required.
+	// PID is the session process ID and the registry filename; zero assigns a
+	// value unique within the process, and no real process is required.
 	PID int
 
 	// Name is the session name written to the record.
 	Name string
 
-	// Status is the session status written to the record. Empty is allowed and
-	// models a session that has not reported a status.
+	// Status is the session status written to the record; empty is allowed.
 	Status string
 
-	// SessionID is the simulated session identifier. Empty means a value
-	// derived from PID. It is written to the record and can be changed later
-	// with SetSessionID.
+	// SessionID is the simulated session identifier; empty derives one from PID,
+	// and SetSessionID changes it later. A frame whose session_id differs from it
+	// is not recorded.
 	SessionID string
 
-	// NoBind writes only the registry record and does not bind a socket. Use
-	// SocketPath to choose the path the record names.
+	// NoBind writes only the registry record and binds no socket; SocketPath
+	// chooses the path the record names.
 	NoBind bool
 
-	// SocketPath is the inbox socket path. Empty means a generated path under a
-	// short temporary directory. When NoBind is false the socket is bound at
-	// this path; when NoBind is true the record names it without binding.
+	// SocketPath is the inbox socket path. When it is empty and NoBind is unset,
+	// a path is generated under a short temporary directory and bound. With NoBind
+	// and an empty SocketPath no path is generated and the record's path is empty;
+	// with NoBind and a path, the record names it but no socket is bound.
 	SocketPath string
 
 	// Mode selects how accepted connections are handled.
 	Mode Mode
 
-	// Extra adds to or overrides the fields written to the registry record. It
-	// is applied last, so it can replace any of the standard fields.
+	// Extra adds to or overrides the fields written to the registry record; it
+	// is applied last.
 	Extra map[string]any
 
-	// BusyDelay delays reading each accepted connection, simulating a session
-	// that is busy. Zero reads immediately.
+	// BusyDelay delays reading each accepted connection; zero reads immediately.
 	BusyDelay time.Duration
 }
 
@@ -92,8 +84,8 @@ type Frame struct {
 	// same connection.
 	Auth bool
 
-	// AuthRaw is the authentication line without its trailing newline. It is
-	// nil when Auth is false.
+	// AuthRaw is the authentication line without its trailing newline; nil when
+	// Auth is false.
 	AuthRaw []byte
 
 	// MsgID is the frame's msg_id.
@@ -103,9 +95,8 @@ type Frame struct {
 	Type string
 
 	// FromName is the sender name decoded from the attribution envelope inside
-	// message.content. It is empty when the content carries no envelope, or when
-	// the receiver would not recognize the envelope because cleaning its
-	// from-name would change the name.
+	// message.content; empty when the content carries no envelope or cleaning
+	// the name would change it.
 	FromName string
 
 	// From is the frame's top-level from field.
@@ -120,9 +111,7 @@ type Frame struct {
 	// Content is message.content verbatim, including any attribution envelope.
 	Content string
 
-	// Fields is the whole decoded frame. It is always non-nil for a recorded
-	// frame: a line that is not a JSON object is not a frame and is not
-	// recorded.
+	// Fields is the whole decoded frame, always non-nil for a recorded frame.
 	Fields map[string]any
 }
 
@@ -162,15 +151,12 @@ type Fake struct {
 	connCh  chan struct{}
 }
 
-// heldConn is a connection a HoldOpen handler is waiting to release.
 type heldConn struct {
 	release chan struct{}
 }
 
 var autoPID atomic.Int64
 
-// nextPID returns a process ID unique within this process. The values are only
-// registry filenames; no real process is required to exist.
 func nextPID() int {
 	return int(autoPID.Add(1)) + 99999
 }
@@ -197,11 +183,8 @@ func New(t testing.TB, opts Options) *Fake {
 	if f.configDir == "" {
 		f.configDir = t.TempDir()
 	}
-	// Register Close only after t.TempDir. Cleanups run last-in-first-out, so
-	// this makes Close run before the temporary directory's RemoveAll: the
-	// listener, connections and socket are torn down while the directory that
-	// holds them still exists, instead of the fake shutting down against a
-	// directory the test framework has already deleted.
+	// Register Close after t.TempDir so Close runs before the temporary
+	// directory's RemoveAll.
 	t.Cleanup(f.Close)
 	if f.pid = opts.PID; f.pid == 0 {
 		f.pid = nextPID()
@@ -229,8 +212,6 @@ func New(t testing.TB, opts Options) *Fake {
 			}
 		}
 	case opts.NoBind:
-		// A record without a socket, modelling a session that has not bound
-		// its inbox yet.
 	default:
 		if err := f.bindAuto(); err != nil {
 			t.Fatalf("fakesession: binding socket: %v", err)
@@ -278,9 +259,8 @@ func (f *Fake) SetStatus(status string) {
 	f.updateRecord(func() { f.status = status })
 }
 
-// SetBusy writes "busy" when busy is true and "idle" otherwise. It changes only
-// the record's status; to model a busy session that delays reading frames, also
-// set BusyDelay or call SetBusyDelay.
+// SetBusy writes "busy" when busy is true and "idle" otherwise; it changes only
+// the record's status, while BusyDelay models a session that delays reading.
 func (f *Fake) SetBusy(busy bool) {
 	f.t.Helper()
 	if busy {
@@ -290,8 +270,9 @@ func (f *Fake) SetBusy(busy bool) {
 	f.SetStatus("idle")
 }
 
-// SetSessionID changes the session identifier in the record. It models a
-// session that ran /clear and now answers to a new identifier.
+// SetSessionID changes the session identifier in the record. A frame that carries
+// a session_id is recorded only when it matches this identifier; a frame without
+// one is recorded as usual.
 func (f *Fake) SetSessionID(sessionID string) {
 	f.t.Helper()
 	f.updateRecord(func() { f.sessionID = sessionID })
@@ -368,9 +349,8 @@ func (f *Fake) SetBusyDelay(delay time.Duration) {
 	f.mu.Unlock()
 }
 
-// Release ends one hold created by HoldOpen. The connection stays open for
-// reading until the sender half-closes, then the receiver closes it; a sender
-// that delays CloseWrite therefore completes it normally.
+// Release ends one hold created by HoldOpen; the connection stays open for
+// reading until the sender half-closes.
 func (f *Fake) Release() {
 	f.t.Helper()
 	f.mu.Lock()
@@ -421,7 +401,6 @@ func (f *Fake) WaitFrameN(n int, timeout time.Duration) (Frame, bool) {
 	return f.waitFrameN(n, timeout)
 }
 
-// waitFrameN waits until at least n frames are recorded and returns the nth.
 func (f *Fake) waitFrameN(n int, timeout time.Duration) (Frame, bool) {
 	f.t.Helper()
 	timer := time.NewTimer(timeout)
@@ -453,11 +432,10 @@ func (f *Fake) waitFrameN(n int, timeout time.Duration) (Frame, bool) {
 	}
 }
 
-// WaitNoConnections waits until the fake tracks no connection, up to timeout.
-// It wakes on every connection the fake accepts and drops instead of polling
-// the count, so the wait returns as soon as the last handler leaves its
-// connection. A HoldOpen connection counts until Release or Close lets its
-// handler return. It reports false when a connection remains at the deadline.
+// WaitNoConnections waits until the fake tracks no connection, up to timeout. A
+// HoldOpen connection still counts after Release until the sender half-closes,
+// and counts until Close if the sender does not. It reports false when a
+// connection remains at the deadline.
 func (f *Fake) WaitNoConnections(timeout time.Duration) bool {
 	f.t.Helper()
 	timer := time.NewTimer(timeout)
@@ -531,8 +509,7 @@ func (f *Fake) Close() {
 	}
 }
 
-// updateRecord applies mutate and rewrites the record when one is present. It
-// calls Fatalf on a write error after releasing the lock.
+// updateRecord calls Fatalf on a write error after releasing the lock.
 func (f *Fake) updateRecord(mutate func()) {
 	f.mu.Lock()
 	mutate()
@@ -546,8 +523,7 @@ func (f *Fake) updateRecord(mutate func()) {
 	}
 }
 
-// writeRecordLocked writes the current fields to the record. The caller holds
-// f.mu.
+// The caller holds f.mu.
 func (f *Fake) writeRecordLocked() error {
 	record := map[string]any{
 		"pid":                 f.pid,
@@ -570,9 +546,8 @@ func (f *Fake) writeRecordLocked() error {
 	return f.writeRecordBytesLocked(data)
 }
 
-// writeRecordBytesLocked replaces the record content in place, matching how
-// Claude Code refreshes its registry, and advances the modification time past
-// the previous write. The caller holds f.mu.
+// writeRecordBytesLocked replaces the record content in place and advances the
+// modification time past the previous write. The caller holds f.mu.
 func (f *Fake) writeRecordBytesLocked(data []byte) error {
 	file, err := os.OpenFile(f.recordPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -593,7 +568,6 @@ func (f *Fake) writeRecordBytesLocked(data []byte) error {
 	return nil
 }
 
-// nextModTimeLocked returns a time strictly after the previous record write.
 // The caller holds f.mu.
 func (f *Fake) nextModTimeLocked() time.Time {
 	now := time.Now()
@@ -604,9 +578,8 @@ func (f *Fake) nextModTimeLocked() time.Time {
 }
 
 // TakeErrors returns the background failures recorded since the previous call
-// and forgets them. Recording never calls a testing method itself: the owner of
-// the fake reports what this returns, either on the test goroutine or through
-// the node agent that hosts the fake.
+// and clears them; recording never calls a testing method, so the fake's owner
+// reports them.
 func (f *Fake) TakeErrors() []error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -618,9 +591,8 @@ func (f *Fake) TakeErrors() []error {
 	return []error{err}
 }
 
-// InjectBackgroundError records err as a background failure, as the accept
-// loop does when it fails unexpectedly. Tests use it to check that the failure
-// reaches the test at all.
+// InjectBackgroundError records err as a background failure, as an unexpected
+// accept-loop failure would.
 func (f *Fake) InjectBackgroundError(err error) {
 	if err == nil {
 		return

@@ -10,8 +10,9 @@ import (
 	"time"
 )
 
+// TestREQAgentMessaging001_WatchReportsNewRecord checks that Watch reports a
+// newly written registry record by its process id.
 func TestREQAgentMessaging001_WatchReportsNewRecord(t *testing.T) {
-	// REQ-agent-messaging-001
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
 		t.Fatalf("creating sessions directory: %v", err)
@@ -30,8 +31,9 @@ func TestREQAgentMessaging001_WatchReportsNewRecord(t *testing.T) {
 	aWaitPID(t, pids, 6101)
 }
 
+// TestREQAgentMessaging005_WatchReportsRename checks that rewriting a record
+// under the same file name is reported by its process id.
 func TestREQAgentMessaging005_WatchReportsRename(t *testing.T) {
-	// REQ-agent-messaging-005
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "inbox.sock")
 	aWriteRecord(t, dir, 6201, map[string]any{
@@ -52,6 +54,8 @@ func TestREQAgentMessaging005_WatchReportsRename(t *testing.T) {
 	aWaitPID(t, pids, 6201)
 }
 
+// TestWatch_ReportsDeletion checks that deleting a record is reported by its
+// process id.
 func TestWatch_ReportsDeletion(t *testing.T) {
 	dir := t.TempDir()
 	path := aWriteRecord(t, dir, 6301, map[string]any{
@@ -71,6 +75,8 @@ func TestWatch_ReportsDeletion(t *testing.T) {
 	aWaitPID(t, pids, 6301)
 }
 
+// TestWatch_ReportsRecordFileRename checks that renaming a record file reports
+// both the old and the new process id.
 func TestWatch_ReportsRecordFileRename(t *testing.T) {
 	dir := t.TempDir()
 	path := aWriteRecord(t, dir, 6801, map[string]any{
@@ -90,6 +96,8 @@ func TestWatch_ReportsRecordFileRename(t *testing.T) {
 	aWaitPIDs(t, pids, 6801, 6802)
 }
 
+// TestWatch_SameSizeSameMtimeRewrite checks that a rewrite with the same size
+// and modification time as the snapshot is still reported.
 func TestWatch_SameSizeSameMtimeRewrite(t *testing.T) {
 	dir := t.TempDir()
 	fixed := time.Unix(1_700_000_000, 0)
@@ -107,10 +115,8 @@ func TestWatch_SameSizeSameMtimeRewrite(t *testing.T) {
 	}
 	t.Cleanup(w.shutdown)
 
-	// "idle" and "busy" have the same JSON length; the rewrite lands on the
-	// same modification time as the snapshot. Only the content digest can
-	// notice this change, and it is the file system's write notification that
-	// makes the watcher look.
+	// "idle" and "busy" encode to the same JSON length; do not change one to a
+	// value of a different length.
 	aWriteRecord(t, dir, 6501, map[string]any{
 		"name":                "agent",
 		"status":              "busy",
@@ -121,11 +127,8 @@ func TestWatch_SameSizeSameMtimeRewrite(t *testing.T) {
 	aWaitPID(t, pids, 6501)
 }
 
-// TestWatch_StopSkipsPendingCallback covers a stop race. notify collects the
-// callback list, the first callback blocks, and stop removes the other two
-// registrations while it runs. When the first callback returns and notify
-// walks the list it collected earlier, the removed registrations must not be
-// invoked: a stopped callback is not called after its stop returned.
+// TestWatch_StopSkipsPendingCallback checks that a registration stopped while
+// another callback is running is not invoked afterwards.
 func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -139,10 +142,6 @@ func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 	var firstID atomic.Int64
 	firstID.Store(-1)
 
-	// Every registration runs the same function. The first invocation records
-	// which registration it belongs to and blocks; later invocations only
-	// report themselves. Reaching a registration whose stop has returned is
-	// the race this test detects.
 	blocker := func(id int) func(int) {
 		return func(int) {
 			if firstStarted.CompareAndSwap(false, true) {
@@ -171,8 +170,6 @@ func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 	defer stopThree()
 
 	// The sentinel is registered last, so callbacks run serially before it.
-	// When it receives the record, every earlier registration for that event
-	// has already run or been skipped.
 	sentinel := make(chan int, 16)
 	stopSentinel, err := Watch(dir, func(pid int) { sentinel <- pid })
 	if err != nil {
@@ -191,11 +188,6 @@ func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 		t.Fatal("no callback started")
 	}
 
-	// Registration 3 stays; one and two are stopped while the event loop is
-	// still inside the first callback. Exactly one registration survives, so
-	// the watcher itself is not shut down and the collected list is walked.
-	// stopOne waits for the callback that is running, so it has to run beside
-	// the release below.
 	oneStopped := make(chan struct{})
 	go func() {
 		stopOne()
@@ -209,9 +201,6 @@ func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 		t.Fatal("stopOne did not return after its callback finished")
 	}
 
-	// The sentinel receiving the record is the event that closes the window:
-	// callbacks run serially, so the stopped registrations have already been
-	// offered this notification and must not have been invoked.
 	select {
 	case pid := <-sentinel:
 		if pid != 7101 {
@@ -233,6 +222,8 @@ func TestWatch_StopSkipsPendingCallback(t *testing.T) {
 	}
 }
 
+// TestWatch_StopAndShared checks that Watch shares one watcher per directory
+// and that a stopped registration stops receiving while the others continue.
 func TestWatch_StopAndShared(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -258,9 +249,6 @@ func TestWatch_StopAndShared(t *testing.T) {
 		t.Fatalf("sharedWatcherCount = %d after removing one callback, want 1", got)
 	}
 
-	// A sentinel on the same directory witnesses that the notification for
-	// 6601 was delivered, so the stopped first callback's silence is a fact
-	// about that event rather than the length of a quiet period.
 	sentinel := make(chan int, 16)
 	stopSentinel, err := Watch(dir, func(pid int) { sentinel <- pid })
 	if err != nil {
@@ -297,9 +285,6 @@ func TestWatch_StopAndShared(t *testing.T) {
 	}
 	aDrain(second)
 
-	// No watcher remains for the stopped registration. A new watcher on the
-	// same directory makes the later record an observable event: it receives
-	// the record, and the stopped callback must not.
 	sentinel = make(chan int, 16)
 	stopSentinel, err = Watch(dir, func(pid int) { sentinel <- pid })
 	if err != nil {
@@ -318,13 +303,8 @@ func TestWatch_StopAndShared(t *testing.T) {
 	}
 }
 
-// TestWatch_CleanupStopsBeforeTempDirRemoval pins the cleanup order this
-// package relies on: the temporary directory comes from t.TempDir, the shared
-// watcher is started after it, and the stop function is registered after the
-// cleanup that observes the watcher. t.Cleanup runs last-in-first-out, so the
-// observation runs after stop has unregistered the watcher and before
-// t.TempDir removes the directory. Nothing here waits on time; the order alone
-// decides the outcome.
+// TestWatch_CleanupStopsBeforeTempDirRemoval checks that the registered stop
+// runs before t.TempDir removes the directory.
 func TestWatch_CleanupStopsBeforeTempDirRemoval(t *testing.T) {
 	dir := t.TempDir()
 	stop, err := Watch(dir, func(int) {})
@@ -336,7 +316,7 @@ func TestWatch_CleanupStopsBeforeTempDirRemoval(t *testing.T) {
 	}
 
 	// This cleanup is registered before stop, so it runs after stop and while
-	// the temporary directory still exists.
+	// the temporary directory still exists; the two registrations must not be swapped.
 	t.Cleanup(func() {
 		if got := sharedWatcherCount(dir); got != 0 {
 			t.Errorf("sharedWatcherCount = %d in cleanup after stop, want 0: the watcher outlived the stop that should precede the directory removal", got)
@@ -348,6 +328,8 @@ func TestWatch_CleanupStopsBeforeTempDirRemoval(t *testing.T) {
 	t.Cleanup(stop)
 }
 
+// TestWatch_UnknownEventCallsZero checks that an event on a file that is not a
+// registry record is reported as 0.
 func TestWatch_UnknownEventCallsZero(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -364,6 +346,8 @@ func TestWatch_UnknownEventCallsZero(t *testing.T) {
 	aWaitPID(t, pids, 0)
 }
 
+// TestWatch_RegistryDirectoryAppears checks that a registry directory created
+// after Watch starts is watched and a record written there is reported.
 func TestWatch_RegistryDirectoryAppears(t *testing.T) {
 	dir := t.TempDir()
 	pids := make(chan int, 16)
@@ -380,10 +364,8 @@ func TestWatch_RegistryDirectoryAppears(t *testing.T) {
 	aWaitPID(t, pids, 6701)
 }
 
-// TestWatch_MissingConfigDir pins the startup fallback: a configuration
-// directory that does not exist yet is not an error. The watcher follows the
-// nearest existing ancestor and reports once with 0 so the caller re-reads what
-// it cares about.
+// TestWatch_MissingConfigDir checks that a configuration directory absent at
+// startup is not an error and is reported as 0.
 func TestWatch_MissingConfigDir(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "absent")
 	pids := make(chan int, 16)
@@ -396,10 +378,8 @@ func TestWatch_MissingConfigDir(t *testing.T) {
 	aWaitPID(t, pids, 0)
 }
 
-// TestWatch_StopWaitsForRunningCallback pins the Stop contract: Stop must not
-// return while a callback it registered is still running, and no callback of
-// that registration may begin after Stop returns. The first callback blocks on
-// a channel while Stop runs beside it.
+// TestWatch_StopWaitsForRunningCallback checks that Stop waits for a running
+// callback and that no callback of that registration starts after it returns.
 func TestWatch_StopWaitsForRunningCallback(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -443,9 +423,6 @@ func TestWatch_StopWaitsForRunningCallback(t *testing.T) {
 		close(stopReturned)
 	}()
 
-	// (a) Stop must wait for the callback that is blocked on release. The seam
-	// reports that Stop has released the registration and is about to wait; it
-	// must not return until the callback does.
 	select {
 	case <-stopCommitted:
 	case <-time.After(aWaitTimeout):
@@ -465,9 +442,6 @@ func TestWatch_StopWaitsForRunningCallback(t *testing.T) {
 		t.Fatal("Stop did not return after the callback finished")
 	}
 
-	// (b) A record written after Stop returned must not start a callback. The
-	// sentinel on the same directory is the event that shows the notification
-	// was delivered to the registrations still present.
 	sentinel := make(chan int, 16)
 	stopSentinel, err := Watch(dir, func(pid int) { sentinel <- pid })
 	if err != nil {
@@ -486,13 +460,8 @@ func TestWatch_StopWaitsForRunningCallback(t *testing.T) {
 	}
 }
 
-// TestWatch_ConcurrentStopsDoNotDeadlock covers two calls of the same stop:
-// one from inside the callback, one from an external goroutine. The external
-// call commits to releasing the registration first and then waits for the
-// running callback; the callback calls the same stop while that wait is in
-// progress. A stop serialized through sync.Once makes the callback block on the
-// Once held by the external call whose wait depends on that callback, so the
-// two wait for each other forever.
+// TestWatch_ConcurrentStopsDoNotDeadlock checks that a stop called from inside
+// a callback does not deadlock against a concurrent external stop.
 func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -520,10 +489,6 @@ func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 		t.Fatalf("Watch: %v", err)
 	}
 
-	// The external Stop is committed once it reaches the point where it is
-	// about to wait for running callbacks. The callback's own Stop is released
-	// only after that, so the external call certainly holds whatever
-	// serialization the implementation uses before the callback asks for it.
 	testWatchBeforeStopWait = func() {
 		commitOnce.Do(func() { close(externalStopCommitted) })
 	}
@@ -551,8 +516,8 @@ func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 		t.Fatal("external Stop did not commit to releasing the callback")
 	}
 
-	// Both Stop calls are now in flight: the external one waits for the
-	// callback, and the callback calls Stop from inside that invocation.
+	// The callback's own Stop is released only after the external Stop has
+	// entered its wait.
 	close(callbackMayStop)
 
 	select {
@@ -567,10 +532,8 @@ func TestWatch_ConcurrentStopsDoNotDeadlock(t *testing.T) {
 	}
 }
 
-// TestWatch_StopFromCallbackDoesNotDeadlock records the rule for a callback
-// that stops its own registration: Stop detects that it is running inside that
-// callback and does not wait for it, because waiting would wait for the caller.
-// No further invocation starts once Stop returns.
+// TestWatch_StopFromCallbackDoesNotDeadlock checks that a callback may stop its
+// own registration without waiting for itself.
 func TestWatch_StopFromCallbackDoesNotDeadlock(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -606,9 +569,6 @@ func TestWatch_StopFromCallbackDoesNotDeadlock(t *testing.T) {
 
 	aDrain(invoked)
 
-	// The callback's own Stop shut the watcher down. A fresh watcher on the
-	// same directory makes the later record an observable event: it receives
-	// the record, and the stopped callback must not.
 	sentinel := make(chan int, 16)
 	stopSentinel, err := Watch(dir, func(pid int) { sentinel <- pid })
 	if err != nil {
@@ -627,10 +587,8 @@ func TestWatch_StopFromCallbackDoesNotDeadlock(t *testing.T) {
 	}
 }
 
-// TestWatch_StartupWindowReportsRecord creates a record after the file watch is
-// installed and before the post-install snapshot is taken. The difference
-// between the two snapshots must report it: a single snapshot taken after the
-// watch would fold the record into the baseline and never report the creation.
+// TestWatch_StartupWindowReportsRecord checks that a record created after the
+// watch is installed and before the post-install snapshot is reported.
 func TestWatch_StartupWindowReportsRecord(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -656,12 +614,8 @@ func TestWatch_StartupWindowReportsRecord(t *testing.T) {
 	aWaitPID(t, pids, pid)
 }
 
-// TestWatch_ErrorsChannelReachesCallback pins the run loop's error input: an
-// error arriving on the file watcher's Errors channel must reach
-// handleWatchError and report pid 0, so that every caller re-reads what it
-// cares about. The fsnotify backend owns fsw.Errors and writes to it from its
-// own goroutine, so the test substitutes the channel the loop reads before the
-// loop starts.
+// TestWatch_ErrorsChannelReachesCallback checks that an error from the file
+// watcher is reported to callbacks as 0.
 func TestWatch_ErrorsChannelReachesCallback(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -679,8 +633,6 @@ func TestWatch_ErrorsChannelReachesCallback(t *testing.T) {
 	}
 	defer stop()
 
-	// No record exists and none is written, so a callback can only come from
-	// the error this test sends.
 	errs <- errors.New("watch error")
 	aWaitPID(t, pids, 0)
 }

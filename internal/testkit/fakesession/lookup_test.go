@@ -10,10 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakesession"
 )
 
-// TestLookupEqualModTimesPrefersLargerPID covers Lookup's tie-break through
-// fakesession fixtures: two records point at the same inbox socket and share a
-// modification time, so the larger process id must win. The fake must allow
-// equal modification times for this branch to be reachable.
+// TestLookupEqualModTimesPrefersLargerPID checks that records pointing at the
+// same socket with equal modification times resolve to the larger pid.
 func TestLookupEqualModTimesPrefersLargerPID(t *testing.T) {
 	dir := t.TempDir()
 	socket := filepath.Join(dir, "shared.sock")

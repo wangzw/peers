@@ -27,8 +27,6 @@ func TestWaitFrameN(t *testing.T) {
 		t.Fatalf("WaitFrame after WaitFrameN(2) msg id = %q, want third", third.MsgID)
 	}
 
-	// Absolute access to an earlier frame still works and does not move the
-	// cursor backwards.
 	first, ok := f.WaitFrameN(1, eventTimeout)
 	if !ok {
 		t.Fatal("first frame not received")

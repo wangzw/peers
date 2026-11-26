@@ -6,7 +6,7 @@ import (
 	"unicode/utf8"
 )
 
-// MaxNameBytes is the longest Agent name, in bytes, that a Broker registers,
+// MaxNameBytes is the longest agent name, in bytes, that a Broker registers,
 // publishes in a roster or accepts from a peer.
 const MaxNameBytes = 128
 

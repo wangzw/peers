@@ -6,8 +6,8 @@ import (
 	"unicode/utf8"
 )
 
+// TestREQAgentMessaging003_NormalizeName checks the name normalization rule across whitespace, case, format characters and invalid UTF-8.
 func TestREQAgentMessaging003_NormalizeName(t *testing.T) {
-	// REQ-agent-messaging-003
 	cases := []struct {
 		name string
 		in   string
@@ -34,20 +34,16 @@ func TestREQAgentMessaging003_NormalizeName(t *testing.T) {
 	}
 }
 
-// wantMaxNameBytes mirrors the value the plan fixes for MaxNameBytes; a peer
-// accepts a roster entry only when its name fits in this many bytes.
 const wantMaxNameBytes = 128
 
-// TestMaxNameBytes pins the exported limit to the value the plan fixes.
+// TestMaxNameBytes checks that MaxNameBytes is 128.
 func TestMaxNameBytes(t *testing.T) {
 	if MaxNameBytes != wantMaxNameBytes {
 		t.Fatalf("MaxNameBytes = %d, want %d", MaxNameBytes, wantMaxNameBytes)
 	}
 }
 
-// TestNormalizeNameCapsLength checks that a normalized name never exceeds
-// MaxNameBytes bytes, even when the input is as large as a session record may
-// hold (inbox reads records up to 256 KiB).
+// TestNormalizeNameCapsLength checks that a 256 KiB name is normalized to at most MaxNameBytes bytes.
 func TestNormalizeNameCapsLength(t *testing.T) {
 	got := NormalizeName(strings.Repeat("a", 256*1024))
 	if len(got) > wantMaxNameBytes {
@@ -55,8 +51,7 @@ func TestNormalizeNameCapsLength(t *testing.T) {
 	}
 }
 
-// TestNormalizeNameTruncatesLongName checks that a name far longer than the
-// limit comes back within it.
+// TestNormalizeNameTruncatesLongName checks that a name far longer than the limit comes back within it.
 func TestNormalizeNameTruncatesLongName(t *testing.T) {
 	got := NormalizeName(strings.Repeat("a", 300))
 	if len(got) > MaxNameBytes {
@@ -64,21 +59,17 @@ func TestNormalizeNameTruncatesLongName(t *testing.T) {
 	}
 }
 
-// TestNormalizeNameTruncationKeepsUTF8Boundary checks that the cut lands on a
-// rune boundary, so the result stays valid UTF-8, and that a cut that leaves a
-// hyphen at the end drops it.
+// TestNormalizeNameTruncationKeepsUTF8Boundary checks that truncation lands on a rune boundary and drops a trailing hyphen.
 func TestNormalizeNameTruncationKeepsUTF8Boundary(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
 	}{
 		{
-			// The second byte of the 2-byte "é" falls at byte 128.
 			name: "cut inside a multibyte rune",
 			in:   strings.Repeat("a", 127) + "é" + strings.Repeat("b", 10),
 		},
 		{
-			// The space becomes a hyphen at byte 128 and is then trimmed.
 			name: "cut leaves a trailing hyphen",
 			in:   strings.Repeat("a", 127) + " " + strings.Repeat("b", 10),
 		},

@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
+// TestLookup_DefaultConfigDir checks that an empty configuration directory resolves to the account's default and that Reread does the same.
 func TestLookup_DefaultConfigDir(t *testing.T) {
 	home := t.TempDir()
 	other := t.TempDir()
 	t.Setenv("HOME", home)
-	// CLAUDE_CONFIG_DIR must not influence the default; the caller reads it
-	// and passes the result in.
+	// CLAUDE_CONFIG_DIR must not influence the default.
 	t.Setenv("CLAUDE_CONFIG_DIR", other)
 
 	defaultDir := filepath.Join(home, ".claude")
@@ -36,7 +36,6 @@ func TestLookup_DefaultConfigDir(t *testing.T) {
 		t.Fatalf("Session.ConfigDir = %q, want %q", s.ConfigDir, defaultDir)
 	}
 
-	// Reread resolves an empty ConfigDir the same way.
 	reread, err := Reread(Session{PID: 4201})
 	if err != nil {
 		t.Fatalf("Reread with the default configuration directory: %v", err)
@@ -46,6 +45,7 @@ func TestLookup_DefaultConfigDir(t *testing.T) {
 	}
 }
 
+// TestLookup_ConfigDirIsCleaned checks that a configuration directory is cleaned lexically and is not made absolute.
 func TestLookup_ConfigDirIsCleaned(t *testing.T) {
 	cwd, err := filepath.Abs(".")
 	if err != nil {
@@ -72,8 +72,6 @@ func TestLookup_ConfigDirIsCleaned(t *testing.T) {
 		t.Fatalf("Lookup returned the wrong record: %+v", s)
 	}
 
-	// Redundant separators and dot elements are removed lexically; the
-	// directory is not made absolute.
 	messy := dir + string(filepath.Separator) + "." + string(filepath.Separator)
 	s, err = Lookup(messy, "/tmp/relative-inbox.sock")
 	if err != nil {
@@ -84,6 +82,7 @@ func TestLookup_ConfigDirIsCleaned(t *testing.T) {
 	}
 }
 
+// TestLookup_NoRecord checks that Lookup reports ErrNoRecord when no usable record matches.
 func TestLookup_NoRecord(t *testing.T) {
 	t.Run("missing config directory", func(t *testing.T) {
 		_, err := Lookup(filepath.Join(t.TempDir(), "absent"), "/tmp/none.sock")

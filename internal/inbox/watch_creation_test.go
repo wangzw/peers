@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// TestWatch_UnresolvableConfigDir reports a missing home from both entry points
-// and starts a watcher once a home exists.
+// TestWatch_UnresolvableConfigDir checks that a missing home is reported by both
+// entry points and a watcher starts once a home exists.
 func TestWatch_UnresolvableConfigDir(t *testing.T) {
 	t.Setenv("HOME", "")
 	if w, entry, err := makeWatcher("", func(int) {}); err == nil || w != nil || entry != nil ||
@@ -23,7 +23,6 @@ func TestWatch_UnresolvableConfigDir(t *testing.T) {
 		t.Fatalf("Watch with an unresolvable home error = %v (stop returned: %t), want the home directory error", err, stop != nil)
 	}
 
-	// Positive control: with a home the same call starts a watcher.
 	t.Setenv("HOME", t.TempDir())
 	stop, err := Watch("", func(int) {})
 	if err != nil {
@@ -32,14 +31,13 @@ func TestWatch_UnresolvableConfigDir(t *testing.T) {
 	stop()
 }
 
-// aWatchResult is one Watch call's outcome.
 type aWatchResult struct {
 	stop func()
 	err  error
 }
 
-// TestWatch_WaiterUsesCreationInFlight proves that a second Watch joins the
-// creation the first Watch has in flight instead of building a second watcher.
+// TestWatch_WaiterUsesCreationInFlight checks that a second Watch joins the
+// in-flight creation of the first Watch.
 func TestWatch_WaiterUsesCreationInFlight(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(aSessionsDir(dir), 0o700); err != nil {
@@ -115,7 +113,6 @@ func TestWatch_WaiterUsesCreationInFlight(t *testing.T) {
 		t.Fatalf("watcher creations = %d, want 1: the second Watch built its own watcher", got)
 	}
 
-	// Both registrations are on one watcher: the record reaches both of them.
 	const pid = 7701
 	aWriteRecord(t, dir, pid, map[string]any{
 		"name":                "agent",
@@ -131,8 +128,6 @@ func TestWatch_WaiterUsesCreationInFlight(t *testing.T) {
 	}
 }
 
-// aWaitWatchResult returns one Watch result, failing the test if it does not
-// arrive within aWaitTimeout.
 func aWaitWatchResult(t *testing.T, results <-chan aWatchResult, what string) aWatchResult {
 	t.Helper()
 	select {
@@ -144,8 +139,8 @@ func aWaitWatchResult(t *testing.T, results <-chan aWatchResult, what string) aW
 	}
 }
 
-// TestWatch_UnwatchableRegistryFallsBack reports a record written after an
-// unwatchable registry directory becomes readable.
+// TestWatch_UnwatchableRegistryFallsBack checks that a record written after an
+// unwatchable registry directory becomes readable is reported.
 func TestWatch_UnwatchableRegistryFallsBack(t *testing.T) {
 	aSkipWithoutFilePermissions(t)
 	dir := t.TempDir()
@@ -165,8 +160,6 @@ func TestWatch_UnwatchableRegistryFallsBack(t *testing.T) {
 	}
 	defer stop()
 
-	// Making the registry readable changes what the watcher can observe; the
-	// event on the configuration directory makes it choose its target again.
 	if err := os.Chmod(sessions, 0o700); err != nil {
 		t.Fatalf("restoring registry directory permissions: %v", err)
 	}
@@ -180,8 +173,8 @@ func TestWatch_UnwatchableRegistryFallsBack(t *testing.T) {
 	aWaitPID(t, pids, pid)
 }
 
-// TestWatch_SwitchedReconcileNotifiesZero reports 0 for an event that arrives
-// while the watch moves down to the configuration directory.
+// TestWatch_SwitchedReconcileNotifiesZero checks that an event arriving while
+// the watch moves down to the configuration directory is reported as 0.
 func TestWatch_SwitchedReconcileNotifiesZero(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "config")
@@ -193,8 +186,6 @@ func TestWatch_SwitchedReconcileNotifiesZero(t *testing.T) {
 	}
 	t.Cleanup(w.shutdown)
 
-	// The watcher started above the configuration directory and reported once
-	// with 0 for the caller to re-read.
 	aWaitPID(t, pids, 0)
 	aDrain(pids)
 
@@ -214,8 +205,6 @@ func TestWatch_SwitchedReconcileNotifiesZero(t *testing.T) {
 	aWriteFile(t, filepath.Join(root, "sibling"), []byte("x"))
 	aWaitPID(t, pids, 0)
 
-	// The watch moved to the configuration directory, so a record written there
-	// is reported.
 	const pid = 7901
 	aWriteRecord(t, dir, pid, map[string]any{
 		"name":                "agent",
@@ -224,8 +213,8 @@ func TestWatch_SwitchedReconcileNotifiesZero(t *testing.T) {
 	aWaitPID(t, pids, pid)
 }
 
-// TestPathWithin pins the strict inside test: a path is inside its parent but
-// not itself, not above it, and not a sibling that shares its name prefix.
+// TestPathWithin checks that pathWithin accepts only paths strictly inside the
+// parent.
 func TestPathWithin(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -238,8 +227,6 @@ func TestPathWithin(t *testing.T) {
 		{"ancestor", "/a/b", "/a", false},
 		{"sibling with shared prefix", "/a", "/ab", false},
 		{"unrelated", "/a/b", "/c/d", false},
-		// A relative parent and an absolute child cannot be made relative, so
-		// the helper reports false instead of guessing.
 		{"mixed spelling", "relative", "/absolute", false},
 	}
 	for _, tc := range cases {

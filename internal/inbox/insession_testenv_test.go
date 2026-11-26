@@ -8,10 +8,7 @@ import (
 	"testing"
 )
 
-// TestAncestorSkipSwitchSkipsAncestorEnvironment proves that a peers_testenv
-// build honors the sandbox switch by not walking the parent chain. The test
-// runner itself lives inside a session's process tree, so a Broker started by
-// a test sandbox would otherwise be refused as if a session had started it.
+// TestAncestorSkipSwitchSkipsAncestorEnvironment checks that a peers_testenv build skips the ancestor walk when the sandbox switch is set.
 func TestAncestorSkipSwitchSkipsAncestorEnvironment(t *testing.T) {
 	prepareInSession(t)
 	t.Setenv(skipAncestorSessionCheckEnv, "1")
@@ -26,9 +23,7 @@ func TestAncestorSkipSwitchSkipsAncestorEnvironment(t *testing.T) {
 	}
 }
 
-// TestAncestorSkipSwitchSkipsAncestorRecord proves that the switch turns off
-// the whole ancestor walk, not only the ancestor environment read: a registry
-// record for the parent must not mark the process as in-session either.
+// TestAncestorSkipSwitchSkipsAncestorRecord checks that the switch also ignores a parent's registry record.
 func TestAncestorSkipSwitchSkipsAncestorRecord(t *testing.T) {
 	home := prepareInSession(t)
 	t.Setenv(skipAncestorSessionCheckEnv, "1")
@@ -41,10 +36,7 @@ func TestAncestorSkipSwitchSkipsAncestorRecord(t *testing.T) {
 	}
 }
 
-// TestAncestorSkipSwitchKeepsOwnEnvironment proves that the switch turns off
-// only the parent-chain walk. A process that carries the session variable in
-// its own environment is still refused, so a test that exercises the refusal
-// through the sandbox behaves like production.
+// TestAncestorSkipSwitchKeepsOwnEnvironment checks that the switch leaves the process's own-environment check in force.
 func TestAncestorSkipSwitchKeepsOwnEnvironment(t *testing.T) {
 	prepareInSession(t)
 	t.Setenv(skipAncestorSessionCheckEnv, "1")
@@ -56,9 +48,7 @@ func TestAncestorSkipSwitchKeepsOwnEnvironment(t *testing.T) {
 	}
 }
 
-// TestAncestorSkipSwitchEmptyKeepsAncestorWalk proves that only a non-empty
-// value turns the walk off, so an empty entry left in a sandbox environment is
-// the same as an absent one.
+// TestAncestorSkipSwitchEmptyKeepsAncestorWalk checks that only a non-empty switch value turns the walk off.
 func TestAncestorSkipSwitchEmptyKeepsAncestorWalk(t *testing.T) {
 	prepareInSession(t)
 	t.Setenv(skipAncestorSessionCheckEnv, "")

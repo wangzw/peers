@@ -2,10 +2,9 @@
 
 package inbox
 
-// skipAncestorSessionCheck reports whether the parent-chain walk is disabled.
-// A release build never disables it. Only a build carrying the peers_testenv
-// tag reads the test switch, so a process inside a session cannot turn the
-// check off by setting an environment variable.
+// skipAncestorSessionCheck reports whether the parent-chain walk is disabled. A
+// release build never disables it: only a peers_testenv build reads the switch,
+// so a session's process cannot turn the check off through the environment.
 func skipAncestorSessionCheck() bool {
 	return false
 }

@@ -12,8 +12,6 @@ import (
 	"strings"
 )
 
-// platformParentPID returns the parent process id of pid, read from
-// /proc/<pid>/stat.
 func platformParentPID(pid int) (int, error) {
 	data, err := os.ReadFile(procPath(pid, "stat"))
 	if err != nil {
@@ -41,9 +39,8 @@ func parseProcStatParent(data []byte) (int, error) {
 	return ppid, nil
 }
 
-// platformEnviron returns the environment of pid, read from
-// /proc/<pid>/environ. The kernel exposes the environment the process had at
-// exec time, and only to a caller that may inspect the process.
+// platformEnviron reads the environment the process had at exec time, which the
+// kernel exposes only to a caller that may inspect the process.
 func platformEnviron(pid int) ([]string, error) {
 	file, err := os.Open(procPath(pid, "environ"))
 	if err != nil {

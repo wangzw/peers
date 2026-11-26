@@ -9,11 +9,8 @@ import (
 	"time"
 )
 
-// TestScanSessions_ReplacedByFIFODoesNotBlock injects the window between the
-// Lstat that classifies a record and the read that hashes it. Replacing the
-// record with a FIFO there used to make os.ReadFile block the watcher goroutine
-// forever. readRecordData opens with O_NOFOLLOW and O_NONBLOCK and checks the
-// opened file again, so the scan finishes and keeps the stat-based stamp.
+// TestScanSessions_ReplacedByFIFODoesNotBlock checks that a record replaced by
+// a FIFO between its Lstat and its read does not block the snapshot.
 func TestScanSessions_ReplacedByFIFODoesNotBlock(t *testing.T) {
 	const pid = 7101
 	dir := t.TempDir()
@@ -50,10 +47,6 @@ func TestScanSessions_ReplacedByFIFODoesNotBlock(t *testing.T) {
 	}
 }
 
-// aStampWithoutBlocking stamps path and fails when stampRecord does not return
-// within aWaitTimeout. A symbolic link is not followed, a directory is not
-// descended and an oversized file is not read, so none of them can make the
-// watcher wait on a FIFO or on a long read.
 func aStampWithoutBlocking(t *testing.T, path string) fileStamp {
 	t.Helper()
 	type result struct {
@@ -77,8 +70,6 @@ func aStampWithoutBlocking(t *testing.T, path string) fileStamp {
 	}
 }
 
-// aScanWithoutBlocking takes a snapshot and fails when scanSessions does not
-// return within aWaitTimeout.
 func aScanWithoutBlocking(t *testing.T, dir string) map[int]fileStamp {
 	t.Helper()
 	done := make(chan map[int]fileStamp, 1)
@@ -92,12 +83,9 @@ func aScanWithoutBlocking(t *testing.T, dir string) map[int]fileStamp {
 	}
 }
 
-// TestStampRecord_NonRegularAndOversizedEntriesAreNotRead pins the branches
-// that classify a registry entry without reading it. A symbolic link is not
-// followed, a directory is not descended and a file above maxRecordSize is not
-// read; all three still produce a stat-based stamp, so a later disappearance
-// or metadata change is reported. A symbolic link to a FIFO is used because
-// following it would block forever.
+// TestStampRecord_NonRegularAndOversizedEntriesAreNotRead checks that a
+// symbolic link, a directory and an oversized file each get a stat-based stamp
+// without being read.
 func TestStampRecord_NonRegularAndOversizedEntriesAreNotRead(t *testing.T) {
 	dir := t.TempDir()
 	sessions := aSessionsDir(dir)
@@ -144,12 +132,9 @@ func TestStampRecord_NonRegularAndOversizedEntriesAreNotRead(t *testing.T) {
 	}
 }
 
-// TestScanSessions_NonRegularAndOversizedRewritesAreNotChanges proves that the
-// snapshot scan keys these entries on their own metadata alone. Rewriting the
-// content behind a symbolic link, rewriting a file inside a directory record
-// and rewriting an oversized file in place with the same size and modification
-// time leave every stamp equal, so none of them is reported as a changed
-// record.
+// TestScanSessions_NonRegularAndOversizedRewritesAreNotChanges checks that
+// rewriting the content behind a symbolic link, a directory or an oversized
+// file leaves its stamp unchanged.
 func TestScanSessions_NonRegularAndOversizedRewritesAreNotChanges(t *testing.T) {
 	const (
 		linkPID      = 7201

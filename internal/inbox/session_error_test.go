@@ -9,10 +9,7 @@ import (
 	"testing"
 )
 
-// TestLookup_UnresolvableHome proves that an empty configuration directory is
-// resolved against the account home and that a missing home is reported instead
-// of being read as a relative path, the shape a service started without a login
-// environment has.
+// TestLookup_UnresolvableHome checks that an empty configuration directory is resolved against the account home and a missing home is reported.
 func TestLookup_UnresolvableHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	if _, err := Lookup("", "/tmp/inbox.sock"); err == nil ||
@@ -20,16 +17,13 @@ func TestLookup_UnresolvableHome(t *testing.T) {
 		t.Fatalf("Lookup with an unresolvable home error = %v, want the home directory error", err)
 	}
 
-	// The same call succeeds once the home resolves, so the failure above is
-	// about the home and not about the socket path.
 	t.Setenv("HOME", t.TempDir())
 	if _, err := Lookup("", "/tmp/inbox.sock"); !errors.Is(err, ErrNoRecord) {
 		t.Fatalf("Lookup with a resolvable home error = %v, want ErrNoRecord", err)
 	}
 }
 
-// TestReread_UnresolvableHome covers the same resolution in Reread, which must
-// report it before it looks at the record at all.
+// TestReread_UnresolvableHome checks that Reread reports a home directory error when HOME cannot be resolved and ErrNoRecord once it can.
 func TestReread_UnresolvableHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	if _, err := Reread(Session{PID: 4242}); err == nil ||
@@ -43,9 +37,6 @@ func TestReread_UnresolvableHome(t *testing.T) {
 	}
 }
 
-// aSkipWithoutFilePermissions skips a test that needs the operating system to
-// deny a read. Root bypasses the permission bits, so the branch it exercises
-// cannot be reproduced.
 func aSkipWithoutFilePermissions(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() == 0 {
@@ -53,8 +44,7 @@ func aSkipWithoutFilePermissions(t *testing.T) {
 	}
 }
 
-// TestLookup_RegistryPermissionDenied proves that a registry directory the
-// account may not read is reported, rather than looking like an empty registry.
+// TestLookup_RegistryPermissionDenied checks that a registry directory the account may not read is reported with a permission error.
 func TestLookup_RegistryPermissionDenied(t *testing.T) {
 	aSkipWithoutFilePermissions(t)
 	dir := t.TempDir()
@@ -78,9 +68,6 @@ func TestLookup_RegistryPermissionDenied(t *testing.T) {
 		t.Fatalf("Lookup error %q does not name the registry directory %q", err, sessions)
 	}
 
-	// Positive control: the record written before the denial is found once the
-	// directory is readable again, so the failure is the permission and not a
-	// missing record.
 	if err := os.Chmod(sessions, 0o700); err != nil {
 		t.Fatalf("restoring registry directory permissions: %v", err)
 	}
@@ -90,9 +77,7 @@ func TestLookup_RegistryPermissionDenied(t *testing.T) {
 	}
 }
 
-// TestLookup_UnreadableRecordIsReported proves that a record the account may not
-// open is reported rather than skipped like a half-written one: a permission
-// failure is not the same as a record that is not there.
+// TestLookup_UnreadableRecordIsReported checks that a record the account may not open is reported with a permission error.
 func TestLookup_UnreadableRecordIsReported(t *testing.T) {
 	aSkipWithoutFilePermissions(t)
 	dir := t.TempDir()
@@ -119,8 +104,6 @@ func TestLookup_UnreadableRecordIsReported(t *testing.T) {
 		t.Fatalf("Lookup error %q does not name the unreadable record %q", err, unreadable)
 	}
 
-	// Positive control: with the record readable again Lookup returns the good
-	// record, so the permission failure did not hide the rest of the registry.
 	if err := os.Chmod(unreadable, 0o600); err != nil {
 		t.Fatalf("restoring record permissions: %v", err)
 	}
@@ -130,9 +113,7 @@ func TestLookup_UnreadableRecordIsReported(t *testing.T) {
 	}
 }
 
-// TestReadRecordData_ReportsInspectingPermissionDenied covers the inspecting
-// Lstat failure: a record path whose parent directory may not be searched is
-// reported, not read as a missing record.
+// TestReadRecordData_ReportsInspectingPermissionDenied checks that a record under a directory that may not be searched is reported with a permission error.
 func TestReadRecordData_ReportsInspectingPermissionDenied(t *testing.T) {
 	aSkipWithoutFilePermissions(t)
 	dir := t.TempDir()
@@ -156,7 +137,6 @@ func TestReadRecordData_ReportsInspectingPermissionDenied(t *testing.T) {
 		t.Fatalf("readRecordData error %q does not name the record %q", err, path)
 	}
 
-	// Positive control: the same path is read once the directory is searchable.
 	if err := os.Chmod(sessions, 0o700); err != nil {
 		t.Fatalf("restoring registry directory permissions: %v", err)
 	}
@@ -169,9 +149,7 @@ func TestReadRecordData_ReportsInspectingPermissionDenied(t *testing.T) {
 	}
 }
 
-// TestReadRecordData_ReportsOpenPermissionDenied covers the open failure after
-// the record was classified as a regular file: an unreadable file is reported
-// with its path and not treated as a missing record.
+// TestReadRecordData_ReportsOpenPermissionDenied checks that an unreadable record is reported with its path and a permission error.
 func TestReadRecordData_ReportsOpenPermissionDenied(t *testing.T) {
 	aSkipWithoutFilePermissions(t)
 	dir := t.TempDir()
@@ -190,7 +168,6 @@ func TestReadRecordData_ReportsOpenPermissionDenied(t *testing.T) {
 		t.Fatalf("readRecordData error %q does not name the record %q", err, path)
 	}
 
-	// Positive control: the record reads once its permission is restored.
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatalf("restoring record permissions: %v", err)
 	}

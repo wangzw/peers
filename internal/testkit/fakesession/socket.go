@@ -17,11 +17,11 @@ import (
 	"unicode"
 )
 
-// maxFrameLineBytes is the receiver's per-line limit: a longer line is
+// maxFrameLineBytes matches the receiver's per-line limit; a longer line is
 // discarded and the connection closed.
 const maxFrameLineBytes = 1 << 20
 
-// maxFromNameRunes is the receiver's rune limit for a from-name.
+// maxFromNameRunes matches the receiver's rune limit for a from-name.
 const maxFromNameRunes = 64
 
 // maxSocketPathBytes keeps the generated socket path inside the Unix sun_path
@@ -30,12 +30,10 @@ const maxSocketPathBytes = 100
 
 var errLineTooLong = errors.New("fakesession: frame line exceeds the 1 MiB limit")
 
-// fromNameAttrRe extracts the from-name attribute from an envelope tag. It is
-// applied only to the opening tag, never to the body.
+// fromNameAttrRe matches the from-name attribute of an envelope opening tag;
+// never apply it to the body.
 var fromNameAttrRe = regexp.MustCompile(`(?:^|\s)from-name="((?:\\.|[^"\\])*)"`)
 
-// bindAuto binds a socket under a fresh short temporary directory and starts
-// the accept loop.
 func (f *Fake) bindAuto() error {
 	dir, err := f.newSocketTempDir()
 	if err != nil {
@@ -60,7 +58,6 @@ func (f *Fake) bindAuto() error {
 	return nil
 }
 
-// bindAt binds at a caller-provided path and starts the accept loop.
 func (f *Fake) bindAt(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
@@ -75,7 +72,6 @@ func (f *Fake) bindAt(path string) error {
 	return nil
 }
 
-// bindUnix binds a Unix socket and restricts it to the owning user.
 func bindUnix(path string) (net.Listener, error) {
 	listener, err := net.Listen("unix", path)
 	if err != nil {
@@ -88,8 +84,6 @@ func bindUnix(path string) (net.Listener, error) {
 	return listener, nil
 }
 
-// newSocketTempDir returns a directory short enough for a socket path,
-// preferring the process temporary directory and falling back to /tmp.
 func (f *Fake) newSocketTempDir() (string, error) {
 	dir, err := os.MkdirTemp("", "fakesession-")
 	if err != nil {
@@ -116,8 +110,7 @@ func socketPathLen(dir string, pid int) int {
 }
 
 // RemoveSocket stops accepting connections and removes the bound socket file
-// while leaving the registry record in place. It models a session whose inbox
-// socket disappeared. It is idempotent.
+// while leaving the registry record in place. It is idempotent.
 func (f *Fake) RemoveSocket() {
 	f.t.Helper()
 	f.mu.Lock()
@@ -136,7 +129,6 @@ func (f *Fake) RemoveSocket() {
 	}
 }
 
-// serve accepts connections until the listener is closed.
 func (f *Fake) serve(listener net.Listener) {
 	for {
 		conn, err := listener.Accept()
@@ -153,8 +145,6 @@ func (f *Fake) serve(listener net.Listener) {
 	}
 }
 
-// setBackgroundError stores the first unexpected background failure so a test
-// goroutine can report it. It never calls a testing method itself.
 func (f *Fake) setBackgroundError(err error) {
 	f.mu.Lock()
 	if f.bgErr == nil {
@@ -163,8 +153,6 @@ func (f *Fake) setBackgroundError(err error) {
 	f.mu.Unlock()
 }
 
-// trackConn registers a connection so Close can interrupt a blocked read. It
-// reports false when the fake is already closed.
 func (f *Fake) trackConn(conn net.Conn) bool {
 	f.mu.Lock()
 	if f.closed {
@@ -177,9 +165,6 @@ func (f *Fake) trackConn(conn net.Conn) bool {
 	return true
 }
 
-// markConnClosed records that the handler closed conn and wakes anyone waiting
-// for a close. The caller closes the connection before calling this, so a
-// waiter that observes the new count also observes EOF.
 func (f *Fake) markConnClosed(conn net.Conn) {
 	f.mu.Lock()
 	delete(f.conns, conn)
@@ -188,18 +173,12 @@ func (f *Fake) markConnClosed(conn net.Conn) {
 	f.signalConns()
 }
 
-// closedConnCount returns how many connections the fake's handlers have closed.
 func (f *Fake) closedConnCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.closedConns
 }
 
-// waitClosedSince waits until the fake has closed a connection after base. It is
-// event-driven: a handler closing a connection advances closedConns and wakes
-// the wait, so the returned bool does not depend on how long reading one line
-// takes. timeout only stops a fake that never closes the connection from
-// hanging the test.
 func (f *Fake) waitClosedSince(base int, timeout time.Duration) bool {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -221,7 +200,6 @@ func (f *Fake) waitClosedSince(base int, timeout time.Duration) bool {
 	}
 }
 
-// signalConns wakes WaitNoConnections after a connection was added or dropped.
 func (f *Fake) signalConns() {
 	select {
 	case f.connCh <- struct{}{}:
@@ -229,7 +207,6 @@ func (f *Fake) signalConns() {
 	}
 }
 
-// handle serves one accepted connection according to the current mode.
 func (f *Fake) handle(conn net.Conn) {
 	if !f.trackConn(conn) {
 		_ = conn.Close()
@@ -278,14 +255,10 @@ func (f *Fake) handle(conn net.Conn) {
 	}
 	frame, ok := parseFrame(line, auth, authRaw)
 	if !ok {
-		// The line is not a JSON object, so it is not a frame. The receiver
-		// discards it and closes the connection once the sender half-closes.
 		drainUntilEOF(conn)
 		return
 	}
 	if !f.acceptsSession(frame.SessionID) {
-		// The frame is addressed to another session. The receiver drops it
-		// silently; the sender only observes the connection closing.
 		drainUntilEOF(conn)
 		return
 	}
@@ -308,24 +281,16 @@ func (f *Fake) handle(conn net.Conn) {
 		case <-f.done:
 			return
 		}
-		// Release ends the hold, but the socket stays open for reading until
-		// the sender half-closes. Closing it outright would make a sender
-		// whose half-close is delayed (the vendored client waits 150 ms on
-		// darwin) fail that CloseWrite with ENOTCONN.
 		drainUntilEOF(conn)
 		return
 	}
 
 	f.addFrame(frame)
-	// Keep the connection open until the sender half-closes. Closing right
-	// after the frame would make a delayed CloseWrite fail with ENOTCONN on
-	// darwin, which the sender has to report as an uncertain delivery.
+	// Read to EOF before closing: closing first makes a sender's delayed
+	// half-close fail with ENOTCONN on darwin.
 	drainUntilEOF(conn)
 }
 
-// drainUntilEOF reads and discards whatever the sender writes until it
-// half-closes or the connection fails. It lets a sender whose half-close is
-// delayed complete it while the socket is still connected.
 func drainUntilEOF(conn net.Conn) {
 	buf := make([]byte, 4096)
 	for {
@@ -335,9 +300,6 @@ func drainUntilEOF(conn net.Conn) {
 	}
 }
 
-// acceptsSession reports whether a frame addressed to sessionID belongs to this
-// fake. A frame without a session id is accepted; a frame carrying any other id
-// is silently dropped, matching the receiver.
 func (f *Fake) acceptsSession(sessionID string) bool {
 	if sessionID == "" {
 		return true
@@ -348,7 +310,6 @@ func (f *Fake) acceptsSession(sessionID string) bool {
 	return sessionID == current
 }
 
-// addFrame records a message frame and wakes WaitFrame.
 func (f *Fake) addFrame(frame Frame) {
 	f.mu.Lock()
 	f.frames = append(f.frames, frame)
@@ -356,7 +317,6 @@ func (f *Fake) addFrame(frame Frame) {
 	f.signalFrame()
 }
 
-// copyFrame detaches a frame from the fake's internal storage.
 func copyFrame(frame Frame) Frame {
 	frame.Raw = append([]byte(nil), frame.Raw...)
 	if frame.AuthRaw != nil {
@@ -379,9 +339,6 @@ func (f *Fake) signalFrame() {
 	}
 }
 
-// readLine reads one newline-terminated line, removing the line ending. A line
-// longer than max bytes is rejected. A final line without a newline is
-// accepted as a line.
 func readLine(r *bufio.Reader, max int) ([]byte, error) {
 	var buf []byte
 	for {
@@ -416,7 +373,6 @@ func trimLineEnding(line []byte) []byte {
 	return bytes.TrimSuffix(line, []byte("\r"))
 }
 
-// isAuthLine reports whether line is the optional authentication frame.
 func isAuthLine(line []byte) bool {
 	if bytes.HasPrefix(line, []byte(`{"type":"auth"`)) {
 		return true
@@ -430,8 +386,6 @@ func isAuthLine(line []byte) bool {
 	return probe.Type == "auth"
 }
 
-// parseFrame decodes one message line into a Frame. It reports false when the
-// line is not a JSON object; such a line is not a frame and is not recorded.
 func parseFrame(raw []byte, auth bool, authRaw []byte) (Frame, bool) {
 	var fields map[string]any
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
@@ -464,11 +418,6 @@ func stringField(fields map[string]any, key string) string {
 	return value
 }
 
-// envelopeFromName returns the from-name attribute of the attribution
-// envelope at the start of content. It returns "" when content has no
-// envelope, or when the receiver would not recognize the envelope because
-// cleaning the name would change it. Only the opening tag is inspected, so a
-// forged tag in the body cannot supply the name.
 func envelopeFromName(content string) string {
 	if !strings.HasPrefix(content, "<cross-session-message") {
 		return ""
@@ -491,9 +440,7 @@ func envelopeFromName(content string) string {
 	return name
 }
 
-// cleanFromName applies the receiver's from-name cleaning: quotes, angle
-// brackets and invisible characters are dropped, surrounding whitespace is
-// trimmed, and the result is truncated to 64 runes.
+// cleanFromName mirrors the receiver's from-name cleaning.
 func cleanFromName(name string) string {
 	name = strings.Map(func(r rune) rune {
 		switch r {

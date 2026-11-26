@@ -6,8 +6,6 @@ import (
 	"testing"
 )
 
-// cSignatureInputs lists every input exercised by the cleaning tests, including
-// the ones that only the invariant test needs.
 func cSignatureInputs() []string {
 	return []string{
 		`a"b<c>d`,
@@ -28,8 +26,8 @@ func cSignatureInputs() []string {
 	}
 }
 
+// TestREQAgentMessaging029_CleanSignature checks that forbidden characters are dropped, whitespace trimmed and empty input stays empty.
 func TestREQAgentMessaging029_CleanSignature(t *testing.T) {
-	// REQ-agent-messaging-029
 	cases := []struct {
 		name string
 		in   string
@@ -51,10 +49,7 @@ func TestREQAgentMessaging029_CleanSignature(t *testing.T) {
 	}
 }
 
-// TestCleanSignatureDropsCharactersTheReceiverCannotRead verbatim covers
-// characters that strconv.Quote would escape inside the JSON frame: a backslash
-// and the Unicode line and paragraph separators, plus private-use and
-// unassigned code points, which are not printable.
+// TestCleanSignatureDropsCharactersTheReceiverCannotRead checks that a backslash, separators, private-use and unassigned code points are dropped.
 func TestCleanSignatureDropsCharactersTheReceiverCannotRead(t *testing.T) {
 	cases := []struct {
 		name string
@@ -76,9 +71,7 @@ func TestCleanSignatureDropsCharactersTheReceiverCannotRead(t *testing.T) {
 	}
 }
 
-// TestCleanSignatureRejectsInvalidUTF8 pins that a lone surrogate, sent as its
-// invalid UTF-8 encoding, is not left untouched. CleanSignature must change it
-// so Deliver rejects a name the receiver would decode differently.
+// TestCleanSignatureRejectsInvalidUTF8 checks that invalid UTF-8 is changed rather than passed through.
 func TestCleanSignatureRejectsInvalidUTF8(t *testing.T) {
 	const invalid = "\xed\xa0\x80" // UTF-8 encoding of a lone surrogate
 	if got := CleanSignature(invalid); got == invalid {
@@ -86,10 +79,7 @@ func TestCleanSignatureRejectsInvalidUTF8(t *testing.T) {
 	}
 }
 
-// TestCleanSignatureSurvivesQuoteAndRecleaning checks the properties the
-// receiver relies on: the cleaned signature sits in a JSON string with no
-// escaping, and cleaning it again changes nothing, so a value CleanSignature
-// produced always passes Deliver's check.
+// TestCleanSignatureSurvivesQuoteAndRecleaning checks that a cleaned signature needs no JSON escaping and cleaning it again changes nothing.
 func TestCleanSignatureSurvivesQuoteAndRecleaning(t *testing.T) {
 	for _, in := range cSignatureInputs() {
 		got := CleanSignature(in)
@@ -102,8 +92,8 @@ func TestCleanSignatureSurvivesQuoteAndRecleaning(t *testing.T) {
 	}
 }
 
+// TestREQAgentMessaging037_TruncatesAt64Runes checks that cleaning keeps 64 runes and cuts more on a rune boundary.
 func TestREQAgentMessaging037_TruncatesAt64Runes(t *testing.T) {
-	// REQ-agent-messaging-037
 	keep := strings.Repeat("a", 64)
 	if got := CleanSignature(keep); got != keep {
 		t.Fatalf("CleanSignature of 64 runes changed it to %q", got)
@@ -112,13 +102,10 @@ func TestREQAgentMessaging037_TruncatesAt64Runes(t *testing.T) {
 	if got, want := CleanSignature(cut), strings.Repeat("a", 64); got != want {
 		t.Fatalf("CleanSignature of 65 runes = %q, want %q", got, want)
 	}
-	// Truncation counts runes, not bytes, so multi-byte text is cut on a rune
-	// boundary.
 	multibyte := strings.Repeat("é", 65)
 	if got, want := CleanSignature(multibyte), strings.Repeat("é", 64); got != want {
 		t.Fatalf("CleanSignature of 65 multi-byte runes = %q, want %q", got, want)
 	}
-	// Trimming happens before truncation.
 	padded := " " + cut
 	if got, want := CleanSignature(padded), strings.Repeat("a", 64); got != want {
 		t.Fatalf("CleanSignature of padded 65 runes = %q, want %q", got, want)

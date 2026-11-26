@@ -10,9 +10,6 @@ import (
 	"time"
 )
 
-// frameLineWithSessionID builds a user frame carrying session_id. An empty
-// sessionID leaves the field out, matching a sender that does not address the
-// frame to a particular session.
 func frameLineWithSessionID(t *testing.T, msgID, fromName, body, sessionID string) string {
 	t.Helper()
 	line := userFrameLine(t, msgID, fromName, body)
@@ -31,10 +28,8 @@ func frameLineWithSessionID(t *testing.T, msgID, fromName, body, sessionID strin
 	return string(data)
 }
 
-// sendFrameLine writes one line on a fresh connection, half-closes it, and
-// waits until the fake closes its end. The fake records a frame before closing
-// the connection, so once this returns any recorded frame is visible to Frames
-// and WaitFrame.
+// The fake records a frame before closing the connection, so once sendFrameLine
+// returns any recorded frame is already visible to Frames and WaitFrame.
 func sendFrameLine(t *testing.T, f *Fake, line string) {
 	t.Helper()
 	conn := dialFake(t, f)
@@ -43,10 +38,6 @@ func sendFrameLine(t *testing.T, f *Fake, line string) {
 	assertConnectionClosed(t, conn)
 }
 
-// assertConnectionClosed waits until the fake's handler has closed conn, then
-// asserts the client observes EOF. The wait is driven by the handler's close
-// signal, so a slow read loop on a loaded machine no longer trips it; a fake
-// that never closes the connection fails the wait.
 func assertConnectionClosed(t *testing.T, conn *fakeConn) {
 	t.Helper()
 	if !conn.fake.waitClosedSince(conn.priorClose, eventTimeout) {
@@ -60,10 +51,9 @@ func assertConnectionClosed(t *testing.T, conn *fakeConn) {
 	}
 }
 
-// TestFrameSessionIDFiltering covers the receiver's session-id rule: a frame
-// without a session id is accepted, one addressed to the current id is
-// accepted, and one carrying any other id is silently dropped. Changing the
-// fake's session id makes previously valid frames stale.
+// TestFrameSessionIDFiltering checks that frames with no session id or the
+// current id are recorded while a frame addressed to another id is dropped,
+// including after the fake's id changes.
 func TestFrameSessionIDFiltering(t *testing.T) {
 	f := New(t, Options{PID: 8001, SessionID: "current-session"})
 
@@ -88,9 +78,8 @@ func TestFrameSessionIDFiltering(t *testing.T) {
 	}
 }
 
-// TestFrameWithMismatchedSessionIDIsDropped checks that a mismatched frame is
-// neither recorded nor reported through WaitFrame, while the connection still
-// closes normally.
+// TestFrameWithMismatchedSessionIDIsDropped checks that a frame with a
+// mismatched session_id is neither recorded nor returned by WaitFrame.
 func TestFrameWithMismatchedSessionIDIsDropped(t *testing.T) {
 	f := New(t, Options{PID: 8002, SessionID: "current-session"})
 
@@ -107,10 +96,8 @@ func TestFrameWithMismatchedSessionIDIsDropped(t *testing.T) {
 	}
 }
 
-// TestFromNameCleaning covers the receiver's attribution rule. The receiver
-// cleans a from-name before recognizing it; when cleaning changes the name the
-// whole envelope is not recognized, the message is still delivered, and
-// FromName is empty.
+// TestFromNameCleaning checks that a from-name cleaning leaves unchanged is
+// reported while one cleaning would change leaves FromName empty.
 func TestFromNameCleaning(t *testing.T) {
 	cases := []struct {
 		name string
@@ -150,7 +137,7 @@ func TestFromNameCleaning(t *testing.T) {
 }
 
 // TestNonJSONLineIsNotRecorded checks that a line which is not a JSON object is
-// not a frame. The connection still closes normally.
+// not recorded or reported as a frame.
 func TestNonJSONLineIsNotRecorded(t *testing.T) {
 	lines := map[string]string{
 		"garbage":     "this is not json",
@@ -173,7 +160,7 @@ func TestNonJSONLineIsNotRecorded(t *testing.T) {
 }
 
 // TestWaitFrameReturnsFramesInOrder checks that repeated WaitFrame calls walk
-// the recorded frames instead of returning the first one every time.
+// the recorded frames in order.
 func TestWaitFrameReturnsFramesInOrder(t *testing.T) {
 	f := New(t, Options{PID: 8030})
 
