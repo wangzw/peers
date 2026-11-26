@@ -813,6 +813,7 @@ func TestRunDiagnosticsRebindsSocketRemovedAfterListen(t *testing.T) {
 	rt.start()
 
 	waitForLocalSocketOrRunError(t, rt, sock)
+	resp := waitForStatus(t, sock, func(s *localpb.StatusResponse) bool { return s.GetDegraded() != nil })
 	if !removed.Load() {
 		t.Fatal("the test seam never removed the socket")
 	}
@@ -823,7 +824,6 @@ func TestRunDiagnosticsRebindsSocketRemovedAfterListen(t *testing.T) {
 	if gid != uint32(os.Getegid()) {
 		t.Fatalf("socket group = %d, want the binding process's %d", gid, os.Getegid())
 	}
-	resp := waitForStatus(t, sock, func(s *localpb.StatusResponse) bool { return s.GetDegraded() != nil })
 	if resp.GetDegraded().GetLevel() != localpb.DegradedLevel_DEGRADED_LEVEL_DIAGNOSTICS_ONLY {
 		t.Fatalf("level = %v, want diagnostics_only", resp.GetDegraded().GetLevel())
 	}
@@ -846,7 +846,7 @@ func TestRunDiagnosticsReappliesSocketPermissions(t *testing.T) {
 	rt.start()
 
 	sock := rt.socketPath()
-	waitForAnswer(t, sock)
+	waitForStatus(t, sock, func(s *localpb.StatusResponse) bool { return s.GetDegraded() != nil })
 	if mode, _ := socketPerms(t, sock); mode != 0o666 {
 		t.Fatalf("socket mode = %04o, want the configured 0666", mode)
 	}

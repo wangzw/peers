@@ -509,6 +509,9 @@ func TestRunRebindsSocketRemovedAfterListen(t *testing.T) {
 	rt.start()
 
 	waitForLocalSocketOrRunError(t, rt, sock)
+	if got := rt.readyLine(); got != "ok\n" {
+		t.Fatalf("readiness line = %q, want ok", got)
+	}
 	if !removed.Load() {
 		t.Fatal("the test seam never removed the socket")
 	}
