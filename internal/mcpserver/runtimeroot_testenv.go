@@ -8,10 +8,9 @@ import (
 	"strconv"
 )
 
-// init installs the runtime directory hook when the environment selects it.
-// The hook exists only in builds with the peers_testenv tag, so a release
-// build can never be redirected away from the real runtime directories that
-// carry the single-instance guarantee.
+// init installs the runtime directory hook from PEERS_TEST_RUNTIME_ROOT; it
+// exists only under the peers_testenv tag, so a release build is never
+// redirected from the real runtime directories.
 func init() {
 	root := os.Getenv("PEERS_TEST_RUNTIME_ROOT")
 	if root == "" {

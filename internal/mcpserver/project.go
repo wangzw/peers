@@ -10,12 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// projectConfigFile is the name of the project configuration file that
-// declares the topics to join automatically.
 const projectConfigFile = ".peers.yaml"
 
-// projectConfig is the parsed content of a project configuration file found in
-// the session working directory or one of its ancestors.
 type projectConfig struct {
 	// Path is the absolute path of the file that was read.
 	Path string
@@ -27,22 +23,18 @@ type projectConfig struct {
 	AutoJoin bool
 }
 
-// projectConfigDocument is the YAML shape of the project configuration file.
-// Unknown keys are ignored.
 type projectConfigDocument struct {
 	Topics   []string `yaml:"topics"`
 	AutoJoin *bool    `yaml:"auto_join"`
 }
 
-// searchStop bounds the upward search. It is an absolute directory name: when
-// the search reaches it, the search stops after looking there instead of
-// continuing to "/". Tests set it to a temporary directory so that files above
-// it cannot affect the result. Production code leaves it empty.
+// searchStop bounds the upward search at this absolute directory; tests set it
+// and production code leaves it empty.
 var searchStop string
 
-// projectOwnerUID returns the uid that owns path, following symbolic links.
-// Tests replace it to simulate a file or a directory owned by another account:
-// an unprivileged test cannot chown one.
+// projectOwnerUID returns the uid that owns path, following symbolic links;
+// tests replace it because an unprivileged test cannot chown a file to another
+// account.
 var projectOwnerUID = func(path string) (uint32, error) {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -55,18 +47,13 @@ var projectOwnerUID = func(path string) (uint32, error) {
 	return st.Uid, nil
 }
 
-// findProjectConfig searches dir and its ancestors up to "/" for a regular file
-// named .peers.yaml. A symbolic link is followed: it counts when its
-// target is a regular file, and a dangling link or a target that is not a
-// regular file is treated as absent, so the search continues upward. found is
-// false when there is none. err is non-nil when the first file found cannot be
-// read or parsed; found is then true.
+// findProjectConfig searches dir and its ancestors for .peers.yaml; found is
+// false when there is none, and err is non-nil with found true when the first
+// file found cannot be read or parsed.
 func findProjectConfig(dir string) (cfg projectConfig, found bool, err error) {
 	return findProjectConfigLogged(dir, nil)
 }
 
-// findProjectConfigLogged is findProjectConfig with a logger for the files it
-// refuses to adopt. A nil log means slog.Default().
 func findProjectConfigLogged(dir string, log *slog.Logger) (cfg projectConfig, found bool, err error) {
 	if log == nil {
 		log = slog.Default()
@@ -79,8 +66,6 @@ func findProjectConfigLogged(dir string, log *slog.Logger) (cfg projectConfig, f
 		path := filepath.Join(d, projectConfigFile)
 		if info, statErr := os.Stat(path); statErr == nil && info.Mode().IsRegular() {
 			if err := checkProjectConfigOwner(path); err != nil {
-				// Another account could have planted the file, so it is not a
-				// project configuration. Keep looking upward.
 				log.Warn("ignoring a project configuration file that is not owned by this account or root",
 					"path", path, "error", err)
 			} else {
@@ -98,15 +83,12 @@ func findProjectConfigLogged(dir string, log *slog.Logger) (cfg projectConfig, f
 	}
 }
 
-// ownsProjectPath reports whether uid may own a project configuration file or
-// the directory that holds it. Root is accepted because a system checkout
-// is often root-owned.
 func ownsProjectPath(uid uint32) bool {
 	return uid == uint32(os.Geteuid()) || uid == 0
 }
 
 // checkProjectConfigOwner verifies that the file, after following symbolic
-// links, and the directory naming it are owned by this account or root.
+// links, and the directory holding it are owned by this account or root.
 func checkProjectConfigOwner(path string) error {
 	fileUID, err := projectOwnerUID(path)
 	if err != nil {
@@ -126,9 +108,9 @@ func checkProjectConfigOwner(path string) error {
 	return nil
 }
 
-// readProjectConfig reads and parses one project configuration file. A file
-// that cannot be read or parsed is reported with found set: the caller must not
-// fall back to an ancestor file.
+// readProjectConfig reads and parses one project configuration file; on a read
+// or parse error found is true, so the caller must not fall back to an ancestor
+// file.
 func readProjectConfig(path string) (cfg projectConfig, found bool, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

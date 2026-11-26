@@ -9,11 +9,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// TestReleaseBuildIgnoresSocketEnvironment proves that a release build reads
-// neither the removed AGENT_PEER_SOCKET nor the test hook
-// PEERS_TEST_SOCKET. The selector's environment seam records every
-// lookup, and selection must complete without one: the account's user
-// Broker wins even though both variables name another live socket.
+// TestReleaseBuildIgnoresSocketEnvironment checks that a release build reads no
+// socket environment variable and selects the account's user Broker.
 func TestReleaseBuildIgnoresSocketEnvironment(t *testing.T) {
 	envPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, envPath, fakelocal.Handlers{})

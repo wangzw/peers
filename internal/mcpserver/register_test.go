@@ -17,7 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// regClient dials the fake Local service for the registration tests.
 func regClient(t *testing.T, path string) localpb.LocalClient {
 	t.Helper()
 	cc, err := grpc.NewClient("unix://"+path,
@@ -37,15 +36,11 @@ type regRun struct {
 	cancel context.CancelFunc
 }
 
-// startRegRun starts runRegistration in the background and waits for its first
-// Register frame to arrive at the fake Broker.
 func startRegRun(t *testing.T, first *localpb.RegisterRequest, onComplete completeFunc) *regRun {
 	t.Helper()
 	return startRegRunOn(t, fakelocal.Handlers{}, first, onComplete)
 }
 
-// startRegRunOn is startRegRun with the fake Broker's handlers supplied by the
-// caller, for tests that need the Broker side to answer topic calls.
 func startRegRunOn(t *testing.T, h fakelocal.Handlers, first *localpb.RegisterRequest, onComplete completeFunc) *regRun {
 	t.Helper()
 	srv := fakelocal.Start(t, fakelocal.SocketPath(t), h)
@@ -68,7 +63,6 @@ func startRegRunOn(t *testing.T, h fakelocal.Handlers, first *localpb.RegisterRe
 	return &regRun{conn: conn, errc: errc, st: st, cancel: cancel}
 }
 
-// wait waits for runRegistration to return.
 func (r *regRun) wait(t *testing.T) error {
 	t.Helper()
 	select {
@@ -80,7 +74,6 @@ func (r *regRun) wait(t *testing.T) error {
 	}
 }
 
-// regWaitUntil polls cond until it holds or the deadline passes.
 func regWaitUntil(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -93,7 +86,6 @@ func regWaitUntil(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// regConsistently asserts that cond holds throughout a bounded window.
 func regConsistently(t *testing.T, what string, window time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(window)
@@ -105,6 +97,8 @@ func regConsistently(t *testing.T, what string, window time.Duration, cond func(
 	}
 }
 
+// TestRunRegistration checks how runRegistration frames the first request and
+// applies each Register event.
 func TestRunRegistration(t *testing.T) {
 	t.Run("sends the first frame verbatim", func(t *testing.T) {
 		for _, tc := range []struct {
@@ -233,9 +227,6 @@ func TestRunRegistration(t *testing.T) {
 				st.NotRegistered == localpb.NotRegisteredReason_NOT_REGISTERED_REASON_BROKER_DEGRADED &&
 				st.NotRegisteredDetail == "config parse failed"
 		})
-		// The stream must stay open after the event. Wait out a short window
-		// instead of sampling once, so a close that follows the event is still
-		// caught.
 		regConsistently(t, "the Register stream stays open after the degraded not_registered", 100*time.Millisecond, func() bool {
 			select {
 			case <-run.conn.Done():
@@ -245,8 +236,6 @@ func TestRunRegistration(t *testing.T) {
 			}
 		})
 
-		// A later completion clears the degraded state, as it does any other
-		// not_registered reason.
 		if err := run.conn.Complete("id1", "me@h", false); err != nil {
 			t.Fatalf("sending registration_complete: %v", err)
 		}
@@ -380,8 +369,6 @@ func TestRunRegistration(t *testing.T) {
 		if err := run.wait(t); err == nil {
 			t.Fatal("runRegistration returned nil after the stream ended")
 		}
-		// runRegistration waits for onComplete, so its context must already be
-		// cancelled when it returns.
 		select {
 		case <-ctxDone:
 		default:
@@ -409,9 +396,6 @@ func TestRunRegistration(t *testing.T) {
 
 		run.conn.End()
 
-		// While onComplete is still blocked, the status must already say the
-		// connection is gone. A tool call in this window must be told to retry,
-		// not that the session is merely unregistered.
 		deadline := time.Now().Add(eventTimeout)
 		for time.Now().Before(deadline) && run.st.Get().Phase != PhaseUnavailable {
 			time.Sleep(2 * time.Millisecond)
@@ -438,10 +422,6 @@ func TestRunRegistration(t *testing.T) {
 	})
 
 	t.Run("a completion arriving while the first runs does not run after cancellation", func(t *testing.T) {
-		// The exact interleaving this guards against is covered directly by
-		// TestRunCompletionDoesNotRunAfterCancellation; this subtest checks the
-		// wiring: a second completion that waited for the first one must not
-		// run once the stream is cancelled.
 		for i := 0; i < 5; i++ {
 			started := make(chan struct{})
 			release := make(chan struct{})
@@ -526,8 +506,6 @@ func TestRunRegistration(t *testing.T) {
 		if err := run.conn.Complete("id2", "two@h", false); err != nil {
 			t.Fatalf("sending the second registration_complete: %v", err)
 		}
-		// The second completion is applied before the first one is released, so
-		// the order log below is a fair record of what the server did with it.
 		regWaitUntil(t, "the second registration completion", func() bool {
 			return run.st.Get().AgentID == "id2"
 		})
@@ -550,8 +528,6 @@ func TestRunRegistration(t *testing.T) {
 		if maxActive > 1 {
 			t.Fatalf("%d onComplete calls ran at once, want at most one", maxActive)
 		}
-		// The second completion must not have started before the first returned.
-		// Both ran, so their recorded order answers that without a sleep.
 		firstEnd, secondStart := -1, -1
 		for i, event := range order {
 			switch event {
@@ -571,11 +547,8 @@ func TestRunRegistration(t *testing.T) {
 	})
 }
 
-// TestRunCompletionDoesNotRunAfterCancellation checks the dispatch decision
-// directly: when the serial slot is free and the stream context is already
-// done, both select cases are ready, and the cancellation must win. The
-// registration stream can reach this state when the previous completion frees
-// the slot at the same moment the connection is cancelled.
+// TestRunCompletionDoesNotRunAfterCancellation checks that runCompletion runs
+// no callback once the registration context is cancelled.
 func TestRunCompletionDoesNotRunAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

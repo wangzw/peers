@@ -70,8 +70,8 @@ func TestBrokerLinkStateNames(t *testing.T) {
 	}
 }
 
-// TestHandlerPreflightErrors fails every tool call before the Broker is ready
-// with its opening phrase and the starting text.
+// TestHandlerPreflightErrors checks that the broker, config and update tools fail
+// with their opening phrase and the starting text before the Broker is ready.
 func TestHandlerPreflightErrors(t *testing.T) {
 	h := newHandlers(Status{Phase: PhaseStarting})
 	tests := []struct {
@@ -104,8 +104,9 @@ func TestHandlerPreflightErrors(t *testing.T) {
 	}
 }
 
-// TestUpdateBrokerErrorEmptyMessages produces the full sentence for each gRPC
-// code.
+// TestUpdateBrokerErrorEmptyMessages checks the sentence permission denied, failed
+// precondition and aborted each produce for an empty message, and that other
+// status codes fall back to the generic text.
 func TestUpdateBrokerErrorEmptyMessages(t *testing.T) {
 	tests := []struct {
 		name string
@@ -143,7 +144,6 @@ func TestUpdateBrokerErrorEmptyMessages(t *testing.T) {
 	}
 }
 
-// lockErrRecorder is a topic recorder whose lock always fails.
 type lockErrRecorder struct {
 	*topicRecorderStub
 	err error

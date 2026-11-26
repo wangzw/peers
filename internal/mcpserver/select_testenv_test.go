@@ -65,8 +65,8 @@ func TestSelectTestSocketMissingDoesNotFallThrough(t *testing.T) {
 	}
 }
 
-// TestSelectRejectsForeignTestSocket rejects a PEERS_TEST_SOCKET served by
-// another account and names the path and that account.
+// TestSelectRejectsForeignTestSocket checks that a PEERS_TEST_SOCKET served by
+// another account is rejected.
 func TestSelectRejectsForeignTestSocket(t *testing.T) {
 	envPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, envPath, fakelocal.Handlers{})
@@ -110,8 +110,6 @@ func TestFindBrokerWithDialRefusesForeignPeer(t *testing.T) {
 		t.Fatalf("FindBrokerWithDial path = %q, want %q", gotPath, path)
 	}
 
-	// The socket now answers as another account, as if another process had
-	// taken it over between selection and the connection.
 	foreign := uint32(os.Geteuid()) + 1
 	old := peerUID
 	peerUID = func(net.Conn) (uint32, error) { return foreign, nil }
@@ -189,7 +187,7 @@ func TestProbeDescriptionNamesEveryFailure(t *testing.T) {
 }
 
 // TestFindAtLevelReportsDeadTestSocket reports a dead test socket as an error at
-// every level.
+// the user level.
 func TestFindAtLevelReportsDeadTestSocket(t *testing.T) {
 	missing := filepath.Join(shortTempDir(t), "absent.sock")
 	t.Setenv("PEERS_TEST_SOCKET", missing)

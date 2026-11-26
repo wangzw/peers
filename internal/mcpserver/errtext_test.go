@@ -12,7 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// detailStatus builds a gRPC status error carrying exactly one ErrorDetail.
 func detailStatus(code codes.Code, d *localpb.ErrorDetail) error {
 	s, err := status.New(code, d.GetMessage()).WithDetails(d)
 	if err != nil {
@@ -27,8 +26,8 @@ func newHandlers(st Status) *handlers {
 	return &handlers{st: store, log: nil}
 }
 
-// TestPreflight covers the five phases and the two ways a connected session may
-// answer a tool call.
+// TestPreflight checks the error for each session phase and the two ways a
+// connected session may answer a tool call.
 func TestPreflight(t *testing.T) {
 	const detail = "dial unix /run/peers/broker.sock: no such file or directory"
 	const unavailableDetail = "the Broker is unavailable: " + detail + "; retrying in the background."
@@ -52,8 +51,6 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: the connection to the Broker is still being set up; retry shortly (code: internal)",
 		},
 		{
-			// The status carries the whole sentence, so the reason appears
-			// once after a single statement that the Broker is unavailable.
 			name:   "unavailable generic",
 			status: Status{Phase: PhaseUnavailable, Detail: unavailableDetail},
 			tool:   "list_agents",
@@ -61,8 +58,6 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: " + unavailableDetail + " (code: internal)",
 		},
 		{
-			// REQ-agent-messaging-038, REQ-agent-messaging-027: a call rejected
-			// before reaching the Broker is not sent, never delivery unknown.
 			name:   "unavailable send",
 			status: Status{Phase: PhaseUnavailable, Detail: unavailableDetail},
 			tool:   "send_message",
@@ -70,8 +65,6 @@ func TestPreflight(t *testing.T) {
 			want:   "Not sent: " + unavailableDetail + " (code: internal)",
 		},
 		{
-			// A status with no recorded reason still says the Broker is
-			// unavailable and that the session retries.
 			name:   "unavailable without a reason",
 			status: Status{Phase: PhaseUnavailable},
 			tool:   "list_agents",
@@ -79,7 +72,6 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: the Broker is unavailable; retrying in the background. (code: internal)",
 		},
 		{
-			// REQ-broker-config-038: the text names both ways to start a Broker.
 			name:   "no Broker",
 			status: Status{Phase: PhaseNoBroker},
 			tool:   "list_agents",
@@ -87,8 +79,6 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: " + textNoBroker + " (code: internal)",
 		},
 		{
-			// REQ-broker-config-037: a system Broker that fails sends the
-			// user to the administrator only.
 			name:   "no system Broker",
 			status: Status{Phase: PhaseNoBroker, Detail: textNoSystemBroker},
 			tool:   "list_agents",
@@ -96,8 +86,6 @@ func TestPreflight(t *testing.T) {
 			want:   "list_agents failed: " + textNoSystemBroker + " (code: internal)",
 		},
 		{
-			// The Broker is running and refused the registration with an
-			// explanation of its own; the model gets that sentence and code.
 			name: "Broker rejected the registration",
 			status: Status{
 				Phase:      PhaseBrokerRejected,
@@ -109,8 +97,6 @@ func TestPreflight(t *testing.T) {
 			want: "list_agents failed: cannot register: account alice already has 1 open registrations (code: quota_exceeded)",
 		},
 		{
-			// The socket answered and the Broker closed the handshake, so the
-			// text must not send the reader to start a running Broker.
 			name: "Broker refused the handshake",
 			status: Status{
 				Phase:      PhaseBrokerRejected,
@@ -163,8 +149,6 @@ func TestPreflight(t *testing.T) {
 			want:      "list_agents failed: config parse failed (code: broker_degraded)",
 		},
 		{
-			// A tool that does not need an identity reaches the Broker, which
-			// answers broker_degraded itself.
 			name: "connected degraded without needAgent",
 			status: Status{
 				Phase:               PhaseConnected,
@@ -177,8 +161,6 @@ func TestPreflight(t *testing.T) {
 			wantNoErr: true,
 		},
 		{
-			// mcpserver design:146: the six management tools work before
-			// registration completes.
 			name: "connected not registered without needAgent",
 			status: Status{
 				Phase:         PhaseConnected,
@@ -222,14 +204,8 @@ func TestPreflight(t *testing.T) {
 	}
 }
 
-// TestPreflightVersionRemedies checks the three remedy clauses for a version
-// mismatch (REQ-broker-config-016): each must tell the reader to restart the
-// Broker, and none may drop the "To fix it" clause.
-// TestNoSystemBrokerTextNamesTheRightActor checks the ruling for
-// REQ-broker-config-037: a session that was using the system Broker must
-// not be told to install or start a user Broker. Every other account is
-// told to ask the administrator; root is the administrator, so its text names
-// the command root runs instead.
+// TestNoSystemBrokerTextNamesTheRightActor checks which actor each empty
+// system-Broker text names.
 func TestNoSystemBrokerTextNamesTheRightActor(t *testing.T) {
 	cases := []struct {
 		name string
@@ -274,6 +250,8 @@ func TestNoSystemBrokerTextNamesTheRightActor(t *testing.T) {
 	}
 }
 
+// TestPreflightVersionRemedies checks the fix clause for a version mismatch with
+// each remedy.
 func TestPreflightVersionRemedies(t *testing.T) {
 	const (
 		detail = "the running Broker speaks local protocol version 2; this MCP server speaks version 1"
@@ -351,9 +329,8 @@ func TestPreflightNotRegisteredReasons(t *testing.T) {
 	}
 }
 
-// TestPreflightAccountHelperFailure checks the exact text for a helper the
-// Broker could not start. It must point at the Broker log and must not say the
-// session record is missing, which would send the reader to the wrong place.
+// TestPreflightAccountHelperFailure checks the text for a helper the Broker
+// could not start.
 func TestPreflightAccountHelperFailure(t *testing.T) {
 	h := newHandlers(Status{
 		Phase:         PhaseConnected,
@@ -374,7 +351,7 @@ func TestPreflightAccountHelperFailure(t *testing.T) {
 }
 
 // TestPreflightBrokerDegradedWithoutDetail checks the sentence and code when a
-// degraded Broker sends no detail of its own.
+// degraded Broker sends no detail.
 func TestPreflightBrokerDegradedWithoutDetail(t *testing.T) {
 	h := newHandlers(Status{
 		Phase:         PhaseConnected,
@@ -391,8 +368,7 @@ func TestPreflightBrokerDegradedWithoutDetail(t *testing.T) {
 }
 
 // TestPreflightNotRegisteredDetail checks that a Broker-supplied detail wins
-// over the general sentence for the reason, and that a missing detail keeps
-// that sentence.
+// over the general sentence for the reason.
 func TestPreflightNotRegisteredDetail(t *testing.T) {
 	t.Run("detail wins", func(t *testing.T) {
 		h := newHandlers(Status{
@@ -428,9 +404,7 @@ func TestPreflightNotRegisteredDetail(t *testing.T) {
 }
 
 // TestRPCError checks the conversion of Local RPC failures, including the
-// phrases for sends and pairings and the permission hints
-// (REQ-broker-config-021, REQ-broker-config-022, REQ-agent-messaging-027,
-// REQ-agent-messaging-038).
+// phrases for sends and pairings and the permission hints.
 func TestRPCError(t *testing.T) {
 	fp := bytes.Repeat([]byte{0xab}, 32)
 	fpHex := hex.EncodeToString(fp)
@@ -497,8 +471,6 @@ func TestRPCError(t *testing.T) {
 			wantPrefix: "list_agents failed:",
 		},
 		{
-			// REQ-agent-messaging-027: no details on a send means the result is
-			// unknown, not that it was not sent.
 			name:       "send without details",
 			tool:       "send_message",
 			kind:       callSend,
@@ -521,8 +493,6 @@ func TestRPCError(t *testing.T) {
 			wantExact: "list_agents failed: the Broker did not answer: connection lost (code: internal)",
 		},
 		{
-			// REQ-broker-config-016: the Broker's own explanation is
-			// authoritative; rpcError adds no restart hint of its own.
 			name:      "version mismatch",
 			tool:      "list_agents",
 			kind:      callGeneric,
@@ -530,8 +500,6 @@ func TestRPCError(t *testing.T) {
 			wantExact: "list_agents failed: incompatible (code: version_mismatch)",
 		},
 		{
-			// A peer Broker that went offline refuses the delivery itself, so the
-			// sender learns why resending is pointless.
 			name: "send to an offline peer",
 			tool: "send_message",
 			kind: callSend,
@@ -580,8 +548,8 @@ func TestRPCError(t *testing.T) {
 	}
 }
 
-// TestErrorSuffixFormat pins the suffix that end-to-end tests parse:
-// " (code: <name>; reported by Broker <64 lowercase hex>)".
+// TestErrorSuffixFormat checks the code and fingerprint suffix that end-to-end
+// tests parse.
 func TestErrorSuffixFormat(t *testing.T) {
 	fp := bytes.Repeat([]byte{0x0f}, 32)
 	fpHex := hex.EncodeToString(fp)
@@ -624,8 +592,8 @@ func TestErrorSuffixFormat(t *testing.T) {
 	})
 }
 
-// TestRPCErrorNoDoublePrefix checks that a Broker-written message which already
-// starts with a result phrase is not prefixed a second time.
+// TestRPCErrorNoDoublePrefix checks that a message which already starts with a
+// result phrase is not prefixed a second time.
 func TestRPCErrorNoDoublePrefix(t *testing.T) {
 	t.Run("not sent", func(t *testing.T) {
 		err := rpcError("send_message", callSend, permNone, detailStatus(codes.NotFound, &localpb.ErrorDetail{
@@ -672,10 +640,8 @@ func TestRPCErrorNoDoublePrefix(t *testing.T) {
 	})
 }
 
-// TestRPCErrorVersionMismatchHasNoRestartHint checks that rpcError does not
-// append a restart hint to a version_mismatch error: the Broker's explanation
-// is authoritative, including for errors reported by a peer Broker reached
-// over a link (REQ-broker-config-016).
+// TestRPCErrorVersionMismatchHasNoRestartHint checks that rpcError appends no
+// restart hint to a version_mismatch error.
 func TestRPCErrorVersionMismatchHasNoRestartHint(t *testing.T) {
 	fp := bytes.Repeat([]byte{0x3c}, 32)
 	fpHex := hex.EncodeToString(fp)
@@ -716,10 +682,8 @@ func TestRPCErrorVersionMismatchHasNoRestartHint(t *testing.T) {
 	}
 }
 
-// TestRPCErrorOpeningPhraseFollowsCode checks that the opening phrase is chosen
-// from the error code and call kind, never copied from the Broker's message: a
-// message that starts with one of the three result phrases is stripped before
-// the phrase the outcome calls for is added (architecture.md:176).
+// TestRPCErrorOpeningPhraseFollowsCode checks that the opening phrase follows
+// the error code and call kind, not the Broker's message.
 func TestRPCErrorOpeningPhraseFollowsCode(t *testing.T) {
 	tests := []struct {
 		name string
@@ -775,8 +739,7 @@ func TestRPCErrorOpeningPhraseFollowsCode(t *testing.T) {
 	}
 }
 
-// TestCodeName checks every value of the closed error-code set against the
-// names in the architecture document.
+// TestCodeName checks every value of the closed error-code set.
 func TestCodeName(t *testing.T) {
 	tests := []struct {
 		code localpb.ErrorCode

@@ -22,27 +22,12 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// loopTestLogger discards everything; the loop only logs when recovering from
-// a panic or when a restoration fails.
 func loopTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// loopWaitLimit bounds every wait for an observable loop event. Each wait ends
-// on an event (a Register stream, a status change, or a fake-clock request),
-// not on elapsed time, so the bound is a safety net that turns a stuck loop
-// into a test failure rather than a hang. It is helloTimeout plus the package
-// eventTimeout: a Hello that hangs reaches helloTimeout, and the test then has
-// the whole event fallback before its own bound, so a loaded runner cannot fail
-// both at once. The fallback keeps the failure report about the loop instead of
-// racing the product's own timeout.
 const loopWaitLimit = helloTimeout + eventTimeout
 
-// loopClock replaces time.After in the loop. Every wait is recorded, and the
-// test drives it with advance or autoAdvance. An advance that arrives before
-// the wait is remembered and fires the next wait at once. It also closes a
-// changed channel whenever a wait is recorded, so a test can wait for that
-// event instead of polling the recorded waits on a wall-clock deadline.
 type loopClock struct {
 	mu      sync.Mutex
 	waits   []time.Duration
@@ -75,7 +60,6 @@ func (c *loopClock) after(d time.Duration) <-chan time.Time {
 	return ch
 }
 
-// advance releases the pending wait, or queues one tick for the next wait.
 func (c *loopClock) advance() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -87,10 +71,6 @@ func (c *loopClock) advance() {
 	c.queued++
 }
 
-// autoAdvance releases the pending wait and every later wait as soon as the
-// loop requests it. A test that only needs the loop to reconnect uses this
-// instead of sequencing every wait, so it never has to observe the loop's
-// internal progress before it can let the loop proceed.
 func (c *loopClock) autoAdvance() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -109,8 +89,6 @@ func (c *loopClock) durations() []time.Duration {
 	return out
 }
 
-// loopWaitCount waits until the loop has requested n waits and returns them.
-// It ends on the clock's notification, not on a poll interval.
 func loopWaitCount(t *testing.T, c *loopClock, n int) []time.Duration {
 	t.Helper()
 	deadline := time.NewTimer(loopWaitLimit)
@@ -134,7 +112,6 @@ func loopWaitCount(t *testing.T, c *loopClock, n int) []time.Duration {
 	}
 }
 
-// loopWaitStatus polls the status store until cond holds.
 func loopWaitStatus(t *testing.T, st *statusStore, what string, cond func(Status) bool) Status {
 	t.Helper()
 	deadline := time.Now().Add(loopWaitLimit)
@@ -149,7 +126,6 @@ func loopWaitStatus(t *testing.T, st *statusStore, what string, cond func(Status
 	return Status{}
 }
 
-// loopNextRegister waits for the next Register stream on srv.
 func loopNextRegister(t *testing.T, srv *fakelocal.Server) *fakelocal.RegisterConn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), loopWaitLimit)
@@ -161,7 +137,6 @@ func loopNextRegister(t *testing.T, srv *fakelocal.Server) *fakelocal.RegisterCo
 	return conn
 }
 
-// loopAwaitString waits for one value on ch.
 func loopAwaitString(t *testing.T, ch <-chan string, what string) string {
 	t.Helper()
 	select {
@@ -173,7 +148,6 @@ func loopAwaitString(t *testing.T, ch <-chan string, what string) string {
 	}
 }
 
-// loopCountCalls counts the unary calls recorded under method.
 func loopCountCalls(srv *fakelocal.Server, method string) int {
 	n := 0
 	for _, c := range srv.Calls() {
@@ -184,7 +158,6 @@ func loopCountCalls(srv *fakelocal.Server, method string) int {
 	return n
 }
 
-// loopWaitCalls waits until calls() reaches want.
 func loopWaitCalls(t *testing.T, calls func() int, want int, what string) {
 	t.Helper()
 	deadline := time.Now().Add(loopWaitLimit)
@@ -197,13 +170,6 @@ func loopWaitCalls(t *testing.T, calls func() int, want int, what string) {
 	t.Fatalf("timed out waiting for %s to be called %d times; saw %d", what, want, calls())
 }
 
-// loopRetryPaused asserts that, with the injected timer held, the loop has
-// made exactly one call to what and is blocked on the clock. The first request
-// for a timer is the barrier: reaching it means the loop made its one call and
-// then blocked, and a loop that retried without waiting would never get there.
-// Waiting for the barrier instead of sleeping keeps the assertion free of a
-// fixed settle window. It then releases the first wait and checks that the
-// following call happens, so the pause is a wait rather than a dead end.
 func loopRetryPaused(t *testing.T, calls func() int, what string, clock *loopClock) {
 	t.Helper()
 	waits := loopWaitCount(t, clock, 1)
@@ -217,9 +183,6 @@ func loopRetryPaused(t *testing.T, calls func() int, what string, clock *loopClo
 	loopWaitCalls(t, calls, 2, what)
 }
 
-// loopBaseDeps builds dependencies that use the real dial, handshake and
-// registration implementation. Every test stubs the selection, and each may
-// replace the clock, onComplete, register or waitNotReady.
 func loopBaseDeps(st *statusStore, clock *loopClock) loopDeps {
 	return loopDeps{
 		probe:        inspectSocket,
@@ -236,8 +199,6 @@ func loopBaseDeps(st *statusStore, clock *loopClock) loopDeps {
 	}
 }
 
-// loopStart runs runLoop in the background. It returns a stop function that
-// cancels the loop and waits for it, also registered as a cleanup.
 func loopStart(t *testing.T, deps loopDeps) (stop func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -261,11 +222,8 @@ func loopStart(t *testing.T, deps loopDeps) (stop func()) {
 	return stop
 }
 
-// loopClosingSocket listens on path and closes every accepted connection at
-// once. This is the shape of a refusal at grpc-go's server handshake: the
-// connection is closed before any RPC frame, so the client gets a transport
-// error and its ClientConn never becomes READY, unlike a Hello the handler
-// answers with a status of its own.
+// loopClosingSocket accepts and closes every connection, reproducing a refusal
+// at grpc-go's server handshake.
 func loopClosingSocket(t *testing.T, path string) {
 	t.Helper()
 	lis, err := net.Listen("unix", path)
@@ -288,7 +246,6 @@ func loopClosingSocket(t *testing.T, path string) {
 // service and against raw sockets.
 func TestRunLoop(t *testing.T) {
 	t.Run("user reconnects to the same Broker and registers again", func(t *testing.T) {
-		// REQ-broker-config-037, REQ-topics-022
 		path := fakelocal.SocketPath(t)
 		srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 		completed := make(chan string, 8)
@@ -317,10 +274,6 @@ func TestRunLoop(t *testing.T) {
 
 		srv.Stop()
 
-		// Start the replacement and let the fake clock release the reconnect
-		// wait without first waiting for the loop to request that wait. The
-		// clock fires a wait as soon as it is asked for, so the only real-time
-		// wait below is for the Register stream itself.
 		replacement := fakelocal.Start(t, path, fakelocal.Handlers{})
 		clock.autoAdvance()
 
@@ -344,10 +297,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a reconnect retries after a transient dial failure", func(t *testing.T) {
-		// A loaded runner can fail the first dial after a reconnect wait. The
-		// test must release the following wait as well instead of assuming one
-		// attempt is enough; otherwise the Register stream is still correct
-		// but the test times out waiting for it.
 		path := fakelocal.SocketPath(t)
 		srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 		completed := make(chan string, 8)
@@ -395,7 +344,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("user reconnect never selects a different Broker", func(t *testing.T) {
-		// REQ-broker-config-037
 		userPath := fakelocal.SocketPath(t)
 		systemPath := fakelocal.SocketPath(t)
 		userSrv := fakelocal.Start(t, userPath, fakelocal.Handlers{})
@@ -428,8 +376,6 @@ func TestRunLoop(t *testing.T) {
 			t.Fatalf("sending the second registration_complete: %v", err)
 		}
 
-		// The second registration is the later event that proves the loop never
-		// fell through to the system Broker or selected again.
 		if calls := systemSrv.Calls(); len(calls) != 0 {
 			t.Errorf("the system Broker received %d calls, want none: %v", len(calls), calls)
 		}
@@ -440,7 +386,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("system Broker is retried, never replaced", func(t *testing.T) {
-		// design:108
 		path := fakelocal.SocketPath(t)
 		srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 		var selectCalls atomic.Int32
@@ -477,7 +422,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a test-named Broker unavailable then up", func(t *testing.T) {
-		// REQ-agent-messaging-038
 		path := fakelocal.SocketPath(t)
 		var selectCalls atomic.Int32
 
@@ -513,7 +457,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("no available Broker enters PhaseNoBroker and retries the selection", func(t *testing.T) {
-		// REQ-broker-config-038
 		path := fakelocal.SocketPath(t)
 		srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 		var selectCalls atomic.Int32
@@ -533,8 +476,6 @@ func TestRunLoop(t *testing.T) {
 			return s.Phase == PhaseNoBroker
 		})
 
-		// The retry uses the connection backoff; there is no separate launch
-		// backoff to wait through.
 		clock.autoAdvance()
 
 		conn := loopNextRegister(t, srv)
@@ -551,10 +492,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a peer mismatch at selection reads the same as at reconnection", func(t *testing.T) {
-		// A socket served by another account is one condition, whichever phase
-		// met it. Selection must show the sentence that names the path and the
-		// answering account, the same one the reconnect phase shows, without the
-		// generic unavailable wrapper.
 		path := fakelocal.SocketPath(t)
 		const wrongUID = 4242
 		wantDetail := peerMismatchError(path, kindUser, wrongUID).Error()
@@ -596,10 +533,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a system peer mismatch at selection still says how to start a Broker", func(t *testing.T) {
-		// REQ-broker-config-038: the system socket is served by another account
-		// and no user Broker answered, so no usable Broker exists. The status
-		// keeps the mismatch sentence and adds the sentence that explains how to
-		// start a Broker.
 		path := fakelocal.SocketPath(t)
 		const wrongUID = 4242
 		wantMismatch := peerMismatchError(path, kindSystem, wrongUID).Error()
@@ -633,8 +566,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a user Broker whose socket is gone reports no Broker", func(t *testing.T) {
-		// REQ-broker-config-037: the tool error is the same no-Broker text as a
-		// session that never found one.
 		path := fakelocal.SocketPath(t)
 
 		st := &statusStore{}
@@ -669,8 +600,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a system Broker that fails reports no system Broker", func(t *testing.T) {
-		// REQ-broker-config-037: a session that was using the system Broker
-		// must be sent to the administrator, not to a user Broker.
 		path := fakelocal.SocketPath(t)
 
 		st := &statusStore{}
@@ -690,8 +619,6 @@ func TestRunLoop(t *testing.T) {
 		if strings.Contains(status.Detail, "peers service install") {
 			t.Fatalf("Detail = %q, must not send the user to a user service", status.Detail)
 		}
-		// A socket that is missing keeps the wording for no Broker, so the
-		// refusal text a running Broker produces cannot leak here.
 		h := &handlers{st: st}
 		_, err := h.preflight("list_agents", callGeneric, false)
 		if err == nil {
@@ -710,9 +637,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a system Broker whose socket is gone or refusing keeps the no-Broker text", func(t *testing.T) {
-		// Only a socket that is missing or refuses connections means the system
-		// Broker is not running; an answering socket never sends the reader to
-		// start it.
 		for _, tc := range []struct {
 			name  string
 			probe probeResult
@@ -759,9 +683,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a system Broker that answers Hello with an error is reported as running", func(t *testing.T) {
-		// Hello returned a status of the Broker's own, so the connection stayed
-		// READY. The Broker is running, and the reader must not be sent to start
-		// it.
 		path := fakelocal.SocketPath(t)
 		const helloErr = "the Broker is busy"
 		helloRPCErr := status.Error(codes.Unavailable, helloErr)
@@ -816,9 +737,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a system Broker whose registration stream ends without an error is reported as running", func(t *testing.T) {
-		// The Register stream ended without an ErrorDetail while the socket
-		// still answers, so the Broker is running; the reader is not sent to
-		// start it.
 		path := fakelocal.SocketPath(t)
 		fakelocal.Start(t, path, fakelocal.Handlers{})
 		var selectCalls atomic.Int32
@@ -865,9 +783,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a registration refused by the Broker passes its sentence to the model", func(t *testing.T) {
-		// The account is at its registration limit while the Broker is
-		// running, so the tool error quotes the Broker and never sends the
-		// reader to start a Broker that is already running.
 		path := fakelocal.SocketPath(t)
 		fakelocal.Start(t, path, fakelocal.Handlers{})
 		const brokerText = "cannot register: account alice already has 1 open registrations"
@@ -908,11 +823,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a system Broker that closes the handshake is reported as running", func(t *testing.T) {
-		// A connection limit enforced during the credential handshake closes
-		// the connection before any ErrorDetail can travel, so the text names
-		// a likely cause without claiming the Broker is gone. A listener that
-		// accepts and closes reproduces that path: the ClientConn never
-		// becomes READY, unlike a Hello the handler answers with a status.
 		path := fakelocal.SocketPath(t)
 		loopClosingSocket(t, path)
 
@@ -948,9 +858,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a user Broker whose socket refuses connections reports no Broker", func(t *testing.T) {
-		// REQ-broker-config-037: a refused connection means no Broker is
-		// listening, so the tool error must say how to start one. Only a socket
-		// that answers and then fails is reported as unavailable.
 		path := fakelocal.SocketPath(t)
 
 		st := &statusStore{}
@@ -984,11 +891,6 @@ func TestRunLoop(t *testing.T) {
 		}
 	})
 
-	// A Hello failure is classified by the probe. Only a socket answered by the
-	// account that may serve this Broker means the Broker is running but not
-	// answering; a socket served by another account is the peer mismatch
-	// selection reports, and a socket that could not be reached at all keeps
-	// the original error without claiming the Broker is running.
 	t.Run("a Hello failure is classified by what the probe found", func(t *testing.T) {
 		const (
 			helloErr = "the Broker rejected the handshake"
@@ -1088,8 +990,6 @@ func TestRunLoop(t *testing.T) {
 				}
 				switch tc.probe {
 				case probeWrongPeer:
-					// The text names the account that answered, and a peer
-					// mismatch never claims the Broker is running.
 					if !strings.Contains(err.Error(), fmt.Sprintf("uid %d", wrongUID)) {
 						t.Fatalf("error = %q, want the answering account's uid", err)
 					}
@@ -1097,8 +997,6 @@ func TestRunLoop(t *testing.T) {
 						t.Fatalf("error = %q, want no running-Broker claim for a peer mismatch", err)
 					}
 				case probeDenied, probeOther:
-					// The probe could not reach the socket at all, so the text
-					// must not claim the Broker is running.
 					if strings.Contains(err.Error(), "running but is not answering") {
 						t.Fatalf("error = %q, want no running-Broker claim", err)
 					}
@@ -1122,7 +1020,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("version mismatch waits for the Broker instead of polling", func(t *testing.T) {
-		// REQ-broker-config-016
 		path := fakelocal.SocketPath(t)
 		var brokerVersion atomic.Uint32
 		brokerVersion.Store(2)
@@ -1157,8 +1054,6 @@ func TestRunLoop(t *testing.T) {
 		if waits := clock.durations(); len(waits) != 0 {
 			t.Fatalf("waits during the version mismatch = %v, want none", waits)
 		}
-		// The version-mismatch status is the later event: the loop has not
-		// opened a Register stream.
 		if got := loopCountCalls(srv, "Hello"); got != 1 {
 			t.Fatalf("Hello calls at the version mismatch = %d, want 1 (no polling)", got)
 		}
@@ -1170,8 +1065,6 @@ func TestRunLoop(t *testing.T) {
 		srv.Stop()
 		srv = fakelocal.Start(t, path, handlers)
 
-		// The Broker leaving READY is still a failed attempt: reconnect waits
-		// one connection backoff before dialing again.
 		clock.autoAdvance()
 
 		conn := loopNextRegister(t, srv)
@@ -1191,7 +1084,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("version mismatch of the system Broker tells the user to ask the administrator", func(t *testing.T) {
-		// REQ-broker-config-016
 		path := fakelocal.SocketPath(t)
 		var brokerVersion atomic.Uint32
 		brokerVersion.Store(2)
@@ -1230,7 +1122,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("version mismatch of a test-named Broker names the socket in the remedy", func(t *testing.T) {
-		// REQ-broker-config-016
 		path := fakelocal.SocketPath(t)
 		fakelocal.Start(t, path, fakelocal.Handlers{
 			Hello: func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error) {
@@ -1258,8 +1149,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("a test-named Broker is only retried after a disconnect", func(t *testing.T) {
-		// A socket named by the test hook is retried as it is, not replaced by
-		// another selection.
 		path := fakelocal.SocketPath(t)
 		srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 
@@ -1313,9 +1202,6 @@ func TestRunLoop(t *testing.T) {
 		loopStart(t, deps)
 
 		loopRetryPaused(t, func() int { return loopCountCalls(srv, "Hello") }, "Hello", clock)
-		// The handler answered Hello with a status, so the connection stayed
-		// usable and this is not a handshake refusal; the phase and text stay
-		// what a user Broker whose Hello keeps failing reported before.
 		if got := st.Get().Phase; got != PhaseUnavailable {
 			t.Fatalf("Phase while Hello keeps failing = %v, want PhaseUnavailable", got)
 		}
@@ -1356,8 +1242,6 @@ func TestRunLoop(t *testing.T) {
 		deps.selectTarget = func(context.Context) (target, error) {
 			return target{Path: path, Kind: kindUser}, nil
 		}
-		// The Broker answers Hello and then drops the connection, which is what
-		// waitNotReady observes in production.
 		deps.waitNotReady = func(context.Context, *grpc.ClientConn) {}
 		loopStart(t, deps)
 
@@ -1392,7 +1276,6 @@ func TestRunLoop(t *testing.T) {
 	})
 
 	t.Run("cancelling the context closes the Register stream and returns", func(t *testing.T) {
-		// REQ-agent-messaging-034
 		path := fakelocal.SocketPath(t)
 		srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 

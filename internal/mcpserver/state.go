@@ -19,20 +19,18 @@ const (
 	// PhaseStarting means nothing has been tried yet.
 	PhaseStarting Phase = iota
 	// PhaseUnavailable means Broker selection or connection failed; Detail is
-	// the whole text shown to the model, including the reason and the
-	// background retry.
+	// the whole text shown to the model.
 	PhaseUnavailable
-	// PhaseNoBroker means no Broker is available for this account; Detail is
-	// empty for the general text and holds the text for a system Broker when
-	// the session was using the system Broker.
+	// PhaseNoBroker means no Broker is available for this account; Detail holds
+	// the system Broker text when the session was using it, and is empty
+	// otherwise.
 	PhaseNoBroker
 	// PhaseVersionMismatch means Hello found an incompatible local protocol
 	// version; Detail names both versions and Remedy says how to fix it.
 	PhaseVersionMismatch
-	// PhaseBrokerRejected means the Broker answered but refused this
-	// connection or registration. Detail is the Broker's own explanation when
-	// it gave one and the local text for a refused handshake otherwise;
-	// RejectCode is the Broker's code, or internal for a refusal without one.
+	// PhaseBrokerRejected means the Broker answered but refused this connection
+	// or registration; Detail is its explanation or the local refusal text, and
+	// RejectCode is its code (internal when none).
 	PhaseBrokerRejected
 	// PhaseConnected means Hello succeeded; registration may still be pending.
 	PhaseConnected
@@ -40,15 +38,15 @@ const (
 
 // Status is a snapshot of the background connection state.
 type Status struct {
-	Phase  Phase
-	Detail string
+	Phase  Phase               // the state of the background connection to the Broker
+	Detail string              // the phase's explanation text; see the Phase constants
 	Remedy string              // PhaseVersionMismatch only: the "To fix it, ..." clause for the selected kind
 	Client localpb.LocalClient // non-nil only in PhaseConnected
 	// Conn is the gRPC connection behind Client, used by the update hint to
 	// call UpdateStatus. It is non-nil only in PhaseConnected.
 	Conn          *grpc.ClientConn
-	AgentID       string // non-empty only after registration_complete
-	Address       string
+	AgentID       string                      // non-empty only after registration_complete
+	Address       string                      // the agent address; empty until registration_complete
 	NotRegistered localpb.NotRegisteredReason // last reason the Broker sent; UNSPECIFIED if none yet
 	// NotRegisteredDetail is the Broker's specific explanation of
 	// NotRegistered; empty when the Broker sent none.
@@ -58,7 +56,6 @@ type Status struct {
 	RejectCode localpb.ErrorCode
 }
 
-// statusStore holds the current Status and is safe for concurrent use.
 type statusStore struct {
 	mu sync.Mutex
 	st Status
@@ -78,18 +75,15 @@ func (s *statusStore) Update(f func(*Status)) {
 	f(&s.st)
 }
 
-// rememberedTopic is a topic this process joined, kept so that a later
-// registration can restore the membership.
 type rememberedTopic struct {
 	Name        string
 	Public      bool
 	Description string
 }
 
-// topicRecorder records and forgets joined topics. lockTopic and unlockTopic
-// serialize a Broker membership change and the memory write it causes with the
-// restore of the same topic after a registration. lockTopic waits for the lock
-// or returns the context's error, so a call stops instead of queueing.
+// lockTopic and unlockTopic serialize a Broker membership change and its memory
+// write with the restore of the same topic after a registration; lockTopic
+// waits for the lock or returns the context's error.
 type topicRecorder interface {
 	Remember(t rememberedTopic)
 	Forget(name string)
@@ -98,14 +92,10 @@ type topicRecorder interface {
 }
 
 // handlerRPCTimeout bounds one Broker RPC of a tool whose Broker side does no
-// network I/O and runs no timer: get_config, set_config, set_broker_online,
-// list_brokers, disconnect_broker and create_pairing_key read or write a small
-// local file or answer from memory. The value matches topicRPCTimeout and
-// termcmd.UnaryTimeout. Tests override it through handlers.rpcTimeout.
+// network I/O and runs no timer; it equals topicRPCTimeout and
+// termcmd.UnaryTimeout.
 const handlerRPCTimeout = 10 * time.Second
 
-// withRPCTimeout returns ctx bounded by timeout, using fallback when timeout is
-// zero. The caller defers the cancel.
 func withRPCTimeout(ctx context.Context, timeout, fallback time.Duration) (context.Context, context.CancelFunc) {
 	if timeout <= 0 {
 		timeout = fallback
@@ -113,29 +103,19 @@ func withRPCTimeout(ctx context.Context, timeout, fallback time.Duration) (conte
 	return context.WithTimeout(ctx, timeout)
 }
 
-// handlers is the shared skeleton of the forwarding tool handlers.
 type handlers struct {
-	st     *statusStore
-	topics topicRecorder
-	log    *slog.Logger
-	// sessionTopics returns this session's default topics for a nameless
-	// join_topic or leave_topic. nil means the session has none.
-	sessionTopics func(context.Context) []string
-	// rpcTimeout bounds one Broker RPC of a tool whose Broker side does no
-	// network I/O and runs no timer. Zero means handlerRPCTimeout; tests set a
-	// short value.
-	rpcTimeout time.Duration
-	// listAgentsTimeout bounds list_agents. Zero means listAgentsRPCTimeout.
+	st                *statusStore
+	topics            topicRecorder
+	log               *slog.Logger
+	sessionTopics     func(context.Context) []string
+	rpcTimeout        time.Duration
 	listAgentsTimeout time.Duration
-	// connectTimeout bounds connect_broker. Zero means connectBrokerRPCTimeout.
-	connectTimeout time.Duration
-	// sendTimeout bounds send_message. Zero means sendMessageRPCTimeout.
-	sendTimeout time.Duration
-	// updateTimeout bounds update_broker. Zero means updateBrokerRPCTimeout.
-	updateTimeout time.Duration
+	connectTimeout    time.Duration
+	sendTimeout       time.Duration
+	updateTimeout     time.Duration
 }
 
-// preflight returns the Status a tool call may use, or an error whose text is
+// preflight returns the Status a tool call may use, or the error whose text is
 // shown to the model when the call must not reach the Broker.
 func (h *handlers) preflight(tool string, kind callKind, needAgent bool) (Status, error) {
 	st := h.st.Get()

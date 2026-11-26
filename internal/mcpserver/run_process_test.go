@@ -21,8 +21,6 @@ func init() {
 	testRoles["mcp"] = mcpRole
 }
 
-// mcpRole is the child half of the process tests: it runs the MCP server over
-// stdio exactly as cmd/peers does, and exits with Run's result.
 func mcpRole() int {
 	if err := Run(context.Background(), Options{}); err != nil {
 		return 1
@@ -30,9 +28,6 @@ func mcpRole() int {
 	return 0
 }
 
-// runProcessEnv builds a child environment from scratch: only PATH, HOME and
-// the role are inherited, so the engineer's Claude Code session variables
-// cannot leak into the child.
 func runProcessEnv(t *testing.T, extra ...string) []string {
 	t.Helper()
 	env := []string{
@@ -43,8 +38,6 @@ func runProcessEnv(t *testing.T, extra ...string) []string {
 	return append(env, extra...)
 }
 
-// startRunProcess starts the test binary as the MCP server over stdio and
-// connects an MCP client to it.
 func startRunProcess(t *testing.T, env []string) (*mcp.ClientSession, *exec.Cmd) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0])
@@ -62,10 +55,8 @@ func startRunProcess(t *testing.T, env []string) (*mcp.ClientSession, *exec.Cmd)
 	return cs, cmd
 }
 
-// REQ-agent-messaging-001, REQ-agent-messaging-036: the process registers at
-// startup without any tool call, and registration depends only on the two
-// environment variables, so a session with no interactive terminal registers
-// the same way.
+// TestRunProcessServesMCP checks that the process registers at startup from the
+// environment alone and declares every tool.
 func TestRunProcessServesMCP(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, sock, fakelocal.Handlers{})
@@ -90,7 +81,8 @@ func TestRunProcessServesMCP(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-038
+// TestRunProcessSurvivesMissingBroker checks that a missing Broker makes tool
+// calls fail without ending the process.
 func TestRunProcessSurvivesMissingBroker(t *testing.T) {
 	missing := socktest.Path(t, "missing.sock")
 	env := runProcessEnv(t,

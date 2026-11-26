@@ -164,8 +164,6 @@ func TestFindAtLevelSystemRefusedThenUp(t *testing.T) {
 	}
 }
 
-// neverAfter returns a channel that never fires, so the waiter can only finish
-// through its context.
 func neverAfter(time.Duration) <-chan time.Time { return make(chan time.Time) }
 
 // TestProbeSystemWithRetryReturnsContextError returns the context's error when it

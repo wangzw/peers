@@ -13,7 +13,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// fakeRegisterClient opens a fake Register stream, or fails the call.
 type fakeRegisterClient struct {
 	localpb.LocalClient
 	openErr error
@@ -27,7 +26,6 @@ func (c *fakeRegisterClient) Register(context.Context, ...grpc.CallOption) (grpc
 	return c.stream, nil
 }
 
-// fakeRegisterStream replays responses from a channel and records CloseSend.
 type fakeRegisterStream struct {
 	grpc.BidiStreamingClient[localpb.RegisterRequest, localpb.RegisterResponse]
 	responses <-chan *localpb.RegisterResponse
@@ -85,8 +83,6 @@ func TestRunRegistrationReportsSendError(t *testing.T) {
 	}
 }
 
-// recordHandler keeps log records in memory so a test can assert the loop's
-// message.
 type recordHandler struct {
 	mu      sync.Mutex
 	records []slog.Record

@@ -16,7 +16,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// topicRecorderStub is a topicRecorder that records the calls it receives.
 type topicRecorderStub struct {
 	remembered []rememberedTopic
 	forgotten  []string
@@ -27,9 +26,6 @@ func (r *topicRecorderStub) Forget(name string)              { r.forgotten = app
 func (r *topicRecorderStub) lockTopic(context.Context) error { return nil }
 func (r *topicRecorderStub) unlockTopic()                    {}
 
-// newTopicsHandlers builds handlers whose status is PhaseConnected and whose
-// client talks to a fresh fakelocal server. agentID may be empty to simulate a
-// connected-but-not-registered session.
 func newTopicsHandlers(t *testing.T, h fakelocal.Handlers, agentID string) (*handlers, *fakelocal.Server, *topicRecorderStub) {
 	t.Helper()
 	path := fakelocal.SocketPath(t)
@@ -52,8 +48,6 @@ func newTopicsHandlers(t *testing.T, h fakelocal.Handlers, agentID string) (*han
 	return &handlers{st: st, topics: rec}, srv, rec
 }
 
-// lastTopicCall returns the only unary request the fake server received, failing the
-// test when there is not exactly one.
 func lastTopicCall(t *testing.T, srv *fakelocal.Server) fakelocal.Call {
 	t.Helper()
 	calls := srv.Calls()
@@ -63,10 +57,10 @@ func lastTopicCall(t *testing.T, srv *fakelocal.Server) fakelocal.Call {
 	return calls[0]
 }
 
+// TestJoinTopic checks that join_topic forwards the request and remembers the
+// joined topic.
 func TestJoinTopic(t *testing.T) {
 	t.Run("forwards the request and remembers the topic", func(t *testing.T) {
-		// REQ-topics-001, REQ-topics-010: join_topic forwards the name, the
-		// public declaration and the description.
 		h, srv, rec := newTopicsHandlers(t, fakelocal.Handlers{
 			JoinTopic: func(context.Context, *localpb.JoinTopicRequest) (*localpb.JoinTopicResponse, error) {
 				return &localpb.JoinTopicResponse{Topics: []string{"t", "u"}}, nil
@@ -109,9 +103,6 @@ func TestJoinTopic(t *testing.T) {
 	})
 
 	t.Run("a failed public join is not remembered", func(t *testing.T) {
-		// REQ-topics-023: a public declaration on a non-public Broker must fail
-		// without being remembered, or the next registration would join it
-		// silently.
 		h, _, rec := newTopicsHandlers(t, fakelocal.Handlers{
 			JoinTopic: func(context.Context, *localpb.JoinTopicRequest) (*localpb.JoinTopicResponse, error) {
 				return nil, fakelocal.ErrorStatus(codes.InvalidArgument, &localpb.ErrorDetail{
@@ -155,9 +146,10 @@ func TestJoinTopic(t *testing.T) {
 	})
 }
 
+// TestLeaveTopic checks that leave_topic forwards the request and forgets the
+// left topic.
 func TestLeaveTopic(t *testing.T) {
 	t.Run("forwards the request and forgets the topic", func(t *testing.T) {
-		// REQ-topics-003: leave_topic forwards the name and forgets the topic.
 		h, srv, rec := newTopicsHandlers(t, fakelocal.Handlers{
 			LeaveTopic: func(context.Context, *localpb.LeaveTopicRequest) (*localpb.LeaveTopicResponse, error) {
 				return &localpb.LeaveTopicResponse{Topics: []string{"u"}}, nil
@@ -233,9 +225,8 @@ func TestLeaveTopic(t *testing.T) {
 	})
 }
 
-// mcpserver design line 119: a tool call returns instead of queueing while a
-// topic change is stuck. The second topic call stops when its context ends,
-// and a registration restore is not left waiting for the same lock.
+// TestLeaveTopicStopsWaitingForTheTopicLock checks that a topic call and a
+// registration restore stop waiting when their context ends.
 func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
 
@@ -244,7 +235,6 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 	releaseJoin := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseJoin) }) }
-	// Unblock the stuck join when the test fails, so its goroutine can exit.
 	t.Cleanup(release)
 
 	fakelocal.Start(t, sock, fakelocal.Handlers{
@@ -264,11 +254,10 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 		defaults: func(context.Context, bool) defaultLookup { return defaultLookup{settled: true} },
 		log:      topicsLogger(),
 	}
-	r.onComplete(context.Background(), client, "agent-1", true) // the first registration joins nothing
+	r.onComplete(context.Background(), client, "agent-1", true)
 	mem.Remember(rememberedTopic{Name: "a"})
 	h := topicsRaceHandlers(client, mem)
 
-	// A join_topic holds the topic lock while the Broker does not answer it.
 	joinDone := make(chan error, 1)
 	go func() {
 		_, err := h.JoinTopic(context.Background(), JoinTopicIn{Name: "x"})
@@ -276,8 +265,6 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 	}()
 	<-joinEntered
 
-	// The second topic call stops when its context ends instead of queueing
-	// on the lock.
 	ctx, cancel := context.WithCancel(context.Background())
 	leaveDone := make(chan error, 1)
 	go func() {
@@ -293,17 +280,12 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 	case <-time.After(eventTimeout):
 		t.Fatalf("leave_topic kept waiting for the topic lock after its context ended (%s)", eventTimeout)
 	}
-	// The join still holds the lock, so leave_topic must not have taken it. If
-	// the join has already finished here, leave_topic ignored its context and
-	// queued behind the lock until the Broker answered instead of ending on it.
 	select {
 	case err := <-joinDone:
 		t.Fatalf("leave_topic took the topic lock while the join was still running (join_topic returned %v)", err)
 	default:
 	}
 
-	// A registration that ends while it waits for the lock returns too, so a
-	// reconnect is not dragged behind the stuck call.
 	streamCtx, cancelStream := context.WithCancel(context.Background())
 	defer cancelStream()
 	restoreDone := make(chan struct{})
@@ -314,7 +296,6 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 	cancelStream()
 	waitClosed(t, restoreDone, "the restore whose registration ended")
 
-	// The Broker recovers and the next registration restores the memory.
 	release()
 	if err := waitErr(t, joinDone, "join_topic"); err != nil {
 		t.Fatalf("join_topic: %v", err)
@@ -327,15 +308,14 @@ func TestLeaveTopicStopsWaitingForTheTopicLock(t *testing.T) {
 	waitClosed(t, reconnectDone, "the restore after the Broker recovered")
 }
 
-// defaultTopicSession returns a sessionTopics function that reports names.
 func defaultTopicSession(names ...string) func(context.Context) []string {
 	return func(context.Context) []string { return names }
 }
 
+// TestJoinDefaultTopics checks that a nameless join_topic joins its default
+// topics with the declaration.
 func TestJoinDefaultTopics(t *testing.T) {
 	t.Run("joins every default topic with the declaration and remembers each", func(t *testing.T) {
-		// REQ-topics-026: a nameless join_topic joins each default topic and
-		// applies public and description to every one of them.
 		h, srv, rec := newTopicsHandlers(t, fakelocal.Handlers{
 			JoinTopic: func(_ context.Context, req *localpb.JoinTopicRequest) (*localpb.JoinTopicResponse, error) {
 				return &localpb.JoinTopicResponse{Topics: []string{req.GetName()}}, nil
@@ -347,7 +327,6 @@ func TestJoinDefaultTopics(t *testing.T) {
 		if err != nil {
 			t.Fatalf("JoinTopic: %v", err)
 		}
-		// The reply is the one from the last join.
 		if want := []string{"b"}; !reflect.DeepEqual(out.Topics, want) {
 			t.Errorf("Topics = %v, want %v", out.Topics, want)
 		}
@@ -402,7 +381,6 @@ func TestJoinDefaultTopics(t *testing.T) {
 		if !strings.Contains(err.Error(), "bad topic") {
 			t.Errorf("error = %q, want the Broker's message", err)
 		}
-		// The error names the topic that failed and the topics already joined.
 		if !strings.Contains(err.Error(), `joined "a"`) {
 			t.Errorf("error = %q, want the topics already joined", err)
 		}
@@ -418,7 +396,6 @@ func TestJoinDefaultTopics(t *testing.T) {
 	})
 
 	t.Run("no default topic", func(t *testing.T) {
-		// REQ-topics-026: a session without a default topic fails the call.
 		h, srv, rec := newTopicsHandlers(t, fakelocal.Handlers{}, "agent-1")
 		h.sessionTopics = defaultTopicSession()
 
@@ -478,10 +455,10 @@ func TestJoinDefaultTopics(t *testing.T) {
 	})
 }
 
+// TestLeaveDefaultTopics checks that a nameless leave_topic leaves the joined
+// defaults and forgets every default topic.
 func TestLeaveDefaultTopics(t *testing.T) {
 	t.Run("leaves the joined defaults and forgets every default", func(t *testing.T) {
-		// REQ-topics-027: every default topic leaves the memory, joined or not,
-		// so a later registration does not restore it.
 		h, srv, rec := newTopicsHandlers(t, fakelocal.Handlers{
 			ListTopics: func(context.Context, *localpb.ListTopicsRequest) (*localpb.ListTopicsResponse, error) {
 				return &localpb.ListTopicsResponse{JoinedTopics: []string{"a", "x"}}, nil
@@ -528,7 +505,6 @@ func TestLeaveDefaultTopics(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LeaveTopic: %v", err)
 		}
-		// Nothing had to be left, so the listing is returned.
 		if want := []string{"x"}; !reflect.DeepEqual(out.Topics, want) {
 			t.Errorf("Topics = %v, want %v", out.Topics, want)
 		}
@@ -564,7 +540,6 @@ func TestLeaveDefaultTopics(t *testing.T) {
 		if !strings.Contains(err.Error(), "no such topic") {
 			t.Errorf("error = %q, want the Broker's message", err)
 		}
-		// The error names the topic that failed and the topics already left.
 		if !strings.Contains(err.Error(), `left "a"`) {
 			t.Errorf("error = %q, want the topics already left", err)
 		}
@@ -596,8 +571,8 @@ func TestLeaveDefaultTopics(t *testing.T) {
 	})
 }
 
-// A nameless leave only affects the current membership and memory; a later
-// nameless join joins the default topics again.
+// TestNamelessLeaveThenJoin checks that a topic left by a nameless call is
+// joined again by a later nameless join.
 func TestNamelessLeaveThenJoin(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, sock, fakelocal.Handlers{
@@ -633,9 +608,10 @@ func TestNamelessLeaveThenJoin(t *testing.T) {
 	}
 }
 
+// TestListTopics checks that list_topics returns its joined and public groups or
+// reports why it cannot.
 func TestListTopics(t *testing.T) {
 	t.Run("forwards both groups", func(t *testing.T) {
-		// REQ-topics-013: list_topics returns the joined and the public groups.
 		h, srv, _ := newTopicsHandlers(t, fakelocal.Handlers{
 			ListTopics: func(context.Context, *localpb.ListTopicsRequest) (*localpb.ListTopicsResponse, error) {
 				return &localpb.ListTopicsResponse{
@@ -708,9 +684,6 @@ func TestListTopics(t *testing.T) {
 	})
 
 	t.Run("a Broker that does not answer does not hold the call open", func(t *testing.T) {
-		// design-mcpserver: every Broker call one topic tool makes is bounded by
-		// topicRPCTimeout. list_topics must return a tool error instead of
-		// waiting for a Broker that never answers.
 		h, _, _ := newTopicsHandlers(t, fakelocal.Handlers{
 			ListTopics: func(ctx context.Context, _ *localpb.ListTopicsRequest) (*localpb.ListTopicsResponse, error) {
 				<-ctx.Done()
@@ -721,8 +694,6 @@ func TestListTopics(t *testing.T) {
 			},
 		}, "agent-1")
 
-		// The backstop is the test's own bound, not the product's: on the
-		// unfixed code the fake never returns and this fires.
 		const backstop = topicRPCTimeout + 5*time.Second
 		start := time.Now()
 		done := make(chan error, 1)

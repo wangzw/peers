@@ -20,8 +20,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// newBrokerHandlersForTest starts a fake Local service and returns handlers
-// whose status is already connected. The agent id is empty when unregistered.
 func newBrokerHandlersForTest(t *testing.T, agentID string, h fakelocal.Handlers) (*handlers, *fakelocal.Server) {
 	t.Helper()
 	path := fakelocal.SocketPath(t)
@@ -43,15 +41,12 @@ func newBrokerHandlersForTest(t *testing.T, agentID string, h fakelocal.Handlers
 	return &handlers{st: st, log: log}, srv
 }
 
-// statusUnavailable is the error shape of an RPC that lost its connection
-// without carrying an ErrorDetail.
 func statusUnavailable() error {
 	return status.Error(codes.Unavailable, "connection lost")
 }
 
-// TestListBrokers covers the fields the model reads for each Broker
-// (REQ-broker-discovery-013, REQ-broker-discovery-014): status, is_peer and the
-// local role.
+// TestListBrokers checks the fields the model reads for each Broker: status,
+// is_peer, the local role and link state.
 func TestListBrokers(t *testing.T) {
 	h, _ := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
 		ListBrokers: func(context.Context, *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error) {
@@ -73,9 +68,8 @@ func TestListBrokers(t *testing.T) {
 					Alias:       "far",
 					Fingerprint: []byte{0x02},
 					IsPeer:      false,
-					// A role on a non-peer must not be shown.
-					Role:   localpb.PeerRole_PEER_ROLE_ACCEPTOR,
-					Status: localpb.BrokerStatus_BROKER_STATUS_NOT_DIRECTLY_REACHABLE,
+					Role:        localpb.PeerRole_PEER_ROLE_ACCEPTOR,
+					Status:      localpb.BrokerStatus_BROKER_STATUS_NOT_DIRECTLY_REACHABLE,
 				},
 			}}, nil
 		},
@@ -174,7 +168,6 @@ func TestListBrokersLocalState(t *testing.T) {
 			}},
 		},
 		{
-			// A response without local state violates the protocol.
 			name:    "missing local state",
 			local:   nil,
 			wantErr: true,
@@ -220,8 +213,7 @@ func TestListBrokersLocalState(t *testing.T) {
 }
 
 // TestListBrokersBeforeRegistration checks that list_brokers reaches the
-// Broker even while the session has not completed registration
-// (REQ-broker-discovery-012, mcpserver design:146).
+// Broker before the session has completed registration.
 func TestListBrokersBeforeRegistration(t *testing.T) {
 	h, srv := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
 		ListBrokers: func(context.Context, *localpb.ListBrokersRequest) (*localpb.ListBrokersResponse, error) {
@@ -239,8 +231,8 @@ func TestListBrokersBeforeRegistration(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-010: connect_broker forwards the address, the key and the
-// local alias, and reports the alias and fingerprint it got back.
+// TestConnectBrokerSuccess checks that connect_broker forwards the address, key
+// and local alias and reports the alias, fingerprint and warnings it got back.
 func TestConnectBrokerSuccess(t *testing.T) {
 	var got *localpb.ConnectRequest
 	h, _ := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
@@ -284,6 +276,8 @@ func TestConnectBrokerSuccess(t *testing.T) {
 	}
 }
 
+// TestConnectBrokerErrors checks the error text for a taken alias, a denied
+// write and a lost connection.
 func TestConnectBrokerErrors(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -339,9 +333,8 @@ func TestConnectBrokerErrors(t *testing.T) {
 	}
 }
 
-// TestConnectBrokerManagementAgentID checks that management calls carry the
-// registered agent id for the Broker's audit log (plan.md section 9), and that
-// they still work before registration.
+// TestConnectBrokerManagementAgentID checks that the management calls carry the
+// registered agent id for the audit log.
 func TestConnectBrokerManagementAgentID(t *testing.T) {
 	var gotConnect *localpb.ConnectRequest
 	var gotDisconnect *localpb.DisconnectRequest
@@ -382,8 +375,8 @@ func TestConnectBrokerManagementAgentID(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-021: disconnect_broker forwards the alias and reports the
-// unpaired result.
+// TestDisconnectBroker checks that disconnect_broker forwards the alias,
+// reports the unpaired result and keeps the not-found code.
 func TestDisconnectBroker(t *testing.T) {
 	var got *localpb.DisconnectRequest
 	h, _ := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
@@ -421,9 +414,8 @@ func TestDisconnectBroker(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-005, REQ-broker-pairing-025: create_pairing_key takes no
-// arguments and returns the one-time key, its expiry and the shown addresses
-// as separate fields, none of them part of the key itself.
+// TestCreatePairingKey checks the key, expiry, shown addresses, note and
+// connect prompt of a create_pairing_key result.
 func TestCreatePairingKey(t *testing.T) {
 	expires := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	h, _ := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
@@ -471,8 +463,8 @@ func TestCreatePairingKey(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyNoAddress covers a Broker that listens nowhere
-// (REQ-broker-pairing-028).
+// TestCreatePairingKeyNoAddress checks the note and empty connect prompt when
+// the Broker has no address to show.
 func TestCreatePairingKeyNoAddress(t *testing.T) {
 	h, _ := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
 		CreatePairingKey: func(context.Context, *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error) {
@@ -493,8 +485,8 @@ func TestCreatePairingKeyNoAddress(t *testing.T) {
 	}
 }
 
-// TestCreatePairingKeyNotListening covers a Broker that does not listen at all
-// (REQ-broker-pairing-036).
+// TestCreatePairingKeyNotListening checks the error and hint when the Broker
+// does not listen.
 func TestCreatePairingKeyNotListening(t *testing.T) {
 	h, _ := newBrokerHandlersForTest(t, "", fakelocal.Handlers{
 		CreatePairingKey: func(context.Context, *localpb.CreatePairingKeyRequest) (*localpb.CreatePairingKeyResponse, error) {
@@ -518,10 +510,8 @@ func TestCreatePairingKeyNotListening(t *testing.T) {
 	}
 }
 
-// TestBrokerToolCallTimeouts covers the broker tools whose Broker side does no
-// network I/O of its own: list_brokers, disconnect_broker and
-// create_pairing_key. Each returns a tool error instead of waiting for a Broker
-// that never answers.
+// TestBrokerToolCallTimeouts checks that the broker tools return a tool error
+// instead of waiting for a Broker that never answers.
 func TestBrokerToolCallTimeouts(t *testing.T) {
 	t.Parallel()
 
@@ -578,8 +568,6 @@ func TestBrokerToolCallTimeouts(t *testing.T) {
 		checkBoundedError(t, "CreatePairingKey", err, elapsed, "create_pairing_key failed", "(code: internal)")
 	})
 
-	// connect_broker has its own bound because the Broker dials, handshakes and
-	// says Hello before it answers. On a timeout it keeps the connect text.
 	t.Run("connect_broker", func(t *testing.T) {
 		t.Parallel()
 		h, _ := newBrokerHandlersForTest(t, "agent-1", fakelocal.Handlers{

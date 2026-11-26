@@ -15,7 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// updateStatusServer answers UpdateStatus with a canned response or error.
 type updateStatusServer struct {
 	localpb.UnimplementedLocalServer
 	respond func(ctx context.Context) (*localpb.UpdateStatusResponse, error)
@@ -25,9 +24,8 @@ func (s *updateStatusServer) UpdateStatus(ctx context.Context, _ *localpb.Update
 	return s.respond(ctx)
 }
 
-// startUpdateStatusServer serves the Local service over a buffer connection.
-// A nil implementation registers no service at all, which makes every call
-// return Unimplemented.
+// startUpdateStatusServer serves the Local service over a buffer connection; a
+// nil impl registers no service, so every call returns Unimplemented.
 func startUpdateStatusServer(t *testing.T, impl localpb.LocalServer) *bufconn.Listener {
 	t.Helper()
 	lis := bufconn.Listen(1 << 20)
@@ -55,6 +53,8 @@ func dialUpdateStatusServer(t *testing.T, lis *bufconn.Listener) *grpc.ClientCon
 	return cc
 }
 
+// TestQueryUpdateStatus checks that the Broker's update fields are read into
+// updateStatus.
 func TestQueryUpdateStatus(t *testing.T) {
 	lis := startUpdateStatusServer(t, &updateStatusServer{respond: func(context.Context) (*localpb.UpdateStatusResponse, error) {
 		return &localpb.UpdateStatusResponse{
@@ -81,6 +81,8 @@ func TestQueryUpdateStatus(t *testing.T) {
 	}
 }
 
+// TestQueryUpdateStatusNoAvailableVersion checks a reply with no available
+// version.
 func TestQueryUpdateStatusNoAvailableVersion(t *testing.T) {
 	lis := startUpdateStatusServer(t, &updateStatusServer{respond: func(context.Context) (*localpb.UpdateStatusResponse, error) {
 		return &localpb.UpdateStatusResponse{CurrentVersion: "0.1.0"}, nil
@@ -98,8 +100,9 @@ func TestQueryUpdateStatusNoAvailableVersion(t *testing.T) {
 	}
 }
 
+// TestQueryUpdateStatusUnimplemented checks that a Broker without UpdateStatus
+// returns Unimplemented.
 func TestQueryUpdateStatusUnimplemented(t *testing.T) {
-	// An older Broker has no UpdateStatus method.
 	lis := startUpdateStatusServer(t, nil)
 	cc := dialUpdateStatusServer(t, lis)
 
@@ -111,6 +114,8 @@ func TestQueryUpdateStatusUnimplemented(t *testing.T) {
 	}
 }
 
+// TestQueryUpdateStatusDeadline checks that the context deadline reaches the
+// Broker call.
 func TestQueryUpdateStatusDeadline(t *testing.T) {
 	lis := startUpdateStatusServer(t, &updateStatusServer{respond: func(ctx context.Context) (*localpb.UpdateStatusResponse, error) {
 		<-ctx.Done()
@@ -126,6 +131,8 @@ func TestQueryUpdateStatusDeadline(t *testing.T) {
 	}
 }
 
+// TestBrokerUpdateStatusWithoutConnection checks that the source fails before
+// the loop has a connection.
 func TestBrokerUpdateStatusWithoutConnection(t *testing.T) {
 	source := brokerUpdateStatus(&statusStore{})
 	_, err := source(context.Background())

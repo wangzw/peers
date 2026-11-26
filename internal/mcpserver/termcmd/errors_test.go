@@ -12,6 +12,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
+// TestDescribeErrorDetail checks that an ErrorDetail becomes its code label
+// plus message and appends the reporting Broker.
 func TestDescribeErrorDetail(t *testing.T) {
 	detail := &localpb.ErrorDetail{
 		Code:    localpb.ErrorCode_ERROR_CODE_PERMISSION_DENIED,
@@ -38,6 +40,8 @@ func TestDescribeErrorDetail(t *testing.T) {
 	}
 }
 
+// TestDescribePlainGRPCError checks the text for an unavailable and an internal
+// gRPC error.
 func TestDescribePlainGRPCError(t *testing.T) {
 	if got := Describe(status.Error(codes.Unavailable, "connection refused")); !strings.HasPrefix(got, "cannot reach the Broker: ") {
 		t.Errorf("Describe(Unavailable) = %q, want it to start with %q", got, "cannot reach the Broker: ")
@@ -47,6 +51,8 @@ func TestDescribePlainGRPCError(t *testing.T) {
 	}
 }
 
+// TestDescribeNilAndPlainError checks that nil describes as empty and a plain
+// error keeps its text.
 func TestDescribeNilAndPlainError(t *testing.T) {
 	if got := Describe(nil); got != "" {
 		t.Errorf("Describe(nil) = %q, want the empty string", got)
@@ -56,6 +62,8 @@ func TestDescribeNilAndPlainError(t *testing.T) {
 	}
 }
 
+// TestDescribeNeutralizesControlCharacters checks that control and format
+// characters in an ErrorDetail message are escaped.
 func TestDescribeNeutralizesControlCharacters(t *testing.T) {
 	esc, bel, bidi := rune(0x1b), rune(0x07), rune(0x202e)
 	detail := &localpb.ErrorDetail{
@@ -77,6 +85,8 @@ func TestDescribeNeutralizesControlCharacters(t *testing.T) {
 	}
 }
 
+// TestVersionMismatchErrorText checks that the error names both versions and the
+// restart advice.
 func TestVersionMismatchErrorText(t *testing.T) {
 	err := &VersionMismatchError{Broker: 2, Client: 1}
 	for _, want := range []string{"version_mismatch", "2", "1", "restart the Broker"} {

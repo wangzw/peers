@@ -19,7 +19,6 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/pairingprompt"
 )
 
-// Table layout shared by both status sections.
 const (
 	tableMinWidth = 0
 	tableTabWidth = 8
@@ -28,17 +27,13 @@ const (
 
 const emptyCell = "-"
 
-// brokerOfflineLine is the status line printed when the Broker refuses messages
-// from other hosts.
 const brokerOfflineLine = "Broker: offline; messages from other hosts are refused. Run peers service online to accept them.\n"
 
-// WriteStatus writes resp as the two sections shown by "peers service status":
-// a table of registered agents followed by a table of peers. A Broker that runs
-// degraded or offline gets status lines before the sections. A degraded Broker
-// that runs diagnostics only prints just those lines and no sections.
-//
-// Each section is sorted and its columns are aligned with text/tabwriter. An
-// empty section is written as "Agents: none" or "Peers: none".
+// WriteStatus writes resp as the two sections shown by the status command: a
+// table of registered agents followed by a table of peers. A Broker that runs
+// degraded or offline gets status lines before the sections; one that runs
+// diagnostics only prints just those lines. An empty section is written as
+// "Agents: none" or "Peers: none".
 func WriteStatus(w io.Writer, resp *localpb.StatusResponse) error {
 	done, err := writeBrokerStateLines(w, resp.GetDegraded(), resp.GetOffline())
 	if err != nil {
@@ -110,10 +105,8 @@ func WriteStatus(w io.Writer, resp *localpb.StatusResponse) error {
 	return nil
 }
 
-// WriteDegraded writes the two lines that say why the Broker runs degraded:
-// the level and cause on the first line and the repair on the second. It is
-// the only place these lines are built, so status, broker list and the service
-// commands print the same text.
+// WriteDegraded writes the two lines that say why the Broker runs degraded: the
+// level and cause on the first line and the repair on the second.
 func WriteDegraded(w io.Writer, level localpb.DegradedLevel, reason, fix string) error {
 	if _, err := fmt.Fprintf(w, "Broker: degraded (%s): %s\n",
 		localpb.DegradedLevelLabel(level), sanitizeText(reason)); err != nil {
@@ -123,9 +116,9 @@ func WriteDegraded(w io.Writer, level localpb.DegradedLevel, reason, fix string)
 	return err
 }
 
-// writeBrokerStateLines writes the degraded and offline lines shared by the
-// status and broker-list output. done reports that the Broker runs diagnostics
-// only, so the caller writes nothing else.
+// writeBrokerStateLines writes the degraded and offline lines shared by status
+// and broker list; done reports that the Broker runs diagnostics only, so the
+// caller writes nothing else.
 func writeBrokerStateLines(w io.Writer, degraded *localpb.DegradedState, offline bool) (done bool, err error) {
 	if degraded != nil {
 		if err := WriteDegraded(w, degraded.GetLevel(), degraded.GetReason(), degraded.GetFix()); err != nil {
@@ -143,8 +136,8 @@ func writeBrokerStateLines(w io.Writer, degraded *localpb.DegradedState, offline
 	return false, nil
 }
 
-// WriteAuditEvent writes ev as one line: the event time, the event name and
-// the non-empty fields, in a fixed order. Events arrive in time order from the
+// WriteAuditEvent writes ev as one line: the event time, the event name and the
+// non-empty fields, in a fixed order. Events arrive in time order from the
 // server and are written in arrival order.
 func WriteAuditEvent(w io.Writer, ev *localpb.AuditEvent) error {
 	if ev == nil {
@@ -203,9 +196,8 @@ func WriteConfigChange(w io.Writer, key string, oldValue, newValue *localpb.Conf
 	return err
 }
 
-// configValueText renders one configuration value for the terminal. A secret
-// value shows "set" or "unset" and never its contents; every other value uses
-// FormatConfigValue and the empty convention.
+// configValueText renders a configuration value for the terminal; a secret value
+// shows only "set" or "unset" and never its contents.
 func configValueText(v *localpb.ConfigValue) string {
 	if secret, ok := v.GetValue().(*localpb.ConfigValue_SecretIsSet); ok {
 		if secret.SecretIsSet {
@@ -218,8 +210,8 @@ func configValueText(v *localpb.ConfigValue) string {
 
 // WritePairingKey writes a new one-time pairing key: the key, its expiry as
 // RFC 3339 in UTC, the addresses the other Broker can dial (each indented by two
-// spaces), and then the paste-ready connect prompt built by the same function
-// the MCP tool uses. A Broker with no address shows no prompt.
+// spaces), and then the paste-ready connect prompt shared with the MCP tool. A
+// Broker with no address shows no prompt.
 func WritePairingKey(w io.Writer, resp *localpb.CreatePairingKeyResponse) error {
 	if resp == nil {
 		resp = &localpb.CreatePairingKeyResponse{}
@@ -247,13 +239,12 @@ func WritePairingKey(w io.Writer, resp *localpb.CreatePairingKeyResponse) error 
 }
 
 // WriteBrokerList writes the Brokers named by brokers as a table sorted by
-// alias. A Broker shows whether it is a peer, its status, which side dialed and
-// its advertised addresses. With no Brokers it writes "Brokers: none".
+// alias, each showing whether it is a peer, its status, which side dialed and
+// its advertised addresses; with no Brokers it writes "Brokers: none".
 //
-// local is the state of the Broker that answered; every peers Broker reports
-// it, so a nil value is a protocol violation and the command fails without
-// writing anything. The status lines it produces come before the table, exactly
-// as WriteStatus writes them.
+// local is the state of the Broker that answered. A nil value is a protocol
+// violation and the command fails without writing anything; otherwise the status
+// lines come before the table, exactly as WriteStatus writes them.
 func WriteBrokerList(w io.Writer, brokers []*localpb.BrokerInfo, local *localpb.LocalBrokerState) error {
 	if local == nil {
 		return errors.New("the Broker did not report its local state")
@@ -359,7 +350,6 @@ func statusEntries(resp *localpb.StatusResponse) ([]*localpb.AgentStatusEntry, [
 	return agents, peers
 }
 
-// sortBrokers returns a copy of brokers sorted by alias, then fingerprint.
 func sortBrokers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
 	sorted := append([]*localpb.BrokerInfo(nil), brokers...)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -372,8 +362,8 @@ func sortBrokers(brokers []*localpb.BrokerInfo) []*localpb.BrokerInfo {
 	return sorted
 }
 
-// peerSortKey orders peers by alias. A peer without a local alias sorts by its
-// fingerprint, matching the "-" that takes the alias column.
+// peerSortKey orders a peer by its alias, or by its fingerprint when it has no
+// local alias.
 func peerSortKey(p *localpb.BrokerInfo) string {
 	if alias := p.GetAlias(); alias != "" {
 		return alias
@@ -442,13 +432,6 @@ func formatAddresses(addresses []*localpb.AdvertisedAddress) string {
 	return strings.Join(parts, ", ")
 }
 
-// sanitizeText makes a string received from the Broker safe to print on a
-// terminal. A tab, newline, carriage return, line separator (U+2028) or
-// paragraph separator (U+2029) becomes a space, so the existing status detail
-// layout is unchanged. Every other control character (C0, DEL and C1) and
-// Unicode format character (category Cf, including bidi overrides) is shown as
-// \xNN below U+0100, as \uNNNN up to U+FFFF and as \UNNNNNNNN above it. An
-// invalid UTF-8 byte is shown as \xNN.
 func sanitizeText(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -505,9 +488,6 @@ func appendField(b *strings.Builder, name, value string) {
 	b.WriteString(quoteValue(value))
 }
 
-// quoteValue quotes a field value that would otherwise be ambiguous on one
-// line: an empty value and values containing a space, a double quote, an
-// equals sign, or a line break.
 func quoteValue(v string) string {
 	if v == "" || strings.ContainsAny(v, " \"=\n\r\t") {
 		return strconv.Quote(v)
@@ -522,9 +502,6 @@ func auditTime(ts *timestamppb.Timestamp) string {
 	return ts.AsTime().UTC().Format(time.RFC3339)
 }
 
-// enumLabel turns a generated proto enum into the lowercase snake case name
-// used on the terminal. The prefix is stripped; a value the generated map does
-// not know is rendered as its number.
 func enumLabel(names map[int32]string, prefix string, v int32) string {
 	if name, ok := names[v]; ok {
 		return strings.ToLower(strings.TrimPrefix(name, prefix))

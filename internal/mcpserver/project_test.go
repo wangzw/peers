@@ -10,8 +10,6 @@ import (
 	"testing"
 )
 
-// writeProjectFile writes content to <dir>/.peers.yaml and returns the
-// absolute path.
 func writeProjectFile(t *testing.T, dir, content string) string {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -24,9 +22,6 @@ func writeProjectFile(t *testing.T, dir, content string) string {
 	return path
 }
 
-// stopSearchAt makes findProjectConfig stop its upward search at dir for the
-// duration of the test, so that a configuration file above dir cannot affect
-// the result.
 func stopSearchAt(t *testing.T, dir string) {
 	t.Helper()
 	old := searchStop
@@ -34,8 +29,9 @@ func stopSearchAt(t *testing.T, dir string) {
 	t.Cleanup(func() { searchStop = old })
 }
 
+// TestFindProjectConfig checks which .peers.yaml is found and how its topics are
+// parsed.
 func TestFindProjectConfig(t *testing.T) {
-	// REQ-topics-015, REQ-topics-021
 	t.Run("finds the file in an ancestor directory", func(t *testing.T) {
 		root := t.TempDir()
 		want := writeProjectFile(t, filepath.Join(root, "a"), "topics: [x]\n")
@@ -356,9 +352,6 @@ func TestFindProjectConfig(t *testing.T) {
 	})
 }
 
-// fakeProjectOwner makes projectOwnerUID report uid for the listed paths and
-// the effective uid for every other path. It simulates files and directories
-// owned by another account without requiring root.
 func fakeProjectOwner(t *testing.T, uidByPath map[string]uint32) {
 	t.Helper()
 	old := projectOwnerUID
@@ -371,10 +364,9 @@ func fakeProjectOwner(t *testing.T, uidByPath map[string]uint32) {
 	t.Cleanup(func() { projectOwnerUID = old })
 }
 
+// TestProjectConfigOwner checks that a project configuration and its directory
+// are adopted only when this account owns them, and that a refusal is logged.
 func TestProjectConfigOwner(t *testing.T) {
-	// A project configuration must be owned by this account or root, and so must
-	// the directory that holds it. Withdrawal here means the file is treated as
-	// absent, so the search continues upward.
 	other := uint32(os.Geteuid()) + 1
 
 	t.Run("a file owned by another account is skipped", func(t *testing.T) {

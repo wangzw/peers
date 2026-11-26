@@ -21,14 +21,11 @@ import (
 const wantHint = "peers 0.1.1 is available (this Broker runs 0.1.0). " +
 	"To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal."
 
-// connectHintClient starts a server whose only extra behaviour is the update
-// hint over source, and returns a connected client session.
 func connectHintClient(t *testing.T, ts toolSet, source updateStatusSource, timeout time.Duration) *mcp.ClientSession {
 	t.Helper()
 	return connectHintClientAt(t, ts, source, timeout, nil)
 }
 
-// connectHintClientAt is connectHintClient with an injectable clock.
 func connectHintClientAt(t *testing.T, ts toolSet, source updateStatusSource, timeout time.Duration, now func() time.Time) *mcp.ClientSession {
 	t.Helper()
 	ctx := context.Background()
@@ -59,7 +56,6 @@ func connectHintClientAt(t *testing.T, ts toolSet, source updateStatusSource, ti
 	return cs
 }
 
-// contentTexts returns every text block of a result in order.
 func contentTexts(res *mcp.CallToolResult) []string {
 	var texts []string
 	for _, c := range res.Content {
@@ -86,6 +82,8 @@ func countingSource(calls *atomic.Int32, st updateStatus) updateStatusSource {
 	}
 }
 
+// TestUpdateHintFirstToolCallOnly checks that the hint is appended to the first
+// tool call only.
 func TestUpdateHintFirstToolCallOnly(t *testing.T) {
 	var calls atomic.Int32
 	ts := &stubToolSet{
@@ -110,8 +108,6 @@ func TestUpdateHintFirstToolCallOnly(t *testing.T) {
 		t.Errorf("last content = %q, want %q", got, wantHint)
 	}
 
-	// A second call, with a different tool, must not carry the notice: the
-	// process has already checked.
 	second := callTool(t, cs, "list_topics", nil)
 	if hasHint(second) {
 		t.Errorf("second result carries the hint: %q", contentTexts(second))
@@ -121,6 +117,8 @@ func TestUpdateHintFirstToolCallOnly(t *testing.T) {
 	}
 }
 
+// TestUpdateHintNoAvailableVersion checks that no hint is appended without an
+// available version.
 func TestUpdateHintNoAvailableVersion(t *testing.T) {
 	var calls atomic.Int32
 	ts := &stubToolSet{
@@ -141,9 +139,8 @@ func TestUpdateHintNoAvailableVersion(t *testing.T) {
 	}
 }
 
-// TestUpdateHintUnimplementedIsAFailedQuery checks that Unimplemented is an
-// ordinary query failure: no hint, the tool result is untouched, and the process
-// is not marked as queried, so the next tool call retries.
+// TestUpdateHintUnimplementedIsAFailedQuery checks that Unimplemented leaves the
+// tool result untouched and the next call retries.
 func TestUpdateHintUnimplementedIsAFailedQuery(t *testing.T) {
 	var calls atomic.Int32
 	source := func(context.Context) (updateStatus, error) {
@@ -175,11 +172,9 @@ func TestUpdateHintUnimplementedIsAFailedQuery(t *testing.T) {
 	}
 }
 
+// TestUpdateHintTimeoutIsSkipped checks that the source sees the product's query
+// timeout and a timeout appends no hint.
 func TestUpdateHintTimeoutIsSkipped(t *testing.T) {
-	// The query timeout is the product's bound on the stalled source. The test
-	// checks the deadline the product handed the source, not how fast anything
-	// ran: a source that sees the caller's much later deadline shows the query
-	// timeout was not applied, and it then returns instead of blocking there.
 	const queryTimeout = 20 * time.Millisecond
 	const deadlineBound = time.Second
 	var calls atomic.Int32
@@ -228,6 +223,8 @@ func TestUpdateHintTimeoutIsSkipped(t *testing.T) {
 	}
 }
 
+// TestUpdateHintOnToolError checks that a hint is appended to a tool error
+// result.
 func TestUpdateHintOnToolError(t *testing.T) {
 	var calls atomic.Int32
 	const toolErr = "list_agents failed: broker unreachable (code: internal)"
@@ -260,7 +257,6 @@ func TestUpdateHintOnToolError(t *testing.T) {
 	}
 }
 
-// fakeClock is a manually advanced clock for the hint's recheck interval.
 type fakeClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -278,10 +274,9 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// TestUpdateHintRechecksAfterTheInterval covers the hint's recheck rule: the
-// first call queries and hints, calls inside the interval do not query, a newer
-// release found once the interval has passed is hinted, and the same version is
-// never hinted twice.
+// TestUpdateHintRechecksAfterTheInterval checks that calls inside the interval
+// do not query, a newer release is hinted after the interval, and the same
+// version is never hinted twice.
 func TestUpdateHintRechecksAfterTheInterval(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)}
 	var calls atomic.Int32
@@ -308,7 +303,6 @@ func TestUpdateHintRechecksAfterTheInterval(t *testing.T) {
 		t.Fatalf("first result lacks the 0.1.1 hint: %q", contentTexts(first))
 	}
 
-	// A call inside the interval neither queries nor hints.
 	if res := callTool(t, cs, "list_topics", nil); hasHint(res) {
 		t.Fatalf("result carries a hint inside the interval: %q", contentTexts(res))
 	}
@@ -320,7 +314,6 @@ func TestUpdateHintRechecksAfterTheInterval(t *testing.T) {
 		t.Fatalf("UpdateStatus called %d times before the interval, want 1", got)
 	}
 
-	// Once the interval has passed, a newer release is queried and hinted.
 	responseMu.Lock()
 	response = updateStatus{CurrentVersion: "0.1.0", AvailableVersion: "0.1.2"}
 	responseMu.Unlock()
@@ -331,7 +324,6 @@ func TestUpdateHintRechecksAfterTheInterval(t *testing.T) {
 		t.Fatalf("result content = %q, want last %q", texts, want)
 	}
 
-	// The same version is not hinted twice, even after another interval.
 	clock.Advance(updateRecheckInterval)
 	if res := callTool(t, cs, "list_agents", nil); hasHint(res) {
 		t.Fatalf("same version hinted twice: %q", contentTexts(res))
@@ -341,9 +333,8 @@ func TestUpdateHintRechecksAfterTheInterval(t *testing.T) {
 	}
 }
 
-// TestUpdateHintRetriesAfterConnectionNotReady covers the first tool call
-// arriving before the Broker connection is ready: no answer was received, so
-// the process is not marked as queried and the next call retries.
+// TestUpdateHintRetriesAfterConnectionNotReady checks that a failed first query
+// leaves the process unchecked and the next call retries.
 func TestUpdateHintRetriesAfterConnectionNotReady(t *testing.T) {
 	var calls atomic.Int32
 	source := func(context.Context) (updateStatus, error) {
@@ -372,9 +363,8 @@ func TestUpdateHintRetriesAfterConnectionNotReady(t *testing.T) {
 	}
 }
 
-// TestUpdateHintSkipsDegradedBroker checks that a Broker which refuses the
-// update query because it runs degraded is handled like a failed query: no
-// hint, and the next tool call tries again.
+// TestUpdateHintSkipsDegradedBroker checks that a degraded Broker's refusal
+// appends no hint and the next call tries again.
 func TestUpdateHintSkipsDegradedBroker(t *testing.T) {
 	fail, err := status.New(codes.FailedPrecondition, "config parse failed").WithDetails(&localpb.ErrorDetail{
 		Code:    localpb.ErrorCode_ERROR_CODE_BROKER_DEGRADED,
@@ -406,6 +396,8 @@ func TestUpdateHintSkipsDegradedBroker(t *testing.T) {
 	}
 }
 
+// TestUpdateHintNextProcessHintsNewVersion checks that a new process hints a
+// newer version again.
 func TestUpdateHintNextProcessHintsNewVersion(t *testing.T) {
 	ts := &stubToolSet{
 		listAgents: func(context.Context, ListAgentsIn) (ListAgentsOut, error) {
@@ -422,7 +414,6 @@ func TestUpdateHintNextProcessHintsNewVersion(t *testing.T) {
 		t.Fatalf("first process did not hint 0.1.1: %q", contentTexts(res))
 	}
 
-	// A new process checks again and sees the newer version.
 	var nextCalls atomic.Int32
 	next := connectHintClient(t, ts, countingSource(&nextCalls, updateStatus{
 		CurrentVersion:   "0.1.0",

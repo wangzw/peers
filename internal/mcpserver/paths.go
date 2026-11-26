@@ -16,14 +16,8 @@ import (
 	"time"
 )
 
-// preferredRuntimeDir returns the runtime directory of the account euid before
-// the fallback rule. It is the seam the peers_testenv build replaces; production
-// code never replaces it.
-//
-// The runtime directory does not depend on any environment variable. The
-// account is taken by effective uid, matching the path table in
-// design-config.md: the system Broker runs as root, every other account gets
-// its own directory under /tmp.
+// preferredRuntimeDir returns the account's runtime directory before the
+// fallback rule; the peers_testenv build replaces it, and production never does.
 var preferredRuntimeDir = func(euid int) (string, error) {
 	if euid == 0 {
 		return systemRuntimeDir(runtime.GOOS), nil
@@ -32,14 +26,13 @@ var preferredRuntimeDir = func(euid int) (string, error) {
 }
 
 // fallbackRuntimeBase returns the per-account base directory whose "peers"
-// child is the fallback runtime directory. It is a seam tests replace;
-// production code never replaces it.
+// child is the fallback runtime directory; tests replace it, and production
+// never does.
 var fallbackRuntimeBase = defaultFallbackRuntimeBase
 
-// runtimeDir returns the runtime directory of the account euid. It is the seam
-// the peers_testenv build no longer replaces; the hook redirects
-// preferredRuntimeDir instead, so the fallback rule still applies under the test
-// root.
+// runtimeDir returns the runtime directory of the account euid; the
+// peers_testenv hook redirects preferredRuntimeDir, so the fallback rule still
+// applies under the test root.
 var runtimeDir = func(euid int) string {
 	preferred, err := preferredRuntimeDir(euid)
 	if err != nil || euid == 0 {
@@ -54,10 +47,6 @@ var runtimeDir = func(euid int) string {
 	return preferred
 }
 
-// runtimeDirCandidates returns the runtime directories this account's Broker may
-// run in: the one the location rule selects first, then the other candidate.
-// The list depends only on the account and the platform paths, so selection can
-// probe both even while the preferred directory's state changes under it.
 func runtimeDirCandidates(euid int) []string {
 	paths := []string{runtimeDir(euid)}
 	if euid == 0 {
@@ -74,8 +63,6 @@ func runtimeDirCandidates(euid int) []string {
 	return paths
 }
 
-// userSocketCandidates returns the local socket of every runtime directory the
-// account's Broker may use.
 func userSocketCandidates(euid int) []string {
 	dirs := runtimeDirCandidates(euid)
 	sockets := make([]string, 0, len(dirs))
@@ -85,15 +72,14 @@ func userSocketCandidates(euid int) []string {
 	return sockets
 }
 
-// socketPath returns the local Broker socket inside dir.
 func socketPath(dir string) string {
 	return filepath.Join(dir, "broker.sock")
 }
 
-// runtimeDirOccupied reports whether another account has taken path. A path
-// that does not exist yet is not occupied. Only a symbolic link, a
-// non-directory or a directory owned by another account counts, matching the
-// rule in internal/config.
+// runtimeDirOccupied reports whether another account has taken path. Only a
+// symbolic link, a non-directory or a directory owned by another account counts,
+// matching the rule in internal/config; a path that does not exist yet is not
+// occupied.
 func runtimeDirOccupied(path string, euid int) bool {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -107,8 +93,8 @@ func runtimeDirOccupied(path string, euid int) bool {
 }
 
 // fallbackBaseUsable reports whether base may hold the fallback runtime
-// directory: it must be a directory this account owns with no group or other
-// access, and it must not be a symbolic link.
+// directory: a directory this account owns, with no group or other access, not
+// a symbolic link.
 func fallbackBaseUsable(base string, euid int) bool {
 	info, err := os.Lstat(base)
 	if err != nil {
@@ -124,29 +110,21 @@ func fallbackBaseUsable(base string, euid int) bool {
 	return info.Mode().Perm()&0o077 == 0
 }
 
-// fallbackBaseProbeTimeout bounds the getconf call on macOS, so a stalled
-// getconf cannot delay every runtime-directory lookup. It is a variable so
-// tests can shorten it.
+// fallbackBaseProbeTimeout bounds the getconf call on macOS; tests shorten it.
 var fallbackBaseProbeTimeout = 5 * time.Second
 
-// getconfOutput runs getconf. It is a seam tests replace; production code never
-// replaces it.
+// getconfOutput runs getconf; tests replace it, and production never does.
 var getconfOutput = func(ctx context.Context) ([]byte, error) {
 	return exec.CommandContext(ctx, "/usr/bin/getconf", "DARWIN_USER_TEMP_DIR").Output()
 }
 
-// fallbackBaseCache keeps a successful getconf result for the life of the
-// process. The runtime directory is resolved on every lookup, and asking
-// getconf each time would spawn a process per call. A failure is not cached, so
-// a transient failure can recover on the next lookup.
+// fallbackBaseCache caches a successful getconf result per process; a failure
+// is not cached, so a transient failure can recover on the next lookup.
 var fallbackBaseCache = struct {
 	mu   sync.Mutex
 	dirs map[int]string
 }{dirs: make(map[int]string)}
 
-// defaultFallbackRuntimeBase names the platform's per-account base directory:
-// the logind runtime directory on Linux, and the per-user temporary directory
-// that getconf reports on macOS.
 func defaultFallbackRuntimeBase(euid int) (string, error) {
 	if runtime.GOOS != "darwin" {
 		return fmt.Sprintf("/run/user/%d", euid), nil
@@ -154,8 +132,6 @@ func defaultFallbackRuntimeBase(euid int) (string, error) {
 	return darwinFallbackBase(euid)
 }
 
-// darwinFallbackBase asks getconf once per process and account, with a bounded
-// wait.
 func darwinFallbackBase(euid int) (string, error) {
 	fallbackBaseCache.mu.Lock()
 	if dir, ok := fallbackBaseCache.dirs[euid]; ok {
@@ -180,9 +156,6 @@ func darwinFallbackBase(euid int) (string, error) {
 	return dir, nil
 }
 
-// systemRuntimeDir returns the runtime directory of the root account on goos.
-// The platform suffix is passed in rather than read from runtime.GOOS so the
-// rule is testable on every host.
 func systemRuntimeDir(goos string) string {
 	if goos == "darwin" {
 		return "/var/run/peers"
@@ -190,12 +163,10 @@ func systemRuntimeDir(goos string) string {
 	return "/run/peers"
 }
 
-// userSocketPath is the local socket of the Broker that runs as the account euid.
 func userSocketPath(euid int) string {
 	return socketPath(runtimeDir(euid))
 }
 
-// systemSocketPath is the local socket of the system Broker, which runs as root.
 func systemSocketPath() string {
 	return socketPath(runtimeDir(0))
 }

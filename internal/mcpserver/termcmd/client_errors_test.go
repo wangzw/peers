@@ -14,10 +14,9 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// TestRunCommandsReturnBrokerErrorsWithoutOutput covers the error path of every
-// terminal client. A client that swallowed the Broker's error and returned nil
-// would make the command exit 0 with empty output, so each call must report the
-// failure and leave both output writers untouched.
+// TestRunCommandsReturnBrokerErrorsWithoutOutput checks that the config, pairing
+// key, broker list, connect and disconnect commands report a permission or
+// unavailable Broker error and write nothing.
 func TestRunCommandsReturnBrokerErrorsWithoutOutput(t *testing.T) {
 	kinds := []struct {
 		name       string

@@ -12,7 +12,6 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// callKind selects the opening phrase of the text shown to the model.
 type callKind int
 
 const (
@@ -22,7 +21,6 @@ const (
 	callUpdate
 )
 
-// permNeed is the config-file permission a tool call requires.
 type permNeed int
 
 const (
@@ -36,16 +34,11 @@ const (
 const (
 	textStarting = "the connection to the Broker is still being set up; retry shortly"
 	// textUnavailable is the whole sentence for a failed attempt at a user or
-	// test-named Broker, with the original error substituted. Building it where
-	// the failure is recorded keeps the model from seeing the unavailable
-	// statement twice with the socket path between the two.
-	textUnavailable = "the Broker is unavailable: %s; retrying in the background."
-	// textUnavailableNoReason stands in for a status that recorded no reason.
+	// test-named Broker, with the original error substituted.
+	textUnavailable         = "the Broker is unavailable: %s; retrying in the background."
 	textUnavailableNoReason = "the Broker is unavailable; retrying in the background."
 	// textBrokerRefusedConnection replaces the unavailable text when the socket
-	// answered but the Broker closed the handshake. A connection limit at the
-	// handshake gives the client no ErrorDetail, so the text names only a
-	// likely cause and never sends the reader to start a running Broker.
+	// answered but the Broker closed the handshake.
 	textBrokerRefusedConnection   = "the Broker is running but refused this connection; this account or the whole host may have reached its connection limit, so retry shortly."
 	textNoBroker                  = "no Broker is available for this account; if a system Broker is installed on this host, ask the administrator to start it. Otherwise start a user Broker with `peers service install`, or run `peers service run` in a terminal outside the Claude Code session (a Broker started inside the session exits with code 6)"
 	textNoUserBrokerSystemRunning = "no user Broker is running for this account; a system Broker is running, so retry with `--system`"
@@ -63,16 +56,13 @@ const (
 	textNoDefaultTopic = "this session has no default topic; pass a topic in `name` to choose one"
 )
 
-// The text for an empty system selection depends on the account: root is
-// the administrator, so it is told the command to run, while every other
-// account must ask the administrator.
+// The text for an empty system selection depends on whether the account is
+// root.
 const (
 	textNoSystemBrokerNonRoot = "the system Broker is unavailable; ask the administrator to start it"
 	textNoSystemBrokerRoot    = "the system Broker is unavailable; start it with `peers service start --system`"
 )
 
-// systemBrokerText returns the text for an empty system selection. Root
-// needs no sudo for the command it names.
 func systemBrokerText(isRoot bool) string {
 	if isRoot {
 		return textNoSystemBrokerRoot
@@ -80,55 +70,34 @@ func systemBrokerText(isRoot bool) string {
 	return textNoSystemBrokerNonRoot
 }
 
-// textNoSystemBroker is the text for this account, chosen once at startup.
 var textNoSystemBroker = systemBrokerText(os.Geteuid() == 0)
 
 // textSystemBrokerUnresponsive replaces the no-Broker text when the system
-// Broker's socket is not missing or refusing connections but the attempt still
-// failed. The Broker is running, so the reader is not told to start it; the
-// original error is kept, the retry stays in the background, and a lasting
-// failure is sent to the administrator.
+// Broker's socket answered but the attempt still failed.
 const textSystemBrokerUnresponsive = "the system Broker is running but is not answering: %s; this session retries in the background, and if this persists, ask the administrator to check it."
 
 // textSystemBrokerUnreachable replaces the unresponsive text when the probe
-// could not reach the system Broker's socket at all, either because this
-// account may not connect or because the dial failed another way. It does not
-// claim the Broker is running, names the socket and the original error, and
-// keeps the retry in the background.
+// could not reach the system Broker's socket at all.
 const textSystemBrokerUnreachable = "cannot reach the system Broker at %s: %s; this session retries in the background."
 
-// unavailableText builds the text shown for a failed attempt at a user or
-// test-named Broker.
 func unavailableText(reason string) string {
 	return fmt.Sprintf(textUnavailable, reason)
 }
 
-// systemBrokerUnresponsiveText builds the text shown when the system Broker's
-// socket answered but the attempt failed.
 func systemBrokerUnresponsiveText(reason string) string {
 	return fmt.Sprintf(textSystemBrokerUnresponsive, reason)
 }
 
-// systemBrokerUnreachableText builds the text shown when the system Broker's
-// socket could not be reached at all.
 func systemBrokerUnreachableText(path, reason string) string {
 	return fmt.Sprintf(textSystemBrokerUnreachable, path, reason)
 }
 
-// errNoBroker is the selection result when no Broker socket answers. Its text
-// names the two ways to start a Broker, so the model can tell the user.
 var errNoBroker = errors.New(textNoBroker)
 
-// errNoSystemBroker is the selection result when the system installation was selected,
-// by --system or as root's default, and no system Broker answers.
 var errNoSystemBroker = errors.New(textNoSystemBroker)
 
-// errNoUserBrokerSystemRunning is the default-level selection result when this
-// account's user Broker is not running but the system Broker is.
-// The text names the level option that reaches the running Broker.
 var errNoUserBrokerSystemRunning = errors.New(textNoUserBrokerSystemRunning)
 
-// openingPhrase returns the phrase that starts the error text for a call kind.
 func openingPhrase(tool string, kind callKind) string {
 	switch kind {
 	case callSend:
@@ -142,9 +111,6 @@ func openingPhrase(tool string, kind callKind) string {
 	}
 }
 
-// openingPhraseForCode returns the phrase for a Broker error. The phrase
-// follows the outcome the error code describes: a delivery_unknown result is
-// unknown whichever tool asked, and every other outcome follows the call kind.
 func openingPhraseForCode(tool string, kind callKind, code localpb.ErrorCode) string {
 	if code == localpb.ErrorCode_ERROR_CODE_DELIVERY_UNKNOWN {
 		return "Delivery unknown"
@@ -152,14 +118,12 @@ func openingPhraseForCode(tool string, kind callKind, code localpb.ErrorCode) st
 	return openingPhrase(tool, kind)
 }
 
-// toolError builds "<phrase>: <body> (code: <name>)".
 func toolError(phrase, body string, code localpb.ErrorCode) error {
 	return fmt.Errorf("%s: %s (code: %s)", phrase, body, codeName(code))
 }
 
-// notRegisteredReason turns a not_registered event reason into the sentence
-// shown to the model. A non-empty detail from the Broker names the specific
-// cause and wins over the general sentence for the reason.
+// notRegisteredReason turns a not_registered reason into the sentence shown to
+// the model; a non-empty detail from the Broker wins.
 func notRegisteredReason(r localpb.NotRegisteredReason, detail string) string {
 	if detail != "" {
 		return detail
@@ -182,7 +146,6 @@ func notRegisteredReason(r localpb.NotRegisteredReason, detail string) string {
 	}
 }
 
-// rpcError turns an error from a Local RPC into the error shown to the model.
 func rpcError(tool string, kind callKind, perm permNeed, err error) error {
 	d := errorDetail(err)
 	if d == nil {
@@ -215,8 +178,7 @@ func rpcError(tool string, kind callKind, perm permNeed, err error) error {
 }
 
 // stripResultPrefix removes a result phrase the Broker already put on a
-// message. The phrase rpcError adds is chosen from the error code, so a message
-// that names a different outcome must not keep its own phrase.
+// message, so a message naming a different outcome does not keep its own.
 func stripResultPrefix(message string) string {
 	switch {
 	case strings.HasPrefix(message, "Not sent: "):
@@ -229,8 +191,6 @@ func stripResultPrefix(message string) string {
 	return message
 }
 
-// errorDetail returns the ErrorDetail carried in the gRPC status details, or
-// nil when there is none.
 func errorDetail(err error) *localpb.ErrorDetail {
 	s, _ := status.FromError(err)
 	if s == nil {
@@ -244,13 +204,11 @@ func errorDetail(err error) *localpb.ErrorDetail {
 	return nil
 }
 
-// rpcMessage returns the gRPC status message of err, which falls back to the
-// error text when err carries no status.
 func rpcMessage(err error) string {
 	return status.Convert(err).Message()
 }
 
-// codeName returns the lower-case name of a stable error code. UNSPECIFIED and
+// codeName returns the lower-case name of an error code; UNSPECIFIED and
 // values outside the closed set are reported as internal.
 func codeName(c localpb.ErrorCode) string {
 	switch c {

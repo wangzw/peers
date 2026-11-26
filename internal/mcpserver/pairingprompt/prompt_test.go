@@ -2,6 +2,8 @@ package pairingprompt
 
 import "testing"
 
+// TestConnectPrompt checks the prompt text for one to several addresses, quoting
+// and the empty list.
 func TestConnectPrompt(t *testing.T) {
 	const key = "PKR8-A8AH-AHPS-8XHJ"
 
@@ -101,8 +103,8 @@ Or run this on the other host:
 	}
 }
 
-// TestShellQuote covers the words left bare and the ones quoted. A leading ~
-// or = is unsafe even though the same character is fine elsewhere in a word.
+// TestShellQuote checks which words are left bare and which are quoted,
+// including a leading ~ or =.
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
 		in   string

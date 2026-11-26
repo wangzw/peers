@@ -80,7 +80,7 @@ func TestInspectSocketPeerUIDError(t *testing.T) {
 }
 
 // TestDialUnixCheckedPeerUIDError refuses a connection whose peer credentials
-// cannot be read, before gRPC can use it.
+// cannot be read.
 func TestDialUnixCheckedPeerUIDError(t *testing.T) {
 	path := listenUnixProbe(t)
 	old := peerUID

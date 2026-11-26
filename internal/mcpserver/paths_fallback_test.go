@@ -7,11 +7,9 @@ import (
 	"testing"
 )
 
-// runtimeFallbackCases is the shared scenario table. internal/config carries
-// the same cases, because the two packages implement the rule separately and
-// must agree on the location. configErr there means config refuses startup;
-// here the same situation leaves the preferred path, which is where the MCP
-// client then finds no socket.
+// runtimeFallbackCases is the location-rule scenario table, duplicated in
+// internal/config; the two packages implement the rule separately and must
+// agree.
 var runtimeFallbackCases = []struct {
 	name         string
 	setup        func(t *testing.T, preferred, fallback string)
@@ -107,11 +105,8 @@ func writeFile(t *testing.T, path string) {
 	}
 }
 
-// TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied covers the owner
-// comparison: a plain directory this account does not own counts as occupied,
-// so the MCP server looks in the fallback location instead of the directory
-// another account planted. The root directory stands in for the other
-// account's, so the test needs no root and no chown.
+// TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied checks that a directory
+// owned by another account counts as occupied and the fallback location is used.
 func TestRuntimeDirTreatsAnotherAccountsDirectoryAsOccupied(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fallback rule applies to non-root accounts")

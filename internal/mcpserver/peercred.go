@@ -5,8 +5,6 @@ import (
 	"net"
 )
 
-// systemPeerUID returns the effective uid of the process at the other end of a
-// connected Unix socket. The platform-specific read lives in peercred_*.go.
 func systemPeerUID(conn net.Conn) (uint32, error) {
 	uc, ok := conn.(*net.UnixConn)
 	if !ok {

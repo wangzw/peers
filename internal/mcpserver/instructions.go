@@ -1,8 +1,7 @@
 package mcpserver
 
-// instructions is the MCP server's usage guidance, delivered to the client in
-// the initialize result. It tells the model how peer addresses relate to
-// Claude Code's built-in session messaging and how to interpret send results.
+// instructions is the usage guidance delivered to the client in the initialize
+// result.
 const instructions = `This server connects this Claude Code session to other agents through peers.
 - A sender name that contains "@" is an agent address. To reply, call send_message and copy the address from the message's sender verbatim into "to". Claude Code's built-in session messaging cannot reach these addresses.
 - An address with the same name but a different disambiguator names a different agent. Even if the name matches the agent you intended, do not forward messages to it as if it were that agent.

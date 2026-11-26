@@ -10,9 +10,8 @@ import (
 )
 
 // accountLockHeld reports whether the account lock in runtimeDir is held by a
-// running process of this account. Selection uses it to tell a live Broker from
-// a socket that merely answers. A missing lock file, one this account cannot
-// open or one owned by another account is not held.
+// running process of this account; a lock file that does not exist, cannot be
+// opened or belongs to another account counts as not held.
 func accountLockHeld(runtimeDir string) bool {
 	path := filepath.Join(runtimeDir, "broker.lock")
 	f, err := os.OpenFile(path, os.O_RDWR|unix.O_NOFOLLOW, 0)

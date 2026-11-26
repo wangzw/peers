@@ -11,9 +11,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// fakeUpdateClient answers ApplyUpdate and counts the calls. The embedded
-// LocalClient is nil: a test for one tool never reaches the other RPCs, and a
-// call to one of them fails loudly instead of returning a zero answer.
+// fakeUpdateClient answers ApplyUpdate and counts the calls; its embedded
+// LocalClient is nil, so a call to any other RPC fails loudly.
 type fakeUpdateClient struct {
 	localpb.LocalClient
 	resp  *localpb.ApplyUpdateResponse
@@ -35,8 +34,8 @@ func newUpdateTestHandler(c *fakeUpdateClient) *handlers {
 	return newHandlers(Status{Phase: PhaseConnected, Client: c, AgentID: "agent-1"})
 }
 
-// TestUpdateBroker covers the forwarded reply, the two result sentences and the
-// three failure outcomes (REQ-update-008).
+// TestUpdateBroker checks the forwarded reply, the two result sentences and the
+// failure outcomes.
 func TestUpdateBroker(t *testing.T) {
 	t.Parallel()
 
@@ -58,7 +57,6 @@ func TestUpdateBroker(t *testing.T) {
 		if out.FromVersion != "v0.1.0" || out.ToVersion != "v0.1.1" || !out.Restarting {
 			t.Errorf("result = %+v, want v0.1.0 -> v0.1.1 restarting", out)
 		}
-		// The sentence is the wording of design-mcpserver.
 		want := "Upgrading the Broker from v0.1.0 to v0.1.1; the Broker will restart and the connection will recover automatically. " +
 			"Reopen this session to use the new MCP server."
 		if out.Result != want {
@@ -77,7 +75,6 @@ func TestUpdateBroker(t *testing.T) {
 		if out.ToVersion != "" || out.Restarting {
 			t.Errorf("result = %+v, want no target version and no restart", out)
 		}
-		// The sentence is the wording of design-mcpserver.
 		if want := "The Broker is already up to date (v0.1.1)."; out.Result != want {
 			t.Errorf("Result = %q, want %q", out.Result, want)
 		}
@@ -129,9 +126,8 @@ func TestUpdateBroker(t *testing.T) {
 	})
 }
 
-// TestUpdateBrokerTimeout covers a Broker that does not finish the update: the
-// tool returns the dedicated timeout text instead of waiting for Claude Code's
-// own tool timeout. The text is asserted verbatim.
+// TestUpdateBrokerTimeout checks the dedicated text returned when the Broker
+// does not finish the update.
 func TestUpdateBrokerTimeout(t *testing.T) {
 	t.Parallel()
 

@@ -17,8 +17,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// newConfigTestHandler starts a fake Local service, connects to it, and returns
-// handlers whose status is connected for the agent "agent-1".
 func newConfigTestHandler(t *testing.T, hs fakelocal.Handlers) (*handlers, *fakelocal.Server) {
 	t.Helper()
 	path := fakelocal.SocketPath(t)
@@ -94,9 +92,8 @@ func TestRenderValue(t *testing.T) {
 	}
 }
 
-// TestGetConfig covers forwarding, value rendering, the secret marker and the
-// read-permission error text. REQ-broker-config-001, REQ-broker-config-022,
-// REQ-broker-pairing-030.
+// TestGetConfig checks forwarding, value rendering, the secret marker and the
+// read-permission error text.
 func TestGetConfig(t *testing.T) {
 	t.Parallel()
 
@@ -136,7 +133,6 @@ func TestGetConfig(t *testing.T) {
 			t.Errorf("second entry = %+v, want pairing.static_key=(set)", out.Entries[1])
 		}
 
-		// A secret entry exposes only the marker, no value alongside it.
 		b, err := json.Marshal(out.Entries[1])
 		if err != nil {
 			t.Fatalf("marshaling the secret entry: %v", err)
@@ -172,9 +168,8 @@ func TestGetConfig(t *testing.T) {
 	})
 }
 
-// TestSetBrokerOnline covers both directions, the changed flag taken from the
+// TestSetBrokerOnline checks both directions, the changed flag taken from the
 // Broker's old and new values, and the denied write.
-// REQ-broker-config-067.
 func TestSetBrokerOnline(t *testing.T) {
 	t.Parallel()
 
@@ -256,10 +251,8 @@ func TestSetBrokerOnline(t *testing.T) {
 	})
 }
 
-// TestSetConfig covers forwarding the raw value, rendering the old and new
+// TestSetConfig checks forwarding the raw value, rendering the old and new
 // values, and keeping the Broker's reason for a rejected change.
-// REQ-broker-config-002, REQ-broker-config-021, REQ-broker-config-029,
-// REQ-broker-config-032, REQ-broker-pairing-031.
 func TestSetConfig(t *testing.T) {
 	t.Parallel()
 
@@ -369,10 +362,9 @@ func TestSetConfig(t *testing.T) {
 	})
 }
 
-// TestConfigToolCallTimeouts covers get_config, set_config and
-// set_broker_online: each returns a tool error instead of waiting for a Broker
-// that never answers. The seam is short; the backstop in waitBoundedCall is the
-// test's own bound and fires on a handler that never returns.
+// TestConfigToolCallTimeouts checks that get_config, set_config and
+// set_broker_online return a tool error instead of waiting for a Broker that
+// never answers.
 func TestConfigToolCallTimeouts(t *testing.T) {
 	t.Parallel()
 

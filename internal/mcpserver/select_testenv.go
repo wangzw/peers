@@ -9,11 +9,9 @@ import (
 	"path/filepath"
 )
 
-// findNamedSocket honors PEERS_TEST_SOCKET, the test hook that replaced
-// the removed AGENT_PEER_SOCKET. The variable is read only in builds with the
-// peers_testenv tag. Its semantics are the old ones: the named socket is
-// used, a socket that does not answer is an error rather than a fall-through to
-// account selection, and the peer must be this account or root.
+// findNamedSocket uses the socket PEERS_TEST_SOCKET names, read only in
+// peers_testenv builds: a socket that does not answer is an error rather than a
+// fall-through to account selection, and the peer must be this account or root.
 func (s *selector) findNamedSocket(ctx context.Context) (target, bool, error) {
 	raw := s.environment("PEERS_TEST_SOCKET")
 	if raw == "" {
@@ -38,8 +36,6 @@ func (s *selector) findNamedSocket(ctx context.Context) (target, bool, error) {
 	}
 }
 
-// environment returns the named environment variable through the selector's
-// seam, falling back to the process environment.
 func (s *selector) environment(name string) string {
 	if s.getenv == nil {
 		return os.Getenv(name)
@@ -47,7 +43,6 @@ func (s *selector) environment(name string) string {
 	return s.getenv(name)
 }
 
-// probeDescription names a probe failure for the test hook's error text.
 func probeDescription(r probeResult) string {
 	switch r {
 	case probeMissing:

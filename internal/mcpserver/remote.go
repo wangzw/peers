@@ -6,12 +6,9 @@ import (
 )
 
 // normalizeRemote turns a git remote address into the default topic name: the
-// host name in lower case, a slash, and the repository path with its case
-// preserved. The second result is false when the address does not name a
-// remote repository, such as a local path or a file URL.
-//
-// Recognised forms are a URL with the https, http, ssh or git scheme and the
-// scp-like form git@host:org/repo.git. See REQ-topics-017.
+// lowercase host name, a slash, and the repository path with its case
+// preserved. The second result is false when the address does not name a remote
+// repository, such as a local path or a file URL.
 func normalizeRemote(raw string) (string, bool) {
 	raw = strings.TrimSpace(raw)
 
@@ -26,8 +23,6 @@ func normalizeRemote(raw string) (string, bool) {
 		default:
 			return "", false
 		}
-		// Hostname drops the user information and the port, and removes the
-		// brackets around an IPv6 address.
 		host = u.Hostname()
 		path = u.Path
 	} else {
@@ -38,9 +33,10 @@ func normalizeRemote(raw string) (string, bool) {
 		if slash := strings.Index(raw, "/"); slash >= 0 && slash < i {
 			return "", false
 		}
-		// In the scp-like form everything before the first colon is the host
-		// part; a leading user name ends at the last "@" in it. Everything
-		// after the colon is the path, even when it starts with a digit.
+		// In the scp-like form the part before the first colon is [user@]host: a
+		// leading user name ends at the last "@", and the host is what follows
+		// it. Everything after the colon is the path, even when it starts with a
+		// digit.
 		hostPart := raw[:i]
 		if at := strings.LastIndex(hostPart, "@"); at >= 0 {
 			hostPart = hostPart[at+1:]

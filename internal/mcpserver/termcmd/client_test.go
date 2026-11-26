@@ -22,7 +22,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
-// fixedSelector returns path and an unchecked dialer from every call.
 func fixedSelector(path string) Selector {
 	return func(context.Context) (string, Dialer, error) {
 		return path, func() (*grpc.ClientConn, localpb.LocalClient, error) {
@@ -35,7 +34,6 @@ func fixedSelector(path string) Selector {
 	}
 }
 
-// methodCalls counts the unary calls srv received for method.
 func methodCalls(srv *fakelocal.Server, method string) int {
 	n := 0
 	for _, c := range srv.Calls() {
@@ -46,7 +44,6 @@ func methodCalls(srv *fakelocal.Server, method string) int {
 	return n
 }
 
-// within runs fn and fails the test if it has not returned within d.
 func within(t *testing.T, d time.Duration, fn func() error) error {
 	t.Helper()
 	done := make(chan error, 1)
@@ -60,6 +57,8 @@ func within(t *testing.T, d time.Duration, fn func() error) error {
 	}
 }
 
+// TestRunStatusUsesSelectedSocket checks that RunStatus connects through the
+// selected socket, performs the version handshake and writes the status.
 func TestRunStatusUsesSelectedSocket(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	resp := &localpb.StatusResponse{
@@ -96,9 +95,8 @@ func TestRunStatusUsesSelectedSocket(t *testing.T) {
 	}
 }
 
-// TestRunStatusDiagnosticsOnly checks that the status lines are written and
-// the sentinel comes back, so the command can exit with 1 without repeating the
-// reason on standard error.
+// TestRunStatusDiagnosticsOnly checks that a diagnostics-only Broker's status
+// lines are written and ErrDiagnosticsOnly is returned.
 func TestRunStatusDiagnosticsOnly(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	const reason = "config parse failed"
@@ -130,6 +128,8 @@ func TestRunStatusDiagnosticsOnly(t *testing.T) {
 	}
 }
 
+// TestRunStatusSelectorError checks that a selector failure is returned as
+// cannot reach the Broker and nothing is written.
 func TestRunStatusSelectorError(t *testing.T) {
 	const noBroker = "no Broker is available for this account; if a system Broker is installed on this host, ask the administrator to start it. Otherwise start a user Broker with `peers service install`, or run `peers service run` in a terminal outside the Claude Code session (a Broker started inside the session exits with code 6)"
 	want := "cannot reach the Broker: " + noBroker
@@ -145,6 +145,8 @@ func TestRunStatusSelectorError(t *testing.T) {
 	}
 }
 
+// TestRunStatusUnreachable checks that an unreachable socket is reported with
+// its path and nothing is written.
 func TestRunStatusUnreachable(t *testing.T) {
 	path := socktest.Path(t, "missing.sock")
 	var got bytes.Buffer
@@ -162,9 +164,8 @@ func TestRunStatusUnreachable(t *testing.T) {
 	}
 }
 
-// TestRunStatusHelloUnavailableNeutralizesMessage checks that the Broker's text
-// on a failed Hello handshake is escaped before it reaches the terminal, since
-// the peer process chose it.
+// TestRunStatusHelloUnavailableNeutralizesMessage checks that text from a failed
+// Hello handshake is escaped before it reaches the terminal.
 func TestRunStatusHelloUnavailableNeutralizesMessage(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	const raw = "starting up\x1b[31m"
@@ -190,6 +191,8 @@ func TestRunStatusHelloUnavailableNeutralizesMessage(t *testing.T) {
 	}
 }
 
+// TestRunStatusVersionMismatch checks that a Broker speaking another protocol
+// version yields a VersionMismatchError and no Status call.
 func TestRunStatusVersionMismatch(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
@@ -212,6 +215,8 @@ func TestRunStatusVersionMismatch(t *testing.T) {
 	}
 }
 
+// TestRunStatusHelloVersionMismatchError checks that a version_mismatch error
+// from Hello names the mismatch and advises restarting with this binary.
 func TestRunStatusHelloVersionMismatchError(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
@@ -239,6 +244,8 @@ func TestRunStatusHelloVersionMismatchError(t *testing.T) {
 	}
 }
 
+// TestRunStatusPermissionDenied checks that a permission failure is described
+// with its error code.
 func TestRunStatusPermissionDenied(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -260,7 +267,6 @@ func TestRunStatusPermissionDenied(t *testing.T) {
 	}
 }
 
-// sampleAuditEvents builds five events in arrival order.
 func sampleAuditEvents() []*localpb.AuditEvent {
 	const base = "2026-11-18T10:00:00Z"
 	start, err := time.Parse(time.RFC3339, base)
@@ -278,8 +284,6 @@ func sampleAuditEvents() []*localpb.AuditEvent {
 	return events
 }
 
-// auditRecorder records the Limit of each Audit request in a concurrency-safe
-// way.
 type auditRecorder struct {
 	mu   sync.Mutex
 	reqs []uint32
@@ -297,6 +301,8 @@ func (r *auditRecorder) limits() []uint32 {
 	return append([]uint32(nil), r.reqs...)
 }
 
+// TestRunAuditStreamsWithLimit checks that RunAudit passes the limit to the
+// server and writes one line per returned event.
 func TestRunAuditStreamsWithLimit(t *testing.T) {
 	events := sampleAuditEvents()
 
@@ -352,6 +358,8 @@ func TestRunAuditStreamsWithLimit(t *testing.T) {
 	}
 }
 
+// TestRunAuditPermissionDenied checks that an Audit stream permission failure is
+// described and nothing is written.
 func TestRunAuditPermissionDenied(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -376,6 +384,8 @@ func TestRunAuditPermissionDenied(t *testing.T) {
 	}
 }
 
+// TestRunAuditErrorAfterEvents checks that events written before a stream error
+// stay in the output.
 func TestRunAuditErrorAfterEvents(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	events := sampleAuditEvents()[:2]
@@ -407,7 +417,6 @@ func TestRunAuditErrorAfterEvents(t *testing.T) {
 	}
 }
 
-// requestOf returns the request of the first call to method.
 func requestOf[T any](t *testing.T, srv *fakelocal.Server, method string) T {
 	t.Helper()
 	for _, c := range srv.Calls() {
@@ -423,6 +432,8 @@ func requestOf[T any](t *testing.T, srv *fakelocal.Server, method string) T {
 	return zero
 }
 
+// TestRunConfigGetAll checks that an empty key fetches every entry and a secret
+// entry shows only that it is set.
 func TestRunConfigGetAll(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	resp := &localpb.GetConfigResponse{Entries: []*localpb.ConfigEntry{
@@ -456,6 +467,8 @@ func TestRunConfigGetAll(t *testing.T) {
 	}
 }
 
+// TestRunConfigGetOneKey checks that a key fetches that entry and passes the key
+// to the Broker.
 func TestRunConfigGetOneKey(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	resp := &localpb.GetConfigResponse{Entries: []*localpb.ConfigEntry{
@@ -479,6 +492,7 @@ func TestRunConfigGetOneKey(t *testing.T) {
 	}
 }
 
+// TestRunConfigGetEmpty checks that an empty reply writes nothing.
 func TestRunConfigGetEmpty(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -496,6 +510,8 @@ func TestRunConfigGetEmpty(t *testing.T) {
 	}
 }
 
+// TestRunConfigSet checks that the old and new values are written and the key
+// and value are sent to the Broker.
 func TestRunConfigSet(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
@@ -520,6 +536,8 @@ func TestRunConfigSet(t *testing.T) {
 	}
 }
 
+// TestRunConfigSetPermissionDeniedIncludesPath checks that a denied write keeps
+// the described text, including the configuration file path, and writes nothing.
 func TestRunConfigSetPermissionDeniedIncludesPath(t *testing.T) {
 	const configFile = "/etc/peers/config.yaml"
 	path := fakelocal.SocketPath(t)
@@ -545,9 +563,8 @@ func TestRunConfigSetPermissionDeniedIncludesPath(t *testing.T) {
 	}
 }
 
-// TestRunSetOnline covers both directions: the stored broker.offline value is
-// the opposite of the requested state, and the success line reports the state
-// (REQ-broker-config-066).
+// TestRunSetOnline checks that the stored broker.offline value is the opposite of
+// the requested state and the success line reports that state.
 func TestRunSetOnline(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -608,6 +625,8 @@ func TestRunSetOnlinePermissionDenied(t *testing.T) {
 	}
 }
 
+// TestRunPairingKeyCreate checks that a created key is written as the pairing key
+// output.
 func TestRunPairingKeyCreate(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	resp := &localpb.CreatePairingKeyResponse{
@@ -637,9 +656,8 @@ func TestRunPairingKeyCreate(t *testing.T) {
 	}
 }
 
-// TestRunPairingKeyCreateNotListening checks that the terminal tells the user
-// how to pair from this side, in the command-line form rather than the MCP tool
-// name that the Broker's own message no longer carries.
+// TestRunPairingKeyCreateNotListening checks that a Broker that cannot listen
+// gets the terminal pairing command in the error and nothing is written.
 func TestRunPairingKeyCreateNotListening(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -664,6 +682,8 @@ func TestRunPairingKeyCreateNotListening(t *testing.T) {
 	}
 }
 
+// TestRunPeerList checks that RunPeerList writes the listed Brokers through the
+// selected socket.
 func TestRunPeerList(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	resp := &localpb.ListBrokersResponse{Local: &localpb.LocalBrokerState{}, Brokers: []*localpb.BrokerInfo{
@@ -707,6 +727,7 @@ func TestRunPeerList(t *testing.T) {
 	}
 }
 
+// TestRunPeerListEmpty checks that an empty Broker list writes "Brokers: none".
 func TestRunPeerListEmpty(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -757,9 +778,8 @@ func TestRunPeerListShowsLocalState(t *testing.T) {
 	}
 }
 
-// TestPeerNamesCollectsAliasesAndFingerprints checks the disconnect completion
-// candidates: a paired Broker contributes its alias and fingerprint, one
-// without an alias only the fingerprint, and a non-peer nothing.
+// TestPeerNamesCollectsAliasesAndFingerprints checks that PeerNames returns the
+// alias and fingerprint of each paired Broker and nothing for a non-peer.
 func TestPeerNamesCollectsAliasesAndFingerprints(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -782,8 +802,8 @@ func TestPeerNamesCollectsAliasesAndFingerprints(t *testing.T) {
 	}
 }
 
-// TestRunPeerListBrokerDegraded checks the diagnostics-only path: the Broker
-// refuses ListBrokers, and the command reports the described error.
+// TestRunPeerListBrokerDegraded checks that RunPeerList reports the described
+// error when the Broker refuses ListBrokers.
 func TestRunPeerListBrokerDegraded(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fail, err := status.New(codes.FailedPrecondition, "config parse failed").WithDetails(&localpb.ErrorDetail{
@@ -809,6 +829,8 @@ func TestRunPeerListBrokerDegraded(t *testing.T) {
 	}
 }
 
+// TestRunPeerConnect checks that the result line and each warning are written and
+// the request carries the address, key and alias.
 func TestRunPeerConnect(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fingerprint := bytes.Repeat([]byte{0xcd}, 32)
@@ -848,6 +870,8 @@ func TestRunPeerConnect(t *testing.T) {
 	}
 }
 
+// TestRunPeerConnectNoWarnings checks that a reply with no warnings writes nothing
+// to the warning writer.
 func TestRunPeerConnectNoWarnings(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -868,8 +892,8 @@ func TestRunPeerConnectNoWarnings(t *testing.T) {
 	}
 }
 
-// TestRunPeerConnectNeedsLocalAlias checks that the terminal asks for --alias,
-// the command's own form of the local_alias parameter.
+// TestRunPeerConnectNeedsLocalAlias checks that RunPeerConnect names --alias when
+// the Broker needs a local alias.
 func TestRunPeerConnectNeedsLocalAlias(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -897,6 +921,8 @@ func TestRunPeerConnectNeedsLocalAlias(t *testing.T) {
 	}
 }
 
+// TestRunPeerDisconnect checks that the disconnect line is written and the
+// reference is sent to the Broker.
 func TestRunPeerDisconnect(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
@@ -917,6 +943,8 @@ func TestRunPeerDisconnect(t *testing.T) {
 	}
 }
 
+// TestRunPeerDisconnectError checks that an unknown peer is described with its
+// error code and the broker list command.
 func TestRunPeerDisconnectError(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
@@ -944,6 +972,8 @@ func TestRunPeerDisconnectError(t *testing.T) {
 	}
 }
 
+// TestRunPeerListSelectorError checks that a selector failure is returned as
+// cannot reach the Broker and nothing is written.
 func TestRunPeerListSelectorError(t *testing.T) {
 	const noBroker = "no Broker is available for this account"
 	var got bytes.Buffer
@@ -958,6 +988,8 @@ func TestRunPeerListSelectorError(t *testing.T) {
 	}
 }
 
+// TestRunAuditCancel checks that RunAudit returns after its context is cancelled
+// while the stream is still open.
 func TestRunAuditCancel(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	sent := make(chan struct{})
@@ -989,14 +1021,14 @@ func TestRunAuditCancel(t *testing.T) {
 	cancel()
 	select {
 	case err := <-done:
-		// The cancellation is the point of the test; the error itself is
-		// the reported context error and is not asserted here.
 		_ = err
 	case <-time.After(eventTimeout):
 		t.Fatalf("RunAudit did not return within %s after the context was cancelled", eventTimeout)
 	}
 }
 
+// TestRunApplyUpdateUsesSelectedSocket checks that the update result is returned
+// through the selected socket.
 func TestRunApplyUpdateUsesSelectedSocket(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	h := fakelocal.AdminHandlers()
@@ -1017,6 +1049,9 @@ func TestRunApplyUpdateUsesSelectedSocket(t *testing.T) {
 	}
 }
 
+// TestRunApplyUpdateDescribesBrokerErrors checks that a Broker error becomes an
+// ApplyUpdateError that keeps the described text and is not a failed
+// precondition.
 func TestRunApplyUpdateDescribesBrokerErrors(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	h := fakelocal.AdminHandlers()
@@ -1040,6 +1075,8 @@ func TestRunApplyUpdateDescribesBrokerErrors(t *testing.T) {
 	}
 }
 
+// TestRunApplyUpdateRecognizesFailedPrecondition checks that a failed
+// precondition from the Broker is recognized by IsFailedPrecondition.
 func TestRunApplyUpdateRecognizesFailedPrecondition(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	h := fakelocal.AdminHandlers()
@@ -1057,6 +1094,8 @@ func TestRunApplyUpdateRecognizesFailedPrecondition(t *testing.T) {
 	}
 }
 
+// TestRunUpdateStatusUsesSelectedSocket checks that the current and available
+// versions are returned through the selected socket.
 func TestRunUpdateStatusUsesSelectedSocket(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	h := fakelocal.AdminHandlers()

@@ -14,6 +14,8 @@ import (
 	"github.com/wangzw/peers/internal/mcpserver/pairingprompt"
 )
 
+// TestWriteStatusListsAgentsAndTopics checks the two tables, their sorting and
+// the fingerprint, status and address columns.
 func TestWriteStatusListsAgentsAndTopics(t *testing.T) {
 	fingerprint := make([]byte, 32)
 	for i := range fingerprint {
@@ -69,6 +71,8 @@ func TestWriteStatusListsAgentsAndTopics(t *testing.T) {
 	}
 }
 
+// TestWriteStatusEmptySections checks that empty agent and peer sections are
+// written as "none".
 func TestWriteStatusEmptySections(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteStatus(&buf, &localpb.StatusResponse{}); err != nil {
@@ -79,9 +83,8 @@ func TestWriteStatusEmptySections(t *testing.T) {
 	}
 }
 
-// TestWriteStatusBrokerState fixes the status lines for the combinations of
-// degraded level and offline, and checks that only diagnostics-only hides the
-// sections.
+// TestWriteStatusBrokerState checks the status lines and section hiding for each
+// degraded and offline combination.
 func TestWriteStatusBrokerState(t *testing.T) {
 	const reason = "listen address :17443 is unavailable: address already in use"
 	const fix = "peers config set broker.listen <free address>"
@@ -171,6 +174,8 @@ func TestWriteStatusDiagnosticsOnlyKeepsUpdateLineOut(t *testing.T) {
 	}
 }
 
+// TestWriteStatusPeersOmitted checks that a status with only agents still ends
+// with the empty peers line.
 func TestWriteStatusPeersOmitted(t *testing.T) {
 	resp := &localpb.StatusResponse{
 		Agents: []*localpb.AgentStatusEntry{
@@ -186,6 +191,8 @@ func TestWriteStatusPeersOmitted(t *testing.T) {
 	}
 }
 
+// TestWriteStatusFingerprintFullHex checks that a fingerprint is written as its
+// full lowercase hex.
 func TestWriteStatusFingerprintFullHex(t *testing.T) {
 	fingerprint := bytes.Repeat([]byte{0xab}, 32)
 	resp := &localpb.StatusResponse{
@@ -201,6 +208,7 @@ func TestWriteStatusFingerprintFullHex(t *testing.T) {
 	}
 }
 
+// TestWriteStatusSortsPeers checks that peers are listed in alias order.
 func TestWriteStatusSortsPeers(t *testing.T) {
 	resp := &localpb.StatusResponse{
 		Peers: []*localpb.BrokerInfo{
@@ -223,6 +231,8 @@ func TestWriteStatusSortsPeers(t *testing.T) {
 	}
 }
 
+// TestWriteAuditEventFields checks the audit line's time, name and fields for a
+// configuration change.
 func TestWriteAuditEventFields(t *testing.T) {
 	ev := &localpb.AuditEvent{
 		Time:     timestamppb.New(time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)),
@@ -244,6 +254,8 @@ func TestWriteAuditEventFields(t *testing.T) {
 	}
 }
 
+// TestWriteAuditEventQuotingAndCount checks that a quoted detail and a non-zero
+// count are written and a zero count is omitted.
 func TestWriteAuditEventQuotingAndCount(t *testing.T) {
 	fingerprint := bytes.Repeat([]byte{0xcd}, 32)
 	ev := &localpb.AuditEvent{
@@ -277,6 +289,8 @@ func TestWriteAuditEventQuotingAndCount(t *testing.T) {
 	}
 }
 
+// TestWriteConfigEntries checks that entries are sorted by key, a secret shows
+// "set" and an unset value shows "-".
 func TestWriteConfigEntries(t *testing.T) {
 	entries := []*localpb.ConfigEntry{
 		{Key: "topics.auto_join", Value: &localpb.ConfigValue{Value: &localpb.ConfigValue_BoolValue{BoolValue: true}}},
@@ -299,6 +313,8 @@ func TestWriteConfigEntries(t *testing.T) {
 	}
 }
 
+// TestWriteConfigEntriesSecretUnset checks that an unset secret is written as
+// "unset".
 func TestWriteConfigEntriesSecretUnset(t *testing.T) {
 	entries := []*localpb.ConfigEntry{
 		{Key: "pairing.static_key", Value: &localpb.ConfigValue{Value: &localpb.ConfigValue_SecretIsSet{SecretIsSet: false}}},
@@ -313,6 +329,7 @@ func TestWriteConfigEntriesSecretUnset(t *testing.T) {
 	}
 }
 
+// TestWriteConfigEntriesEmpty checks that no entries write nothing.
 func TestWriteConfigEntriesEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteConfigEntries(&buf, nil); err != nil {
@@ -323,6 +340,8 @@ func TestWriteConfigEntriesEmpty(t *testing.T) {
 	}
 }
 
+// TestWriteConfigChange checks the change line for a previous value and for an
+// unset old value.
 func TestWriteConfigChange(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -359,6 +378,8 @@ func TestWriteConfigChange(t *testing.T) {
 	}
 }
 
+// TestWritePairingKey checks the key, expiry, addresses and multi-address
+// connect prompt.
 func TestWritePairingKey(t *testing.T) {
 	resp := &localpb.CreatePairingKeyResponse{
 		Key:            "one-time-key",
@@ -387,6 +408,8 @@ func TestWritePairingKey(t *testing.T) {
 	}
 }
 
+// TestWritePairingKeySingleAddress checks the connect prompt for a single
+// address.
 func TestWritePairingKeySingleAddress(t *testing.T) {
 	resp := &localpb.CreatePairingKeyResponse{
 		Key:            "one-time-key",
@@ -413,9 +436,8 @@ func TestWritePairingKeySingleAddress(t *testing.T) {
 	}
 }
 
-// TestWritePairingKeyUsesSharedConnectPrompt checks that the prompt the terminal
-// appends is exactly what the function shared with the MCP tool returns, so the
-// two outputs cannot drift apart.
+// TestWritePairingKeyUsesSharedConnectPrompt checks that WritePairingKey appends
+// the prompt pairingprompt.ConnectPrompt returns.
 func TestWritePairingKeyUsesSharedConnectPrompt(t *testing.T) {
 	resp := &localpb.CreatePairingKeyResponse{
 		Key:            "one-time-key",
@@ -436,6 +458,7 @@ func TestWritePairingKeyUsesSharedConnectPrompt(t *testing.T) {
 	}
 }
 
+// TestWritePairingKeyEmpty checks the output for a nil response.
 func TestWritePairingKeyEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WritePairingKey(&buf, nil); err != nil {
@@ -447,8 +470,8 @@ func TestWritePairingKeyEmpty(t *testing.T) {
 	}
 }
 
-// TestWritePairingKeyNoAddressNoPrompt checks that a response without an
-// address keeps the old output: the prompt needs an address to name.
+// TestWritePairingKeyNoAddressNoPrompt checks that a response without an address
+// prints no prompt.
 func TestWritePairingKeyNoAddressNoPrompt(t *testing.T) {
 	resp := &localpb.CreatePairingKeyResponse{Key: "one-time-key"}
 
@@ -463,6 +486,8 @@ func TestWritePairingKeyNoAddressNoPrompt(t *testing.T) {
 	}
 }
 
+// TestWriteBrokerList checks the table's alias order and its peer, status,
+// direction and address columns.
 func TestWriteBrokerList(t *testing.T) {
 	fingerprint := func(b byte) []byte { return bytes.Repeat([]byte{b}, 32) }
 	brokers := []*localpb.BrokerInfo{
@@ -509,6 +534,7 @@ func TestWriteBrokerList(t *testing.T) {
 	}
 }
 
+// TestWriteBrokerListEmpty checks that no Brokers write "Brokers: none".
 func TestWriteBrokerListEmpty(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteBrokerList(&buf, nil, &localpb.LocalBrokerState{}); err != nil {
@@ -519,8 +545,8 @@ func TestWriteBrokerListEmpty(t *testing.T) {
 	}
 }
 
-// TestWriteBrokerListWithoutLocalState checks that a response without local
-// state is rejected before anything is written: every peers Broker reports it.
+// TestWriteBrokerListWithoutLocalState checks that a response without local state
+// is rejected and nothing is written.
 func TestWriteBrokerListWithoutLocalState(t *testing.T) {
 	var buf bytes.Buffer
 	err := WriteBrokerList(&buf, nil, nil)
@@ -586,6 +612,8 @@ func TestWriteBrokerListBrokerState(t *testing.T) {
 	}
 }
 
+// TestWritePairingResult checks the pairing result line with alias and
+// fingerprint.
 func TestWritePairingResult(t *testing.T) {
 	resp := &localpb.ConnectResponse{
 		Alias:       "hostB",
@@ -601,6 +629,8 @@ func TestWritePairingResult(t *testing.T) {
 	}
 }
 
+// TestWriteWarnings checks that each warning is written on its own line and an
+// empty list writes nothing.
 func TestWriteWarnings(t *testing.T) {
 	warnings := []*localpb.Warning{
 		{Message: "fingerprint mismatch: directory card differs"},
@@ -625,6 +655,8 @@ func TestWriteWarnings(t *testing.T) {
 	}
 }
 
+// TestFormatConfigValueKinds checks the rendering of every ConfigValue kind and
+// the empty forms.
 func TestFormatConfigValueKinds(t *testing.T) {
 	cases := []struct {
 		name  string
@@ -649,6 +681,8 @@ func TestFormatConfigValueKinds(t *testing.T) {
 	}
 }
 
+// TestWriteStatusShowsAvailableUpdate checks that an available version adds the
+// update line after the sections.
 func TestWriteStatusShowsAvailableUpdate(t *testing.T) {
 	resp := &localpb.StatusResponse{
 		CurrentVersion:   "0.1.1",
@@ -665,6 +699,8 @@ func TestWriteStatusShowsAvailableUpdate(t *testing.T) {
 	}
 }
 
+// TestWriteStatusOmitsUpdateLineWithoutAvailableVersion checks that no update
+// line is written without an available version.
 func TestWriteStatusOmitsUpdateLineWithoutAvailableVersion(t *testing.T) {
 	resp := &localpb.StatusResponse{CurrentVersion: "0.1.1"}
 	var buf bytes.Buffer
@@ -676,7 +712,6 @@ func TestWriteStatusOmitsUpdateLineWithoutAvailableVersion(t *testing.T) {
 	}
 }
 
-// escapeForTest returns how sanitizeText renders r.
 func escapeForTest(r rune) string {
 	if r < 0x100 {
 		return fmt.Sprintf(`\x%02x`, r)
@@ -684,8 +719,6 @@ func escapeForTest(r rune) string {
 	return fmt.Sprintf(`\u%04x`, r)
 }
 
-// assertNoControlCharacters fails when out carries a raw character from chars,
-// and requires its escaped form to appear instead.
 func assertNoControlCharacters(t *testing.T, out string, chars ...rune) {
 	t.Helper()
 	for _, r := range chars {
@@ -698,8 +731,9 @@ func assertNoControlCharacters(t *testing.T, out string, chars ...rune) {
 	}
 }
 
-// TestTerminalOutputNeutralizesControlCharacters covers every terminal path
-// that prints a string received from the Broker.
+// TestTerminalOutputNeutralizesControlCharacters checks that control and format
+// characters in strings from the Broker are escaped in the list, status, warning,
+// degraded, audit and pairing key output.
 func TestTerminalOutputNeutralizesControlCharacters(t *testing.T) {
 	esc, bel, bidi := rune(0x1b), rune(0x07), rune(0x202e)
 	evil := string(esc) + "]52;c;AAAA" + string(bel) + "x" + string(bidi) + "y"
@@ -793,9 +827,8 @@ func TestTerminalOutputNeutralizesControlCharacters(t *testing.T) {
 	})
 }
 
-// TestSanitizeText pins every branch of sanitizeText, including the input forms
-// a valid rune loop does not reach: an invalid UTF-8 byte, a C1 control, a
-// format character above U+FFFF and the Unicode line and paragraph separators.
+// TestSanitizeText checks how sanitizeText renders control, format and invalid
+// UTF-8 input.
 func TestSanitizeText(t *testing.T) {
 	cases := []struct {
 		name string
@@ -824,8 +857,7 @@ func TestSanitizeText(t *testing.T) {
 }
 
 // TestSortBrokersBreaksAliasTiesByFingerprint checks that brokers sharing an
-// alias are ordered by fingerprint rather than by their position in the input,
-// which is what a stable sort keeps when no tie-break is applied.
+// alias are ordered by fingerprint.
 func TestSortBrokersBreaksAliasTiesByFingerprint(t *testing.T) {
 	low := bytes.Repeat([]byte{0x01}, 32)
 	high := bytes.Repeat([]byte{0xff}, 32)

@@ -10,11 +10,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// shortTempDir returns a temporary directory at a short path. A Unix socket
-// path is limited to 104 bytes on macOS, and t.TempDir() there lands under
-// /var/folders/<long account directory>/T, which leaves too little room for the
-// socket below it. /tmp keeps the whole path short on every platform these
-// tests run on.
+// shortTempDir returns a temporary directory under /tmp, because a Unix socket
+// path is limited to 104 bytes on macOS and t.TempDir() is too long there.
 func shortTempDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("/tmp", "peers-")
@@ -25,7 +22,6 @@ func shortTempDir(t *testing.T) string {
 	return dir
 }
 
-// listenUnix starts a real Unix socket at path and keeps it open for the test.
 func listenUnix(t *testing.T, path string) {
 	t.Helper()
 	ln, err := net.Listen("unix", path)
@@ -35,8 +31,6 @@ func listenUnix(t *testing.T, path string) {
 	t.Cleanup(func() { _ = ln.Close() })
 }
 
-// holdAccountLock takes the account lock at path and keeps it for the test,
-// standing in for a Broker that is running.
 func holdAccountLock(t *testing.T, path string) {
 	t.Helper()
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
@@ -50,11 +44,9 @@ func holdAccountLock(t *testing.T, path string) {
 	t.Cleanup(func() { _ = f.Close() })
 }
 
-// TestFindUsesFallbackSocketAfterTakenDirDisappears covers the occupant that
-// deletes the taken /tmp directory: the location rule alone would send the MCP
-// server back to the preferred path, but the Broker is still running from the
-// fallback directory. Selection probes both locations and uses the fallback
-// socket.
+// TestFindUsesFallbackSocketAfterTakenDirDisappears checks that selection uses
+// the fallback socket when the occupying directory disappears but the Broker
+// still runs from the fallback location.
 func TestFindUsesFallbackSocketAfterTakenDirDisappears(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("the fallback rule applies to non-root accounts")
@@ -74,8 +66,6 @@ func TestFindUsesFallbackSocketAfterTakenDirDisappears(t *testing.T) {
 	listenUnix(t, sock)
 	holdAccountLock(t, filepath.Join(runDir, "broker.lock"))
 
-	// The occupant removes the taken directory. Resolving the location alone now
-	// names the preferred path again.
 	if err := os.Remove(preferred); err != nil {
 		t.Fatalf("remove taken directory: %v", err)
 	}

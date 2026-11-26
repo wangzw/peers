@@ -15,8 +15,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
-// recordingAfter returns an after function that records each requested wait and
-// releases it at once, so tests never sleep.
 func recordingAfter() (func(time.Duration) <-chan time.Time, func() []time.Duration) {
 	var waits []time.Duration
 	after := func(d time.Duration) <-chan time.Time {
@@ -42,8 +40,8 @@ func wantWaits(t *testing.T, got []time.Duration, want ...time.Duration) {
 	}
 }
 
-// REQ-broker-config-026: the removed AGENT_PEER_SOCKET no longer influences
-// selection; the user Broker of the account wins.
+// TestSelectIgnoresSocketEnvironment checks that AGENT_PEER_SOCKET does not
+// influence selection and the account's user Broker wins.
 func TestSelectIgnoresSocketEnvironment(t *testing.T) {
 	envPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, envPath, fakelocal.Handlers{})
@@ -68,7 +66,8 @@ func TestSelectIgnoresSocketEnvironment(t *testing.T) {
 	}
 }
 
-// The user Broker wins over the system one (design:85).
+// TestSelectUserBeforeSystem checks that the user Broker wins over the system
+// one.
 func TestSelectUserBeforeSystem(t *testing.T) {
 	userPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, userPath, fakelocal.Handlers{})
@@ -91,13 +90,12 @@ func TestSelectUserBeforeSystem(t *testing.T) {
 	}
 }
 
+// TestSelectSystemOnly checks that the system Broker is selected when no user
+// Broker answers.
 func TestSelectSystemOnly(t *testing.T) {
 	systemPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, systemPath, fakelocal.Handlers{})
 
-	// The fake server runs as the test account, while a system Broker
-	// must run as root. Pretend the peer is root so the rule is exercised on
-	// the real probe.
 	old := peerUID
 	peerUID = func(net.Conn) (uint32, error) { return 0, nil }
 	t.Cleanup(func() { peerUID = old })
@@ -118,9 +116,8 @@ func TestSelectSystemOnly(t *testing.T) {
 	}
 }
 
-// A system socket the account may not use is not retried, and with no
-// user Broker there is nothing to select (REQ-broker-config-027,
-// REQ-broker-config-038).
+// TestFindSystemDeniedReturnsNoBroker checks that a system socket this account
+// may not use is not retried and selection finds no Broker.
 func TestFindSystemDeniedReturnsNoBroker(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -148,9 +145,8 @@ func TestFindSystemDeniedReturnsNoBroker(t *testing.T) {
 	}
 }
 
-// A socket served by another account must not be selected: that process would
-// receive the registration frame, message bodies, pairing keys and configuration
-// writes.
+// TestSelectRejectsForeignUserSocket checks that a user socket served by another
+// account is not selected.
 func TestSelectRejectsForeignUserSocket(t *testing.T) {
 	userPath := fakelocal.SocketPath(t)
 	fakelocal.Start(t, userPath, fakelocal.Handlers{})
@@ -180,9 +176,8 @@ func TestSelectRejectsForeignUserSocket(t *testing.T) {
 	}
 }
 
-// Root may serve the system socket but not the user one of a
-// regular account. The real peer check, not a stub probe, sees uid 0 on the
-// account's socket.
+// TestSelectRejectsRootServedUserSocket checks that a user socket served by
+// root, rather than by the account, is rejected.
 func TestSelectRejectsRootServedUserSocket(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root's own user socket is served by root")
@@ -210,10 +205,8 @@ func TestSelectRejectsRootServedUserSocket(t *testing.T) {
 	}
 }
 
-// A system socket served by a non-root account is unusable. With no user
-// Broker there is nothing to select, and the mismatch is reported rather than
-// falling through to the no-Broker text that sends the user to ask the
-// administrator to start a system Broker.
+// TestFindNonRootSystemSocketReportsMismatch checks that a system socket served
+// by a non-root account reports the peer mismatch rather than no Broker.
 func TestFindNonRootSystemSocketReportsMismatch(t *testing.T) {
 	userPath := fakelocal.SocketPath(t)
 	systemPath := socktest.Path(t, "system.sock")
@@ -243,8 +236,8 @@ func TestFindNonRootSystemSocketReportsMismatch(t *testing.T) {
 	}
 }
 
-// No Broker at all is an error whose text names both ways to start one
-// (REQ-broker-config-038).
+// TestFindNoBroker checks that no Broker at all is an error whose text names
+// both ways to start one.
 func TestFindNoBroker(t *testing.T) {
 	s := &selector{
 		getenv:       func(string) string { return "" },
@@ -264,8 +257,8 @@ func TestFindNoBroker(t *testing.T) {
 	}
 }
 
-// For root the user and system sockets are one path, so only one
-// probe runs and the target is treated as the user socket.
+// TestSelectRootSharedSocketPath checks that when the user and system sockets
+// are one path only one probe runs and the target is the user socket.
 func TestSelectRootSharedSocketPath(t *testing.T) {
 	same := socktest.Path(t, "broker.sock")
 	probes := 0
@@ -292,7 +285,8 @@ func TestSelectRootSharedSocketPath(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-026
+// TestFindSystemRefusedRetriesThenNoBroker checks that a refused system socket
+// is retried for the full deadline and then reported as no Broker.
 func TestFindSystemRefusedRetriesThenNoBroker(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -333,6 +327,8 @@ func TestFindSystemRefusedRetriesThenNoBroker(t *testing.T) {
 	}
 }
 
+// TestSelectSystemRefusedThenUp checks that a system socket refusing connections
+// is selected once it starts answering.
 func TestSelectSystemRefusedThenUp(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -366,6 +362,9 @@ func TestSelectSystemRefusedThenUp(t *testing.T) {
 	wantWaits(t, waits(), 250*time.Millisecond, 500*time.Millisecond)
 }
 
+// TestFindSystemRefusedRetries checks that a refused system socket is retried
+// with the backoff schedule plus the remaining wait, and then reported as no
+// Broker.
 func TestFindSystemRefusedRetries(t *testing.T) {
 	systemPath := socktest.Path(t, "system.sock")
 	after, waits := recordingAfter()
@@ -397,11 +396,8 @@ func TestFindSystemRefusedRetries(t *testing.T) {
 	)
 }
 
-// A system socket that refuses connections can be taken by another account
-// while the Broker restarts. That account may not serve the system Broker, so
-// the retry reports the same peer mismatch the first probe reports instead of
-// running out the retry deadline and telling the user to ask the administrator
-// to start a system Broker.
+// TestFindSystemRefusedThenWrongPeerReportsMismatch checks that a peer mismatch
+// during the retry ends it at once with the peer mismatch error.
 func TestFindSystemRefusedThenWrongPeerReportsMismatch(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -418,8 +414,6 @@ func TestFindSystemRefusedThenWrongPeerReportsMismatch(t *testing.T) {
 				return probeInfo{Outcome: probeMissing}
 			}
 			systemProbes++
-			// The level's first probe and the retry's own first probe both
-			// see a refused socket; the retry then finds another account.
 			if systemProbes <= 2 {
 				return probeInfo{Outcome: probeRefused}
 			}
@@ -439,17 +433,14 @@ func TestFindSystemRefusedThenWrongPeerReportsMismatch(t *testing.T) {
 	if errors.Is(err, errNoSystemBroker) {
 		t.Fatalf("error = %v, want the peer mismatch rather than a missing system Broker", err)
 	}
-	// The mismatch ends the retry at the first wait instead of after the whole
-	// deadline.
 	wantWaits(t, waits(), 250*time.Millisecond)
 	if systemProbes != 3 {
 		t.Fatalf("system socket probed %d times, want 3 (level, retry start, one retry)", systemProbes)
 	}
 }
 
-// REQ-broker-config-055: a command that names a level talks to that level's
-// Broker, so the two explicit levels pick different sockets even when both
-// Brokers answer.
+// TestFindAtLevelSelectsOnlyThatLevel checks that each explicit level picks its
+// own socket even when both Brokers answer.
 func TestFindAtLevelSelectsOnlyThatLevel(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -480,9 +471,8 @@ func TestFindAtLevelSelectsOnlyThatLevel(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-055: --user must not fall through to a running system
-// Broker; otherwise the option would not decide which Broker the command talks
-// to.
+// TestFindAtLevelUserDoesNotFallThrough checks that --user does not fall through
+// to a running system Broker.
 func TestFindAtLevelUserDoesNotFallThrough(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -508,10 +498,8 @@ func TestFindAtLevelUserDoesNotFallThrough(t *testing.T) {
 	}
 }
 
-// TestFindForLevelExplainsAnEmptySelection checks the error text of an empty
-// selection. A named --system reports the system Broker as
-// unavailable; a defaulted selection points at --system when only the system
-// Broker answers; a named --user keeps the generic text.
+// TestFindForLevelExplainsAnEmptySelection checks the error text an empty
+// selection returns for each level.
 func TestFindForLevelExplainsAnEmptySelection(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -531,9 +519,6 @@ func TestFindForLevelExplainsAnEmptySelection(t *testing.T) {
 			want: errNoSystemBroker,
 		},
 		{
-			// Root's default choice is the system installation, and root is the
-			// administrator, so an empty selection must report the
-			// system Broker rather than the account's user one.
 			name: "root default level", system: true, explicit: false, root: true,
 			userOutcome: probeMissing, systemOutcome: probeMissing,
 			want: errNoSystemBroker,
@@ -558,7 +543,6 @@ func TestFindForLevelExplainsAnEmptySelection(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			userSocket := userPath
 			if tc.root {
-				// Root's user and system sockets share one path.
 				userSocket = systemPath
 			}
 			s := &selector{
@@ -579,8 +563,8 @@ func TestFindForLevelExplainsAnEmptySelection(t *testing.T) {
 	}
 }
 
-// TestFindForLevelReturnsTheSelectedSocket checks the successful path of the
-// level-aware finder.
+// TestFindForLevelReturnsTheSelectedSocket checks that the level-aware finder
+// returns the selected socket.
 func TestFindForLevelReturnsTheSelectedSocket(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")
@@ -604,8 +588,8 @@ func TestFindForLevelReturnsTheSelectedSocket(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-055: --system must not fall through to a running user
-// Broker either.
+// TestFindAtLevelSystemDoesNotFallThrough checks that --system does not fall
+// through to a running user Broker.
 func TestFindAtLevelSystemDoesNotFallThrough(t *testing.T) {
 	userPath := socktest.Path(t, "user.sock")
 	systemPath := socktest.Path(t, "system.sock")

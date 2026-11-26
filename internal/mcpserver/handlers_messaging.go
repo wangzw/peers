@@ -8,19 +8,13 @@ import (
 )
 
 const (
-	// listAgentsRPCTimeout bounds list_agents. The Broker refreshes every
-	// session it knows with a 1s sessionCallTimeout, so 20s covers about twenty
-	// sessions that do not answer; a healthy refresh takes milliseconds.
 	listAgentsRPCTimeout = 20 * time.Second
-	// sendMessageRPCTimeout bounds send_message. The Broker reports the result
-	// within send.request_timeout, 20s by default; the extra 10s lets the
-	// Broker decide whether the message was delivered before the handler gives
-	// up and reports delivery_unknown.
+	// sendMessageRPCTimeout must stay longer than the Broker's
+	// send.request_timeout (20s by default), or the call reports
+	// delivery_unknown before the Broker decides whether the message arrived.
 	sendMessageRPCTimeout = 30 * time.Second
 )
 
-// agentStatusName maps a registered agent status to the word shown to the
-// model. UNSPECIFIED becomes the empty string, which the JSON encoding omits.
 func agentStatusName(s localpb.AgentStatus) string {
 	switch s {
 	case localpb.AgentStatus_AGENT_STATUS_IDLE:
@@ -36,8 +30,8 @@ func agentStatusName(s localpb.AgentStatus) string {
 	}
 }
 
-// ListAgents forwards list_agents to the Broker. The filters are forwarded
-// verbatim; the Broker decides which agents are visible.
+// ListAgents forwards list_agents to the Broker verbatim; the Broker decides
+// which agents are visible.
 func (h *handlers) ListAgents(ctx context.Context, in ListAgentsIn) (ListAgentsOut, error) {
 	st, err := h.preflight("list_agents", callGeneric, true)
 	if err != nil {
@@ -73,12 +67,10 @@ func (h *handlers) ListAgents(ctx context.Context, in ListAgentsIn) (ListAgentsO
 	return out, nil
 }
 
-// sendMessageResult is the result text of a successful send_message. It only
-// means the message reached the recipient's session, not that it was read.
 const sendMessageResult = "Delivered to the recipient's session (not necessarily read)."
 
-// SendMessage forwards send_message to the Broker. To and Message are not
-// trimmed or rewritten.
+// SendMessage forwards send_message to the Broker without trimming or
+// rewriting To or Message.
 func (h *handlers) SendMessage(ctx context.Context, in SendMessageIn) (SendMessageOut, error) {
 	st, err := h.preflight("send_message", callSend, true)
 	if err != nil {

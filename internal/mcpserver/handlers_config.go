@@ -10,10 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// GetConfig forwards get_config to the Broker and renders every returned value
-// as text. Reading the configuration needs read permission on the Broker's
-// config file but no agent identity, so a session whose registration has not
-// completed may still call it.
+// GetConfig forwards get_config to the Broker and renders every value as text;
+// it needs read permission but no agent identity.
 func (h *handlers) GetConfig(ctx context.Context, in GetConfigIn) (GetConfigOut, error) {
 	st, err := h.preflight("get_config", callGeneric, false)
 	if err != nil {
@@ -32,9 +30,8 @@ func (h *handlers) GetConfig(ctx context.Context, in GetConfigIn) (GetConfigOut,
 	return GetConfigOut{Entries: entries}, nil
 }
 
-// SetConfig forwards set_config to the Broker. Value is the raw text the model
-// gave; the Broker parses it according to the key's type. The agent id is sent
-// only for the audit record and may be empty.
+// SetConfig forwards set_config to the Broker; Value is the raw text the model
+// gave, which the Broker parses according to the key's type.
 func (h *handlers) SetConfig(ctx context.Context, in SetConfigIn) (SetConfigOut, error) {
 	st, err := h.preflight("set_config", callGeneric, false)
 	if err != nil {
@@ -58,14 +55,13 @@ func (h *handlers) SetConfig(ctx context.Context, in SetConfigIn) (SetConfigOut,
 }
 
 // SetBrokerOnline forwards set_broker_online to the Broker as a change of
-// broker.offline. The agent id is sent only for the audit record. Changed
-// compares the values the Broker reports before and after the write.
+// broker.offline; Changed compares the values the Broker reports before and
+// after the write.
 func (h *handlers) SetBrokerOnline(ctx context.Context, in SetBrokerOnlineIn) (SetBrokerOnlineOut, error) {
 	st, err := h.preflight("set_broker_online", callGeneric, false)
 	if err != nil {
 		return SetBrokerOnlineOut{}, err
 	}
-	// broker.offline is the opposite of the tool's online flag.
 	value := "true"
 	if in.Online {
 		value = "false"
@@ -86,8 +82,6 @@ func (h *handlers) SetBrokerOnline(ctx context.Context, in SetBrokerOnlineIn) (S
 	}, nil
 }
 
-// renderValue renders one configuration value the way the config file writes
-// it. A nil value and a value whose oneof is unset render as the empty string.
 func renderValue(v *localpb.ConfigValue) string {
 	if v == nil {
 		return ""
@@ -122,9 +116,8 @@ func renderValue(v *localpb.ConfigValue) string {
 	}
 }
 
-// renderDuration drops trailing zero-valued units from time.Duration.String():
-// "10m0s" becomes "10m", "1h0m0s" becomes "1h", "1h30m0s" becomes "1h30m". The
-// zero must stand for the whole unit, so the "0" in "10s" or "1h30m" is kept.
+// renderDuration drops trailing zero-valued units from time.Duration.String();
+// a zero that is part of a multi-digit number, as in "10s", is kept.
 func renderDuration(d time.Duration) string {
 	s := d.String()
 	s = trimZeroUnit(s, "s", "hmsµ")
@@ -132,9 +125,8 @@ func renderDuration(d time.Duration) string {
 	return s
 }
 
-// trimZeroUnit removes a trailing "<unit>" whose value is exactly zero, when
-// unitLetters names the unit immediately before it. A preceding digit means the
-// zero is part of a multi-digit number and is kept.
+// trimZeroUnit removes a trailing zero-valued unit only when unitLetters names
+// the unit immediately before it, so the zero in "10s" or "1h30m" is kept.
 func trimZeroUnit(s, unit, unitLetters string) string {
 	suffix := "0" + unit
 	if !strings.HasSuffix(s, suffix) {
@@ -150,9 +142,8 @@ func trimZeroUnit(s, unit, unitLetters string) string {
 	return s
 }
 
-// renderStringList renders a list as a YAML flow sequence: "[a, b]", or "[]"
-// when empty. Elements containing a comma, a bracket, whitespace, or nothing at
-// all are double-quoted.
+// renderStringList renders values as a YAML flow sequence, double-quoting an
+// element that is empty or contains a comma, a bracket or whitespace.
 func renderStringList(values []string) string {
 	if len(values) == 0 {
 		return "[]"

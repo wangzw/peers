@@ -8,9 +8,8 @@ import (
 	"testing"
 )
 
-// TestRuntimeDirFromTestEnv checks that the test build hook points every local
-// socket path at the same root the config test hook uses: root/<euid> for an
-// ordinary account and root/root for the superuser.
+// TestRuntimeDirFromTestEnv checks that the test build hook roots the user and
+// system socket paths under PEERS_TEST_RUNTIME_ROOT.
 func TestRuntimeDirFromTestEnv(t *testing.T) {
 	root := os.Getenv("PEERS_TEST_RUNTIME_ROOT")
 	if root == "" {

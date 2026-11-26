@@ -9,15 +9,10 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// topicLockError is the error shown when a topic call stops waiting for
-// another topic change instead of queueing behind it.
 func topicLockError(tool string, err error) error {
 	return toolError(tool+" failed", "another topic change was still in progress: "+err.Error(), localpb.ErrorCode_ERROR_CODE_INTERNAL)
 }
 
-// topicPartialError reports a nameless topic call that stopped at a failing
-// topic. It names the topics already handled and the topic that failed, then
-// carries the Broker's error unchanged.
 func topicPartialError(tool, handledVerb, failedVerb, failed string, handled []string, err error) error {
 	phrase := openingPhrase(tool, callGeneric) + ": "
 	parts := make([]string, 0, 2)
@@ -32,15 +27,11 @@ func topicPartialError(tool, handledVerb, failedVerb, failed string, handled []s
 	return errors.New(phrase + strings.Join(parts, "; ") + ": " + strings.TrimPrefix(err.Error(), phrase))
 }
 
-// ListTopics forwards list_topics and returns the joined and public topics the
-// Broker reports.
 func (h *handlers) ListTopics(ctx context.Context, _ NoArgs) (ListTopicsOut, error) {
 	st, err := h.preflight("list_topics", callGeneric, true)
 	if err != nil {
 		return ListTopicsOut{}, err
 	}
-	// The RPC is bounded like every other topic tool call, so a Broker that
-	// does not answer returns an error instead of holding the tool call open.
 	ctx, cancel := context.WithTimeout(ctx, topicRPCTimeout)
 	defer cancel()
 	resp, err := st.Client.ListTopics(ctx, &localpb.ListTopicsRequest{AgentId: st.AgentID})
@@ -61,10 +52,6 @@ func (h *handlers) ListTopics(ctx context.Context, _ NoArgs) (ListTopicsOut, err
 	return out, nil
 }
 
-// JoinTopic forwards join_topic and, on success only, records the membership so
-// that a later registration can restore it. Without a name it joins this
-// session's default topics instead, applying the public declaration and the
-// description to each of them.
 func (h *handlers) JoinTopic(ctx context.Context, in JoinTopicIn) (TopicsOut, error) {
 	st, err := h.preflight("join_topic", callGeneric, true)
 	if err != nil {
@@ -73,10 +60,8 @@ func (h *handlers) JoinTopic(ctx context.Context, in JoinTopicIn) (TopicsOut, er
 	if in.Name == "" {
 		return h.joinDefaultTopics(ctx, st, in.Public, in.Description)
 	}
-	// The Broker call and the memory write are one critical section: a
-	// registration restore of the same topic must not run between them. The
-	// call stops when the context ends rather than queueing on the lock, and
-	// the RPC itself is bounded so the lock cannot be held indefinitely.
+	// The Broker call and the memory write are one critical section, so a
+	// registration restore of the same topic cannot run between them.
 	if err := h.topics.lockTopic(ctx); err != nil {
 		return TopicsOut{}, topicLockError("join_topic", err)
 	}
@@ -96,10 +81,8 @@ func (h *handlers) JoinTopic(ctx context.Context, in JoinTopicIn) (TopicsOut, er
 	return TopicsOut{Topics: resp.GetTopics()}, nil
 }
 
-// joinDefaultTopics joins every default topic in one critical section, in the
-// list's order. It stops at the first failure and returns that error; the
-// topics joined before it stay in the memory, so a later registration restores
-// them. On success it returns the topic list from the last reply.
+// joinDefaultTopics joins every default topic in one critical section, stopping
+// at the first failure while the topics already joined stay in the memory.
 func (h *handlers) joinDefaultTopics(ctx context.Context, st Status, public bool, description string) (TopicsOut, error) {
 	names, err := h.defaultTopicNames(ctx, "join_topic")
 	if err != nil {
@@ -130,8 +113,6 @@ func (h *handlers) joinDefaultTopics(ctx context.Context, st Status, public bool
 	return TopicsOut{Topics: topics}, nil
 }
 
-// LeaveTopic forwards leave_topic and, on success only, forgets the membership.
-// Without a name it leaves this session's default topics instead.
 func (h *handlers) LeaveTopic(ctx context.Context, in LeaveTopicIn) (TopicsOut, error) {
 	st, err := h.preflight("leave_topic", callGeneric, true)
 	if err != nil {
@@ -157,11 +138,9 @@ func (h *handlers) LeaveTopic(ctx context.Context, in LeaveTopicIn) (TopicsOut, 
 	return TopicsOut{Topics: resp.GetTopics()}, nil
 }
 
-// leaveDefaultTopics leaves the default topics this session has joined. It
-// reads the joined topics first and skips the default ones among them that the
-// session does not hold. Every default topic is dropped from the memory, joined
-// or not, so a later registration in this session does not restore it. When
-// nothing had to be left, it returns the listing it read.
+// leaveDefaultTopics leaves the joined default topics and forgets every default
+// topic from the memory, joined or not; it stops at the first failure, so only
+// the topics left before it are forgotten.
 func (h *handlers) leaveDefaultTopics(ctx context.Context, st Status) (TopicsOut, error) {
 	names, err := h.defaultTopicNames(ctx, "leave_topic")
 	if err != nil {
@@ -201,8 +180,6 @@ func (h *handlers) leaveDefaultTopics(ctx context.Context, st Status) (TopicsOut
 	return TopicsOut{Topics: topics}, nil
 }
 
-// defaultTopicNames returns the session's default topics. When there are none,
-// both nameless topic tools fail with the same invalid_argument error.
 func (h *handlers) defaultTopicNames(ctx context.Context, tool string) ([]string, error) {
 	var names []string
 	if h.sessionTopics != nil {

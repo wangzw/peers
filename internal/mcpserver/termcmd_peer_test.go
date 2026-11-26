@@ -15,8 +15,8 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// The terminal commands connect through the checked dialer, so a socket taken
-// over by another account after selection is refused before Hello is sent.
+// TestRunStatusRefusesForeignPeer checks that the status command refuses a
+// Broker socket taken over by another account before Hello is sent.
 func TestRunStatusRefusesForeignPeer(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{

@@ -11,46 +11,30 @@ import (
 )
 
 const (
-	// toolsCallMethod is the MCP method the hint observes. Every tool call
-	// passes through it, including calls that end in a tool error.
 	toolsCallMethod = "tools/call"
-	// updateStatusTimeout bounds one UpdateStatus query. A Broker that does not
-	// answer in time only costs the hint, never the tool result.
-	updateStatusTimeout = 3 * time.Second
-	// updateRecheckInterval is the minimum time between two UpdateStatus
-	// queries from one MCP process. The RPC is local and cheap, but querying on
-	// every tool call buys nothing; ten minutes still notices a release while a
-	// session stays open.
+	// updateStatusTimeout bounds one UpdateStatus query; a timeout or error only
+	// drops the hint.
+	updateStatusTimeout   = 3 * time.Second
 	updateRecheckInterval = 10 * time.Minute
 )
 
-// updateStatus is the part of the Broker's UpdateStatus response the hint
-// needs. AvailableVersion is empty when no newer release is known.
 type updateStatus struct {
 	CurrentVersion   string
 	AvailableVersion string
 	ReleaseURL       string
 }
 
-// updateStatusSource queries the Broker for the update state. The hint skips
-// itself on any error.
 type updateStatusSource func(ctx context.Context) (updateStatus, error)
 
-// updateHint appends a release notice to a tool result. The Broker is queried
-// at most once per updateRecheckInterval per process, and the first tool call
-// always queries. A notice is appended only when the available version is
-// non-empty and differs from the version this process last notified, so the
-// same version is never announced twice even though later calls re-query.
 type updateHint struct {
-	source  updateStatusSource
-	timeout time.Duration
-	log     *slog.Logger
-	// fallbackCurrent is the version of this MCP process, used when the Broker
-	// reports no current version.
+	source          updateStatusSource
+	timeout         time.Duration
+	log             *slog.Logger
 	fallbackCurrent string
-	// now is the clock. A nil value means time.Now.
+	// A nil now means time.Now.
 	now func() time.Time
 
+	// mu protects the fields below; a query runs outside the lock.
 	mu              sync.Mutex
 	checking        bool
 	queried         bool
@@ -58,10 +42,9 @@ type updateHint struct {
 	notifiedVersion string
 }
 
-// middleware returns the receiving middleware that appends the notice. It runs
-// the wrapped handler first, so the notice never replaces or delays the tool's
-// own result; a call that fails at the protocol level (err != nil) has no
-// result to decorate and is left alone.
+// middleware appends the notice after the wrapped handler returns, so the result
+// is never replaced; the query runs before the result is returned, can delay it
+// by up to updateStatusTimeout, and an error or timeout only drops the hint.
 func (u *updateHint) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		res, err := next(ctx, method, req)
@@ -79,12 +62,9 @@ func (u *updateHint) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 	}
 }
 
-// take returns the notice to append, if any. A query runs when no query is in
-// flight and either the process has never had an answer or the recheck
-// interval has passed. Only an answer from the Broker counts as a query; any
-// query error, including Unimplemented, leaves the process unchecked so the
-// next tool call retries. An empty available version or a version already
-// notified yields false.
+// take returns the notice to append, if any. Only an answer from the Broker
+// counts as a query, so any error leaves the process unchecked and the next
+// tool call retries.
 func (u *updateHint) take(ctx context.Context) (string, bool) {
 	now := u.now
 	if now == nil {
@@ -132,9 +112,8 @@ func (u *updateHint) take(ctx context.Context) (string, bool) {
 	return hintText(st.AvailableVersion, current), true
 }
 
-// query runs the source with the query timeout. A panic from the source is
-// reported as an error: a fault in the update check must never end the MCP
-// server or eat a tool result.
+// query runs the source with the query timeout; a panic in the source becomes
+// an error rather than ending the MCP server.
 func (u *updateHint) query(ctx context.Context) (st updateStatus, err error) {
 	timeout := u.timeout
 	if timeout <= 0 {
@@ -153,7 +132,6 @@ func (u *updateHint) query(ctx context.Context) (st updateStatus, err error) {
 	return u.source(qctx)
 }
 
-// hintText is the sentence the design fixes word for word.
 func hintText(available, current string) string {
 	return fmt.Sprintf("peers %s is available (this Broker runs %s). "+
 		"To upgrade, the user can ask you to call update_broker or run `peers update` in a terminal.",

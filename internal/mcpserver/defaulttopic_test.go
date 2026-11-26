@@ -13,13 +13,10 @@ import (
 	"testing"
 )
 
-// defaultTopicsLogger returns a logger that discards everything.
 func defaultTopicsLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-// defaultTopicsFailReader returns an originReader that fails the test when it
-// is called, for the cases where the project configuration alone decides.
 func defaultTopicsFailReader(t *testing.T) originReader {
 	t.Helper()
 	return func(context.Context, string) (string, error) {
@@ -28,19 +25,14 @@ func defaultTopicsFailReader(t *testing.T) originReader {
 	}
 }
 
-// automaticForTest computes the automatic-joining topics from a fresh lookup,
-// as the first registration does.
 func automaticForTest(ctx context.Context, dir string, brokerAutoJoin bool, readOrigin originReader, log *slog.Logger) []string {
 	return automaticTopics(lookupDefaultTopics(ctx, dir, readOrigin, log), brokerAutoJoin)
 }
 
-// sessionForTest computes the topics a nameless call uses from a fresh lookup.
 func sessionForTest(ctx context.Context, dir string, readOrigin originReader, log *slog.Logger) []string {
 	return lookupDefaultTopics(ctx, dir, readOrigin, log).topics
 }
 
-// defaultTopicsEqual reports whether two topic lists contain the same names in
-// the same order. A nil list equals an empty one.
 func defaultTopicsEqual(got, want []string) bool {
 	if len(got) != len(want) {
 		return false
@@ -53,13 +45,12 @@ func defaultTopicsEqual(got, want []string) bool {
 	return true
 }
 
+// TestAutomaticTopics checks that automatic joining applies the Broker and
+// project switches to the default topics.
 func TestAutomaticTopics(t *testing.T) {
-	// Covers REQ-topics-015, REQ-topics-016, REQ-topics-018, REQ-topics-020
-	// and REQ-topics-021.
 	ctx := context.Background()
 
 	t.Run("broker switched automatic joining off", func(t *testing.T) {
-		// REQ-topics-020: the Broker's settings win before the project file.
 		dir := t.TempDir()
 		writeProjectFile(t, dir, "topics: [a]\n")
 		got := automaticForTest(ctx, dir, false, defaultTopicsFailReader(t), defaultTopicsLogger())
@@ -69,7 +60,6 @@ func TestAutomaticTopics(t *testing.T) {
 	})
 
 	t.Run("project file switched automatic joining off", func(t *testing.T) {
-		// REQ-topics-021.
 		dir := t.TempDir()
 		writeProjectFile(t, dir, "auto_join: false\ntopics: [a]\n")
 		got := automaticForTest(ctx, dir, true, defaultTopicsFailReader(t), defaultTopicsLogger())
@@ -79,8 +69,6 @@ func TestAutomaticTopics(t *testing.T) {
 	})
 
 	t.Run("project file names the topics", func(t *testing.T) {
-		// REQ-topics-015: the project topics replace the origin, they are not
-		// merged with it.
 		dir := t.TempDir()
 		writeProjectFile(t, dir, "topics: [a, b]\n")
 		got := automaticForTest(ctx, dir, true, defaultTopicsFailReader(t), defaultTopicsLogger())
@@ -90,7 +78,6 @@ func TestAutomaticTopics(t *testing.T) {
 	})
 
 	t.Run("git origin when no project file exists", func(t *testing.T) {
-		// REQ-topics-016.
 		dir := t.TempDir()
 		readOrigin := func(context.Context, string) (string, error) {
 			return "https://github.com/o/r", nil
@@ -114,7 +101,6 @@ func TestAutomaticTopics(t *testing.T) {
 	})
 
 	t.Run("no git origin", func(t *testing.T) {
-		// REQ-topics-018.
 		dir := t.TempDir()
 		readOrigin := func(context.Context, string) (string, error) {
 			return "", errors.New("not a git repository")
@@ -126,7 +112,6 @@ func TestAutomaticTopics(t *testing.T) {
 	})
 
 	t.Run("origin is a local path", func(t *testing.T) {
-		// REQ-topics-018: a local path does not name a remote repository.
 		dir := t.TempDir()
 		readOrigin := func(context.Context, string) (string, error) {
 			return "/srv/repo.git", nil
@@ -156,9 +141,9 @@ func TestAutomaticTopics(t *testing.T) {
 	})
 }
 
+// TestNamelessDefaultTopics checks that a nameless topic call still uses the
+// project topics or the origin when the project file sets auto_join to false.
 func TestNamelessDefaultTopics(t *testing.T) {
-	// REQ-topics-026, REQ-topics-027: the nameless topic tools use steps 3 to
-	// 5 of the design and ignore both automatic-joining switches.
 	ctx := context.Background()
 
 	t.Run("project auto_join off still names its topics", func(t *testing.T) {
@@ -211,10 +196,9 @@ func TestNamelessDefaultTopics(t *testing.T) {
 	})
 }
 
+// TestLookupDefaultTopicsSettled checks that a timed-out or cancelled origin
+// lookup stays unsettled while another failure settles the answer.
 func TestLookupDefaultTopicsSettled(t *testing.T) {
-	// A git command that timed out or was cancelled does not decide whether an
-	// origin exists, so its empty result must not be cached. Any other failure
-	// means there is no origin, which is a settled answer.
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name    string
@@ -239,6 +223,8 @@ func TestLookupDefaultTopicsSettled(t *testing.T) {
 	}
 }
 
+// TestSessionTopicList checks that a settled computation is cached and an
+// unsettled one is computed again.
 func TestSessionTopicList(t *testing.T) {
 	t.Run("computes once and keeps the result", func(t *testing.T) {
 		calls := 0
@@ -275,8 +261,6 @@ func TestSessionTopicList(t *testing.T) {
 	})
 
 	t.Run("does not keep a result that did not settle", func(t *testing.T) {
-		// A git command that timed out leaves the answer unknown; a later call
-		// must be allowed to look again.
 		calls := 0
 		list := &sessionTopicList{compute: func(context.Context) defaultLookup {
 			calls++
@@ -303,7 +287,6 @@ func TestSessionTopicList(t *testing.T) {
 	})
 }
 
-// gitOriginGit runs a git subcommand in dir and fails the test on error.
 func gitOriginGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	full := append([]string{"-C", dir}, args...)
@@ -313,8 +296,9 @@ func gitOriginGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
+// TestGitOrigin checks that gitOrigin reads the origin from a subdirectory and
+// fails outside a repository without reading the global configuration.
 func TestGitOrigin(t *testing.T) {
-	// REQ-topics-016, REQ-topics-018.
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
@@ -340,8 +324,6 @@ func TestGitOrigin(t *testing.T) {
 		t.Fatal("gitOrigin outside a repository must fail")
 	}
 
-	// A global remote.origin.url must not leak into the result: --local makes
-	// git fail outside a repository before it reads other scopes.
 	global := filepath.Join(t.TempDir(), "gitconfig")
 	if err := os.WriteFile(global, []byte("[remote \"origin\"]\n\turl = x\n"), 0o644); err != nil {
 		t.Fatalf("write global config: %v", err)

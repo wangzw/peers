@@ -19,15 +19,12 @@ const (
 	textNoPeerBroker     = "list_brokers shows the paired Brokers."
 )
 
-// connectBrokerRPCTimeout bounds connect_broker. The Broker spends at most 5s
-// dialing each address (link.dial_timeout by default), 10s on the pairing
-// handshake and 10s on the link Hello, 25s in all; the extra 5s lets the Broker
-// reach its own deadline first and report the precise cause.
+// connectBrokerRPCTimeout must exceed the Broker's dial, pairing handshake and
+// Hello deadlines together, so the Broker reaches its own deadline first.
 const connectBrokerRPCTimeout = 30 * time.Second
 
-// ListBrokers lists the Brokers this Broker knows. It works before the
-// session is registered, so that a model can inspect the pairing state while
-// registration is still pending.
+// ListBrokers lists the Brokers this Broker knows and works before the session
+// is registered.
 func (h *handlers) ListBrokers(ctx context.Context, in NoArgs) (ListBrokersOut, error) {
 	st, err := h.preflight("list_brokers", callGeneric, false)
 	if err != nil {
@@ -55,9 +52,6 @@ func (h *handlers) ListBrokers(ctx context.Context, in NoArgs) (ListBrokersOut, 
 	return out, nil
 }
 
-// localBrokerOut turns the answering Broker's state into the tool result shape.
-// A response without local state violates the protocol: every peers Broker
-// reports it.
 func localBrokerOut(local *localpb.LocalBrokerState) (*LocalBrokerOut, error) {
 	if local == nil {
 		return nil, toolError(openingPhrase("list_brokers", callGeneric),
@@ -74,7 +68,6 @@ func localBrokerOut(local *localpb.LocalBrokerState) (*LocalBrokerOut, error) {
 	return out, nil
 }
 
-// brokerOut turns one BrokerInfo into the tool result shape.
 func brokerOut(b *localpb.BrokerInfo) BrokerOut {
 	out := BrokerOut{
 		Alias:        b.GetAlias(),
@@ -94,8 +87,6 @@ func brokerOut(b *localpb.BrokerInfo) BrokerOut {
 	return out
 }
 
-// brokerStatusName renders a BrokerStatus as the lower-case name used by the
-// tool result. UNSPECIFIED becomes the empty string.
 func brokerStatusName(s localpb.BrokerStatus) string {
 	switch s {
 	case localpb.BrokerStatus_BROKER_STATUS_CONNECTED:
@@ -109,7 +100,6 @@ func brokerStatusName(s localpb.BrokerStatus) string {
 	}
 }
 
-// peerRoleName renders the role of this Broker in a peer link.
 func peerRoleName(r localpb.PeerRole) string {
 	switch r {
 	case localpb.PeerRole_PEER_ROLE_DIALER:
@@ -121,8 +111,6 @@ func peerRoleName(r localpb.PeerRole) string {
 	}
 }
 
-// linkStateName renders a LinkState as the lower-case name without the enum
-// prefix. UNSPECIFIED becomes the empty string.
 func linkStateName(s localpb.LinkState) string {
 	switch s {
 	case localpb.LinkState_LINK_STATE_DIALING:
@@ -142,8 +130,8 @@ func linkStateName(s localpb.LinkState) string {
 	}
 }
 
-// ConnectBroker pairs this Broker with another one. The agent id is carried
-// only so that the Broker can audit who asked; registration is not required.
+// ConnectBroker pairs this Broker with another one; registration is not
+// required, and the agent id is sent only for the audit record.
 func (h *handlers) ConnectBroker(ctx context.Context, in ConnectBrokerIn) (ConnectBrokerOut, error) {
 	st, err := h.preflight("connect_broker", callConnect, false)
 	if err != nil {
@@ -180,7 +168,6 @@ func (h *handlers) ConnectBroker(ctx context.Context, in ConnectBrokerIn) (Conne
 	return out, nil
 }
 
-// DisconnectBroker unpairs from a peer Broker.
 func (h *handlers) DisconnectBroker(ctx context.Context, in DisconnectBrokerIn) (DisconnectBrokerOut, error) {
 	st, err := h.preflight("disconnect_broker", callGeneric, false)
 	if err != nil {
@@ -204,8 +191,6 @@ func (h *handlers) DisconnectBroker(ctx context.Context, in DisconnectBrokerIn) 
 	return DisconnectBrokerOut{Result: "Unpaired " + in.Broker + "; the link is closed."}, nil
 }
 
-// CreatePairingKey creates a one-time pairing key and returns the addresses
-// that the other side may use, which are shown but are not part of the key.
 func (h *handlers) CreatePairingKey(ctx context.Context, in NoArgs) (CreatePairingKeyOut, error) {
 	st, err := h.preflight("create_pairing_key", callGeneric, false)
 	if err != nil {

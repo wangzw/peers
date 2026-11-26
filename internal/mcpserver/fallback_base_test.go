@@ -11,17 +11,15 @@ import (
 	"time"
 )
 
-// resetFallbackBaseCache clears the cached getconf result so each test starts
-// from an unresolvable state.
 func resetFallbackBaseCache() {
 	fallbackBaseCache.mu.Lock()
 	fallbackBaseCache.dirs = make(map[int]string)
 	fallbackBaseCache.mu.Unlock()
 }
 
-// TestDefaultFallbackRuntimeBasePerPlatform covers the platform branch: the
-// logind directory on Linux, and the per-user temporary directory getconf
-// reports on macOS. The macOS branch also runs in the macOS probe job.
+// TestDefaultFallbackRuntimeBasePerPlatform checks the platform branch of the
+// fallback base: the logind directory on Linux and the getconf directory on
+// macOS.
 func TestDefaultFallbackRuntimeBasePerPlatform(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		got, err := defaultFallbackRuntimeBase(1234)
@@ -100,10 +98,6 @@ func TestDarwinFallbackBaseTimesOut(t *testing.T) {
 		resetFallbackBaseCache()
 	})
 	fallbackBaseProbeTimeout = 25 * time.Millisecond
-	// The probe deadline is the product's bound on getconf. Checking the value
-	// the product passed keeps the assertion independent of scheduling: a probe
-	// that received no deadline, or the caller's much later one, returns at once
-	// so the test reports it instead of blocking.
 	const deadlineBound = time.Second
 	deadlines := make(chan time.Duration, 1)
 	getconfOutput = func(ctx context.Context) ([]byte, error) {

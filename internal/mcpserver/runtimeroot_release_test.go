@@ -12,19 +12,12 @@ import (
 )
 
 const (
-	// releaseChildEnv marks the child process of TestTestEnvIgnoredInReleaseBuild.
 	releaseChildEnv = "PEERS_TESTENV_RELEASE_CHILD"
-	// releaseRoot is the value the child puts in the environment. A build that
-	// installs the hook would use it.
-	releaseRoot = "/r"
+	releaseRoot     = "/r"
 )
 
-// TestTestEnvIgnoredInReleaseBuild checks that a build without the
-// peers_testenv tag does not point the socket paths at the test runtime
-// root. The hook is installed by package init, so the environment has to be in
-// place before the child starts: t.Setenv runs after init and therefore passes
-// whether or not the hook exists. The child re-executes this test binary with
-// the selector already set.
+// TestTestEnvIgnoredInReleaseBuild checks that a build without the peers_testenv
+// tag ignores PEERS_TEST_RUNTIME_ROOT and keeps the real socket paths.
 func TestTestEnvIgnoredInReleaseBuild(t *testing.T) {
 	if os.Getenv(releaseChildEnv) == "1" {
 		if got, want := userSocketPath(1000), "/tmp/peers-1000/broker.sock"; got != want {
@@ -38,10 +31,9 @@ func TestTestEnvIgnoredInReleaseBuild(t *testing.T) {
 	runReleaseChild(t, "TestTestEnvIgnoredInReleaseBuild")
 }
 
-// runReleaseChild runs name in a fresh process of this test binary and fails
-// when that process fails. The explicit PASS line catches a -test.run pattern
-// that matches nothing, which would otherwise exit successfully without
-// checking anything.
+// The hook is installed by package init, so the environment must be in place
+// before the child starts: t.Setenv runs after init and would pass whether or
+// not the hook exists.
 func runReleaseChild(t *testing.T, name string) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run=^"+name+"$", "-test.v")
@@ -53,14 +45,13 @@ func runReleaseChild(t *testing.T, name string) {
 	if err != nil {
 		t.Fatalf("release-build child failed: %v\n%s", err, out)
 	}
+	// The explicit PASS line catches a -test.run pattern that matches nothing,
+	// which would otherwise exit successfully without checking anything.
 	if !strings.Contains(string(out), "--- PASS: "+name) {
 		t.Fatalf("child did not run %s:\n%s", name, out)
 	}
 }
 
-// releaseChildEnvVars returns the current environment with overrides applied.
-// A key in overrides is removed before it is added again, so the child cannot
-// inherit a second value for the same variable.
 func releaseChildEnvVars(overrides ...string) []string {
 	keys := make(map[string]bool, len(overrides))
 	for _, kv := range overrides {

@@ -14,11 +14,8 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// errWriter is the write failure every reporter must return to its caller.
 var errWriter = errors.New("terminal write failed")
 
-// failWriter accepts allow successful writes, then fails every write with
-// errWriter. A negative allow lets every write through.
 type failWriter struct {
 	allow int
 	calls int
@@ -151,8 +148,8 @@ func TestPeerSortKeyFallsBackToFingerprint(t *testing.T) {
 	}
 }
 
-// TestFormatAddressesVariants joins the kind and address of every listed
-// address.
+// TestFormatAddressesVariants checks how an address renders when it has a kind,
+// an address, both or neither.
 func TestFormatAddressesVariants(t *testing.T) {
 	tests := []struct {
 		name string

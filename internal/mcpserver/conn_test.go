@@ -18,7 +18,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
-// dialFakeConn starts a fake Local service and returns a client connection to it.
 func dialFakeConn(t *testing.T, h fakelocal.Handlers) (*fakelocal.Server, *connPair) {
 	t.Helper()
 	path := fakelocal.SocketPath(t)
@@ -31,12 +30,13 @@ func dialFakeConn(t *testing.T, h fakelocal.Handlers) (*fakelocal.Server, *connP
 	return srv, &connPair{cc: cc, c: c}
 }
 
-// connPair pairs the client connection with the typed Local client.
 type connPair struct {
 	cc *grpc.ClientConn
 	c  localpb.LocalClient
 }
 
+// TestProbeSocket checks that a raw probe classifies each socket state as the
+// matching probe result.
 func TestProbeSocket(t *testing.T) {
 	t.Run("answers when a server listens", func(t *testing.T) {
 		path := fakelocal.SocketPath(t)
@@ -53,8 +53,6 @@ func TestProbeSocket(t *testing.T) {
 	})
 
 	t.Run("regular file at the path", func(t *testing.T) {
-		// Linux reports ECONNREFUSED for a regular file, macOS ENOTSOCK; both
-		// mean nothing listens there, so the probe must say refused.
 		path := fakelocal.SocketPath(t)
 		if err := os.WriteFile(path, []byte("not a socket"), 0o644); err != nil {
 			t.Fatalf("write placeholder: %v", err)
@@ -70,15 +68,11 @@ func TestProbeSocket(t *testing.T) {
 		if err != nil {
 			t.Fatalf("listen: %v", err)
 		}
-		// net.UnixListener removes the socket file on Close by default; keep it
-		// so that the path outlives the listener, as it does after a crash.
 		lis.(*net.UnixListener).SetUnlinkOnClose(false)
 		if err := lis.Close(); err != nil {
 			t.Fatalf("close listener: %v", err)
 		}
 		t.Cleanup(func() { _ = os.Remove(path) })
-		// The socket file stays behind after the listener closes; connecting to
-		// it yields ECONNREFUSED.
 		if got := probeSocket(context.Background(), path); got != probeRefused {
 			t.Fatalf("probeSocket = %v, want probeRefused", got)
 		}
@@ -101,8 +95,8 @@ func TestProbeSocket(t *testing.T) {
 	})
 }
 
-// The raw probe must report the account that answered so that selection can
-// reject a socket another account laid down.
+// TestInspectSocketReportsForeignPeer checks that a raw probe reports the
+// account of the peer that answered.
 func TestInspectSocketReportsForeignPeer(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{})
@@ -121,9 +115,8 @@ func TestInspectSocketReportsForeignPeer(t *testing.T) {
 	}
 }
 
-// Even if selection probed a socket owned by this account, the connection that
-// actually carries the protocol must check the peer again, so a socket taken
-// over between the probe and the dial is never used.
+// TestDialLocalRefusesForeignPeer checks that the dialer refuses a socket taken
+// over by another account after selection.
 func TestDialLocalRefusesForeignPeer(t *testing.T) {
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{})
@@ -147,6 +140,8 @@ func TestDialLocalRefusesForeignPeer(t *testing.T) {
 	}
 }
 
+// TestDialLocal checks that a dialed connection completes a compatible Hello
+// with the fake Broker.
 func TestDialLocal(t *testing.T) {
 	srv, conn := dialFakeConn(t, fakelocal.Handlers{})
 	if got := srv.Path(); got == "" {
@@ -161,6 +156,8 @@ func TestDialLocal(t *testing.T) {
 	}
 }
 
+// TestHello checks the Hello handshake for compatible, mismatched and failed
+// versions.
 func TestHello(t *testing.T) {
 	t.Run("compatible version", func(t *testing.T) {
 		_, conn := dialFakeConn(t, fakelocal.Handlers{})
@@ -174,7 +171,6 @@ func TestHello(t *testing.T) {
 	})
 
 	t.Run("different version in the response", func(t *testing.T) {
-		// REQ-broker-config-016
 		_, conn := dialFakeConn(t, fakelocal.Handlers{
 			Hello: func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error) {
 				return &localpb.HelloResponse{ProtocolVersion: 2}, nil
@@ -251,10 +247,6 @@ func TestHello(t *testing.T) {
 	})
 
 	t.Run("respects the caller context", func(t *testing.T) {
-		// The handler reports when it has started and then blocks until its
-		// context ends. Cancelling the caller's context after that point proves
-		// hello used it: a hello that kept only its own deadline would return
-		// DeadlineExceeded instead of Canceled, whatever the scheduling delay.
 		started := make(chan struct{})
 		_, conn := dialFakeConn(t, fakelocal.Handlers{
 			Hello: func(ctx context.Context, _ *localpb.HelloRequest) (*localpb.HelloResponse, error) {
@@ -290,6 +282,8 @@ func TestHello(t *testing.T) {
 	})
 }
 
+// TestWaitNotReady checks that waitNotReady returns when the connection leaves
+// READY or the context ends.
 func TestWaitNotReady(t *testing.T) {
 	t.Run("waits while the connection is ready", func(t *testing.T) {
 		_, conn := dialFakeConn(t, fakelocal.Handlers{})
@@ -317,8 +311,6 @@ func TestWaitNotReady(t *testing.T) {
 			t.Fatalf("hello: %v", err)
 		}
 
-		// The context outlives the fallback below by far, so a timely return
-		// can only come from the Broker stopping, not from the context ending.
 		ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
 		defer cancel()
 

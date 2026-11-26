@@ -68,7 +68,7 @@ func TestPeerUIDFromFDRejectsBadDescriptor(t *testing.T) {
 	}
 }
 
-// writeFakeGit puts an executable named git with body on PATH.
+// writeFakeGit replaces PATH with a directory that contains only the fake git.
 func writeFakeGit(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -109,9 +109,8 @@ func TestGitOriginRejectsEmptyURL(t *testing.T) {
 	}
 }
 
-// TestLookupDefaultTopicsNilLogger joins a default topic from a usable origin
-// and returns a settled empty result when there is none, both with the default
-// logger.
+// TestLookupDefaultTopicsNilLogger checks a default topic from a usable origin and
+// a settled empty result without one, with the default logger.
 func TestLookupDefaultTopicsNilLogger(t *testing.T) {
 	dir := t.TempDir()
 	got := lookupDefaultTopics(context.Background(), dir,

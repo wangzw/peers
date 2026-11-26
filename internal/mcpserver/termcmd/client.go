@@ -14,12 +14,13 @@ import (
 	"github.com/wangzw/peers/internal/broker/localpb"
 )
 
-// UnaryTimeout bounds each unary call to the Local service. The Audit stream
-// has no overall deadline; it ends when the command is interrupted.
+// UnaryTimeout bounds a unary call to the Local service that has no deadline of
+// its own, such as Hello, Status, config reads and writes, key creation, broker
+// listing and disconnect. RunPeerConnect, RunApplyUpdate and RunUpdateStatus do
+// not use it. The Audit stream has no overall deadline; it ends when the command
+// is interrupted.
 const UnaryTimeout = 10 * time.Second
 
-// updateStatusTimeout bounds one UpdateStatus call. It is shorter than
-// UnaryTimeout because the update command polls it while a Broker restarts.
 const updateStatusTimeout = 2 * time.Second
 
 // ErrDiagnosticsOnly reports that the Broker runs degraded with diagnostics
@@ -28,18 +29,17 @@ const updateStatusTimeout = 2 * time.Second
 var ErrDiagnosticsOnly = errors.New("the Broker runs degraded with diagnostics only")
 
 // Dialer opens a client connection to the Broker on the selected socket. The
-// production value checks the peer before gRPC uses the connection. It is an
-// alias so that a function returning this signature directly satisfies
-// Selector.
+// production value checks the peer before gRPC uses the connection.
 type Dialer = func() (*grpc.ClientConn, localpb.LocalClient, error)
 
 // Selector returns the socket path of a running Broker together with a function
 // that opens a connection to it. It never starts a Broker.
-// mcpserver.FindBrokerWithDial satisfies it.
 type Selector func(ctx context.Context) (socketPath string, dial Dialer, err error)
 
 // RunStatus connects to the selected Broker, checks that both ends speak the
-// same local protocol version and writes the Broker status to w.
+// same local protocol version and writes the Broker status to w. It returns
+// ErrDiagnosticsOnly after writing the status lines when the Broker runs
+// diagnostics only.
 func RunStatus(ctx context.Context, sel Selector, w io.Writer) error {
 	client, closeConn, err := dial(ctx, sel)
 	if err != nil {
@@ -130,8 +130,7 @@ func RunConfigSet(ctx context.Context, sel Selector, key, value string, w io.Wri
 }
 
 // RunSetOnline connects to the selected Broker, sets broker.offline and
-// reports the new state in one line. Broker selection and error reporting are
-// the same as for config set.
+// reports the new state in one line.
 func RunSetOnline(ctx context.Context, sel Selector, online bool, w io.Writer) error {
 	client, closeConn, err := dial(ctx, sel)
 	if err != nil {
@@ -175,10 +174,6 @@ func RunPairingKeyCreate(ctx context.Context, sel Selector, w io.Writer) error {
 	return WritePairingKey(w, resp)
 }
 
-// pairingKeyErrorText describes a failed key creation and, when the Broker
-// refuses because it does not listen, names the terminal command that pairs
-// from this side. The Broker states the refusal without MCP tool names, which
-// only the model would understand.
 func pairingKeyErrorText(err error) string {
 	text := Describe(err)
 	if errorCode(err) == localpb.ErrorCode_ERROR_CODE_INVALID_ARGUMENT {
@@ -205,12 +200,9 @@ func RunPeerList(ctx context.Context, sel Selector, w io.Writer) error {
 
 // RunPeerConnect connects to the selected Broker and pairs with the Broker at
 // address. The result line goes to w and every warning goes to warn, each on
-// its own line.
-//
-// The call is not bounded by UnaryTimeout: the Broker performs a pairing
-// handshake that has its own ten-second timeout, and a deadline of the same
-// length here would cancel the call before the Broker could report that
-// timeout as a pairing failure.
+// its own line. The call is not bounded by UnaryTimeout: the Broker's pairing
+// handshake has its own ten-second timeout, and a deadline of the same length
+// would cancel the call before the Broker could report a pairing failure.
 func RunPeerConnect(ctx context.Context, sel Selector, address, key, alias string, w, warn io.Writer) error {
 	client, closeConn, err := dial(ctx, sel)
 	if err != nil {
@@ -232,9 +224,6 @@ func RunPeerConnect(ctx context.Context, sel Selector, address, key, alias strin
 	return WriteWarnings(warn, resp.GetWarnings())
 }
 
-// connectErrorText describes a failed pairing and, when the other Broker's
-// alias is taken, names --alias, the terminal command's form of the
-// local_alias parameter.
 func connectErrorText(err error) string {
 	text := Describe(err)
 	if errorCode(err) == localpb.ErrorCode_ERROR_CODE_NEEDS_LOCAL_ALIAS {
@@ -262,8 +251,6 @@ func RunPeerDisconnect(ctx context.Context, sel Selector, broker string, w io.Wr
 	return err
 }
 
-// disconnectErrorText describes a failed disconnect and, when no peer matches
-// the reference, names the terminal command that lists the paired Brokers.
 func disconnectErrorText(err error) string {
 	text := Describe(err)
 	if errorCode(err) == localpb.ErrorCode_ERROR_CODE_NOT_FOUND {
@@ -272,10 +259,10 @@ func disconnectErrorText(err error) string {
 	return text
 }
 
-// PeerNames returns the aliases and fingerprints of the paired Brokers. It
-// feeds the shell completion of a broker argument: a Broker known through the
-// directory but not paired contributes no candidate. The caller decides what a
-// failure means; this function writes nothing.
+// PeerNames returns the aliases and fingerprints of the paired Brokers, for the
+// shell completion of a broker argument. A Broker known through the directory
+// but not paired contributes no candidate; it writes nothing and leaves the
+// meaning of a failure to the caller.
 func PeerNames(ctx context.Context, sel Selector) ([]string, error) {
 	client, closeConn, err := dial(ctx, sel)
 	if err != nil {
@@ -304,34 +291,38 @@ func PeerNames(ctx context.Context, sel Selector) ([]string, error) {
 
 // ApplyUpdateResult is the outcome of the Broker's ApplyUpdate RPC.
 type ApplyUpdateResult struct {
+	// FromVersion is the version before the upgrade.
 	FromVersion string
-	ToVersion   string
-	Restarting  bool
+	// ToVersion is the version the Broker upgraded to; empty when already up to
+	// date.
+	ToVersion string
+	// Restarting reports whether the Broker is about to restart.
+	Restarting bool
 }
 
 // ApplyUpdateError is a failed ApplyUpdate with the gRPC code kept, so a caller
 // can tell the Broker's refusal from a transport or permission failure while
 // the text stays the described one.
 type ApplyUpdateError struct {
+	// Code is the gRPC code of the failure.
 	Code codes.Code
+	// Text is the described error text.
 	Text string
 }
 
+// Error returns the described text.
 func (e *ApplyUpdateError) Error() string { return e.Text }
 
-// IsFailedPrecondition reports whether err is an ApplyUpdate refusal. The
-// update command falls back to replacing a user binary only on this
-// answer, which is how a Broker that cannot apply updates itself declines.
+// IsFailedPrecondition reports whether err is an ApplyUpdate refusal, which is
+// how a Broker that cannot apply updates itself declines.
 func IsFailedPrecondition(err error) bool {
 	var e *ApplyUpdateError
 	return errors.As(err, &e) && e.Code == codes.FailedPrecondition
 }
 
 // RunApplyUpdate asks the selected Broker to install the newest release and
-// restart itself. The request carries no version: the Broker decides what is
-// newer and refuses a downgrade. The call has no deadline of its own because
-// the Broker downloads and verifies the release before answering; cancelling
-// ctx cancels that work.
+// restart itself. The request carries no version and has no deadline of its own;
+// cancelling ctx cancels the download and verification.
 func RunApplyUpdate(ctx context.Context, sel Selector) (ApplyUpdateResult, error) {
 	client, closeConn, err := dial(ctx, sel)
 	if err != nil {
@@ -351,9 +342,7 @@ func RunApplyUpdate(ctx context.Context, sel Selector) (ApplyUpdateResult, error
 }
 
 // RunUpdateStatus returns the version the selected Broker runs now and the
-// newer release it knows of. The call is bounded by updateStatusTimeout, which
-// is short because it is polled while a Broker restarts; a Broker that is
-// still starting refuses the connection instead of answering slowly.
+// newer release it knows of. The call is bounded by updateStatusTimeout.
 func RunUpdateStatus(ctx context.Context, sel Selector) (current, available string, err error) {
 	client, closeConn, err := dial(ctx, sel)
 	if err != nil {
@@ -370,17 +359,12 @@ func RunUpdateStatus(ctx context.Context, sel Selector) (current, available stri
 	return resp.GetCurrentVersion(), resp.GetAvailableVersion(), nil
 }
 
-// listBrokers calls ListBrokers with the unary timeout. Both the listing
-// commands and shell completion read the Broker list this way.
 func listBrokers(ctx context.Context, client localpb.LocalClient) (*localpb.ListBrokersResponse, error) {
 	callCtx, cancel := context.WithTimeout(ctx, UnaryTimeout)
 	defer cancel()
 	return client.ListBrokers(callCtx, &localpb.ListBrokersRequest{})
 }
 
-// dial selects the Broker, opens a connection through the selector's dialer and
-// performs the version handshake. The returned close function closes the
-// connection.
 func dial(ctx context.Context, sel Selector) (localpb.LocalClient, func(), error) {
 	path, open, err := sel(ctx)
 	if err != nil {

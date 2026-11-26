@@ -49,8 +49,6 @@ func (c *stubLocalClient) UpdateStatus(context.Context, *localpb.UpdateStatusReq
 	return c.update, c.updateErr
 }
 
-// stubSelector returns a selector whose dialer hands out client over a real
-// ClientConn, so the caller's deferred Close has something to close.
 func stubSelector(t *testing.T, client localpb.LocalClient) Selector {
 	t.Helper()
 	return func(context.Context) (string, Dialer, error) {

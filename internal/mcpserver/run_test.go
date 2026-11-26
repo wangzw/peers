@@ -21,8 +21,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/socktest"
 )
 
-// runHandle drives one Run in the background together with an MCP client
-// connected over an in-memory transport.
 type runHandle struct {
 	cs     *mcp.ClientSession
 	done   chan struct{}
@@ -34,9 +32,6 @@ type runHandle struct {
 	stopOnce sync.Once
 }
 
-// startRunClient starts Run with opts.Transport replaced by one end of an
-// in-memory pair, connects a client to the other end, and registers a cleanup
-// that stops both.
 func startRunClient(t *testing.T, opts Options) *runHandle {
 	t.Helper()
 	clientTransport, serverTransport := mcp.NewInMemoryTransports()
@@ -65,7 +60,6 @@ func startRunClient(t *testing.T, opts Options) *runHandle {
 	return h
 }
 
-// stop closes the client, cancels ctx and waits for Run to return.
 func (h *runHandle) stop(t *testing.T) {
 	t.Helper()
 	h.stopOnce.Do(func() {
@@ -79,7 +73,6 @@ func (h *runHandle) stop(t *testing.T) {
 	})
 }
 
-// wait waits for Run to return and returns its error.
 func (h *runHandle) wait(t *testing.T, d time.Duration) error {
 	t.Helper()
 	select {
@@ -93,7 +86,6 @@ func (h *runHandle) wait(t *testing.T, d time.Duration) error {
 	}
 }
 
-// finished reports whether Run has returned without consuming its result.
 func (h *runHandle) finished() bool {
 	select {
 	case <-h.done:
@@ -103,17 +95,12 @@ func (h *runHandle) finished() bool {
 	}
 }
 
-// errValue returns the error Run returned; it must already have returned.
 func (h *runHandle) errValue() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.err
 }
 
-// runTestOptions builds options whose Broker-facing behaviour is under test
-// control: environment lookups come from env, the working directory is an empty
-// temporary directory, the sockets do not exist, and the git origin is
-// unavailable.
 func runTestOptions(t *testing.T, clock *loopClock, env map[string]string) Options {
 	t.Helper()
 	dir := t.TempDir()
@@ -128,8 +115,6 @@ func runTestOptions(t *testing.T, clock *loopClock, env map[string]string) Optio
 	}
 }
 
-// runNextRegister waits for a Register stream, advancing clock while the
-// connection loop is in a backoff wait.
 func runNextRegister(t *testing.T, srv *fakelocal.Server, clock *loopClock) *fakelocal.RegisterConn {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -149,15 +134,11 @@ func runNextRegister(t *testing.T, srv *fakelocal.Server, clock *loopClock) *fak
 	}
 }
 
-// runWaitJoinTopic waits until the fake Broker has received a JoinTopic for
-// name and returns that request.
 func runWaitJoinTopic(t *testing.T, srv *fakelocal.Server, name string) *localpb.JoinTopicRequest {
 	t.Helper()
 	return runWaitJoinTopicAfter(t, srv, name, 0)
 }
 
-// runWaitJoinTopicAfter waits until the fake Broker has received a JoinTopic
-// for name after the first skip requests and returns that request.
 func runWaitJoinTopicAfter(t *testing.T, srv *fakelocal.Server, name string, skip int) *localpb.JoinTopicRequest {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -174,8 +155,6 @@ func runWaitJoinTopicAfter(t *testing.T, srv *fakelocal.Server, name string, ski
 	return nil
 }
 
-// runJoinTopicNames returns the names of the JoinTopic requests received after
-// the first skip calls.
 func runJoinTopicNames(srv *fakelocal.Server, skip int) []string {
 	reqs := topicsJoinRequests(srv)
 	if skip > len(reqs) {
@@ -188,8 +167,6 @@ func runJoinTopicNames(srv *fakelocal.Server, skip int) []string {
 	return out
 }
 
-// runWaitRegistered calls list_agents until the call succeeds, which means the
-// registration_complete event has been applied.
 func runWaitRegistered(t *testing.T, cs *mcp.ClientSession) {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -202,7 +179,8 @@ func runWaitRegistered(t *testing.T, cs *mcp.ClientSession) {
 	t.Fatal("list_agents never succeeded after registration")
 }
 
-// REQ-agent-messaging-038
+// TestRunHandshakeWithoutBroker checks that the MCP handshake completes and
+// every tool is declared with no Broker.
 func TestRunHandshakeWithoutBroker(t *testing.T) {
 	clock := newLoopClock()
 	missing := socktest.Path(t, "missing.sock")
@@ -238,11 +216,6 @@ func TestRunHandshakeWithoutBroker(t *testing.T) {
 	}
 }
 
-// runWaitUnavailableError calls list_agents until the connection loop has left
-// PhaseStarting and reports why the Broker is unusable. The loop runs in a
-// background goroutine, so the first tool call may legitimately arrive before
-// the first Broker selection has finished; PhaseStarting answers "still being
-// set up" and asks the caller to retry.
 func runWaitUnavailableError(t *testing.T, cs *mcp.ClientSession) *mcp.CallToolResult {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -258,7 +231,8 @@ func runWaitUnavailableError(t *testing.T, cs *mcp.ClientSession) *mcp.CallToolR
 	}
 }
 
-// REQ-agent-messaging-038
+// TestRunToolErrorsWhenBrokerIsUnavailable checks the no-Broker tool error and
+// that the loop recovers when a Broker appears.
 func TestRunToolErrorsWhenBrokerIsUnavailable(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -288,8 +262,6 @@ func TestRunToolErrorsWhenBrokerIsUnavailable(t *testing.T) {
 		t.Errorf("send_message error = %q, want a \"Not sent:\" prefix", text)
 	}
 
-	// The Broker appears; the loop recovers by itself, without the MCP client
-	// reconnecting.
 	srv := fakelocal.Start(t, sock, fakelocal.Handlers{
 		ListAgents: func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
 			return &localpb.ListAgentsResponse{SelfAddress: "me@b"}, nil
@@ -310,7 +282,8 @@ func TestRunToolErrorsWhenBrokerIsUnavailable(t *testing.T) {
 	}
 }
 
-// REQ-topics-015, REQ-topics-019
+// TestRunJoinsDefaultTopicFromProjectConfig checks that the project
+// configuration's topic is joined non-publicly at registration.
 func TestRunJoinsDefaultTopicFromProjectConfig(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -343,9 +316,9 @@ func TestRunJoinsDefaultTopicFromProjectConfig(t *testing.T) {
 	}
 }
 
-// REQ-topics-027: a nameless leave acts on the topics this process joined
-// automatically at its first registration, not on a list computed again from a
-// project configuration that changed since.
+// TestRunNamelessLeaveUsesTheTopicsJoinedAtRegistration checks that a nameless
+// leave uses the topics joined at registration after the project configuration
+// changed.
 func TestRunNamelessLeaveUsesTheTopicsJoinedAtRegistration(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -381,8 +354,6 @@ func TestRunNamelessLeaveUsesTheTopicsJoinedAtRegistration(t *testing.T) {
 	runWaitJoinTopic(t, srv, "team")
 	runWaitRegistered(t, h.cs)
 
-	// The project configuration changes after the first registration. The
-	// nameless call must still leave the topic that was joined then.
 	writeProjectFile(t, dir, "topics: [other]\n")
 	res := callTool(t, h.cs, "leave_topic", nil)
 	if res.IsError {
@@ -400,7 +371,8 @@ func TestRunNamelessLeaveUsesTheTopicsJoinedAtRegistration(t *testing.T) {
 	}
 }
 
-// REQ-topics-020
+// TestRunDoesNotJoinWhenAutoJoinIsOff checks that auto_join off joins no default
+// topic even across a Broker restart.
 func TestRunDoesNotJoinWhenAutoJoinIsOff(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -430,10 +402,8 @@ func TestRunDoesNotJoinWhenAutoJoinIsOff(t *testing.T) {
 	}
 	runWaitRegistered(t, h.cs)
 
-	// The completion joins nothing. Join a marker by hand, restart the Broker
-	// and register again: the restore replays the memory in insertion order, so
-	// a default topic remembered despite auto_join being off would be joined
-	// before the marker. Waiting for the marker is what orders this assertion.
+	// The restore replays the memory in insertion order, so waiting for the
+	// marker orders this assertion.
 	res := callTool(t, h.cs, "join_topic", map[string]any{"name": "marker"})
 	if res.IsError {
 		t.Fatalf("join_topic marker failed: %s", textContent(t, res))
@@ -454,7 +424,8 @@ func TestRunDoesNotJoinWhenAutoJoinIsOff(t *testing.T) {
 	}
 }
 
-// REQ-topics-022
+// TestRunRestoresTopicsAfterBrokerRestart checks that topics joined before a
+// Broker restart are restored with their public declaration and description.
 func TestRunRestoresTopicsAfterBrokerRestart(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -488,8 +459,6 @@ func TestRunRestoresTopicsAfterBrokerRestart(t *testing.T) {
 		t.Fatalf("join_topic x failed: %s", textContent(t, res))
 	}
 
-	// The restarted fake Broker starts with an empty call log, so the restored
-	// joins are the first thing it records.
 	srv.Stop()
 	srv = fakelocal.Start(t, sock, handlers)
 
@@ -504,7 +473,8 @@ func TestRunRestoresTopicsAfterBrokerRestart(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-034
+// TestRunForgetsManualTopicsAcrossProcesses checks that a new process restores
+// only the default topic and not one joined by hand.
 func TestRunForgetsManualTopicsAcrossProcesses(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -536,17 +506,15 @@ func TestRunForgetsManualTopicsAcrossProcesses(t *testing.T) {
 	}
 	runWaitJoinTopic(t, srv, "x")
 
-	// Turning the session off: the first Run ends and the second starts over.
 	first.cancel()
 	if err := first.wait(t, eventTimeout); err != nil {
 		t.Fatalf("Run returned %v, want nil", err)
 	}
 	second := startRunClient(t, opts)
 	conn2 := runNextRegister(t, srv, clock)
-	// The fake Broker keeps the first process's JoinTopic calls, so waiting
-	// for any "team" request returns the first process's one. Wait for the
-	// second process's own restore instead: it runs only after the new agent
-	// ID is in the status store, so this wait also orders the join_topic below.
+	// The fake Broker keeps the first process's calls, so wait for the second
+	// process's own restore, which runs only after the new agent ID is in the
+	// status store; this also orders the join_topic below.
 	skip := len(topicsJoinRequests(srv))
 	if err := conn2.Complete("agent-2", "me2@b", true); err != nil {
 		t.Fatalf("Complete: %v", err)
@@ -556,10 +524,6 @@ func TestRunForgetsManualTopicsAcrossProcesses(t *testing.T) {
 		t.Fatalf("the restored team join was sent for %q, want agent-2", got)
 	}
 
-	// A new process must not replay a topic the old one joined by hand. Join a
-	// marker and restart the Broker: the restore replays the memory in
-	// insertion order, so a wrongly carried-over "x" would come before the
-	// marker, and waiting for the marker orders the assertion.
 	res2 := callTool(t, second.cs, "join_topic", map[string]any{"name": "marker"})
 	if res2.IsError {
 		t.Fatalf("join_topic marker failed: %s", textContent(t, res2))
@@ -580,7 +544,8 @@ func TestRunForgetsManualTopicsAcrossProcesses(t *testing.T) {
 	}
 }
 
-// REQ-agent-messaging-034
+// TestRunCancelClosesRegisterStream checks that cancelling ctx closes the
+// Register stream before Run returns.
 func TestRunCancelClosesRegisterStream(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -603,6 +568,8 @@ func TestRunCancelClosesRegisterStream(t *testing.T) {
 	}
 }
 
+// TestRunInstallsNoSignalHandler checks that Run installs no signal handler,
+// leaving that to cmd.
 func TestRunInstallsNoSignalHandler(t *testing.T) {
 	clock := newLoopClock()
 	sock := socktest.Path(t, "missing.sock")
@@ -650,7 +617,8 @@ func TestRunInstallsNoSignalHandler(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-016
+// TestRunSendsInjectedProtocolVersion checks that the injected local protocol
+// version reaches Hello and a mismatch is reported.
 func TestRunSendsInjectedProtocolVersion(t *testing.T) {
 	clock := newLoopClock()
 	sock := fakelocal.SocketPath(t)
@@ -698,7 +666,8 @@ func TestRunSendsInjectedProtocolVersion(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-038
+// TestRunReportsNoBroker checks that the no-Broker tool error lists the startup
+// methods and the process keeps running.
 func TestRunReportsNoBroker(t *testing.T) {
 	clock := newLoopClock()
 	opts := runTestOptions(t, clock, map[string]string{"CLAUDE_CODE_MESSAGING_SOCKET": "/s"})

@@ -17,15 +17,11 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// versionRejectText is what a Broker speaking local protocol version 2 answers
-// a client speaking version 1 with.
 const versionRejectText = "local protocol version 1 is not supported by this Broker (version 2); restart the Broker"
 
-// versionAfter records every requested wait and resolves it at once. A loop
-// that polls the Broker after a version mismatch therefore runs as fast as the
-// fake Broker answers, which turns the polling into extra Hello calls the test
-// can count. The correct loop sends nothing and waits for the connection to
-// leave READY.
+// versionAfter records every requested wait and resolves it at once, so a loop
+// that polls after a version mismatch turns the polling into Hello calls the
+// test can count.
 type versionAfter struct {
 	mu    sync.Mutex
 	waits []time.Duration
@@ -46,9 +42,6 @@ func (a *versionAfter) recorded() []time.Duration {
 	return append([]time.Duration(nil), a.waits...)
 }
 
-// versionOptions builds options whose Broker-facing behaviour is fully under
-// test control: no environment overrides, an empty working directory, the given
-// sockets, waits that resolve at once and no git origin.
 func versionOptions(t *testing.T, userSocket, systemSocket string) (Options, *versionAfter) {
 	t.Helper()
 	after := &versionAfter{}
@@ -64,8 +57,6 @@ func versionOptions(t *testing.T, userSocket, systemSocket string) (Options, *ve
 	}, after
 }
 
-// versionMismatchRejecter answers Hello the way a version 2 Broker rejects a
-// version 1 client, counting every call.
 func versionMismatchRejecter(hellos *atomic.Int64) fakelocal.Handlers {
 	return fakelocal.Handlers{
 		Hello: func(context.Context, *localpb.HelloRequest) (*localpb.HelloResponse, error) {
@@ -78,9 +69,6 @@ func versionMismatchRejecter(hellos *atomic.Int64) fakelocal.Handlers {
 	}
 }
 
-// versionWaitMismatch calls list_agents until the background loop reports the
-// version mismatch and returns that text. Until the first selection finishes,
-// list_agents answers that the Broker is still being set up.
 func versionWaitMismatch(t *testing.T, cs *mcp.ClientSession) string {
 	t.Helper()
 	deadline := time.Now().Add(eventTimeout)
@@ -96,9 +84,6 @@ func versionWaitMismatch(t *testing.T, cs *mcp.ClientSession) string {
 	return ""
 }
 
-// versionAssertNoRegister fails if srv receives a Register stream within the
-// window. Only a compatible Hello leads to Register, so a stream here means the
-// MCP server registered despite the mismatch.
 func versionAssertNoRegister(t *testing.T, srv *fakelocal.Server, what string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -109,7 +94,8 @@ func versionAssertNoRegister(t *testing.T, srv *fakelocal.Server, what string) {
 	}
 }
 
-// REQ-broker-config-016
+// TestMismatchDoesNotRegisterOrSwitch checks that a version mismatch neither
+// registers nor switches to the system Broker.
 func TestMismatchDoesNotRegisterOrSwitch(t *testing.T) {
 	userSock := fakelocal.SocketPath(t)
 	systemSock := fakelocal.SocketPath(t)
@@ -153,10 +139,10 @@ func TestMismatchDoesNotRegisterOrSwitch(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-016
+// TestMismatchBrokerOlder checks that the mismatch text names the Broker's
+// protocol version.
 func TestMismatchBrokerOlder(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
-	// The default Hello handler answers localpb.ProtocolVersion (1).
 	srv := fakelocal.Start(t, sock, fakelocal.Handlers{})
 
 	opts, _ := versionOptions(t, sock, fakelocal.SocketPath(t))
@@ -176,7 +162,8 @@ func TestMismatchBrokerOlder(t *testing.T) {
 	versionAssertNoRegister(t, srv, "the user Broker")
 }
 
-// REQ-broker-config-016
+// TestMismatchNoHelloPolling checks that the loop sends no further Hello and
+// does not back off while the mismatched connection is up.
 func TestMismatchNoHelloPolling(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
 	var hellos atomic.Int64
@@ -196,8 +183,6 @@ func TestMismatchNoHelloPolling(t *testing.T) {
 		}
 	}
 
-	// The loop waits for the connection to leave READY, so neither the tool
-	// calls nor the immediate waits cause another Hello.
 	if got := hellos.Load(); got != 1 {
 		t.Errorf("the Broker received %d Hello calls after the mismatch; the loop must not poll", got)
 	}
@@ -206,16 +191,13 @@ func TestMismatchNoHelloPolling(t *testing.T) {
 	}
 }
 
-// startMismatchBroker serves a fake Broker on path that rejects the handshake
-// the way a real Broker at a different local protocol version does: a
-// version_mismatch status carrying the code and the message, and no field for
-// the Broker's protocol version.
 func startMismatchBroker(t *testing.T, path string) {
 	t.Helper()
 	fakelocal.Start(t, path, versionMismatchRejecter(new(atomic.Int64)))
 }
 
-// REQ-broker-config-016
+// TestMismatchRejectionNamesNoBrokerVersion checks that a rejection without a
+// Broker version names no version 0.
 func TestMismatchRejectionNamesNoBrokerVersion(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
 	startMismatchBroker(t, sock)
@@ -240,7 +222,8 @@ func TestMismatchRejectionNamesNoBrokerVersion(t *testing.T) {
 	}
 }
 
-// REQ-broker-config-016
+// TestMismatchRecoversAfterBrokerRestart checks that the session registers once
+// the Broker runs a compatible version.
 func TestMismatchRecoversAfterBrokerRestart(t *testing.T) {
 	sock := fakelocal.SocketPath(t)
 	var version atomic.Uint32
@@ -265,7 +248,6 @@ func TestMismatchRecoversAfterBrokerRestart(t *testing.T) {
 	h := startRunClient(t, opts)
 	versionWaitMismatch(t, h.cs)
 
-	// The user restarts the Broker with a version this MCP server speaks.
 	version.Store(localpb.ProtocolVersion)
 	srv.Restart()
 

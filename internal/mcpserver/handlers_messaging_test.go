@@ -19,7 +19,6 @@ import (
 	"github.com/wangzw/peers/internal/testkit/fakelocal"
 )
 
-// messagingTestClient dials the fake Local service listening on path.
 func messagingTestClient(t *testing.T, path string) localpb.LocalClient {
 	t.Helper()
 	cc, err := grpc.NewClient("unix://"+path, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -30,8 +29,6 @@ func messagingTestClient(t *testing.T, path string) localpb.LocalClient {
 	return localpb.NewLocalClient(cc)
 }
 
-// messagingTestHandlers returns handlers in the connected state, registered as
-// agentID.
 func messagingTestHandlers(client localpb.LocalClient, agentID string) *handlers {
 	st := &statusStore{}
 	st.Update(func(s *Status) {
@@ -43,7 +40,6 @@ func messagingTestHandlers(client localpb.LocalClient, agentID string) *handlers
 	return &handlers{st: st, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
-// messagingCallsOf returns the requests of one method the fake service recorded.
 func messagingCallsOf(srv *fakelocal.Server, method string) []any {
 	var out []any
 	for _, c := range srv.Calls() {
@@ -54,9 +50,9 @@ func messagingCallsOf(srv *fakelocal.Server, method string) []any {
 	return out
 }
 
+// TestListAgentsForwardsFilters checks that the filters and the caller's
+// identity reach the Broker.
 func TestListAgentsForwardsFilters(t *testing.T) {
-	// REQ-agent-messaging-008: the filters, including the caller's identity,
-	// reach the Broker; filtering is the Broker's job.
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
 		ListAgents: func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
@@ -91,10 +87,9 @@ func TestListAgentsForwardsFilters(t *testing.T) {
 	}
 }
 
+// TestListAgentsOutput checks the status words, the omitted unknown status, the
+// empty topic list and self_address.
 func TestListAgentsOutput(t *testing.T) {
-	// REQ-agent-messaging-008, REQ-agent-messaging-009, REQ-agent-messaging-010,
-	// REQ-agent-messaging-011, REQ-agent-messaging-032: status words, the
-	// omitted unknown status, the empty topic list, and self_address.
 	path := fakelocal.SocketPath(t)
 	fakelocal.Start(t, path, fakelocal.Handlers{
 		ListAgents: func(context.Context, *localpb.ListAgentsRequest) (*localpb.ListAgentsResponse, error) {
@@ -164,12 +159,9 @@ func TestListAgentsOutput(t *testing.T) {
 	}
 }
 
+// TestListAgentsOutputAccount checks that the result carries the account that
+// registered each agent.
 func TestListAgentsOutputAccount(t *testing.T) {
-	// REQ-agent-messaging-008: the result carries the account that registered
-	// each agent, so the model can tell apart agents with the same name. The
-	// entry is decoded from JSON with unknown fields discarded, so the test
-	// builds and fails on the missing output field against code that predates
-	// it instead of failing to compile.
 	var entry localpb.AgentEntry
 	build := protojson.UnmarshalOptions{DiscardUnknown: true}
 	if err := build.Unmarshal([]byte(`{"address":"other@host","sharedTopics":["topic-a"],"account":"alice"}`), &entry); err != nil {
@@ -209,9 +201,9 @@ func TestListAgentsOutputAccount(t *testing.T) {
 	}
 }
 
+// TestListAgentsNotRegistered checks that an unregistered session gets an
+// explanation and no request reaches the Broker.
 func TestListAgentsNotRegistered(t *testing.T) {
-	// REQ-agent-messaging-038: an unregistered session gets an explanation and
-	// no request reaches the Broker.
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{})
 	st := &statusStore{}
@@ -237,9 +229,9 @@ func TestListAgentsNotRegistered(t *testing.T) {
 	}
 }
 
+// TestSendMessageForwards checks that To, Message and the caller's identity
+// reach the Broker unchanged.
 func TestSendMessageForwards(t *testing.T) {
-	// REQ-agent-messaging-013: to, message and the caller's identity reach the
-	// Broker unchanged.
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
 		Send: func(context.Context, *localpb.SendRequest) (*localpb.SendResponse, error) {
@@ -279,13 +271,12 @@ func TestSendMessageForwards(t *testing.T) {
 	}
 }
 
+// TestSendMessageErrors checks the error text for a delivery_unknown result, an
+// ordinary failure and a lost connection.
 func TestSendMessageErrors(t *testing.T) {
-	// REQ-agent-messaging-027: DELIVERY_UNKNOWN is "Delivery unknown", an
-	// ordinary failure is "Not sent", and a connection lost mid-RPC is
-	// "Delivery unknown".
 	tests := []struct {
 		name   string
-		stop   bool // stop the fake service inside the Send handler
+		stop   bool
 		send   func(context.Context, *localpb.SendRequest) (*localpb.SendResponse, error)
 		prefix string
 	}{
@@ -339,9 +330,9 @@ func TestSendMessageErrors(t *testing.T) {
 	}
 }
 
+// TestSendMessageConcurrentAgentID checks that concurrent calls from one session
+// carry the same agent identity.
 func TestSendMessageConcurrentAgentID(t *testing.T) {
-	// REQ-agent-messaging-035: concurrent calls from one session carry the same
-	// agent identity.
 	path := fakelocal.SocketPath(t)
 	srv := fakelocal.Start(t, path, fakelocal.Handlers{
 		Send: func(context.Context, *localpb.SendRequest) (*localpb.SendResponse, error) {
@@ -381,8 +372,8 @@ func TestSendMessageConcurrentAgentID(t *testing.T) {
 	}
 }
 
-// TestMessagingToolCallTimeouts covers list_agents and send_message. Each
-// returns a tool error instead of waiting for a Broker that never answers.
+// TestMessagingToolCallTimeouts checks that list_agents and send_message return
+// a tool error instead of waiting for a Broker that never answers.
 func TestMessagingToolCallTimeouts(t *testing.T) {
 	t.Parallel()
 
