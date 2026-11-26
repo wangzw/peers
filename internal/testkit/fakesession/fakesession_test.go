@@ -453,6 +453,7 @@ func TestNoBindEmptyPath(t *testing.T) {
 	}
 }
 
+// Linux refuses a regular file with ECONNREFUSED and macOS with ENOTSOCK, so both are accepted.
 func TestSocketRefusesConnections(t *testing.T) {
 	path := filepath.Join(socktest.Dir(t), "regular-file")
 	if err := os.WriteFile(path, []byte("not a socket"), 0o600); err != nil {
@@ -467,8 +468,8 @@ func TestSocketRefusesConnections(t *testing.T) {
 	if err == nil {
 		t.Fatal("dialing a regular file succeeded")
 	}
-	if !errors.Is(err, syscall.ECONNREFUSED) && !strings.Contains(err.Error(), "not a socket") {
-		t.Fatalf("dialing a regular file: %v, want ECONNREFUSED or a not-a-socket error", err)
+	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, syscall.ENOTSOCK) && !strings.Contains(err.Error(), "not a socket") {
+		t.Fatalf("dialing a regular file: %v, want ECONNREFUSED, ENOTSOCK, or a not-a-socket error", err)
 	}
 }
 
