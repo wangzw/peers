@@ -1,8 +1,12 @@
 name: CI
 
+# Every commit is tested once: a push to main, a pull request through
+# pull_request, and any other branch on demand through workflow_dispatch.
 on:
   push:
+    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
