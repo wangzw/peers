@@ -15,8 +15,6 @@ import (
 	"time"
 )
 
-// identityTestTime is a fixed generation time so certificate fields can be
-// asserted exactly.
 func identityTestTime() time.Time {
 	return time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
 }
@@ -65,8 +63,8 @@ func identityWriteFile(t *testing.T, dir, name string, data []byte, mode os.File
 	return path
 }
 
-// REQ-broker-pairing-001: the identity is generated once and reloaded
-// unchanged, so the fingerprint is stable across restarts.
+// TestREQBrokerPairing001_IdentityStableAcrossReopen checks that reopening a
+// data directory loads the same identity and fingerprint.
 func TestREQBrokerPairing001_IdentityStableAcrossReopen(t *testing.T) {
 	t.Parallel()
 
@@ -76,7 +74,6 @@ func TestREQBrokerPairing001_IdentityStableAcrossReopen(t *testing.T) {
 	certBefore := identityReadFile(t, filepath.Join(dir, identityCertFileName))
 	pubBefore := first.publicKey()
 
-	// A later start must load the same files, not regenerate them.
 	later := func() time.Time { return identityTestTime().Add(72 * time.Hour) }
 	second, err := loadIdentity(dir, later)
 	if err != nil {
@@ -100,14 +97,14 @@ func TestREQBrokerPairing001_IdentityStableAcrossReopen(t *testing.T) {
 	}
 }
 
-// identityCertFingerprint parses the certificate and derives the SHA-256 of its
-// DER SubjectPublicKeyInfo, the definition of the fingerprint.
 func identityCertFingerprint(t *testing.T, dir string) Fingerprint {
 	t.Helper()
 	cert := identityParseCertificate(t, dir)
 	return Fingerprint(sha256.Sum256(cert.RawSubjectPublicKeyInfo))
 }
 
+// TestIdentityFingerprintMatchesCertificatePublicKeyInfo checks that the
+// identity fingerprint is the SHA-256 of the certificate's SubjectPublicKeyInfo.
 func TestIdentityFingerprintMatchesCertificatePublicKeyInfo(t *testing.T) {
 	t.Parallel()
 
@@ -124,6 +121,8 @@ func TestIdentityFingerprintMatchesCertificatePublicKeyInfo(t *testing.T) {
 	}
 }
 
+// TestIdentityFilesUseOwnerOnlyPermissions checks that both identity files are
+// mode 0600 and owned by the effective user.
 func TestIdentityFilesUseOwnerOnlyPermissions(t *testing.T) {
 	t.Parallel()
 
@@ -146,6 +145,8 @@ func TestIdentityFilesUseOwnerOnlyPermissions(t *testing.T) {
 	}
 }
 
+// TestIdentityKeyFileIsPKCS8PEM checks that the key file is a PKCS#8 PEM
+// Ed25519 key and the certificate file is a single CERTIFICATE PEM block.
 func TestIdentityKeyFileIsPKCS8PEM(t *testing.T) {
 	t.Parallel()
 
@@ -178,6 +179,8 @@ func TestIdentityKeyFileIsPKCS8PEM(t *testing.T) {
 	}
 }
 
+// TestIdentityRejectsGroupOrOtherAccess checks that loadIdentity rejects
+// identity files readable by group or other.
 func TestIdentityRejectsGroupOrOtherAccess(t *testing.T) {
 	t.Parallel()
 
@@ -201,6 +204,8 @@ func TestIdentityRejectsGroupOrOtherAccess(t *testing.T) {
 	}
 }
 
+// TestIdentityRejectsSymbolicLink checks that loadIdentity rejects an identity
+// file that is a symbolic link.
 func TestIdentityRejectsSymbolicLink(t *testing.T) {
 	t.Parallel()
 
@@ -218,6 +223,8 @@ func TestIdentityRejectsSymbolicLink(t *testing.T) {
 	}
 }
 
+// TestIdentityRejectsDirectoryInPlaceOfFile checks that loadIdentity rejects a
+// directory where an identity file is expected.
 func TestIdentityRejectsDirectoryInPlaceOfFile(t *testing.T) {
 	t.Parallel()
 
@@ -230,8 +237,8 @@ func TestIdentityRejectsDirectoryInPlaceOfFile(t *testing.T) {
 	}
 }
 
-// A crash between writing the key and the certificate must not change the
-// identity: the certificate is reissued from the existing key.
+// TestIdentityRegeneratesMissingCertificate checks that losing the certificate
+// reissues it from the existing key without changing the identity.
 func TestIdentityRegeneratesMissingCertificate(t *testing.T) {
 	t.Parallel()
 
@@ -260,6 +267,8 @@ func TestIdentityRegeneratesMissingCertificate(t *testing.T) {
 	}
 }
 
+// TestIdentityRejectsCertificateWithoutKey checks that loadIdentity rejects a
+// certificate whose key is missing.
 func TestIdentityRejectsCertificateWithoutKey(t *testing.T) {
 	t.Parallel()
 
@@ -273,6 +282,8 @@ func TestIdentityRejectsCertificateWithoutKey(t *testing.T) {
 	}
 }
 
+// TestIdentityRejectsMismatchedKeyAndCertificate checks that loadIdentity
+// rejects a certificate issued for a different key.
 func TestIdentityRejectsMismatchedKeyAndCertificate(t *testing.T) {
 	t.Parallel()
 
@@ -290,6 +301,8 @@ func TestIdentityRejectsMismatchedKeyAndCertificate(t *testing.T) {
 	}
 }
 
+// TestIdentityRejectsMalformedFiles checks that loadIdentity rejects PEM
+// blocks with a wrong type or trailing data and files that are not PEM.
 func TestIdentityRejectsMalformedFiles(t *testing.T) {
 	t.Parallel()
 
@@ -325,6 +338,8 @@ func TestIdentityRejectsMalformedFiles(t *testing.T) {
 	}
 }
 
+// TestIdentityCertificateProperties checks that the generated certificate is a
+// self-signed Ed25519 leaf with no host names.
 func TestIdentityCertificateProperties(t *testing.T) {
 	t.Parallel()
 
@@ -377,8 +392,9 @@ func TestIdentityCertificateProperties(t *testing.T) {
 	}
 }
 
-// FingerprintOf must agree with the certificate fingerprint for the same key;
-// otherwise directory records and the peer table would disagree.
+// TestFingerprintOfRawPublicKeyEqualsCertificateFingerprint checks that
+// FingerprintOf agrees for a raw public key and a SubjectPublicKeyInfo and
+// returns the zero value for other inputs.
 func TestFingerprintOfRawPublicKeyEqualsCertificateFingerprint(t *testing.T) {
 	t.Parallel()
 
@@ -407,6 +423,8 @@ func TestFingerprintOfRawPublicKeyEqualsCertificateFingerprint(t *testing.T) {
 	}
 }
 
+// TestIdentitySignAndVerify checks that a signature verifies with the identity
+// public key and that mismatched inputs are rejected.
 func TestIdentitySignAndVerify(t *testing.T) {
 	t.Parallel()
 
@@ -450,6 +468,8 @@ func TestIdentitySignAndVerify(t *testing.T) {
 	}
 }
 
+// TestIdentityPublicKeyReturnsCopy checks that mutating the returned public key
+// does not change the identity.
 func TestIdentityPublicKeyReturnsCopy(t *testing.T) {
 	t.Parallel()
 
@@ -465,7 +485,8 @@ func TestIdentityPublicKeyReturnsCopy(t *testing.T) {
 	}
 }
 
-// The owner check cannot be exercised without privilege to change ownership.
+// TestIdentityRejectsForeignOwner checks that a key owned by another uid is
+// rejected, skipping without root to change ownership.
 func TestIdentityRejectsForeignOwner(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("requires root to change file ownership")
@@ -483,9 +504,9 @@ func TestIdentityRejectsForeignOwner(t *testing.T) {
 	}
 }
 
-// The key is installed by linking a fully written temporary file into place.
-// The target must appear complete, keep mode 0600, and leave no temporary file
-// behind.
+// TestWriteIdentityFileExclusiveInstallsCompleteFile checks that linking a
+// temporary file installs the complete data with mode 0600 and leaves no
+// temporary file behind.
 func TestWriteIdentityFileExclusiveInstallsCompleteFile(t *testing.T) {
 	t.Parallel()
 
@@ -518,8 +539,8 @@ func TestWriteIdentityFileExclusiveInstallsCompleteFile(t *testing.T) {
 	}
 }
 
-// A second generator must not overwrite an existing key file: the link fails,
-// the existing content is untouched, and the temporary file is removed.
+// TestWriteIdentityFileExclusiveRejectsExistingTarget checks that an existing
+// target is never overwritten and the temporary file is removed.
 func TestWriteIdentityFileExclusiveRejectsExistingTarget(t *testing.T) {
 	t.Parallel()
 
@@ -548,13 +569,10 @@ func TestWriteIdentityFileExclusiveRejectsExistingTarget(t *testing.T) {
 	}
 }
 
-// identityWriteFailureEnv marks the child process of
-// TestGenerateIdentityWriteFailureLeavesNoPartialKey.
 const identityWriteFailureEnv = "PEERS_TEST_IDENTITY_WRITE_FAILURE_DIR"
 
-// A failed key write must leave no identity.key at all. The child process caps
-// its file size so the key write fails after a partial write; with the old
-// direct-to-target write that left a truncated key behind.
+// TestGenerateIdentityWriteFailureLeavesNoPartialKey checks that a key write
+// that fails partway leaves no identity.key and no temporary file.
 func TestGenerateIdentityWriteFailureLeavesNoPartialKey(t *testing.T) {
 	if dir := os.Getenv(identityWriteFailureEnv); dir != "" {
 		identityWriteFailureChild(t, dir)

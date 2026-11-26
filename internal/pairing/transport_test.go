@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// transportTestConn is a minimal PairConn used to check that a Transport hands
-// exactly this connection to the dial callback.
 type transportTestConn struct {
 	fp       Fingerprint
 	pub      []byte
@@ -49,8 +47,6 @@ func (c *transportTestConn) Close() error {
 	return nil
 }
 
-// transportTestFake implements Transport without any network. It records the
-// dial address, passes the configured connection to run, and records drops.
 type transportTestFake struct {
 	address   string
 	conn      PairConn
@@ -81,9 +77,7 @@ var (
 	_ PairConn  = (*transportTestConn)(nil)
 )
 
-// TestTransportPairDialHandsConnectionToRun checks the wiring contract: the
-// address is passed through and run receives the connection the transport
-// dialed.
+// TestTransportPairDialHandsConnectionToRun checks that PairDial passes the address through and hands run the dialed connection.
 func TestTransportPairDialHandsConnectionToRun(t *testing.T) {
 	conn := &transportTestConn{fp: auditTestFingerprint(0x10), remote: "192.0.2.10:17443"}
 	tr := &transportTestFake{conn: conn}
@@ -107,9 +101,7 @@ func TestTransportPairDialHandsConnectionToRun(t *testing.T) {
 	}
 }
 
-// TestTransportPairDialPropagatesRunError keeps the handshake's own error
-// (rejection, protocol error, store failure) visible to Connect unchanged,
-// rather than being confused with a dial failure.
+// TestTransportPairDialPropagatesRunError checks that PairDial returns run's error unchanged.
 func TestTransportPairDialPropagatesRunError(t *testing.T) {
 	want := errors.New("handshake failed")
 	tr := &transportTestFake{conn: &transportTestConn{}}
@@ -125,8 +117,7 @@ func TestTransportPairDialPropagatesRunError(t *testing.T) {
 	}
 }
 
-// TestTransportDropRecordsFingerprint checks that Unpair's close path addresses
-// the right peer and that repeated drops remain safe.
+// TestTransportDropRecordsFingerprint checks that Drop records the fingerprint and repeated drops are safe.
 func TestTransportDropRecordsFingerprint(t *testing.T) {
 	fp := auditTestFingerprint(0x20)
 	tr := &transportTestFake{}

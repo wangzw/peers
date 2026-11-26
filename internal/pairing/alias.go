@@ -8,8 +8,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// isAliasByte reports whether c is one of the bytes an alias may contain:
-// ASCII letters, digits, '.', '-' and '_'.
 func isAliasByte(c byte) bool {
 	switch {
 	case c >= 'a' && c <= 'z':
@@ -22,9 +20,6 @@ func isAliasByte(c byte) bool {
 	return true
 }
 
-// validAlias reports whether s can be used as an alias. Aliases are 1 to
-// config.AliasMaxLen bytes long and consist of ASCII letters, digits, '.', '-'
-// and '_'. Matching is case-sensitive; no normalization is applied anywhere.
 func validAlias(s string) bool {
 	if len(s) == 0 || len(s) > config.AliasMaxLen {
 		return false
@@ -37,13 +32,8 @@ func validAlias(s string) bool {
 	return true
 }
 
-// normalizeAlias returns the form of a self-reported alias that the peer table
-// stores. A value that satisfies validAlias is returned unchanged. Any other
-// value is reduced to the alias character set and truncated to
-// config.AliasMaxLen, so an oversized or malformed value is never persisted as
-// it was reported; the result may be empty. Whether the reported value counts as
-// usable is still decided by validAlias on the original, not on this stored
-// form.
+// normalizeAlias returns the stored form of a self-reported alias; usability is
+// still decided from the original value, not this form.
 func normalizeAlias(alias string) string {
 	if validAlias(alias) {
 		return alias
@@ -51,9 +41,6 @@ func normalizeAlias(alias string) string {
 	return truncatePart(sanitizeAliasPart(alias), config.AliasMaxLen)
 }
 
-// sanitizeAliasPart turns s into a string that satisfies the alias character
-// set. Every rune outside [A-Za-z0-9._-] becomes '-'. The result may be longer
-// than an alias; callers truncate it.
 func sanitizeAliasPart(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -67,15 +54,11 @@ func sanitizeAliasPart(s string) string {
 	return b.String()
 }
 
-// assignLocalAlias builds a local alias that is unique against taken. The
-// candidate is the sanitized self-reported alias, '-', and leading hex digits
-// of fp. If that collides, more hex digits are added, and after the hex space
-// is exhausted a two-digit sequence number is appended. The result always
-// satisfies validAlias.
-//
-// taken must contain every alias that must not be reused: the Broker's own
-// alias and the effective alias of every other peer. ownAlias is included for
-// the same reason but is accepted separately so callers cannot forget it.
+// assignLocalAlias builds a local alias from the sanitized self-reported alias
+// and a suffix: increasing counts of the fingerprint's hex digits, then a
+// two-digit sequence, then "-xx". A candidate is skipped when it is taken or
+// equals ownAlias, and the result is "" when every candidate is taken. taken
+// must already hold the Broker's own alias and every other peer's effective alias.
 func assignLocalAlias(reported string, fp Fingerprint, ownAlias string, taken map[string]struct{}) string {
 	base := sanitizeAliasPart(reported)
 	if base == "" {
@@ -84,9 +67,8 @@ func assignLocalAlias(reported string, fp Fingerprint, ownAlias string, taken ma
 
 	hex := fingerprintHex(fp)
 
-	// Try the self-reported base with an increasing number of fingerprint
-	// digits. A suffix of "-" plus 23 hex digits already fills the whole alias,
-	// so longer prefixes cannot fit.
+	// The suffix '-' plus 23 hex digits already fills the whole alias, so the
+	// loop stops there.
 	for digits := 4; digits <= len(hex) && digits+1 <= config.AliasMaxLen; digits++ {
 		suffix := "-" + hex[:digits]
 		candidate := truncatePart(base, config.AliasMaxLen-len(suffix)) + suffix
@@ -95,8 +77,7 @@ func assignLocalAlias(reported string, fp Fingerprint, ownAlias string, taken ma
 		}
 	}
 
-	// The fingerprint-based names were all taken. Keep the base and append a
-	// two-digit sequence number instead, making room by truncating the base.
+	// All fingerprint-based names collided; fall back to a two-digit sequence.
 	for seq := 0; seq <= 99; seq++ {
 		suffix := fmt.Sprintf("-%02d", seq)
 		candidate := truncatePart(base, config.AliasMaxLen-len(suffix)) + suffix
@@ -105,9 +86,7 @@ func assignLocalAlias(reported string, fp Fingerprint, ownAlias string, taken ma
 		}
 	}
 
-	// A hundred collisions on one prefix is outside anything a real peer table
-	// produces. Return a value that is still valid and different from the last
-	// attempt rather than looping forever.
+	// Fall back to '-xx' rather than loop forever after a hundred collisions.
 	candidate := truncatePart(base, config.AliasMaxLen-3) + "-xx"
 	if aliasAvailable(candidate, ownAlias, taken) {
 		return candidate
@@ -115,8 +94,6 @@ func assignLocalAlias(reported string, fp Fingerprint, ownAlias string, taken ma
 	return ""
 }
 
-// aliasAvailable reports whether candidate is a valid alias not in taken and
-// not equal to ownAlias.
 func aliasAvailable(candidate, ownAlias string, taken map[string]struct{}) bool {
 	if !validAlias(candidate) || candidate == ownAlias {
 		return false
@@ -125,9 +102,7 @@ func aliasAvailable(candidate, ownAlias string, taken map[string]struct{}) bool 
 	return !used
 }
 
-// truncatePart shortens s to at most n bytes without splitting a rune. The
-// sanitized inputs are ASCII, but keeping it rune-safe avoids a broken alias if
-// the function is reused with arbitrary text.
+// truncatePart shortens s to at most n bytes without splitting a rune.
 func truncatePart(s string, n int) string {
 	if n <= 0 {
 		return ""
@@ -141,5 +116,4 @@ func truncatePart(s string, n int) string {
 	return s[:n]
 }
 
-// isRuneStart reports whether b begins a UTF-8 rune.
 func isRuneStart(b byte) bool { return b&0xc0 != 0x80 }

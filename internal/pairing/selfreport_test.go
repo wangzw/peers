@@ -13,9 +13,7 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// countingOps counts the WriteFile calls atomicWrite makes. Every rewrite of
-// peers.json performs exactly one WriteFile on the temporary file, so the count
-// is the number of persisted table rewrites.
+// countingOps counts WriteFile calls, one per peers.json rewrite.
 type countingOps struct {
 	*peerTestOps
 
@@ -48,7 +46,6 @@ func newCountingPeerTable(t *testing.T) (*peerTable, string, *countingOps) {
 	return table, path, ops
 }
 
-// readPeersFile decodes the persisted table at path.
 func readPeersFile(t *testing.T, path string) peersFile {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -62,10 +59,8 @@ func readPeersFile(t *testing.T, path string) peersFile {
 	return file
 }
 
-// TestOversizedSelfReportedAliasStoredNormalized reproduces the audit finding
-// that a self-reported alias was persisted verbatim. A peer reporting more than
-// one MiB must end up with an alias that fits the alias rule; a local alias is
-// generated as before, because an oversized value is not a valid alias.
+// TestOversizedSelfReportedAliasStoredNormalized checks that an oversized
+// self-reported alias is stored normalized and gets a generated local alias.
 func TestOversizedSelfReportedAliasStoredNormalized(t *testing.T) {
 	t.Parallel()
 	table, path, _ := newPeerTestTable(t)
@@ -96,11 +91,8 @@ func TestOversizedSelfReportedAliasStoredNormalized(t *testing.T) {
 	}
 }
 
-// TestPutNormalizesSelfReportedAlias covers the table write path itself. A
-// handshake commit hands the reported alias to put unchanged, so put must store
-// the normalized form; deleting that step would let a value outside the alias
-// rule reach peers.json. The persisted record is checked directly, not the
-// in-memory entry.
+// TestPutNormalizesSelfReportedAlias checks that put stores the normalized alias
+// in peers.json rather than the raw reported value.
 func TestPutNormalizesSelfReportedAlias(t *testing.T) {
 	t.Parallel()
 	table, path, _ := newPeerTestTable(t)
@@ -126,9 +118,7 @@ func TestPutNormalizesSelfReportedAlias(t *testing.T) {
 	}
 }
 
-// TestSelfReportedCandidateAddressLengthBound pins the 259-byte cap on one
-// stored candidate address: a 253-byte domain name plus ':' and a five-digit
-// port is the longest address the table accepts, and one byte more is skipped.
+// TestSelfReportedCandidateAddressLengthBound checks that a 259-byte candidate address without a trailing dot is kept and a 260-byte one is skipped.
 func TestSelfReportedCandidateAddressLengthBound(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -154,12 +144,9 @@ func TestSelfReportedCandidateAddressLengthBound(t *testing.T) {
 	}
 }
 
-// TestAdvertisedAddrBoundaryMatchesConfig pins the length boundary where a
-// fully qualified domain name carries a trailing dot. config.ValidDialHost
-// removes that dot before applying the 253-byte domain limit, so a 253-byte
-// domain written with a trailing dot plus a five-digit port is a 260-byte
-// address that configuration accepts. Pairing must accept the same address: at
-// every boundary case both sides judge it the same way.
+// TestAdvertisedAddrBoundaryMatchesConfig checks that pairing accepts exactly
+// the advertised addresses config accepts, including a domain with a trailing
+// dot.
 func TestAdvertisedAddrBoundaryMatchesConfig(t *testing.T) {
 	t.Parallel()
 
@@ -199,10 +186,9 @@ func TestAdvertisedAddrBoundaryMatchesConfig(t *testing.T) {
 	}
 }
 
-// TestSelfReportedCandidateAddressPortDigits pins the per-byte digit check on
-// the port. A string that strconv alone would still parse is not enough: every
-// byte must be 0-9, so '+', '-', '_', a letter and a multibyte digit are
-// rejected. A port with leading zeros is still decimal and is accepted.
+// TestSelfReportedCandidateAddressPortDigits checks that every port byte must be
+// a decimal digit, so leading zeros pass and signs, letters and multibyte digits
+// fail.
 func TestSelfReportedCandidateAddressPortDigits(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -232,10 +218,9 @@ func TestSelfReportedCandidateAddressPortDigits(t *testing.T) {
 	}
 }
 
-// TestSelfReportedCandidateAddressesValidated reproduces the audit finding that
-// acceptor- and card-sourced addresses were stored without checking them. Only
-// entries that are a dialable host:port may survive; malformed entries are
-// skipped like unknown kinds, and the valid entries around them are kept.
+// TestSelfReportedCandidateAddressesValidated checks that acceptor- and
+// card-sourced addresses keep only dialable host:port entries and skip malformed
+// ones.
 func TestSelfReportedCandidateAddressesValidated(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -262,10 +247,8 @@ func TestSelfReportedCandidateAddressesValidated(t *testing.T) {
 	}
 }
 
-// TestUnchangedSelfReportedFieldsSkipRewrite reproduces the write amplification:
-// every Hello, PeerInfo or address frame rewrote the whole table even when
-// nothing changed. Repeating the same alias, address list and connected address
-// must write once, not once per call.
+// TestUnchangedSelfReportedFieldsSkipRewrite checks that repeated identical
+// alias, address and connected-address observations write peers.json once.
 func TestUnchangedSelfReportedFieldsSkipRewrite(t *testing.T) {
 	t.Parallel()
 	table, _, ops := newCountingPeerTable(t)
@@ -304,10 +287,9 @@ func TestUnchangedSelfReportedFieldsSkipRewrite(t *testing.T) {
 	}
 }
 
-// TestOldPeersFileOversizedAliasLoadsNormalized reproduces the load path: a file
-// written by an older build may hold an alias longer than the alias rule. That
-// must not stop the Broker from starting, the value must be normalized in
-// memory, and the next write must persist the normalized value.
+// TestOldPeersFileOversizedAliasLoadsNormalized checks that an oversized alias
+// in peers.json loads normalized and the next write persists the normalized
+// value.
 func TestOldPeersFileOversizedAliasLoadsNormalized(t *testing.T) {
 	t.Parallel()
 	fp, pub := peerTestKey(t)

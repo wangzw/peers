@@ -1,3 +1,4 @@
+// Package pairingpb defines the pairing handshake frames and their frame kinds.
 package pairingpb
 
 // Frame kinds for the pairing handshake payloads.

@@ -11,11 +11,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// --- REQ-broker-pairing-006 ------------------------------------------------
-
-// REQ-broker-pairing-006: a one-time key works at the ninth minute and answers
-// KEY_EXPIRED at the eleventh, with no change to either peer table on the
-// rejected attempt.
+// TestREQBrokerPairing006_NineMinutesSucceedsElevenMinutesExpired checks that a
+// key works at nine minutes and answers KEY_EXPIRED at eleven without changing
+// either peer table.
 func TestREQBrokerPairing006_NineMinutesSucceedsElevenMinutesExpired(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -59,8 +57,9 @@ func TestREQBrokerPairing006_NineMinutesSucceedsElevenMinutesExpired(t *testing.
 	}
 }
 
-// REQ-broker-pairing-006: an expired-key record survives until 24 hours after
-// the key's expiry and is deleted at that cutoff.
+// TestREQBrokerPairing006_ExpiredRecordDroppedAfter24Hours checks that an
+// expired-key record answers KEY_EXPIRED until 24 hours after expiry and is
+// dropped at the cutoff.
 func TestREQBrokerPairing006_ExpiredRecordDroppedAfter24Hours(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -81,8 +80,8 @@ func TestREQBrokerPairing006_ExpiredRecordDroppedAfter24Hours(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-006: holding an expired record does not make every
-// unknown lookup tag answer KEY_EXPIRED.
+// TestREQBrokerPairing006_UnknownLookupTagStillKeyInvalid checks that an
+// unknown lookup tag answers KEY_INVALID even while an expired record is held.
 func TestREQBrokerPairing006_UnknownLookupTagStillKeyInvalid(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -107,8 +106,8 @@ func TestREQBrokerPairing006_UnknownLookupTagStillKeyInvalid(t *testing.T) {
 	_ = hsRequestAttempt(t, freshP, "ZZZZ-ZZZZ-ZZZZ-ZZZZ", ReasonKeyInvalid)
 }
 
-// REQ-broker-pairing-006: a hit on an expired-key record neither counts toward
-// the per-minute limit nor is limited by it.
+// TestREQBrokerPairing006_ExpiredHitsNotCounted checks that a hit on an expired
+// record answers KEY_EXPIRED without counting toward the per-minute limit.
 func TestREQBrokerPairing006_ExpiredHitsNotCounted(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -136,9 +135,9 @@ func TestREQBrokerPairing006_ExpiredHitsNotCounted(t *testing.T) {
 	_ = hsRequestAttempt(t, accP, key, ReasonKeyExpired)
 }
 
-// REQ-broker-pairing-006: keys discarded by use or by reaching the verification
-// failure limit do not become expired-key records; a later use answers
-// KEY_INVALID, as REQ-broker-pairing-007 requires.
+// TestREQBrokerPairing006_UsedAndDiscardedKeysAreNotExpired checks that a key
+// removed by use or by the verification-failure limit becomes no expired-key
+// record.
 func TestREQBrokerPairing006_UsedAndDiscardedKeysAreNotExpired(t *testing.T) {
 	t.Run("used", func(t *testing.T) {
 		clk := newHSClock()
@@ -200,8 +199,8 @@ func TestREQBrokerPairing006_UsedAndDiscardedKeysAreNotExpired(t *testing.T) {
 	})
 }
 
-// REQ-broker-pairing-006: expired-key records are capped at
-// maxExpiredKeyRecords by dropping the earliest cutoff first.
+// TestREQBrokerPairing006_ExpiredRecordLimit checks that expired-key records
+// are capped at maxExpiredKeyRecords, dropping the earliest cutoff.
 func TestREQBrokerPairing006_ExpiredRecordLimit(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -227,8 +226,8 @@ func TestREQBrokerPairing006_ExpiredRecordLimit(t *testing.T) {
 	_ = hsRequestAttempt(t, accP, keys[len(keys)-1], ReasonKeyExpired)
 }
 
-// REQ-broker-pairing-006: a key that expires between PairRequest and
-// PairConfirm cannot finish the handshake and is rejected as KEY_EXPIRED.
+// TestREQBrokerPairing006_KeyExpiresBetweenRequestAndConfirm checks that a key
+// expiring between PairRequest and PairConfirm is rejected as KEY_EXPIRED.
 func TestREQBrokerPairing006_KeyExpiresBetweenRequestAndConfirm(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)

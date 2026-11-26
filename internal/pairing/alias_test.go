@@ -18,6 +18,8 @@ func aliasTestFingerprint(seed byte) Fingerprint {
 	return fp
 }
 
+// TestValidAlias checks that validAlias accepts the allowed byte set and length
+// and rejects everything else.
 func TestValidAlias(t *testing.T) {
 	t.Parallel()
 	valid := []string{"a", "A", "0", "host-1", "a.b_c-d", strings.Repeat("x", 24)}
@@ -34,6 +36,8 @@ func TestValidAlias(t *testing.T) {
 	}
 }
 
+// TestSanitizeAliasPart checks that every character outside the alias set becomes
+// '-'.
 func TestSanitizeAliasPart(t *testing.T) {
 	t.Parallel()
 	cases := map[string]string{
@@ -50,6 +54,8 @@ func TestSanitizeAliasPart(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing037_LocalAliasMaxLengthAndCharset checks that a generated
+// local alias always satisfies the alias length and character rules.
 func TestREQBrokerPairing037_LocalAliasMaxLengthAndCharset(t *testing.T) {
 	t.Parallel()
 	reported := []string{
@@ -72,6 +78,8 @@ func TestREQBrokerPairing037_LocalAliasMaxLengthAndCharset(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing037_LocalAliasTruncation checks that a long base is
+// truncated to leave room for the fingerprint suffix.
 func TestREQBrokerPairing037_LocalAliasTruncation(t *testing.T) {
 	t.Parallel()
 	fp := aliasTestFingerprint(0xab)
@@ -88,9 +96,11 @@ func TestREQBrokerPairing037_LocalAliasTruncation(t *testing.T) {
 	}
 }
 
+// TestAssignLocalAliasUsesSanitizedBaseAndPrefix checks that the generated alias
+// is the sanitized base plus a fingerprint prefix.
 func TestAssignLocalAliasUsesSanitizedBaseAndPrefix(t *testing.T) {
 	t.Parallel()
-	fp := aliasTestFingerprint(0xab) // hex prefix "abab"
+	fp := aliasTestFingerprint(0xab)
 	cases := map[string]string{
 		"hostA": "hostA-abab",
 		"a b":   "a-b-abab",
@@ -103,6 +113,8 @@ func TestAssignLocalAliasUsesSanitizedBaseAndPrefix(t *testing.T) {
 	}
 }
 
+// TestAssignLocalAliasAddsHexDigitsWhenTaken checks that a taken candidate gets
+// one more fingerprint digit.
 func TestAssignLocalAliasAddsHexDigitsWhenTaken(t *testing.T) {
 	t.Parallel()
 	fp := aliasTestFingerprint(0xab)
@@ -113,6 +125,8 @@ func TestAssignLocalAliasAddsHexDigitsWhenTaken(t *testing.T) {
 	}
 }
 
+// TestAssignLocalAliasFallsBackToSequence checks that the generator falls back to
+// a two-digit sequence once every fingerprint prefix is taken.
 func TestAssignLocalAliasFallsBackToSequence(t *testing.T) {
 	t.Parallel()
 	fp := aliasTestFingerprint(0xab)
@@ -128,6 +142,8 @@ func TestAssignLocalAliasFallsBackToSequence(t *testing.T) {
 	}
 }
 
+// TestAssignLocalAliasAvoidsOwnAlias checks that the generated alias never
+// equals the Broker's own alias.
 func TestAssignLocalAliasAvoidsOwnAlias(t *testing.T) {
 	t.Parallel()
 	fp := aliasTestFingerprint(0xab)
@@ -140,6 +156,8 @@ func TestAssignLocalAliasAvoidsOwnAlias(t *testing.T) {
 	}
 }
 
+// TestAliasUniquenessAcrossOwnAliasAndPeers checks that generated aliases avoid
+// the own alias and every taken peer alias.
 func TestAliasUniquenessAcrossOwnAliasAndPeers(t *testing.T) {
 	t.Parallel()
 	own := "own-alias"
@@ -157,6 +175,9 @@ func TestAliasUniquenessAcrossOwnAliasAndPeers(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing024_AcceptorAssignsLocalAliasOnConflict checks that a
+// conflicting self-reported alias gets a generated local alias reserved for the
+// handshake.
 func TestREQBrokerPairing024_AcceptorAssignsLocalAliasOnConflict(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -183,10 +204,8 @@ func TestREQBrokerPairing024_AcceptorAssignsLocalAliasOnConflict(t *testing.T) {
 	}
 }
 
-// TestResolveAliasSkipsInFlightReservation pins the rule that ResolveAlias
-// resolves committed peers only. An alias reserved by a handshake that has not
-// committed yet is not an Agent address: a model that received it would address
-// a peer that may never exist.
+// TestResolveAliasSkipsInFlightReservation checks that an alias reserved by a
+// handshake resolves only after the commit.
 func TestResolveAliasSkipsInFlightReservation(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -209,6 +228,8 @@ func TestResolveAliasSkipsInFlightReservation(t *testing.T) {
 	}
 }
 
+// TestResolveAliasOnlyMatchesEffectiveAliases checks that ResolveAlias matches
+// only effective aliases and is case-sensitive.
 func TestResolveAliasOnlyMatchesEffectiveAliases(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -229,6 +250,8 @@ func TestResolveAliasOnlyMatchesEffectiveAliases(t *testing.T) {
 	}
 }
 
+// TestReservationRejectsCommittedAlias checks that a reservation cannot take
+// another peer's committed alias but lets a peer reserve its own.
 func TestReservationRejectsCommittedAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -244,6 +267,8 @@ func TestReservationRejectsCommittedAlias(t *testing.T) {
 	}
 }
 
+// TestHandshakeReservationReleasedOnFailure checks that releasing a reservation
+// frees the alias for another handshake.
 func TestHandshakeReservationReleasedOnFailure(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -259,6 +284,8 @@ func TestHandshakeReservationReleasedOnFailure(t *testing.T) {
 	}
 }
 
+// TestPutRechecksReservation checks that put refuses an alias another handshake
+// reserved.
 func TestPutRechecksReservation(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -277,11 +304,8 @@ func TestPutRechecksReservation(t *testing.T) {
 	}
 }
 
-// TestCommitHandshakeRequiresOwnReservation pins the reservation ownership
-// recheck on the handshake commit path. Unlike put, commitHandshake must find
-// the effective alias reserved by this very fingerprint: no reservation and a
-// reservation owned by another fingerprint both fail with ErrNeedsLocalAlias and
-// leave the table unchanged.
+// TestCommitHandshakeRequiresOwnReservation checks that a handshake commits only
+// an alias reserved by its own fingerprint and not the cached own alias.
 func TestCommitHandshakeRequiresOwnReservation(t *testing.T) {
 	t.Parallel()
 
@@ -382,9 +406,8 @@ func TestCommitHandshakeRequiresOwnReservation(t *testing.T) {
 	})
 }
 
-// TestConcurrentSelfReportedAliasCollision has two peers report the same alias
-// at the same time. Both observations must leave distinct effective aliases:
-// one keeps the reported alias and the other gets a generated local alias.
+// TestConcurrentSelfReportedAliasCollision checks that two peers reporting one
+// alias at once end with distinct effective aliases.
 func TestConcurrentSelfReportedAliasCollision(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -492,7 +515,8 @@ func TestREQBrokerPairing026_ExistingLocalAliasUnaffected(t *testing.T) {
 	}
 }
 
-// TestObserveAliasUsesReportedAliasWhenFree covers the no-conflict branch.
+// TestObserveAliasUsesReportedAliasWhenFree checks that a free reported alias
+// becomes the effective alias without a local alias.
 func TestObserveAliasUsesReportedAliasWhenFree(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -506,6 +530,8 @@ func TestObserveAliasUsesReportedAliasWhenFree(t *testing.T) {
 	}
 }
 
+// TestObserveAliasPersistenceFailureKeepsOldValue checks that a failed write
+// keeps the old alias and writes no audit event.
 func TestObserveAliasPersistenceFailureKeepsOldValue(t *testing.T) {
 	t.Parallel()
 	table, _, ops := newPeerTestTable(t)
@@ -526,21 +552,24 @@ func TestObserveAliasPersistenceFailureKeepsOldValue(t *testing.T) {
 	}
 }
 
+// TestObserveBeforeOpenIgnored checks that the observe methods are ignored
+// without a panic on a zero Pairing.
 func TestObserveBeforeOpenIgnored(t *testing.T) {
 	t.Parallel()
 	var p Pairing
 	fp := aliasTestFingerprint(1)
-	// None of these may panic; they only log.
 	p.ObserveAlias(fp, "x")
 	p.ObserveConnected(fp, "192.0.2.10:1")
 	p.ObserveAcceptorAddresses(fp, []config.AdvertisedAddr{{Kind: config.AdvertisedKindDirect, Addr: "192.0.2.10:1"}})
 	p.UpdateCardAddresses(fp, []config.AdvertisedAddr{{Kind: config.AdvertisedKindDirect, Addr: "192.0.2.10:1"}})
 }
 
+// TestMakeLocalAliasAvoidsReserved checks that local alias generation skips an
+// alias another handshake reserved.
 func TestMakeLocalAliasAvoidsReserved(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
-	fp := aliasTestFingerprint(0xab) // hex prefix "abab"
+	fp := aliasTestFingerprint(0xab)
 	other, _ := peerTestKey(t)
 	if _, ok := table.reserveAlias("buildbox-abab", other); !ok {
 		t.Fatalf("reserveAlias failed")
@@ -559,6 +588,8 @@ func TestMakeLocalAliasAvoidsReserved(t *testing.T) {
 	}
 }
 
+// TestAssignLocalAliasInvalidSequenceDoesNotLoop checks that the generator
+// returns empty once every candidate is taken instead of looping.
 func TestAssignLocalAliasInvalidSequenceDoesNotLoop(t *testing.T) {
 	t.Parallel()
 	fp := aliasTestFingerprint(0)

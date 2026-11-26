@@ -10,6 +10,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
+// TestOpenRejectsNilTransport checks that Open with a nil transport returns
+// ErrNoTransport.
 func TestOpenRejectsNilTransport(t *testing.T) {
 	p, err := Open(nil)
 	if !errors.Is(err, ErrNoTransport) {
@@ -20,6 +22,8 @@ func TestOpenRejectsNilTransport(t *testing.T) {
 	}
 }
 
+// TestOpenRejectsEmptyDataDir checks that opening with an empty data directory
+// returns ErrNotOpen.
 func TestOpenRejectsEmptyDataDir(t *testing.T) {
 	s := configSettings{paths: func() config.PathSet { return config.PathSet{} }}
 	p, err := newPairing(s, &hsTransport{}, newHSClock(), realFileOps{}, nil)
@@ -31,6 +35,9 @@ func TestOpenRejectsEmptyDataDir(t *testing.T) {
 	}
 }
 
+// TestOpenGeneratesIdentityAndReloadsIt checks that the first open writes the
+// identity with the expected mode, a restart keeps the fingerprint, and the
+// first open writes no peer table.
 func TestOpenGeneratesIdentityAndReloadsIt(t *testing.T) {
 	s := newHSSettings(t)
 	clk := newHSClock()
@@ -65,8 +72,8 @@ func TestOpenGeneratesIdentityAndReloadsIt(t *testing.T) {
 	}
 }
 
-// REQ-broker-pairing-001: the fingerprint comes only from the identity's
-// public key, so changing the alias or the listen address does not change it.
+// TestREQBrokerPairing001_FingerprintIgnoresAliasAndListen checks that the
+// fingerprint stays the same when the alias, listen address and hostname change.
 func TestREQBrokerPairing001_FingerprintIgnoresAliasAndListen(t *testing.T) {
 	s := newHSSettings(t)
 	s.alias = "alpha"
@@ -94,6 +101,8 @@ func TestREQBrokerPairing001_FingerprintIgnoresAliasAndListen(t *testing.T) {
 	}
 }
 
+// TestOpenLoadsExistingPeerTableOnRestart checks that the peer, its role and
+// its effective alias survive a restart.
 func TestOpenLoadsExistingPeerTableOnRestart(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -129,6 +138,8 @@ func TestOpenLoadsExistingPeerTableOnRestart(t *testing.T) {
 	}
 }
 
+// TestOpenFailsOnBrokenPeerTable checks that a malformed peers.json makes open
+// fail with ErrStore.
 func TestOpenFailsOnBrokenPeerTable(t *testing.T) {
 	s := newHSSettings(t)
 	if err := os.WriteFile(filepath.Join(s.dataDir, peersFileName), []byte(`{"version":1,"peers":[`), peersFileMode); err != nil {
@@ -144,6 +155,8 @@ func TestOpenFailsOnBrokenPeerTable(t *testing.T) {
 	}
 }
 
+// TestOpenFailsOnUnknownPeerTableVersion checks that an unknown peers.json
+// version makes open fail with ErrStore.
 func TestOpenFailsOnUnknownPeerTableVersion(t *testing.T) {
 	s := newHSSettings(t)
 	doc := `{"version":2,"peers":[]}`

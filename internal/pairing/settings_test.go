@@ -8,9 +8,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// settingsTestConfig builds a configSettings whose config calls are replaced
-// with canned values, so these tests never load config or touch the host's
-// configuration.
 func settingsTestConfig() configSettings {
 	return configSettings{
 		paths: func() config.PathSet {
@@ -47,9 +44,8 @@ func settingsTestConfig() configSettings {
 	}
 }
 
-// TestConfigSettingsReadsDocumentedConfig covers every method the pairing logic
-// reads: alias, hostname, advertised addresses, static key, data directory and
-// the two limits.
+// TestConfigSettingsReadsDocumentedConfig checks that configSettings returns the
+// configured values for the settings pairing reads.
 func TestConfigSettingsReadsDocumentedConfig(t *testing.T) {
 	s := settingsTestConfig()
 
@@ -119,8 +115,8 @@ func TestConfigSettingsReadsDocumentedConfig(t *testing.T) {
 	}
 }
 
-// TestConfigSettingsAdvertisedReturnsCopy makes sure the caller cannot mutate
-// the list the adapter reads from config.
+// TestConfigSettingsAdvertisedReturnsCopy checks that changing a returned address
+// list leaves the next call's list unchanged.
 func TestConfigSettingsAdvertisedReturnsCopy(t *testing.T) {
 	s := settingsTestConfig()
 	first, err := s.Advertised()
@@ -137,8 +133,8 @@ func TestConfigSettingsAdvertisedReturnsCopy(t *testing.T) {
 	}
 }
 
-// TestConfigSettingsAuditForwards verifies the adapter passes the event through
-// unchanged to config.Audit.
+// TestConfigSettingsAuditForwards checks that Audit passes the event through to
+// the configured audit function.
 func TestConfigSettingsAuditForwards(t *testing.T) {
 	var got config.Event
 	s := settingsTestConfig()
@@ -158,8 +154,8 @@ func TestConfigSettingsEmptyDataDir(t *testing.T) {
 	}
 }
 
-// TestConfigSettingsKindChecks rejects a value of the wrong kind instead of
-// silently using a zero value.
+// TestConfigSettingsKindChecks checks that a value of the wrong kind is rejected
+// with an error.
 func TestConfigSettingsKindChecks(t *testing.T) {
 	t.Run("alias wants string", func(t *testing.T) {
 		s := configSettings{get: func(string) (config.Value, error) {
@@ -182,8 +178,8 @@ func TestConfigSettingsKindChecks(t *testing.T) {
 	})
 }
 
-// TestConfigSettingsPropagatesGetError keeps config.ErrNotLoaded and other
-// read failures visible to the caller.
+// TestConfigSettingsPropagatesGetError checks that a configuration read error is
+// returned to the caller.
 func TestConfigSettingsPropagatesGetError(t *testing.T) {
 	want := errors.New("config unavailable")
 	s := configSettings{get: func(string) (config.Value, error) { return config.Value{}, want }}
@@ -223,9 +219,8 @@ func TestConfigKindName(t *testing.T) {
 	}
 }
 
-// TestConfigSettingsZeroValueUsesConfigAPI checks the fallback path: the
-// production adapter reads the real config package's hostname, which does not
-// require Load.
+// TestConfigSettingsZeroValueUsesConfigAPI checks that the production settings
+// read the hostname through the config package.
 func TestConfigSettingsZeroValueUsesConfigAPI(t *testing.T) {
 	s := newConfigSettings()
 	if _, ok := s.(configSettings); !ok {

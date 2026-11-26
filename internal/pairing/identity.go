@@ -20,31 +20,21 @@ import (
 )
 
 const (
-	// identityKeyFileName is the private key file inside the data directory.
-	identityKeyFileName = "identity.key"
-	// identityCertFileName is the self-signed certificate file inside the data
-	// directory.
+	identityKeyFileName  = "identity.key"
 	identityCertFileName = "identity.crt"
 
 	identityKeyPEMType  = "PRIVATE KEY"
 	identityCertPEMType = "CERTIFICATE"
 
-	// identityFileMode is the mode of both identity files. Only the account
-	// running the Broker may read them.
 	identityFileMode os.FileMode = 0o600
 )
 
-// ed25519SubjectPublicKeyInfoPrefix is the DER header that x509 wraps around a
-// raw 32-byte Ed25519 public key when it builds a SubjectPublicKeyInfo. It lets
-// the package derive a fingerprint from a bare public key, as directory records
-// publish one.
+// ed25519SubjectPublicKeyInfoPrefix is the DER SubjectPublicKeyInfo header x509
+// wraps around a raw 32-byte Ed25519 public key.
 var ed25519SubjectPublicKeyInfoPrefix = []byte{
 	0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
 }
 
-// identity is the local Broker's Ed25519 key pair and self-signed certificate.
-// The fingerprint is derived from the certificate's SubjectPublicKeyInfo and
-// therefore survives a certificate reissue with the same key.
 type identity struct {
 	privateKey ed25519.PrivateKey
 	cert       tls.Certificate
@@ -52,10 +42,9 @@ type identity struct {
 	pub        []byte
 }
 
-// loadIdentity loads the identity from dataDir, generating one on first use.
-// It never replaces an existing key or a certificate that does not match its
-// key: such states return ErrIdentity so a Broker cannot silently adopt a new
-// identity.
+// loadIdentity generates the identity on first use and returns ErrIdentity
+// rather than replacing an existing key or a certificate that does not match
+// its key.
 func loadIdentity(dataDir string, now func() time.Time) (*identity, error) {
 	if dataDir == "" {
 		return nil, fmt.Errorf("%w: empty data directory", ErrIdentity)
@@ -105,8 +94,6 @@ func loadIdentity(dataDir string, now func() time.Time) (*identity, error) {
 	return newIdentity(priv, cert), nil
 }
 
-// generateIdentity creates a fresh key pair and writes both files. The private
-// key is created exclusively so a concurrent generator cannot be overwritten.
 func generateIdentity(dataDir string, now func() time.Time) (*identity, error) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -135,8 +122,6 @@ func generateIdentity(dataDir string, now func() time.Time) (*identity, error) {
 	return installCertificate(dataDir, priv, certDER)
 }
 
-// generateCertificate issues a new self-signed certificate for an existing
-// private key and replaces identity.crt atomically.
 func generateCertificate(dataDir string, priv ed25519.PrivateKey, now func() time.Time) (*identity, error) {
 	certDER, err := createIdentityCertificate(priv.Public().(ed25519.PublicKey), priv, now)
 	if err != nil {
@@ -145,8 +130,6 @@ func generateCertificate(dataDir string, priv ed25519.PrivateKey, now func() tim
 	return installCertificate(dataDir, priv, certDER)
 }
 
-// installCertificate writes certDER as identity.crt and returns the in-memory
-// identity built from it.
 func installCertificate(dataDir string, priv ed25519.PrivateKey, certDER []byte) (*identity, error) {
 	certPath := filepath.Join(dataDir, identityCertFileName)
 	if err := writeIdentityCertificate(dataDir, certPath, certDER); err != nil {
@@ -162,9 +145,8 @@ func installCertificate(dataDir string, priv ed25519.PrivateKey, certDER []byte)
 	return newIdentity(priv, cert), nil
 }
 
-// createIdentityCertificate builds the self-signed certificate. It carries no
-// host names: the fingerprint is the identity, and names would only suggest a
-// trust path that does not exist.
+// createIdentityCertificate builds the self-signed certificate, which carries
+// no host names.
 func createIdentityCertificate(pub ed25519.PublicKey, priv ed25519.PrivateKey, now func() time.Time) ([]byte, error) {
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -188,8 +170,6 @@ func createIdentityCertificate(pub ed25519.PublicKey, priv ed25519.PrivateKey, n
 	return der, nil
 }
 
-// newIdentity assembles the in-memory identity from a parsed key and
-// certificate.
 func newIdentity(priv ed25519.PrivateKey, cert *x509.Certificate) *identity {
 	pub := append([]byte(nil), cert.PublicKey.(ed25519.PublicKey)...)
 	return &identity{
@@ -204,24 +184,18 @@ func newIdentity(priv ed25519.PrivateKey, cert *x509.Certificate) *identity {
 	}
 }
 
-// fingerprint returns the certificate fingerprint of this identity.
 func (id *identity) fingerprint() Fingerprint {
 	return id.fp
 }
 
-// publicKey returns a copy of the raw 32-byte Ed25519 public key.
 func (id *identity) publicKey() []byte {
 	return append([]byte(nil), id.pub...)
 }
 
-// sign signs data with the identity's Ed25519 private key.
 func (id *identity) sign(data []byte) []byte {
 	return ed25519.Sign(id.privateKey, data)
 }
 
-// fingerprintOfPublicKey derives a fingerprint from either a raw 32-byte
-// Ed25519 public key or a DER SubjectPublicKeyInfo. Any other input yields the
-// zero Fingerprint, which callers must treat as "no identity".
 func fingerprintOfPublicKey(pub []byte) Fingerprint {
 	switch len(pub) {
 	case ed25519.PublicKeySize:
@@ -241,8 +215,6 @@ func fingerprintOfPublicKey(pub []byte) Fingerprint {
 	}
 }
 
-// parseEd25519PublicKeyInfo parses a DER SubjectPublicKeyInfo and requires an
-// Ed25519 key.
 func parseEd25519PublicKeyInfo(der []byte) (ed25519.PublicKey, error) {
 	key, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
@@ -255,10 +227,9 @@ func parseEd25519PublicKeyInfo(der []byte) (ed25519.PublicKey, error) {
 	return pub, nil
 }
 
-// readIdentityFile reads one identity file after checking that it is a regular
-// file owned by the effective user and inaccessible to group and other. Every
-// failure is reported so that callers can tell a missing file from a rejected
-// one.
+// readIdentityFile rejects a symlink, a non-regular file, group or other
+// access and a foreign owner; a missing file is returned unchanged so callers
+// can tell it from a rejected one.
 func readIdentityFile(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -292,7 +263,6 @@ func readIdentityFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-// parseIdentityPrivateKey decodes the PKCS#8 PEM private key.
 func parseIdentityPrivateKey(data []byte) (ed25519.PrivateKey, error) {
 	block, rest := pem.Decode(data)
 	if block == nil {
@@ -318,8 +288,6 @@ func parseIdentityPrivateKey(data []byte) (ed25519.PrivateKey, error) {
 	return priv, nil
 }
 
-// parseIdentityCertificate decodes the self-signed PEM certificate and requires
-// an Ed25519 public key.
 func parseIdentityCertificate(data []byte) (*x509.Certificate, error) {
 	block, rest := pem.Decode(data)
 	if block == nil {
@@ -341,9 +309,6 @@ func parseIdentityCertificate(data []byte) (*x509.Certificate, error) {
 	return cert, nil
 }
 
-// checkCertificateMatchesKey rejects a certificate that was not issued for the
-// stored private key. Adopting such a pair would make signing and the TLS
-// handshake disagree about the identity.
 func checkCertificateMatchesKey(cert *x509.Certificate, priv ed25519.PrivateKey) error {
 	certPub, ok := cert.PublicKey.(ed25519.PublicKey)
 	if !ok {
@@ -356,7 +321,6 @@ func checkCertificateMatchesKey(cert *x509.Certificate, priv ed25519.PrivateKey)
 	return nil
 }
 
-// encodeIdentityPrivateKey encodes the key as PKCS#8 PEM.
 func encodeIdentityPrivateKey(priv ed25519.PrivateKey) ([]byte, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
@@ -365,9 +329,8 @@ func encodeIdentityPrivateKey(priv ed25519.PrivateKey) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: identityKeyPEMType, Bytes: der}), nil
 }
 
-// writeIdentityTempFile creates a temporary file in dir with the restricted
-// identity file mode and writes data to it. The caller owns the returned path
-// and must link or rename it into place, then remove it.
+// The caller must link or rename the returned path into place and then remove
+// it.
 func writeIdentityTempFile(dir, path string, data []byte) (string, error) {
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
 	if err != nil {
@@ -398,11 +361,9 @@ func writeIdentityTempFile(dir, path string, data []byte) (string, error) {
 	return tmpPath, nil
 }
 
-// writeIdentityFileExclusive writes data to a temporary file in dir, fsyncs it
-// and links it into place. Linking fails when path already exists, which keeps
-// the exclusive-create semantics of os.O_EXCL: two generators cannot both
-// install a key. The target never holds a partial file because only the link
-// makes it visible, and the temporary file is removed on every path.
+// writeIdentityFileExclusive links a fully written temporary file into place,
+// so the target never holds a partial file and an existing key is never
+// overwritten.
 func writeIdentityFileExclusive(dir, path string, data []byte) error {
 	tmpPath, err := writeIdentityTempFile(dir, path, data)
 	if err != nil {
@@ -412,8 +373,6 @@ func writeIdentityFileExclusive(dir, path string, data []byte) error {
 	return os.Link(tmpPath, path)
 }
 
-// writeIdentityFileAtomic writes data to a temporary file in dir, fsyncs it,
-// renames it over path and fsyncs the directory.
 func writeIdentityFileAtomic(dir, path string, data []byte) error {
 	tmpPath, err := writeIdentityTempFile(dir, path, data)
 	if err != nil {
@@ -426,7 +385,6 @@ func writeIdentityFileAtomic(dir, path string, data []byte) error {
 	return syncIdentityDir(dir)
 }
 
-// writeIdentityCertificate encodes and atomically installs the certificate.
 func writeIdentityCertificate(dir, path string, der []byte) error {
 	pemData := pem.EncodeToMemory(&pem.Block{Type: identityCertPEMType, Bytes: der})
 	if err := writeIdentityFileAtomic(dir, path, pemData); err != nil {
@@ -435,7 +393,6 @@ func writeIdentityCertificate(dir, path string, der []byte) error {
 	return nil
 }
 
-// syncIdentityDir fsyncs the directory so a rename survives a crash.
 func syncIdentityDir(dir string) error {
 	d, err := os.Open(dir)
 	if err != nil {

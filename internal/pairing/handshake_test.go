@@ -20,20 +20,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// --- handshake test doubles ------------------------------------------------
-
-// testWaitBound is the package-wide fallback for a wait on an event that a test
-// expects to arrive: a handshake frame on the scripted connection, a
-// rejection, or a goroutine returning. It only decides how long a wait that
-// will never complete takes to fail: the success path selects on the event
-// itself and never spends this time, so a larger value costs nothing. Thirty
-// seconds is far above the worst normal latency under load, including
-// scheduling and -race overhead; it is not a claim that a handshake should
-// take that long.
+// testWaitBound is the package-wide fallback that only decides how long a wait that never completes takes to fail; do not shrink it, or load and -race overhead cause flakes.
 const testWaitBound = 30 * time.Second
 
-// hsSettings is a mutable settings fake. aliasFunc, when set, overrides Alias
-// so a test can change the value between the calls a handshake makes.
 type hsSettings struct {
 	mu             sync.Mutex
 	dataDir        string
@@ -76,8 +65,6 @@ func (s *hsSettings) StaticKey() string {
 	return s.staticKey
 }
 
-// staticKeyCallCount reports how many times the handshake read the preset
-// static key, so a test can prove a lookup path never reaches it.
 func (s *hsSettings) staticKeyCallCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -118,7 +105,6 @@ func (s *hsSettings) recorded() []config.Event {
 	return append([]config.Event(nil), s.audits...)
 }
 
-// hsTimer is a timer driven by hsClock.
 type hsTimer struct {
 	c        chan time.Time
 	deadline time.Time
@@ -138,7 +124,6 @@ func (t *hsTimer) Stop() bool {
 	return true
 }
 
-// hsClock is a fake clock. Advance moves time forward and fires due timers.
 type hsClock struct {
 	mu     sync.Mutex
 	now    time.Time
@@ -180,7 +165,6 @@ func (c *hsClock) Advance(d time.Duration) {
 	}
 }
 
-// hsConn is one endpoint of an in-memory PairConn pair.
 type hsConn struct {
 	mu         sync.Mutex
 	queue      []hsFrame
@@ -205,8 +189,6 @@ func newHSConn() *hsConn {
 	return &hsConn{wake: make(chan struct{}, 1), sentCh: make(chan uint32, 32), version: hsProtocolVersion}
 }
 
-// hsConnPairFor builds endpoints whose reported identities are the given
-// fingerprint/public-key pairs, checking the pair is self-consistent.
 func hsConnPairFor(aFP Fingerprint, aPub []byte, bFP Fingerprint, bPub []byte) (*hsConn, *hsConn) {
 	a := newHSConn()
 	b := newHSConn()
@@ -303,7 +285,6 @@ func (c *hsConn) Close() error {
 	c.mu.Unlock()
 	c.notify()
 	if peer != nil {
-		// A real transport reports a closed peer as EOF on the other side.
 		peer.mu.Lock()
 		peer.closed = true
 		peer.mu.Unlock()
@@ -312,8 +293,6 @@ func (c *hsConn) Close() error {
 	return nil
 }
 
-// hsRecordingConn records the frames pairing itself sends, distinguishing them
-// from frames the fake transport sends after run returns.
 type hsRecordingConn struct {
 	PairConn
 	mu    sync.Mutex
@@ -327,9 +306,6 @@ func (r *hsRecordingConn) Send(ctx context.Context, kind uint32, payload []byte)
 	return r.PairConn.Send(ctx, kind, payload)
 }
 
-// hsOnSendConn runs f once, after a frame of the given kind is sent
-// successfully. A test uses it to change state at one exact point of a
-// handshake.
 type hsOnSendConn struct {
 	PairConn
 	kind uint32
@@ -351,7 +327,6 @@ func (r *hsRecordingConn) sentKinds() []uint32 {
 	return append([]uint32(nil), r.kinds...)
 }
 
-// hsTransport is the injected transport for handshake tests.
 type hsTransport struct {
 	mu        sync.Mutex
 	dialErr   error
@@ -402,8 +377,6 @@ func hsSendHello(raw PairConn) error {
 	return raw.Send(context.Background(), kindHello, nil)
 }
 
-// hsNewPairing builds a live Pairing with a generated identity and an empty
-// peer table in the settings' data directory.
 func hsNewPairing(t *testing.T, s *hsSettings, tr Transport, clk *hsClock) *Pairing {
 	t.Helper()
 	id, err := generateIdentity(s.dataDir, clk.Now)
@@ -430,8 +403,6 @@ func hsNewPairing(t *testing.T, s *hsSettings, tr Transport, clk *hsClock) *Pair
 	}
 }
 
-// hsKey generates a standalone Ed25519 key pair and its fingerprint, as a peer
-// identity that never needs a certificate in these tests.
 func hsKey(t *testing.T) (Fingerprint, []byte) {
 	t.Helper()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -441,15 +412,11 @@ func hsKey(t *testing.T) (Fingerprint, []byte) {
 	return FingerprintOf(pub), append([]byte(nil), pub...)
 }
 
-// hsPair runs one Connect against one Accept over an in-memory connection pair
-// and waits for both sides. afterRun lets a test control the link Hello.
 func hsPair(t *testing.T, initP, accP *Pairing, initTr *hsTransport, key, localAlias string, afterRun func(context.Context, PairConn) error) (Peer, string, error, error) {
 	t.Helper()
 	return hsPairFrom(t, initP, accP, initTr, key, localAlias, "192.0.2.2:40002", afterRun)
 }
 
-// hsPairFrom is hsPair with the acceptor-side remote address under the test's
-// control, so a test can make the handshake arrive from a chosen source.
 func hsPairFrom(t *testing.T, initP, accP *Pairing, initTr *hsTransport, key, localAlias, acceptorRemote string, afterRun func(context.Context, PairConn) error) (Peer, string, error, error) {
 	t.Helper()
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
@@ -467,8 +434,8 @@ func hsPairFrom(t *testing.T, initP, accP *Pairing, initTr *hsTransport, key, lo
 	return peer, shown, connectErr, awaitAccept(acceptErr)
 }
 
-// --- tests -----------------------------------------------------------------
-
+// TestHandshakeHMACFormulaVectors checks computeHint, responderProof and
+// initiatorProof against formula vectors transcribed independently of them.
 func TestHandshakeHMACFormulaVectors(t *testing.T) {
 	t.Parallel()
 
@@ -484,10 +451,8 @@ func TestHandshakeHMACFormulaVectors(t *testing.T) {
 		acceptorSeen[i] = 0x44
 	}
 
-	// The expected values come from the formulas written in
-	// docs/design/modules/design-pairing.md, transcribed here as
-	// designPairHint/designResponderProof/designInitiatorProof, not from the
-	// implementation's own functions.
+	// The expected values are computed independently of the implementation, so
+	// a formula change on either side fails this test.
 	wantHint := designPairHint(key, ni, initiator)
 	if got := computeHint(key, ni, initiator); !hmac.Equal(got, wantHint) {
 		t.Fatalf("hint = %x, want %x", got, wantHint)
@@ -502,6 +467,8 @@ func TestHandshakeHMACFormulaVectors(t *testing.T) {
 	}
 }
 
+// TestPairingFrameOrderAndKinds checks the frame order and kinds of a
+// successful handshake and that both sides commit.
 func TestPairingFrameOrderAndKinds(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -552,6 +519,8 @@ func TestPairingFrameOrderAndKinds(t *testing.T) {
 	}
 }
 
+// TestAcceptCommitsOnlyAfterHandoffFrame checks that the acceptor commits only
+// after the link Hello and puts that frame back for link.
 func TestAcceptCommitsOnlyAfterHandoffFrame(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -601,6 +570,8 @@ func TestAcceptCommitsOnlyAfterHandoffFrame(t *testing.T) {
 	}
 }
 
+// TestAcceptRequiresHelloKind checks that a handoff frame other than the link
+// Hello is a protocol error leaving no peer and no reservation.
 func TestAcceptRequiresHelloKind(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -635,6 +606,8 @@ func TestAcceptRequiresHelloKind(t *testing.T) {
 	}
 }
 
+// TestHandshakeTimeoutInitiator checks that the initiator maps its own deadline
+// to a timeout PairingError.
 func TestHandshakeTimeoutInitiator(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -645,7 +618,7 @@ func TestHandshakeTimeoutInitiator(t *testing.T) {
 	tr.raw = aConn
 	tr.beforeRun = func() { clk.Advance(30 * time.Second) }
 	go func() {
-		<-aConn.sentCh // PairRequest was sent
+		<-aConn.sentCh
 		clk.Advance(11 * time.Second)
 	}()
 
@@ -656,6 +629,8 @@ func TestHandshakeTimeoutInitiator(t *testing.T) {
 	}
 }
 
+// TestHandshakeTimeoutAcceptor checks that the acceptor returns a timeout
+// PairingError and commits nothing.
 func TestHandshakeTimeoutAcceptor(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -668,7 +643,7 @@ func TestHandshakeTimeoutAcceptor(t *testing.T) {
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
-	initTr.raw = aConn // no afterRun: the link Hello never arrives
+	initTr.raw = aConn
 
 	acceptErr := make(chan error, 1)
 	go func() { acceptErr <- accP.Accept(bConn) }()
@@ -689,6 +664,8 @@ func TestHandshakeTimeoutAcceptor(t *testing.T) {
 	}
 }
 
+// TestFailureLimitInvalidatesKey checks that a one-time key is discarded after
+// the failure limit and its next request is rejected as key invalid.
 func TestFailureLimitInvalidatesKey(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -708,8 +685,6 @@ func TestFailureLimitInvalidatesKey(t *testing.T) {
 		}
 	}
 
-	// The key reached pairing.max_failures and must be gone: the next request
-	// is rejected as a key-invalid request.
 	err = hsRequestAttempt(t, accP, key, ReasonKeyInvalid)
 	var pairErr *PairingError
 	if !errors.As(err, &pairErr) || pairErr.Reason != ReasonKeyInvalid {
@@ -720,6 +695,8 @@ func TestFailureLimitInvalidatesKey(t *testing.T) {
 	}
 }
 
+// TestConcurrentAcceptorHandshakesReserveDistinctAliases checks that concurrent
+// handshakes reporting the same alias get distinct effective aliases.
 func TestConcurrentAcceptorHandshakesReserveDistinctAliases(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -761,6 +738,9 @@ func TestConcurrentAcceptorHandshakesReserveDistinctAliases(t *testing.T) {
 	}
 }
 
+// TestConnectNeedsLocalAliasThenProvidedAliasCompletes checks that an alias
+// conflict needs a local alias and that a provided alias completes without
+// renaming the existing peer.
 func TestConnectNeedsLocalAliasThenProvidedAliasCompletes(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -772,7 +752,6 @@ func TestConnectNeedsLocalAliasThenProvidedAliasCompletes(t *testing.T) {
 	initP := hsNewPairing(t, initS, initTr, clk)
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
-	// The acceptor reports "beta"; make the initiator already hold that alias.
 	dupFP, dupPub := hsKey(t)
 	if _, err := initP.peers.put(peerEntry{
 		fingerprint: dupFP, publicKey: dupPub, alias: "beta", role: RoleDialer, pairedAt: clk.Now(),
@@ -802,6 +781,8 @@ func TestConnectNeedsLocalAliasThenProvidedAliasCompletes(t *testing.T) {
 	}
 }
 
+// TestConnectDialErrorMapping checks how Connect maps dial failures to sentinel
+// and pairing errors.
 func TestConnectDialErrorMapping(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -838,9 +819,8 @@ func TestConnectDialErrorMapping(t *testing.T) {
 	}
 }
 
-// A canceled dial reports the cancellation, not an unreachable peer: the link
-// dial wraps context.Canceled together with ErrDialFailed, and Connect must not
-// turn a caller's cancellation into a pairing failure.
+// TestConnectCanceledDialIsCanceled checks that a canceled dial returns
+// context.Canceled, not ErrPeerUnreachable.
 func TestConnectCanceledDialIsCanceled(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -859,6 +839,8 @@ func TestConnectCanceledDialIsCanceled(t *testing.T) {
 	}
 }
 
+// TestMismatchedFingerprintViewsFailLookup checks that a different initiator
+// fingerprint on the acceptor side matches no key and commits nothing.
 func TestMismatchedFingerprintViewsFailLookup(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -871,9 +853,6 @@ func TestMismatchedFingerprintViewsFailLookup(t *testing.T) {
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 	otherFP, otherPub := hsKey(t)
 
-	// The acceptor sees a valid but different initiator identity. The lookup tag
-	// is bound to this fingerprint, so the acceptor finds no matching key and
-	// rejects before any proof is exchanged.
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
 	bConn.fp = otherFP
 	bConn.pub = otherPub
@@ -898,12 +877,8 @@ func TestMismatchedFingerprintViewsFailLookup(t *testing.T) {
 	}
 }
 
-// TestLookupTagReplayDoesNotConsumeOneTimeKey reproduces the defect where a man
-// in the middle forwards the initiator's (ni, lookup tag) to the real acceptor.
-// While the lookup tag was computed from the key and ni alone, the forwarded
-// request matched the one-time key, so every wrong PairConfirm the forwarder
-// sent counted against the key. Once the count reached max_failures the key was
-// discarded and its real owner could no longer pair.
+// TestLookupTagReplayDoesNotConsumeOneTimeKey checks that a forwarded lookup tag
+// matches no key and cannot exhaust the key's failure count.
 func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -918,15 +893,10 @@ func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
 
 	initP, tr := newInitiatorPairing(t, clk)
 
-	// The request the initiator I sends: a nonce and the lookup tag it computes
-	// for its own fingerprint.
 	ni := makeSeq(9, nonceLength)
 	hint := computeHint([]byte(key), ni, initP.identity.fingerprint())
 
 	for i := 0; i < accS.maxFailures; i++ {
-		// A different certificate M forwards I's request. It does not hold the
-		// key, so whenever the acceptor offers it a challenge it answers with a
-		// wrong PairConfirm.
 		mFP, mPub := hsKey(t)
 		aConn, bConn := hsConnPairFor(mFP, mPub, accP.identity.fingerprint(), accP.identity.publicKey())
 		acceptErr := make(chan error, 1)
@@ -942,7 +912,6 @@ func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
 		}
 		switch kind {
 		case kindPairChallenge:
-			// The defect: the forwarded tag matched the one-time key.
 			t.Errorf("replay %d received a PairChallenge for the forwarded lookup tag", i)
 			if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: make([]byte, proofLength)}); err != nil {
 				t.Fatalf("replay %d: send bad PairConfirm: %v", i, err)
@@ -964,7 +933,6 @@ func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
 		_ = awaitAccept(acceptErr)
 	}
 
-	// I, which really holds the key, must still pair with it.
 	peer, _, connectErr, acceptErr := hsPairFrom(t, initP, accP, tr, key, "", "198.51.100.9:9999", func(ctx context.Context, raw PairConn) error {
 		return hsSendHello(raw)
 	})
@@ -979,10 +947,7 @@ func TestLookupTagReplayDoesNotConsumeOneTimeKey(t *testing.T) {
 	}
 }
 
-// TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid checks that a forwarded
-// tag cannot even learn that the one-time key it names has expired. Binding the
-// tag to the initiator's fingerprint makes it match no record, so the replay is
-// an ordinary invalid key rather than an expired-key answer.
+// TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid checks that a forwarded lookup tag that points at an expired key but is bound to another fingerprint matches no record and is rejected as key invalid, not key expired.
 func TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -997,7 +962,6 @@ func TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid(t *testing.T) {
 
 	ni := makeSeq(11, nonceLength)
 	hint := computeHint([]byte(key), ni, ownerFP)
-	// The key expires while still retained as an expired-key record.
 	clk.Advance(11 * time.Minute)
 
 	mFP, mPub := hsKey(t)
@@ -1028,6 +992,8 @@ func TestLookupTagReplayAgainstExpiredRecordIsKeyInvalid(t *testing.T) {
 	_ = awaitAccept(acceptErr)
 }
 
+// TestRateLimitedFailureUsesSourceMergeKey checks that a rate-limited rejection
+// audits with the source prefix as its merge key.
 func TestRateLimitedFailureUsesSourceMergeKey(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1056,8 +1022,8 @@ func TestRateLimitedFailureUsesSourceMergeKey(t *testing.T) {
 	}
 }
 
-// The attempt limit is per minute: when the injected clock crosses a minute
-// boundary the counter starts over rather than locking the acceptor forever.
+// TestAttemptCounterResetsEachMinute checks that the attempt counter starts over
+// when the clock crosses a minute boundary.
 func TestAttemptCounterResetsEachMinute(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1079,9 +1045,8 @@ func TestAttemptCounterResetsEachMinute(t *testing.T) {
 	}
 }
 
-// TestAttemptLimitIsPerSource reproduces the global-counter defect: one source
-// exhausting its allowance must not stop another source from pairing with the
-// preset static key in the same minute.
+// TestAttemptLimitIsPerSource checks that one source exhausting its allowance
+// does not rate-limit another source.
 func TestAttemptLimitIsPerSource(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1090,16 +1055,13 @@ func TestAttemptLimitIsPerSource(t *testing.T) {
 	accS.maxAttempts = 1
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
-	// Source X fills its allowance with a request that matches no key.
 	if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonKeyInvalid, "198.51.100.1:1000"); !errors.Is(err, ErrPairingRejected) {
 		t.Fatalf("source X first request error = %v", err)
 	}
-	// One more request from X is rate limited.
 	if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonTryLater, "198.51.100.1:1001"); !errors.Is(err, ErrPairingRejected) {
 		t.Fatalf("source X second request error = %v", err)
 	}
 
-	// Source Y pairs with the correct static key in the same minute.
 	initP, tr := newInitiatorPairing(t, clk)
 	peer, _, connectErr, acceptErr := hsPairFrom(t, initP, accP, tr, "STATIC-KEY", "", "198.51.100.2:2000", func(ctx context.Context, raw PairConn) error {
 		return hsSendHello(raw)
@@ -1115,8 +1077,8 @@ func TestAttemptLimitIsPerSource(t *testing.T) {
 	}
 }
 
-// TestAttemptLimitGroupsIPv6ByPrefix covers the source unit: two addresses in
-// one /64 share an allowance, and a different /64 has its own.
+// TestAttemptLimitGroupsIPv6ByPrefix checks that two addresses in one /64 share
+// an allowance and a different /64 has its own.
 func TestAttemptLimitGroupsIPv6ByPrefix(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1136,10 +1098,8 @@ func TestAttemptLimitGroupsIPv6ByPrefix(t *testing.T) {
 	}
 }
 
-// TestAttemptLimitSharesOneAllowanceAmongNonIPSources checks that every source
-// without an IP address is one unknown source. Two different address strings
-// that do not parse as host:port must share a single allowance, not each get
-// their own.
+// TestAttemptLimitSharesOneAllowanceAmongNonIPSources checks that sources with
+// no parsable IP share one unknown-source allowance.
 func TestAttemptLimitSharesOneAllowanceAmongNonIPSources(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1157,9 +1117,7 @@ func TestAttemptLimitSharesOneAllowanceAmongNonIPSources(t *testing.T) {
 }
 
 // TestAttemptLimitTreatsMappedIPv4AsIPv4 checks that an IPv4-mapped IPv6
-// address and the plain IPv4 address are one source. Without Unmap the mapped
-// address falls into an IPv6 /64 of its own and escapes the plain address's
-// allowance.
+// address shares the plain IPv4 address's allowance.
 func TestAttemptLimitTreatsMappedIPv4AsIPv4(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1176,9 +1134,8 @@ func TestAttemptLimitTreatsMappedIPv4AsIPv4(t *testing.T) {
 	}
 }
 
-// TestAttemptLimitHasGlobalCap covers the second limit: ten times the
-// per-source allowance across all sources in one minute, after which every
-// source is refused until the minute changes.
+// TestAttemptLimitHasGlobalCap checks the second limit, ten times the
+// per-source allowance across all sources in one minute.
 func TestAttemptLimitHasGlobalCap(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1197,16 +1154,14 @@ func TestAttemptLimitHasGlobalCap(t *testing.T) {
 		t.Fatalf("request above the global cap error = %v", err)
 	}
 
-	// The next minute starts with an empty window, so the same source counts.
 	clk.Advance(time.Minute)
 	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "198.51.100.200:1001"); !errors.Is(err, ErrPairingRejected) {
 		t.Fatalf("request after the minute boundary error = %v", err)
 	}
 }
 
-// TestRateLimitedAuditMergesSeparateIPv6Prefixes checks that the merge key is
-// the source prefix, so two addresses in one /64 share a key and two /64s do
-// not.
+// TestRateLimitedAuditMergesSeparateIPv6Prefixes checks that the audit merge key
+// is the /64 prefix, so two /64s get distinct keys.
 func TestRateLimitedAuditMergesSeparateIPv6Prefixes(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -1240,9 +1195,7 @@ func TestRateLimitedAuditMergesSeparateIPv6Prefixes(t *testing.T) {
 	}
 }
 
-// TestStaticKeyUnreadBeforeRateChecks proves the preset static key is read only
-// after the lookup has matched no one-time key, no expired record, and passed
-// both frequency limits.
+// TestStaticKeyUnreadBeforeRateChecks checks that a one-time key hit, an expired record hit and a rate-limited request leave the static key unread, while a counted request reads it once.
 func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
 	t.Run("one-time key match", func(t *testing.T) {
 		clk := newHSClock()
@@ -1312,7 +1265,6 @@ func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
 		accS.maxAttempts = 1
 		accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
-		// A counted request reads the static key once, after the limits pass.
 		if err := hsRequestAttemptFrom(t, accP, "not-the-static-key", ReasonKeyInvalid, "198.51.100.12:1000"); !errors.Is(err, ErrPairingRejected) {
 			t.Fatalf("counted request error = %v", err)
 		}
@@ -1329,6 +1281,8 @@ func TestStaticKeyUnreadBeforeRateChecks(t *testing.T) {
 	})
 }
 
+// TestUnknownRejectReasonIsProtocolError checks that an unassigned PairReject
+// reason is a protocol error.
 func TestUnknownRejectReasonIsProtocolError(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -1348,10 +1302,8 @@ func TestUnknownRejectReasonIsProtocolError(t *testing.T) {
 	}
 }
 
-// TestAliasChangedAtCommitLeavesNoPeer renames the Broker between the
-// reservation (PairConfirm) and the commit (PairDone). The Broker's
-// broker.alias subscriber pushes the new value through SetOwnAlias, and the
-// commit recheck must see it and refuse the peer.
+// TestAliasChangedAtCommitLeavesNoPeer checks that a rename between reservation
+// and commit refuses the peer and leaves no reservation.
 func TestAliasChangedAtCommitLeavesNoPeer(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -1388,11 +1340,8 @@ func TestAliasChangedAtCommitLeavesNoPeer(t *testing.T) {
 	}
 }
 
-// TestStaticKeyReReadAtConfirm covers REQ-broker-pairing-032 and
-// REQ-broker-pairing-033 across a single handshake: the preset static key is
-// deleted or rotated after the PairRequest lookup but before the acceptor
-// verifies the PairConfirm proof. Verification must use the key's current value,
-// so the stale proof cannot complete the handshake.
+// TestStaticKeyReReadAtConfirm checks that deleting or rotating the static key
+// before PairConfirm verification rejects the stale proof.
 func TestStaticKeyReReadAtConfirm(t *testing.T) {
 	const oldKey = "OLD-STATIC"
 
@@ -1444,10 +1393,7 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 				t.Fatalf("decode PairChallenge: %v", err)
 			}
 
-			// The key changes between the request lookup and the confirmation
-			// verification.
 			tc.swap(accS)
-
 			proof := initiatorProof([]byte(oldKey), ni, challenge.GetResponderNonce(), initiatorFP, accP.identity.fingerprint())
 			if err := hsSendProto(aConn, kindPairConfirm, &pairingpb.PairConfirm{Proof: proof, InitiatorAlias: "intruder"}); err != nil {
 				t.Fatalf("send PairConfirm: %v", err)
@@ -1482,11 +1428,8 @@ func TestStaticKeyReReadAtConfirm(t *testing.T) {
 	}
 }
 
-// TestInitiatorWithholdsAliasUntilResponderVerified proves the initiator does
-// not reveal its alias before it has verified the responder. A fake responder
-// answers with a well-formed challenge whose proof cannot verify, so the
-// initiator must stop without ever sending PairConfirm, the frame that now
-// carries the alias.
+// TestInitiatorWithholdsAliasUntilResponderVerified checks that a failed
+// responder proof stops the initiator before PairConfirm and its alias.
 func TestInitiatorWithholdsAliasUntilResponderVerified(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -1544,10 +1487,8 @@ func TestInitiatorWithholdsAliasUntilResponderVerified(t *testing.T) {
 	}
 }
 
-// TestAcceptorReadsAliasFromConfirmedPairConfirm proves the acceptor takes the
-// initiator's self-reported alias from PairConfirm. The request carries no
-// alias and the confirm carries one, so an acceptor that still reads the
-// request records a generated local alias instead.
+// TestAcceptorReadsAliasFromConfirmedPairConfirm checks that the acceptor
+// records the alias from PairConfirm and audits it.
 func TestAcceptorReadsAliasFromConfirmedPairConfirm(t *testing.T) {
 	const key = "STATIC-KEY"
 	const alias = "gamma"
@@ -1625,10 +1566,8 @@ func TestAcceptorReadsAliasFromConfirmedPairConfirm(t *testing.T) {
 	}
 }
 
-// TestAcceptorFailureAuditsOmitInitiatorAlias proves every failure path before
-// the initiator proof verifies records only the fingerprint. Each subtest puts
-// the alias in a raw field 2 of the request, the field it used to occupy, so an
-// acceptor that still reads it from there leaks the alias into the audit log.
+// TestAcceptorFailureAuditsOmitInitiatorAlias checks that failures before the
+// initiator proof verifies audit the fingerprint alone.
 func TestAcceptorFailureAuditsOmitInitiatorAlias(t *testing.T) {
 	const key = "STATIC-KEY"
 	const alias = "initiator-secret"
@@ -1736,8 +1675,6 @@ func TestAcceptorFailureAuditsOmitInitiatorAlias(t *testing.T) {
 	})
 }
 
-// assertNoAuditedAlias checks one pairing_failed event names the peer by
-// fingerprint only.
 func assertNoAuditedAlias(t *testing.T, e config.Event) {
 	t.Helper()
 	if e.Peer == nil {
@@ -1748,15 +1685,12 @@ func assertNoAuditedAlias(t *testing.T, e config.Event) {
 	}
 }
 
-// receiveWithTimeout reads one frame, bounding the wait so a wrong
-// implementation fails with an assertion instead of blocking the test.
 func receiveWithTimeout(conn PairConn) (uint32, []byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), testWaitBound)
 	defer cancel()
 	return conn.Receive(ctx)
 }
 
-// awaitAccept waits for Accept to return, bounding the wait for the same reason.
 func awaitAccept(ch <-chan error) error {
 	select {
 	case err := <-ch:
@@ -1766,10 +1700,6 @@ func awaitAccept(ch <-chan error) error {
 	}
 }
 
-// --- manual handshake drivers ----------------------------------------------
-
-// hsBadConfirmAttempt sends a syntactically valid request and a wrong proof,
-// expecting a verification failure.
 func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 	t.Helper()
 	fp, pub := hsKey(t)
@@ -1799,15 +1729,11 @@ func hsBadConfirmAttempt(t *testing.T, p *Pairing, key string) error {
 	return awaitAccept(acceptErr)
 }
 
-// hsRequestAttempt sends one PairRequest and expects a PairReject with the
-// given reason. It returns the error Accept reported.
 func hsRequestAttempt(t *testing.T, p *Pairing, key string, want RejectReason) error {
 	t.Helper()
 	return hsRequestAttemptFrom(t, p, key, want, "192.0.2.2:40002")
 }
 
-// hsRequestAttemptFrom is hsRequestAttempt with the acceptor-side remote
-// address under the test's control.
 func hsRequestAttemptFrom(t *testing.T, p *Pairing, key string, want RejectReason, acceptorRemote string) error {
 	t.Helper()
 	fp, pub := hsKey(t)
@@ -1846,8 +1772,6 @@ func hsRequestAttemptFrom(t *testing.T, p *Pairing, key string, want RejectReaso
 	return awaitAccept(acceptErr)
 }
 
-// hsCompleteAsInitiator drives the initiator side of one handshake to
-// completion, including the link Hello, then waits for Accept.
 func hsCompleteAsInitiator(t *testing.T, p *Pairing, aConn, bConn *hsConn, initiatorFP Fingerprint, alias, key string) error {
 	t.Helper()
 	acceptErr := make(chan error, 1)
@@ -1895,23 +1819,17 @@ func hsSendProto(conn PairConn, kind uint32, msg proto.Message) error {
 	return conn.Send(context.Background(), kind, payload)
 }
 
-// --- small helpers ---------------------------------------------------------
-
-// hsSendRaw sends one already encoded frame.
 func hsSendRaw(conn PairConn, kind uint32, payload []byte) error {
 	return conn.Send(context.Background(), kind, payload)
 }
 
-// hsAppendStringField appends one string field to an encoded protobuf message.
-// A test uses it to put a field on the wire by its number, so the same test
-// compiles whether or not the message type still declares that field.
+// hsAppendStringField appends one string field to an encoded protobuf message,
+// so a test can send a field the message type no longer declares.
 func hsAppendStringField(payload []byte, num protowire.Number, value string) []byte {
 	payload = protowire.AppendTag(payload, num, protowire.BytesType)
 	return protowire.AppendString(payload, value)
 }
 
-// hsHasField reports whether an encoded protobuf message carries a field with
-// the given number.
 func hsHasField(payload []byte, num protowire.Number) bool {
 	for len(payload) > 0 {
 		n, typ, tagLen := protowire.ConsumeTag(payload)
@@ -1931,7 +1849,6 @@ func hsHasField(payload []byte, num protowire.Number) bool {
 	return false
 }
 
-// hsSentKinds returns the frame kinds conn has sent so far.
 func hsSentKinds(conn *hsConn) []uint32 {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()

@@ -43,8 +43,7 @@ func TestAliasConflictReportsInFlightReservation(t *testing.T) {
 }
 
 // TestAliasConflictIgnoresOwnAlias checks that setting the Broker alias to its
-// current value is not a conflict, while a committed peer alias still is. The
-// own-alias cache must not mask a peer that owns an alias.
+// current value is not a conflict while a committed peer alias still is.
 func TestAliasConflictIgnoresOwnAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)

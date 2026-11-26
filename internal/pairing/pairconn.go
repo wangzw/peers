@@ -6,13 +6,9 @@ import (
 	"github.com/wangzw/peers/internal/pairing/pairingpb"
 )
 
-// PairConn is one TLS connection handed to pairing. Frames are passed raw;
-// pairing interprets only pairing frames and never parses link frames.
-//
-// The implementation is supplied by link. It must provide the peer identity
-// read from the certificate presented on this connection, must return from
-// Send and Receive when the context is canceled or expires, and must allow
-// Close to be called more than once.
+// PairConn is one TLS connection handed to pairing, which interprets only
+// pairing frames and never parses link frame payloads; it receives link's first
+// Hello and puts it back for link. link implements it.
 type PairConn interface {
 	// PeerFingerprint is the certificate fingerprint the peer presented on
 	// this TLS connection.
@@ -46,18 +42,14 @@ type PairConn interface {
 }
 
 // finalSender is implemented by a PairConn whose transport writes
-// asynchronously and therefore has to keep the connection open after its last
-// frame. link's PairConn adapter implements it with the same linger it uses
-// for its own Reject. A transport that delivers synchronously needs no linger
-// and falls back to Send followed by Close.
+// asynchronously and must keep the connection open after its last frame; a
+// synchronous transport falls back to Send followed by Close.
 type finalSender interface {
 	SendAndLinger(ctx context.Context, kind uint32, payload []byte) error
 }
 
 // Frame kinds used during a pairing handshake. Only kindHello belongs to the
-// link protocol: pairing checks it to recognise the frame that hands the
-// connection to link, and never interprets its payload. The other values
-// mirror the pairingpb message set so a mismatch is a compile-time error.
+// link protocol; the others mirror pairingpb so a mismatch fails to compile.
 const (
 	kindHello         uint32 = 1
 	kindPairRequest          = pairingpb.KindPairRequest

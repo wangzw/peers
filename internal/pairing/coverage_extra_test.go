@@ -25,9 +25,6 @@ import (
 	"github.com/wangzw/peers/internal/pairing/pairingpb"
 )
 
-// stubSettings embeds the mutating handshake fake and overrides the settings
-// methods whose error returns a test needs to drive. A nil error field falls
-// through to the embedded fake.
 type stubSettings struct {
 	*hsSettings
 	aliasErr       error
@@ -80,8 +77,6 @@ func (s *stubSettings) MaxAttemptsPerMinute() (int, error) {
 	return s.hsSettings.MaxAttemptsPerMinute()
 }
 
-// sendFailConn fails every Send, standing in for a transport that went away
-// between the frames of one handshake.
 type sendFailConn struct {
 	PairConn
 	err error
@@ -89,8 +84,8 @@ type sendFailConn struct {
 
 func (c *sendFailConn) Send(context.Context, uint32, []byte) error { return c.err }
 
-// TestRealClockNowAndTimer covers the production clock adapter: Now reports the
-// wall clock, NewTimer fires, and Stop reports whether a timer was running.
+// TestRealClockNowAndTimer checks that the real clock reports the current time
+// and produces timers that fire and stop.
 func TestRealClockNowAndTimer(t *testing.T) {
 	t.Parallel()
 
@@ -121,9 +116,8 @@ func TestRealClockNowAndTimer(t *testing.T) {
 	}
 }
 
-// TestNewPairingSurfacesIdentityAndAliasErrors covers the two failure returns
-// after the collaborators are filled: an unreadable data directory and a
-// configuration error from the alias read.
+// TestNewPairingSurfacesIdentityAndAliasErrors checks that newPairing returns
+// ErrIdentity for an unreadable data directory and ErrNotOpen for an alias error.
 func TestNewPairingSurfacesIdentityAndAliasErrors(t *testing.T) {
 	t.Parallel()
 
@@ -149,8 +143,8 @@ func TestNewPairingSurfacesIdentityAndAliasErrors(t *testing.T) {
 	}
 }
 
-// TestAtomicWriteFailureAndSyncErrorLogged returns the write failure and keeps
-// the committed file when only the directory sync fails.
+// TestAtomicWriteFailureAndSyncErrorLogged checks that atomicWrite returns a write
+// failure but keeps the file when only the directory sync fails.
 func TestAtomicWriteFailureAndSyncErrorLogged(t *testing.T) {
 	t.Parallel()
 
@@ -177,8 +171,9 @@ func TestAtomicWriteFailureAndSyncErrorLogged(t *testing.T) {
 	}
 }
 
-// TestRealFileOpsAndReadErrors reports the os adapter's write and sync failures
-// and reads a present file, a missing path and a directory.
+// TestRealFileOpsAndReadErrors checks that the real file operations surface
+// filesystem errors and that readFileOrNotExist handles present, missing and
+// directory paths.
 func TestRealFileOpsAndReadErrors(t *testing.T) {
 	t.Parallel()
 
@@ -207,8 +202,8 @@ func TestRealFileOpsAndReadErrors(t *testing.T) {
 	}
 }
 
-// TestPeerTableNilAndZeroGuards reports no conflict on a nil or zero Pairing and
-// a conflict for a committed alias on an open table.
+// TestPeerTableNilAndZeroGuards checks that AliasConflict reports no conflict on a
+// nil or zero Pairing and a conflict on an open table.
 func TestPeerTableNilAndZeroGuards(t *testing.T) {
 	t.Parallel()
 
@@ -294,8 +289,8 @@ func TestPeerTableResolveAliasRejectsOwnAlias(t *testing.T) {
 	}
 }
 
-// TestPeerTableReservationHelpers covers the empty-alias refusal, the no-op
-// releases and the unknown-token lookups of the reservation bookkeeping.
+// TestPeerTableReservationHelpers checks that the reservation bookkeeping refuses
+// an empty alias and ignores unknown tokens.
 func TestPeerTableReservationHelpers(t *testing.T) {
 	t.Parallel()
 
@@ -324,8 +319,8 @@ func TestPeerTableReservationHelpers(t *testing.T) {
 	}
 }
 
-// TestPeerTableObserveAliasUnknownPeer leaves an unknown fingerprint untouched
-// and assigns a local alias to a known peer whose observed name is taken.
+// TestPeerTableObserveAliasUnknownPeer checks that observeAlias leaves an unknown
+// peer untouched and assigns a local alias to a known peer whose name is taken.
 func TestPeerTableObserveAliasUnknownPeer(t *testing.T) {
 	t.Parallel()
 
@@ -373,9 +368,8 @@ func TestLoadPeerTableSurfacesReadError(t *testing.T) {
 	}
 }
 
-// TestPeersRecordValidationErrors covers each per-record check that runs before
-// a record is accepted: fingerprint syntax, public-key encoding and length, and
-// the paired-at timestamp.
+// TestPeersRecordValidationErrors checks that a record with a bad fingerprint, a
+// bad public key or a bad paired_at timestamp is rejected as ErrStore.
 func TestPeersRecordValidationErrors(t *testing.T) {
 	t.Parallel()
 
@@ -427,9 +421,8 @@ func TestLoadIdentityEmptyDataDir(t *testing.T) {
 	}
 }
 
-// TestLoadIdentityRecoversCertificateWithUnparsableKey covers the key-present,
-// certificate-missing path when the stored key itself cannot be parsed: the
-// certificate is not reissued over an unusable key.
+// TestLoadIdentityRecoversCertificateWithUnparsableKey checks that loadIdentity
+// refuses to reissue a certificate over a stored key it cannot parse.
 func TestLoadIdentityRecoversCertificateWithUnparsableKey(t *testing.T) {
 	t.Parallel()
 
@@ -484,8 +477,6 @@ func TestReadIdentityFileRejectsUnreadableFile(t *testing.T) {
 	}
 }
 
-// rsaCertificate builds a self-signed RSA certificate, the non-Ed25519 input the
-// identity parsers must reject.
 func rsaCertificate(t *testing.T) (*x509.Certificate, []byte) {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -509,8 +500,8 @@ func rsaCertificate(t *testing.T) (*x509.Certificate, []byte) {
 	return cert, der
 }
 
-// TestParseIdentityPrivateKeyErrors covers the PEM type, the PKCS#8 parse and
-// the key-type checks of the private-key parser.
+// TestParseIdentityPrivateKeyErrors checks that parseIdentityPrivateKey rejects an
+// unexpected PEM type, a malformed body and a key that is not Ed25519.
 func TestParseIdentityPrivateKeyErrors(t *testing.T) {
 	t.Parallel()
 
@@ -538,8 +529,8 @@ func TestParseIdentityPrivateKeyErrors(t *testing.T) {
 	}
 }
 
-// TestParseIdentityCertificateErrors covers the PEM type, the x509 parse and
-// the key-type checks of the certificate parser.
+// TestParseIdentityCertificateErrors checks that the certificate and public-key
+// parsers reject an unexpected PEM type, a malformed body and a non-Ed25519 key.
 func TestParseIdentityCertificateErrors(t *testing.T) {
 	t.Parallel()
 
@@ -572,8 +563,8 @@ func TestParseIdentityCertificateErrors(t *testing.T) {
 	}
 }
 
-// TestIdentityWriteHelpersSurfaceFilesystemErrors reports a missing directory
-// from every identity write helper.
+// TestIdentityWriteHelpersSurfaceFilesystemErrors checks that every identity write
+// helper reports a missing directory.
 func TestIdentityWriteHelpersSurfaceFilesystemErrors(t *testing.T) {
 	t.Parallel()
 
@@ -618,8 +609,9 @@ func TestIdentityWriteHelpersSurfaceFilesystemErrors(t *testing.T) {
 	}
 }
 
-// TestWriteIdentityFileAtomicRenameFailure reports the rename failure over an
-// existing directory and installs a file when the target is free.
+// TestWriteIdentityFileAtomicRenameFailure checks that writeIdentityFileAtomic
+// returns the rename error over an existing directory and installs a file at a
+// free path.
 func TestWriteIdentityFileAtomicRenameFailure(t *testing.T) {
 	t.Parallel()
 
@@ -660,8 +652,8 @@ func TestRecordVerificationFailureSkipsOtherKeys(t *testing.T) {
 	}
 }
 
-// TestCreateOneTimeKeyErrors reports ErrNotOpen, the settings errors and the
-// random source error before a key is stored.
+// TestCreateOneTimeKeyErrors checks that CreateOneTimeKey reports ErrNotOpen, the
+// settings errors and the random source error.
 func TestCreateOneTimeKeyErrors(t *testing.T) {
 	t.Parallel()
 
@@ -719,8 +711,8 @@ func TestRandomBytesFallback(t *testing.T) {
 	}
 }
 
-// TestValidAdvertisedAddrRejectsParens rejects an address with parentheses and
-// accepts a plain host:port.
+// TestValidAdvertisedAddrRejectsParens checks that validAdvertisedAddr rejects an
+// address with parentheses and accepts a plain host:port.
 func TestValidAdvertisedAddrRejectsParens(t *testing.T) {
 	t.Parallel()
 
@@ -732,8 +724,8 @@ func TestValidAdvertisedAddrRejectsParens(t *testing.T) {
 	}
 }
 
-// TestCandidatesUnknownPeer returns no candidates for an unknown fingerprint and
-// the stored address for a known dialer.
+// TestCandidatesUnknownPeer checks that Candidates returns nothing for an unknown
+// fingerprint and the stored address for a known dialer.
 func TestCandidatesUnknownPeer(t *testing.T) {
 	t.Parallel()
 
@@ -766,8 +758,8 @@ func TestTruncatePartRuneBoundary(t *testing.T) {
 	}
 }
 
-// TestVerifyRejectsMalformedSubjectPublicKeyInfo rejects a malformed key and
-// accepts a valid signature.
+// TestVerifyRejectsMalformedSubjectPublicKeyInfo checks that Verify rejects a
+// malformed public key and accepts a valid signature.
 func TestVerifyRejectsMalformedSubjectPublicKeyInfo(t *testing.T) {
 	t.Parallel()
 
@@ -792,8 +784,8 @@ func TestConnectBeforeOpen(t *testing.T) {
 	}
 }
 
-// TestConnectRejectsInvalidLocalAlias covers the alias syntax check, which runs
-// before any dial.
+// TestConnectRejectsInvalidLocalAlias checks that an invalid local alias makes
+// Connect return ErrInvalidAlias.
 func TestConnectRejectsInvalidLocalAlias(t *testing.T) {
 	t.Parallel()
 
@@ -803,8 +795,8 @@ func TestConnectRejectsInvalidLocalAlias(t *testing.T) {
 	}
 }
 
-// TestConnectSurfacesAliasAndRandomErrors covers the two collaborator errors
-// before the dial: the alias read and the nonce generation.
+// TestConnectSurfacesAliasAndRandomErrors checks that Connect returns the alias
+// read error and the nonce generation error.
 func TestConnectSurfacesAliasAndRandomErrors(t *testing.T) {
 	t.Parallel()
 
@@ -845,8 +837,8 @@ func TestRejectDetailCoversLocalReasons(t *testing.T) {
 	}
 }
 
-// TestAdvertisedConversions round-trips the direct addresses between the config
-// and wire forms.
+// TestAdvertisedConversions checks that advertisedToPB and advertisedFromPB
+// preserve the kind and address of a direct address.
 func TestAdvertisedConversions(t *testing.T) {
 	t.Parallel()
 
@@ -883,7 +875,8 @@ func TestParseConnectAddressRejectsNestedParens(t *testing.T) {
 	}
 }
 
-// TestAcceptBeforeOpenAndNilConn covers the two early refusals on the responder.
+// TestAcceptBeforeOpenAndNilConn checks that the acceptor refuses a zero Pairing
+// and a nil connection.
 func TestAcceptBeforeOpenAndNilConn(t *testing.T) {
 	t.Parallel()
 

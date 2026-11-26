@@ -11,11 +11,8 @@ func direct(addr string) config.AdvertisedAddr {
 	return config.AdvertisedAddr{Kind: config.AdvertisedKindDirect, Addr: addr}
 }
 
-// TestValidDialPortBounds pins the accepted port range and the per-byte digit
-// check of validDialPort. The largest port is accepted and one past it is not.
-// A sign is not a digit, so "+1" is rejected. Leading zeros stay decimal: every
-// byte is a digit and Atoi reads "080" as 80, so it is accepted, which is the
-// same rule connect_broker applies to its address.
+// TestValidDialPortBounds checks the accepted port range and digit rules: 1 to
+// 65535, leading zeros accepted, signs and the empty string rejected.
 func TestValidDialPortBounds(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -37,6 +34,8 @@ func TestValidDialPortBounds(t *testing.T) {
 	}
 }
 
+// TestCandidateMergeOrderAndDedup checks the merge order acceptor, card,
+// pairing and that a duplicate keeps its first source.
 func TestCandidateMergeOrderAndDedup(t *testing.T) {
 	t.Parallel()
 	e := &peerEntry{
@@ -119,6 +118,8 @@ func TestRePairAddressStaysCardSourced(t *testing.T) {
 	}
 }
 
+// TestCandidatesSkipUnknownKinds checks that address kinds this version does
+// not know are left out.
 func TestCandidatesSkipUnknownKinds(t *testing.T) {
 	t.Parallel()
 	e := &peerEntry{
@@ -135,6 +136,7 @@ func TestCandidatesSkipUnknownKinds(t *testing.T) {
 	}
 }
 
+// TestCandidatesCapEight checks that each source keeps at most eight addresses.
 func TestCandidatesCapEight(t *testing.T) {
 	t.Parallel()
 	var acceptor, card []config.AdvertisedAddr
@@ -154,6 +156,8 @@ func TestCandidatesCapEight(t *testing.T) {
 	}
 }
 
+// TestCandidatesForAcceptorAreEmpty checks that an acceptor peer has no
+// candidates and no last connected address.
 func TestCandidatesForAcceptorAreEmpty(t *testing.T) {
 	t.Parallel()
 	e := &peerEntry{
@@ -170,6 +174,9 @@ func TestCandidatesForAcceptorAreEmpty(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing034_ObserveAcceptorAddressesReplacesSource checks that
+// observing the acceptor addresses replaces only that source, leaving the card
+// source.
 func TestREQBrokerPairing034_ObserveAcceptorAddressesReplacesSource(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -194,6 +201,8 @@ func TestREQBrokerPairing034_ObserveAcceptorAddressesReplacesSource(t *testing.T
 	}
 }
 
+// TestREQBrokerPairing034_CandidatesUseUpdatedSource checks that Candidates
+// reads the latest observed acceptor list.
 func TestREQBrokerPairing034_CandidatesUseUpdatedSource(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -208,6 +217,8 @@ func TestREQBrokerPairing034_CandidatesUseUpdatedSource(t *testing.T) {
 	}
 }
 
+// TestUpdateCardAddressesOnlyForDialerPeers checks that card addresses are
+// stored for a dialer peer and ignored for an acceptor peer.
 func TestUpdateCardAddressesOnlyForDialerPeers(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -230,6 +241,8 @@ func TestUpdateCardAddressesOnlyForDialerPeers(t *testing.T) {
 	}
 }
 
+// TestObserveConnectedOnlyForDialerPeers checks that the last connected address
+// is recorded only for a dialer peer.
 func TestObserveConnectedOnlyForDialerPeers(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -255,6 +268,8 @@ func TestObserveConnectedOnlyForDialerPeers(t *testing.T) {
 	}
 }
 
+// TestAddressUpdatePersistenceFailureKeepsOldValue checks that a failed persist
+// leaves every address source and the last connected address unchanged.
 func TestAddressUpdatePersistenceFailureKeepsOldValue(t *testing.T) {
 	t.Parallel()
 	table, _, ops := newPeerTestTable(t)
@@ -281,6 +296,8 @@ func TestAddressUpdatePersistenceFailureKeepsOldValue(t *testing.T) {
 	}
 }
 
+// TestUpdateOnUnknownPeerIsIgnored checks that observing an unknown fingerprint
+// creates no entry.
 func TestUpdateOnUnknownPeerIsIgnored(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -294,6 +311,7 @@ func TestUpdateOnUnknownPeerIsIgnored(t *testing.T) {
 	}
 }
 
+// TestAddressSourceConstants checks the string form of each address source.
 func TestAddressSourceConstants(t *testing.T) {
 	t.Parallel()
 	cases := map[AddressSource]string{
@@ -308,6 +326,7 @@ func TestAddressSourceConstants(t *testing.T) {
 	}
 }
 
+// TestRoleString checks the string form of each role.
 func TestRoleString(t *testing.T) {
 	t.Parallel()
 	cases := map[Role]string{

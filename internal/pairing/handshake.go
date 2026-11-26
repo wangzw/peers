@@ -16,8 +16,6 @@ import (
 )
 
 const (
-	// handshakeTimeout bounds one pairing handshake on each side. It is a
-	// constant, not a configuration value.
 	handshakeTimeout = 10 * time.Second
 
 	nonceLength     = 32
@@ -25,10 +23,14 @@ const (
 	proofLength     = sha256.Size
 )
 
-// Connect pairs with the Broker at address using key. It dials through the
-// injected transport, runs the five-frame handshake, commits the peer and
-// leaves the connection to link. shownHost is the display-only host name from
-// the "host(addr:port)" address form and never enters the peer table.
+// Connect pairs with the Broker at address using key and commits the peer.
+// localAlias is the local alias to reserve, required when the peer's alias
+// conflicts or the call returns ErrNeedsLocalAlias. The handshake has a
+// ten-second deadline that starts after the dial and ends in a *PairingError
+// with ReasonTimeout. shownHost is the display-only host name from the
+// "host(addr:port)" form. It returns ErrNotOpen, ErrInvalidAddress,
+// ErrInvalidAlias, ErrPeerUnreachable, ErrProtocol, ErrStore, link's ErrClosed,
+// the ctx error or a *PairingError, and leaves the connection to link on success.
 func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) (Peer, string, error) {
 	if !p.handshakeReady() {
 		return Peer{}, "", ErrNotOpen
@@ -52,8 +54,8 @@ func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) 
 
 	var result Peer
 	err = p.transport.PairDial(ctx, dialAddr, func(conn PairConn) error {
-		// The 10-second limit starts here: the connection exists and link's
-		// dial timeout has already done its job.
+		// The handshake deadline starts after the dial; link's dial timeout
+		// has already bounded the connect.
 		runCtx, cancel := withClockTimeout(ctx, p.clock, handshakeTimeout)
 		defer cancel()
 
@@ -67,8 +69,8 @@ func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) 
 	if err != nil {
 		switch {
 		case errors.Is(err, ErrDialFailed):
-			// A canceled dial is the caller's cancellation, not an
-			// unreachable peer: link wraps both sentinels in that case.
+			// A canceled dial is the caller's cancellation: link reports every
+			// dial failure as ErrDialFailed, so cancellation is read from ctx.Err().
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return Peer{}, "", ctxErr
 			}
@@ -82,11 +84,9 @@ func (p *Pairing) Connect(ctx context.Context, address, key, localAlias string) 
 	return result, shownHost, nil
 }
 
-// runInitiator sends PairRequest, verifies the responder proof, reserves the
-// effective alias and sends PairConfirm with its own alias, then commits the
-// peer after PairDone. The alias travels only in PairConfirm: before the
-// responder proof verifies, the initiator has no evidence that the other side
-// is the expected Broker.
+// runInitiator withholds the initiator's alias until the responder proof
+// verifies: the alias travels only in PairConfirm, sent after that check and
+// after the alias is reserved.
 func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, key string, ni, hint []byte, ownAlias, localAlias, dialAddr string) (Peer, error) {
 	acceptorFP := conn.PeerFingerprint()
 	acceptorPub := conn.PeerPublicKey()
@@ -127,6 +127,8 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 		return closeAndFail(conn, &PairingError{Reason: ReasonVerificationFailed, Detail: "responder proof did not verify"})
 	}
 
+	// Reserve the effective alias before sending PairConfirm; commitHandshake
+	// re-checks it under the peer-table lock.
 	finalAlias, local := p.chooseInitiatorAlias(acceptorFP, challenge.GetResponderAlias(), ownAlias, localAlias)
 	token, reserved := uint64(0), false
 	if finalAlias != "" {
@@ -160,9 +162,8 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 		return closeAndFail(conn, fmt.Errorf("%w: expected PairDone, got frame %d", ErrProtocol, kind))
 	}
 
-	// The reservation and the own alias are re-checked inside the peer-table
-	// lock in the same critical section that commits, so neither a concurrent
-	// rename nor another handshake can slip in after this point.
+	// The reservation and own alias are re-checked under the peer-table lock in
+	// the same critical section that commits.
 	entry := p.dialerEntry(acceptorFP, acceptorPub, challenge.GetResponderAlias(), local, dialAddr, challenge.GetAdvertisedAddresses())
 	replaced, committedAlias, frozen, err := p.peers.commitHandshake(entry, token)
 	if err != nil {
@@ -172,19 +173,19 @@ func (p *Pairing) runInitiator(runCtx, parent context.Context, conn PairConn, ke
 	if replaced {
 		p.transport.Drop(acceptorFP)
 	}
-	// Audit the alias the table actually committed when re-pairing froze the
-	// current effective alias instead of adopting the reserved one once the
-	// tombstone cap is reached.
+	// Audit the alias the table committed: re-pairing can freeze the current
+	// effective alias instead of adopting the reserved one.
 	if frozen {
 		auditLocalAliasAssigned(p.settings, p.clock.Now(), acceptorFP, committedAlias)
 	}
 	return p.peerView(acceptorFP), nil
 }
 
-// Accept runs the responder side of a pairing handshake over conn. The caller
-// (link) hands over the connection when the first frame is a PairRequest. On
-// success the connection is left open for link; on any failure Accept closes
-// it.
+// Accept runs the acceptor side of a pairing handshake over conn, which link
+// hands over when the first frame is a PairRequest. It has a ten-second
+// deadline that ends in a *PairingError with ReasonTimeout. On success the
+// connection is left open for link; a failure after the handshake begins closes
+// it, while ErrNotOpen returns without closing conn and leaves it to the caller.
 func (p *Pairing) Accept(conn PairConn) error {
 	if !p.handshakeReady() {
 		return ErrNotOpen
@@ -212,10 +213,8 @@ func (p *Pairing) Accept(conn PairConn) error {
 	if err := proto.Unmarshal(payload, &request); err != nil {
 		return closeWithError(conn, fmt.Errorf("%w: cannot decode PairRequest: %v", ErrProtocol, err))
 	}
-	// The version check comes before any key lookup: a peer speaking another
-	// protocol cannot be paired, and reporting a version conflict keeps it from
-	// being mistaken for a wrong key. An unfilled version (0) never matches,
-	// because every link protocol version is at least 1.
+	// The version check comes before any key lookup, so a version mismatch is
+	// never reported as a wrong key.
 	if request.GetProtocolVersion() != conn.ProtocolVersion() {
 		return p.rejectAcceptor(conn, ctx, initiatorFP, ReasonVersionIncompatible, p.clock.Now())
 	}
@@ -224,9 +223,8 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return closeWithError(conn, fmt.Errorf("%w: PairRequest has a malformed nonce or lookup tag", ErrProtocol))
 	}
 
-	// The alias arrives later, in PairConfirm, and is read only once the
-	// initiator proof verifies. Every failure before that point records the
-	// fingerprint alone.
+	// The alias arrives in PairConfirm and is read only after the initiator
+	// proof verifies; every earlier failure records the fingerprint alone.
 	initiatorAlias := ""
 
 	now := p.clock.Now()
@@ -301,8 +299,6 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return p.rejectAcceptor(conn, ctx, initiatorFP, ReasonVerificationFailed, verifiedAt)
 	}
 
-	// The initiator proved it holds the key, so its self-reported alias is now
-	// trustworthy enough to reserve, commit and audit.
 	initiatorAlias = confirm.GetInitiatorAlias()
 
 	ownAliasNow, err := p.alias()
@@ -333,8 +329,8 @@ func (p *Pairing) Accept(conn PairConn) error {
 		return p.acceptFrameError(conn, ctx, initiatorFP, finalAlias, err)
 	}
 
-	// The peer becomes a committed peer only after the initiator's first link
-	// Hello arrives. Put that frame back for link to read.
+	// The peer commits only after the initiator's first link Hello arrives; the
+	// frame is put back for link to read.
 	kind, payload, err = conn.Receive(ctx)
 	if err != nil {
 		return p.acceptFrameError(conn, ctx, initiatorFP, finalAlias, err)
@@ -344,10 +340,8 @@ func (p *Pairing) Accept(conn PairConn) error {
 	}
 	conn.Unread(kindHello, payload)
 
-	// Re-check the reservation and the own alias in the same lock that commits.
-	// A competing handshake or a concurrent rename between the reservation
-	// before PairDone and this point turns into ErrNeedsLocalAlias instead of an
-	// inconsistent commit.
+	// Re-check the reservation and the own alias in the same lock that commits,
+	// so a competing handshake or rename cannot produce an inconsistent commit.
 	replaced, committedAlias, frozen, err := p.peers.commitHandshake(pending, token)
 	if err != nil {
 		return closeWithError(conn, err)
@@ -357,9 +351,8 @@ func (p *Pairing) Accept(conn PairConn) error {
 		p.transport.Drop(initiatorFP)
 	}
 
-	// Audit the alias the table actually committed, not the one reserved before
-	// PairDone. Re-pairing can freeze the current effective alias instead of
-	// adopting the reserved one once the tombstone cap is reached.
+	// Audit the alias the table committed, not the one reserved before PairDone:
+	// re-pairing can freeze the current effective alias.
 	committedAt := p.clock.Now()
 	auditPairingSucceeded(p.settings, committedAt, initiatorFP, committedAlias)
 	if localAlias != "" || frozen {
@@ -368,8 +361,6 @@ func (p *Pairing) Accept(conn PairConn) error {
 	return nil
 }
 
-// pairProof computes one side's authentication code over both nonces and both
-// fingerprints, under the given domain label.
 func pairProof(label string, key, ni, nr []byte, self, seen Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(label))
@@ -380,20 +371,14 @@ func pairProof(label string, key, ni, nr []byte, self, seen Fingerprint) []byte 
 	return mac.Sum(nil)
 }
 
-// responderProof computes the acceptor's authentication code.
 func responderProof(key, ni, nr []byte, acceptor, initiatorSeen Fingerprint) []byte {
 	return pairProof(pairResponderLabel, key, ni, nr, acceptor, initiatorSeen)
 }
 
-// initiatorProof computes the initiator's authentication code.
 func initiatorProof(key, ni, nr []byte, initiator, acceptorSeen Fingerprint) []byte {
 	return pairProof(pairInitiatorLabel, key, ni, nr, initiator, acceptorSeen)
 }
 
-// rejectAcceptor sends PairReject with reason, records the acceptor-owned audit
-// event, closes the connection and returns the matching error. Every rejection
-// happens before the initiator proof verifies, so the audit records the
-// fingerprint alone; the initiator's self-reported alias is not trusted yet.
 func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerprint, reason RejectReason, now time.Time) error {
 	switch reason {
 	case ReasonTryLater:
@@ -403,9 +388,8 @@ func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerpr
 	case ReasonKeyExpired:
 		auditPairingFailed(p.settings, now, fp, "", auditReasonKeyExpired, "")
 	case ReasonVersionIncompatible:
-		// A stranger can send a mismatched version as often as it likes without
-		// being counted as an attempt, so the audit merges these by source too;
-		// otherwise the log would grow without bound.
+		// A version mismatch is not counted as an attempt, so the audit merges
+		// these by source to bound the log.
 		auditPairingFailed(p.settings, now, fp, "", auditReasonVersionIncompatible, auditSourceMergeKey(conn.RemoteAddr()))
 	default:
 		auditPairingFailed(p.settings, now, fp, "", auditReasonKeyInvalid, "")
@@ -414,10 +398,6 @@ func (p *Pairing) rejectAcceptor(conn PairConn, ctx context.Context, fp Fingerpr
 	return &PairingError{Reason: reason, Detail: rejectDetail(reason)}
 }
 
-// acceptFrameError maps a transport failure on the acceptor side to the
-// handshake error the design assigns it, closing the connection and recording
-// the pairing-owned audit event. alias is empty until the initiator proof
-// verifies; after that it is the confirmed self-reported alias.
 func (p *Pairing) acceptFrameError(conn PairConn, ctx context.Context, fp Fingerprint, alias string, err error) error {
 	_ = conn.Close()
 	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
@@ -428,8 +408,8 @@ func (p *Pairing) acceptFrameError(conn PairConn, ctx context.Context, fp Finger
 	return &PairingError{Reason: ReasonNotConnected, Detail: "connection closed during pairing"}
 }
 
-// initiatorFrameError maps a transport failure on the initiator side. The
-// broker owns the initiator's audit event, so this only classifies the error.
+// initiatorFrameError only classifies the error: the broker owns the
+// initiator's audit event.
 func (p *Pairing) initiatorFrameError(conn PairConn, parent, runCtx context.Context, err error) error {
 	_ = conn.Close()
 	if parent.Err() != nil {
@@ -441,22 +421,16 @@ func (p *Pairing) initiatorFrameError(conn PairConn, parent, runCtx context.Cont
 	return &PairingError{Reason: ReasonNotConnected, Detail: "connection closed during pairing"}
 }
 
-// closeAndFail closes conn and returns err with the zero Peer.
 func closeAndFail(conn PairConn, err error) (Peer, error) {
 	_ = conn.Close()
 	return Peer{}, err
 }
 
-// closeWithError closes conn and returns err.
 func closeWithError(conn PairConn, err error) error {
 	_ = conn.Close()
 	return err
 }
 
-// chooseInitiatorAlias picks the alias the initiator will hold. A caller
-// supplied alias wins; an existing local alias is kept so re-pairing does not
-// rename a peer; otherwise a valid, non-conflicting self-reported alias is
-// used. An empty result means the caller must supply a local alias.
 func (p *Pairing) chooseInitiatorAlias(fp Fingerprint, reported, ownAlias, provided string) (alias, localAlias string) {
 	if provided != "" {
 		return provided, provided
@@ -470,8 +444,6 @@ func (p *Pairing) chooseInitiatorAlias(fp Fingerprint, reported, ownAlias, provi
 	return "", ""
 }
 
-// reserveAcceptorAlias reserves the alias the acceptor will use and reports the
-// reservation token and whether a local alias had to be generated.
 func (p *Pairing) reserveAcceptorAlias(fp Fingerprint, reported, ownAlias string) (alias, localAlias string, token uint64, ok bool) {
 	p.peers.mu.Lock()
 	defer p.peers.mu.Unlock()
@@ -488,8 +460,6 @@ func (p *Pairing) reserveAcceptorAlias(fp Fingerprint, reported, ownAlias string
 	return generated, generated, token, true
 }
 
-// reserveAlias takes the final effective alias for an in-flight handshake and
-// returns its reservation token.
 func (p *Pairing) reserveAlias(fp Fingerprint, alias, ownAlias string) (uint64, bool) {
 	if alias == "" || alias == ownAlias {
 		return 0, false
@@ -499,7 +469,6 @@ func (p *Pairing) reserveAlias(fp Fingerprint, alias, ownAlias string) (uint64, 
 	return p.peers.reserveAliasLocked(alias, fp)
 }
 
-// releaseAlias frees the reservation held by one in-flight handshake.
 func (p *Pairing) releaseAlias(token uint64) {
 	if token == 0 {
 		return
@@ -509,14 +478,11 @@ func (p *Pairing) releaseAlias(token uint64) {
 	p.peers.mu.Unlock()
 }
 
-// peerView returns the committed entry as the exported view. The entry is read
-// back from the peer table so candidate sources and filtering come from it.
 func (p *Pairing) peerView(fp Fingerprint) Peer {
 	entry, _ := p.peers.get(fp)
 	return entry.toPeer()
 }
 
-// dialerEntry builds the peer-table entry the initiator commits.
 func (p *Pairing) dialerEntry(fp Fingerprint, pub []byte, alias, localAlias, dialAddr string, advertised []*pairingpb.AdvertisedAddress) peerEntry {
 	entry := peerEntry{
 		fingerprint:   fp,
@@ -527,8 +493,6 @@ func (p *Pairing) dialerEntry(fp Fingerprint, pub []byte, alias, localAlias, dia
 		pairedAt:      p.clock.Now(),
 		lastConnected: dialAddr,
 	}
-	// Re-pairing keeps the card-sourced candidates; the acceptor and pairing
-	// sources describe this handshake and replace the old values.
 	if prior, ok := p.peers.get(fp); ok {
 		entry.card = append([]config.AdvertisedAddr(nil), prior.card...)
 	}
@@ -537,10 +501,8 @@ func (p *Pairing) dialerEntry(fp Fingerprint, pub []byte, alias, localAlias, dia
 	return entry
 }
 
-// sendRejectAndLinger writes a PairReject frame and lets the connection stay
-// open briefly, so the frame can leave the transport's write buffer before the
-// close. Local-only reasons never travel on the wire; they close the
-// connection at once.
+// sendRejectAndLinger keeps the connection open briefly so the PairReject can
+// leave the transport's write buffer before the close.
 func sendRejectAndLinger(ctx context.Context, conn PairConn, reason RejectReason) error {
 	pbReason, ok := rejectReasonToPB(reason)
 	if !ok {
@@ -561,8 +523,6 @@ func sendRejectAndLinger(ctx context.Context, conn PairConn, reason RejectReason
 	return conn.Close()
 }
 
-// rejectError turns a PairReject payload into a PairingError. An unrecognised
-// reason is a protocol error.
 func rejectError(payload []byte) error {
 	var reject pairingpb.PairReject
 	if err := proto.Unmarshal(payload, &reject); err != nil {
@@ -575,8 +535,6 @@ func rejectError(payload []byte) error {
 	return &PairingError{Reason: reason, Detail: rejectDetail(reason)}
 }
 
-// rejectReasonToPB maps a local reject reason to the wire enum. Timeout and
-// not-connected are local only.
 func rejectReasonToPB(reason RejectReason) (pairingpb.PairingRejectReason, bool) {
 	switch reason {
 	case ReasonKeyInvalid:
@@ -594,7 +552,6 @@ func rejectReasonToPB(reason RejectReason) (pairingpb.PairingRejectReason, bool)
 	}
 }
 
-// rejectReasonFromPB maps a wire reject reason to the local reason.
 func rejectReasonFromPB(reason pairingpb.PairingRejectReason) (RejectReason, bool) {
 	switch reason {
 	case pairingpb.PairingRejectReason_PAIRING_REJECT_REASON_KEY_INVALID:
@@ -612,7 +569,6 @@ func rejectReasonFromPB(reason pairingpb.PairingRejectReason) (RejectReason, boo
 	}
 }
 
-// rejectDetail is the human-readable detail carried by PairingError.
 func rejectDetail(reason RejectReason) string {
 	switch reason {
 	case ReasonKeyInvalid:
@@ -634,7 +590,6 @@ func rejectDetail(reason RejectReason) string {
 	}
 }
 
-// sendMessage marshals one protobuf message and sends it as a frame.
 func sendMessage(ctx context.Context, conn PairConn, kind uint32, msg proto.Message) error {
 	payload, err := proto.Marshal(msg)
 	if err != nil {
@@ -643,7 +598,6 @@ func sendMessage(ctx context.Context, conn PairConn, kind uint32, msg proto.Mess
 	return conn.Send(ctx, kind, payload)
 }
 
-// advertisedToPB converts the config address list to its wire form.
 func advertisedToPB(addrs []config.AdvertisedAddr) []*pairingpb.AdvertisedAddress {
 	out := make([]*pairingpb.AdvertisedAddress, 0, len(addrs))
 	for _, addr := range addrs {
@@ -652,7 +606,6 @@ func advertisedToPB(addrs []config.AdvertisedAddr) []*pairingpb.AdvertisedAddres
 	return out
 }
 
-// advertisedFromPB converts the wire address list back to config's form.
 func advertisedFromPB(addrs []*pairingpb.AdvertisedAddress) []config.AdvertisedAddr {
 	out := make([]config.AdvertisedAddr, 0, len(addrs))
 	for _, addr := range addrs {
@@ -664,8 +617,6 @@ func advertisedFromPB(addrs []*pairingpb.AdvertisedAddress) []config.AdvertisedA
 	return out
 }
 
-// parseConnectAddress accepts "host:port" and "shownName(host:port)". The
-// shown name never participates in dialing or identity checks.
 func parseConnectAddress(address string) (dialAddr, shownHost string, err error) {
 	if address == "" {
 		return "", "", ErrInvalidAddress
@@ -688,8 +639,6 @@ func parseConnectAddress(address string) (dialAddr, shownHost string, err error)
 	return dialAddr, shownHost, nil
 }
 
-// alias reads this Broker's self-reported alias, wrapping a configuration
-// failure as a store error.
 func (p *Pairing) alias() (string, error) {
 	alias, err := p.settings.Alias()
 	if err != nil {
@@ -698,7 +647,6 @@ func (p *Pairing) alias() (string, error) {
 	return alias, nil
 }
 
-// nonce returns a fresh 32-byte random value from the injected random source.
 func (p *Pairing) nonce() ([]byte, error) {
 	buf := make([]byte, nonceLength)
 	if err := p.randomBytes(buf); err != nil {
@@ -707,8 +655,6 @@ func (p *Pairing) nonce() ([]byte, error) {
 	return buf, nil
 }
 
-// handshakeReady reports whether the instance has the collaborators a
-// handshake needs.
 func (p *Pairing) handshakeReady() bool {
 	return p != nil && p.identity != nil && p.transport != nil &&
 		p.settings != nil && p.clock != nil && p.peers != nil && p.keys != nil

@@ -60,24 +60,30 @@ func (s AddressSource) String() string {
 
 // Candidate is one dialable address and the source it came from.
 type Candidate struct {
-	Source AddressSource
-	Addr   string
+	Source AddressSource // where the address came from
+	Addr   string        // a dialable host:port
 }
 
 // Peer is the exported view of one peer-table entry. Peers returns copies:
 // mutating Candidates or PublicKey does not change the table.
 type Peer struct {
-	Fingerprint   Fingerprint
-	PublicKey     []byte // raw 32-byte Ed25519 public key
-	Alias         string // self-reported alias
-	LocalAlias    string // empty when none was assigned
-	Role          Role
-	PairedAt      time.Time
+	Fingerprint   Fingerprint // identifies the peer
+	PublicKey     []byte      // raw 32-byte Ed25519 public key
+	Alias         string      // self-reported alias
+	LocalAlias    string      // empty when none was assigned
+	Role          Role        // this Broker's role in the pair
+	PairedAt      time.Time   // when this side's handshake succeeded
 	Candidates    []Candidate // dialer peers only
 	LastConnected string      // dialer peers only
 }
 
 // Sentinel errors. Callers match them with errors.Is.
+//
+// ErrNeedsLocalAlias is returned when a handshake needs a local alias the caller
+// must supply, ErrNotListening when no listen address is configured, ErrIdentity
+// when the identity file is rejected, ErrStore when the peer table or
+// configuration cannot be read or written, and ErrProtocol when a handshake frame
+// is malformed.
 var (
 	ErrNotOpen         = errors.New("the pairing is not open")
 	ErrNoTransport     = errors.New("the transport is nil")
@@ -97,10 +103,11 @@ var (
 	ErrDialFailed = errors.New("dial failed")
 )
 
-// RejectReason is the local reason a pairing was refused. ReasonTimeout and
-// ReasonNotConnected are local only and never travel on the wire.
+// RejectReason is the local reason a pairing was refused.
 type RejectReason uint8
 
+// RejectReason values. ReasonTimeout and ReasonNotConnected are local only and
+// never travel on the wire.
 const (
 	ReasonKeyInvalid RejectReason = iota + 1
 	ReasonVerificationFailed
@@ -115,8 +122,8 @@ const (
 // message starts with "Not connected" and it unwraps to ErrPairingRejected, so
 // brokers can map it to the pairing_rejected error code.
 type PairingError struct {
-	Reason RejectReason
-	Detail string
+	Reason RejectReason // the refusal kind
+	Detail string       // the explanation shown after "Not connected: "
 }
 
 // Error implements error.

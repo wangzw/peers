@@ -11,15 +11,12 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// hsProtocolVersion is the link protocol version the in-memory test connections
-// report. It is deliberately independent of linkpb.ProtocolVersion: pairing
-// treats the number as opaque, and a link version bump must not change these
-// tests.
+// hsProtocolVersion is deliberately independent of linkpb.ProtocolVersion:
+// pairing treats the version as opaque.
 const hsProtocolVersion uint32 = 2
 
-// hsRawPairRequest encodes a PairRequest by field number so the test builds a
-// request with a protocol version even while the message type lacks the field.
-// A zero version, the proto3 default, is left off the wire.
+// hsRawPairRequest encodes a PairRequest by field number, leaving a zero version
+// off the wire.
 func hsRawPairRequest(ni, tag []byte, version uint32) []byte {
 	payload := protowire.AppendTag(nil, 1, protowire.BytesType)
 	payload = protowire.AppendBytes(payload, ni)
@@ -32,8 +29,6 @@ func hsRawPairRequest(ni, tag []byte, version uint32) []byte {
 	return payload
 }
 
-// hsVarintField returns the value of one varint field in an encoded protobuf
-// message.
 func hsVarintField(payload []byte, num protowire.Number) (uint64, bool) {
 	for len(payload) > 0 {
 		n, typ, tagLen := protowire.ConsumeTag(payload)
@@ -57,9 +52,8 @@ func hsVarintField(payload []byte, num protowire.Number) (uint64, bool) {
 	return 0, false
 }
 
-// TestInitiatorSendsProtocolVersion proves the initiator puts the connection's
-// protocol version in field 4 of PairRequest. Without it a mixed-version peer
-// cannot tell an incompatible handshake from a wrong key.
+// TestInitiatorSendsProtocolVersion checks that the initiator puts the
+// connection's protocol version in field 4 of PairRequest.
 func TestInitiatorSendsProtocolVersion(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -81,12 +75,10 @@ func TestInitiatorSendsProtocolVersion(t *testing.T) {
 			return
 		}
 		request <- payload
-		// The fake acceptor stops here; closing lets Connect return.
+		// Connect does not return until this connection closes.
 		_ = bConn.Close()
 	}()
 
-	// The fake acceptor never completes the handshake, so Connect fails. Only
-	// the bytes of PairRequest matter.
 	_, _, _ = initP.Connect(context.Background(), "127.0.0.1:17443", "STATIC-KEY", "")
 
 	payload := <-request
@@ -102,8 +94,6 @@ func TestInitiatorSendsProtocolVersion(t *testing.T) {
 	}
 }
 
-// hsVersionMismatch runs one version-rejected PairRequest from remote and
-// returns the PairReject reason the acceptor sent and the acceptor's error.
 func hsVersionMismatch(
 	t *testing.T, accP *Pairing, key string, initiatorFP Fingerprint,
 	initiatorPub []byte, remote string, version uint32,
@@ -133,13 +123,9 @@ func hsVersionMismatch(
 	return int32(reject.GetReason()), awaitAccept(acceptErr)
 }
 
-// TestAcceptorRejectsProtocolVersionMismatch proves the acceptor compares the
-// protocol version before it looks up any key: a different version, including
-// the unfilled 0, is refused with reason 5, audited as version incompatible,
-// and counted as no attempt. The audit carries a source merge key, so repeated
-// attempts from one source collapse into a single merged record rather than
-// growing the audit without bound (config merges every pairing_failed with the
-// same non-empty key; see TestConfigAuditMergePairingFailed).
+// TestAcceptorRejectsProtocolVersionMismatch checks that a differing or unfilled
+// protocol version is refused before any key lookup, audited as version
+// incompatible and not counted as an attempt.
 func TestAcceptorRejectsProtocolVersionMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -206,9 +192,6 @@ func TestAcceptorRejectsProtocolVersionMismatch(t *testing.T) {
 			if len(failed) != attempts+1 {
 				t.Fatalf("pairing_failed audits = %d, want %d: %+v", len(failed), attempts+1, failed)
 			}
-			// Every same-source event carries the one source key, so config's
-			// merge folds them into a single record; the other source stays
-			// separate. This is the property that bounds audit growth.
 			if got := byKey[wantSame]; got != attempts {
 				t.Fatalf("audits under %q = %d, want %d merged-source events", wantSame, got, attempts)
 			}

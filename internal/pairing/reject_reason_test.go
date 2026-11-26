@@ -11,10 +11,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// TestRejectReasonWireMappingRoundTrip checks that every reason carried on the
-// wire survives the local-to-protobuf mapping in both directions, that the
-// expired-key reason keeps its assigned wire value, and that local-only reasons
-// never map onto the wire.
+// TestRejectReasonWireMappingRoundTrip checks that the wire reasons round-trip,
+// that key expired keeps wire value 4, and that local-only reasons never map
+// onto the wire.
 func TestRejectReasonWireMappingRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -53,8 +52,8 @@ func TestRejectReasonWireMappingRoundTrip(t *testing.T) {
 	}
 }
 
-// TestRejectErrorKeyExpired covers REQ-broker-pairing-006: a initiator that
-// receives KEY_EXPIRED reports an expired key, not a protocol error.
+// TestRejectErrorKeyExpired checks that a KEY_EXPIRED reply reports an expired
+// key, not a protocol error.
 func TestRejectErrorKeyExpired(t *testing.T) {
 	t.Parallel()
 
@@ -87,9 +86,7 @@ func TestRejectErrorKeyExpired(t *testing.T) {
 	}
 }
 
-// TestRejectErrorUnknownReasonStillProtocolError checks that an unassigned
-// reason value is still treated as a protocol error rather than as an expired
-// key.
+// TestRejectErrorUnknownReasonStillProtocolError checks that an unassigned reason value is treated as a protocol error.
 func TestRejectErrorUnknownReasonStillProtocolError(t *testing.T) {
 	t.Parallel()
 

@@ -18,10 +18,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// --- test doubles ----------------------------------------------------------
-
-// peerTestOps wraps the real file operations and injects failures at each step
-// of atomicWrite.
 type peerTestOps struct {
 	fileOps
 
@@ -69,8 +65,6 @@ func (o *peerTestOps) set(rename, write, syncDir bool) {
 	o.mu.Unlock()
 }
 
-// peerTestSettings implements settings for the peer-table tests. Only alias and
-// audit are exercised here.
 type peerTestSettings struct {
 	mu     sync.Mutex
 	alias  string
@@ -105,7 +99,6 @@ func (s *peerTestSettings) recordedEvents() []config.Event {
 	return append([]config.Event(nil), s.events...)
 }
 
-// peerTestTransport records Drop calls.
 type peerTestTransport struct {
 	mu    sync.Mutex
 	drops []Fingerprint
@@ -127,8 +120,6 @@ func (t *peerTestTransport) dropped() []Fingerprint {
 	return append([]Fingerprint(nil), t.drops...)
 }
 
-// --- helpers ---------------------------------------------------------------
-
 func newPeerTestTable(t *testing.T) (*peerTable, string, *peerTestOps) {
 	t.Helper()
 	dir := t.TempDir()
@@ -141,8 +132,6 @@ func newPeerTestTable(t *testing.T) (*peerTable, string, *peerTestOps) {
 	return table, path, ops
 }
 
-// peerTestKey returns a real Ed25519 public key and the fingerprint derived from
-// it, so a record written with them passes the load-time consistency check.
 func peerTestKey(t *testing.T) (Fingerprint, []byte) {
 	t.Helper()
 	pub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -170,8 +159,6 @@ func mustPut(t *testing.T, table *peerTable, e peerEntry) bool {
 	}
 	return replaced
 }
-
-// --- persistence -----------------------------------------------------------
 
 // TestREQBrokerPairing017_PeersSurviveReopen checks that role, effective alias,
 // every candidate source and the last connected address survive a restart.
@@ -243,15 +230,8 @@ func TestREQBrokerPairing016_IsPeerAfterReopenWithoutKey(t *testing.T) {
 	}
 }
 
-// TestLoadChecksLocalAlias checks that a stored local_alias is held to the
-// validAlias rule the write path already enforces: a malformed value rejects
-// the file as ErrStore through the same record error an invalid retired alias
-// uses, and a valid value loads unchanged. A value equal to the Broker's own
-// alias is deliberately not rejected here: the alias-conflict validator only
-// runs while the Broker is up, so a hand-edited file or a changed host-derived
-// alias could hold it at startup, and rejecting it would make every peer
-// unavailable. Such a value loads and is not resolved as the Broker itself;
-// the running conflict handling takes it from there.
+// TestLoadChecksLocalAlias checks that loading a stored local alias enforces the
+// validAlias rule while a value equal to the Broker's own alias still loads.
 func TestLoadChecksLocalAlias(t *testing.T) {
 	t.Parallel()
 	fp, pub := peerTestKey(t)
@@ -268,8 +248,6 @@ func TestLoadChecksLocalAlias(t *testing.T) {
 		wantErr    string
 	}{
 		{"invalid alias", "bad alias", `local alias "bad alias" is not a valid alias`},
-		// The Broker's own alias must still load: rejecting it would break
-		// startup for a value the loader cannot avoid.
 		{"the Broker's own alias", "hostA", ""},
 		{"valid alias", "hostB-0123", ""},
 	}
@@ -364,7 +342,8 @@ func TestREQBrokerPairing021_UnpairIdempotent(t *testing.T) {
 	}
 }
 
-// TestREQBrokerPairing022_IsPeerFalseAfterUnpair checks the query side.
+// TestREQBrokerPairing022_IsPeerFalseAfterUnpair checks that IsPeer, Role and
+// EffectiveAlias report no peer after Unpair.
 func TestREQBrokerPairing022_IsPeerFalseAfterUnpair(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -388,8 +367,8 @@ func TestREQBrokerPairing022_IsPeerFalseAfterUnpair(t *testing.T) {
 	}
 }
 
-// TestPeerTableWriteFailureKeepsMemory injects a rename failure and checks the
-// old table is still served.
+// TestPeerTableWriteFailureKeepsMemory checks that a failed write leaves the
+// in-memory table unchanged.
 func TestPeerTableWriteFailureKeepsMemory(t *testing.T) {
 	t.Parallel()
 	table, _, ops := newPeerTestTable(t)
@@ -432,10 +411,8 @@ func TestUnpairWriteFailureKeepsMemory(t *testing.T) {
 	}
 }
 
-// TestUnpairSkipsDropWhenRepairReplacesEntry interleaves a re-pairing commit
-// between Unpair's removal and its link drop. The new pairing's link must
-// survive: Drop is skipped because the removed entry is no longer the current
-// one.
+// TestUnpairSkipsDropWhenRepairReplacesEntry checks that a re-pairing committed
+// between removal and drop keeps its link.
 func TestUnpairSkipsDropWhenRepairReplacesEntry(t *testing.T) {
 	t.Parallel()
 
@@ -467,11 +444,9 @@ func TestUnpairSkipsDropWhenRepairReplacesEntry(t *testing.T) {
 	}
 }
 
-// --- re-pairing ------------------------------------------------------------
-
-// TestInitiateRepairKeepsCardAndLocalAlias covers the plan's re-pairing rule:
-// the initiator keeps card-sourced candidates and its old local alias while the
-// other sources take this handshake's values.
+// TestInitiateRepairKeepsCardAndLocalAlias checks that re-pairing as the dialer
+// keeps the card source and the old local alias while other sources take the
+// new values.
 func TestInitiateRepairKeepsCardAndLocalAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -515,8 +490,8 @@ func TestInitiateRepairKeepsCardAndLocalAlias(t *testing.T) {
 	}
 }
 
-// TestAcceptorRepairDropsCandidates covers the acceptor branch: a re-pairing
-// that makes this Broker the acceptor removes every candidate address.
+// TestAcceptorRepairDropsCandidates checks that re-pairing as the acceptor
+// removes every candidate address.
 func TestAcceptorRepairDropsCandidates(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -559,8 +534,8 @@ func TestPutInitialisesLastConnectedFromPairingAddress(t *testing.T) {
 	}
 }
 
-// --- JSON ------------------------------------------------------------------
-
+// TestPeersJSONRoundTripFieldNames checks that peers.json is written with the
+// expected field names and the alias and local alias reload.
 func TestPeersJSONRoundTripFieldNames(t *testing.T) {
 	t.Parallel()
 	table, path, _ := newPeerTestTable(t)
@@ -623,6 +598,8 @@ func TestPeersJSONRoundTripFieldNames(t *testing.T) {
 	}
 }
 
+// TestPeersJSONUnknownFieldsIgnored checks that unknown top-level and record
+// fields do not prevent loading.
 func TestPeersJSONUnknownFieldsIgnored(t *testing.T) {
 	t.Parallel()
 	fp, pub := peerTestKey(t)
@@ -654,6 +631,8 @@ func TestPeersJSONUnknownFieldsIgnored(t *testing.T) {
 	}
 }
 
+// TestPeersJSONBadRoleFailsOpen checks that an unknown role rejects the file as
+// ErrStore.
 func TestPeersJSONBadRoleFailsOpen(t *testing.T) {
 	t.Parallel()
 	assertPeersLoadFails(t, func(fp Fingerprint, pub []byte) string {
@@ -662,6 +641,8 @@ func TestPeersJSONBadRoleFailsOpen(t *testing.T) {
 	})
 }
 
+// TestPeersJSONFingerprintMismatchFailsOpen checks that a fingerprint not
+// matching its public key rejects the file as ErrStore.
 func TestPeersJSONFingerprintMismatchFailsOpen(t *testing.T) {
 	t.Parallel()
 	assertPeersLoadFails(t, func(fp Fingerprint, pub []byte) string {
@@ -671,6 +652,8 @@ func TestPeersJSONFingerprintMismatchFailsOpen(t *testing.T) {
 	})
 }
 
+// TestPeersJSONDuplicateFingerprintFailsOpen checks that two records with one
+// fingerprint reject the file as ErrStore.
 func TestPeersJSONDuplicateFingerprintFailsOpen(t *testing.T) {
 	t.Parallel()
 	fp, pub := peerTestKey(t)
@@ -680,6 +663,8 @@ func TestPeersJSONDuplicateFingerprintFailsOpen(t *testing.T) {
 	assertPeersDocFails(t, doc)
 }
 
+// TestPeersJSONDuplicateEffectiveAliasFailsOpen checks that two records claiming
+// one effective alias reject the file as ErrStore.
 func TestPeersJSONDuplicateEffectiveAliasFailsOpen(t *testing.T) {
 	t.Parallel()
 	fpA, pubA := peerTestKey(t)
@@ -691,11 +676,15 @@ func TestPeersJSONDuplicateEffectiveAliasFailsOpen(t *testing.T) {
 	assertPeersDocFails(t, doc)
 }
 
+// TestPeersJSONUnknownVersionFailsOpen checks that an unknown file version
+// rejects the file as ErrStore.
 func TestPeersJSONUnknownVersionFailsOpen(t *testing.T) {
 	t.Parallel()
 	assertPeersDocFails(t, `{"version":2,"peers":[]}`)
 }
 
+// TestPeersJSONMalformedFailsOpen checks that a malformed file is rejected as
+// ErrStore.
 func TestPeersJSONMalformedFailsOpen(t *testing.T) {
 	t.Parallel()
 	assertPeersDocFails(t, `not json`)
@@ -723,8 +712,8 @@ func base64Std(b []byte) string {
 	return base64.StdEncoding.EncodeToString(b)
 }
 
-// --- queries ---------------------------------------------------------------
-
+// TestPeersSortedByEffectiveAliasThenFingerprint checks that Peers sorts by
+// effective alias.
 func TestPeersSortedByEffectiveAliasThenFingerprint(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -751,6 +740,8 @@ func TestPeersSortedByEffectiveAliasThenFingerprint(t *testing.T) {
 	}
 }
 
+// TestPeersReturnsCopies checks that Peers returns buffers that do not share the
+// table's.
 func TestPeersReturnsCopies(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -773,6 +764,8 @@ func TestPeersReturnsCopies(t *testing.T) {
 	}
 }
 
+// TestZeroPairingAnswersEmpty checks that every query on a zero Pairing answers
+// empty and Unpair returns ErrNotOpen.
 func TestZeroPairingAnswersEmpty(t *testing.T) {
 	t.Parallel()
 	var p Pairing
@@ -800,6 +793,8 @@ func TestZeroPairingAnswersEmpty(t *testing.T) {
 	}
 }
 
+// TestUnpairSnapshotsAliasBeforeRemoval checks that EffectiveAlias reports the
+// alias before Unpair and empty after.
 func TestUnpairSnapshotsAliasBeforeRemoval(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)

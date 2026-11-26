@@ -14,24 +14,18 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// --- helpers ---------------------------------------------------------------
-
-// setStaticKey changes the fake static key between handshakes.
 func setStaticKey(s *hsSettings, key string) {
 	s.mu.Lock()
 	s.staticKey = key
 	s.mu.Unlock()
 }
 
-// setAdvertised replaces the fake advertised address list.
 func setAdvertised(s *hsSettings, addrs ...config.AdvertisedAddr) {
 	s.mu.Lock()
 	s.advertised = append([]config.AdvertisedAddr(nil), addrs...)
 	s.mu.Unlock()
 }
 
-// pairWithHello drives one full handshake including the link Hello frame that
-// promotes a pending acceptor entry to a committed peer.
 func pairWithHello(t *testing.T, initP, accP *Pairing, tr *hsTransport, key string) (Peer, error, error) {
 	t.Helper()
 	peer, _, connectErr, acceptErr := hsPair(t, initP, accP, tr, key, "", func(ctx context.Context, raw PairConn) error {
@@ -40,7 +34,6 @@ func pairWithHello(t *testing.T, initP, accP *Pairing, tr *hsTransport, key stri
 	return peer, connectErr, acceptErr
 }
 
-// newInitiatorPairing builds an initiator with its own data directory.
 func newInitiatorPairing(t *testing.T, clk *hsClock) (*Pairing, *hsTransport) {
 	t.Helper()
 	s := newHSSettings(t)
@@ -49,8 +42,6 @@ func newInitiatorPairing(t *testing.T, clk *hsClock) (*Pairing, *hsTransport) {
 	return hsNewPairing(t, s, tr, clk), tr
 }
 
-// validKeyShape reports whether key is four groups of four Crockford Base32
-// characters separated by '-'.
 func validKeyShape(key string) bool {
 	if len(key) != 19 {
 		return false
@@ -72,14 +63,16 @@ func validKeyShape(key string) bool {
 	return true
 }
 
-// --- encoding --------------------------------------------------------------
-
+// TestOneTimeKeyEncodingZeroVector checks that ten zero bytes encode as
+// 0000-0000-0000-0000.
 func TestOneTimeKeyEncodingZeroVector(t *testing.T) {
 	if got := encodeOneTimeKey([10]byte{}); got != "0000-0000-0000-0000" {
 		t.Fatalf("encodeOneTimeKey(zero) = %q, want %q", got, "0000-0000-0000-0000")
 	}
 }
 
+// TestOneTimeKeyEncodingFormat checks that encoding produces the four-group
+// Crockford form deterministically.
 func TestOneTimeKeyEncodingFormat(t *testing.T) {
 	var ones [10]byte
 	for i := range ones {
@@ -100,8 +93,6 @@ func TestOneTimeKeyEncodingFormat(t *testing.T) {
 	if again := encodeOneTimeKey(mixed); again != got {
 		t.Fatalf("encoding is not deterministic: %q then %q", got, again)
 	}
-	// 160 bits of input produce exactly 16 characters, so no character may be
-	// padding. A different input must produce a different encoding.
 	var other [10]byte
 	other[9] = 1
 	if encodeOneTimeKey(other) == got {
@@ -109,8 +100,9 @@ func TestOneTimeKeyEncodingFormat(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-005 ------------------------------------------------
-
+// TestREQBrokerPairing005_CreateOneTimeKeyReturnsKeyAndExpiry checks that a
+// created key has the one-time format, expires in ten minutes and is stored
+// once.
 func TestREQBrokerPairing005_CreateOneTimeKeyReturnsKeyAndExpiry(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -135,6 +127,8 @@ func TestREQBrokerPairing005_CreateOneTimeKeyReturnsKeyAndExpiry(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing005_KeyWorksForConnect checks that a one-time key
+// completes a handshake, commits both sides and is consumed.
 func TestREQBrokerPairing005_KeyWorksForConnect(t *testing.T) {
 	clk := newHSClock()
 	initP, tr := newInitiatorPairing(t, clk)
@@ -164,8 +158,8 @@ func TestREQBrokerPairing005_KeyWorksForConnect(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-006 ------------------------------------------------
-
+// TestREQBrokerPairing006_KeyWorksAtNineMinutes checks that a key still works
+// nine minutes after creation.
 func TestREQBrokerPairing006_KeyWorksAtNineMinutes(t *testing.T) {
 	clk := newHSClock()
 	initP, tr := newInitiatorPairing(t, clk)
@@ -190,9 +184,8 @@ func TestREQBrokerPairing006_KeyWorksAtNineMinutes(t *testing.T) {
 	}
 }
 
-// A one-time key is valid for exactly ten minutes: at the exact expiry instant
-// it is already gone, so an implementation that treats the boundary as
-// inclusive fails this test.
+// TestREQBrokerPairing006_KeyExpiredAtExactlyTenMinutes checks that a key is
+// already expired at the exact ten-minute instant.
 func TestREQBrokerPairing006_KeyExpiredAtExactlyTenMinutes(t *testing.T) {
 	clk := newHSClock()
 	initP, tr := newInitiatorPairing(t, clk)
@@ -227,6 +220,8 @@ func TestREQBrokerPairing006_KeyExpiredAtExactlyTenMinutes(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing006_KeyExpiredAtElevenMinutes checks that a key is
+// rejected as expired eleven minutes after creation.
 func TestREQBrokerPairing006_KeyExpiredAtElevenMinutes(t *testing.T) {
 	clk := newHSClock()
 	initP, tr := newInitiatorPairing(t, clk)
@@ -261,8 +256,8 @@ func TestREQBrokerPairing006_KeyExpiredAtElevenMinutes(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-007 ------------------------------------------------
-
+// TestREQBrokerPairing007_KeySucceedsOnceThenInvalid checks that a one-time key
+// works once and its second use is rejected as invalid.
 func TestREQBrokerPairing007_KeySucceedsOnceThenInvalid(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -295,8 +290,8 @@ func TestREQBrokerPairing007_KeySucceedsOnceThenInvalid(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-008 ------------------------------------------------
-
+// TestREQBrokerPairing008_NoStaticKeyRejectsArbitraryKey checks that an
+// arbitrary key is rejected when no static key is configured.
 func TestREQBrokerPairing008_NoStaticKeyRejectsArbitraryKey(t *testing.T) {
 	clk := newHSClock()
 	initP, tr := newInitiatorPairing(t, clk)
@@ -315,8 +310,8 @@ func TestREQBrokerPairing008_NoStaticKeyRejectsArbitraryKey(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-009 ------------------------------------------------
-
+// TestREQBrokerPairing009_StaticKeyRepeatedUses checks that the static key can
+// pair repeatedly.
 func TestREQBrokerPairing009_StaticKeyRepeatedUses(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -335,6 +330,8 @@ func TestREQBrokerPairing009_StaticKeyRepeatedUses(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing009_StaticKeyNotExpired checks that the static key still
+// works after eleven minutes.
 func TestREQBrokerPairing009_StaticKeyNotExpired(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -358,12 +355,8 @@ func TestREQBrokerPairing009_StaticKeyNotExpired(t *testing.T) {
 	}
 }
 
-// TestLookupAtRequestReadsStaticKeyOutsideTableLock proves that the preset
-// static key is never read while keys.mu is held. The reader reaches config's
-// secret; doing that under keys.mu would nest keys.mu before config's lock, the
-// reverse of the config -> pairing order pairing keeps everywhere else. The
-// injected reader tries the same mutex: TryLock succeeds only when the caller
-// does not hold it.
+// TestLookupAtRequestReadsStaticKeyOutsideTableLock checks that the static key
+// is read without holding the key table lock.
 func TestLookupAtRequestReadsStaticKeyOutsideTableLock(t *testing.T) {
 	ni := makeSeq(1, nonceLength)
 	fp, _ := hsKey(t)
@@ -419,12 +412,8 @@ func TestLookupAtRequestReadsStaticKeyOutsideTableLock(t *testing.T) {
 	})
 }
 
-// TestUndoAttemptIgnoresARolledWindow proves that undoing a tentative count
-// cannot decrement a later minute's window. lookupAtRequest records the attempt
-// before releasing the lock, reads the static key, and then undoes the record;
-// a concurrent request can roll the window to the next minute in between. The
-// earlier count was discarded with the old window, so the undo must leave the
-// new window untouched.
+// TestUndoAttemptIgnoresARolledWindow checks that undoing a tentative attempt
+// leaves a later minute's window untouched.
 func TestUndoAttemptIgnoresARolledWindow(t *testing.T) {
 	ni := makeSeq(2, nonceLength)
 	fp, _ := hsKey(t)
@@ -436,9 +425,6 @@ func TestUndoAttemptIgnoresARolledWindow(t *testing.T) {
 
 	table := &keyTable{}
 	staticKey := func() string {
-		// A request from another source rolls the window to the next minute
-		// and is counted there, after this request's tentative count landed in
-		// the old window.
 		table.mu.Lock()
 		table.attempts = attemptWindow{minute: next, total: 1, bySource: map[string]int{other: 1}}
 		table.mu.Unlock()
@@ -464,8 +450,8 @@ func TestUndoAttemptIgnoresARolledWindow(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-025 ------------------------------------------------
-
+// TestREQBrokerPairing025_OnlyOneTimeKeysAreGenerated checks that generated
+// keys differ, use the one-time format and never equal the static key.
 func TestREQBrokerPairing025_OnlyOneTimeKeysAreGenerated(t *testing.T) {
 	clk := newHSClock()
 	const static = "STATIC-KEY-UNIQUE-SENTINEL"
@@ -497,6 +483,8 @@ func TestREQBrokerPairing025_OnlyOneTimeKeysAreGenerated(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing025_NoReusableKeyOnDisk checks that neither the static
+// key nor a generated key is written into the data directory.
 func TestREQBrokerPairing025_NoReusableKeyOnDisk(t *testing.T) {
 	clk := newHSClock()
 	const static = "STATIC-SECRET-7Q4Z-DO-NOT-PERSIST"
@@ -519,9 +507,6 @@ func TestREQBrokerPairing025_NoReusableKeyOnDisk(t *testing.T) {
 	assertDirDoesNotContain(t, accS.dataDir, oneTime)
 }
 
-// assertDirDoesNotContain scans every regular file in dir for needle. The check
-// is over bytes, not file names: a reusable key could be written under any
-// name.
 func assertDirDoesNotContain(t *testing.T, dir, needle string) {
 	t.Helper()
 	err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
@@ -545,8 +530,8 @@ func assertDirDoesNotContain(t *testing.T, dir, needle string) {
 	}
 }
 
-// --- REQ-broker-pairing-028 ------------------------------------------------
-
+// TestREQBrokerPairing028_ShownAddressesOrderAndFormat checks that shown
+// addresses are the direct ones, in order, in hostname(address:port) form.
 func TestREQBrokerPairing028_ShownAddressesOrderAndFormat(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -580,6 +565,9 @@ func TestREQBrokerPairing028_ShownAddressesOrderAndFormat(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing028_EmptyAdvertisedWhileListening checks that a key is
+// still created with an empty shown list when listening with no advertised
+// address.
 func TestREQBrokerPairing028_EmptyAdvertisedWhileListening(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -599,8 +587,9 @@ func TestREQBrokerPairing028_EmptyAdvertisedWhileListening(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-032 ------------------------------------------------
-
+// TestREQBrokerPairing032_DeletedStaticKeyStopsNextHandshake checks that
+// deleting the static key rejects the next handshake without removing an
+// existing peer.
 func TestREQBrokerPairing032_DeletedStaticKeyStopsNextHandshake(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -629,8 +618,8 @@ func TestREQBrokerPairing032_DeletedStaticKeyStopsNextHandshake(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-033 ------------------------------------------------
-
+// TestREQBrokerPairing033_RotatedStaticKeyAcceptsOnlyNewValue checks that after
+// rotation the old value is rejected and the new one pairs.
 func TestREQBrokerPairing033_RotatedStaticKeyAcceptsOnlyNewValue(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -667,8 +656,9 @@ func TestREQBrokerPairing033_RotatedStaticKeyAcceptsOnlyNewValue(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-036 ------------------------------------------------
-
+// TestREQBrokerPairing036_CreateKeyFailsWhenNotListening checks that
+// CreateOneTimeKey returns ErrNotListening and generates no key when the listen
+// address is empty.
 func TestREQBrokerPairing036_CreateKeyFailsWhenNotListening(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -687,7 +677,6 @@ func TestREQBrokerPairing036_CreateKeyFailsWhenNotListening(t *testing.T) {
 	}
 }
 
-// assertRejectedReason checks that err is a PairingError with the given reason.
 func assertRejectedReason(t *testing.T, err error, want RejectReason) {
 	t.Helper()
 	if !errors.Is(err, ErrPairingRejected) {

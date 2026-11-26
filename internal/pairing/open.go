@@ -5,19 +5,18 @@ import (
 	"path/filepath"
 )
 
-// peersFileName is the peer table inside the data directory.
 const peersFileName = "peers.json"
 
 // Open loads the identity and the peer table and installs the transport. It
 // must be called once per data directory, after config.Load. Each call returns
-// an independent instance; a data directory should have only one.
+// an independent instance; a data directory should have only one. It returns
+// ErrNoTransport for a nil transport, ErrNotOpen when the data directory or the
+// alias cannot be read, ErrIdentity when the identity is rejected, and ErrStore
+// when the peer table cannot be read or parsed.
 func Open(t Transport) (*Pairing, error) {
 	return newPairing(newConfigSettings(), t, realClock{}, realFileOps{}, nil)
 }
 
-// newPairing assembles an instance from its collaborators. Every seam is a
-// parameter so tests can supply a fake configuration, clock, file system and
-// random source without touching the real host.
 func newPairing(s settings, t Transport, c clock, ops fileOps, randRead func([]byte) (int, error)) (*Pairing, error) {
 	if t == nil {
 		return nil, ErrNoTransport

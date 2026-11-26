@@ -9,19 +9,13 @@ import (
 	"time"
 )
 
-// bufferedLinger is the fake transport's linger window. It stands in for the
-// one second link keeps a rejected connection open so the frame can leave the
-// write buffer.
+// bufferedLinger stands in for the one second link keeps a rejected connection
+// open so the frame leaves the write buffer.
 const bufferedLinger = time.Second
 
-// bufferedPairConn models a transport whose Send only hands the frame to the
-// write buffer and whose Close drops whatever is still buffered. A connection
-// implementing finalSender flushes the buffer in SendAndLinger, waits until
-// the peer has read the frame or the linger expires, and only then closes.
-//
-// eager selects the write path. The dialing side writes straight to its peer
-// so the handshake can start; the accepting side buffers, which is the
-// behaviour the rejection path has to survive.
+// bufferedPairConn models a transport whose Send only buffers and whose Close
+// drops the buffer; the eager dialing side writes straight through so the
+// handshake can start.
 type bufferedPairConn struct {
 	peer    *bufferedPairConn
 	eager   bool
@@ -38,8 +32,6 @@ type bufferedPairConn struct {
 	read   chan struct{} // signals that a queued frame was consumed
 }
 
-// newBufferedPair returns the dialing and accepting ends, each reporting the
-// other's fingerprint and public key.
 func newBufferedPair(dialFP Fingerprint, dialPub []byte, accFP Fingerprint, accPub []byte) (*bufferedPairConn, *bufferedPairConn) {
 	dialer := &bufferedPairConn{
 		fp:      accFP,
@@ -98,8 +90,6 @@ func (c *bufferedPairConn) Send(ctx context.Context, kind uint32, payload []byte
 	return nil
 }
 
-// SendAndLinger is the finalSender path: it writes the buffered frame out and
-// waits for the peer to read it, bounded by bufferedLinger, before closing.
 func (c *bufferedPairConn) SendAndLinger(ctx context.Context, kind uint32, payload []byte) error {
 	if err := c.Send(ctx, kind, payload); err != nil {
 		return err
@@ -122,8 +112,6 @@ func (c *bufferedPairConn) SendAndLinger(ctx context.Context, kind uint32, paylo
 	return c.Close()
 }
 
-// deliver queues frames for this side to read. A closed connection accepts
-// nothing.
 func (c *bufferedPairConn) deliver(frames ...hsFrame) bool {
 	c.mu.Lock()
 	if c.closed {
@@ -169,9 +157,6 @@ func (c *bufferedPairConn) Unread(kind uint32, payload []byte) {
 	c.notify()
 }
 
-// Close drops the frames that were never written out. Frames already delivered
-// to the peer stay readable, so the peer reports the handshake failure after
-// it has read them.
 func (c *bufferedPairConn) Close() error {
 	c.mu.Lock()
 	if c.closed {
@@ -193,13 +178,10 @@ func (c *bufferedPairConn) Close() error {
 	return nil
 }
 
-// noLingerConn exposes only the PairConn method set, hiding SendAndLinger from
-// pairing's finalSender assertion. The rejection then takes the Send-then-Close
+// noLingerConn hides SendAndLinger so the rejection takes the Send-then-Close
 // fallback.
 type noLingerConn struct{ PairConn }
 
-// runBufferedReject runs one Connect against one Accept over the buffered fake.
-// linger selects whether the accepting end offers finalSender.
 func runBufferedReject(t *testing.T, accP, initP *Pairing, key string, linger bool) (connectErr, acceptErr error) {
 	t.Helper()
 	dialConn, accConn := newBufferedPair(
@@ -249,10 +231,7 @@ func assertPairingError(t *testing.T, err error, reason RejectReason, detail str
 	}
 }
 
-// TestRejectAcceptorLingerCarriesTheReason checks the finalSender path over a
-// transport that only writes buffered frames: the acceptor lingers after the
-// PairReject, so the dialer receives the reason and detail instead of a bare
-// close.
+// TestRejectAcceptorLingerCarriesTheReason checks that a lingering acceptor delivers the reject reason to the dialer.
 func TestRejectAcceptorLingerCarriesTheReason(t *testing.T) {
 	t.Run("wrong key", func(t *testing.T) {
 		clk := newHSClock()
@@ -281,18 +260,14 @@ func TestRejectAcceptorLingerCarriesTheReason(t *testing.T) {
 	})
 }
 
-// TestBufferedTransportWithoutLingerLosesTheReason characterizes the old
-// transport behaviour: Send only buffered the PairReject, Close dropped it, and
-// the dialer saw a bare connection close. The fake really reproduces the
-// defect, so the previous failure was not an artifact of the test harness.
+// TestBufferedTransportWithoutLingerLosesTheReason checks that a transport
+// without linger drops the buffered PairReject, leaving the dialer a bare close.
 func TestBufferedTransportWithoutLingerLosesTheReason(t *testing.T) {
 	clk := newHSClock()
 	accP := newRejectPairing(t, "acceptor", clk)
 	initP := newRejectPairing(t, "dialer", clk)
 
 	connectErr, acceptErr := runBufferedReject(t, accP, initP, "WRNG-WRNG-WRNG-WRNG", false)
-	// The acceptor still knows why it refused.
 	assertPairingError(t, acceptErr, ReasonKeyInvalid, "pairing key is invalid")
-	// The buffered reject was dropped, so the dialer lost the reason.
 	assertPairingError(t, connectErr, ReasonNotConnected, "connection closed during pairing")
 }

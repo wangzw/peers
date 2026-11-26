@@ -11,46 +11,31 @@ import (
 )
 
 const (
-	// oneTimeKeyLifetime is how long a generated pairing key stays usable. It is
-	// a constant, not a configuration value.
 	oneTimeKeyLifetime = 10 * time.Minute
-	// oneTimeKeyBytes is the size of the random value behind a one-time key:
-	// 80 bits, encoded as 16 Crockford Base32 characters.
-	oneTimeKeyBytes = 10
-	// crockfordAlphabet is the Crockford Base32 alphabet used for one-time keys.
-	crockfordAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-	// The HMAC domain-separation labels of the pairing protocol. Changing one
-	// makes pairing fail against a Broker that still uses the old value, so
-	// they are kept together. None has a NUL terminator.
-	pairHintLabel      = "peers pair hint"
-	pairResponderLabel = "peers pair responder"
-	pairInitiatorLabel = "peers pair initiator"
-	// expiredKeyRetention is how long an expired one-time key is remembered so
-	// the acceptor can answer KEY_EXPIRED instead of KEY_INVALID.
-	expiredKeyRetention = 24 * time.Hour
-	// maxExpiredKeyRecords caps the expired-key records; the records with the
-	// earliest cutoff are dropped first.
+	oneTimeKeyBytes    = 10
+	crockfordAlphabet  = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+	// The HMAC domain-separation labels, kept together: changing one breaks
+	// pairing with a Broker using the old value, and none has a NUL terminator.
+	pairHintLabel        = "peers pair hint"
+	pairResponderLabel   = "peers pair responder"
+	pairInitiatorLabel   = "peers pair initiator"
+	expiredKeyRetention  = 24 * time.Hour
 	maxExpiredKeyRecords = 64
 )
 
-// expiredKey remembers a one-time key that expired by time. key is kept only
-// to recompute lookup tags; it never verifies a proof or completes a
-// handshake.
+// expiredKey is kept only to recompute lookup tags; it never verifies a proof
+// or completes a handshake.
 type expiredKey struct {
 	key   string
-	until time.Time // expiry + expiredKeyRetention
+	until time.Time
 }
 
-// oneTimeKey is one unexpired key and its verification failure count.
 type oneTimeKey struct {
 	key      string
 	expires  time.Time
 	failures int
 }
 
-// keyMatch is the key selected for one handshake. oneTime distinguishes a
-// one-time key from the preset static key, and proof carries the initiator's
-// PairConfirm proof until verification.
 type keyMatch struct {
 	key     string
 	oneTime bool
@@ -58,25 +43,18 @@ type keyMatch struct {
 	proof   []byte
 }
 
-// attemptGlobalFactor multiplies the per-source allowance into the cap on all
-// sources together. It is a constant, not a configuration value.
 const attemptGlobalFactor = 10
 
-// attemptWindow counts, for one minute, pairing requests that matched neither
-// a one-time key nor the preset static key: per source and in total. The map
-// gains an entry only when a request is counted, and the whole window is
-// replaced when the minute changes, so it never holds more entries than the
-// global cap.
+// attemptWindow counts unmatched pairing requests per source and in total for
+// one minute and is replaced when the minute changes.
 type attemptWindow struct {
 	minute   time.Time
 	total    int
 	bySource map[string]int
 }
 
-// keyTable holds the one-time keys, the expired-key records and the per-minute
-// attempt counters. One mutex covers all three. Verification and removal of a
-// one-time key happen under the same lock, so two concurrent handshakes cannot
-// both consume one key.
+// keyTable protects the key, expired-key and attempt state with one mutex, so
+// two concurrent handshakes cannot both consume one key.
 type keyTable struct {
 	mu       sync.Mutex
 	keys     []oneTimeKey
@@ -84,9 +62,6 @@ type keyTable struct {
 	attempts attemptWindow
 }
 
-// encodeOneTimeKey renders 10 random bytes as four groups of four Crockford
-// Base32 characters separated by '-'. Ten zero bytes encode as
-// "0000-0000-0000-0000".
 func encodeOneTimeKey(raw [10]byte) string {
 	var chars [16]byte
 	for i := range chars {
@@ -107,11 +82,7 @@ func encodeOneTimeKey(raw [10]byte) string {
 	return string(out)
 }
 
-// computeHint is the lookup tag the initiator sends in PairRequest. It lets the
-// acceptor find the key without revealing it, and has no NUL terminator. The
-// tag is bound to the initiator's fingerprint: the acceptor recomputes it with
-// the fingerprint it reads from this TLS connection, so a third party that
-// forwards someone else's tag presents its own certificate and matches no key.
+// computeHint returns the lookup tag, bound to the initiator's fingerprint.
 func computeHint(key, ni []byte, initiator Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(pairHintLabel))
@@ -120,8 +91,6 @@ func computeHint(key, ni []byte, initiator Fingerprint) []byte {
 	return mac.Sum(nil)[:lookupTagLength]
 }
 
-// add stores a new one-time key that expires oneTimeKeyLifetime from now, after
-// dropping keys that have already expired.
 func (k *keyTable) add(key string, now time.Time) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -129,10 +98,8 @@ func (k *keyTable) add(key string, now time.Time) {
 	k.keys = append(k.keys, oneTimeKey{key: key, expires: now.Add(oneTimeKeyLifetime)})
 }
 
-// expireLocked moves keys whose lifetime has ended into the expired-key
-// records, drops records past their cutoff, and caps the records at
-// maxExpiredKeyRecords by dropping the earliest cutoff first. The caller must
-// hold k.mu.
+// expireLocked must be called with k.mu held; it moves expired keys into the
+// expired-key records and caps the records at maxExpiredKeyRecords.
 func (k *keyTable) expireLocked(now time.Time) {
 	kept := k.keys[:0]
 	for _, key := range k.keys {
@@ -160,32 +127,12 @@ func (k *keyTable) expireLocked(now time.Time) {
 	}
 }
 
-// lookupAtRequest selects the key for an incoming PairRequest. It first looks
-// for a matching one-time key, then the expired-key records, then checks the
-// per-minute attempt limits, then the preset static key. staticKey is called
-// only after both limits pass, and never while keys.mu is held: it reads
-// config, and pairing must not take a config lock under a pairing lock. A
-// request that matches a one-time key, hits an expired record or is refused by a
-// limit never reads it. A request that matches nothing increments the source's
-// counter and the total; the count is taken before the static key is read and
-// undone when the static key matches. found is false on rejection; the returned
-// error is a PairingError whose reason maps to the PairReject reason.
-//
-// initiator is the fingerprint the acceptor sees on this connection; every
-// lookup tag is recomputed with it, so a tag computed by a different party
-// matches no key.
-//
-// source is the network prefix from sourcePrefix; every address without an IP
-// shares the empty string as one unknown source. A source may make
-// maxAttempts unmatched requests per minute and all sources together may make
-// attemptGlobalFactor times that.
-//
-// A hit on an expired-key record answers KEY_EXPIRED and does not touch the
-// counters: the caller holds that key, and the counters exist to stop guessing.
-//
-// The per-key failure limit is not consulted here: recordVerificationFailure
-// already discards a one-time key once its failures reach that limit, so any key
-// still in the table is eligible.
+// lookupAtRequest selects the key for an incoming PairRequest, checking
+// one-time keys, expired-key records, the per-minute attempt limits and then
+// the pre-provisioned static key. staticKey is called only after both limits pass and
+// never with k.mu held, because it reads config. An unmatched request is
+// counted before the static key is read and the count undone when it matches. A
+// hit on an expired record answers KEY_EXPIRED and touches no counter.
 func (k *keyTable) lookupAtRequest(ni, hint []byte, initiator Fingerprint, now time.Time, source string, maxAttempts int, staticKey func() string) (keyMatch, bool, error) {
 	k.mu.Lock()
 
@@ -205,8 +152,8 @@ func (k *keyTable) lookupAtRequest(ni, hint []byte, initiator Fingerprint, now t
 		}
 	}
 
-	// Reset the window when the minute changes before consulting the limits;
-	// otherwise a minute that reached a limit would reject forever.
+	// Reset the window before consulting the limits, or an exhausted minute
+	// would reject forever.
 	minute := now.Truncate(time.Minute)
 	if !k.attempts.minute.Equal(minute) {
 		k.attempts = attemptWindow{minute: minute}
@@ -217,10 +164,8 @@ func (k *keyTable) lookupAtRequest(ni, hint []byte, initiator Fingerprint, now t
 		return keyMatch{}, false, &PairingError{Reason: ReasonTryLater, Detail: rejectDetail(ReasonTryLater)}
 	}
 
-	// Record the attempt before releasing the lock, so the limit check and the
-	// count happen in one critical section and two concurrent requests cannot
-	// both decide they are within the allowance. A static-key match below undoes
-	// this record, because a matched request is not an attempt.
+	// Record the attempt before releasing the lock so two concurrent requests
+	// cannot both pass the limit check; a static-key match below undoes it.
 	if k.attempts.bySource == nil {
 		k.attempts.bySource = make(map[string]int)
 	}
@@ -228,9 +173,8 @@ func (k *keyTable) lookupAtRequest(ni, hint []byte, initiator Fingerprint, now t
 	k.attempts.total++
 	k.mu.Unlock()
 
-	// staticKey reads config's secret, so it must run outside keys.mu: config's
-	// validators take the peer table lock while holding config's lock, and
-	// nesting keys.mu before config's lock would invert that order.
+	// staticKey reads config's secret, so it must run outside k.mu: taking k.mu
+	// before config's lock inverts the config-then-pairing order.
 	key := staticKey()
 	if key != "" && hmac.Equal(computeHint([]byte(key), ni, initiator), hint) {
 		k.undoAttempt(source, minute)
@@ -240,10 +184,8 @@ func (k *keyTable) lookupAtRequest(ni, hint []byte, initiator Fingerprint, now t
 	return keyMatch{}, false, &PairingError{Reason: ReasonKeyInvalid, Detail: rejectDetail(ReasonKeyInvalid)}
 }
 
-// undoAttempt removes one attempt recorded for source in the window opened at
-// minute. lookupAtRequest calls it when a tentative count is followed by a
-// static-key match. When the window has already rolled to a later minute, the
-// record was discarded with the old window and there is nothing to undo.
+// undoAttempt removes a tentative attempt count; when the window has rolled to
+// a later minute there is nothing to undo.
 func (k *keyTable) undoAttempt(source string, minute time.Time) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -260,12 +202,10 @@ func (k *keyTable) undoAttempt(source string, minute time.Time) {
 	}
 }
 
-// verifyAtConfirm checks the initiator's proof against the key selected at
-// request time. A one-time key must still be in the table; when it expired
-// during the handshake, gone is KEY_EXPIRED, and when it was removed some other
-// way, gone is KEY_INVALID. In both cases the caller answers with that reason
-// and counts no failure. A successful one-time key is removed atomically with
-// the check. gone is 0 when the key is still usable.
+// verifyAtConfirm checks the proof against the key selected at request time,
+// removing a one-time key atomically with the check. gone reports KEY_EXPIRED
+// for a key expired during the handshake and KEY_INVALID for one removed
+// otherwise, and is 0 when the key is still usable.
 func (k *keyTable) verifyAtConfirm(m keyMatch, ni, nr []byte, acceptorFP, initiatorSeen Fingerprint, staticKey string, now time.Time) (ok bool, gone RejectReason) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -295,8 +235,8 @@ func (k *keyTable) verifyAtConfirm(m keyMatch, ni, nr []byte, acceptorFP, initia
 		return true, 0
 	}
 
-	// The preset static key must still equal its current configured value. A
-	// rotated or deleted key cannot finish a handshake that started before it.
+	// A rotated or deleted static key cannot finish a handshake that started
+	// before it.
 	if staticKey == "" || staticKey != m.key {
 		return false, 0
 	}
@@ -304,9 +244,8 @@ func (k *keyTable) verifyAtConfirm(m keyMatch, ni, nr []byte, acceptorFP, initia
 	return hmac.Equal(want, m.proof), 0
 }
 
-// recordVerificationFailure counts one failed verification against a one-time
-// key and discards the key once maxFailures is reached. The static key is never
-// counted.
+// recordVerificationFailure counts a failed verification against a one-time key
+// and discards it at maxFailures; the static key is never counted.
 func (k *keyTable) recordVerificationFailure(m keyMatch, maxFailures int, now time.Time) {
 	if !m.oneTime {
 		return
@@ -326,9 +265,11 @@ func (k *keyTable) recordVerificationFailure(m keyMatch, maxFailures int, now ti
 	}
 }
 
-// CreateOneTimeKey generates a fresh one-time pairing key, returns its expiry
-// and the display addresses of this Broker. It refuses to generate a key when no
-// listen address is configured, because the peer could not dial this Broker.
+// CreateOneTimeKey generates a one-time pairing key and returns it with its
+// expiry and the display spellings of this Broker's advertised direct addresses,
+// each as hostname(addr). It returns ErrNotListening when no listen address is
+// configured, ErrNotOpen before Open, ErrStore when the settings cannot be read,
+// and the random source's error unchanged when entropy fails.
 func (p *Pairing) CreateOneTimeKey() (key string, expires time.Time, shown []string, err error) {
 	if p == nil || p.settings == nil || p.clock == nil || p.keys == nil {
 		return "", time.Time{}, nil, ErrNotOpen
@@ -367,8 +308,6 @@ func (p *Pairing) CreateOneTimeKey() (key string, expires time.Time, shown []str
 	return key, expires, shown, nil
 }
 
-// randomBytes fills buf from the injected random source, falling back to
-// crypto/rand.
 func (p *Pairing) randomBytes(buf []byte) error {
 	if p.randRead != nil {
 		_, err := p.randRead(buf)

@@ -1,11 +1,7 @@
 package pairing
 
-// Tests in this file cover rules that the design states as orderings or
-// inequalities rather than as observable end results: the proof formula, the
-// order of the rate-limit checks, and the two sides of the alias-conflict
-// rule. The proof helpers below are transcribed from
-// docs/design/modules/design-pairing.md and are deliberately independent of
-// the implementation, so a changed formula shows up as a mismatch.
+// The proof helpers in this file are deliberately independent of the product
+// code, so a changed formula must fail here.
 
 import (
 	"context"
@@ -21,11 +17,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// designLookupTagLength is the "first 8 bytes" in the lookup-tag formula.
 const designLookupTagLength = 8
 
-// designPairHint computes
-// HMAC-SHA256(key, "peers pair hint" || ni || initiator)[:8].
 func designPairHint(key, ni []byte, initiator Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("peers pair hint"))
@@ -34,9 +27,6 @@ func designPairHint(key, ni []byte, initiator Fingerprint) []byte {
 	return mac.Sum(nil)[:designLookupTagLength]
 }
 
-// designResponderProof computes
-// HMAC-SHA256(key, "peers pair responder" || ni || nr ||
-// acceptor || initiatorSeen).
 func designResponderProof(key, ni, nr []byte, acceptor, initiatorSeen Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("peers pair responder"))
@@ -47,9 +37,6 @@ func designResponderProof(key, ni, nr []byte, acceptor, initiatorSeen Fingerprin
 	return mac.Sum(nil)
 }
 
-// designInitiatorProof computes
-// HMAC-SHA256(key, "peers pair initiator" || ni || nr ||
-// initiator || acceptorSeen).
 func designInitiatorProof(key, ni, nr []byte, initiator, acceptorSeen Fingerprint) []byte {
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte("peers pair initiator"))
@@ -60,14 +47,9 @@ func designInitiatorProof(key, ni, nr []byte, initiator, acceptorSeen Fingerprin
 	return mac.Sum(nil)
 }
 
-// --- the other direction of the man in the middle --------------------------
-
-// TestREQBrokerPairing012_InitiatorSeesDifferentAcceptorCertificate covers the
-// direction the existing mismatched-view tests do not: the initiator's TLS view
-// reports a certificate that is not the real acceptor's. The acceptor still
-// proves with its real fingerprint, so the responder proof cannot verify. With
-// the acceptor fingerprint removed from both proof formulas the two views
-// become indistinguishable and this pairing wrongly succeeds.
+// TestREQBrokerPairing012_InitiatorSeesDifferentAcceptorCertificate checks that
+// a different acceptor certificate seen by the initiator fails the responder
+// proof and commits neither side.
 func TestREQBrokerPairing012_InitiatorSeesDifferentAcceptorCertificate(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -81,8 +63,6 @@ func TestREQBrokerPairing012_InitiatorSeesDifferentAcceptorCertificate(t *testin
 	otherFP, otherPub := hsKey(t)
 
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
-	// The initiator sees a different but self-consistent acceptor identity.
-	// The acceptor's own view of the connection is unchanged.
 	aConn.fp = otherFP
 	aConn.pub = otherPub
 	initTr.raw = aConn
@@ -103,10 +83,8 @@ func TestREQBrokerPairing012_InitiatorSeesDifferentAcceptorCertificate(t *testin
 	}
 }
 
-// --- rate-limit ordering ---------------------------------------------------
-
-// A valid one-time key is looked up before the per-minute attempt limit is
-// consulted, so a minute whose counter is already exhausted still accepts it.
+// TestRateLimitOrderingOneTimeKeyAfterCounterExhausted checks that a valid
+// one-time key is accepted after the per-minute limit is exhausted.
 func TestRateLimitOrderingOneTimeKeyAfterCounterExhausted(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -115,7 +93,6 @@ func TestRateLimitOrderingOneTimeKeyAfterCounterExhausted(t *testing.T) {
 	accS.maxAttempts = 1
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
-	// Exhaust the allowance with one request that matches no key.
 	if err := hsRequestAttempt(t, accP, "no-such-key", ReasonKeyInvalid); !errors.Is(err, ErrPairingRejected) {
 		t.Fatalf("exhausting request error = %v", err)
 	}
@@ -133,8 +110,8 @@ func TestRateLimitOrderingOneTimeKeyAfterCounterExhausted(t *testing.T) {
 	}
 }
 
-// Static-key hits are not counted as failed attempts, so the key keeps working
-// past the per-minute limit.
+// TestRateLimitOrderingStaticKeyHitsAreNotCounted checks that static-key hits
+// are not counted and keep working past the per-minute limit.
 func TestRateLimitOrderingStaticKeyHitsAreNotCounted(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -158,9 +135,8 @@ func TestRateLimitOrderingStaticKeyHitsAreNotCounted(t *testing.T) {
 	}
 }
 
-// A "try later" rejection is not itself an attempt. Counting it would let one
-// source exhaust the global allowance by repeating requests the limit already
-// refuses.
+// TestRateLimitTryLaterIsNotCounted checks that a try-later rejection is not
+// counted as an attempt.
 func TestRateLimitTryLaterIsNotCounted(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -169,7 +145,6 @@ func TestRateLimitTryLaterIsNotCounted(t *testing.T) {
 	accS.maxAttempts = 1
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
-	// One counted request fills the only per-source slot.
 	if err := hsRequestAttemptFrom(t, accP, "bad-key", ReasonKeyInvalid, "198.51.100.5:1000"); !errors.Is(err, ErrPairingRejected) {
 		t.Fatalf("first request error = %v", err)
 	}
@@ -186,8 +161,8 @@ func TestRateLimitTryLaterIsNotCounted(t *testing.T) {
 	}
 }
 
-// Failed mi verifications are counted against a one-time key only. The static
-// key stays usable after failures exceed maxFailures.
+// TestRateLimitOrderingStaticKeySurvivesVerificationFailures checks that the
+// static key still pairs after more verification failures than maxFailures.
 func TestRateLimitOrderingStaticKeySurvivesVerificationFailures(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -212,11 +187,9 @@ func TestRateLimitOrderingStaticKeySurvivesVerificationFailures(t *testing.T) {
 	}
 }
 
-// --- alias conflicts at the handshake level --------------------------------
-
-// When the initiator's self-reported alias equals the acceptor's own alias, the
-// acceptor must assign a local alias and still complete the pairing
-// (REQ-broker-pairing-024).
+// TestREQBrokerPairing024_AcceptorOwnAliasConflictAssignsLocalAlias checks that
+// a reported alias equal to the acceptor's own gets a distinct local alias and
+// still completes.
 func TestREQBrokerPairing024_AcceptorOwnAliasConflictAssignsLocalAlias(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -226,8 +199,6 @@ func TestREQBrokerPairing024_AcceptorOwnAliasConflictAssignsLocalAlias(t *testin
 
 	initFP, initPub := hsKey(t)
 	aConn, bConn := hsConnPairFor(initFP, initPub, accP.identity.fingerprint(), accP.identity.publicKey())
-	// Drive the initiator side by hand so its reported alias is exactly the
-	// acceptor's own alias, independently of the fake initiator's own settings.
 	if err := hsCompleteAsInitiator(t, accP, aConn, bConn, initFP, "same", "STATIC-KEY"); err != nil {
 		t.Fatalf("handshake: %v", err)
 	}
@@ -260,8 +231,6 @@ func TestREQBrokerPairing024_AcceptorOwnAliasConflictAssignsLocalAlias(t *testin
 	}
 }
 
-// awaitError waits for a scripted peer to finish, bounding the wait the same
-// way awaitAccept bounds Accept.
 func awaitError(ch <-chan error) error {
 	select {
 	case err := <-ch:
@@ -271,9 +240,6 @@ func awaitError(ch <-chan error) error {
 	}
 }
 
-// connectBounded calls Connect with a real-time bound, so a scripted peer that
-// stops responding turns into an assertion failure rather than a hung test.
-// The static key is the key these scripted tests use.
 func connectBounded(t *testing.T, p *Pairing, localAlias ...string) (Peer, string, error) {
 	t.Helper()
 	alias := ""
@@ -285,17 +251,11 @@ func connectBounded(t *testing.T, p *Pairing, localAlias ...string) (Peer, strin
 	return p.Connect(ctx, "127.0.0.1:17443", "STATIC-KEY", alias)
 }
 
-// scriptedAcceptor plays the responder side of one handshake with a chosen
-// self-reported alias, proving with the design formula. With complete=false it
-// expects the initiator to close the connection right after the challenge, the
-// reaction to needing a local alias. With complete=true it verifies the
-// initiator proof, sends PairDone and consumes the link Hello.
 func scriptedAcceptor(conn PairConn, responderFP, initiatorFP Fingerprint, responderAlias, key string, complete bool) <-chan error {
 	done := make(chan error, 1)
 	go func() {
-		// Closing on every exit unblocks the initiator if this script sees a
-		// frame it did not expect; an open connection plus a fake clock would
-		// otherwise leave Connect waiting forever.
+		// Close on every exit, or an unexpected frame plus a fake clock leaves
+		// Connect waiting forever.
 		defer func() { _ = conn.Close() }()
 		kind, payload, err := receiveWithTimeout(conn)
 		if err != nil {
@@ -368,11 +328,9 @@ func scriptedAcceptor(conn PairConn, responderFP, initiatorFP Fingerprint, respo
 	return done
 }
 
-// The initiator-side counterpart: when the peer reports the initiator's own
-// alias, Connect must ask for a local alias rather than pair, and the supplied
-// local alias must be the effective alias. A scripted acceptor is used so the
-// peer's reported alias can differ from its own settings while still matching
-// the initiator's alias.
+// TestREQBrokerPairing004_PeerAliasEqualToOwnAliasNeedsLocalAlias checks that a
+// peer reporting the initiator's own alias needs a local alias, and uses the
+// supplied one.
 func TestREQBrokerPairing004_PeerAliasEqualToOwnAliasNeedsLocalAlias(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -400,8 +358,6 @@ func TestREQBrokerPairing004_PeerAliasEqualToOwnAliasNeedsLocalAlias(t *testing.
 		t.Fatalf("scripted acceptor: %v", err)
 	}
 
-	// The same challenge with a supplied local alias completes under it. The
-	// link Hello is the frame the transport sends after Connect's run returns.
 	aConn, bConn = hsConnPairFor(initFP, initP.identity.publicKey(), responderFP, responderPub)
 	initTr.raw = aConn
 	initTr.afterRun = func(ctx context.Context, raw PairConn) error { return hsSendHello(raw) }

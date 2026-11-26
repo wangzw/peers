@@ -12,12 +12,11 @@ func (p *Pairing) Fingerprint() Fingerprint {
 }
 
 // TLSConfig returns a fresh TLS configuration that presents this Broker's
-// certificate. The caller may modify the copy without affecting the next call.
-// It returns nil when the instance has no identity.
-//
-// InsecureSkipVerify is deliberate: TLS proves possession of the certificate's
-// private key, while identity comes from the fingerprint check and the pairing
-// handshake. ClientAuth requests the peer's certificate so link can read it.
+// certificate; the caller may modify the copy without affecting the next call.
+// It returns nil when the instance has no identity. InsecureSkipVerify is
+// deliberate: identity comes from the fingerprint check and the pairing
+// handshake, not from TLS. ClientAuth requests the peer's certificate so link
+// can read it.
 func (p *Pairing) TLSConfig() *tls.Config {
 	if p == nil || p.identity == nil {
 		return nil
@@ -30,10 +29,9 @@ func (p *Pairing) TLSConfig() *tls.Config {
 	}
 }
 
-// cloneTLSCertificate copies the certificate chain's byte slices. Copying the
-// tls.Certificate struct alone would share the DER buffers with the identity, so
-// a caller that mutates the returned chain could corrupt later TLSConfig calls
-// and the identity itself.
+// It must deep-copy the DER bytes: a shallow copy would share them with the
+// identity, so a caller mutating the returned chain could corrupt later
+// TLSConfig calls.
 func cloneTLSCertificate(cert tls.Certificate) tls.Certificate {
 	out := cert
 	if cert.Certificate != nil {

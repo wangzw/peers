@@ -15,9 +15,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// --- helpers ---------------------------------------------------------------
-
-// seedLocalPeer adds one committed dialer peer with the given effective alias.
 func seedLocalPeer(t *testing.T, p *Pairing, alias string, clk *hsClock) Fingerprint {
 	t.Helper()
 	fp, pub := hsKey(t)
@@ -33,8 +30,6 @@ func seedLocalPeer(t *testing.T, p *Pairing, alias string, clk *hsClock) Fingerp
 	return fp
 }
 
-// acceptManual runs the acceptor side against a hand-written initiator that
-// never dials, so a test can observe whether Accept touched the transport.
 func acceptManual(t *testing.T, p *Pairing, alias, key string) {
 	t.Helper()
 	fp, pub := hsKey(t)
@@ -44,7 +39,6 @@ func acceptManual(t *testing.T, p *Pairing, alias, key string) {
 	}
 }
 
-// addrRecordingTransport records the address handed to PairDial.
 type addrRecordingTransport struct {
 	*hsTransport
 	mu      sync.Mutex
@@ -64,9 +58,6 @@ func (t *addrRecordingTransport) dialedAddress() string {
 	return t.address
 }
 
-// dropFrameConn simulates a frame lost on the wire: it consumes one frame of
-// the given kind from the receive queue and reports the connection as closed,
-// so the handshake cannot observe it.
 type dropFrameConn struct {
 	PairConn
 	kind uint32
@@ -83,8 +74,8 @@ func (c *dropFrameConn) Receive(ctx context.Context) (uint32, []byte, error) {
 	return kind, payload, nil
 }
 
-// --- REQ-broker-pairing-004 ------------------------------------------------
-
+// TestREQBrokerPairing004_ConnectNeedsLocalAlias checks that an alias conflict
+// with no local alias returns ErrNeedsLocalAlias and commits nothing.
 func TestREQBrokerPairing004_ConnectNeedsLocalAlias(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -96,8 +87,6 @@ func TestREQBrokerPairing004_ConnectNeedsLocalAlias(t *testing.T) {
 	initP := hsNewPairing(t, initS, initTr, clk)
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
-	// The acceptor reports "beta", which the initiator already uses for an
-	// existing peer, so Connect cannot pick it.
 	seedLocalPeer(t, initP, "beta", clk)
 
 	_, _, err, acceptErr := hsPair(t, initP, accP, initTr, "STATIC-KEY", "", nil)
@@ -115,6 +104,8 @@ func TestREQBrokerPairing004_ConnectNeedsLocalAlias(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing004_ProvidedLocalAliasCompletes checks that a provided
+// local alias completes the handshake without renaming the conflicting peer.
 func TestREQBrokerPairing004_ProvidedLocalAliasCompletes(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -145,15 +136,14 @@ func TestREQBrokerPairing004_ProvidedLocalAliasCompletes(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-002 ------------------------------------------------
-
-// setHSAlias changes the fake self-reported alias between handshakes.
 func setHSAlias(s *hsSettings, alias string) {
 	s.mu.Lock()
 	s.alias = alias
 	s.mu.Unlock()
 }
 
+// TestREQBrokerPairing002_SelfAliasFromSettingsInHandshake checks that each
+// handshake reports the current configured alias, not a cached one.
 func TestREQBrokerPairing002_SelfAliasFromSettingsInHandshake(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -173,8 +163,6 @@ func TestREQBrokerPairing002_SelfAliasFromSettingsInHandshake(t *testing.T) {
 		t.Fatalf("peer alias = %q, want the acceptor's configured alias beta", peer.Alias)
 	}
 
-	// The acceptor's configured alias changes; the next handshake must report
-	// the new value rather than a cached one.
 	setHSAlias(accS, "gamma")
 	peer, connectErr, acceptErr = pairWithHello(t, initP, accP, initTr, "STATIC-KEY")
 	if connectErr != nil || acceptErr != nil {
@@ -188,8 +176,8 @@ func TestREQBrokerPairing002_SelfAliasFromSettingsInHandshake(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-003 ------------------------------------------------
-
+// TestREQBrokerPairing003_AliasChangeObservedByLink checks that ObserveAlias
+// changes the effective alias and resolution.
 func TestREQBrokerPairing003_AliasChangeObservedByLink(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -209,7 +197,6 @@ func TestREQBrokerPairing003_AliasChangeObservedByLink(t *testing.T) {
 		t.Fatalf("effective alias before the change = %q, want beta", got)
 	}
 
-	// This is what link calls when a Hello or PeerInfo reports a new alias.
 	initP.ObserveAlias(fp, "renamed")
 	if got := initP.EffectiveAlias(fp); got != "renamed" {
 		t.Fatalf("effective alias after ObserveAlias = %q, want renamed", got)
@@ -222,8 +209,8 @@ func TestREQBrokerPairing003_AliasChangeObservedByLink(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-010 ------------------------------------------------
-
+// TestREQBrokerPairing010_ConnectReturnsPeerAliasAndFingerprint checks the peer
+// fields Connect returns for a plain host:port address.
 func TestREQBrokerPairing010_ConnectReturnsPeerAliasAndFingerprint(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -264,6 +251,8 @@ func TestREQBrokerPairing010_ConnectReturnsPeerAliasAndFingerprint(t *testing.T)
 	}
 }
 
+// TestREQBrokerPairing010_ShownAddressFormDialsInnerAddress checks that the
+// shown-address form dials only the address inside the parentheses.
 func TestREQBrokerPairing010_ShownAddressFormDialsInnerAddress(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -300,6 +289,8 @@ func TestREQBrokerPairing010_ShownAddressFormDialsInnerAddress(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing010_InvalidAddressRejected checks that malformed
+// addresses are rejected before any dial.
 func TestREQBrokerPairing010_InvalidAddressRejected(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -324,8 +315,8 @@ func TestREQBrokerPairing010_InvalidAddressRejected(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-011 ------------------------------------------------
-
+// TestREQBrokerPairing011_WrongKeyLeavesBothTablesEmpty checks that a wrong key
+// rejects the handshake and leaves both peer tables empty.
 func TestREQBrokerPairing011_WrongKeyLeavesBothTablesEmpty(t *testing.T) {
 	clk := newHSClock()
 	initP, tr := newInitiatorPairing(t, clk)
@@ -347,6 +338,8 @@ func TestREQBrokerPairing011_WrongKeyLeavesBothTablesEmpty(t *testing.T) {
 	}
 }
 
+// TestREQBrokerPairing011_ExpiredAndUsedKeysRejected checks that an expired or
+// already used one-time key is rejected and changes no peer table.
 func TestREQBrokerPairing011_ExpiredAndUsedKeysRejected(t *testing.T) {
 	t.Run("expired", func(t *testing.T) {
 		clk := newHSClock()
@@ -387,10 +380,8 @@ func TestREQBrokerPairing011_ExpiredAndUsedKeysRejected(t *testing.T) {
 		}
 
 		second, secondTr := newInitiatorPairing(t, clk)
-		// Send the link Hello so an implementation that wrongly accepts the
-		// reused key completes the handshake and fails the assertions below,
-		// instead of leaving Accept blocked on the missing frame until the test
-		// timeout.
+		// Send the link Hello so a wrongly accepted reuse fails an assertion
+		// instead of blocking Accept until the test timeout.
 		_, _, connectErr, acceptErr := hsPair(t, second, accP, secondTr, key, "", func(ctx context.Context, raw PairConn) error {
 			return hsSendHello(raw)
 		})
@@ -404,8 +395,8 @@ func TestREQBrokerPairing011_ExpiredAndUsedKeysRejected(t *testing.T) {
 	})
 }
 
-// --- REQ-broker-pairing-012 ------------------------------------------------
-
+// TestREQBrokerPairing012_MismatchedFingerprintViewsFailLookup checks that a
+// different initiator fingerprint matches no key and commits nothing.
 func TestREQBrokerPairing012_MismatchedFingerprintViewsFailLookup(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -418,10 +409,6 @@ func TestREQBrokerPairing012_MismatchedFingerprintViewsFailLookup(t *testing.T) 
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
-	// The acceptor sees a consistent but different initiator identity, the view
-	// a man in the middle would have. The lookup tag is bound to this
-	// fingerprint, so the forwarded tag matches no key and gets a key-invalid
-	// rejection before any proof is exchanged.
 	otherFP, otherPub := hsKey(t)
 	bConn.fp = otherFP
 	bConn.pub = otherPub
@@ -440,8 +427,8 @@ func TestREQBrokerPairing012_MismatchedFingerprintViewsFailLookup(t *testing.T) 
 	}
 }
 
-// --- REQ-broker-pairing-014 ------------------------------------------------
-
+// TestREQBrokerPairing014_OnlyConnectCallsPairDial checks that only Connect
+// dials: creating a key and accepting do not.
 func TestREQBrokerPairing014_OnlyConnectCallsPairDial(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -483,8 +470,8 @@ func TestREQBrokerPairing014_OnlyConnectCallsPairDial(t *testing.T) {
 	}
 }
 
-// --- REQ-broker-pairing-027 ------------------------------------------------
-
+// TestREQBrokerPairing027_AcceptorNeverCallsPairDial checks that the acceptor
+// never dials and commits each accepted peer.
 func TestREQBrokerPairing027_AcceptorNeverCallsPairDial(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)
@@ -504,8 +491,8 @@ func TestREQBrokerPairing027_AcceptorNeverCallsPairDial(t *testing.T) {
 	}
 }
 
-// --- handshake edge cases --------------------------------------------------
-
+// TestAcceptDiscardsPendingWhenConnectionCloses checks that a connection closed
+// before Hello leaves no peer, no reservation and no Drop.
 func TestAcceptDiscardsPendingWhenConnectionCloses(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -520,7 +507,6 @@ func TestAcceptDiscardsPendingWhenConnectionCloses(t *testing.T) {
 
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
 	initTr.raw = aConn
-	// The link closes instead of sending its Hello after PairDone.
 	initTr.afterRun = func(ctx context.Context, raw PairConn) error {
 		return raw.Close()
 	}
@@ -544,6 +530,8 @@ func TestAcceptDiscardsPendingWhenConnectionCloses(t *testing.T) {
 	}
 }
 
+// TestPairDoneLostLeavesBothUnpaired checks that losing PairDone leaves both
+// sides unpaired and consumes the one-time key.
 func TestPairDoneLostLeavesBothUnpaired(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -560,7 +548,6 @@ func TestPairDoneLostLeavesBothUnpaired(t *testing.T) {
 	initTr := &hsTransport{}
 	initP := hsNewPairing(t, initS, initTr, clk)
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
-	// The PairDone frame is lost, so the initiator never observes it.
 	initTr.raw = aConn
 	initTr.runConn = &dropFrameConn{PairConn: aConn, kind: kindPairDone}
 
@@ -582,13 +569,13 @@ func TestPairDoneLostLeavesBothUnpaired(t *testing.T) {
 		t.Fatalf("the one-time key was not consumed: %d entries", got)
 	}
 
-	// The key was consumed by the valid proof even though PairDone never
-	// arrived, so a retry with it is rejected.
 	retry, retryTr := newInitiatorPairing(t, clk)
 	_, _, retryErr, _ := hsPair(t, retry, accP, retryTr, key, "", nil)
 	assertRejectedReason(t, retryErr, ReasonKeyInvalid)
 }
 
+// TestConcurrentHandshakesSameKeyOnlyOneSucceeds checks that two handshakes
+// holding one key let only the first commit.
 func TestConcurrentHandshakesSameKeyOnlyOneSucceeds(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -633,8 +620,6 @@ func TestConcurrentHandshakesSameKeyOnlyOneSucceeds(t *testing.T) {
 		t.Fatalf("first handshake: %v", err)
 	}
 
-	// The key was consumed atomically with the first success, so the second
-	// confirm must be rejected even though its request found the key.
 	kind, payload := hsManualConfirm(t, second.conn, key, second.ni, second.nr, second.fp, accP.identity.fingerprint(), "dup")
 	if kind != kindPairReject {
 		t.Fatalf("second reply = %d, want PairReject", kind)
@@ -654,10 +639,9 @@ func TestConcurrentHandshakesSameKeyOnlyOneSucceeds(t *testing.T) {
 	}
 }
 
-// TestSameFingerprintHandshakesKeepIndependentReservations runs two handshakes
-// for one fingerprint that both reserve the same alias. When the first is
-// abandoned, releasing its reservation must not free the second, which still
-// commits.
+// TestSameFingerprintHandshakesKeepIndependentReservations checks that
+// abandoning one handshake does not release another handshake's reservation for
+// the same alias.
 func TestSameFingerprintHandshakesKeepIndependentReservations(t *testing.T) {
 	clk := newHSClock()
 	accS := newHSSettings(t)
@@ -685,7 +669,6 @@ func TestSameFingerprintHandshakesKeepIndependentReservations(t *testing.T) {
 	first := start(0)
 	second := start(64)
 
-	// Both handshakes verified and reserved "dup"; each received PairDone.
 	for _, hs := range []*attempt{first, second} {
 		kind, _ := hsManualConfirm(t, hs.conn, key, hs.ni, hs.nr, initiatorFP, accP.identity.fingerprint(), "dup")
 		if kind != kindPairDone {
@@ -693,7 +676,6 @@ func TestSameFingerprintHandshakesKeepIndependentReservations(t *testing.T) {
 		}
 	}
 
-	// Abandoning the first handshake releases only its own reservation.
 	_ = first.conn.Close()
 	if err := awaitAccept(first.acceptErr); err == nil {
 		t.Fatal("the abandoned handshake succeeded")
@@ -716,10 +698,8 @@ func TestSameFingerprintHandshakesKeepIndependentReservations(t *testing.T) {
 	}
 }
 
-// TestInitiatorReReservesAfterEffectiveAliasChanges covers a re-pairing whose
-// peer receives a generated local alias between reservation and commit. The
-// commit moves the reservation to the new effective alias instead of returning
-// needs_local_alias.
+// TestInitiatorReReservesAfterEffectiveAliasChanges checks that a commit moves
+// the reservation to a new effective alias rather than failing.
 func TestInitiatorReReservesAfterEffectiveAliasChanges(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -783,8 +763,6 @@ func TestInitiatorReReservesAfterEffectiveAliasChanges(t *testing.T) {
 			return
 		}
 
-		// Give the existing peer a local alias while the handshake holds its
-		// reservation on "beta".
 		initP.ObserveAlias(accFP, "alpha")
 
 		payload, err = proto.Marshal(&pairingpb.PairDone{})
@@ -927,8 +905,6 @@ func TestUnverifiedAliasNotAudited(t *testing.T) {
 	}
 }
 
-// hsManualChallenge sends one PairRequest and returns the responder nonce from
-// the PairChallenge. Every wait is bounded by receiveWithTimeout.
 func hsManualChallenge(t *testing.T, conn *hsConn, initiatorFP Fingerprint, ni []byte, key string) []byte {
 	t.Helper()
 	request := &pairingpb.PairRequest{
@@ -953,8 +929,6 @@ func hsManualChallenge(t *testing.T, conn *hsConn, initiatorFP Fingerprint, ni [
 	return challenge.GetResponderNonce()
 }
 
-// hsManualConfirm sends a correct PairConfirm, carrying alias as the
-// initiator's self-reported alias, and returns the reply frame.
 func hsManualConfirm(t *testing.T, conn *hsConn, key string, ni, nr []byte, initiatorFP, acceptorFP Fingerprint, alias string) (uint32, []byte) {
 	t.Helper()
 	proof := initiatorProof([]byte(key), ni, nr, initiatorFP, acceptorFP)
@@ -968,10 +942,7 @@ func hsManualConfirm(t *testing.T, conn *hsConn, key string, ni, nr []byte, init
 	return kind, payload
 }
 
-// hsRequestWithAlias sends one PairRequest with alias encoded in raw field 2,
-// the field it used to occupy, and returns the error Accept reported. Encoding
-// by number keeps the test meaningful: an acceptor that still reads the alias
-// from the request accepts the field even though the message type reserves it.
+// Encoding the alias by field number makes an acceptor that reads it from the request accept the reserved field.
 func hsRequestWithAlias(t *testing.T, p *Pairing, alias, key string) error {
 	t.Helper()
 	fp, pub := hsKey(t)
@@ -997,6 +968,8 @@ func hsRequestWithAlias(t *testing.T, p *Pairing, alias, key string) error {
 	return awaitAccept(acceptErr)
 }
 
+// TestAcceptorOverwriteDropsOldLinkAndCandidates checks that re-pairing as
+// acceptor clears the candidates and drops the old link.
 func TestAcceptorOverwriteDropsOldLinkAndCandidates(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -1014,8 +987,6 @@ func TestAcceptorOverwriteDropsOldLinkAndCandidates(t *testing.T) {
 	}
 	fp := initP.identity.fingerprint()
 
-	// Give the committed acceptor entry candidate addresses to prove the
-	// re-pairing clears them.
 	accP.peers.mu.Lock()
 	entry := accP.peers.peers[fp]
 	entry.acceptor = append(entry.acceptor, direct("acceptor:1"))
@@ -1043,6 +1014,8 @@ func TestAcceptorOverwriteDropsOldLinkAndCandidates(t *testing.T) {
 	}
 }
 
+// TestAcceptTimeoutClosesWithoutPairRejectFrame checks that a timed-out acceptor
+// closes without sending PairReject and commits nothing.
 func TestAcceptTimeoutClosesWithoutPairRejectFrame(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -1055,7 +1028,7 @@ func TestAcceptTimeoutClosesWithoutPairRejectFrame(t *testing.T) {
 	accP := hsNewPairing(t, accS, &hsTransport{}, clk)
 
 	aConn, bConn := hsConnPairFor(initP.identity.fingerprint(), initP.identity.publicKey(), accP.identity.fingerprint(), accP.identity.publicKey())
-	initTr.raw = aConn // no afterRun: the link Hello never arrives
+	initTr.raw = aConn
 
 	recB := &hsRecordingConn{PairConn: bConn}
 	acceptErr := make(chan error, 1)
@@ -1089,7 +1062,6 @@ func TestAcceptTimeoutClosesWithoutPairRejectFrame(t *testing.T) {
 	}
 }
 
-// orderClock records the order of the dial and of the first handshake timer.
 type orderClock struct {
 	*hsClock
 	mu        sync.Mutex
@@ -1126,8 +1098,6 @@ func (c *orderClock) timerStartedAfterDial() bool {
 	return c.timerSeen && c.dialSeen && c.timerSeq > c.dialSeq
 }
 
-// dialOrderTransport spends thirty fake seconds dialing before it hands the
-// connection to the handshake.
 type dialOrderTransport struct {
 	conn     PairConn
 	clock    *orderClock
@@ -1150,6 +1120,8 @@ func (t *dialOrderTransport) PairDial(ctx context.Context, address string, run f
 
 func (t *dialOrderTransport) Drop(Fingerprint) {}
 
+// TestHandshakeTimeoutStartsAfterDial checks that the handshake deadline starts
+// only after the dial completes.
 func TestHandshakeTimeoutStartsAfterDial(t *testing.T) {
 	clk := &orderClock{hsClock: newHSClock()}
 	initS := newHSSettings(t)
@@ -1182,6 +1154,8 @@ func TestHandshakeTimeoutStartsAfterDial(t *testing.T) {
 	}
 }
 
+// TestConnectRejectsInvalidHostAddress checks that invalid hosts are rejected
+// before dialing and valid ones reach PairDial.
 func TestConnectRejectsInvalidHostAddress(t *testing.T) {
 	clk := newHSClock()
 	s := newHSSettings(t)

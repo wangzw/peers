@@ -83,9 +83,7 @@ type PairRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	InitiatorNonce []byte                 `protobuf:"bytes,1,opt,name=initiator_nonce,json=initiatorNonce,proto3" json:"initiator_nonce,omitempty"`
 	LookupTag      []byte                 `protobuf:"bytes,3,opt,name=lookup_tag,json=lookupTag,proto3" json:"lookup_tag,omitempty"`
-	// protocol_version is the speaker's link protocol version. The acceptor
-	// compares it before looking up a key, so a mismatched pairing fails as a
-	// version conflict instead of a wrong key.
+	// protocol_version is the speaker's link protocol version.
 	ProtocolVersion uint32 `protobuf:"varint,4,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache

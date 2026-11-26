@@ -5,14 +5,8 @@ import (
 	"testing"
 )
 
-// TestOpenSeedsOwnAliasCache checks that opening a Pairing fills the peer
-// table's own-alias cache, so every path that observes an alias sees the local
-// alias even before the Broker calls SetOwnAlias.
-//
-// A peer that reports the Broker's own alias must get a generated local alias.
-// When the cache starts empty, observeAlias treats the reported alias as free
-// and makes it the peer's effective alias, which collides with the Broker
-// itself.
+// TestOpenSeedsOwnAliasCache checks that opening a Pairing seeds the own-alias
+// cache so a peer reporting the Broker's alias gets a generated local alias.
 func TestOpenSeedsOwnAliasCache(t *testing.T) {
 	t.Parallel()
 
@@ -59,8 +53,6 @@ func TestOpenSeedsOwnAliasCache(t *testing.T) {
 				t.Fatalf("seed peer table: %v", err)
 			}
 
-			// Deliberately no SetOwnAlias: the open path must have seeded the
-			// cache with the configured alias.
 			p.ObserveAlias(fp, "beta")
 
 			if got := p.EffectiveAlias(fp); got == "beta" {

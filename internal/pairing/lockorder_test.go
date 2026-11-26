@@ -9,11 +9,8 @@ import (
 	"time"
 )
 
-// lockedAliasConfig models the mutex config holds around one key. set takes
-// that lock and runs the registered validator while holding it, exactly as
-// config.Set and config's file reload do for broker.alias. It then commits the
-// value and calls the subscriber after releasing the lock, mirroring the
-// notification goroutine.
+// lockedAliasConfig models config's lock around broker.alias: the validator runs
+// under the lock and the subscriber after it is released.
 type lockedAliasConfig struct {
 	mu        sync.Mutex
 	alias     string
@@ -37,7 +34,6 @@ func (c *lockedAliasConfig) set(alias string) error {
 	return nil
 }
 
-// get reads the value through the same lock, standing in for config.Get.
 func (c *lockedAliasConfig) get() (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -45,50 +41,26 @@ func (c *lockedAliasConfig) get() (string, error) {
 }
 
 const (
-	// lockOrderRounds is how many rounds each side runs. It is large enough
-	// that the two sides overlap on every run, which is what exposes an
-	// inverted lock order.
+	// lockOrderRounds must stay large enough that the two sides overlap on every
+	// run, which is what exposes an inverted lock order.
 	lockOrderRounds = 100
-	// roundSamples is how many uncontended rounds are timed per side to find
-	// the normal cost of one round.
-	roundSamples = 20
-	// stallFactor multiplies the slower measured round to give the
-	// no-progress window. A goroutine waiting on the other side's lock is
-	// released after at most one round, so progress keeps resetting the
-	// window while an inverted order stops both counters for good. 100 times
-	// the measured round leaves room for the scheduler and for the other
-	// side's critical section without approaching the total run time.
+	roundSamples    = 20
+	// stallFactor gives the no-progress window as a multiple of the slower measured round and must leave room for the scheduler and the other side's critical section, so do not shrink it.
 	stallFactor = 100
-	// minStallWindow floors the derived window. When a round takes
-	// microseconds the measured multiple is below the resolution of the
-	// scheduler and the timer, so the window must not shrink further.
+	// minStallWindow floors the window at what the scheduler and timer can
+	// resolve; do not shrink it.
 	minStallWindow = time.Second
-	// maxStallWindow caps the derived window. 30 seconds is far above the
-	// normal cost of one round and the scheduler jitter around it, while a
-	// true deadlock still fails within an acceptable time. The cap matters
-	// when the measurement phase is itself abnormally slow: without it a
-	// single inflated round would stretch the no-progress window to an
-	// undiagnosable length.
+	// maxStallWindow caps the window so an abnormally slow measurement still
+	// fails within an acceptable time.
 	maxStallWindow = 30 * time.Second
 )
 
-// TestAliasValidationKeepsTheConfigPairingLockOrder runs the broker.alias
-// validator, which holds config's lock, next to handshake commits, which hold
-// the peer table lock. The validator calls AliasConflict and ResolveAlias.
-//
-// The rule is config lock -> pairing lock, never the reverse: pairing must not
-// call config while its table lock is held. On the pre-fix code the validator's
-// ResolveAlias re-entered config.Get while config's lock was held, and a
-// concurrent commit read the own alias through config.Get under the table lock,
-// so this test deadlocked.
-//
-// The test fails on a stalled counter, not on total elapsed time. Each side
-// records how many rounds it completed, and the test fails only when neither
-// counter has moved for a window derived from the measured cost of one round.
-// A slow machine that keeps completing rounds therefore cannot fail it, while
-// a true lock inversion stops both counters and is reported with every
-// goroutine's stack.
+// TestAliasValidationKeepsTheConfigPairingLockOrder checks that the broker.alias
+// validator holding config's lock and concurrent handshake commits holding the
+// pairing lock complete without deadlock.
 func TestAliasValidationKeepsTheConfigPairingLockOrder(t *testing.T) {
+	// The rule is config lock then pairing lock, never the reverse: pairing must
+	// not call config while its table lock is held.
 	cfg := &lockedAliasConfig{alias: "self"}
 	s := newHSSettings(t)
 	s.alias = "self"
@@ -112,9 +84,8 @@ func TestAliasValidationKeepsTheConfigPairingLockOrder(t *testing.T) {
 		alias string
 	}
 
-	// Time one uncontended round on each side. The no-progress window is
-	// derived from these measurements, never from the total run time, so load
-	// that merely makes each round slower cannot fail the test.
+	// The no-progress window is derived from measured rounds, so load that only
+	// slows each round cannot fail the test.
 	measureKeys := make([]peerKey, roundSamples)
 	for i := range measureKeys {
 		fp, pub := peerTestKey(t)
@@ -173,7 +144,6 @@ func TestAliasValidationKeepsTheConfigPairingLockOrder(t *testing.T) {
 	start := make(chan struct{})
 	errs := make(chan error, 2)
 
-	// Config side: hold config's lock, run the validator, commit the value.
 	go func() {
 		<-start
 		for i := 0; i < lockOrderRounds; i++ {
@@ -186,8 +156,6 @@ func TestAliasValidationKeepsTheConfigPairingLockOrder(t *testing.T) {
 		errs <- nil
 	}()
 
-	// Pairing side: complete handshakes, each reserving and committing an
-	// alias under the peer table lock.
 	go func() {
 		<-start
 		for i := 0; i < lockOrderRounds; i++ {
@@ -241,7 +209,6 @@ func TestAliasValidationKeepsTheConfigPairingLockOrder(t *testing.T) {
 	}
 }
 
-// meanRoundDuration returns the mean duration of n calls to op.
 func meanRoundDuration(n int, op func()) time.Duration {
 	start := time.Now()
 	for i := 0; i < n; i++ {
@@ -250,8 +217,6 @@ func meanRoundDuration(n int, op func()) time.Duration {
 	return time.Since(start) / time.Duration(n)
 }
 
-// allGoroutineStacks returns every goroutine's stack, growing the buffer until
-// runtime.Stack reports that the whole trace fit.
 func allGoroutineStacks() []byte {
 	buf := make([]byte, 64<<10)
 	for {

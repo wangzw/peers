@@ -10,9 +10,7 @@ message PairRequest {
 
   bytes initiator_nonce = 1;
   bytes lookup_tag = 3;
-  // protocol_version is the speaker's link protocol version. The acceptor
-  // compares it before looking up a key, so a mismatched pairing fails as a
-  // version conflict instead of a wrong key.
+  // protocol_version is the speaker's link protocol version.
   uint32 protocol_version = 4;
 }
 

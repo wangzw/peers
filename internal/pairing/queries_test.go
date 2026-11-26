@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+// TestPairingFingerprintMatchesIdentity checks that Fingerprint derives from the
+// identity's public key.
 func TestPairingFingerprintMatchesIdentity(t *testing.T) {
 	p := hsNewPairing(t, newHSSettings(t), &hsTransport{}, newHSClock())
 
@@ -23,6 +25,8 @@ func TestPairingFingerprintMatchesIdentity(t *testing.T) {
 	}
 }
 
+// TestZeroPairingFingerprint checks that a zero or empty Pairing returns the
+// zero fingerprint.
 func TestZeroPairingFingerprint(t *testing.T) {
 	var zero Pairing
 	if got := zero.Fingerprint(); !got.IsZero() {
@@ -33,6 +37,8 @@ func TestZeroPairingFingerprint(t *testing.T) {
 	}
 }
 
+// TestPairingTLSConfig checks the TLS version, client auth, skipped
+// verification and the presented certificate.
 func TestPairingTLSConfig(t *testing.T) {
 	p := hsNewPairing(t, newHSSettings(t), &hsTransport{}, newHSClock())
 
@@ -63,6 +69,8 @@ func TestPairingTLSConfig(t *testing.T) {
 	}
 }
 
+// TestPairingTLSConfigReturnsIsolatedCertificateBytes checks that each
+// TLSConfig call returns its own copy of the certificate bytes.
 func TestPairingTLSConfigReturnsIsolatedCertificateBytes(t *testing.T) {
 	p := hsNewPairing(t, newHSSettings(t), &hsTransport{}, newHSClock())
 	original := append([]byte(nil), p.identity.cert.Certificate[0]...)
@@ -80,6 +88,8 @@ func TestPairingTLSConfigReturnsIsolatedCertificateBytes(t *testing.T) {
 	}
 }
 
+// TestZeroPairingTLSConfigIsNil checks that a zero Pairing returns a nil TLS
+// configuration.
 func TestZeroPairingTLSConfigIsNil(t *testing.T) {
 	var zero Pairing
 	if cfg := zero.TLSConfig(); cfg != nil {
@@ -87,6 +97,8 @@ func TestZeroPairingTLSConfigIsNil(t *testing.T) {
 	}
 }
 
+// TestPairingSign checks that Sign produces a verifiable, deterministic
+// signature with the identity key.
 func TestPairingSign(t *testing.T) {
 	p := hsNewPairing(t, newHSSettings(t), &hsTransport{}, newHSClock())
 	data := []byte("peers pairing signature")
@@ -106,6 +118,7 @@ func TestPairingSign(t *testing.T) {
 	}
 }
 
+// TestZeroPairingSignIsNil checks that a zero Pairing returns a nil signature.
 func TestZeroPairingSignIsNil(t *testing.T) {
 	var zero Pairing
 	if sig := zero.Sign([]byte("data")); sig != nil {
@@ -113,6 +126,8 @@ func TestZeroPairingSignIsNil(t *testing.T) {
 	}
 }
 
+// TestPairingPublicKey checks that PublicKey matches the fingerprint, verifies
+// signatures and returns a copy.
 func TestPairingPublicKey(t *testing.T) {
 	p := hsNewPairing(t, newHSSettings(t), &hsTransport{}, newHSClock())
 	data := []byte("peers pairing public key")
@@ -136,6 +151,8 @@ func TestPairingPublicKey(t *testing.T) {
 	}
 }
 
+// TestZeroPairingPublicKeyIsNil checks that a zero, nil or empty Pairing
+// returns a nil public key.
 func TestZeroPairingPublicKeyIsNil(t *testing.T) {
 	var zero Pairing
 	if got := zero.PublicKey(); got != nil {

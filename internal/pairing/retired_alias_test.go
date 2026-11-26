@@ -14,11 +14,8 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// TestRetiredAliasNotReassigned reproduces the audit finding that an alias a
-// peer gave up could be handed to another peer straight away, so an Agent
-// address already in a model's hands would address a different Broker. After B
-// renames from hostB to hostB2, C must not take over hostB; it gets a local
-// alias instead and the assignment is audited.
+// TestRetiredAliasNotReassigned checks that another peer cannot take an alias a
+// peer gave up and instead gets an audited local alias.
 func TestRetiredAliasNotReassigned(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -60,9 +57,8 @@ func TestRetiredAliasNotReassigned(t *testing.T) {
 	}
 }
 
-// TestAliasConflictReportsRetiredAlias checks that a peer's tombstone is a
-// conflict for the Broker's own alias, so it cannot adopt an alias another peer
-// used before.
+// TestAliasConflictReportsRetiredAlias checks that an alias tombstone is
+// reported as a conflict.
 func TestAliasConflictReportsRetiredAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -78,8 +74,8 @@ func TestAliasConflictReportsRetiredAlias(t *testing.T) {
 	}
 }
 
-// TestRetiredAliasReturnsToOwner checks that a peer may take back an alias it
-// gave up: the alias leaves the tombstone list and resolves to that peer again.
+// TestRetiredAliasReturnsToOwner checks that a peer can take back an alias it
+// gave up.
 func TestRetiredAliasReturnsToOwner(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -108,8 +104,8 @@ func TestRetiredAliasReturnsToOwner(t *testing.T) {
 	}
 }
 
-// TestRetiredAliasPersistsAcrossReopen checks the on-disk field: the tombstone
-// survives a reload and keeps another peer from taking the alias.
+// TestRetiredAliasPersistsAcrossReopen checks that an alias tombstone survives
+// a reload.
 func TestRetiredAliasPersistsAcrossReopen(t *testing.T) {
 	t.Parallel()
 	table, path, _ := newPeerTestTable(t)
@@ -152,7 +148,7 @@ func TestRetiredAliasPersistsAcrossReopen(t *testing.T) {
 }
 
 // TestUnpairReleasesRetiredAlias checks that removing the peer removes its
-// tombstones too, so another peer may use the alias afterwards.
+// tombstones too.
 func TestUnpairReleasesRetiredAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -176,9 +172,9 @@ func TestUnpairReleasesRetiredAlias(t *testing.T) {
 	}
 }
 
-// TestInitiatorNeedsLocalAliasForRetiredAlias checks the pairing path: when the
-// acceptor reports an alias the initiator's table retired, Connect refuses
-// without a local alias instead of handing the address to a different Broker.
+// TestInitiatorNeedsLocalAliasForRetiredAlias checks that Connect returns
+// ErrNeedsLocalAlias when the acceptor reports an alias tombstone and no local
+// alias is given.
 func TestInitiatorNeedsLocalAliasForRetiredAlias(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -208,9 +204,8 @@ func TestInitiatorNeedsLocalAliasForRetiredAlias(t *testing.T) {
 	}
 }
 
-// TestAcceptorAssignsLocalAliasForRetiredAlias checks the accepting side: an
-// initiator reporting an alias this table retired gets a local alias, and the
-// assignment is audited.
+// TestAcceptorAssignsLocalAliasForRetiredAlias checks that the acceptor gives
+// an initiator reporting an alias tombstone a local alias and audits it.
 func TestAcceptorAssignsLocalAliasForRetiredAlias(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -265,9 +260,8 @@ func TestAcceptorAssignsLocalAliasForRetiredAlias(t *testing.T) {
 	}
 }
 
-// TestRetiredAliasCapFreezesLocalAlias checks the eighth-and-later rename: the
-// ninth distinct effective alias freezes the current one as a local alias
-// instead of adding a tombstone, and the assignment is audited.
+// TestRetiredAliasCapFreezesLocalAlias checks that a rename past the alias
+// tombstone cap freezes the current alias as a local alias and audits it.
 func TestRetiredAliasCapFreezesLocalAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -319,9 +313,8 @@ func TestRetiredAliasCapFreezesLocalAlias(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsInvalidRetiredAliases checks the load-time rules for
-// tombstone fields: invalid names, too many, and collisions with an effective
-// alias or another tombstone all reject the file as ErrStore.
+// TestLoadRejectsInvalidRetiredAliases checks that a record with invalid
+// tombstones is rejected when loaded.
 func TestLoadRejectsInvalidRetiredAliases(t *testing.T) {
 	t.Parallel()
 	aFP, aPub := peerTestKey(t)
@@ -459,10 +452,8 @@ func TestRepairingFreezesWhenRetiredAliasesFull(t *testing.T) {
 	}
 }
 
-// TestAcceptorFreezeAuditsCommittedAlias checks that when re-pairing freezes
-// the current effective alias because the tombstone cap is reached, the
-// acceptor audits the alias it actually committed, not the one it reserved
-// before PairDone.
+// TestAcceptorFreezeAuditsCommittedAlias checks that the acceptor audits the
+// alias it actually committed.
 func TestAcceptorFreezeAuditsCommittedAlias(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -538,8 +529,7 @@ func TestAcceptorFreezeAuditsCommittedAlias(t *testing.T) {
 
 // TestInitiatorFreezeReplacesProvidedLocalAlias checks that a freeze during
 // re-pairing replaces a caller-provided local alias with the current effective
-// alias, that the returned Peer reports the alias actually committed, and that
-// the initiator audits the frozen alias.
+// alias.
 func TestInitiatorFreezeReplacesProvidedLocalAlias(t *testing.T) {
 	clk := newHSClock()
 	initS := newHSSettings(t)
@@ -620,9 +610,8 @@ func TestPutRejectsRetiredAlias(t *testing.T) {
 	}
 }
 
-// TestEnsureReservationRejectsRetiredAlias checks the recheck a handshake
-// performs when the alias it wants to move its reservation to has become
-// another peer's tombstone between reserving and committing.
+// TestEnsureReservationRejectsRetiredAlias checks that a reservation move onto
+// another peer's alias tombstone is rejected.
 func TestEnsureReservationRejectsRetiredAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -636,9 +625,6 @@ func TestEnsureReservationRejectsRetiredAlias(t *testing.T) {
 	if !ok {
 		t.Fatal("could not reserve the old alias")
 	}
-	// The alias the handshake wants to move to appears as a tombstone only after
-	// the reservation was taken, which is the race ensureReservationLocked
-	// rechecks against.
 	table.peers[bFP].retiredAliases = append(table.peers[bFP].retiredAliases, "free")
 
 	if err := table.ensureReservationLocked("free", token, cFP, ""); !errors.Is(err, ErrNeedsLocalAlias) {
@@ -646,9 +632,8 @@ func TestEnsureReservationRejectsRetiredAlias(t *testing.T) {
 	}
 }
 
-// TestLocalAliasAvoidsAnotherPeersRetiredAlias checks that generating a local
-// alias skips one that another peer retired, even though the generated name
-// carries a fingerprint suffix.
+// TestLocalAliasAvoidsAnotherPeersRetiredAlias checks that a generated local
+// alias avoids another peer's alias tombstone.
 func TestLocalAliasAvoidsAnotherPeersRetiredAlias(t *testing.T) {
 	t.Parallel()
 	table, _, _ := newPeerTestTable(t)
@@ -676,8 +661,7 @@ func TestLocalAliasAvoidsAnotherPeersRetiredAlias(t *testing.T) {
 }
 
 // TestRetiredAliasesOmittedFromFileWhenEmpty checks that a peer with no
-// tombstones writes no retired_aliases field, keeping the file compatible with
-// builds that do not know the field.
+// tombstones writes no retired_aliases field.
 func TestRetiredAliasesOmittedFromFileWhenEmpty(t *testing.T) {
 	t.Parallel()
 	fp, pub := peerTestKey(t)

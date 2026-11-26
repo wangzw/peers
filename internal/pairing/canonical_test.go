@@ -2,6 +2,8 @@ package pairing
 
 import "testing"
 
+// TestCanonicalAddress checks lowercasing, canonical IP form, port
+// normalization and the fallback for an unparsable address.
 func TestCanonicalAddress(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {

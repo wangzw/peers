@@ -7,7 +7,6 @@ import (
 	"github.com/wangzw/peers/internal/config"
 )
 
-// auditTestSettings records the events pairing hands to the audit log.
 type auditTestSettings struct {
 	events []config.Event
 }
@@ -32,9 +31,8 @@ func auditTestFingerprint(fill byte) Fingerprint {
 	return fp
 }
 
-// TestAuditPairingSucceeded covers the acceptor's pairing_succeeded event:
-// pairing leaves Actor and Account empty, stamps the injected time, and names
-// the peer by fingerprint and effective alias.
+// TestAuditPairingSucceeded checks that the pairing_succeeded event carries the
+// injected time and the peer by fingerprint and alias.
 func TestAuditPairingSucceeded(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 0, 0, 123456789, time.UTC)
 	fp := auditTestFingerprint(0xab)
@@ -69,9 +67,8 @@ func TestAuditPairingSucceeded(t *testing.T) {
 	}
 }
 
-// TestAuditPairingFailedCarriesReasonAndMergeKey covers a rate-limited failure:
-// the reason goes in Detail and the source-based key in MergeKey so config can
-// merge repeated attempts from one host.
+// TestAuditPairingFailedCarriesReasonAndMergeKey checks that a failed pairing
+// records the reason as Detail and the source-based key as MergeKey.
 func TestAuditPairingFailedCarriesReasonAndMergeKey(t *testing.T) {
 	now := time.Date(2026, 11, 18, 12, 1, 0, 0, time.UTC)
 	fp := auditTestFingerprint(0x01)
@@ -149,9 +146,8 @@ func TestAuditEventZeroFingerprintOmitsPeer(t *testing.T) {
 	}
 }
 
-// TestAuditReasonVocabulary pins the Detail strings. The audit log records the
-// reason only, never a key or address, so these values are part of the log
-// contract.
+// TestAuditReasonVocabulary checks that several rejection reasons spell the
+// expected Detail strings.
 func TestAuditReasonVocabulary(t *testing.T) {
 	cases := []struct {
 		got  string
