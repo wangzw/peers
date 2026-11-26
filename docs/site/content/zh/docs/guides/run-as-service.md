@@ -38,7 +38,7 @@ peers service install
 二进制必须放在 root 拥有、且组和其他人不可写的目录里，例如 `/usr/local/bin`。服务以 root 身份运行这个二进制，能改动它或其上级目录的普通账户可能借此接管服务：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 sudo install -o root -g 0 -m 0755 peers-${VERSION}/peers /usr/local/bin/peers
 sudo /usr/local/bin/peers service install --system
 ```

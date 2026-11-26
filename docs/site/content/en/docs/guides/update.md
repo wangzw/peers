@@ -39,7 +39,7 @@ peers update
 
 It first refuses a binary that is not a release build. It then asks before changing anything; answering `y` or `yes` goes ahead, and any other answer cancels the update and leaves the binary and the service as they were. Only after you confirm does it select a Broker; what it then does depends on that Broker and on how it runs.
 
-Add `--yes` to skip the question. When standard input is not a terminal, as in a script or a scheduled job, the command requires `--yes` and otherwise fails with `standard input is not a terminal; pass --yes to proceed without asking`. When the installed version is already the latest, the command prints `peers 0.6.0 is up to date` and exits without changing anything.
+Add `--yes` to skip the question. When standard input is not a terminal, as in a script or a scheduled job, the command requires `--yes` and otherwise fails with `standard input is not a terminal; pass --yes to proceed without asking`. When the installed version is already the latest, the command prints `peers 0.6.1 is up to date` and exits without changing anything.
 
 [Command line]({{< relref "/docs/reference/cli" >}}) gives the full description of the command.
 

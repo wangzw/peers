@@ -16,7 +16,7 @@ description: "按系统级或用户级安装 peers，可用安装脚本、发布
 安装指定版本时，先设好版本号，再传 `--version`：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 curl -fsSL https://github.com/wangzw/peers/releases/latest/download/install.sh | sh -s -- --version "$VERSION"
 ```
 
@@ -40,7 +40,7 @@ sh install.sh
 peers 以 `tar.gz` 发布包的形式放在 [GitHub Releases](https://github.com/wangzw/peers/releases/latest) 上。下载对应平台和架构的发布包，以及同一发布里的 `checksums.txt`：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 curl -LO https://github.com/wangzw/peers/releases/download/v${VERSION}/peers_${VERSION}_<os>_<arch>.tar.gz
 curl -LO https://github.com/wangzw/peers/releases/download/v${VERSION}/checksums.txt
 ```
@@ -50,21 +50,21 @@ curl -LO https://github.com/wangzw/peers/releases/download/v${VERSION}/checksums
 使用前先用 `checksums.txt` 校验发布包。Linux 上：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 grep peers_${VERSION}_linux_arm64.tar.gz checksums.txt | sha256sum -c -
 ```
 
 macOS 上用 `shasum`：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 grep peers_${VERSION}_darwin_arm64.tar.gz checksums.txt | shasum -a 256 -c -
 ```
 
 新建一个目录，把发布包解压进去：发布包没有外层目录，不新建目录时，`peers` 二进制、`LICENSE`、`README.md`、`install.sh`、`third_party/`、`THIRD_PARTY_LICENSES/` 与 `man/` 都会直接落在当前目录：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 mkdir peers-${VERSION}
 tar -xzf peers_${VERSION}_darwin_arm64.tar.gz -C peers-${VERSION}
 ```
@@ -74,7 +74,7 @@ Linux 上把 `darwin` 换成 `linux`。
 进入解压出的目录并运行脚本：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 cd peers-${VERSION}
 sh ./install.sh
 ```
@@ -147,7 +147,7 @@ install.sh: warning: skipped the man page <page>: <reason>; install it with: ins
 macOS 上，浏览器下载的文件带有隔离属性，而二进制没有签名，也没有经过公证，所以清除之前 macOS 会阻止运行二进制。如果发布包是浏览器下载的，先从解压出的二进制上清除：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 xattr -d com.apple.quarantine peers-${VERSION}/peers
 ```
 
@@ -158,7 +158,7 @@ xattr -d com.apple.quarantine peers-${VERSION}/peers
 把二进制移到 `PATH` 上的目录：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 mkdir -p ~/.local/bin
 mv peers-${VERSION}/peers ~/.local/bin/
 peers --version
@@ -209,7 +209,7 @@ peers service run
 从源码构建需要 Go 1.27。克隆仓库并构建：
 
 ```sh
-VERSION=0.6.0
+VERSION=0.6.1
 git clone https://github.com/wangzw/peers
 cd peers
 go build -trimpath -ldflags "-X main.version=$VERSION" -o peers ./cmd/peers
