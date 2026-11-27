@@ -30,7 +30,22 @@ The reference pages under `docs/site/content/{en,zh}/docs/reference/` are checke
 
 `make site-check` builds and checks every version of the website under `docs/site/`: each `vX.Y.Z` tag from the oldest release `docs/site/versions.yaml` names on, built from its own content (or from the commit that file names for it) with the working tree's other site files, and the working tree itself as `/dev/`. It checks the en and zh parity of the working tree's content. It also fails when a page under `docs/site/content/` writes a bare release number that equals a `vX.Y.Z` tag: a page that needs the release its install commands fetch uses the `release` shortcode, which renders the build's `params.release`, and a release named as history keeps its `v` prefix. It builds each version strictly, checks each version's Markdown renditions and metadata, assembles `docs/site/public` as the site is deployed and checks the internal links of the assembled tree. The version checkouts go to the git-ignored `.site-build/` and keep their full history, so the repository needs its full history and tags. `SITE_AS_RELEASE=vX.Y.Z` also builds the working tree as release vX.Y.Z, the latest, which must be higher than every other version; when that tag exists, the working tree's build replaces the tag's. The Site workflow runs it on pull requests that touch the website, and on main with `SITE_RELEASES` naming the list of published GitHub releases, which then replaces the tags, before it deploys the assembled tree. It is not part of `make check`; run it when a change touches the website or a script it runs.
 
+`make release-check VERSION=vX.Y.Z` checks that the commit at HEAD can be tagged as release `VERSION`: the version has that form and is higher than every `vX.Y.Z` tag, the commit is on `origin/main` and the working tree is clean, `CHANGELOG.md` has a dated section for the version that `scripts/release-notes` extracts, the Makefile's `RELEASE_NOTES_VERSION` names it, the reference-page tests pass, and `make site-check SITE_AS_RELEASE=$(VERSION)` passes. It reads `origin/main` as it is and does not fetch. It is not part of `make check`; the Releases section says when to run it, and the Release workflow runs it again before publishing.
+
 `make third-party-check` compares every vendored library under `third_party/` with the upstream module version `third_party/UPSTREAM` records, and `make vulncheck` scans the module graph for known vulnerabilities on both supported platforms. Both reach the network, so neither is part of `make check`; run them when a change touches the vendored source or the module graph.
+
+## Releases
+
+A release is an annotated tag `vX.Y.Z` on a commit of main. It is made in this order:
+
+1. Prepare one change on main that adds a dated `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md`, sets `RELEASE_NOTES_VERSION` in the `Makefile` to `vX.Y.Z`, and brings `docs/site/content/` in line with that section: review every page, in English and Chinese, that the section's entries affect, because the website publishes this content as the release's documentation.
+2. Merge that change into main and push it.
+3. Fetch `origin`, check out the commit to tag with a clean working tree, and run `make release-check VERSION=vX.Y.Z`. It needs Hugo at `HUGO_VERSION`, lychee, and the full history with every tag.
+4. Create the annotated tag `vX.Y.Z` on that commit and push the tag.
+5. The Release workflow runs `make release-check` again and only then publishes the release with goreleaser. A failure stops it before anything is published, and the website keeps the previous release as its default.
+6. After the Release workflow succeeds, the Site workflow deploys the website with the new release as its default.
+
+A prerelease tag `vX.Y.Z-<suffix>` skips `make release-check`, is published as a prerelease and never appears on the website.
 
 ## Signals
 

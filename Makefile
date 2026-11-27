@@ -101,7 +101,7 @@ RELEASE_NOTES_VERSION ?= v0.6.1
 # target was added.
 GOVULNCHECK_VERSION := v1.10.0
 
-.PHONY: gen gen-check lint release-notes-check archive-check third-party-check vulncheck proto-lint test test-root e2e e2e-darwin cover-report cover-check docs-check check site site-check
+.PHONY: gen gen-check lint release-notes-check archive-check third-party-check vulncheck proto-lint test test-root e2e e2e-darwin cover-report cover-check docs-check check site site-check release-check
 
 # Regenerate the committed generated artifacts: the protobuf code with buf and
 # the man pages from the cobra command tree. Generated Go code is committed next
@@ -429,6 +429,17 @@ site-check:
 		-public $(SITE_DIR)/public -jobs $(JOBS) \
 		$(if $(SITE_AS_RELEASE),-as-release $(SITE_AS_RELEASE)) \
 		$(if $(SITE_RELEASES),-releases $(SITE_RELEASES))
+
+# Check that the commit at HEAD can be tagged as release VERSION, from the
+# repository state through the changelog, the reference pages and the website.
+# The first failing step stops the target and is named. Needs Hugo at
+# HUGO_VERSION and lychee, so it is not part of make check.
+release-check:
+	@if [ -z '$(VERSION)' ]; then echo "usage: make release-check VERSION=vX.Y.Z" >&2; exit 2; fi
+	@go run -p $(JOBS) ./scripts/release-check -version '$(VERSION)' || { status=$$?; echo "release-check: repository state check failed" >&2; exit $$status; }
+	@go run -p $(JOBS) ./scripts/release-notes -version '$(VERSION)' >/dev/null || { status=$$?; echo "release-check: release notes check failed" >&2; exit $$status; }
+	@go test -p $(JOBS) -run '^TestReferencePage' ./cmd/peers ./internal/mcpserver ./internal/config || { status=$$?; echo "release-check: reference-page tests failed" >&2; exit $$status; }
+	@$(MAKE) --no-print-directory site-check SITE_AS_RELEASE='$(VERSION)' JOBS='$(JOBS)' || { status=$$?; echo "release-check: site-check failed" >&2; exit $$status; }
 
 # Run every gate in a fixed order. Each gate is a separate recursive make so
 # the order also holds when the caller passes -j. The guard runs before any
