@@ -88,6 +88,11 @@ HUGO_VERSION := 0.170.1
 
 SITE_DIR ?= docs/site
 
+# Passed through to scripts/site-versions: build the working tree as this
+# release, and take the version set from this GitHub releases JSON file.
+SITE_AS_RELEASE ?=
+SITE_RELEASES ?=
+
 # Version whose released section in CHANGELOG.md the release notes check
 # extracts.
 RELEASE_NOTES_VERSION ?= v0.6.1
@@ -376,8 +381,12 @@ docs-check:
 
 # Preview the website locally.
 site:
-	@if ! command -v hugo >/dev/null 2>&1; then \
-		echo "site: hugo is not installed; install Hugo $(HUGO_VERSION)" >&2; \
+	@missing=""; \
+	for tool in hugo git; do \
+		command -v $$tool >/dev/null 2>&1 || missing="$$missing $$tool"; \
+	done; \
+	if [ -n "$$missing" ]; then \
+		echo "site: missing tools:$$missing (Hugo $(HUGO_VERSION))" >&2; \
 		exit 1; \
 	fi
 	@release="$$(git tag --list 'v*' --sort=-v:refname | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"; \
@@ -387,47 +396,39 @@ site:
 	fi; \
 	HUGO_PARAMS_RELEASE="$${release#v}" hugo server --source $(SITE_DIR)
 
-# Check that the English and Chinese pages match, that no page writes a bare
-# release number that equals a vX.Y.Z tag, build the website strictly, check
-# that every generated index.html has an index.md next to it, check the
-# description and sharing metadata of every page and the lastmod of every
-# sitemap entry, and check the internal links of the generated pages. The link check uses the
-# generated tree as its root, so a root-relative link resolves inside the
-# site; page relative links resolve against the file that contains them. The
-# build cleans the destination first, so a page that was deleted or renamed
-# cannot keep passing the link check through its stale output.
+# Check the website in every version it has. The en and zh trees of the
+# working tree must match, and no page may write a bare release number that
+# names a valid tag. scripts/site-versions then builds every vX.Y.Z tag from
+# the oldest docs/site/versions.yaml names, each from its own content and the
+# working tree's site files, plus the working tree as /dev/, checks every
+# version strictly (Markdown renditions and page metadata), assembles
+# $(SITE_DIR)/public as the site is deployed and checks the internal links of
+# the assembled tree. The checkouts go to the git-ignored .site-build and keep
+# their full history, so the repository needs its history and tags.
+# SITE_AS_RELEASE builds the working tree as that release, which must be higher
+# than every other version; SITE_RELEASES takes the version set from a GitHub
+# releases JSON file instead of the tags, keeping only the published releases.
 site-check:
 	@missing=""; \
-	for tool in hugo lychee go; do \
+	for tool in hugo lychee go git; do \
 		command -v $$tool >/dev/null 2>&1 || missing="$$missing $$tool"; \
 	done; \
 	if [ -n "$$missing" ]; then \
 		echo "site-check: missing tools:$$missing (Hugo $(HUGO_VERSION))" >&2; \
 		exit 1; \
-	fi; \
-	have="$$(hugo version 2>/dev/null | sed -n 's/^hugo v\([^ ]*\).*/\1/p')"; \
+	fi
+	@have="$$(hugo version 2>/dev/null | sed -n 's/^hugo v\([^ ]*\).*/\1/p')"; \
 	case "$$have" in \
 		"$(HUGO_VERSION)"|"$(HUGO_VERSION)"-*) ;; \
 		*) echo "site-check: Hugo $(HUGO_VERSION) required, found '$$have'" >&2; exit 1 ;; \
 	esac
 	go run -p $(JOBS) ./scripts/site-parity -en $(SITE_DIR)/content/en -zh $(SITE_DIR)/content/zh
 	go run -p $(JOBS) ./scripts/site-release-number -content $(SITE_DIR)/content -repo $(CURDIR)
-	@release="$$(git tag --list 'v*' --sort=-v:refname | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"; \
-	if [ -z "$$release" ]; then \
-		echo "site-check: no vX.Y.Z tag found; fetch the tags (git fetch --tags) so params.release can be set" >&2; \
-		exit 1; \
-	fi; \
-	GOMAXPROCS=$(JOBS) HUGO_PARAMS_RELEASE="$${release#v}" hugo --source $(SITE_DIR) --cleanDestinationDir --gc --minify --panicOnWarning
-	@missing="$$(find $(SITE_DIR)/public -name index.html | sort | while read -r page; do \
-		[ -f "$${page%.html}.md" ] || echo "$$page"; \
-	done)"; \
-	if [ -n "$$missing" ]; then \
-		echo "site-check: pages without a Markdown rendition (index.md):" >&2; \
-		echo "$$missing" >&2; \
-		exit 1; \
-	fi
-	go run -p $(JOBS) ./scripts/site-meta -public $(SITE_DIR)/public
-	lychee --offline --no-progress --max-concurrency $(JOBS) --root-dir "$(CURDIR)/$(SITE_DIR)/public" '$(SITE_DIR)/public/**/*.html'
+	go run -p $(JOBS) ./scripts/site-versions \
+		-repo $(CURDIR) -site $(SITE_DIR) -work $(CURDIR)/.site-build \
+		-public $(SITE_DIR)/public -jobs $(JOBS) \
+		$(if $(SITE_AS_RELEASE),-as-release $(SITE_AS_RELEASE)) \
+		$(if $(SITE_RELEASES),-releases $(SITE_RELEASES))
 
 # Run every gate in a fixed order. Each gate is a separate recursive make so
 # the order also holds when the caller passes -j. The guard runs before any

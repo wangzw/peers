@@ -54,3 +54,4 @@ Thumbs.db
 docs/site/public/
 docs/site/resources/
 .hugo_build.lock
+/.site-build/
