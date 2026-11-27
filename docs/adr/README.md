@@ -95,3 +95,4 @@ This directory records the architecture decisions in force in peers. A decision 
 |---|
 | [Index only the website's latest release at the root](adr-versioned-website-indexing.md) |
 | [Check the reference pages against the code with package tests](adr-reference-pages-checked-by-tests.md) |
+| [Rebuild every published release of the website from git on each deploy](adr-versioned-website-build.md) |
