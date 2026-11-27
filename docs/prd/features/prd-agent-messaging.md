@@ -6,7 +6,7 @@ Claude Code sessions on different hosts need to know which sessions they can com
 
 ## Scope
 
-This document covers how a session registers as an [agent](../../glossary.md), agent naming and addressing, the agent list, sending and delivery results for point-to-point messages, the scope of a message when the user asks to send to all agents or to broadcast, and the refusal of peer messages while a Broker is offline.
+This document covers how a session registers as an [agent](../../glossary.md), agent naming and addressing, the agent list, sending and delivery results for point-to-point messages, the scope of a message when the user asks to send to all agents or to broadcast, which send tool the model is directed to use for an agent that Claude Code's built-in cross-session send tool can reach, and the refusal of peer messages while a Broker is offline.
 
 ### Out of Scope
 
@@ -427,6 +427,22 @@ Each entry of `list_agents` MUST give the account name that registered the agent
 The MCP service's instructions MUST tell the model that an address with the same name but a different disambiguator is another agent, and not to forward messages to it as if it were the original agent.
 
 - **Acceptance**: The instructions contain a sentence stating that an address with the same name but a different disambiguator points to another agent and, even if the name is the same as the one the user wants to contact, it must not be forwarded to as if it were the original one.
+- **Status**: Implemented
+- **E2E test**: Not applicable: the model performs this behavior per the instructions, and it cannot be verified deterministically; the content of the instructions is asserted by `TestInstructions` in `internal/mcpserver/tools_test.go`
+
+### REQ-agent-messaging-052
+
+When this session starts a conversation with an agent that Claude Code's built-in cross-session send tool can reach (the agent's session appears in that tool's session list), and the user neither mentions peers nor names the agent by its agent address, the system MUST direct the model to send with the built-in tool. This system's send tool is for agents the built-in tool cannot reach, for an agent the user names by its agent address, and for a message the user explicitly asks to send with peers.
+
+- **Acceptance**: The instructions state that a conversation with an agent whose session appears in Claude Code's built-in session list is started with Claude Code's built-in session tools, even when the agent is also registered with this system; and that this system's send tool starts the conversation instead when the user names the agent by its agent address, when the user explicitly asks to send with peers, or when the agent's session is not in that list.
+- **Status**: Implemented
+- **E2E test**: Not applicable: the model performs this behavior per the instructions, and it cannot be verified deterministically; the content of the instructions is asserted by `TestInstructions` in `internal/mcpserver/tools_test.go`
+
+### REQ-agent-messaging-053
+
+A reply to a message whose sender is an agent address MUST go through this system's send tool, to that address verbatim, even when a session with the same name appears in Claude Code's built-in session list.
+
+- **Acceptance**: The instructions state that a reply to a message whose sender contains `@` goes through this system's send tool to the sender's address verbatim, even when a session with the same name appears in Claude Code's built-in session list.
 - **Status**: Implemented
 - **E2E test**: Not applicable: the model performs this behavior per the instructions, and it cannot be verified deterministically; the content of the instructions is asserted by `TestInstructions` in `internal/mcpserver/tools_test.go`
 
