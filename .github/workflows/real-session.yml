@@ -42,6 +42,7 @@ jobs:
             inbound) ;;
             signature) ;;
             reply) ;;
+            initiate) ;;
             mcp-toggle) ;;
             subagent) ;;
             headless) ;;

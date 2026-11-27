@@ -29,6 +29,7 @@ var probeNames = []string{
 	"inbound",
 	"signature",
 	"reply",
+	"initiate",
 	"mcp-toggle",
 	"subagent",
 	"headless",
