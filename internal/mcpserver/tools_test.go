@@ -451,11 +451,13 @@ func TestInstructions(t *testing.T) {
 	for _, want := range []string{
 		"send_message",
 		"verbatim",
-		"built-in session messaging cannot reach",
+		`A sender name that contains "@" is an agent address. To reply, call send_message and copy the address from the message's sender verbatim into "to", even when a session with the same name appears in Claude Code's built-in session list.`,
+		`- To start a conversation with an agent whose session appears in Claude Code's built-in session list, send with Claude Code's built-in session tools, even if the agent is also registered with peers. Use send_message instead when the user names the agent by its agent address, such as name@alias, when the user explicitly asks to send with peers, or when the agent's session is not in that list, such as another account's agent on this host or an agent on another host that the list does not show.`,
+		`If this session has no built-in session tools and the user asks to message every agent, everyone, or broadcast without mentioning peers, do not fall back to peers: tell the user and add the same peers hint.`,
 		"reached the other session",
 		"Delivery unknown",
 		"deliver it twice",
-		"once per agent",
+		"To message several agents, send to each one separately, once per agent, with the tool the rules above choose for it. Do not reply just to thank or acknowledge.",
 		"drops the duplicate",
 		"even though the send still reports success",
 		"broker_offline",
@@ -470,6 +472,17 @@ func TestInstructions(t *testing.T) {
 	} {
 		if !strings.Contains(info.Instructions, want) {
 			t.Errorf("instructions do not contain %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		"cannot reach these addresses",
+		"whether it runs on this host or another one",
+		"an agent address is not a target of Claude Code's built-in session messaging",
+		"To message several agents by address",
+		"This holds when the user names the agent by its agent address",
+	} {
+		if strings.Contains(info.Instructions, unwanted) {
+			t.Errorf("instructions contain %q", unwanted)
 		}
 	}
 }

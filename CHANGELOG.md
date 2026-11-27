@@ -2,6 +2,12 @@
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- The MCP server's instructions now direct the model to start a conversation with an agent whose session appears in Claude Code's built-in session list through the built-in session tools, even when that agent is registered with peers. `send_message` starts the conversation when the user names the agent by its agent address, asks to send with peers, or names an agent whose session is not in that list. A reply to a message whose sender is an agent address still goes through `send_message`, to that address verbatim.
+
 ## [0.6.1] - 2026-11-26
 
 ### Fixed
