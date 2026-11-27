@@ -1,0 +1,7 @@
+# The oldest published release the website serves, and the content commit of
+# each version whose tag does not already point at it.
+oldest: v0.6.1
+refs:
+  # The v0.6.1 tag still carries VERSION=0.6.0; its aligned site content
+  # landed in this commit.
+  v0.6.1: 6f5ef116917dcdfcc7e39e72c544c4508cbb4822
