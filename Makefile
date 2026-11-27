@@ -382,8 +382,9 @@ site:
 	fi
 	hugo server --source $(SITE_DIR)
 
-# Check that the English and Chinese pages match, build the website strictly,
-# check that every generated index.html has an index.md next to it, check the
+# Check that the English and Chinese pages match, that no page writes a bare
+# release number that equals a vX.Y.Z tag, build the website strictly, check
+# that every generated index.html has an index.md next to it, check the
 # description and sharing metadata of every page and the lastmod of every
 # sitemap entry, and check the internal links of the generated pages. The link check uses the
 # generated tree as its root, so a root-relative link resolves inside the
@@ -405,6 +406,7 @@ site-check:
 		*) echo "site-check: Hugo $(HUGO_VERSION) required, found '$$have'" >&2; exit 1 ;; \
 	esac
 	go run -p $(JOBS) ./scripts/site-parity -en $(SITE_DIR)/content/en -zh $(SITE_DIR)/content/zh
+	go run -p $(JOBS) ./scripts/site-release-number -content $(SITE_DIR)/content -repo $(CURDIR)
 	GOMAXPROCS=$(JOBS) hugo --source $(SITE_DIR) --cleanDestinationDir --gc --minify --panicOnWarning
 	@missing="$$(find $(SITE_DIR)/public -name index.html | sort | while read -r page; do \
 		[ -f "$${page%.html}.md" ] || echo "$$page"; \

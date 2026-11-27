@@ -8,6 +8,7 @@ on:
       - docs/site/**
       - docs/assets/**
       - scripts/site-parity/**
+      - scripts/site-release-number/**
       - scripts/site-baseurl-check.sh
       - Makefile
       - go.mod
@@ -18,6 +19,7 @@ on:
       - docs/site/**
       - docs/assets/**
       - scripts/site-parity/**
+      - scripts/site-release-number/**
       - scripts/site-baseurl-check.sh
       - Makefile
       - go.mod
