@@ -31,6 +31,7 @@ This directory records the architecture decisions in force in peers. A decision 
 | [Do not rate-limit or detect message loops in the Broker](adr-no-broker-rate-limiting.md) |
 | [Reuse A2A's Message structure as the link message body](adr-a2a-message-body.md) |
 | [Refuse peer delivery while the Broker is offline](adr-offline-refuses-peer-delivery.md) |
+| [Start conversations through Claude Code's built-in send tool when its session list shows the agent](adr-built-in-send-for-listed-sessions.md) |
 
 ## Trust and links
 
