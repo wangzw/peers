@@ -7,8 +7,10 @@ on:
     paths:
       - docs/site/**
       - docs/assets/**
+      - scripts/site-meta/**
       - scripts/site-parity/**
       - scripts/site-release-number/**
+      - scripts/site-versions/**
       - scripts/site-baseurl-check.sh
       - Makefile
       - go.mod
@@ -18,13 +20,20 @@ on:
     paths:
       - docs/site/**
       - docs/assets/**
+      - scripts/site-meta/**
       - scripts/site-parity/**
       - scripts/site-release-number/**
+      - scripts/site-versions/**
       - scripts/site-baseurl-check.sh
       - Makefile
       - go.mod
       - go.sum
       - .github/workflows/site.yml
+  workflow_run:
+    workflows:
+      - Release
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -33,16 +42,23 @@ permissions:
 env:
   LYCHEE_VERSION: 0.24.2
 
+# Every run on main that may deploy shares the deployment group, so two such
+# runs cannot build and then deploy out of order: a push, a manual dispatch and
+# a workflow_run whose Release run succeeded. A pull request, a run on another
+# branch and a workflow_run whose Release run did not succeed use their own
+# group, so a failed Release never queues in pages and cancels the deploy it was
+# checked against. This is the run's only group: a queued run is a whole run, so
+# it lists the released versions after any run it replaced.
+concurrency:
+  group: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') && 'pages' || format('site-{0}', github.ref) }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build and check
+    # The deploy job needs this one, so a failed Release run skips the deploy here.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    # A run on main shares the deployment group, so two pushes cannot build
-    # and then deploy out of order. A pull request, or a manual run on another
-    # branch, uses its own group and never occupies the pages group.
-    concurrency:
-      group: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && 'pages' || format('site-{0}', github.ref) }}
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -81,7 +97,22 @@ jobs:
           sudo install -m 0755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee /usr/local/bin/lychee
           lychee --version
       - name: Check the site
+        if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
         run: make site-check
+      # The token stays on this step, which only lists releases. The steps that
+      # run Hugo receive the file, never the token.
+      - name: Write the published releases
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        id: releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases="$RUNNER_TEMP/releases.json"
+          gh release list --repo "${{ github.repository }}" --limit 1000 --json tagName,isDraft,isPrerelease > "$releases"
+          printf 'file=%s\n' "$releases" >> "$GITHUB_OUTPUT"
+      - name: Check the site against every published release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: make site-check SITE_RELEASES="${{ steps.releases.outputs.file }}"
       - name: Configure Pages
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         id: pages
@@ -89,18 +120,6 @@ jobs:
       - name: Check the deployment address
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: bash scripts/site-baseurl-check.sh "${{ steps.pages.outputs.base_url }}"
-      - name: Build for deployment
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tags="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName')"
-          release="$(printf '%s\n' "$tags" | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | sed 's/^v//' | sort -V | tail -n 1 || true)"
-          if [ -z "$release" ]; then
-            echo "Build for deployment: no published release with a vX.Y.Z tag" >&2
-            exit 1
-          fi
-          HUGO_PARAMS_RELEASE="$release" hugo --source docs/site --gc --minify --panicOnWarning
       - name: Upload the site
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
@@ -115,9 +134,6 @@ jobs:
     permissions:
       pages: write
       id-token: write
-    concurrency:
-      group: pages
-      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
