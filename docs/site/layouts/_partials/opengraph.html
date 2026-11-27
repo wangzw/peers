@@ -1,8 +1,13 @@
 {{- /*
-  Mirrors the Hextra v0.13.0 opengraph partial. The only change is that the
-  og:description and og:type values carry no surrounding whitespace; the
-  theme's template indents them inside the attribute. Everything else is kept
-  byte for byte so the override stays easy to compare with the theme.
+  Mirrors the Hextra v0.13.0 opengraph partial. Changes from the theme:
+
+  - The og:description and og:type values carry no surrounding whitespace; the
+    theme's template indents them inside the attribute.
+  - og:url is the canonical head.html records on the page store, so it equals
+    the canonical of the build's version class.
+
+  Everything else is kept byte for byte so the override stays easy to compare
+  with the theme.
 */ -}}
 
 <meta property="og:title" content="{{ .Title }}">
@@ -20,7 +25,8 @@
 <meta
   property="og:type"
   content="{{ if .IsPage }}article{{ else }}website{{ end }}">
-<meta property="og:url" content="{{ .Permalink }}">
+{{- $canonical := .Store.Get "canonical" | default .Permalink -}}
+<meta property="og:url" content="{{ $canonical }}">
 
 {{- with $.Params.images -}}
   {{- range first 6 . }}

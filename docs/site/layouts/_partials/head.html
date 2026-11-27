@@ -1,19 +1,44 @@
 {{- /*
-  Mirrors the Hextra v0.13.0 head partial. The only change is the home page
-  title: the theme always uses the site title there, while this site sets the
-  longer home title in the home page's front matter. Every other page keeps the
-  theme's "page – site" form. Everything else is kept byte for byte so the
-  override stays easy to compare with the theme.
+  Mirrors the Hextra v0.13.0 head partial. Every difference from the theme:
+
+  - This header comment is added.
+  - `$page := .` and `$version := partial "version/context.html" $page` are
+    added before the robots meta, and `$noindex` reads `$page.Params.noindex`
+    instead of `.Params.noindex`.
+  - The robots meta follows the build's version class: index, follow for
+    latest and latest-copy, noindex, follow for older and dev. Outside
+    production, and on a page marked noindex, it stays noindex, nofollow. The
+    value is built in `$robots` before the meta, and the whitespace trim
+    markers on this block differ from the theme's.
+  - The home page title comes from the home page's front matter, falling back
+    to the site title; the theme always uses the site title.
+  - The canonical replaces the theme's `with .Params.canonical` / else
+    `.Permalink` block. A page marked noindex keeps a self canonical. A front
+    matter `canonical` value applies only to class latest, so an older or dev
+    page never combines noindex with a canonical to another page. A
+    latest-copy page canonicalises to the same path under canonicalBaseURL,
+    and every other page keeps its permalink. The chosen value is recorded on
+    the page store so opengraph.html repeats it as og:url, and the trim
+    markers on these lines differ from the theme's.
+
+  Everything else, including the remaining whitespace trim markers, is kept
+  byte for byte so the override stays easy to compare with the theme.
 */ -}}
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  {{- $noindex := .Params.noindex | default false -}}
-  {{ if and (hugo.IsProduction) (not $noindex) -}}
-    <meta name="robots" content="index, follow" />
-  {{ else -}}
+  {{- $page := . -}}
+  {{- $version := partial "version/context.html" $page -}}
+  {{- $noindex := $page.Params.noindex | default false -}}
+  {{- if and (hugo.IsProduction) (not $noindex) -}}
+    {{- $robots := "index, follow" -}}
+    {{- if or (eq $version.class "older") (eq $version.class "dev") -}}
+      {{- $robots = "noindex, follow" -}}
+    {{- end -}}
+    <meta name="robots" content="{{ $robots }}" />
+  {{- else -}}
     <meta name="robots" content="noindex, nofollow" />
-  {{ end -}}
+  {{- end -}}
   {{ partialCached "favicons.html" . -}}
   <title>
     {{- if .IsHome -}}
@@ -25,11 +50,16 @@
   </title>
   <meta name="description" content="{{ partial "utils/page-description.html" . }}" />
 
-  {{- with .Params.canonical -}}
-    <link rel="canonical" href="{{ . }}" itemprop="url" />
-  {{- else -}}
-    <link rel="canonical" href="{{ .Permalink }}" itemprop="url" />
+  {{- $canonical := $page.Permalink -}}
+  {{- if not $noindex -}}
+    {{- if and (eq $version.class "latest") $page.Params.canonical -}}
+      {{- $canonical = $page.Params.canonical -}}
+    {{- else if eq $version.class "latest-copy" -}}
+      {{- $canonical = partial "version/in.html" (dict "base" $version.canonicalBaseURL "page" $page) -}}
+    {{- end -}}
   {{- end -}}
+  {{- $_ := $page.Store.Set "canonical" $canonical -}}
+  <link rel="canonical" href="{{ $canonical }}" itemprop="url" />
 
   {{- partial "opengraph.html" . -}}
   {{- partial "schema.html" . -}}

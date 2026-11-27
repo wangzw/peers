@@ -1,22 +1,34 @@
 {{- /*
   JSON-LD for the site, generated from the page rather than written into the
-  Markdown. The home page gets a SoftwareApplication, a page marked `faq: true`
-  gets a FAQPage built from its own headings and answers, and every docs page
-  gets a BreadcrumbList. The FAQ page is also a docs page, so it gets both.
+  Markdown. The home page gets a SoftwareApplication naming the release the
+  build documents and linking to it, a page marked `faq: true` gets a FAQPage
+  built from its own headings and answers, and every docs page gets a
+  BreadcrumbList. The FAQ page is also a docs page, so it gets both.
+
+  The SoftwareApplication url and the BreadcrumbList items are the page's
+  canonical URL. In class latest-copy that is the same path under
+  canonicalBaseURL, so structured data points at the root copy, not at the
+  /vX.Y.Z/ copy.
 */ -}}
+{{- $version := partial "version/context.html" . -}}
 {{- $lang := .Site.Language.Locale | default .Site.Language.Lang -}}
+{{- $canonical := .Store.Get "canonical" | default .Permalink -}}
 
 {{- if .IsHome -}}
+  {{- $downloadURL := printf "https://github.com/wangzw/peers/releases/tag/v%s" $version.release -}}
+  {{- if eq $version.class "dev" -}}
+    {{- $downloadURL = printf "https://github.com/wangzw/peers/releases/tag/%s" $version.latestName -}}
+  {{- end -}}
   {{- $app := dict
     "@context" "https://schema.org"
     "@type" "SoftwareApplication"
     "name" "peers"
     "description" .Site.Params.description
-    "url" .Permalink
+    "url" $canonical
     "applicationCategory" "DeveloperApplication"
     "operatingSystem" "Linux, macOS"
     "license" "https://www.apache.org/licenses/LICENSE-2.0"
-    "downloadUrl" "https://github.com/wangzw/peers/releases/latest"
+    "downloadUrl" $downloadURL
     "offers" (dict "@type" "Offer" "price" "0" "priceCurrency" "USD")
     "sameAs" "https://github.com/wangzw/peers"
     "inLanguage" $lang
@@ -27,6 +39,12 @@
       "url" "https://zhanwei.wang/en/"
       "sameAs" (slice "https://github.com/wangzw"))
   -}}
+  {{- if ne $version.class "dev" -}}
+    {{- $app = merge $app (dict "softwareVersion" $version.release) -}}
+  {{- end -}}
+  {{- if not .Lastmod.IsZero -}}
+    {{- $app = merge $app (dict "dateModified" (.Lastmod.Format "2006-01-02T15:04:05-07:00")) -}}
+  {{- end -}}
   <script type="application/ld+json">{{ $app | jsonify | safeJS }}</script>
 {{- end -}}
 
@@ -72,17 +90,25 @@
     {{- if $p.IsHome -}}
       {{- $name = site.Title -}}
     {{- end -}}
+    {{- $item := $p.Permalink -}}
+    {{- if eq $version.class "latest-copy" -}}
+      {{- $item = partial "version/in.html" (dict "base" $version.canonicalBaseURL "page" $p) -}}
+    {{- end -}}
     {{- $crumbs = $crumbs | append (dict
       "@type" "ListItem"
       "position" (add $i 1)
       "name" $name
-      "item" $p.Permalink) -}}
+      "item" $item) -}}
+  {{- end -}}
+  {{- $currentItem := .Permalink -}}
+  {{- if eq $version.class "latest-copy" -}}
+    {{- $currentItem = $canonical -}}
   {{- end -}}
   {{- $crumbs = $crumbs | append (dict
     "@type" "ListItem"
     "position" (add (len $ancestors) 1)
     "name" (.LinkTitle | default .Title)
-    "item" .Permalink) -}}
+    "item" $currentItem) -}}
   {{- $breadcrumb := dict
     "@context" "https://schema.org"
     "@type" "BreadcrumbList"

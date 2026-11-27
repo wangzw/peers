@@ -1,31 +1,35 @@
 {{- /*
   Extra head metadata appended at the end of <head> by Hextra.
 
-  Emits reciprocal hreflang links (including the page itself), an x-default
-  pointing at the English version, the link to the page's Markdown rendition,
-  and Open Graph locales. The Open Graph and
+  Emits reciprocal hreflang links (including the page itself) and an x-default
+  pointing at the English version, for the latest version class only. Every
+  page of every class carries the link to its Markdown rendition, which
+  scripts/site-meta reads as the page's own permalink. The Open Graph and
   Twitter image tags come from the theme's opengraph partial and Hugo's
   twitter_cards template, which read the per-language params.images. JSON-LD
   lives in custom/jsonld.html.
 */ -}}
 {{- $page := . -}}
+{{- $version := partial "version/context.html" $page -}}
 {{- $lang := .Site.Language.Locale | default .Site.Language.Lang -}}
 
-{{- /* hreflang: every existing translation, then x-default only when an
-       English version exists to point at. A page without one gets no
-       x-default rather than one pointing at itself. */ -}}
-{{- $xdefault := "" -}}
-{{- range .AllTranslations -}}
-  {{- if eq .Language.Lang "en" -}}
-    {{- $xdefault = .Permalink -}}
+{{- if eq $version.class "latest" -}}
+  {{- /* hreflang: every existing translation, then x-default only when an
+         English version exists to point at. A page without one gets no
+         x-default rather than one pointing at itself. */ -}}
+  {{- $xdefault := "" -}}
+  {{- range .AllTranslations -}}
+    {{- if eq .Language.Lang "en" -}}
+      {{- $xdefault = .Permalink -}}
+    {{- end -}}
   {{- end -}}
-{{- end -}}
-{{- range .AllTranslations -}}
-  {{- $code := .Language.Locale | default .Language.Lang -}}
-  <link rel="alternate" hreflang="{{ $code }}" href="{{ .Permalink }}" />
-{{- end -}}
-{{- with $xdefault -}}
-<link rel="alternate" hreflang="x-default" href="{{ . }}" />
+  {{- range .AllTranslations -}}
+    {{- $code := .Language.Locale | default .Language.Lang -}}
+    <link rel="alternate" hreflang="{{ $code }}" href="{{ .Permalink }}" />
+  {{- end -}}
+  {{- with $xdefault -}}
+  <link rel="alternate" hreflang="x-default" href="{{ . }}" />
+  {{- end -}}
 {{- end }}
 {{- with .OutputFormats.Get "markdown" }}
 <link rel="alternate" type="{{ .MediaType.Type }}" href="{{ .Permalink }}" />
