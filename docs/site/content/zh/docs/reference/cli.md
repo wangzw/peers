@@ -171,7 +171,8 @@ peers service install [flags]
 
 - `--system` 与 `--user` 选择级别，二者互斥。都不给时，root 安装系统级，其他账户安装用户级。
 - 用户级服务在账户登录时启动 Broker。不能以 root 运行。在 macOS 上只能在图形登录会话里运行。`~/.peers/config.yaml` 不存在时，生成这个文件，属主为执行安装的账户，权限 `0600`；已存在的文件不改动。
-- 系统级服务在开机时启动 Broker。必须以 root 运行。组 `peers` 不存在时，命令新建它；已存在时直接使用，不改动成员。`/etc/peers/config.yaml` 不存在时，生成这个文件，属主为 `root`，组为 `peers`，权限 `0660`；已存在的文件不改动。`--admin-group <name>` 只在系统级安装时有效；安装落到用户级时，无论是因为给了 `--user` 还是因为执行安装的不是 root，都属于用法错误，以退出码 2 结束。它用于改用另一个组；组名只能以小写字母或下划线开头，其后只能是小写字母、数字、下划线或连字符。已有同名组且组内已有成员时，如果本次安装要新生成配置文件、`--admin-group` 又没有指定这个组、此前也没有安装记录过这个组，安装会拒绝，报错为 `peers service install: cannot use the existing group "<group>" as the administration group: its members <a, b and c> would be able to manage the system Broker; pass --admin-group <group> to accept them, or pass --admin-group with another name`，只有一个成员时写成 `member <a>`；安装不写任何文件，以退出码 1 结束。用 `--admin-group` 指定这个组，表示接受这些成员；组 id 为 0 的组一律拒绝。用 `--admin-group` 指定了组，或配置文件已存在时，安装不读成员名单；先前安装记录在 `/var/lib/peers/admin-group` 里的组不会被拒绝，但成员仍会读取并列入汇总。
+- 系统级服务在开机时启动 Broker。必须以 root 运行。组 `peers` 不存在时，命令新建它；已存在时直接使用，不改动成员。`/etc/peers/config.yaml` 不存在时，生成这个文件，属主为 `root`，组为 `peers`，权限 `0660`；已存在的文件不改动。
+- `--admin-group <name>` 只在系统级安装时有效；安装落到用户级时，无论是因为给了 `--user` 还是因为执行安装的不是 root，都属于用法错误，以退出码 2 结束。它用于改用另一个组；组名只能以小写字母或下划线开头，其后只能是小写字母、数字、下划线或连字符。已有同名组且组内已有成员时，如果本次安装要新生成配置文件、`--admin-group` 又没有指定这个组、此前也没有安装记录过这个组，安装会拒绝，报错为 `peers service install: cannot use the existing group "<group>" as the administration group: its members <a, b and c> would be able to manage the system Broker; pass --admin-group <group> to accept them, or pass --admin-group with another name`，只有一个成员时写成 `member <a>`；安装不写任何文件，以退出码 1 结束。用 `--admin-group` 指定这个组，表示接受这些成员；组 id 为 0 的组一律拒绝。用 `--admin-group` 指定了组，或配置文件已存在时，安装不读成员名单；先前安装记录在 `/var/lib/peers/admin-group` 里的组不会被拒绝，但成员仍会读取并列入汇总。
 
 生成的文件是一份列出全部键的模板：有固定默认值的键写出取值，其余键写成注释并附示例值或空占位。安装汇总的 `config:` 一行以 `(generated)` 结尾表示本次写入，以 `(kept)` 结尾表示文件已存在；系统级安装保留已有文件时，还会输出 `To delegate administration, run: chgrp <group> <path> && chmod 0660 <path>`。执行这条命令就把已有安装的配置文件交给该组，组成员随后不用 `sudo` 就能管理 Broker；管理组见[以配置文件权限管理 Broker]({{< relref "/docs/guides/management-permissions" >}})。系统级安装的汇总还有一行 `admin group:`，给出组名和本次安装得到它的方式：
 
@@ -391,7 +392,9 @@ peers completion [flags]
 peers completion [command]
 ```
 
-把指定 shell 的自动补全脚本输出到标准输出。支持的 shell 为 `bash`、`zsh`、`fish` 与 `powershell`；每个 shell 子命令都接受 `--no-descriptions`，让脚本不带描述。不带 shell 的 `peers completion` 与未知的 shell 名都属于用法错误，以退出码 2 结束。成功时以退出码 0 结束。
+把指定 shell 的自动补全脚本输出到标准输出。支持的 shell 为 `bash`、`zsh`、`fish` 与 `powershell`。不带 shell 的 `peers completion` 与未知的 shell 名都属于用法错误，以退出码 2 结束。成功时以退出码 0 结束。
+
+- `--no-descriptions` 让脚本不带描述，每个 shell 子命令都接受这个选项。
 
 安装脚本会按安装的级别写入补全文件：bash 两个级别都装，zsh 只在系统级装，主机装有 fish 时才装 fish。[安装 peers]({{< relref "/docs/guides/install" >}}#补全与-man-页)说明安装脚本写入哪些文件，[文件与路径]({{< relref "/docs/reference/files" >}}#补全与-man-页)列出路径。
 
