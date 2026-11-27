@@ -88,3 +88,9 @@ This directory records the architecture decisions in force in peers. A decision 
 |---|
 | [Read accounts and groups from the system account database](adr-account-database-source.md) |
 | [Reuse claude-code-socket-transport to write the inbox socket](adr-reuse-socket-transport-library.md) |
+
+## Website and releases
+
+| Decision |
+|---|
+| [Check the reference pages against the code with package tests](adr-reference-pages-checked-by-tests.md) |

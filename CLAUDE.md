@@ -26,6 +26,8 @@ A cross-host communication system for agents. A host runs a Broker either as a s
 
 `cover-check` enforces the coverage thresholds over the data `make test` writes as `unit` and `testenv` and `make e2e` writes as `e2e`: total statement coverage of at least `COVER_TOTAL` (90) and at least `COVER_PACKAGE` (80) for every package. Inside `make check` both floors are read only from the command line, so an exported value cannot loosen the gate; a standalone `make cover-check` honours them from the environment too. The denominator is every package under `internal/` and `cmd/peers`, excluding generated code (files with the `// Code generated ... DO NOT EDIT.` header), `internal/testkit`, `test/`, `scripts/` and `third_party/`; the data `make test-root` writes is not counted. `make cover-report` prints the same table without enforcing the floors, and `COVER_FORMAT=markdown` prints the Markdown table CI appends to the step summary.
 
+The reference pages under `docs/site/content/{en,zh}/docs/reference/` are checked against the code by tests that `make test` runs: `cmd/peers` compares `cli.md` with the command tree, `internal/mcpserver` compares `mcp-tools.md` with the registered tools and their parameters and `project-config.md` with the project configuration keys, and `internal/config` compares `configuration.md` with the configuration keys and their defaults. A change that adds, removes or renames a command, flag, tool, parameter or key, or changes a parameter's required mark or a key's default, updates the English and the Chinese page in the same commit. The tests read a fixed structure: a command is a `## peers <path>` heading (siblings may share one, as in `## peers service start, stop and restart`), a flag is a list item that begins with its code span, and the identifiers of the other pages are in the first table of the page. Prose, types and descriptions are not compared. `docs/adr/adr-reference-pages-checked-by-tests.md` records the decision.
+
 `make site-check` builds the website under `docs/site/` strictly and checks its internal links. It also fails when a page under `docs/site/content/` writes a bare release number that equals a `vX.Y.Z` tag: a page that needs the release its install commands fetch uses the `release` shortcode, which renders the build's `params.release`, and a release named as history keeps its `v` prefix. The build takes `params.release` from the newest `vX.Y.Z` tag, so the checkout needs its tags. It is not part of `make check`; run it when a change touches the website.
 
 `make third-party-check` compares every vendored library under `third_party/` with the upstream module version `third_party/UPSTREAM` records, and `make vulncheck` scans the module graph for known vulnerabilities on both supported platforms. Both reach the network, so neither is part of `make check`; run them when a change touches the vendored source or the module graph.
@@ -55,7 +57,7 @@ Supplements the `commit-convention` skill.
 - `design`: cross-cutting changes
 - `repo`: repository-level configuration, such as `CLAUDE.md`, `.claude/`, `.github/`, `Makefile`, `scripts/`, `.golangci.yml`, the `buf` configuration and `.gitignore`
 
-Shared test support under `internal/testkit/` takes the scope of the module it simulates.
+Shared test support under `internal/testkit/` takes the scope of the module it simulates; `internal/testkit/refpage`, which reads the website's reference pages, takes `site`.
 
 ### Rules
 
