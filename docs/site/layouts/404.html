@@ -1,0 +1,95 @@
+{{- /*
+  Mirrors the Hextra v0.13.0 404 page. Every difference from the theme:
+
+  - This header comment is added.
+  - `$version := partial "version/context.html" .` is added before the
+    doctype, with trim markers, to read params.versions and latestBaseURL.
+  - The light-mode style block gains `.hextra-error-latest` and
+    `.hextra-error-versions` rules and a link rule for both; the dark-mode
+    block gains the same two link colours.
+  - The heading message comes from the `notFoundMessage` i18n key, falling
+    back to the theme's sentence.
+  - Below the heading, the page gains a link to `$version.latestBaseURL`
+    labelled `notFoundLatest`, a `notFoundVersions` label, and a list of every
+    element of `params.versions` by its name and URL. The `{{- range }}` and
+    `{{- end }}` trim markers on the list are part of the addition.
+
+  Everything else is kept byte for byte so the override stays easy to compare
+  with the theme.
+*/ -}}
+{{- $version := partial "version/context.html" . -}}
+<!doctype html>
+<html lang="{{ .Site.Language.Lang | default "en" }}" dir="{{ partial "utils/hugo-compat/language-direction.html" .Site.Language | default "ltr" }}">
+  <body
+    style='font-family:system-ui,"Segoe UI",Roboto,Helvetica,Arial,sans-serif,"Apple Color Emoji","Segoe UI Emoji"; height:100vh; text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center'
+  >
+    <main id="content">
+      <style>
+        body {
+          color: #000;
+          background: #fff;
+          margin: 0;
+        }
+
+        .hextra-error-h1 {
+          border-right: 1px solid rgba(0, 0, 0, 0.3);
+        }
+
+        .hextra-error-latest {
+          margin: 0.75rem 0 0;
+          font-size: 14px;
+          line-height: 1.6;
+        }
+
+        .hextra-error-versions {
+          margin: 0.75rem 0 0;
+          padding: 0;
+          list-style: none;
+          font-size: 14px;
+          line-height: 1.8;
+        }
+
+        .hextra-error-latest a,
+        .hextra-error-versions a {
+          color: #2563eb;
+          text-decoration: underline;
+          text-underline-offset: 2px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+          body {
+            color: #fff;
+            background: #000;
+          }
+
+          .hextra-error-h1 {
+            border-right: 1px solid rgba(255, 255, 255, 0.3);
+          }
+
+          .hextra-error-latest a,
+          .hextra-error-versions a {
+            color: #93c5fd;
+          }
+        }
+      </style>
+      <h1
+        class="hextra-error-h1"
+        style='display: inline-block; margin: 0 20px 0 0; padding-right: 23px; font-size: 24px; font-weight: 500; vertical-align: top; line-height: 49px; font-feature-settings: "rlig" 1,"calt" 1,"ss01" 1,"ss06" 1 !important;'
+      >
+        404
+      </h1>
+      <div style="display: inline-block; text-align: left">
+        <h2 style="font-size: 14px; font-weight: 400; line-height: 49px; margin: 0">{{ T "notFoundMessage" | default "This page could not be found." }}</h2>
+        <p class="hextra-error-latest">
+          <a href="{{ $version.latestBaseURL }}">{{ T "notFoundLatest" | default "Go to the documentation of the latest release" }}</a>
+        </p>
+        <p class="hextra-error-latest">{{ T "notFoundVersions" | default "Versions" }}</p>
+        <ul class="hextra-error-versions">
+          {{- range $version.versions }}
+          <li><a href="{{ .url }}">{{ .name }}</a></li>
+          {{- end }}
+        </ul>
+      </div>
+    </main>
+  </body>
+</html>

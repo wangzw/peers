@@ -1,0 +1,77 @@
+{{- /*
+  Mirrors the Hextra v0.13.0 banner partial. The version banner replaces the
+  theme banner rather than stacking on it: class older or dev renders the
+  version banner here and the theme's params.banner banner does not render at
+  all, with no close button so it cannot be dismissed. Class latest keeps the
+  theme's params.banner banner unchanged, close button included. A build that
+  sets params.banner for any class other than latest fails, so the two banners
+  are never both present. Because the theme emits its banner script only for
+  params.banner, the version banner measures itself and sets
+  --hextra-banner-height and data-hextra-banner, which the navbar and the
+  mobile sidebar read.
+*/ -}}
+{{- $version := partial "version/context.html" . -}}
+{{- $versionBanner := or (eq $version.class "older") (eq $version.class "dev") -}}
+{{- if and site.Params.banner (ne $version.class "latest") -}}
+  {{- errorf "banner.html: params.banner is set for class %s; the site banner is supported only for class latest, where the version banner does not render" $version.class -}}
+{{- end -}}
+
+{{- if $versionBanner }}
+  {{- $latestURL := "" -}}
+  {{- $latestName := $version.latestName -}}
+  {{- range $version.versions }}
+    {{- if eq .class "latest" }}
+      {{- $latestName = .name -}}
+      {{- $latestURL = partial "version/in.html" (dict "base" .url "page" $) -}}
+    {{- end }}
+  {{- end }}
+  {{- if not $latestURL }}
+    {{- $latestURL = partial "version/in.html" (dict "base" $version.latestBaseURL "page" $) -}}
+  {{- end }}
+  {{- $latestLink := printf `<a class="hextra-version-banner-link" href="%s">%s</a>` $latestURL $latestName | safeHTML -}}
+  {{- $key := cond (eq $version.class "older") "versionBannerOlder" "versionBannerDev" -}}
+<div class="hextra-banner hx:max-md:sticky hx:top-0 hx:z-20 hx:px-6 hx:text-center hx:text-slate-50 hx:dark:text-white hx:bg-neutral-900 hx:dark:bg-neutral-800 hx:print:[display:none]" data-version-banner>
+  <div class="hx:relative hx:flex hx:items-center hx:justify-center hx:font-medium hx:text-sm hx:py-2.5">
+    <p class="hx:px-8">
+      {{- T $key (dict "Version" $version.name "Latest" $latestLink) | safeHTML -}}
+    </p>
+  </div>
+</div>
+<script>
+  (function () {
+    var banner = document.querySelector("[data-version-banner]");
+    if (!banner) return;
+    function measure() {
+      document.documentElement.style.setProperty("--hextra-banner-height", banner.offsetHeight + "px");
+    }
+    measure();
+    document.documentElement.dataset.hextraBanner = "visible";
+    window.addEventListener("load", measure);
+    if (window.ResizeObserver) {
+      new ResizeObserver(measure).observe(banner);
+    } else {
+      window.addEventListener("resize", measure);
+    }
+  })();
+</script>
+{{- end }}
+
+{{- if and (not $versionBanner) site.Params.banner }}
+<div class="hextra-banner hx:max-md:sticky hx:top-0 hx:z-20 hx:px-6 hx:text-center hx:text-slate-50 hx:dark:text-white hx:bg-neutral-900 hx:dark:bg-neutral-800 hx:print:[display:none]">
+  <div class="hx:relative hx:flex hx:items-center hx:justify-center hx:font-medium hx:text-sm hx:py-2.5">
+    {{- with partial "custom/banner.html" . -}}
+      {{- . -}}
+    {{- else -}}
+      <div style="white-space: pre-wrap" class="hx:px-8">
+        {{- site.Params.banner.message | default "🎉 Welcome! This is a banner message." | .RenderString -}}
+      </div>
+    {{- end -}}
+    <button
+      class="hextra-banner-close-button hx:cursor-pointer hx:absolute hx:right-0 hx:text-white hx:font-bold hx:leading-none hx:hover:opacity-75 hx:transition hx:w-10 hx:h-10 hx:-mr-2 hx:md:mr-0 hx:flex hx:items-center hx:justify-center"
+      aria-label="{{ (T "closeBanner") | default "Close banner" }}"
+    >
+      {{- partial "utils/icon.html" (dict "name" "x" "attributes" "height=16") -}}
+    </button>
+  </div>
+</div>
+{{- end -}}

@@ -448,3 +448,121 @@
     max-width: none !important;
   }
 }
+
+/* The version selector is a native details element, so it works without
+   JavaScript. */
+.hextra-version-selector {
+  position: relative;
+  display: inline-block;
+  margin-inline-start: 0.25rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.hextra-version-selector > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.5rem;
+  border-radius: 0.125rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--hx-color-gray-600);
+  user-select: none;
+}
+
+.hextra-version-selector > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hextra-version-selector > summary:hover {
+  color: var(--hx-color-gray-800);
+}
+
+:root.dark .hextra-version-selector > summary {
+  color: var(--hx-color-gray-400);
+}
+
+:root.dark .hextra-version-selector > summary:hover {
+  color: var(--hx-color-gray-200);
+}
+
+.hextra-version-selector-chevron {
+  transition: transform 0.2s ease-in-out;
+}
+
+.hextra-version-selector-current {
+  font-weight: 500;
+  color: var(--hx-color-gray-800);
+}
+
+:root.dark .hextra-version-selector-current {
+  color: var(--hx-color-gray-200);
+}
+
+.hextra-version-selector[open] .hextra-version-selector-chevron {
+  transform: rotate(180deg);
+}
+
+.hextra-version-selector-items {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 20;
+  min-width: 8rem;
+  margin: 0;
+  padding: 0.25rem;
+  border: 1px solid var(--hx-color-gray-200);
+  border-radius: 0.5rem;
+  background-color: #fff;
+  box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  list-style: none;
+}
+
+:root.dark .hextra-version-selector-items {
+  border-color: var(--hx-color-neutral-700);
+  background-color: var(--hx-color-neutral-900);
+}
+
+.hextra-version-selector-item {
+  display: block;
+  padding: 0.375rem 0.75rem;
+  border-radius: 0.125rem;
+  color: var(--hx-color-gray-600);
+  white-space: nowrap;
+}
+
+.hextra-version-selector-item:hover {
+  background-color: var(--hx-color-gray-100);
+  color: var(--hx-color-gray-800);
+}
+
+:root.dark .hextra-version-selector-item {
+  color: var(--hx-color-gray-400);
+}
+
+:root.dark .hextra-version-selector-item:hover {
+  background-color: var(--hx-color-neutral-800);
+  color: var(--hx-color-gray-200);
+}
+
+.hextra-version-selector-item-current {
+  font-weight: 500;
+}
+
+/* The link sits in the theme's dark banner, so it inherits that text colour. */
+.hextra-version-banner-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.hextra-version-banner-link:hover {
+  text-decoration-thickness: 2px;
+}
+
+@media (max-width: 767px) {
+  .hextra-version-selector > summary {
+    padding: 0.375rem;
+  }
+}

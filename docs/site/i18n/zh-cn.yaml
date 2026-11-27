@@ -1,0 +1,7 @@
+# Hextra merges this file with its own zh-cn.yaml; only the site's keys are here.
+versionSelector: "版本"
+versionBannerOlder: "这是 {{ .Version }} 的文档，最新版本是 {{ .Latest }}。"
+versionBannerDev: "这是尚未发布的开发版文档，最新版本是 {{ .Latest }}。"
+notFoundMessage: "找不到这个页面。"
+notFoundLatest: "前往最新版本的文档"
+notFoundVersions: "版本"
