@@ -1,0 +1,21 @@
+{{- /*
+  Returns the absolute URL of a page's output in another version.
+
+  Takes a map with "base" (the version's base URL, ending in a slash) and
+  "page", and optionally "format" (an output format name, default "html").
+  The URL is the base followed by the page's path relative to the current
+  build's base URL, language prefix included. A page without the named output
+  format fails the build.
+*/ -}}
+{{- $base := .base -}}
+{{- $page := .page -}}
+{{- $format := .format | default "html" -}}
+{{- $output := $page.OutputFormats.Get $format -}}
+{{- if not $output -}}
+  {{- errorf "version/in.html: page %q has no %q output format" $page.Path $format -}}
+{{- end -}}
+{{- $siteBase := urls.Parse site.BaseURL -}}
+{{- $prefix := strings.TrimSuffix "/" $siteBase.Path -}}
+{{- $path := strings.TrimPrefix $prefix $output.RelPermalink -}}
+{{- $path = strings.TrimPrefix "/" $path -}}
+{{- return printf "%s%s" $base $path -}}

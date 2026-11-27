@@ -1,0 +1,41 @@
+{{- /*
+  Returns the build's version context as a map: name, class, canonicalBaseURL,
+  latestBaseURL, latestName, release and versions. An empty params.release
+  fails the build in every class, so nothing renders an empty release number.
+  With params.version or params.versions absent, the defaults of those
+  interfaces apply. A class outside latest, latest-copy, older and dev fails
+  the build too.
+*/ -}}
+{{- $release := site.Params.release | default "" -}}
+{{- if not $release -}}
+  {{- errorf "version/context.html: params.release is empty; set it so the site can name the release it documents" -}}
+{{- end -}}
+{{- $version := site.Params.version -}}
+{{- $name := "" -}}
+{{- $class := "" -}}
+{{- $canonicalBaseURL := "" -}}
+{{- $latestBaseURL := site.BaseURL -}}
+{{- $latestName := "" -}}
+
+{{- if $version -}}
+  {{- $name = $version.name -}}
+  {{- $class = $version.class -}}
+  {{- $canonicalBaseURL = $version.canonicalBaseURL | default "" -}}
+  {{- $latestBaseURL = $version.latestBaseURL | default site.BaseURL -}}
+  {{- $latestName = $version.latestName | default $name -}}
+{{- else -}}
+  {{- $name = printf "v%s" $release -}}
+  {{- $class = "latest" -}}
+  {{- $latestName = $name -}}
+{{- end -}}
+
+{{- if not (in (slice "latest" "latest-copy" "older" "dev") $class) -}}
+  {{- errorf "version/context.html: params.version.class %q is not one of latest, latest-copy, older, dev" $class -}}
+{{- end -}}
+
+{{- $versions := site.Params.versions -}}
+{{- if not $versions -}}
+  {{- $versions = slice (dict "name" $name "url" site.BaseURL "class" "latest") -}}
+{{- end -}}
+
+{{- return (dict "name" $name "class" $class "canonicalBaseURL" $canonicalBaseURL "latestBaseURL" $latestBaseURL "latestName" $latestName "release" $release "versions" $versions) -}}
