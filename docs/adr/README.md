@@ -93,4 +93,5 @@ This directory records the architecture decisions in force in peers. A decision 
 
 | Decision |
 |---|
+| [Index only the website's latest release at the root](adr-versioned-website-indexing.md) |
 | [Check the reference pages against the code with package tests](adr-reference-pages-checked-by-tests.md) |
