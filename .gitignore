@@ -47,6 +47,9 @@ Thumbs.db
 .claude/settings.local.json
 .claude/worktrees/
 
+# Session working files
+/.workflow/
+
 # Website build output
 docs/site/public/
 docs/site/resources/
