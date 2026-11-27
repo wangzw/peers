@@ -39,6 +39,8 @@ topics:
 
 接收方 Broker 把消息写进目标会话的 inbox socket，并附上接收方视角下的发送方地址。空闲的目标会话无需用户输入就会开始处理。会话可以用 `send_message` 向这个发送方地址发送消息。
 
+对方 Agent 的会话也出现在 Claude Code 内置的会话列表里时（同一账户在本机上的另一个会话就是这样），用它的 Claude Code 会话名指定它，例如“给 `frontend` 发送 hello。”，`peers` 会让模型用 Claude Code 内置的会话工具发起对话，而不是 `send_message`。用它的完整 Agent 地址指定它，例如“给 `<address>` 发送 hello。”，或者要求经 `peers` 发送，就会用 `send_message` 发送。发送方是 Agent 地址的消息，回复仍然走 `send_message`，向该地址逐字回复。
+
 ## 给所有 Agent 发消息
 
 说“给所有 Agent 发一句 hello。”时，模型只把它发给本机的会话，用 Claude Code 内置的会话工具发送，不经过 peers，发完会提醒你还可以用 peers 通知其他主机上的 Agent。要发到其他主机，就明确说出来：“用 peers 广播 hello。”模型会对 `list_agents` 列出的每个 Agent 各调用一次 `send_message`。会话没有内置会话工具时，不会改用 peers 代发，而是说明这一点，并给出同样的提醒。

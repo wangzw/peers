@@ -22,9 +22,9 @@ Restart any Claude Code session that is already running so it loads the peer MCP
 
 ## Try it
 
-On one host, start two sessions in the same project directory. Both join the same default topic, taken from the project configuration file `.peers.yaml` or, when there is none, from the URL of the workspace's git origin remote. Say “List the agents.” (the model calls `list_agents`), then “Send hello to `<address>`.” (the model calls `send_message`).
+On one host, start two sessions in the same project directory. Both join the same default topic, taken from the project configuration file `.peers.yaml` or, when there is none, from the URL of the workspace's git origin remote. Say “List the agents.” (the model calls `list_agents`), then “Send hello to `<name>`.” with the other session's Claude Code session name: the other session also appears in Claude Code's built-in session list, so `peers` directs the model to send with Claude Code's built-in session tools. Given its full agent address instead, `peers` directs the model to `send_message`; both reach the session.
 
-Between two hosts, on the host that can be reached, say “Create a pairing key.” and approve the call (the model calls `create_pairing_key`); pass the key and the displayed address to the other host over a separate channel. On the other host, say “Connect to the Broker at `<address>` with the key `<key>`.” and approve the call (the model calls `connect_broker`). Sessions on both hosts that share a topic can now see each other.
+Between two hosts, on the host that can be reached, say “Create a pairing key.” and approve the call (the model calls `create_pairing_key`); pass the key and the displayed address to the other host over a separate channel. On the other host, say “Connect to the Broker at `<address>` with the key `<key>`.” and approve the call (the model calls `connect_broker`). Sessions on both hosts that share a topic can now see each other, and `send_message` reaches the other host's agents.
 
 [Getting Started](https://peers.zhanwei.wang/docs/getting-started/) walks through both.
 

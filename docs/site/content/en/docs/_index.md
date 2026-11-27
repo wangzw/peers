@@ -31,7 +31,7 @@ flowchart LR
   brokerA <-->|paired link| brokerB
 ```
 
-Sessions on the same host can also use the tools to message each other. The path is the same, with both sessions registered on one Broker.
+Sessions on the same host can register on one Broker too. When the other session appears in Claude Code's built-in session list, as another session of the same account does, the model starts a conversation with it through Claude Code's built-in session tools rather than through `peers`, unless you name it by its agent address or ask for `peers`; a message that arrives from an agent address is still answered through `peers`. Another account's session on a system Broker is not in that list and is reached through `peers`.
 
 ## Platform requirements
 

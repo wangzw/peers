@@ -35,9 +35,9 @@ peers 的工具由模型调用，用自然语言提出要求即可；它们不�
 
 在同一个项目目录里打开两个会话，都启用 peers 工具，两个会话就在同一个默认 topic 里。不是这样时，按[谁能和谁通信](#谁能和谁通信)里的办法，在两边加入同一个 topic。
 
-在一个会话里说“列出 Agent。”（模型会调用 `list_agents`）。结果会给出你自己的地址，以及对方会话的地址，形式为 `name@alias`，例如 `frontend@workstation.alice`；系统级 Broker 上的地址则是 `frontend@workstation`。再说“给 `<address>` 发送 hello。”（模型会调用 `send_message`）。
+在一个会话里说“列出 Agent。”（模型会调用 `list_agents`）。结果会给出你自己的地址，以及对方会话的地址，形式为 `name@alias`，例如 `frontend@workstation.alice`；系统级 Broker 上的地址则是 `frontend@workstation`。再说“给 `<name>` 发送 hello。”，其中 `<name>` 是对方会话的 Claude Code 会话名，例如 `frontend`：对方会话也出现在 Claude Code 内置的会话列表里，所以 `peers` 会让模型用 Claude Code 内置的会话工具发送这条消息，而不是 `send_message`。换成它完整的 Agent 地址时，`peers` 会让模型用 `send_message` 发送；两种方式都能把消息送到对方会话。
 
-消息写入接收方会话的 inbox socket 后，发送方会话报告成功。空闲的接收会话无需用户输入就会开始处理。消息带有发送方的 Agent 地址，会话可以用 `send_message` 向这个地址发送消息。
+通过 peers 到达的消息带有发送方的 Agent 地址，接收方会话用 `send_message` 向这个地址逐字回复。空闲的接收会话无需用户输入就会开始处理。
 
 ## 在两台主机之间互发消息
 
@@ -47,6 +47,8 @@ peers 的工具由模型调用，用自然语言提出要求即可；它们不�
 2. 结果给出一个一次性配对密钥、它的失效时间、本机 Broker 的地址，以及一段填好密钥与本机 Broker 全部地址、可直接粘贴的连接提示词。密钥和地址分开显示，地址不属于密钥。把这段提示词经 peers 之外的途径交给另一台主机的用户，不要让 Agent 转发；原因见[安全模型]({{< relref "security.md" >}}#配对与指纹)。
 3. 在另一台主机的会话里粘贴这段提示词并批准这次调用（模型会调用 `connect_broker`，地址与密钥取自提示词），或者运行提示词给出的 `peers broker connect` 命令。
 4. 结果显示接受方 Broker 的别名与指纹。配对只连通两台 Broker；两边的会话还要在同一个 topic 里才能互相看见，例如都开在同一仓库的克隆里（`origin` 规范化后相同），或者都加入了同名 topic。看不到对方时，先检查这一点，见[谁能和谁通信](#谁能和谁通信)。
+
+两边的会话能互相看见之后，用另一台主机的 Agent 地址说“给 `<address>` 发送 hello。”（模型会调用 `send_message`）。消息写入接收方会话的 inbox socket 后，发送方会话报告成功。
 
 `create_pairing_key`、`connect_broker` 等管理工具以及对应的终端命令，要求对 Broker 的配置文件有写权限。你自己的用户级 Broker 的配置文件属于你的账户；系统级 Broker 上，谁拥有这个权限见[管理组]({{< relref "guides/management-permissions.md" >}}#管理组)。
 

@@ -31,7 +31,7 @@ flowchart LR
   brokerA <-->|已配对链路| brokerB
 ```
 
-同一台主机上的会话也可以用这些工具互发消息。路径相同，只是两个会话登记在同一个 Broker 上。
+同一台主机上的会话也可以登记在同一个 Broker 上。对方会话出现在 Claude Code 内置的会话列表里时（同一账户的另一个会话就是这样），模型改用 Claude Code 内置的会话工具与它发起对话，而不经过 peers，除非你用它的 Agent 地址指定它，或要求经 peers 发送；来自 Agent 地址的消息仍然通过 peers 回复。系统级 Broker 上另一个账户的会话不在这个列表里，需要通过 peers 联系。
 
 ## 平台要求
 

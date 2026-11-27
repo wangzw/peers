@@ -35,9 +35,9 @@ The `peers` tools are called by the model. Ask for what you want in natural lang
 
 Open two sessions in the same project directory and enable the `peers` tools in both; they share the same default topic. When they do not, join the same topic in both, as described in [Who can talk to whom](#who-can-talk-to-whom).
 
-In one session, say “List the agents.” (the model calls `list_agents`). The result gives your own address and the other session as `name@alias`, for example `frontend@workstation.alice`; on a system Broker the address is `frontend@workstation`. Then say “Send hello to `<address>`.” (the model calls `send_message`).
+In one session, say “List the agents.” (the model calls `list_agents`). The result gives your own address and the other session as `name@alias`, for example `frontend@workstation.alice`; on a system Broker the address is `frontend@workstation`. Then say “Send hello to `<name>`.” with the other session's Claude Code session name, such as `frontend`: the other session also appears in Claude Code's built-in session list, so `peers` directs the model to send the message with Claude Code's built-in session tools rather than `send_message`. Given its full agent address instead, `peers` directs the model to `send_message`; both reach the session.
 
-The sending session reports success once the message is written into the receiving session's inbox socket. An idle receiving session starts working on the message without user input. The message carries the sender's agent address, and a session can call `send_message` with that address to send a message back.
+A message that arrives through `peers` carries the sender's agent address, and the receiving session replies to it with `send_message`, to that address verbatim. An idle receiving session starts working on a message without user input.
 
 ## Send a message between two hosts
 
@@ -47,6 +47,8 @@ At least one host must be able to reach port 17443 on the other. Before pairing,
 2. The result gives a one-time key, its expiry time, this Broker's addresses and a paste-ready connect prompt that names the key and those addresses. The key and the addresses are shown separately; the addresses are not part of the key. Pass the prompt to the other host's user through a channel outside `peers`, and do not let an agent forward the key or the prompt; [the security model]({{< relref "security.md" >}}#pairing-and-fingerprints) explains why.
 3. On the other host, paste the prompt into a session and approve the call (the model calls `connect_broker` with the address and key from the prompt), or run the `peers broker connect` command that the prompt gives.
 4. The result shows the accepting Broker's alias and fingerprint. Pairing connects only the two Brokers: the sessions on both hosts still need a shared topic to see each other, for example both opened in clones of the same repository, whose `origin` addresses normalize to the same name, or both joined to a topic with the same name. When they cannot see each other, check this first; see [Who can talk to whom](#who-can-talk-to-whom).
+
+Once the sessions on both hosts see each other, say “Send hello to `<address>`.” with the other host's agent address (the model calls `send_message`). The sending session reports success once the message is written into the receiving session's inbox socket.
 
 `create_pairing_key`, `connect_broker` and the other management tools, and their terminal forms, need write permission on the Broker's configuration file. Your own user Broker's file belongs to your account; for a system Broker, [the admin group]({{< relref "guides/management-permissions.md" >}}#the-admin-group) covers who holds that permission.
 
