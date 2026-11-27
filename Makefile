@@ -380,7 +380,12 @@ site:
 		echo "site: hugo is not installed; install Hugo $(HUGO_VERSION)" >&2; \
 		exit 1; \
 	fi
-	hugo server --source $(SITE_DIR)
+	@release="$$(git tag --list 'v*' --sort=-v:refname | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"; \
+	if [ -z "$$release" ]; then \
+		echo "site: no vX.Y.Z tag found; fetch the tags (git fetch --tags) so params.release can be set" >&2; \
+		exit 1; \
+	fi; \
+	HUGO_PARAMS_RELEASE="$${release#v}" hugo server --source $(SITE_DIR)
 
 # Check that the English and Chinese pages match, that no page writes a bare
 # release number that equals a vX.Y.Z tag, build the website strictly, check
@@ -407,7 +412,12 @@ site-check:
 	esac
 	go run -p $(JOBS) ./scripts/site-parity -en $(SITE_DIR)/content/en -zh $(SITE_DIR)/content/zh
 	go run -p $(JOBS) ./scripts/site-release-number -content $(SITE_DIR)/content -repo $(CURDIR)
-	GOMAXPROCS=$(JOBS) hugo --source $(SITE_DIR) --cleanDestinationDir --gc --minify --panicOnWarning
+	@release="$$(git tag --list 'v*' --sort=-v:refname | grep -Ex 'v[0-9]+\.[0-9]+\.[0-9]+' | head -n 1)"; \
+	if [ -z "$$release" ]; then \
+		echo "site-check: no vX.Y.Z tag found; fetch the tags (git fetch --tags) so params.release can be set" >&2; \
+		exit 1; \
+	fi; \
+	GOMAXPROCS=$(JOBS) HUGO_PARAMS_RELEASE="$${release#v}" hugo --source $(SITE_DIR) --cleanDestinationDir --gc --minify --panicOnWarning
 	@missing="$$(find $(SITE_DIR)/public -name index.html | sort | while read -r page; do \
 		[ -f "$${page%.html}.md" ] || echo "$$page"; \
 	done)"; \
