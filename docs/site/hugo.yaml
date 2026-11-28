@@ -19,6 +19,22 @@ enableGitInfo: true
 # Every crawler, AI ones included, may read the whole site. The template in
 # layouts/robots.txt allows them all and points to the sitemap derived from
 # baseURL; Hugo writes it once, for the default content language.
+#
+# The HTML of each version carries its robots meta and canonical. The files
+# of /dev/ and of every /vX.Y.Z/ that cannot (index.md, llms.txt,
+# llms-full.txt and the RSS feeds) get noindex from a Cloudflare response
+# header rule on the zone:
+#   when: http.host eq "peers.zhanwei.wang"
+#         and (starts_with(http.request.uri.path, "/dev/")
+#              or http.request.uri.path wildcard "/v*.*.*/*")
+#         and (ends_with(http.request.uri.path, ".md")
+#              or ends_with(http.request.uri.path, ".txt")
+#              or ends_with(http.request.uri.path, ".xml"))
+#   set:  the response header X-Robots-Tag to noindex
+# The rule sees the path after the Markdown rewrite rule below, so an
+# index.md answered for Accept: text/markdown carries the header too, and it
+# never matches an HTML response. docs/adr/adr-versioned-website-indexing.md
+# records why.
 enableRobotsTXT: true
 
 # llms.txt and llms-full.txt are generated for each language from the site's
