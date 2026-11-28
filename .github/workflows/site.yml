@@ -15,6 +15,7 @@ on:
       - Makefile
       - go.mod
       - go.sum
+      - .github/actions/site-tools/**
       - .github/workflows/site.yml
   pull_request:
     paths:
@@ -28,6 +29,7 @@ on:
       - Makefile
       - go.mod
       - go.sum
+      - .github/actions/site-tools/**
       - .github/workflows/site.yml
   workflow_run:
     workflows:
@@ -38,9 +40,6 @@ on:
 
 permissions:
   contents: read
-
-env:
-  LYCHEE_VERSION: 0.24.2
 
 # Every run on main that may deploy shares the deployment group, so two such
 # runs cannot build and then deploy out of order: a push, a manual dispatch and
@@ -73,29 +72,8 @@ jobs:
           # feeds the published page, so it must not restore a cache another
           # workflow can write.
           cache: false
-      - name: Install Hugo
-        run: |
-          version="$(sed -n 's/^HUGO_VERSION[[:space:]]*[:?]=[[:space:]]*//p' Makefile)"
-          base="https://github.com/gohugoio/hugo/releases/download/v${version}"
-          curl -sSL -o /tmp/hugo_checksums.txt "${base}/hugo_${version}_checksums.txt"
-          checksum="$(grep " hugo_${version}_linux-amd64.tar.gz$" /tmp/hugo_checksums.txt | awk '{print $1}')"
-          test -n "$checksum"
-          curl -sSL -o /tmp/hugo.tar.gz "${base}/hugo_${version}_linux-amd64.tar.gz"
-          printf '%s  %s\n' "$checksum" /tmp/hugo.tar.gz | sha256sum -c -
-          tar -xzf /tmp/hugo.tar.gz -C /tmp hugo
-          sudo install -m 0755 /tmp/hugo /usr/local/bin/hugo
-          hugo version
-      - name: Install lychee
-        run: |
-          archive="lychee-x86_64-unknown-linux-gnu.tar.gz"
-          base="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}"
-          curl -sSL -o "/tmp/${archive}" "${base}/${archive}"
-          curl -sSL -o "/tmp/${archive}.sha256" "${base}/${archive}.sha256"
-          checksum="$(awk '{print $1}' "/tmp/${archive}.sha256")"
-          printf '%s  %s\n' "$checksum" "/tmp/${archive}" | sha256sum -c -
-          tar -xzf "/tmp/${archive}" -C /tmp
-          sudo install -m 0755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee /usr/local/bin/lychee
-          lychee --version
+      - name: Install the site tools
+        uses: ./.github/actions/site-tools
       - name: Check the site
         if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
         run: make site-check
